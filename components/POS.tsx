@@ -1,12 +1,41 @@
-import React, { useState } from 'react';
-import { MOCK_PRODUCTS } from '../constants';
+import React, { useState, useEffect } from 'react';
 import { Product, CartItem } from '../types';
-import { ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Loader2 } from 'lucide-react';
 
 const POS: React.FC = () => {
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [processing, setProcessing] = useState(false);
+
+  const fetchProducts = async () => {
+    try {
+        // Don't set loading to true here to avoid flickering if we refresh in background,
+        // but for initial load it's fine.
+        // If we call it after checkout, we might want to keep UI stable.
+        const tenantId = localStorage.getItem('nortex_tenant_id');
+        if (!tenantId) return;
+
+        const response = await fetch('http://localhost:3000/api/products', {
+            headers: { 'x-tenant-id': tenantId }
+        });
+        if (response.ok) {
+            const data = await response.json();
+            // Ensure price is number
+            const formatted = data.map((p: any) => ({ ...p, price: Number(p.price) }));
+            setProducts(formatted);
+        }
+    } catch (e) {
+        console.error("Error fetching products", e);
+    } finally {
+        setLoadingProducts(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchProducts();
+  }, []);
 
   const addToCart = (product: Product) => {
     setCart(prev => {
@@ -38,18 +67,48 @@ const POS: React.FC = () => {
   const tax = total * 0.18; // IGV example
   const grandTotal = total + tax;
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     if (cart.length === 0) return;
     setProcessing(true);
-    // Simulate API call to POST /pos/sales
-    setTimeout(() => {
-      setProcessing(false);
-      setCart([]);
-      alert("¡Venta procesada! Stock actualizado y Scoring recalculado.");
-    }, 1500);
+
+    try {
+        const tenantId = localStorage.getItem('nortex_tenant_id');
+        if (!tenantId) throw new Error("No session");
+
+        const response = await fetch('http://localhost:3000/api/sales', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-tenant-id': tenantId
+            },
+            body: JSON.stringify({
+                // server.ts expects `items` to have `id` (as `productId`?)
+                // Wait, server.ts: `const product = await tx.product.findUnique({ where: { id: item.id } });`
+                // So the payload item should have `id`.
+                items: cart.map(item => ({ id: item.id, quantity: item.quantity })),
+                paymentMethod: 'CASH',
+                userId: 'system'
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Error processing sale');
+        }
+
+        alert("¡Venta procesada! Stock actualizado y Scoring recalculado.");
+        setCart([]);
+        await fetchProducts(); // Refresh stock
+
+    } catch (error: any) {
+        alert("Error: " + error.message);
+    } finally {
+        setProcessing(false);
+    }
   };
 
-  const filteredProducts = MOCK_PRODUCTS.filter(p => 
+  const filteredProducts = products.filter(p =>
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
     p.sku.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -69,24 +128,34 @@ const POS: React.FC = () => {
           />
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto pb-4">
-          {filteredProducts.map(product => (
-            <button 
-              key={product.id}
-              onClick={() => addToCart(product)}
-              className="bg-white p-4 rounded-xl border border-slate-200 hover:border-nortex-500 hover:shadow-md transition-all text-left group flex flex-col justify-between"
-            >
-              <div>
-                <span className="text-xs font-mono text-slate-400 mb-1 block">{product.sku}</span>
-                <h3 className="font-semibold text-slate-800 leading-tight group-hover:text-nortex-500 transition-colors">{product.name}</h3>
-              </div>
-              <div className="mt-4 flex justify-between items-end">
-                <span className="text-lg font-bold text-slate-900">${product.price.toFixed(2)}</span>
-                <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">Stock: {product.stock}</span>
-              </div>
-            </button>
-          ))}
-        </div>
+        {loadingProducts ? (
+            <div className="flex-1 flex items-center justify-center">
+                <Loader2 className="animate-spin text-slate-400" size={32} />
+            </div>
+        ) : (
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 overflow-y-auto pb-4">
+            {filteredProducts.map(product => (
+                <button
+                key={product.id}
+                onClick={() => addToCart(product)}
+                disabled={product.stock <= 0}
+                className={`bg-white p-4 rounded-xl border border-slate-200 transition-all text-left group flex flex-col justify-between
+                    ${product.stock > 0 ? 'hover:border-nortex-500 hover:shadow-md' : 'opacity-50 cursor-not-allowed'}`}
+                >
+                <div>
+                    <span className="text-xs font-mono text-slate-400 mb-1 block">{product.sku}</span>
+                    <h3 className="font-semibold text-slate-800 leading-tight group-hover:text-nortex-500 transition-colors">{product.name}</h3>
+                </div>
+                <div className="mt-4 flex justify-between items-end">
+                    <span className="text-lg font-bold text-slate-900">${product.price.toFixed(2)}</span>
+                    <span className={`text-xs px-2 py-1 rounded ${product.stock > 0 ? 'text-slate-500 bg-slate-100' : 'text-red-500 bg-red-100'}`}>
+                        {product.stock > 0 ? `Stock: ${product.stock}` : 'Sin Stock'}
+                    </span>
+                </div>
+                </button>
+            ))}
+            </div>
+        )}
       </div>
 
       {/* Cart - Right Side */}
@@ -96,7 +165,7 @@ const POS: React.FC = () => {
             <ShoppingCart size={20} />
             Ticket de Venta
           </h2>
-          <p className="text-xs text-slate-500 mt-1">Order #TRX-9982</p>
+          <p className="text-xs text-slate-500 mt-1">Order #TRX-{Math.floor(Math.random() * 10000)}</p>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -175,7 +244,7 @@ const POS: React.FC = () => {
                 ? 'bg-slate-400 cursor-not-allowed' 
                 : 'bg-nortex-900 hover:bg-nortex-800 shadow-nortex-900/20'}`}
           >
-            {processing ? 'PROCESANDO...' : 'COBRAR'}
+            {processing ? <Loader2 className="animate-spin" /> : 'COBRAR'}
           </button>
         </div>
       </div>

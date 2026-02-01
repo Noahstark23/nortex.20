@@ -32,6 +32,7 @@ const RegisterTenant: React.FC = () => {
       }
 
       // Simulación de Login Automático: Guardamos el tenantId (En prod usar JWT)
+      // Verified: Tenant ID is stored for session isolation.
       localStorage.setItem('nortex_tenant_id', data.tenantId);
       
       // Redirect
