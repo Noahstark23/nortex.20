@@ -17,215 +17,255 @@ export const MOCK_PRODUCTS: Product[] = [
   { id: '5', name: 'Tubo PVC 4"', price: 18.90, stock: 120, sku: 'TUB-005' },
 ];
 
-export const SQL_SCHEMA = `
--- FASE 1: DATABASE SCHEMA (PostgreSQL 16)
--- Aislamiento: Row-Level Security (RLS) via tenant_id. 
--- Es más barato y escalable que schemas separados para miles de PyMEs.
+// --- CODIGO BACKEND PARA VISUALIZACION EN BLUEPRINT VIEWER ---
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+const PRISMA_SCHEMA_CODE = `// ESTO VA EN: /backend/prisma/schema.prisma
 
--- 1. TENANTS (Inquilinos)
-CREATE TABLE tenants (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name VARCHAR(255) NOT NULL,
-    slug VARCHAR(50) UNIQUE NOT NULL, -- para subdominios ferreteria-a.nortex.com
-    business_type VARCHAR(50) NOT NULL, -- 'FERRETERIA', 'FARMACIA'
-    status VARCHAR(20) DEFAULT 'ACTIVE',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+generator client {
+  provider = "prisma-client-js"
+}
 
--- 2. USERS (Administradores y Cajeros)
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    role VARCHAR(20) DEFAULT 'CASHIER', -- 'ADMIN', 'OWNER'
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
--- Index para búsquedas rápidas por tenant
-CREATE INDEX idx_users_tenant ON users(tenant_id);
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
 
--- 3. PRODUCTS (Inventario)
-CREATE TABLE products (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
-    sku VARCHAR(100) NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    price DECIMAL(10, 2) NOT NULL,
-    stock_quantity INTEGER DEFAULT 0,
-    cost DECIMAL(10, 2), -- Para calcular margen real
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE(tenant_id, sku) -- SKU único por tenant, no global
-);
+// 1. EL INQUILINO (La PyME)
+model Tenant {
+  id            String    @id @default(uuid())
+  name          String
+  type          String    // 'FERRETERIA', 'FARMACIA'
+  slug          String    @unique // subdominio
+  
+  // Fintech Core
+  walletBalance Decimal   @default(0.00) @db.Decimal(15, 2)
+  creditScore   Int       @default(0)
+  creditLimit   Decimal   @default(0.00) @db.Decimal(15, 2)
+  
+  users         User[]
+  products      Product[]
+  sales         Sale[]
+  transactions  Transaction[]
 
--- 4. SALES (El corazón del Scoring)
-CREATE TABLE sales (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES users(id),
-    total_amount DECIMAL(12, 2) NOT NULL,
-    payment_method VARCHAR(50) DEFAULT 'CASH', -- 'CARD', 'YAPE', 'QR'
-    status VARCHAR(20) DEFAULT 'COMPLETED',
-    metadata JSONB, -- Datos extra del POS
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-CREATE INDEX idx_sales_tenant_date ON sales(tenant_id, created_at DESC);
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
--- 5. WALLETS (Fintech Core)
-CREATE TABLE wallets (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE UNIQUE,
-    balance DECIMAL(15, 2) DEFAULT 0.00 CHECK (balance >= 0),
-    currency VARCHAR(3) DEFAULT 'USD',
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+  @@index([slug])
+}
 
--- 6. TRANSACTION_LOGS (Auditoría Inmutable)
-CREATE TABLE transaction_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    wallet_id UUID REFERENCES wallets(id),
-    amount DECIMAL(15, 2) NOT NULL,
-    type VARCHAR(50) NOT NULL, -- 'SALE_DEPOSIT', 'LOAN_DISBURSEMENT', 'WITHDRAWAL'
-    reference_id UUID, -- Link a sale_id o loan_id
-    balance_after DECIMAL(15, 2) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+// 2. USUARIOS (Seguridad)
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String
+  role          String    // 'OWNER', 'CASHIER'
+  
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  
+  sales         Sale[]
 
--- 7. CREDIT_SCORES (El Negocio Real)
-CREATE TABLE credit_scores (
-    tenant_id UUID REFERENCES tenants(id) PRIMARY KEY,
-    score INTEGER DEFAULT 0, -- 0 a 1000
-    max_credit_limit DECIMAL(12, 2) DEFAULT 0,
-    last_calculated_at TIMESTAMP WITH TIME ZONE,
-    risk_level VARCHAR(20) -- 'LOW', 'MEDIUM', 'HIGH'
-);
-`;
+  createdAt     DateTime  @default(now())
+}
 
-export const DOCKER_COMPOSE = `
-# FASE 3: INFRAESTRUCTURA (Coolify / DigitalOcean)
-version: '3.8'
+// 3. INVENTARIO (Activos)
+model Product {
+  id            String    @id @default(uuid())
+  sku           String
+  name          String
+  price         Decimal   @db.Decimal(10, 2)
+  cost          Decimal   @db.Decimal(10, 2) // Para calcular margen
+  stock         Int       @default(0)
+  
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  
+  saleItems     SaleItem[]
 
-services:
-  # 1. GATEWAY (Nginx Proxy Manager o Traefik gestionado por Coolify)
-  # Este servicio maneja SSL y enrutamiento a los tenants.
+  @@unique([tenantId, sku]) // El SKU es único por tienda, no global
+}
 
-  # 2. API (Backend NestJS)
-  api:
-    image: nortex/api:latest
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    restart: always
-    environment:
-      - NODE_ENV=production
-      - DATABASE_URL=postgresql://nortex_user:secure_pass@db:5432/nortex_db
-      - REDIS_URL=redis://redis:6379
-      - JWT_SECRET=\${JWT_SECRET}
-    ports:
-      - "3000:3000"
-    depends_on:
-      - db
-      - redis
-    networks:
-      - nortex-internal
+// 4. VENTAS (El motor del Scoring)
+model Sale {
+  id            String     @id @default(uuid())
+  total         Decimal    @db.Decimal(12, 2)
+  status        String     @default("COMPLETED") // 'COMPLETED', 'REFUNDED'
+  paymentMethod String     // 'CASH', 'CARD', 'QR'
+  
+  tenantId      String
+  tenant        Tenant     @relation(fields: [tenantId], references: [id])
+  
+  userId        String
+  user          User       @relation(fields: [userId], references: [id])
+  
+  items         SaleItem[]
+  
+  createdAt     DateTime   @default(now())
 
-  # 3. DATABASE (PostgreSQL 16)
-  db:
-    image: postgres:16-alpine
-    restart: always
-    environment:
-      POSTGRES_USER: nortex_user
-      POSTGRES_PASSWORD: \${DB_PASSWORD}
-      POSTGRES_DB: nortex_db
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    networks:
-      - nortex-internal
-    # No ports exposed to host for security
+  @@index([tenantId, createdAt])
+}
 
-  # 4. REDIS (Queue & Cache)
-  redis:
-    image: redis:7-alpine
-    restart: always
-    volumes:
-      - redisdata:/data
-    networks:
-      - nortex-internal
+model SaleItem {
+  id            String   @id @default(uuid())
+  saleId        String
+  sale          Sale     @relation(fields: [saleId], references: [id])
+  
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id])
+  
+  quantity      Int
+  priceAtSale   Decimal  @db.Decimal(10, 2) // Precio histórico
+}
 
-  # 5. WORKER (Procesamiento asíncrono de Scoring)
-  worker:
-    image: nortex/worker:latest
-    environment:
-      - DATABASE_URL=postgresql://nortex_user:secure_pass@db:5432/nortex_db
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      - db
-      - redis
-    networks:
-      - nortex-internal
+// 5. AUDITORÍA FINANCIERA (Inmutable)
+model Transaction {
+  id            String   @id @default(uuid())
+  amount        Decimal  @db.Decimal(15, 2)
+  type          String   // 'SALE_INCOME', 'LOAN_DISBURSEMENT', 'WITHDRAWAL'
+  
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  
+  referenceId   String?  // ID de la Venta o del Préstamo
+  balanceAfter  Decimal  @db.Decimal(15, 2)
+  
+  createdAt     DateTime @default(now())
+}`;
 
-volumes:
-  pgdata:
-  redisdata:
+const SERVER_CODE = `// ESTO VA EN: /backend/server.ts
+import express from 'express';
+import cors from 'cors';
+import { PrismaClient } from '@prisma/client';
 
-networks:
-  nortex-internal:
-    driver: bridge
-`;
+const prisma = new PrismaClient();
+const app = express();
 
-export const API_STRUCTURE = `
-# FASE 2: API BLUEPRINT (Clean Architecture - NestJS)
+app.use(cors());
+app.use(express.json());
 
-src/
-├── app.module.ts
-├── main.ts
-├── common/             # Decorators, Filters, Guards
-│   ├── decorators/
-│   │   └── current-tenant.decorator.ts # Extrae tenant_id del JWT
-│   └── guards/
-├── modules/
-│   ├── auth/           # Auth Module
-│   │   ├── controllers/
-│   │   │   └── auth.controller.ts  # POST /auth/login, POST /auth/register
-│   │   ├── services/
-│   │   │   └── auth.service.ts
-│   │   └── strategies/             # JWT Strategy
-│   ├── pos/            # Point of Sale Module
-│   │   ├── controllers/
-│   │   │   └── sales.controller.ts # POST /pos/sales
-│   │   ├── services/
-│   │   │   └── sales.service.ts    # Atomic Transaction (Stock -1, Cash +1)
-│   ├── fintech/        # Fintech Core
-│   │   ├── controllers/
-│   │   │   └── loans.controller.ts # GET /fintech/loan-offer
-│   │   ├── services/
-│   │   │   └── scoring.service.ts  # Logic to calculate risk
-│   └── dashboard/
-│       ├── controllers/
-│       │   └── stats.controller.ts # GET /dashboard/stats
-└── database/
-    ├── entities/       # TypeORM Entities
-    └── migrations/
-`;
+// MIDDLEWARE: Simulación de Auth
+const requireTenant = async (req, res, next) => {
+  const tenantId = req.headers['x-tenant-id'] || 'tnt_01_alpha';
+  req.tenantId = tenantId;
+  next();
+};
+
+// --- RUTAS DE VENTAS (CORE FINTECH) ---
+// POST /api/sales - Venta Atómica (El corazón de Nortex)
+app.post('/api/sales', requireTenant, async (req, res) => {
+  const { items, paymentMethod, userId } = req.body;
+
+  try {
+    // INICIO DE TRANSACCIÓN ACID
+    const result = await prisma.$transaction(async (tx) => {
+      let totalAmount = 0;
+      const saleItemsData = [];
+
+      // 1. Validar Stock y Calcular Totales
+      for (const item of items) {
+        const product = await tx.product.findUnique({ where: { id: item.productId } });
+
+        if (product.stock < item.quantity) {
+          throw new Error(\`Insufficient stock for \${product.name}\`);
+        }
+
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { stock: { decrement: item.quantity } }
+        });
+
+        totalAmount += Number(product.price) * item.quantity;
+        saleItemsData.push({
+          productId: item.productId,
+          quantity: item.quantity,
+          priceAtSale: product.price
+        });
+      }
+
+      // 2. Crear Venta
+      const sale = await tx.sale.create({
+        data: {
+          tenantId: req.tenantId,
+          userId: userId || 'system_user',
+          total: totalAmount,
+          paymentMethod: paymentMethod,
+          items: { create: saleItemsData }
+        }
+      });
+
+      // 3. ACTUALIZAR TENANT (Wallet & Scoring)
+      const scoreIncrease = Math.floor(totalAmount / 100);
+      const updatedTenant = await tx.tenant.update({
+        where: { id: req.tenantId },
+        data: {
+          walletBalance: { increment: totalAmount },
+          creditScore: { increment: scoreIncrease }
+        }
+      });
+
+      // 4. LOG FINANCIERO
+      await tx.transaction.create({
+        data: {
+          tenantId: req.tenantId,
+          amount: totalAmount,
+          type: 'SALE_INCOME',
+          referenceId: sale.id,
+          balanceAfter: updatedTenant.walletBalance
+        }
+      });
+
+      return sale;
+    });
+
+    res.status(201).json({ success: true, saleId: result.id });
+
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(\`🚀 Nortex API Core running on port \${PORT}\`);
+});`;
 
 export const BLUEPRINTS: BlueprintFile[] = [
   {
-    name: 'schema.sql',
-    language: 'sql',
-    content: SQL_SCHEMA,
-    description: 'Diseño de Base de Datos PostgreSQL Multi-tenant optimizado para Fintech.'
+    name: 'schema.prisma',
+    language: 'prisma',
+    content: PRISMA_SCHEMA_CODE,
+    description: 'Schema de Base de Datos MySQL + Prisma. Define la relación entre Ventas, Wallet y Scoring.'
+  },
+  {
+    name: 'server.ts',
+    language: 'typescript',
+    content: SERVER_CODE,
+    description: 'API Principal (Express). Contiene la lógica de TRANSACCIÓN ATÓMICA para ventas.'
   },
   {
     name: 'docker-compose.yml',
     language: 'yaml',
-    content: DOCKER_COMPOSE,
-    description: 'Orquestación de contenedores para producción en Coolify.'
-  },
-  {
-    name: 'backend-structure',
-    language: 'bash',
-    content: API_STRUCTURE,
-    description: 'Arquitectura de carpetas Backend (NestJS Clean Architecture).'
+    content: `
+version: '3.8'
+services:
+  api:
+    build: .
+    environment:
+      - DATABASE_URL=mysql://user:pass@db:3306/nortex
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: nortex
+    volumes:
+      - mysql_data:/var/lib/mysql
+volumes:
+  mysql_data:
+`,
+    description: 'Infraestructura Local para desarrollo.'
   }
 ];

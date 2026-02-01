@@ -1,18 +1,23 @@
 import React from 'react';
-import { LayoutGrid, ShoppingCart, Terminal, Settings, LogOut, Code2 } from 'lucide-react';
-import { ViewMode } from '../types';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { LayoutGrid, ShoppingCart, Code2, LogOut } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
-  currentView: ViewMode;
-  onNavigate: (view: ViewMode) => void;
 }
 
-const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigate }) => {
+const Layout: React.FC<LayoutProps> = ({ children }) => {
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    localStorage.removeItem('nortex_tenant_id');
+    navigate('/');
+  };
+
   const navItems = [
-    { id: 'POS', label: 'Punto de Venta', icon: ShoppingCart },
-    { id: 'DASHBOARD', label: 'Panel Financiero', icon: LayoutGrid },
-    { id: 'BLUEPRINT', label: 'Modo Dios (CTO)', icon: Code2 },
+    { path: '/app/pos', label: 'Punto de Venta', icon: ShoppingCart },
+    { path: '/app/dashboard', label: 'Panel Financiero', icon: LayoutGrid },
+    { path: '/app/blueprint', label: 'Modo Dios (CTO)', icon: Code2 },
   ];
 
   return (
@@ -30,26 +35,30 @@ const Layout: React.FC<LayoutProps> = ({ children, currentView, onNavigate }) =>
           <nav className="p-2 lg:p-4 space-y-2 mt-4">
             {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = currentView === item.id;
               return (
-                <button
-                  key={item.id}
-                  onClick={() => onNavigate(item.id as ViewMode)}
-                  className={`w-full flex items-center justify-center lg:justify-start gap-3 px-3 py-3 rounded-xl transition-all duration-200 group
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  className={({ isActive }) => `
+                    w-full flex items-center justify-center lg:justify-start gap-3 px-3 py-3 rounded-xl transition-all duration-200 group
                     ${isActive 
                       ? 'bg-nortex-500 text-white shadow-lg shadow-blue-900/20' 
-                      : 'text-slate-400 hover:bg-nortex-800 hover:text-white'}`}
+                      : 'text-slate-400 hover:bg-nortex-800 hover:text-white'}
+                  `}
                 >
-                  <Icon size={20} className={isActive ? 'animate-pulse' : ''} />
+                  <Icon size={20} />
                   <span className="hidden lg:block font-medium text-sm">{item.label}</span>
-                </button>
+                </NavLink>
               );
             })}
           </nav>
         </div>
 
         <div className="p-2 lg:p-4 border-t border-nortex-800">
-          <button className="w-full flex items-center justify-center lg:justify-start gap-3 px-3 py-3 rounded-xl text-slate-500 hover:bg-red-500/10 hover:text-red-400 transition-colors">
+          <button 
+            onClick={handleLogout}
+            className="w-full flex items-center justify-center lg:justify-start gap-3 px-3 py-3 rounded-xl text-slate-500 hover:bg-red-500/10 hover:text-red-400 transition-colors"
+          >
             <LogOut size={20} />
             <span className="hidden lg:block font-medium text-sm">Cerrar Sesión</span>
           </button>
