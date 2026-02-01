@@ -1,7 +1,8 @@
-import React from 'react';
-import { MOCK_TENANT } from '../constants';
-import { TrendingUp, DollarSign, Activity, AlertCircle, CreditCard, PieChart } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { TrendingUp, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Loader2 } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Tenant } from '../types';
 
 const data = [
   { name: 'Lun', sales: 4000, risk: 240 },
@@ -14,13 +15,64 @@ const data = [
 ];
 
 const Dashboard: React.FC = () => {
+  const navigate = useNavigate();
+  const [tenant, setTenant] = useState<Tenant | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const fetchSession = async () => {
+      try {
+        const tenantId = localStorage.getItem('nortex_tenant_id');
+        if (!tenantId) {
+            navigate('/login');
+            return;
+        }
+
+        const response = await fetch('http://localhost:3000/api/session', {
+            headers: {
+                'x-tenant-id': tenantId
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to fetch session');
+        }
+
+        const data = await response.json();
+        setTenant(data.tenant);
+      } catch (err) {
+        console.error(err);
+        setError('Error loading dashboard data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchSession();
+  }, [navigate]);
+
+  if (loading) return (
+    <div className="h-full flex items-center justify-center bg-slate-50">
+      <Loader2 className="animate-spin text-nortex-900" size={48} />
+    </div>
+  );
+
+  if (error) return (
+    <div className="h-full flex items-center justify-center bg-slate-50 text-red-500">
+      {error}
+    </div>
+  );
+
+  if (!tenant) return null;
+
   return (
     <div className="p-6 h-full overflow-y-auto bg-slate-50 text-slate-800">
       <header className="mb-8">
         <h1 className="text-3xl font-bold text-nortex-900">Panel Financiero</h1>
         <div className="flex items-center gap-2 mt-2">
-           <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold uppercase tracking-wider">{MOCK_TENANT.type}</span>
-           <span className="text-slate-500">{MOCK_TENANT.name}</span>
+           <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold uppercase tracking-wider">{tenant.type}</span>
+           <span className="text-slate-500">{tenant.name}</span>
         </div>
       </header>
 
@@ -32,7 +84,7 @@ const Dashboard: React.FC = () => {
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Saldo en Billetera</p>
-              <h3 className="text-2xl font-bold text-slate-900">${MOCK_TENANT.walletBalance.toLocaleString()}</h3>
+              <h3 className="text-2xl font-bold text-slate-900">${Number(tenant.walletBalance).toLocaleString()}</h3>
             </div>
             <div className="p-2 bg-green-100 text-green-600 rounded-lg">
               <DollarSign size={20} />
@@ -49,14 +101,14 @@ const Dashboard: React.FC = () => {
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Nortex Score</p>
-              <h3 className="text-2xl font-bold text-blue-600">{MOCK_TENANT.creditScore} <span className="text-sm text-slate-400 font-normal">/ 1000</span></h3>
+              <h3 className="text-2xl font-bold text-blue-600">{tenant.creditScore} <span className="text-sm text-slate-400 font-normal">/ 1000</span></h3>
             </div>
             <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
               <Activity size={20} />
             </div>
           </div>
           <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-            <div className="bg-blue-500 h-full rounded-full" style={{ width: `${MOCK_TENANT.creditScore / 10}%` }}></div>
+            <div className="bg-blue-500 h-full rounded-full" style={{ width: `${tenant.creditScore / 10}%` }}></div>
           </div>
           <p className="text-xs text-slate-400 mt-2">Excelente capacidad de pago</p>
         </div>
@@ -66,7 +118,7 @@ const Dashboard: React.FC = () => {
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-400">Línea Pre-Aprobada</p>
-              <h3 className="text-2xl font-bold text-white">${MOCK_TENANT.creditLimit.toLocaleString()}</h3>
+              <h3 className="text-2xl font-bold text-white">${Number(tenant.creditLimit).toLocaleString()}</h3>
             </div>
             <div className="p-2 bg-white/10 text-white rounded-lg">
               <CreditCard size={20} />
