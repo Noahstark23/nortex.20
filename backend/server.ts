@@ -1,6 +1,7 @@
 // ENTREGABLE 2: server.ts
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import { calculateCreditScore } from './utils/scoringEngine';
 
 // CTO NOTE: In "War Economy" mode (Docker/CI), Prisma Client might not be generated yet.
 // We use 'require' to bypass the static analysis error: "Module has no exported member PrismaClient".
@@ -16,7 +17,7 @@ try {
     tenant = { findUnique: async () => null, create: async () => ({ id: 'mock' }), update: async () => {} };
     product = { findMany: async () => [], findUnique: async () => null, update: async () => {} };
     customer = { findMany: async () => [] };
-    sale = { create: async () => ({}) };
+    sale = { create: async () => ({}), findMany: async () => [] };
     supplier = { findMany: async () => [], create: async () => ({}) };
     purchase = { create: async () => ({ id: 'mock-p' }), update: async () => {} };
     purchaseItem = { create: async () => {} };
@@ -27,7 +28,7 @@ const app = express();
 const prisma = new PrismaClient();
 
 // Configuración básica
-app.use(cors()); 
+app.use(cors() as any); 
 app.use(express.json());
 
 // --- TYPES ---
@@ -39,7 +40,7 @@ interface AuthenticatedRequest extends Request {
 
 // --- UTILS ---
 const requireTenant = (req: Request, res: Response, next: NextFunction) => {
-  const tenantId = req.headers['x-tenant-id'] as string;
+  const tenantId = (req as any).headers['x-tenant-id'] as string;
   if (!tenantId) {
     (res as any).status(401).json({ error: 'Unauthorized: Missing Tenant ID' });
     return;
@@ -189,13 +190,15 @@ app.post('/api/sales', requireTenant, (async (req: any, res: any) => {
         }
       });
 
-      const scorePoints = Math.floor(totalSale / 10);
-
+      // ACTUALIZACIÓN DE SCORING EN TIEMPO REAL (Simplificada)
+      // En un sistema real, esto iría a una cola de trabajos (Bull/Redis)
+      // Aquí lo hacemos directo pero sin bloquear la respuesta si falla.
+      // Score se recalcula bajo demanda en /analytics/score, aquí solo sumamos balance.
+      
       await tx.tenant.update({
         where: { id: tenantId },
         data: {
-          walletBalance: { increment: totalSale },
-          creditScore: { increment: scorePoints }
+          walletBalance: { increment: totalSale }
         }
       });
 
@@ -211,7 +214,7 @@ app.post('/api/sales', requireTenant, (async (req: any, res: any) => {
 }) as any);
 
 
-// --- NUEVOS ENDPOINTS: SUPPLIERS & PURCHASES ---
+// --- SUPPLIERS & PURCHASES ---
 
 app.get('/api/suppliers', requireTenant, (async (req: any, res: any) => {
   try {
@@ -234,15 +237,13 @@ app.post('/api/suppliers', requireTenant, (async (req: any, res: any) => {
   }
 }) as any);
 
-// ACID TRANSACTION: PURCHASE
 app.post('/api/purchases', requireTenant, (async (req: any, res: any) => {
-  const { supplierId, items } = req.body; // items: [{ productId, quantity, cost }]
+  const { supplierId, items } = req.body; 
   
   try {
     await prisma.$transaction(async (tx: any) => {
       let totalCost = 0;
       
-      // 1. Create Purchase Header
       const purchase = await tx.purchase.create({
         data: {
           tenantId: req.tenantId,
@@ -252,7 +253,6 @@ app.post('/api/purchases', requireTenant, (async (req: any, res: any) => {
         }
       });
   
-      // 2. Process Items & Update Stock
       for (const item of items) {
          const lineTotal = Number(item.quantity) * Number(item.cost);
          totalCost += lineTotal;
@@ -266,20 +266,17 @@ app.post('/api/purchases', requireTenant, (async (req: any, res: any) => {
            }
          });
          
-         // CRITICAL: INCREMENT STOCK
          await tx.product.update({
            where: { id: item.productId },
            data: { stock: { increment: Number(item.quantity) } }
          });
       }
   
-      // 3. Update Total
       await tx.purchase.update({
         where: { id: purchase.id },
         data: { total: totalCost }
       });
   
-      // 4. DECREMENT WALLET (Cash Flow)
       await tx.tenant.update({
         where: { id: req.tenantId },
         data: { walletBalance: { decrement: totalCost } }
@@ -290,6 +287,35 @@ app.post('/api/purchases', requireTenant, (async (req: any, res: any) => {
   } catch (e: any) {
     console.error(e);
     res.status(400).json({ error: 'Error processing purchase' });
+  }
+}) as any);
+
+
+// --- FASE 4: ANALYTICS & SCORING ---
+app.get('/api/analytics/score', requireTenant, (async (req: any, res: any) => {
+  try {
+    const analysis = await calculateCreditScore(prisma, req.tenantId);
+    
+    // Actualizar el score en la DB
+    await prisma.tenant.update({
+      where: { id: req.tenantId },
+      data: { 
+        creditScore: analysis.score,
+        creditLimit: analysis.maxLoanAmount
+      }
+    });
+
+    res.json(analysis);
+  } catch (error) {
+    console.error('Error calculando score:', error);
+    // Retornar fallback para que el frontend no rompa
+    res.json({
+        score: 300,
+        metrics: { liquidity: 0, consistency: 0, assets: 0 },
+        financials: { walletBalance: 0, inventoryValue: 0, monthlySales: 0 },
+        maxLoanAmount: 0,
+        tips: ["Error calculando score. Faltan datos transaccionales."]
+    });
   }
 }) as any);
 
