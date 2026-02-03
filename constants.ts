@@ -1,4 +1,4 @@
-import { Product, Tenant, BlueprintFile, Sale } from './types';
+import { Product, Tenant, BlueprintFile, Sale, Wholesaler, CatalogItem } from './types';
 
 export const MOCK_TENANT: Tenant = {
   id: 'tnt_01_alpha',
@@ -9,7 +9,7 @@ export const MOCK_TENANT: Tenant = {
   walletBalance: 12450.50,
   subscriptionStatus: 'TRIALING',
   plan: 'PRO_MONTHLY',
-  trialEndsAt: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString() // 5 days left mock
+  trialEndsAt: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
 };
 
 export const MOCK_PRODUCTS: Product[] = [
@@ -65,7 +65,35 @@ export const MOCK_DEBTORS: Sale[] = [
   }
 ];
 
-// --- CODIGO BACKEND PARA VISUALIZACION EN BLUEPRINT VIEWER ---
+// --- FASE 7: MARKETPLACE DATA ---
+
+export const MOCK_WHOLESALERS: Wholesaler[] = [
+  { id: 'ws_01', name: 'Distribuidora La Universal', sector: 'ABARROTES' },
+  { id: 'ws_02', name: 'Droguería Central', sector: 'FARMACIA' },
+  { id: 'ws_03', name: 'Holcim Industrial', sector: 'FERRETERIA' },
+  { id: 'ws_04', name: 'Textiles Masaya', sector: 'MODA' },
+  { id: 'ws_05', name: 'TechZone Mayorista', sector: 'TECNOLOGIA' }
+];
+
+export const MOCK_CATALOG: CatalogItem[] = [
+  // ABARROTES
+  { id: 'cat_01', wholesalerId: 'ws_01', wholesalerName: 'La Universal', name: 'Arroz Faisán 50lb', description: 'Saco de arroz grano entero 98%', sku: 'ARR-50', price: 45.00, category: 'Granos', sector: 'ABARROTES', minQuantity: 5 },
+  { id: 'cat_02', wholesalerId: 'ws_01', wholesalerName: 'La Universal', name: 'Aceite Cocinero 1L x12', description: 'Caja de 12 unidades', sku: 'ACE-12', price: 28.50, category: 'Aceites', sector: 'ABARROTES', minQuantity: 2 },
+  { id: 'cat_03', wholesalerId: 'ws_01', wholesalerName: 'La Universal', name: 'Coca-Cola 3L Pack', description: 'Pack de 6 unidades retornables', sku: 'COKE-06', price: 12.00, category: 'Bebidas', sector: 'ABARROTES', minQuantity: 10 },
+  
+  // FARMACIA
+  { id: 'cat_04', wholesalerId: 'ws_02', wholesalerName: 'Droguería Central', name: 'Panadol Forte Caja', description: 'Caja hospitalaria 100 tabletas', sku: 'PAN-100', price: 15.00, category: 'Analgésicos', sector: 'FARMACIA', minQuantity: 1 },
+  { id: 'cat_05', wholesalerId: 'ws_02', wholesalerName: 'Droguería Central', name: 'Amoxicilina 500mg', description: 'Pack 50 blisters', sku: 'AMOX-50', price: 35.00, category: 'Antibióticos', sector: 'FARMACIA', minQuantity: 2 },
+  { id: 'cat_06', wholesalerId: 'ws_02', wholesalerName: 'Droguería Central', name: 'Pedialyte Zinc', description: 'Caja surtida 12 botellas', sku: 'PED-12', price: 40.00, category: 'Hidratación', sector: 'FARMACIA', minQuantity: 3 },
+
+  // FERRETERIA
+  { id: 'cat_07', wholesalerId: 'ws_03', wholesalerName: 'Holcim', name: 'Cemento Portland Tipo I', description: 'Pallet de 40 bolsas', sku: 'CEM-PAL', price: 380.00, category: 'Obra Gris', sector: 'FERRETERIA', minQuantity: 1 },
+  { id: 'cat_08', wholesalerId: 'ws_03', wholesalerName: 'Holcim', name: 'Varilla Corrugada 3/8', description: 'Atado de 50 varillas', sku: 'VAR-50', price: 210.00, category: 'Acero', sector: 'FERRETERIA', minQuantity: 1 },
+
+  // MODA
+  { id: 'cat_09', wholesalerId: 'ws_04', wholesalerName: 'Textiles Masaya', name: 'Camiseta Polo Básica', description: 'Docena colores surtidos', sku: 'POLO-12', price: 60.00, category: 'Caballeros', sector: 'MODA', minQuantity: 2 },
+  { id: 'cat_10', wholesalerId: 'ws_04', wholesalerName: 'Textiles Masaya', name: 'Jeans Clásico', description: 'Docena tallas 28-36', sku: 'JEAN-12', price: 180.00, category: 'Damas', sector: 'MODA', minQuantity: 1 },
+];
 
 const PRISMA_SCHEMA_CODE = `// ESTO VA EN: /backend/prisma/schema.prisma
 
@@ -81,135 +109,86 @@ datasource db {
 model Tenant {
   id            String    @id @default(uuid())
   name          String
-  type          String    
+  type          String    // FERRETERIA, FARMACIA, PULPERIA...
   slug          String    @unique
   walletBalance Decimal   @default(0.00) @db.Decimal(15, 2)
   creditScore   Int       @default(0)
   creditLimit   Decimal   @default(0.00) @db.Decimal(15, 2)
-  
-  // BILLING FIELDS (FASE 6)
-  subscriptionStatus String   @default("TRIALING") // TRIALING, ACTIVE, PAST_DUE
+  subscriptionStatus String   @default("TRIALING") 
   plan               String   @default("PRO_MONTHLY")
   trialEndsAt        DateTime @default(now()) 
-  stripeCustomerId   String?
 
   users         User[]
   sales         Sale[]
   customers     Customer[]
   loans         Loan[]    
+  orders        MarketplaceOrder[] // Relación B2B
 }
 
-model User {
-  id            String    @id @default(uuid())
-  email         String    @unique
-  password      String
-  role          String    @default("OWNER")
-  tenantId      String
-  tenant        Tenant    @relation(fields: [tenantId], references: [id])
-  createdAt     DateTime  @default(now())
+model Wholesaler {
+  id          String        @id @default(uuid())
+  name        String        
+  sector      String        // ABARROTES, FARMACIA, MODA...
+  logoUrl     String?
+  products    CatalogItem[]
+  orders      MarketplaceOrder[]
 }
 
-model Loan {
-  id            String    @id @default(uuid())
-  amount        Decimal   @db.Decimal(15, 2) 
-  interest      Decimal   @db.Decimal(15, 2) 
-  totalDue      Decimal   @db.Decimal(15, 2) 
-  status        String    @default("ACTIVE") 
-  dueDate       DateTime
+model CatalogItem {
+  id           String   @id @default(uuid())
+  wholesalerId String
+  wholesaler   Wholesaler @relation(fields: [wholesalerId], references: [id])
+  name         String
+  description  String?
+  sku          String
+  price        Decimal  @db.Decimal(10, 2)
+  category     String   
+  sector       String   
+  imageUrl     String?
+  minQuantity  Int      @default(1)
   
-  tenantId      String
-  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  orderItems   MarketplaceOrderItem[]
+}
+
+model MarketplaceOrder {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  wholesalerId String
+  wholesaler  Wholesaler @relation(fields: [wholesalerId], references: [id])
   
-  createdAt     DateTime  @default(now())
-}
-
-model Customer {
-  id            String    @id @default(uuid())
-  name          String
-  taxId         String?   
-  phone         String?
-  tenantId      String
-  tenant        Tenant    @relation(fields: [tenantId], references: [id])
-  sales         Sale[]
+  total       Decimal  @db.Decimal(12, 2)
+  status      String   @default("PENDING")
+  createdAt   DateTime @default(now())
   
-  @@unique([tenantId, name])
+  items       MarketplaceOrderItem[]
 }
 
-model Sale {
-  id            String     @id @default(uuid())
-  total         Decimal    @db.Decimal(12, 2)
-  status        String     @default("COMPLETED")
-  paymentMethod String     
-  balance       Decimal    @default(0.00) @db.Decimal(12, 2)
-  dueDate       DateTime?  
-  tenantId      String
-  tenant        Tenant     @relation(fields: [tenantId], references: [id])
-  customerId    String?
-  customer      Customer?  @relation(fields: [customerId], references: [id])
-  items         SaleItem[]
-  payments      Payment[]
-  createdAt     DateTime   @default(now())
-}
-
-model Payment {
-  id            String    @id @default(uuid())
-  amount        Decimal   @db.Decimal(12, 2)
-  method        String
-  date          DateTime  @default(now())
-  saleId        String
-  sale          Sale      @relation(fields: [saleId], references: [id])
-}
-
-model SaleItem {
-  id            String   @id @default(uuid())
-  saleId        String
-  sale          Sale     @relation(fields: [saleId], references: [id])
-  productId     String
+model MarketplaceOrderItem {
+  id            String      @id @default(uuid())
+  orderId       String
+  order         MarketplaceOrder @relation(fields: [orderId], references: [id])
+  catalogItemId String
+  catalogItem   CatalogItem @relation(fields: [catalogItemId], references: [id])
+  
   quantity      Int
-  priceAtSale   Decimal  @db.Decimal(10, 2)
-}`;
-
-const SERVER_CODE = `// LÓGICA DE BILLING & PAYWALL
-
-// Middleware Bloqueo
-const enforcePaywall = async (req, res, next) => {
-  if (req.method === 'GET') return next();
-  if (req.path.startsWith('/api/billing')) return next();
-
-  const tenant = await prisma.tenant.findUnique({ where: { id: req.user.tenantId } });
-  
-  if (tenant.subscriptionStatus === 'PAST_DUE' || tenant.subscriptionStatus === 'CANCELLED') {
-    return res.status(402).json({ error: "SERVICIO SUSPENDIDO. Actualice su pago." });
-  }
-  next();
+  priceAtBuy    Decimal
 }
 
-// Subscribe Route
-app.post('/api/billing/subscribe', authenticate, async (req, res) => {
-   await prisma.tenant.update({
-     where: { id: req.user.tenantId },
-     data: { subscriptionStatus: 'ACTIVE', trialEndsAt: null }
-   });
-   res.json({ success: true, message: 'Plan Reactivado' });
-});`;
+// ... Resto de modelos existentes (User, Sale, Loan, etc)
+`;
 
 export const BLUEPRINTS: BlueprintFile[] = [
   {
     name: 'schema.prisma',
     language: 'prisma',
     content: PRISMA_SCHEMA_CODE,
-    description: 'Schema actualizado: Suscripciones y Paywall.'
+    description: 'Schema B2B: Wholesalers, Catalog & Orders.'
   },
   {
     name: 'server.ts',
     language: 'typescript',
-    content: SERVER_CODE,
-    description: 'Backend: Lógica de Bloqueo por Impago (402 Payment Required).'
+    content: '// Endpoints para /api/marketplace/catalog y /api/marketplace/orders',
+    description: 'Backend: Lógica de filtrado multisectorial.'
   },
-  {
-    name: 'docker-compose.yml',
-    language: 'yaml',
-    content: `version: '3.8'\nservices:\n  db:\n    image: mysql:8.0`,
-    description: 'Infraestructura sin cambios.'
-  }
 ];

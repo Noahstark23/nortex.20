@@ -35,6 +35,7 @@ const RegisterTenant: React.FC = () => {
       localStorage.setItem('nortex_token', data.token);
       localStorage.setItem('nortex_user', JSON.stringify(data.user));
       localStorage.setItem('nortex_tenant_id', data.tenant.id);
+      localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant)); // Save full tenant data for marketplace filtering
       
       navigate('/app/dashboard');
 
@@ -92,7 +93,9 @@ const RegisterTenant: React.FC = () => {
               onChange={e => setFormData({...formData, type: e.target.value})}
             >
               <option value="FERRETERIA">Ferretería / Construcción</option>
+              <option value="PULPERIA">Pulpería / Abarrotes</option>
               <option value="FARMACIA">Farmacia</option>
+              <option value="BOUTIQUE">Boutique / Ropa</option>
               <option value="RETAIL">Retail General</option>
             </select>
           </div>

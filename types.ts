@@ -14,7 +14,7 @@ export interface CartItem extends Product {
 export interface Tenant {
   id: string;
   name: string;
-  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL';
+  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE'; // Expanded types
   creditScore: number;
   creditLimit: number;
   walletBalance: number;
@@ -54,7 +54,38 @@ export interface Loan {
   createdAt: string;
 }
 
-export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS';
+// MARKETPLACE B2B ENTITIES
+export interface Wholesaler {
+  id: string;
+  name: string;
+  sector: 'ABARROTES' | 'FARMACIA' | 'FERRETERIA' | 'MODA' | 'TECNOLOGIA';
+  logoUrl?: string;
+}
+
+export interface CatalogItem {
+  id: string;
+  wholesalerId: string;
+  wholesalerName: string; // Denormalized for UI
+  name: string;
+  description: string;
+  sku: string;
+  price: number; // Wholesale price
+  category: string;
+  sector: string;
+  imageUrl?: string;
+  minQuantity: number;
+}
+
+export interface MarketplaceOrder {
+  id: string;
+  wholesalerId: string;
+  total: number;
+  status: 'PENDING' | 'SHIPPED' | 'DELIVERED';
+  createdAt: string;
+  itemsCount: number;
+}
+
+export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS' | 'MARKETPLACE';
 
 export interface BlueprintFile {
   name: string;
