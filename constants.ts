@@ -82,27 +82,42 @@ model Tenant {
   slug          String    @unique
   walletBalance Decimal   @default(0.00) @db.Decimal(15, 2)
   creditScore   Int       @default(0)
+  creditLimit   Decimal   @default(0.00) @db.Decimal(15, 2) // Cupo disponible
   
-  users         User[]    // Relación con Usuarios
+  users         User[]
   sales         Sale[]
   customers     Customer[]
+  loans         Loan[]    // Relación con Préstamos
 }
 
-// NUEVO: SISTEMA DE USUARIOS
 model User {
   id            String    @id @default(uuid())
   email         String    @unique
-  password      String    // Hash Bcrypt
-  role          String    @default("OWNER") // OWNER, STAFF
+  password      String
+  role          String    @default("OWNER")
   tenantId      String
   tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  createdAt     DateTime  @default(now())
+}
+
+model Loan {
+  id            String    @id @default(uuid())
+  amount        Decimal   @db.Decimal(15, 2) // Capital prestado
+  interest      Decimal   @db.Decimal(15, 2) // Interés generado
+  totalDue      Decimal   @db.Decimal(15, 2) // Total a pagar
+  status        String    @default("ACTIVE") // ACTIVE, PAID, DEFAULT
+  dueDate       DateTime
+  
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  
   createdAt     DateTime  @default(now())
 }
 
 model Customer {
   id            String    @id @default(uuid())
   name          String
-  taxId         String?   // RUC / DNI
+  taxId         String?   
   phone         String?
   tenantId      String
   tenant        Tenant    @relation(fields: [tenantId], references: [id])
@@ -114,31 +129,24 @@ model Customer {
 model Sale {
   id            String     @id @default(uuid())
   total         Decimal    @db.Decimal(12, 2)
-  
-  // FINTECH CORE: CRÉDITO
-  status        String     @default("COMPLETED") // 'COMPLETED', 'CREDIT_PENDING', 'PAID'
-  paymentMethod String     // 'CASH', 'CREDIT', etc.
-  balance       Decimal    @default(0.00) @db.Decimal(12, 2) // Deuda pendiente
-  dueDate       DateTime?  // Fecha límite de pago
-  
+  status        String     @default("COMPLETED")
+  paymentMethod String     
+  balance       Decimal    @default(0.00) @db.Decimal(12, 2)
+  dueDate       DateTime?  
   tenantId      String
   tenant        Tenant     @relation(fields: [tenantId], references: [id])
-  
   customerId    String?
   customer      Customer?  @relation(fields: [customerId], references: [id])
-  
   items         SaleItem[]
-  payments      Payment[]  // Historial de abonos
-  
+  payments      Payment[]
   createdAt     DateTime   @default(now())
 }
 
 model Payment {
   id            String    @id @default(uuid())
   amount        Decimal   @db.Decimal(12, 2)
-  method        String    // 'CASH', 'TRANSFER'
+  method        String
   date          DateTime  @default(now())
-  
   saleId        String
   sale          Sale      @relation(fields: [saleId], references: [id])
 }
@@ -152,50 +160,78 @@ model SaleItem {
   priceAtSale   Decimal  @db.Decimal(10, 2)
 }`;
 
-const SERVER_CODE = `// VERSIÓN ACTUALIZADA CON AUTH
-// Imports...
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+const SERVER_CODE = `// LÓGICA DE PRÉSTAMOS (LENDING)
 
-// Middleware Auth
-const authenticate = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).send('Access Denied');
-  try {
-     const verified = jwt.verify(token, process.env.JWT_SECRET);
-     req.user = verified;
-     next();
-  } catch (err) { res.status(400).send('Invalid Token'); }
-};
-
-// Login Route
-app.post('/api/auth/login', async (req, res) => {
-   const user = await prisma.user.findUnique({ where: { email: req.body.email } });
-   if (!user) return res.status(400).send('Email wrong');
-   
-   const validPass = await bcrypt.compare(req.body.password, user.password);
-   if (!validPass) return res.status(400).send('Invalid password');
-   
-   const token = jwt.sign({ _id: user.id, tenantId: user.tenantId }, process.env.JWT_SECRET);
-   res.header('auth-token', token).send(token);
+// GET /api/loans
+app.get('/api/loans', authenticate, async (req, res) => {
+  const loans = await prisma.loan.findMany({
+    where: { tenantId: req.user.tenantId },
+    orderBy: { createdAt: 'desc' }
+  });
+  res.json(loans);
 });
 
-// Protect All Routes
-app.use('/api/sales', authenticate);
-`;
+// POST /api/loans/request
+app.post('/api/loans/request', authenticate, async (req, res) => {
+  const { amount } = req.body;
+  const tenantId = req.user.tenantId;
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Obtener Tenant y Validar
+      const tenant = await tx.tenant.findUnique({ where: { id: tenantId } });
+      
+      if (tenant.creditScore < 500) throw new Error("Score insuficiente para créditos.");
+      if (Number(tenant.creditLimit) < amount) throw new Error("Monto excede línea disponible.");
+      
+      // 2. Calcular Interés (Flat 5%)
+      const interest = amount * 0.05;
+      const totalDue = amount + interest;
+      const dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + 30); // 30 días plazo
+
+      // 3. Crear Préstamo
+      const loan = await tx.loan.create({
+        data: {
+          tenantId,
+          amount,
+          interest,
+          totalDue,
+          status: 'ACTIVE',
+          dueDate
+        }
+      });
+
+      // 4. Inyectar Dinero en Wallet y Reducir Cupo
+      await tx.tenant.update({
+        where: { id: tenantId },
+        data: {
+          walletBalance: { increment: amount },
+          creditLimit: { decrement: amount }
+        }
+      });
+
+      return loan;
+    });
+
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});`;
 
 export const BLUEPRINTS: BlueprintFile[] = [
   {
     name: 'schema.prisma',
     language: 'prisma',
     content: PRISMA_SCHEMA_CODE,
-    description: 'Schema actualizado: Usuarios, Auth y Roles.'
+    description: 'Schema actualizado: Sistema de Préstamos (Loans).'
   },
   {
     name: 'server.ts',
     language: 'typescript',
     content: SERVER_CODE,
-    description: 'Backend: Implementación de JWT y Middleware.'
+    description: 'Backend: Motor de Decisión Crediticia y Transacciones.'
   },
   {
     name: 'docker-compose.yml',

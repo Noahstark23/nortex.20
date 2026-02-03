@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { MOCK_TENANT } from '../constants';
-import { TrendingUp, DollarSign, Activity, AlertCircle, CreditCard, PieChart } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
+import { TrendingUp, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Loan, Tenant } from '../types';
 
 const data = [
   { name: 'Lun', sales: 4000, risk: 240 },
@@ -14,13 +15,92 @@ const data = [
 ];
 
 const Dashboard: React.FC = () => {
+  // State for Lending
+  const [showLoanModal, setShowLoanModal] = useState(false);
+  const [loanAmount, setLoanAmount] = useState('');
+  const [loadingLoan, setLoadingLoan] = useState(false);
+  const [tenantData, setTenantData] = useState<Tenant>(MOCK_TENANT);
+  const [activeLoans, setActiveLoans] = useState<Loan[]>([]);
+
+  // Simulation of fetching data
+  useEffect(() => {
+    // In a real app, this would fetch from /api/loans and /api/me
+    // For now, we simulate the structure
+    const storedTenant = localStorage.getItem('nortex_tenant_data');
+    if (storedTenant) {
+        setTenantData(JSON.parse(storedTenant));
+    }
+  }, []);
+
+  const activeDebt = activeLoans.reduce((acc, loan) => acc + Number(loan.totalDue), 0);
+
+  const handleRequestLoan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amount = parseFloat(loanAmount);
+    
+    if (isNaN(amount) || amount <= 0) {
+      alert("Ingrese un monto válido");
+      return;
+    }
+
+    if (amount > tenantData.creditLimit) {
+      alert("El monto excede su línea de crédito disponible");
+      return;
+    }
+
+    setLoadingLoan(true);
+
+    try {
+      // Simulation of API Call to POST /api/loans/request
+      // const res = await fetch(...) 
+      
+      // Simulating Network Delay
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      // Optimistic Update
+      const interest = amount * 0.05;
+      const totalDue = amount + interest;
+      
+      const newLoan: Loan = {
+        id: `loan_${Date.now()}`,
+        amount,
+        interest,
+        totalDue,
+        status: 'ACTIVE',
+        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        createdAt: new Date().toISOString()
+      };
+
+      const updatedTenant = {
+        ...tenantData,
+        walletBalance: tenantData.walletBalance + amount,
+        creditLimit: tenantData.creditLimit - amount
+      };
+
+      setTenantData(updatedTenant);
+      setActiveLoans(prev => [newLoan, ...prev]);
+      
+      // Persist mock data
+      localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
+
+      setShowLoanModal(false);
+      setLoanAmount('');
+      alert("🚀 ¡Fondos desembolsados exitosamente!");
+
+    } catch (error) {
+      alert("Error al procesar el préstamo");
+    } finally {
+      setLoadingLoan(false);
+    }
+  };
+
   return (
-    <div className="p-6 h-full overflow-y-auto bg-slate-50 text-slate-800">
+    <div className="p-6 h-full overflow-y-auto bg-slate-50 text-slate-800 relative">
       <header className="mb-8">
         <h1 className="text-3xl font-bold text-nortex-900">Panel Financiero</h1>
         <div className="flex items-center gap-2 mt-2">
-           <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold uppercase tracking-wider">{MOCK_TENANT.type}</span>
-           <span className="text-slate-500">{MOCK_TENANT.name}</span>
+           <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold uppercase tracking-wider">{tenantData.type}</span>
+           <span className="text-slate-500">{tenantData.name}</span>
         </div>
       </header>
 
@@ -32,7 +112,7 @@ const Dashboard: React.FC = () => {
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Saldo en Billetera</p>
-              <h3 className="text-2xl font-bold text-slate-900">${MOCK_TENANT.walletBalance.toLocaleString()}</h3>
+              <h3 className="text-2xl font-bold text-slate-900 transition-all duration-500">${tenantData.walletBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
             </div>
             <div className="p-2 bg-green-100 text-green-600 rounded-lg">
               <DollarSign size={20} />
@@ -49,46 +129,54 @@ const Dashboard: React.FC = () => {
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Nortex Score</p>
-              <h3 className="text-2xl font-bold text-blue-600">{MOCK_TENANT.creditScore} <span className="text-sm text-slate-400 font-normal">/ 1000</span></h3>
+              <h3 className="text-2xl font-bold text-blue-600">{tenantData.creditScore} <span className="text-sm text-slate-400 font-normal">/ 1000</span></h3>
             </div>
             <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
               <Activity size={20} />
             </div>
           </div>
           <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-            <div className="bg-blue-500 h-full rounded-full" style={{ width: `${MOCK_TENANT.creditScore / 10}%` }}></div>
+            <div className="bg-blue-500 h-full rounded-full" style={{ width: `${tenantData.creditScore / 10}%` }}></div>
           </div>
           <p className="text-xs text-slate-400 mt-2">Excelente capacidad de pago</p>
         </div>
 
         {/* Credit Line Card */}
-        <div className="bg-gradient-to-br from-nortex-900 to-nortex-800 text-white p-6 rounded-xl shadow-sm border border-nortex-800">
-          <div className="flex justify-between items-start mb-4">
+        <div className="bg-gradient-to-br from-nortex-900 to-nortex-800 text-white p-6 rounded-xl shadow-sm border border-nortex-800 ring-1 ring-white/10 relative overflow-hidden group">
+          <div className="absolute -right-6 -top-6 w-24 h-24 bg-nortex-accent blur-[50px] opacity-20 group-hover:opacity-30 transition-opacity"></div>
+          
+          <div className="flex justify-between items-start mb-4 relative z-10">
             <div>
-              <p className="text-sm font-medium text-slate-400">Línea Pre-Aprobada</p>
-              <h3 className="text-2xl font-bold text-white">${MOCK_TENANT.creditLimit.toLocaleString()}</h3>
+              <p className="text-sm font-medium text-slate-400">Línea Disponible</p>
+              <h3 className="text-2xl font-bold text-white">${tenantData.creditLimit.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
             </div>
             <div className="p-2 bg-white/10 text-white rounded-lg">
               <CreditCard size={20} />
             </div>
           </div>
-          <button className="w-full py-2 bg-nortex-accent hover:bg-emerald-400 text-nortex-900 text-sm font-bold rounded transition-colors">
-            SOLICITAR DESEMBOLSO
+          <button 
+            onClick={() => setShowLoanModal(true)}
+            disabled={tenantData.creditLimit <= 0}
+            className="relative z-10 w-full py-2 bg-nortex-accent hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-nortex-900 text-sm font-bold rounded transition-colors flex items-center justify-center gap-2"
+          >
+            <Banknote size={16} /> SOLICITAR DESEMBOLSO
           </button>
         </div>
 
-        {/* Risk Alert Card */}
+        {/* Active Debt Card */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <div className="flex justify-between items-start mb-4">
             <div>
-              <p className="text-sm font-medium text-slate-500">Riesgo Calculado</p>
-              <h3 className="text-2xl font-bold text-slate-900">Bajo</h3>
+              <p className="text-sm font-medium text-slate-500">Deuda Activa</p>
+              <h3 className="text-2xl font-bold text-red-600">${activeDebt.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
             </div>
-            <div className="p-2 bg-orange-100 text-orange-600 rounded-lg">
+            <div className="p-2 bg-red-100 text-red-600 rounded-lg">
               <AlertCircle size={20} />
             </div>
           </div>
-          <p className="text-xs text-slate-500">Basado en flujo de caja de los últimos 30 días.</p>
+          <p className="text-xs text-slate-500">
+             {activeLoans.length > 0 ? `${activeLoans.length} préstamos activos` : 'Sin deudas pendientes'}
+          </p>
         </div>
       </div>
 
@@ -113,15 +201,113 @@ const Dashboard: React.FC = () => {
         </div>
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h3 className="text-lg font-bold text-slate-800 mb-6">Categorías</h3>
-          <div className="h-64 flex items-center justify-center">
-             <div className="text-center">
-                <PieChart size={48} className="text-slate-300 mx-auto mb-2" />
-                <p className="text-slate-500 text-sm">Visualización disponible con más data</p>
-             </div>
+          <h3 className="text-lg font-bold text-slate-800 mb-6">Préstamos Activos</h3>
+          <div className="h-64 overflow-y-auto custom-scrollbar pr-2">
+             {activeLoans.length === 0 ? (
+               <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                  <PieChart size={48} className="mb-2 opacity-20" />
+                  <p className="text-sm">No hay actividad reciente</p>
+               </div>
+             ) : (
+               <div className="space-y-3">
+                 {activeLoans.map(loan => (
+                   <div key={loan.id} className="p-3 bg-slate-50 border border-slate-100 rounded-lg flex justify-between items-center">
+                     <div>
+                       <div className="text-xs text-slate-400 flex items-center gap-1">
+                         <Clock size={10} /> Vence: {new Date(loan.dueDate).toLocaleDateString()}
+                       </div>
+                       <div className="font-bold text-slate-700">${loan.amount.toFixed(2)}</div>
+                     </div>
+                     <span className="text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">ACTIVE</span>
+                   </div>
+                 ))}
+               </div>
+             )}
           </div>
         </div>
       </div>
+
+      {/* LENDING MODAL */}
+      {showLoanModal && (
+        <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
+            <div className="bg-nortex-900 p-6 relative overflow-hidden">
+               <div className="absolute top-0 right-0 w-32 h-32 bg-nortex-accent blur-[60px] opacity-20"></div>
+               <button 
+                 onClick={() => setShowLoanModal(false)}
+                 className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+               >
+                 <X size={20} />
+               </button>
+               <h3 className="text-xl font-bold text-white flex items-center gap-2 relative z-10">
+                 <Banknote size={24} className="text-nortex-accent" /> Solicitar Capital
+               </h3>
+               <p className="text-slate-400 text-sm mt-1 relative z-10">Inyección de liquidez inmediata</p>
+            </div>
+
+            <form onSubmit={handleRequestLoan} className="p-6">
+              <div className="mb-6">
+                <label className="block text-xs font-mono text-slate-500 mb-2 font-bold">MONTO A SOLICITAR</label>
+                <div className="relative">
+                  <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={24} />
+                  <input 
+                    type="number" 
+                    min="1"
+                    step="0.01"
+                    max={tenantData.creditLimit}
+                    required
+                    className="w-full pl-12 pr-4 py-4 text-3xl font-bold text-slate-900 border border-slate-200 rounded-xl focus:ring-2 focus:ring-nortex-500 focus:border-nortex-500 outline-none transition-all"
+                    placeholder="0.00"
+                    value={loanAmount}
+                    onChange={e => setLoanAmount(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+                <div className="flex justify-between mt-2 text-xs">
+                   <span className="text-slate-500">Disponible: <span className="font-bold text-slate-700">${tenantData.creditLimit.toFixed(2)}</span></span>
+                   {Number(loanAmount) > tenantData.creditLimit && (
+                     <span className="text-red-500 font-bold">Excede el límite</span>
+                   )}
+                </div>
+              </div>
+
+              {/* Loan Breakdown */}
+              {Number(loanAmount) > 0 && Number(loanAmount) <= tenantData.creditLimit && (
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Capital</span>
+                    <span className="font-medium text-slate-900">${Number(loanAmount).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Interés (5% Flat)</span>
+                    <span className="font-medium text-slate-900">${(Number(loanAmount) * 0.05).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Plazo</span>
+                    <span className="font-medium text-slate-900">30 Días</span>
+                  </div>
+                  <div className="border-t border-slate-200 pt-2 mt-2 flex justify-between items-center">
+                    <span className="font-bold text-slate-700">Total a Pagar</span>
+                    <span className="font-bold text-nortex-900 text-lg">${(Number(loanAmount) * 1.05).toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
+
+              <button 
+                type="submit"
+                disabled={loadingLoan || !loanAmount || Number(loanAmount) > tenantData.creditLimit}
+                className="w-full py-4 bg-nortex-900 hover:bg-nortex-800 text-white font-bold rounded-xl shadow-lg shadow-nortex-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex justify-center items-center gap-2"
+              >
+                {loadingLoan ? 'PROCESANDO...' : (
+                  <>
+                    CONFIRMAR Y RECIBIR <Check size={20} />
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

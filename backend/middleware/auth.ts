@@ -1,15 +1,15 @@
-import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'nortex_super_secret_key_2026';
 
-export interface AuthRequest extends Request {
+export interface AuthRequest {
   userId?: string;
   tenantId?: string;
   role?: string;
+  [key: string]: any;
 }
 
-export const authenticate = (req: Request, res: Response, next: NextFunction) => {
+export const authenticate = (req: any, res: any, next: any) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
@@ -27,10 +27,10 @@ export const authenticate = (req: Request, res: Response, next: NextFunction) =>
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; tenantId: string; role: string };
     
-    // Cast to AuthRequest to attach custom properties
-    (req as AuthRequest).userId = decoded.userId;
-    (req as AuthRequest).tenantId = decoded.tenantId;
-    (req as AuthRequest).role = decoded.role;
+    // Attach custom properties directly since we are using 'any'
+    req.userId = decoded.userId;
+    req.tenantId = decoded.tenantId;
+    req.role = decoded.role;
     
     next();
   } catch (error) {

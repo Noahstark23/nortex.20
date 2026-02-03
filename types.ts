@@ -40,6 +40,16 @@ export interface Sale {
   payments?: Payment[];
 }
 
+export interface Loan {
+  id: string;
+  amount: number;
+  interest: number;
+  totalDue: number;
+  status: 'ACTIVE' | 'PAID' | 'DEFAULT';
+  dueDate: string;
+  createdAt: string;
+}
+
 export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS';
 
 export interface BlueprintFile {
