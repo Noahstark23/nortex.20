@@ -4,7 +4,6 @@ export interface Product {
   price: number;
   stock: number;
   sku: string;
-  category: string;
 }
 
 export interface CartItem extends Product {
@@ -20,11 +19,27 @@ export interface Tenant {
   walletBalance: number;
 }
 
-export interface Payment {
+export interface Customer {
   id: string;
-  amount: number;
-  date: string;
-  method: 'CASH' | 'TRANSFER';
+  name: string;
+  taxId: string; // DNI o RUC
+  email?: string;
+  phone?: string;
+}
+
+export interface Supplier {
+  id: string;
+  name: string;
+  taxId: string; // RUC
+  email?: string;
+  phone?: string;
+}
+
+export interface PurchaseItem {
+  productId: string;
+  productName: string; // Denormalized for UI
+  quantity: number;
+  cost: number; // Costo unitario
 }
 
 export interface Sale {
@@ -32,15 +47,11 @@ export interface Sale {
   total: number;
   date: string;
   items: number;
-  status: 'COMPLETED' | 'CREDIT_PENDING' | 'PAID';
-  paymentMethod: 'CASH' | 'CARD' | 'QR' | 'CREDIT';
-  customerName?: string;
-  balance: number; // Lo que falta por pagar
-  dueDate?: string;
-  payments?: Payment[];
+  status: 'COMPLETED' | 'PENDING';
+  customerId?: string; // Opcional (Venta anónima)
 }
 
-export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS';
+export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS' | 'INVENTORY';
 
 export interface BlueprintFile {
   name: string;

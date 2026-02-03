@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Package } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -16,7 +16,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const navItems = [
     { path: '/app/pos', label: 'Punto de Venta', icon: ShoppingCart },
-    { path: '/app/receivables', label: 'Crédito y Cobranza', icon: Wallet },
+    { path: '/app/inventory', label: 'Inventario & Compras', icon: Package },
     { path: '/app/dashboard', label: 'Panel Financiero', icon: LayoutGrid },
     { path: '/app/blueprint', label: 'Modo Dios (CTO)', icon: Code2 },
   ];
