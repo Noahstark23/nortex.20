@@ -9,6 +9,15 @@ const POS: React.FC = () => {
   const [processing, setProcessing] = useState(false);
 
   const addToCart = (product: Product) => {
+    // Check stock availability
+    const existingInCart = cart.find(item => item.id === product.id);
+    const currentQuantity = existingInCart ? existingInCart.quantity : 0;
+
+    if (currentQuantity + 1 > product.stock) {
+      alert(`Stock insuficiente para ${product.name}. Solo quedan ${product.stock} unidades.`);
+      return;
+    }
+
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
       if (existing) {
@@ -25,6 +34,15 @@ const POS: React.FC = () => {
   };
 
   const updateQuantity = (id: string, delta: number) => {
+    // Check stock if increasing quantity
+    if (delta > 0) {
+      const item = cart.find(i => i.id === id);
+      if (item && item.quantity + 1 > item.stock) {
+        alert(`No hay suficiente stock. Máximo disponible: ${item.stock}`);
+        return;
+      }
+    }
+
     setCart(prev => prev.map(item => {
       if (item.id === id) {
         const newQty = Math.max(1, item.quantity + delta);
@@ -82,7 +100,9 @@ const POS: React.FC = () => {
               </div>
               <div className="mt-4 flex justify-between items-end">
                 <span className="text-lg font-bold text-slate-900">${product.price.toFixed(2)}</span>
-                <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">Stock: {product.stock}</span>
+                <span className={`text-xs px-2 py-1 rounded ${product.stock === 0 ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+                   {product.stock === 0 ? 'Sin Stock' : `Stock: ${product.stock}`}
+                </span>
               </div>
             </button>
           ))}
