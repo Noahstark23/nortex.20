@@ -4,6 +4,7 @@ export interface Product {
   price: number;
   stock: number;
   sku: string;
+  category: string;
 }
 
 export interface CartItem extends Product {
@@ -19,12 +20,11 @@ export interface Tenant {
   walletBalance: number;
 }
 
-export interface Customer {
+export interface Payment {
   id: string;
-  name: string;
-  taxId: string; // DNI o RUC
-  email?: string;
-  phone?: string;
+  amount: number;
+  date: string;
+  method: 'CASH' | 'TRANSFER';
 }
 
 export interface Sale {
@@ -32,8 +32,12 @@ export interface Sale {
   total: number;
   date: string;
   items: number;
-  status: 'COMPLETED' | 'PENDING';
-  customerId?: string; // Opcional (Venta anónima)
+  status: 'COMPLETED' | 'CREDIT_PENDING' | 'PAID';
+  paymentMethod: 'CASH' | 'CARD' | 'QR' | 'CREDIT';
+  customerName?: string;
+  balance: number; // Lo que falta por pagar
+  dueDate?: string;
+  payments?: Payment[];
 }
 
 export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS';

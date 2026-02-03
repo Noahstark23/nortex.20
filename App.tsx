@@ -6,6 +6,7 @@ import Dashboard from './components/Dashboard';
 import BlueprintViewer from './components/BlueprintViewer';
 import LandingPage from './components/LandingPage';
 import RegisterTenant from './components/RegisterTenant';
+import AccountsReceivable from './components/AccountsReceivable';
 
 // Protected Route Wrapper
 const ProtectedApp = () => {
@@ -21,6 +22,7 @@ const ProtectedApp = () => {
       <Routes>
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="pos" element={<POS />} />
+        <Route path="receivables" element={<AccountsReceivable />} />
         <Route path="blueprint" element={<BlueprintViewer />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
