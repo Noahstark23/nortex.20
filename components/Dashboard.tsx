@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { MOCK_TENANT } from '../constants';
-import { TrendingUp, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock } from 'lucide-react';
+import { TrendingUp, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, AlertTriangle, Lock } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Loan, Tenant } from '../types';
 
@@ -21,18 +21,60 @@ const Dashboard: React.FC = () => {
   const [loadingLoan, setLoadingLoan] = useState(false);
   const [tenantData, setTenantData] = useState<Tenant>(MOCK_TENANT);
   const [activeLoans, setActiveLoans] = useState<Loan[]>([]);
+  const [processingSub, setProcessingSub] = useState(false);
 
   // Simulation of fetching data
   useEffect(() => {
-    // In a real app, this would fetch from /api/loans and /api/me
-    // For now, we simulate the structure
-    const storedTenant = localStorage.getItem('nortex_tenant_data');
-    if (storedTenant) {
-        setTenantData(JSON.parse(storedTenant));
-    }
+    const fetchDashboardData = async () => {
+       const storedTenant = localStorage.getItem('nortex_tenant_data');
+       if (storedTenant) {
+           const parsed = JSON.parse(storedTenant);
+           setTenantData(parsed);
+       }
+       // In a real app we would fetch /api/billing/status here to update the local state with DB truth
+    };
+    fetchDashboardData();
   }, []);
 
   const activeDebt = activeLoans.reduce((acc, loan) => acc + Number(loan.totalDue), 0);
+
+  // PAYWALL LOGIC
+  const daysLeftInTrial = tenantData.trialEndsAt 
+    ? Math.ceil((new Date(tenantData.trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : 0;
+
+  const handleReactivate = async () => {
+    setProcessingSub(true);
+    try {
+      const token = localStorage.getItem('nortex_token');
+      const res = await fetch('http://localhost:3000/api/billing/subscribe', {
+        method: 'POST',
+        headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ planId: 'PRO_MONTHLY' })
+      });
+      
+      if (!res.ok) throw new Error('Falló el pago simulado');
+
+      // Update Local State immediately
+      const updatedTenant = { 
+        ...tenantData, 
+        subscriptionStatus: 'ACTIVE' as const, 
+        trialEndsAt: '' // Clear trial
+      };
+      setTenantData(updatedTenant);
+      localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
+      
+      alert("✅ ¡Cuenta Reactivada! El sistema está operativo.");
+      
+    } catch (e) {
+        alert("Error al procesar la suscripción.");
+    } finally {
+        setProcessingSub(false);
+    }
+  };
 
   const handleRequestLoan = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,11 +93,26 @@ const Dashboard: React.FC = () => {
     setLoadingLoan(true);
 
     try {
-      // Simulation of API Call to POST /api/loans/request
-      // const res = await fetch(...) 
+      const token = localStorage.getItem('nortex_token');
+      // REAL API CALL
+      const res = await fetch('http://localhost:3000/api/loans/request', {
+          method: 'POST',
+          headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ amount })
+      });
+
+      const data = await res.json();
       
-      // Simulating Network Delay
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      if (!res.ok) {
+          if (res.status === 402) {
+              alert("⛔ BLOQUEADO: Suscripción vencida. Pague para continuar.");
+              return;
+          }
+          throw new Error(data.error);
+      }
 
       // Optimistic Update
       const interest = amount * 0.05;
@@ -79,16 +136,14 @@ const Dashboard: React.FC = () => {
 
       setTenantData(updatedTenant);
       setActiveLoans(prev => [newLoan, ...prev]);
-      
-      // Persist mock data
       localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
 
       setShowLoanModal(false);
       setLoanAmount('');
       alert("🚀 ¡Fondos desembolsados exitosamente!");
 
-    } catch (error) {
-      alert("Error al procesar el préstamo");
+    } catch (error: any) {
+      alert(error.message || "Error al procesar el préstamo");
     } finally {
       setLoadingLoan(false);
     }
@@ -96,11 +151,52 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="p-6 h-full overflow-y-auto bg-slate-50 text-slate-800 relative">
+      
+      {/* BILLING BANNERS */}
+      {tenantData.subscriptionStatus === 'TRIALING' && (
+        <div className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex items-center justify-between">
+           <div className="flex items-center gap-3 text-yellow-700">
+              <Clock size={20} />
+              <span className="font-medium">
+                  Modo Prueba: Quedan <span className="font-bold">{daysLeftInTrial} días</span> gratis.
+              </span>
+           </div>
+           <button onClick={handleReactivate} className="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white text-sm font-bold rounded shadow-sm transition-colors">
+               ACTIVAR PLAN PRO
+           </button>
+        </div>
+      )}
+
+      {(tenantData.subscriptionStatus === 'PAST_DUE' || tenantData.subscriptionStatus === 'CANCELLED') && (
+        <div className="mb-6 p-4 bg-red-600 text-white rounded-lg shadow-lg flex items-center justify-between animate-pulse">
+           <div className="flex items-center gap-3">
+              <Lock size={24} />
+              <div>
+                  <h3 className="font-bold text-lg">SERVICIO SUSPENDIDO</h3>
+                  <p className="text-red-100 text-sm">No puedes registrar nuevas ventas ni solicitar préstamos.</p>
+              </div>
+           </div>
+           <button 
+             onClick={handleReactivate} 
+             disabled={processingSub}
+             className="px-6 py-3 bg-white text-red-600 font-bold rounded shadow-lg hover:bg-slate-100 transition-colors"
+           >
+               {processingSub ? 'PROCESANDO...' : 'REACTIVAR SERVICIO ($50)'}
+           </button>
+        </div>
+      )}
+
       <header className="mb-8">
         <h1 className="text-3xl font-bold text-nortex-900">Panel Financiero</h1>
         <div className="flex items-center gap-2 mt-2">
            <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold uppercase tracking-wider">{tenantData.type}</span>
            <span className="text-slate-500">{tenantData.name}</span>
+           <span className={`px-2 py-1 rounded text-xs font-bold uppercase tracking-wider ${
+               tenantData.subscriptionStatus === 'ACTIVE' ? 'bg-green-100 text-green-700' :
+               tenantData.subscriptionStatus === 'PAST_DUE' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
+           }`}>
+               {tenantData.subscriptionStatus}
+           </span>
         </div>
       </header>
 

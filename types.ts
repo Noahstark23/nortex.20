@@ -18,6 +18,10 @@ export interface Tenant {
   creditScore: number;
   creditLimit: number;
   walletBalance: number;
+  // Billing Fields
+  subscriptionStatus: 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
+  plan: string;
+  trialEndsAt: string; // ISO Date
 }
 
 export interface Payment {

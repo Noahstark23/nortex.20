@@ -21,7 +21,7 @@ app.use(express.json() as any);
 
 // --- AUTH ENGINE ---
 
-// REGISTRO
+// REGISTRO (Updated for Trial)
 app.post('/api/auth/register', async (req: any, res: any) => {
   const { companyName, email, password, type } = req.body;
 
@@ -32,6 +32,10 @@ app.post('/api/auth/register', async (req: any, res: any) => {
 
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Calculate Trial End (14 days from now)
+    const trialEndsAt = new Date();
+    trialEndsAt.setDate(trialEndsAt.getDate() + 14);
 
     const result = await prisma.$transaction(async (tx: any) => {
       const tenant = await tx.tenant.create({
@@ -41,7 +45,10 @@ app.post('/api/auth/register', async (req: any, res: any) => {
           slug: companyName.toLowerCase().replace(/\s+/g, '-'),
           walletBalance: 0,
           creditScore: 500, // Score base
-          creditLimit: 2000 // Cupo inicial base para pruebas
+          creditLimit: 2000, // Cupo inicial base para pruebas
+          // Phase 6: Billing Fields
+          subscriptionStatus: 'TRIALING',
+          trialEndsAt: trialEndsAt
         }
       });
 
@@ -103,6 +110,42 @@ app.post('/api/auth/login', async (req: any, res: any) => {
   }
 });
 
+// --- BILLING ENGINE (FASE 6) ---
+
+// GET SUBSCRIPTION STATUS
+app.get('/api/billing/status', authenticate, async (req: any, res: any) => {
+  const authReq = req as AuthRequest;
+  try {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: authReq.tenantId },
+      select: { subscriptionStatus: true, trialEndsAt: true, plan: true }
+    });
+    res.json(tenant);
+  } catch (error) {
+    res.status(500).json({ error: 'Error fetching billing status' });
+  }
+});
+
+// MOCK SUBSCRIBE / REACTIVATE
+app.post('/api/billing/subscribe', authenticate, async (req: any, res: any) => {
+  const authReq = req as AuthRequest;
+  try {
+    // In a real world, this would verify a Stripe Webhook or create a SetupIntent
+    // For Mock: We just set status to ACTIVE
+    await prisma.tenant.update({
+      where: { id: authReq.tenantId },
+      data: {
+        subscriptionStatus: 'ACTIVE',
+        trialEndsAt: null // Trial is over, subscription is active
+      }
+    });
+
+    res.json({ success: true, message: '✅ Suscripción activada exitosamente.' });
+  } catch (error) {
+    res.status(500).json({ error: 'Error procesando el pago simulado' });
+  }
+});
+
 // --- LENDING ENGINE (FASE 5) ---
 
 // OBTENER HISTORIAL DE PRÉSTAMOS
@@ -119,7 +162,7 @@ app.get('/api/loans', authenticate, async (req: any, res: any) => {
   }
 });
 
-// SOLICITAR PRÉSTAMO (Lending Request)
+// SOLICITAR PRÉSTAMO
 app.post('/api/loans/request', authenticate, async (req: any, res: any) => {
   const authReq = req as AuthRequest;
   const { amount } = req.body;
@@ -147,7 +190,7 @@ app.post('/api/loans/request', authenticate, async (req: any, res: any) => {
         throw new Error(`Monto excede su línea disponible de $${Number(tenant.creditLimit).toFixed(2)}`);
       }
 
-      // Check Default (Si tiene préstamos vencidos)
+      // Check Default
       const defaultedLoans = await tx.loan.count({
         where: { tenantId, status: 'DEFAULT' }
       });
@@ -155,7 +198,7 @@ app.post('/api/loans/request', authenticate, async (req: any, res: any) => {
         throw new Error("Tiene deudas vencidas. Regularice su situación.");
       }
 
-      // 2. Calcular Condiciones Financieras
+      // 2. Calcular Condiciones
       const interestRate = 0.05; // 5% Flat
       const interest = requestedAmount * interestRate;
       const totalDue = requestedAmount + interest;
@@ -174,7 +217,7 @@ app.post('/api/loans/request', authenticate, async (req: any, res: any) => {
         }
       });
 
-      // 4. TRANSACCIÓN ATÓMICA: Inyectar Dinero y Reducir Cupo
+      // 4. TRANSACCIÓN ATÓMICA
       await tx.tenant.update({
         where: { id: tenantId },
         data: {

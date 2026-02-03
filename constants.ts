@@ -6,7 +6,10 @@ export const MOCK_TENANT: Tenant = {
   type: 'FERRETERIA',
   creditScore: 785,
   creditLimit: 50000.00,
-  walletBalance: 12450.50
+  walletBalance: 12450.50,
+  subscriptionStatus: 'TRIALING',
+  plan: 'PRO_MONTHLY',
+  trialEndsAt: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString() // 5 days left mock
 };
 
 export const MOCK_PRODUCTS: Product[] = [
@@ -82,12 +85,18 @@ model Tenant {
   slug          String    @unique
   walletBalance Decimal   @default(0.00) @db.Decimal(15, 2)
   creditScore   Int       @default(0)
-  creditLimit   Decimal   @default(0.00) @db.Decimal(15, 2) // Cupo disponible
+  creditLimit   Decimal   @default(0.00) @db.Decimal(15, 2)
   
+  // BILLING FIELDS (FASE 6)
+  subscriptionStatus String   @default("TRIALING") // TRIALING, ACTIVE, PAST_DUE
+  plan               String   @default("PRO_MONTHLY")
+  trialEndsAt        DateTime @default(now()) 
+  stripeCustomerId   String?
+
   users         User[]
   sales         Sale[]
   customers     Customer[]
-  loans         Loan[]    // Relación con Préstamos
+  loans         Loan[]    
 }
 
 model User {
@@ -102,10 +111,10 @@ model User {
 
 model Loan {
   id            String    @id @default(uuid())
-  amount        Decimal   @db.Decimal(15, 2) // Capital prestado
-  interest      Decimal   @db.Decimal(15, 2) // Interés generado
-  totalDue      Decimal   @db.Decimal(15, 2) // Total a pagar
-  status        String    @default("ACTIVE") // ACTIVE, PAID, DEFAULT
+  amount        Decimal   @db.Decimal(15, 2) 
+  interest      Decimal   @db.Decimal(15, 2) 
+  totalDue      Decimal   @db.Decimal(15, 2) 
+  status        String    @default("ACTIVE") 
   dueDate       DateTime
   
   tenantId      String
@@ -160,64 +169,28 @@ model SaleItem {
   priceAtSale   Decimal  @db.Decimal(10, 2)
 }`;
 
-const SERVER_CODE = `// LÓGICA DE PRÉSTAMOS (LENDING)
+const SERVER_CODE = `// LÓGICA DE BILLING & PAYWALL
 
-// GET /api/loans
-app.get('/api/loans', authenticate, async (req, res) => {
-  const loans = await prisma.loan.findMany({
-    where: { tenantId: req.user.tenantId },
-    orderBy: { createdAt: 'desc' }
-  });
-  res.json(loans);
-});
+// Middleware Bloqueo
+const enforcePaywall = async (req, res, next) => {
+  if (req.method === 'GET') return next();
+  if (req.path.startsWith('/api/billing')) return next();
 
-// POST /api/loans/request
-app.post('/api/loans/request', authenticate, async (req, res) => {
-  const { amount } = req.body;
-  const tenantId = req.user.tenantId;
-
-  try {
-    const result = await prisma.$transaction(async (tx) => {
-      // 1. Obtener Tenant y Validar
-      const tenant = await tx.tenant.findUnique({ where: { id: tenantId } });
-      
-      if (tenant.creditScore < 500) throw new Error("Score insuficiente para créditos.");
-      if (Number(tenant.creditLimit) < amount) throw new Error("Monto excede línea disponible.");
-      
-      // 2. Calcular Interés (Flat 5%)
-      const interest = amount * 0.05;
-      const totalDue = amount + interest;
-      const dueDate = new Date();
-      dueDate.setDate(dueDate.getDate() + 30); // 30 días plazo
-
-      // 3. Crear Préstamo
-      const loan = await tx.loan.create({
-        data: {
-          tenantId,
-          amount,
-          interest,
-          totalDue,
-          status: 'ACTIVE',
-          dueDate
-        }
-      });
-
-      // 4. Inyectar Dinero en Wallet y Reducir Cupo
-      await tx.tenant.update({
-        where: { id: tenantId },
-        data: {
-          walletBalance: { increment: amount },
-          creditLimit: { decrement: amount }
-        }
-      });
-
-      return loan;
-    });
-
-    res.json(result);
-  } catch (e) {
-    res.status(400).json({ error: e.message });
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.user.tenantId } });
+  
+  if (tenant.subscriptionStatus === 'PAST_DUE' || tenant.subscriptionStatus === 'CANCELLED') {
+    return res.status(402).json({ error: "SERVICIO SUSPENDIDO. Actualice su pago." });
   }
+  next();
+}
+
+// Subscribe Route
+app.post('/api/billing/subscribe', authenticate, async (req, res) => {
+   await prisma.tenant.update({
+     where: { id: req.user.tenantId },
+     data: { subscriptionStatus: 'ACTIVE', trialEndsAt: null }
+   });
+   res.json({ success: true, message: 'Plan Reactivado' });
 });`;
 
 export const BLUEPRINTS: BlueprintFile[] = [
@@ -225,13 +198,13 @@ export const BLUEPRINTS: BlueprintFile[] = [
     name: 'schema.prisma',
     language: 'prisma',
     content: PRISMA_SCHEMA_CODE,
-    description: 'Schema actualizado: Sistema de Préstamos (Loans).'
+    description: 'Schema actualizado: Suscripciones y Paywall.'
   },
   {
     name: 'server.ts',
     language: 'typescript',
     content: SERVER_CODE,
-    description: 'Backend: Motor de Decisión Crediticia y Transacciones.'
+    description: 'Backend: Lógica de Bloqueo por Impago (402 Payment Required).'
   },
   {
     name: 'docker-compose.yml',
