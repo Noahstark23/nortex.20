@@ -31,10 +31,11 @@ const RegisterTenant: React.FC = () => {
         throw new Error(data.error || 'Error en el registro');
       }
 
-      // Simulación de Login Automático: Guardamos el tenantId (En prod usar JWT)
-      localStorage.setItem('nortex_tenant_id', data.tenantId);
+      // JWT IMPLEMENTATION
+      localStorage.setItem('nortex_token', data.token);
+      localStorage.setItem('nortex_user', JSON.stringify(data.user));
+      localStorage.setItem('nortex_tenant_id', data.tenant.id);
       
-      // Redirect
       navigate('/app/dashboard');
 
     } catch (err: any) {

@@ -16,7 +16,9 @@
     "lucide-react": "^0.563.0",
     "express": "^5.2.1",
     "@prisma/client": "^7.3.0",
-    "cors": "^2.8.6"
+    "cors": "^2.8.6",
+    "bcryptjs": "^3.0.3",
+    "jsonwebtoken": "^9.0.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

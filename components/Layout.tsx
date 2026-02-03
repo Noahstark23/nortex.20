@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Package } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -10,13 +10,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
 
   const handleLogout = () => {
+    // Clear Auth Data
+    localStorage.removeItem('nortex_token');
+    localStorage.removeItem('nortex_user');
     localStorage.removeItem('nortex_tenant_id');
-    navigate('/');
+    navigate('/login');
   };
 
   const navItems = [
     { path: '/app/pos', label: 'Punto de Venta', icon: ShoppingCart },
-    { path: '/app/inventory', label: 'Inventario & Compras', icon: Package },
+    { path: '/app/receivables', label: 'Crédito y Cobranza', icon: Wallet },
     { path: '/app/dashboard', label: 'Panel Financiero', icon: LayoutGrid },
     { path: '/app/blueprint', label: 'Modo Dios (CTO)', icon: Code2 },
   ];

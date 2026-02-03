@@ -1,86 +1,55 @@
 // ENTREGABLE 2: server.ts
-import express, { Request, Response, NextFunction, RequestHandler } from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
-import { calculateCreditScore } from './utils/scoringEngine';
+// @ts-ignore
+import { PrismaClient } from '@prisma/client';
+// @ts-ignore
+import bcrypt from 'bcryptjs';
+// @ts-ignore
+import jwt from 'jsonwebtoken';
 
-// CTO NOTE: In "War Economy" mode (Docker/CI), Prisma Client might not be generated yet.
-// We use 'require' to bypass the static analysis error: "Module has no exported member PrismaClient".
-// This allows the build to pass before 'npx prisma generate' runs in the entrypoint.
-let PrismaClient: any;
-try {
-  PrismaClient = require('@prisma/client').PrismaClient;
-} catch (e) {
-  // Fallback mock class to prevent crash during build/linting if package is missing
-  PrismaClient = class {
-    $transaction(cb: any) { return cb(this); }
-    user = { findUnique: async () => null, create: async () => ({}) };
-    tenant = { findUnique: async () => null, create: async () => ({ id: 'mock', creditScore: 600, creditLimit: 5000 }), update: async () => {} };
-    product = { findMany: async () => [], findUnique: async () => null, update: async () => {} };
-    customer = { findMany: async () => [] };
-    sale = { create: async () => ({}), findMany: async () => [] };
-    supplier = { findMany: async () => [], create: async () => ({}) };
-    purchase = { create: async () => ({ id: 'mock-p' }), update: async () => {} };
-    purchaseItem = { create: async () => {} };
-    loan = { findMany: async () => [], create: async () => ({}) }; // Added Loan Mock
-  };
-}
+// Import middleware (Assuming same directory structure or handled by bundler)
+import { authenticate, AuthRequest } from './middleware/auth';
 
 const app = express();
 const prisma = new PrismaClient();
+const JWT_SECRET = process.env.JWT_SECRET || 'nortex_super_secret_key_2026';
 
 // Configuración básica
-app.use(cors() as unknown as RequestHandler); 
-app.use(express.json());
+app.use(cors()); 
+app.use(express.json() as any);
 
-// --- TYPES ---
-// Fix for environment where express.Request types might be missing body
-interface AuthenticatedRequest extends Request {
-  tenantId?: string;
-  body: any;
-}
+// --- AUTH ENGINE ---
 
-// --- UTILS ---
-const requireTenant = (req: Request, res: Response, next: NextFunction) => {
-  const tenantId = (req as any).headers['x-tenant-id'] as string;
-  if (!tenantId) {
-    (res as any).status(401).json({ error: 'Unauthorized: Missing Tenant ID' });
-    return;
-  }
-  (req as any).tenantId = tenantId;
-  next();
-};
-
-// --- AUTH & ONBOARDING (SaaS Core) ---
-app.post('/api/auth/register', (async (req: any, res: any) => {
+// REGISTRO (Tenant + Owner User)
+app.post('/api/auth/register', async (req: Request, res: Response) => {
   const { companyName, email, password, type } = req.body;
 
   if (!companyName || !email || !password) {
-    return res.status(400).json({ error: 'Faltan datos requeridos' });
+    res.status(400).json({ error: 'Todos los campos son obligatorios' });
+    return;
   }
 
   try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     const result = await prisma.$transaction(async (tx: any) => {
-      const existingUser = await tx.user.findUnique({ where: { email } });
-      if (existingUser) throw new Error('El email ya está registrado');
-
-      const slug = companyName.toLowerCase().replace(/ /g, '-') + '-' + Math.floor(Math.random() * 1000);
-
+      // 1. Crear Tenant
       const tenant = await tx.tenant.create({
         data: {
           name: companyName,
-          type: type || 'RETAIL',
-          slug: slug,
-          plan: 'FREE',
+          type: type || 'FERRETERIA',
+          slug: companyName.toLowerCase().replace(/\s+/g, '-'),
           walletBalance: 0,
-          creditScore: 300,
-          creditLimit: 0
+          creditScore: 500 // Score inicial base
         }
       });
 
+      // 2. Crear Usuario Admin (Owner)
       const user = await tx.user.create({
         data: {
           email,
-          passwordHash: password,
+          password: hashedPassword,
           role: 'OWNER',
           tenantId: tenant.id
         }
@@ -89,67 +58,97 @@ app.post('/api/auth/register', (async (req: any, res: any) => {
       return { tenant, user };
     });
 
-    res.status(201).json({
-      success: true,
-      message: 'Empresa registrada exitosamente',
-      tenantId: result.tenant.id,
+    // 3. Generar Token
+    const token = jwt.sign(
+      { userId: result.user.id, tenantId: result.tenant.id, role: result.user.role },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({ 
+      success: true, 
+      token, 
       user: { email: result.user.email, role: result.user.role },
-      redirectUrl: '/app/dashboard'
+      tenant: result.tenant 
     });
 
   } catch (error: any) {
-    console.error('Registration error:', error);
-    res.status(400).json({ error: error.message || 'Error en el registro' });
+    console.error(error);
+    res.status(500).json({ error: 'Error al registrar empresa. El email o empresa ya existe.' });
   }
-}) as any);
+});
 
-// --- RUTAS DE APP (Protegidas) ---
+// LOGIN
+app.post('/api/auth/login', async (req: Request, res: Response) => {
+  const { email, password } = req.body;
 
-app.get('/api/session', requireTenant, (async (req: any, res: any) => {
   try {
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: req.tenantId },
-      select: { name: true, type: true, walletBalance: true, creditScore: true, creditLimit: true }
+    // 1. Buscar Usuario
+    const user = await prisma.user.findUnique({
+      where: { email },
+      include: { tenant: true }
     });
-    res.json({ tenant });
-  } catch (error) {
-    res.status(500).json({ error: 'Error de sesión' });
-  }
-}) as any);
 
-app.get('/api/products', requireTenant, (async (req: any, res: any) => {
+    if (!user) {
+      res.status(401).json({ error: 'Credenciales inválidas' });
+      return;
+    }
+
+    // 2. Verificar Password
+    const isValid = await bcrypt.compare(password, user.password);
+    if (!isValid) {
+      res.status(401).json({ error: 'Credenciales inválidas' });
+      return;
+    }
+
+    // 3. Generar Token
+    const token = jwt.sign(
+      { userId: user.id, tenantId: user.tenantId, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: { email: user.email, role: user.role },
+      tenant: user.tenant
+    });
+
+  } catch (error: any) {
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+// --- RUTAS PROTEGIDAS (API) ---
+
+// OBTENER CLIENTES CON DEUDA
+app.get('/api/receivables', authenticate, async (req: Request, res: Response) => {
+  const authReq = req as AuthRequest;
   try {
-    const products = await prisma.product.findMany({
-      where: { tenantId: req.tenantId },
-      select: { id: true, name: true, price: true, stock: true, sku: true }
+    const sales = await prisma.sale.findMany({
+      where: { 
+        tenantId: authReq.tenantId,
+        status: 'CREDIT_PENDING'
+      },
+      include: { customer: true, payments: true },
+      orderBy: { createdAt: 'desc' }
     });
-    res.json(products);
+    res.json(sales);
   } catch (error) {
-    res.status(500).json({ error: 'Error interno obteniendo productos' });
+    res.status(500).json({ error: 'Error fetching receivables' });
   }
-}) as any);
+});
 
-app.get('/api/customers', requireTenant, (async (req: any, res: any) => {
-  try {
-    const customers = await prisma.customer.findMany({
-      where: { tenantId: req.tenantId },
-      orderBy: { name: 'asc' },
-      select: { id: true, name: true, taxId: true, email: true }
-    });
-    res.json(customers);
-  } catch (error) {
-    console.error("Error fetching customers (tabla existe?):", error); 
-    res.json([]); 
-  }
-}) as any);
-
-// PROCESAR VENTA (Actualizado con Cliente)
-app.post('/api/sales', requireTenant, (async (req: any, res: any) => {
-  const { items, customerId } = req.body; // customerId opcional
-  const tenantId = req.tenantId;
+// PROCESAR VENTA
+app.post('/api/sales', authenticate, async (req: Request, res: Response) => {
+  const authReq = req as AuthRequest;
+  const { items, paymentMethod, customerName, dueDate } = req.body; 
+  const tenantId = authReq.tenantId;
 
   if (!items || items.length === 0) {
-    return res.status(400).json({ error: 'El carrito está vacío' });
+    res.status(400).json({ error: 'Carrito vacío' });
+    return;
   }
 
   try {
@@ -157,21 +156,17 @@ app.post('/api/sales', requireTenant, (async (req: any, res: any) => {
       let totalSale = 0;
       const saleItemsData = [];
 
+      // Validar Stock
       for (const item of items) {
         const product = await tx.product.findUnique({ where: { id: item.id } });
-
-        if (!product) throw new Error(`Producto ${item.id} no encontrado`);
-        if (product.tenantId !== tenantId) throw new Error('Acceso denegado al producto');
-        if (product.stock < item.quantity) throw new Error(`Stock insuficiente: ${product.name}`);
+        if (!product || product.stock < item.quantity) throw new Error(`Stock insuficiente: ${item.name}`);
 
         await tx.product.update({
           where: { id: item.id },
           data: { stock: { decrement: item.quantity } }
         });
 
-        const lineTotal = Number(product.price) * item.quantity;
-        totalSale += lineTotal;
-
+        totalSale += Number(product.price) * item.quantity;
         saleItemsData.push({
           productId: product.id,
           quantity: item.quantity,
@@ -179,217 +174,102 @@ app.post('/api/sales', requireTenant, (async (req: any, res: any) => {
         });
       }
 
+      // Cliente
+      let customerId = null;
+      if (customerName) {
+        const customer = await tx.customer.upsert({
+            where: { tenantId_name: { tenantId, name: customerName }},
+            update: {},
+            create: { name: customerName, tenantId }
+        });
+        customerId = customer.id;
+      }
+
+      if (paymentMethod === 'CREDIT' && !customerId) {
+        throw new Error('Venta a crédito requiere nombre de cliente');
+      }
+
+      // Crear Venta
+      const isCredit = paymentMethod === 'CREDIT';
       const sale = await tx.sale.create({
         data: {
           tenantId,
           total: totalSale,
-          status: 'COMPLETED',
-          paymentMethod: 'CASH', 
-          userId: 'system',
-          customerId: customerId || undefined, // Vinculación
+          status: isCredit ? 'CREDIT_PENDING' : 'COMPLETED',
+          balance: isCredit ? totalSale : 0,
+          paymentMethod: paymentMethod,
+          customerId: customerId,
+          dueDate: isCredit ? new Date(dueDate) : null,
           items: { create: saleItemsData }
         }
       });
-      
+
+      // Wallet & Score
+      if (!isCredit) {
+        await tx.tenant.update({
+            where: { id: tenantId },
+            data: { walletBalance: { increment: totalSale } }
+        });
+      }
       await tx.tenant.update({
         where: { id: tenantId },
-        data: {
-          walletBalance: { increment: totalSale }
-        }
+        data: { creditScore: { increment: Math.floor(totalSale / 10) } }
       });
 
       return sale;
     });
 
-    res.json({ success: true, saleId: result.id, message: 'Venta procesada correctamente' });
-
+    res.json({ success: true, saleId: result.id });
   } catch (error: any) {
-    console.error('Error en transacción:', error);
-    res.status(400).json({ error: error.message || 'Error procesando la venta' });
+    res.status(400).json({ error: error.message });
   }
-}) as any);
+});
 
+// REGISTRAR ABONO
+app.post('/api/sales/:id/pay', authenticate, async (req: Request, res: Response) => {
+  const authReq = req as AuthRequest;
+  const { amount, method } = req.body;
+  const saleId = req.params.id;
 
-// --- SUPPLIERS & PURCHASES ---
-
-app.get('/api/suppliers', requireTenant, (async (req: any, res: any) => {
-  try {
-    const suppliers = await prisma.supplier.findMany({ where: { tenantId: req.tenantId } });
-    res.json(suppliers);
-  } catch (e) {
-    res.json([]);
-  }
-}) as any);
-
-app.post('/api/suppliers', requireTenant, (async (req: any, res: any) => {
-  try {
-    const { name, taxId, email, phone } = req.body;
-    const supplier = await prisma.supplier.create({
-      data: { name, taxId, email, phone, tenantId: req.tenantId }
-    });
-    res.json(supplier);
-  } catch (e) {
-    res.status(400).json({ error: 'Error creando proveedor' });
-  }
-}) as any);
-
-app.post('/api/purchases', requireTenant, (async (req: any, res: any) => {
-  const { supplierId, items } = req.body; 
-  
-  try {
-    await prisma.$transaction(async (tx: any) => {
-      let totalCost = 0;
-      
-      const purchase = await tx.purchase.create({
-        data: {
-          tenantId: req.tenantId,
-          supplierId,
-          total: 0, 
-          status: 'COMPLETED'
-        }
-      });
-  
-      for (const item of items) {
-         const lineTotal = Number(item.quantity) * Number(item.cost);
-         totalCost += lineTotal;
-         
-         await tx.purchaseItem.create({
-           data: {
-             purchaseId: purchase.id,
-             productId: item.productId,
-             quantity: Number(item.quantity),
-             costPrice: Number(item.cost)
-           }
-         });
-         
-         await tx.product.update({
-           where: { id: item.productId },
-           data: { stock: { increment: Number(item.quantity) } }
-         });
-      }
-  
-      await tx.purchase.update({
-        where: { id: purchase.id },
-        data: { total: totalCost }
-      });
-  
-      await tx.tenant.update({
-        where: { id: req.tenantId },
-        data: { walletBalance: { decrement: totalCost } }
-      });
-    });
-    
-    res.json({ success: true });
-  } catch (e: any) {
-    console.error(e);
-    res.status(400).json({ error: 'Error processing purchase' });
-  }
-}) as any);
-
-
-// --- FASE 4: ANALYTICS & SCORING ---
-app.get('/api/analytics/score', requireTenant, (async (req: any, res: any) => {
-  try {
-    const analysis = await calculateCreditScore(prisma, req.tenantId);
-    
-    // Actualizar el score en la DB
-    await prisma.tenant.update({
-      where: { id: req.tenantId },
-      data: { 
-        creditScore: analysis.score,
-        creditLimit: analysis.maxLoanAmount
-      }
-    });
-
-    res.json(analysis);
-  } catch (error) {
-    console.error('Error calculando score:', error);
-    // Retornar fallback para que el frontend no rompa
-    res.json({
-        score: 300,
-        metrics: { liquidity: 0, consistency: 0, assets: 0 },
-        financials: { walletBalance: 0, inventoryValue: 0, monthlySales: 0 },
-        maxLoanAmount: 0,
-        tips: ["Error calculando score. Faltan datos transaccionales."]
-    });
-  }
-}) as any);
-
-// --- FASE 5: LENDING ENGINE ---
-
-// Obtener préstamos
-app.get('/api/loans', requireTenant, (async (req: any, res: any) => {
-  try {
-    const loans = await prisma.loan.findMany({
-      where: { tenantId: req.tenantId },
-      orderBy: { createdAt: 'desc' }
-    });
-    res.json(loans);
-  } catch (e) {
-    res.json([]);
-  }
-}) as any);
-
-// Solicitar Desembolso
-app.post('/api/loans/request', requireTenant, (async (req: any, res: any) => {
-  const { amount } = req.body;
-  const requestedAmount = Number(amount);
-  
   try {
     const result = await prisma.$transaction(async (tx: any) => {
-      // 1. RISK CHECK
-      const tenant = await tx.tenant.findUnique({ where: { id: req.tenantId } });
-      
-      if (!tenant || tenant.creditScore < 500) {
-        throw new Error('Score insuficiente (< 500). Sigue operando para mejorar tu perfil.');
-      }
-      
-      // En un sistema real, verificamos deuda vigente vs limite. 
-      // Aquí simplificamos: Si pides más de tu límite pre-aprobado actual, falla.
-      if (requestedAmount > Number(tenant.creditLimit)) {
-        throw new Error(`Monto excede tu límite aprobado de $${tenant.creditLimit}`);
-      }
+        const sale = await tx.sale.findUnique({ where: { id: saleId } });
+        
+        if (!sale) throw new Error('Venta no existe');
+        if (sale.tenantId !== authReq.tenantId) throw new Error('Acceso denegado'); // Security Check
+        
+        if (Number(sale.balance) < Number(amount)) throw new Error('Monto mayor a la deuda');
 
-      // 2. FINANCIAL CALCULATION
-      const INTEREST_RATE = 0.05; // 5% Flat fee
-      const interest = requestedAmount * INTEREST_RATE;
-      const totalDue = requestedAmount + interest;
-      const dueDate = new Date();
-      dueDate.setDate(dueDate.getDate() + 30); // Net 30
+        await tx.payment.create({
+            data: {
+                saleId,
+                amount,
+                method,
+                date: new Date()
+            }
+        });
 
-      // 3. EXECUTE LOAN
-      const loan = await tx.loan.create({
-        data: {
-          tenantId: req.tenantId,
-          amount: requestedAmount,
-          interest: interest,
-          totalDue: totalDue,
-          status: 'ACTIVE',
-          dueDate: dueDate
-        }
-      });
+        const newBalance = Number(sale.balance) - Number(amount);
+        const newStatus = newBalance <= 0.01 ? 'PAID' : 'CREDIT_PENDING';
 
-      // 4. DISBURSE FUNDS (ACID Transaction with Loan creation)
-      await tx.tenant.update({
-        where: { id: req.tenantId },
-        data: {
-          walletBalance: { increment: requestedAmount },
-          // Opcional: Podríamos reducir el creditLimit aquí, pero lo recalculamos dinámicamente en el score
-        }
-      });
-      
-      return loan;
+        await tx.sale.update({
+            where: { id: saleId },
+            data: { balance: newBalance, status: newStatus }
+        });
+
+        await tx.tenant.update({
+            where: { id: authReq.tenantId },
+            data: { walletBalance: { increment: amount } }
+        });
+
+        return { newBalance, newStatus };
     });
 
-    res.json({ success: true, loan: result });
-
-  } catch (e: any) {
-    console.error('Lending Error:', e);
-    res.status(400).json({ error: e.message || 'Error procesando préstamo' });
+    res.json(result);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
   }
-}) as any);
+});
 
 const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Nortex Backend escuchando en http://localhost:${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Nortex Backend Ready :${PORT}`));

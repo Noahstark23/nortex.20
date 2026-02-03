@@ -6,14 +6,15 @@ import Dashboard from './components/Dashboard';
 import BlueprintViewer from './components/BlueprintViewer';
 import LandingPage from './components/LandingPage';
 import RegisterTenant from './components/RegisterTenant';
-import InventoryManager from './components/InventoryManager';
+import AccountsReceivable from './components/AccountsReceivable';
+import Login from './components/Login';
 
-// Protected Route Wrapper
+// Protected Route Wrapper (Auth Guard)
 const ProtectedApp = () => {
-  // Simple auth check simulation
-  const isAuthenticated = !!localStorage.getItem('nortex_tenant_id');
+  // Check for JWT Token
+  const token = localStorage.getItem('nortex_token');
   
-  if (!isAuthenticated) {
+  if (!token) {
     return <Navigate to="/login" replace />;
   }
 
@@ -22,7 +23,7 @@ const ProtectedApp = () => {
       <Routes>
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="pos" element={<POS />} />
-        <Route path="inventory" element={<InventoryManager />} />
+        <Route path="receivables" element={<AccountsReceivable />} />
         <Route path="blueprint" element={<BlueprintViewer />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
@@ -37,7 +38,7 @@ function App() {
         {/* Public Routes */}
         <Route path="/" element={<LandingPage />} />
         <Route path="/register" element={<RegisterTenant />} />
-        <Route path="/login" element={<div className="h-screen flex items-center justify-center text-white bg-nortex-900">Login Placeholder (Use Register)</div>} />
+        <Route path="/login" element={<Login />} />
         
         {/* Protected Routes */}
         <Route path="/app/*" element={<ProtectedApp />} />

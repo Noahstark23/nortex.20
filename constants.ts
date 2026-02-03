@@ -1,4 +1,4 @@
-import { Product, Tenant, BlueprintFile, Customer, Supplier } from './types';
+import { Product, Tenant, BlueprintFile, Sale } from './types';
 
 export const MOCK_TENANT: Tenant = {
   id: 'tnt_01_alpha',
@@ -10,124 +10,178 @@ export const MOCK_TENANT: Tenant = {
 };
 
 export const MOCK_PRODUCTS: Product[] = [
-  { id: '1', name: 'Cemento Sol 50kg', price: 28.50, stock: 150, sku: 'CEM-001' },
-  { id: '2', name: 'Fierro 1/2" x 9m', price: 45.00, stock: 300, sku: 'FIE-002' },
-  { id: '3', name: 'Ladrillo King Kong', price: 1.20, stock: 5000, sku: 'LAD-003' },
-  { id: '4', name: 'Pintura Latek 1GL', price: 35.00, stock: 45, sku: 'PIN-004' },
-  { id: '5', name: 'Tubo PVC 4"', price: 18.90, stock: 120, sku: 'TUB-005' },
+  { id: '1', name: 'Cemento Sol 50kg', price: 28.50, stock: 150, sku: 'CEM-001', category: 'Construcción' },
+  { id: '2', name: 'Fierro 1/2" x 9m', price: 45.00, stock: 300, sku: 'FIE-002', category: 'Construcción' },
+  { id: '3', name: 'Ladrillo King Kong', price: 1.20, stock: 5000, sku: 'LAD-003', category: 'Albañilería' },
+  { id: '4', name: 'Pintura Latek 1GL', price: 35.00, stock: 45, sku: 'PIN-004', category: 'Acabados' },
+  { id: '5', name: 'Tubo PVC 4"', price: 18.90, stock: 120, sku: 'TUB-005', category: 'Gasfitería' },
+  { id: '6', name: 'Martillo Carpintero', price: 25.00, stock: 15, sku: 'HER-006', category: 'Herramientas' },
+  { id: '7', name: 'Thinner Acrílico', price: 12.00, stock: 40, sku: 'QUI-007', category: 'Químicos' },
 ];
 
-export const MOCK_CUSTOMERS: Customer[] = [
-  { id: 'c1', name: 'Constructora Hnos. Perez', taxId: '20100200300', email: 'compras@perez.com' },
-  { id: 'c2', name: 'Juan Mecánico', taxId: '1045678901', phone: '999-888-777' },
-  { id: 'c3', name: 'Municipalidad Distrital', taxId: '20505050501', email: 'logistica@muni.gob.pe' },
-];
-
-export const MOCK_SUPPLIERS: Supplier[] = [
-  { id: 's1', name: 'Distribuidora Aceros Arequipa', taxId: '20100100100', phone: '01-200-3000' },
-  { id: 's2', name: 'Cementos Lima S.A.', taxId: '20200200200', email: 'ventas@cementos.com' },
+export const MOCK_DEBTORS: Sale[] = [
+  {
+    id: 'sale_991',
+    total: 1500.00,
+    balance: 800.00,
+    date: '2023-10-25T10:00:00Z',
+    items: 4,
+    status: 'CREDIT_PENDING',
+    paymentMethod: 'CREDIT',
+    customerName: 'Constructora Los Andes SAC',
+    dueDate: '2023-11-25T10:00:00Z',
+    payments: [
+      { id: 'pay_1', amount: 700.00, date: '2023-10-26T14:30:00Z', method: 'TRANSFER' }
+    ]
+  },
+  {
+    id: 'sale_992',
+    total: 240.50,
+    balance: 240.50,
+    date: '2023-10-28T09:15:00Z',
+    items: 2,
+    status: 'CREDIT_PENDING',
+    paymentMethod: 'CREDIT',
+    customerName: 'Juan Pérez (Maestro Obra)',
+    dueDate: '2023-11-05T00:00:00Z',
+    payments: []
+  },
+  {
+    id: 'sale_993',
+    total: 4500.00,
+    balance: 0,
+    date: '2023-10-01T11:00:00Z',
+    items: 12,
+    status: 'PAID',
+    paymentMethod: 'CREDIT',
+    customerName: 'Constructora Los Andes SAC',
+    dueDate: '2023-10-15T00:00:00Z',
+    payments: [
+      { id: 'pay_2', amount: 4500.00, date: '2023-10-10T09:00:00Z', method: 'TRANSFER' }
+    ]
+  }
 ];
 
 // --- CODIGO BACKEND PARA VISUALIZACION EN BLUEPRINT VIEWER ---
 
 const PRISMA_SCHEMA_CODE = `// ESTO VA EN: /backend/prisma/schema.prisma
 
-model Tenant {
-  // ... (Campos existentes) ...
-  loans         Loan[]
-  creditScore   Int       @default(300)
-  creditLimit   Decimal   @default(0)
+generator client {
+  provider = "prisma-client-js"
 }
 
-// NUEVA ENTIDAD: PRÉSTAMO FINTECH
-model Loan {
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
   id            String    @id @default(uuid())
-  amount        Decimal   // Monto solicitado (Principal)
-  interest      Decimal   // 5% Flat fee
-  totalDue      Decimal   // Monto + Interes
+  name          String
+  type          String    
+  slug          String    @unique
+  walletBalance Decimal   @default(0.00) @db.Decimal(15, 2)
+  creditScore   Int       @default(0)
   
-  status        String    @default("ACTIVE") // ACTIVE, PAID, DEFAULT
-  
-  createdAt     DateTime  @default(now())
-  dueDate       DateTime  // +30 días
-  
+  users         User[]    // Relación con Usuarios
+  sales         Sale[]
+  customers     Customer[]
+}
+
+// NUEVO: SISTEMA DE USUARIOS
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  password      String    // Hash Bcrypt
+  role          String    @default("OWNER") // OWNER, STAFF
   tenantId      String
   tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  createdAt     DateTime  @default(now())
 }
 
-// ... (Resto del schema: Purchases, Suppliers, Sales)
-`;
-
-const SERVER_CODE = `// SERVER.TS UPDATES
-
-// 7. LENDING ENGINE (Sistema de Préstamos)
-
-// GET: Obtener préstamos
-app.get('/api/loans', requireTenant, async (req, res) => {
-  const loans = await prisma.loan.findMany({
-    where: { tenantId: req.tenantId },
-    orderBy: { createdAt: 'desc' }
-  });
-  res.json(loans);
-});
-
-// POST: Solicitar desembolso
-app.post('/api/loans/request', requireTenant, async (req, res) => {
-  const { amount } = req.body; // Monto solicitado
-  const requestedAmount = Number(amount);
+model Customer {
+  id            String    @id @default(uuid())
+  name          String
+  taxId         String?   // RUC / DNI
+  phone         String?
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  sales         Sale[]
   
+  @@unique([tenantId, name])
+}
+
+model Sale {
+  id            String     @id @default(uuid())
+  total         Decimal    @db.Decimal(12, 2)
+  
+  // FINTECH CORE: CRÉDITO
+  status        String     @default("COMPLETED") // 'COMPLETED', 'CREDIT_PENDING', 'PAID'
+  paymentMethod String     // 'CASH', 'CREDIT', etc.
+  balance       Decimal    @default(0.00) @db.Decimal(12, 2) // Deuda pendiente
+  dueDate       DateTime?  // Fecha límite de pago
+  
+  tenantId      String
+  tenant        Tenant     @relation(fields: [tenantId], references: [id])
+  
+  customerId    String?
+  customer      Customer?  @relation(fields: [customerId], references: [id])
+  
+  items         SaleItem[]
+  payments      Payment[]  // Historial de abonos
+  
+  createdAt     DateTime   @default(now())
+}
+
+model Payment {
+  id            String    @id @default(uuid())
+  amount        Decimal   @db.Decimal(12, 2)
+  method        String    // 'CASH', 'TRANSFER'
+  date          DateTime  @default(now())
+  
+  saleId        String
+  sale          Sale      @relation(fields: [saleId], references: [id])
+}
+
+model SaleItem {
+  id            String   @id @default(uuid())
+  saleId        String
+  sale          Sale     @relation(fields: [saleId], references: [id])
+  productId     String
+  quantity      Int
+  priceAtSale   Decimal  @db.Decimal(10, 2)
+}`;
+
+const SERVER_CODE = `// VERSIÓN ACTUALIZADA CON AUTH
+// Imports...
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+
+// Middleware Auth
+const authenticate = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).send('Access Denied');
   try {
-    await prisma.$transaction(async (tx) => {
-      // 1. ANÁLISIS DE RIESGO
-      const tenant = await tx.tenant.findUnique({ where: { id: req.tenantId } });
-      
-      if (tenant.creditScore < 500) {
-        throw new Error('Score insuficiente. Mejora tus ventas para calificar.');
-      }
-      
-      // Verificar capacidad de endeudamiento (Mock logic: creditLimit es el tope global)
-      // En prod: Sumaríamos deuda activa actual + requestedAmount
-      if (requestedAmount > Number(tenant.creditLimit)) {
-        throw new Error('El monto excede tu línea de crédito pre-aprobada.');
-      }
+     const verified = jwt.verify(token, process.env.JWT_SECRET);
+     req.user = verified;
+     next();
+  } catch (err) { res.status(400).send('Invalid Token'); }
+};
 
-      // 2. CÁLCULO FINANCIERO
-      const INTEREST_RATE = 0.05; // 5% mensual flat
-      const interest = requestedAmount * INTEREST_RATE;
-      const totalDue = requestedAmount + interest;
-      const dueDate = new Date();
-      dueDate.setDate(dueDate.getDate() + 30); // Vence en 30 días
-
-      // 3. EJECUCIÓN (Crear Préstamo)
-      const loan = await tx.loan.create({
-        data: {
-          tenantId: req.tenantId,
-          amount: requestedAmount,
-          interest: interest,
-          totalDue: totalDue,
-          status: 'ACTIVE',
-          dueDate: dueDate
-        }
-      });
-
-      // 4. DESEMBOLSO (Inyectar liquidez a la Wallet)
-      await tx.tenant.update({
-        where: { id: req.tenantId },
-        data: {
-          walletBalance: { increment: requestedAmount },
-          // Opcional: Reducir creditLimit temporalmente o manejarlo con "AvailableCredit" calculado
-        }
-      });
-      
-      return loan;
-    });
-
-    res.json({ success: true, message: 'Fondos desembolsados exitosamente.' });
-
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
+// Login Route
+app.post('/api/auth/login', async (req, res) => {
+   const user = await prisma.user.findUnique({ where: { email: req.body.email } });
+   if (!user) return res.status(400).send('Email wrong');
+   
+   const validPass = await bcrypt.compare(req.body.password, user.password);
+   if (!validPass) return res.status(400).send('Invalid password');
+   
+   const token = jwt.sign({ _id: user.id, tenantId: user.tenantId }, process.env.JWT_SECRET);
+   res.header('auth-token', token).send(token);
 });
+
+// Protect All Routes
+app.use('/api/sales', authenticate);
 `;
 
 export const BLUEPRINTS: BlueprintFile[] = [
@@ -135,12 +189,18 @@ export const BLUEPRINTS: BlueprintFile[] = [
     name: 'schema.prisma',
     language: 'prisma',
     content: PRISMA_SCHEMA_CODE,
-    description: 'Schema actualizado con Suppliers, Purchases y Expenses.'
+    description: 'Schema actualizado: Usuarios, Auth y Roles.'
   },
   {
-    name: 'lending_engine.ts',
+    name: 'server.ts',
     language: 'typescript',
     content: SERVER_CODE,
-    description: 'Lógica de backend para cálculo de riesgo y desembolso de préstamos.'
+    description: 'Backend: Implementación de JWT y Middleware.'
   },
+  {
+    name: 'docker-compose.yml',
+    language: 'yaml',
+    content: `version: '3.8'\nservices:\n  db:\n    image: mysql:8.0`,
+    description: 'Infraestructura sin cambios.'
+  }
 ];
