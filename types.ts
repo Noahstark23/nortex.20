@@ -19,12 +19,21 @@ export interface Tenant {
   walletBalance: number;
 }
 
+export interface Customer {
+  id: string;
+  name: string;
+  taxId: string; // DNI o RUC
+  email?: string;
+  phone?: string;
+}
+
 export interface Sale {
   id: string;
   total: number;
   date: string;
   items: number;
   status: 'COMPLETED' | 'PENDING';
+  customerId?: string; // Opcional (Venta anónima)
 }
 
 export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS';
