@@ -1,5 +1,5 @@
 // ENTREGABLE 2: server.ts
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request as ExRequest, Response as ExResponse, NextFunction, RequestHandler } from 'express';
 import cors from 'cors';
 
 // CTO NOTE: In "War Economy" mode (Docker/CI), Prisma Client might not be generated yet.
@@ -25,25 +25,26 @@ const prisma = new PrismaClient();
 
 // Configuración básica
 app.use(cors()); 
-// FIX: Explicitly cast middleware to avoid "No overload matches this call" 
-// due to type mismatch between 'connect' and 'express' types.
 app.use(express.json() as any);
 
 // --- TYPES ---
-interface AuthenticatedRequest extends Request {
+interface AuthenticatedRequest extends ExRequest {
   tenantId?: string;
 }
 
 // --- UTILS ---
-const requireTenant = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+const requireTenant: RequestHandler = (req, res, next) => {
   const tenantId = req.headers['x-tenant-id'] as string;
-  if (!tenantId) return res.status(401).json({ error: 'Unauthorized: Missing Tenant ID' });
-  req.tenantId = tenantId;
+  if (!tenantId) {
+    res.status(401).json({ error: 'Unauthorized: Missing Tenant ID' });
+    return;
+  }
+  (req as AuthenticatedRequest).tenantId = tenantId;
   next();
 };
 
 // --- AUTH & ONBOARDING (SaaS Core) ---
-app.post('/api/auth/register', async (req: Request, res: Response) => {
+app.post('/api/auth/register', (async (req: ExRequest, res: ExResponse) => {
   const { companyName, email, password, type } = req.body;
 
   if (!companyName || !email || !password) {
@@ -93,11 +94,11 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
     console.error('Registration error:', error);
     res.status(400).json({ error: error.message || 'Error en el registro' });
   }
-});
+}) as RequestHandler);
 
 // --- RUTAS DE APP (Protegidas) ---
 
-app.get('/api/session', requireTenant, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/session', requireTenant, (async (req: AuthenticatedRequest, res: ExResponse) => {
   try {
     const tenant = await prisma.tenant.findUnique({
       where: { id: req.tenantId },
@@ -107,9 +108,9 @@ app.get('/api/session', requireTenant, async (req: AuthenticatedRequest, res: Re
   } catch (error) {
     res.status(500).json({ error: 'Error de sesión' });
   }
-});
+}) as RequestHandler);
 
-app.get('/api/products', requireTenant, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/products', requireTenant, (async (req: AuthenticatedRequest, res: ExResponse) => {
   try {
     const products = await prisma.product.findMany({
       where: { tenantId: req.tenantId },
@@ -119,12 +120,11 @@ app.get('/api/products', requireTenant, async (req: AuthenticatedRequest, res: R
   } catch (error) {
     res.status(500).json({ error: 'Error interno obteniendo productos' });
   }
-});
+}) as RequestHandler);
 
 // NUEVO: OBTENER CLIENTES
-app.get('/api/customers', requireTenant, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/customers', requireTenant, (async (req: AuthenticatedRequest, res: ExResponse) => {
   try {
-    // Si la tabla no existe aún en DB local, esto fallará, pero es el código correcto.
     const customers = await prisma.customer.findMany({
       where: { tenantId: req.tenantId },
       orderBy: { name: 'asc' },
@@ -136,10 +136,10 @@ app.get('/api/customers', requireTenant, async (req: AuthenticatedRequest, res: 
     console.error("Error fetching customers (tabla existe?):", error); 
     res.json([]); 
   }
-});
+}) as RequestHandler);
 
 // PROCESAR VENTA (Actualizado con Cliente)
-app.post('/api/sales', requireTenant, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/sales', requireTenant, (async (req: AuthenticatedRequest, res: ExResponse) => {
   const { items, customerId } = req.body; // customerId opcional
   const tenantId = req.tenantId;
 
@@ -205,7 +205,7 @@ app.post('/api/sales', requireTenant, async (req: AuthenticatedRequest, res: Res
     console.error('Error en transacción:', error);
     res.status(400).json({ error: error.message || 'Error procesando la venta' });
   }
-});
+}) as RequestHandler);
 
 const PORT = 3000;
 app.listen(PORT, () => {
