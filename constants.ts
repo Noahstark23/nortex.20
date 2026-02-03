@@ -34,137 +34,99 @@ const PRISMA_SCHEMA_CODE = `// ESTO VA EN: /backend/prisma/schema.prisma
 
 model Tenant {
   // ... (Campos existentes) ...
-  suppliers     Supplier[]
-  purchases     Purchase[]
-  expenses      Expense[]
+  loans         Loan[]
+  creditScore   Int       @default(300)
+  creditLimit   Decimal   @default(0)
 }
 
-// NUEVA ENTIDAD: PROVEEDOR
-model Supplier {
+// NUEVA ENTIDAD: PRÉSTAMO FINTECH
+model Loan {
   id            String    @id @default(uuid())
-  name          String
-  taxId         String    // RUC
-  email         String?
-  phone         String?
-  tenantId      String
-  tenant        Tenant    @relation(fields: [tenantId], references: [id])
-  purchases     Purchase[]
+  amount        Decimal   // Monto solicitado (Principal)
+  interest      Decimal   // 5% Flat fee
+  totalDue      Decimal   // Monto + Interes
   
-  @@unique([tenantId, taxId])
-}
-
-// NUEVA ENTIDAD: COMPRA DE INVENTARIO (Entry)
-model Purchase {
-  id            String    @id @default(uuid())
-  date          DateTime  @default(now())
-  total         Decimal
-  status        String    @default("COMPLETED") // COMPLETED, DRAFT
+  status        String    @default("ACTIVE") // ACTIVE, PAID, DEFAULT
   
-  tenantId      String
-  tenant        Tenant    @relation(fields: [tenantId], references: [id])
-  
-  supplierId    String
-  supplier      Supplier  @relation(fields: [supplierId], references: [id])
-  
-  items         PurchaseItem[]
-}
-
-model PurchaseItem {
-  id            String    @id @default(uuid())
-  purchaseId    String
-  purchase      Purchase  @relation(fields: [purchaseId], references: [id])
-  
-  productId     String
-  product       Product   @relation(fields: [productId], references: [id])
-  
-  quantity      Int
-  costPrice     Decimal   // Costo unitario al momento de compra
-}
-
-// NUEVA ENTIDAD: GASTOS OPERATIVOS (OPEX)
-model Expense {
-  id            String    @id @default(uuid())
-  description   String
-  amount        Decimal
-  category      String    // RENTA, SERVICIOS, PLANILLA
-  date          DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  dueDate       DateTime  // +30 días
   
   tenantId      String
   tenant        Tenant    @relation(fields: [tenantId], references: [id])
 }
+
+// ... (Resto del schema: Purchases, Suppliers, Sales)
 `;
 
 const SERVER_CODE = `// SERVER.TS UPDATES
 
-// ... imports
+// 7. LENDING ENGINE (Sistema de Préstamos)
 
-// 5. GESTIÓN DE PROVEEDORES
-app.get('/api/suppliers', requireTenant, async (req, res) => {
-  const suppliers = await prisma.supplier.findMany({ where: { tenantId: req.tenantId } });
-  res.json(suppliers);
-});
-
-app.post('/api/suppliers', requireTenant, async (req, res) => {
-  const { name, taxId, email, phone } = req.body;
-  const supplier = await prisma.supplier.create({
-    data: { name, taxId, email, phone, tenantId: req.tenantId }
+// GET: Obtener préstamos
+app.get('/api/loans', requireTenant, async (req, res) => {
+  const loans = await prisma.loan.findMany({
+    where: { tenantId: req.tenantId },
+    orderBy: { createdAt: 'desc' }
   });
-  res.json(supplier);
+  res.json(loans);
 });
 
-// 6. COMPRAS Y REABASTECIMIENTO (ACID Transaction)
-app.post('/api/purchases', requireTenant, async (req, res) => {
-  const { supplierId, items } = req.body; // items: [{ productId, quantity, cost }]
+// POST: Solicitar desembolso
+app.post('/api/loans/request', requireTenant, async (req, res) => {
+  const { amount } = req.body; // Monto solicitado
+  const requestedAmount = Number(amount);
   
-  await prisma.$transaction(async (tx) => {
-    let totalCost = 0;
-    
-    // 1. Crear Cabecera de Compra
-    const purchase = await tx.purchase.create({
-      data: {
-        tenantId: req.tenantId,
-        supplierId,
-        total: 0, // Se actualiza luego o calculamos aquí
-        status: 'COMPLETED'
+  try {
+    await prisma.$transaction(async (tx) => {
+      // 1. ANÁLISIS DE RIESGO
+      const tenant = await tx.tenant.findUnique({ where: { id: req.tenantId } });
+      
+      if (tenant.creditScore < 500) {
+        throw new Error('Score insuficiente. Mejora tus ventas para calificar.');
       }
+      
+      // Verificar capacidad de endeudamiento (Mock logic: creditLimit es el tope global)
+      // En prod: Sumaríamos deuda activa actual + requestedAmount
+      if (requestedAmount > Number(tenant.creditLimit)) {
+        throw new Error('El monto excede tu línea de crédito pre-aprobada.');
+      }
+
+      // 2. CÁLCULO FINANCIERO
+      const INTEREST_RATE = 0.05; // 5% mensual flat
+      const interest = requestedAmount * INTEREST_RATE;
+      const totalDue = requestedAmount + interest;
+      const dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + 30); // Vence en 30 días
+
+      // 3. EJECUCIÓN (Crear Préstamo)
+      const loan = await tx.loan.create({
+        data: {
+          tenantId: req.tenantId,
+          amount: requestedAmount,
+          interest: interest,
+          totalDue: totalDue,
+          status: 'ACTIVE',
+          dueDate: dueDate
+        }
+      });
+
+      // 4. DESEMBOLSO (Inyectar liquidez a la Wallet)
+      await tx.tenant.update({
+        where: { id: req.tenantId },
+        data: {
+          walletBalance: { increment: requestedAmount },
+          // Opcional: Reducir creditLimit temporalmente o manejarlo con "AvailableCredit" calculado
+        }
+      });
+      
+      return loan;
     });
 
-    // 2. Procesar Items y Actualizar Stock
-    for (const item of items) {
-       const lineTotal = item.quantity * item.cost;
-       totalCost += lineTotal;
-       
-       // Crear detalle
-       await tx.purchaseItem.create({
-         data: {
-           purchaseId: purchase.id,
-           productId: item.productId,
-           quantity: item.quantity,
-           costPrice: item.cost
-         }
-       });
-       
-       // AUMENTAR STOCK (Inverso a la venta)
-       await tx.product.update({
-         where: { id: item.productId },
-         data: { stock: { increment: item.quantity } }
-       });
-    }
+    res.json({ success: true, message: 'Fondos desembolsados exitosamente.' });
 
-    // 3. Actualizar Total de Compra
-    await tx.purchase.update({
-      where: { id: purchase.id },
-      data: { total: totalCost }
-    });
-
-    // 4. DISMINUIR BILLETERA (Salida de dinero)
-    await tx.tenant.update({
-      where: { id: req.tenantId },
-      data: { walletBalance: { decrement: totalCost } }
-    });
-  });
-  
-  res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 `;
 
@@ -176,9 +138,9 @@ export const BLUEPRINTS: BlueprintFile[] = [
     description: 'Schema actualizado con Suppliers, Purchases y Expenses.'
   },
   {
-    name: 'server.ts',
+    name: 'lending_engine.ts',
     language: 'typescript',
     content: SERVER_CODE,
-    description: 'API endpoints para Suppliers y ACID Transactions de Compras.'
+    description: 'Lógica de backend para cálculo de riesgo y desembolso de préstamos.'
   },
 ];

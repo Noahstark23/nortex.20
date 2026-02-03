@@ -51,6 +51,16 @@ export interface Sale {
   customerId?: string; // Opcional (Venta anónima)
 }
 
+export interface Loan {
+  id: string;
+  amount: number;      // Principal recibido
+  interest: number;    // Interes generado
+  totalDue: number;    // Total a pagar
+  status: 'ACTIVE' | 'PAID' | 'DEFAULT';
+  dueDate: string;
+  createdAt: string;
+}
+
 export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS' | 'INVENTORY';
 
 export interface BlueprintFile {

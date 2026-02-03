@@ -1,5 +1,5 @@
 // ENTREGABLE 2: server.ts
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response, NextFunction, RequestHandler } from 'express';
 import cors from 'cors';
 import { calculateCreditScore } from './utils/scoringEngine';
 
@@ -14,13 +14,14 @@ try {
   PrismaClient = class {
     $transaction(cb: any) { return cb(this); }
     user = { findUnique: async () => null, create: async () => ({}) };
-    tenant = { findUnique: async () => null, create: async () => ({ id: 'mock' }), update: async () => {} };
+    tenant = { findUnique: async () => null, create: async () => ({ id: 'mock', creditScore: 600, creditLimit: 5000 }), update: async () => {} };
     product = { findMany: async () => [], findUnique: async () => null, update: async () => {} };
     customer = { findMany: async () => [] };
     sale = { create: async () => ({}), findMany: async () => [] };
     supplier = { findMany: async () => [], create: async () => ({}) };
     purchase = { create: async () => ({ id: 'mock-p' }), update: async () => {} };
     purchaseItem = { create: async () => {} };
+    loan = { findMany: async () => [], create: async () => ({}) }; // Added Loan Mock
   };
 }
 
@@ -28,7 +29,7 @@ const app = express();
 const prisma = new PrismaClient();
 
 // Configuración básica
-app.use(cors() as any); 
+app.use(cors() as unknown as RequestHandler); 
 app.use(express.json());
 
 // --- TYPES ---
@@ -189,11 +190,6 @@ app.post('/api/sales', requireTenant, (async (req: any, res: any) => {
           items: { create: saleItemsData }
         }
       });
-
-      // ACTUALIZACIÓN DE SCORING EN TIEMPO REAL (Simplificada)
-      // En un sistema real, esto iría a una cola de trabajos (Bull/Redis)
-      // Aquí lo hacemos directo pero sin bloquear la respuesta si falla.
-      // Score se recalcula bajo demanda en /analytics/score, aquí solo sumamos balance.
       
       await tx.tenant.update({
         where: { id: tenantId },
@@ -316,6 +312,80 @@ app.get('/api/analytics/score', requireTenant, (async (req: any, res: any) => {
         maxLoanAmount: 0,
         tips: ["Error calculando score. Faltan datos transaccionales."]
     });
+  }
+}) as any);
+
+// --- FASE 5: LENDING ENGINE ---
+
+// Obtener préstamos
+app.get('/api/loans', requireTenant, (async (req: any, res: any) => {
+  try {
+    const loans = await prisma.loan.findMany({
+      where: { tenantId: req.tenantId },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(loans);
+  } catch (e) {
+    res.json([]);
+  }
+}) as any);
+
+// Solicitar Desembolso
+app.post('/api/loans/request', requireTenant, (async (req: any, res: any) => {
+  const { amount } = req.body;
+  const requestedAmount = Number(amount);
+  
+  try {
+    const result = await prisma.$transaction(async (tx: any) => {
+      // 1. RISK CHECK
+      const tenant = await tx.tenant.findUnique({ where: { id: req.tenantId } });
+      
+      if (!tenant || tenant.creditScore < 500) {
+        throw new Error('Score insuficiente (< 500). Sigue operando para mejorar tu perfil.');
+      }
+      
+      // En un sistema real, verificamos deuda vigente vs limite. 
+      // Aquí simplificamos: Si pides más de tu límite pre-aprobado actual, falla.
+      if (requestedAmount > Number(tenant.creditLimit)) {
+        throw new Error(`Monto excede tu límite aprobado de $${tenant.creditLimit}`);
+      }
+
+      // 2. FINANCIAL CALCULATION
+      const INTEREST_RATE = 0.05; // 5% Flat fee
+      const interest = requestedAmount * INTEREST_RATE;
+      const totalDue = requestedAmount + interest;
+      const dueDate = new Date();
+      dueDate.setDate(dueDate.getDate() + 30); // Net 30
+
+      // 3. EXECUTE LOAN
+      const loan = await tx.loan.create({
+        data: {
+          tenantId: req.tenantId,
+          amount: requestedAmount,
+          interest: interest,
+          totalDue: totalDue,
+          status: 'ACTIVE',
+          dueDate: dueDate
+        }
+      });
+
+      // 4. DISBURSE FUNDS (ACID Transaction with Loan creation)
+      await tx.tenant.update({
+        where: { id: req.tenantId },
+        data: {
+          walletBalance: { increment: requestedAmount },
+          // Opcional: Podríamos reducir el creditLimit aquí, pero lo recalculamos dinámicamente en el score
+        }
+      });
+      
+      return loan;
+    });
+
+    res.json({ success: true, loan: result });
+
+  } catch (e: any) {
+    console.error('Lending Error:', e);
+    res.status(400).json({ error: e.message || 'Error procesando préstamo' });
   }
 }) as any);
 
