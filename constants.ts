@@ -97,6 +97,7 @@ model Tenant {
   employees Employee[]
   sales     Sale[]
   shifts    Shift[]
+  b2bOrders B2BOrder[]
 }
 
 // GESTIÓN DE CLIENTES Y RIESGO
@@ -205,6 +206,17 @@ model Sale {
   items         SaleItem[]
   payments      Payment[]
   createdAt     DateTime   @default(now())
+}
+
+// 4. Marketplace B2B (Nuevo)
+model B2BOrder {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  total     Decimal  @db.Decimal(12, 2)
+  items     Json     // Guardamos el carrito como JSON simple
+  status    String   @default("PENDING") // PENDING, SHIPPED, DELIVERED
+  createdAt DateTime @default(now())
 }
 `;
 

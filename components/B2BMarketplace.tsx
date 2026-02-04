@@ -19,6 +19,7 @@ const B2BMarketplace: React.FC = () => {
   const [cart, setCart] = useState<{item: CatalogItem, qty: number}[]>([]);
   const [tenantData, setTenantData] = useState<Tenant | null>(null);
   const [showFinanceModal, setShowFinanceModal] = useState(false);
+  const [processingOrder, setProcessingOrder] = useState(false);
 
   useEffect(() => {
     // 1. Get Tenant Data to auto-select sector
@@ -68,25 +69,50 @@ const B2BMarketplace: React.FC = () => {
     setShowFinanceModal(true);
   };
 
-  const confirmOrder = (method: 'WALLET' | 'BNPL') => {
+  const confirmOrder = async (method: 'WALLET' | 'BNPL') => {
       if (!tenantData) return;
+      setProcessingOrder(true);
 
-      if (method === 'WALLET') {
-          if (cartTotal > tenantData.walletBalance) {
-              alert("❌ Saldo insuficiente en Wallet.");
-              return;
+      const token = localStorage.getItem('nortex_token');
+
+      try {
+          if (method === 'WALLET') {
+              const res = await fetch('http://localhost:3000/api/b2b/order', {
+                  method: 'POST',
+                  headers: { 
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${token}`
+                  },
+                  body: JSON.stringify({
+                      items: cart,
+                      total: cartTotal
+                  })
+              });
+
+              const data = await res.json();
+
+              if (!res.ok) {
+                  throw new Error(data.error || 'Error procesando compra');
+              }
+
+              // Update Local Tenant Data from Server Response
+              setTenantData(data.tenant);
+              localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
+              
+              alert("✅ Pago confirmado con Wallet. Envío en proceso.");
+          } else {
+              // BNPL Logic (Simulation for now, backend endpoint not requested explicitly for BNPL logic yet)
+              alert("🚀 ¡Crédito Aprobado! La orden ha sido procesada. Pagarás la primera cuota en 30 días.");
           }
-          const updatedTenant = { ...tenantData, walletBalance: tenantData.walletBalance - cartTotal };
-          setTenantData(updatedTenant);
-          localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
-          alert("✅ Pago confirmado con Wallet. Envío en proceso.");
-      } else {
-          // BNPL Logic
-          alert("🚀 ¡Crédito Aprobado! La orden ha sido procesada. Pagarás la primera cuota en 30 días.");
+          
+          setCart([]);
+          setShowFinanceModal(false);
+
+      } catch (error: any) {
+          alert(`❌ ${error.message}`);
+      } finally {
+          setProcessingOrder(false);
       }
-      
-      setCart([]);
-      setShowFinanceModal(false);
   };
 
   return (
@@ -246,7 +272,7 @@ const B2BMarketplace: React.FC = () => {
                   </div>
                   <div className="p-6 space-y-4">
                       {/* OPTION 1: WALLET */}
-                      <button onClick={() => confirmOrder('WALLET')} className="w-full bg-slate-50 hover:bg-slate-100 border border-slate-200 p-4 rounded-xl flex items-center justify-between group transition-all">
+                      <button onClick={() => confirmOrder('WALLET')} disabled={processingOrder} className="w-full bg-slate-50 hover:bg-slate-100 border border-slate-200 p-4 rounded-xl flex items-center justify-between group transition-all">
                           <div className="flex items-center gap-3">
                               <div className="p-3 bg-white border border-slate-200 rounded-lg text-slate-600">
                                   <CreditCard size={24} />
@@ -265,7 +291,7 @@ const B2BMarketplace: React.FC = () => {
                       </div>
 
                       {/* OPTION 2: BNPL */}
-                      <button onClick={() => confirmOrder('BNPL')} className="w-full bg-gradient-to-r from-nortex-900 to-nortex-800 text-white p-4 rounded-xl flex items-center justify-between hover:shadow-lg hover:shadow-nortex-900/30 transition-all border border-transparent hover:border-nortex-accent relative overflow-hidden">
+                      <button onClick={() => confirmOrder('BNPL')} disabled={processingOrder} className="w-full bg-gradient-to-r from-nortex-900 to-nortex-800 text-white p-4 rounded-xl flex items-center justify-between hover:shadow-lg hover:shadow-nortex-900/30 transition-all border border-transparent hover:border-nortex-accent relative overflow-hidden">
                           <div className="flex items-center gap-3 relative z-10">
                               <div className="p-3 bg-white/10 rounded-lg text-nortex-accent">
                                   <Banknote size={24} />
@@ -282,7 +308,7 @@ const B2BMarketplace: React.FC = () => {
                       </button>
                       
                       <div className="text-center">
-                        <button onClick={() => setShowFinanceModal(false)} className="text-slate-400 hover:text-slate-600 text-sm font-medium mt-2">Cancelar Operación</button>
+                        <button onClick={() => setShowFinanceModal(false)} disabled={processingOrder} className="text-slate-400 hover:text-slate-600 text-sm font-medium mt-2">Cancelar Operación</button>
                       </div>
                   </div>
               </div>

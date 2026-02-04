@@ -23,8 +23,65 @@ app.use(express.json() as any);
 // (Preserved from previous implementation context)
 
 // ==========================================
-// 🧠 FINTECH INTELLIGENCE (SCORING)
+// 📊 DASHBOARD & INTELLIGENCE (REAL DATA)
 // ==========================================
+
+app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const tenantId = authReq.tenantId;
+
+        // 1. Fetch Tenant Financials
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: tenantId }
+        });
+
+        // 2. Calculate Sales Last 7 Days
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        const recentSales = await prisma.sale.findMany({
+            where: {
+                tenantId: tenantId,
+                createdAt: { gte: sevenDaysAgo }
+            },
+            select: {
+                createdAt: true,
+                total: true
+            }
+        });
+
+        // Group by Day
+        const days = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
+        const chartData = Array.from({ length: 7 }).map((_, i) => {
+            const d = new Date();
+            d.setDate(d.getDate() - (6 - i));
+            const dayName = days[d.getDay()];
+            
+            // Filter sales for this day
+            const dayTotal = recentSales
+                .filter((s: any) => new Date(s.createdAt).toDateString() === d.toDateString())
+                .reduce((sum: number, s: any) => sum + Number(s.total), 0);
+
+            return { name: dayName, sales: dayTotal };
+        });
+
+        // 3. Calculate Active Debt (Loans mock or real debt)
+        // Since we don't have a Loan table in the schema provided in constants yet (it's simulated in frontend currently),
+        // we will check if any customers have debt, or use the tenant's wallet vs limit as a proxy if needed.
+        // For now, let's return the credit info which is real.
+        
+        res.json({
+            tenant: tenant,
+            chartData: chartData,
+            // If we had a Loan model: activeDebt = await prisma.loan.aggregate(...)
+        });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Error fetching dashboard stats' });
+    }
+});
 
 app.get('/api/fintech/score', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
@@ -42,7 +99,6 @@ app.get('/api/fintech/score', authenticate, async (req: any, res: any) => {
 });
 
 app.post('/api/loans/request', authenticate, async (req: any, res: any) => {
-    // ... (Loan logic preserved)
     const authReq = req as AuthRequest;
     const { amount } = req.body;
     try {
@@ -57,6 +113,55 @@ app.post('/api/loans/request', authenticate, async (req: any, res: any) => {
         await prisma.auditLog.create({ data: { tenantId: authReq.tenantId, userId: authReq.userId, action: 'SURPLUS_ALERT', details: `Préstamo: $${amount}` } });
         res.json(updated);
     } catch (error) { res.status(500).json({ error: 'Error' }); }
+});
+
+// ==========================================
+// 🌍 B2B MARKETPLACE (ACID TRANSACTIONS)
+// ==========================================
+
+app.post('/api/b2b/order', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { items, total } = req.body;
+    const orderTotal = Number(total);
+
+    try {
+        // Transaction: Check Balance -> Deduct -> Create Order
+        const result = await prisma.$transaction(async (tx: any) => {
+            // 1. Lock & Fetch Tenant
+            const tenant = await tx.tenant.findUnique({ where: { id: authReq.tenantId } });
+            
+            if (Number(tenant.walletBalance) < orderTotal) {
+                throw new Error('SALDO_INSUFICIENTE');
+            }
+
+            // 2. Deduct Balance
+            const updatedTenant = await tx.tenant.update({
+                where: { id: authReq.tenantId },
+                data: { walletBalance: { decrement: orderTotal } }
+            });
+
+            // 3. Create Order Record
+            const order = await tx.b2BOrder.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    total: orderTotal,
+                    items: items, // Stored as JSON
+                    status: 'PENDING'
+                }
+            });
+
+            return { tenant: updatedTenant, order };
+        });
+
+        res.json(result);
+
+    } catch (error: any) {
+        if (error.message === 'SALDO_INSUFICIENTE') {
+            return res.status(402).json({ error: 'Saldo insuficiente en Wallet.' });
+        }
+        console.error(error);
+        res.status(500).json({ error: 'Error procesando la orden.' });
+    }
 });
 
 // ==========================================
@@ -155,26 +260,44 @@ app.post('/api/suppliers', authenticate, async (req: any, res: any) => {
 
 
 // ==========================================
-// 👔 RRHH: EMPLEADOS & NÓMINA
+// 👔 RRHH: EMPLEADOS & NÓMINA (LÓGICA REAL)
 // ==========================================
 
 app.get('/api/employees', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        // En un caso real, haríamos join con Ventas para calcular salesMonthToDate
+        // Calcular inicio del mes actual
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
         const employees = await prisma.employee.findMany({
             where: { tenantId: authReq.tenantId },
-            orderBy: { firstName: 'asc' }
+            orderBy: { firstName: 'asc' },
+            include: {
+                sales: {
+                    where: {
+                        createdAt: { gte: startOfMonth }
+                    },
+                    select: { total: true }
+                }
+            }
         });
         
-        // Simulación de ventas acumuladas
-        const employeesWithSales = employees.map((e: any) => ({
-            ...e,
-            salesMonthToDate: Math.random() * 5000 // Mock data
-        }));
+        // Calcular total vendido sumando los registros de Sales (Query Real)
+        const employeesWithSales = employees.map((e: any) => {
+            const totalSales = e.sales.reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
+            const { sales, ...employeeData } = e; 
+            return {
+                ...employeeData,
+                salesMonthToDate: totalSales
+            };
+        });
 
         res.json(employeesWithSales);
-    } catch (error) { res.status(500).json({ error: 'Error' }); }
+    } catch (error) { 
+        console.error(error);
+        res.status(500).json({ error: 'Error fetching employees' }); 
+    }
 });
 
 app.post('/api/employees', authenticate, async (req: any, res: any) => {
@@ -256,7 +379,7 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
                     paymentMethod: paymentMethod,
                     customerName: customerName,
                     customerId: customerId || null,
-                    employeeId: employeeId || null, // Registro del vendedor
+                    employeeId: employeeId || null, // Registro del vendedor REAL
                     balance: balance,
                     dueDate: dueDate,
                     shiftId: currentShift.id,

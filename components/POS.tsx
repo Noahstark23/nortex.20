@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { MOCK_PRODUCTS } from '../constants';
-import { Product, CartItem, Shift } from '../types';
-import { ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert } from 'lucide-react';
+import { Product, CartItem, Shift, Employee } from '../types';
+import { ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, Briefcase } from 'lucide-react';
 
 interface Customer {
   id: string;
@@ -23,6 +23,10 @@ const POS: React.FC = () => {
   const [customerSearch, setCustomerSearch] = useState('');
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
 
+  // SALESPERSON STATE (COMMISSIONS)
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
+
   const [showAddModal, setShowAddModal] = useState(false);
   const [newProduct, setNewProduct] = useState({ name: '', sku: '', price: '', costPrice: '', stock: '', category: 'General' });
 
@@ -39,8 +43,9 @@ const POS: React.FC = () => {
   useEffect(() => {
     const initPOS = async () => {
         try {
-            // 1. Check Shift
             const token = localStorage.getItem('nortex_token');
+
+            // 1. Check Shift
             const res = await fetch('http://localhost:3000/api/shifts/current', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -61,7 +66,15 @@ const POS: React.FC = () => {
                 setCustomerList(await custRes.json());
             }
 
-            // 3. Check for Ghost Cart
+            // 3. Fetch Employees for Selector (Commissions)
+            const empRes = await fetch('http://localhost:3000/api/employees', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (empRes.ok) {
+                setEmployees(await empRes.json());
+            }
+
+            // 4. Check for Ghost Cart
             const pendingCart = localStorage.getItem('nortex_pending_cart');
             if (pendingCart) {
                 setCart(JSON.parse(pendingCart));
@@ -186,6 +199,12 @@ const POS: React.FC = () => {
     if (!currentShift) { setShowOpenShift(true); return; }
     if (cart.length === 0) return;
     
+    // Require employee for commission tracking (Strict mode)
+    if (!selectedEmployeeId && employees.length > 0) {
+        alert("⚠️ Selecciona un vendedor para asignar la comisión.");
+        return;
+    }
+
     // Front-end Block
     if (method === 'CREDIT' && isCreditBlocked) {
         alert("⛔ Crédito Denegado: Cliente bloqueado o sin cupo disponible.");
@@ -203,7 +222,8 @@ const POS: React.FC = () => {
                 paymentMethod: method,
                 customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
                 customerId: selectedCustomer?.id,
-                total: grandTotal
+                total: grandTotal,
+                employeeId: selectedEmployeeId // Enviar vendedor
             })
         });
 
@@ -213,6 +233,8 @@ const POS: React.FC = () => {
         setCart([]);
         setSelectedCustomer(null);
         setCustomerSearch('');
+        // We keep the selected employee for convenience in fast-paced retail
+        // setSelectedEmployeeId(''); 
         alert("✅ Venta registrada exitosamente.");
 
     } catch (error: any) {
@@ -444,6 +466,23 @@ const POS: React.FC = () => {
           <h2 className="font-bold text-slate-800 flex items-center gap-2"><ShoppingCart size={20} /> Ticket</h2>
         </div>
         
+        {/* EMPLOYEE SELECTOR (COMMISSIONS) */}
+        <div className="px-4 pt-4">
+             <div className="relative">
+                <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                <select 
+                    className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:border-nortex-500 bg-white appearance-none"
+                    value={selectedEmployeeId}
+                    onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                >
+                    <option value="">Seleccionar Vendedor (Comisión)</option>
+                    {employees.map(emp => (
+                        <option key={emp.id} value={emp.id}>{emp.firstName} {emp.lastName}</option>
+                    ))}
+                </select>
+             </div>
+        </div>
+
         {/* SMART CUSTOMER SEARCH */}
         <div className="px-4 pt-4 relative">
            <div className="relative">

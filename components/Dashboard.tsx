@@ -5,16 +5,6 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { Loan, Tenant } from '../types';
 import { useNavigate } from 'react-router-dom';
 
-const data = [
-  { name: 'Lun', sales: 4000, risk: 240 },
-  { name: 'Mar', sales: 3000, risk: 139 },
-  { name: 'Mie', sales: 2000, risk: 980 },
-  { name: 'Jue', sales: 2780, risk: 390 },
-  { name: 'Vie', sales: 1890, risk: 480 },
-  { name: 'Sab', sales: 2390, risk: 380 },
-  { name: 'Dom', sales: 3490, risk: 430 },
-];
-
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   // State for Lending
@@ -27,22 +17,40 @@ const Dashboard: React.FC = () => {
   const [refreshingScore, setRefreshingScore] = useState(false);
   const [scoreFactors, setScoreFactors] = useState<string[]>([]);
   
+  // Real Chart Data
+  const [chartData, setChartData] = useState<any[]>([]);
+  
   // Smart Restock State
   const [lowStockItems, setLowStockItems] = useState<any[]>([]);
 
-  // Simulation of fetching data
+  // FETCH REAL DATA
   useEffect(() => {
     const initDashboard = async () => {
-       const storedTenant = localStorage.getItem('nortex_tenant_data');
-       if (storedTenant) {
-           const parsed = JSON.parse(storedTenant);
-           setTenantData(parsed);
-       }
-       await refreshCreditScore();
+       const token = localStorage.getItem('nortex_token');
        
-       // AI Prediction Simulation
-       const critical = MOCK_PRODUCTS.filter(p => p.stock < 10);
-       setLowStockItems(critical);
+       try {
+           // 1. Get Dashboard Stats (Real Data)
+           const res = await fetch('http://localhost:3000/api/dashboard/stats', {
+               headers: { 'Authorization': `Bearer ${token}` }
+           });
+           
+           if (res.ok) {
+               const data = await res.json();
+               setTenantData(data.tenant);
+               setChartData(data.chartData);
+               localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
+           }
+
+           // 2. Refresh Credit Score (Algorithm)
+           await refreshCreditScore();
+           
+           // 3. AI Prediction Simulation (Still simulated as we don't have stock history yet in DB fully populated)
+           const critical = MOCK_PRODUCTS.filter(p => p.stock < 10);
+           setLowStockItems(critical);
+
+       } catch (e) {
+           console.error("Dashboard Sync Failed", e);
+       }
     };
     initDashboard();
   }, []);
@@ -353,10 +361,10 @@ const Dashboard: React.FC = () => {
       {/* Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h3 className="text-lg font-bold text-slate-800 mb-6">Flujo de Caja Real</h3>
+          <h3 className="text-lg font-bold text-slate-800 mb-6">Flujo de Caja Real (Últimos 7 días)</h3>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data}>
+              <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dy={10} />
                 <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
