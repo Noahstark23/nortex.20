@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { MOCK_TENANT } from '../constants';
-import { TrendingUp, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, AlertTriangle, Lock } from 'lucide-react';
+import { TrendingUp, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, AlertTriangle, Lock, RefreshCw } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Loan, Tenant } from '../types';
 
@@ -22,19 +22,43 @@ const Dashboard: React.FC = () => {
   const [tenantData, setTenantData] = useState<Tenant>(MOCK_TENANT);
   const [activeLoans, setActiveLoans] = useState<Loan[]>([]);
   const [processingSub, setProcessingSub] = useState(false);
+  const [refreshingScore, setRefreshingScore] = useState(false);
+  const [scoreFactors, setScoreFactors] = useState<string[]>([]);
 
   // Simulation of fetching data
   useEffect(() => {
-    const fetchDashboardData = async () => {
+    const initDashboard = async () => {
        const storedTenant = localStorage.getItem('nortex_tenant_data');
        if (storedTenant) {
            const parsed = JSON.parse(storedTenant);
            setTenantData(parsed);
        }
-       // In a real app we would fetch /api/billing/status here to update the local state with DB truth
+       await refreshCreditScore();
     };
-    fetchDashboardData();
+    initDashboard();
   }, []);
+
+  const refreshCreditScore = async () => {
+      setRefreshingScore(true);
+      try {
+        const token = localStorage.getItem('nortex_token');
+        const res = await fetch('http://localhost:3000/api/fintech/score', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            setTenantData(data.tenant);
+            localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
+            if (data.analysis && data.analysis.factors) {
+                setScoreFactors(data.analysis.factors);
+            }
+        }
+      } catch (e) {
+          console.error("Failed to refresh score", e);
+      } finally {
+          setRefreshingScore(false);
+      }
+  };
 
   const activeDebt = activeLoans.reduce((acc, loan) => acc + Number(loan.totalDue), 0);
 
@@ -220,21 +244,34 @@ const Dashboard: React.FC = () => {
         </div>
 
         {/* Credit Score Card */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 relative overflow-hidden">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 relative overflow-hidden group">
+          <button 
+             onClick={refreshCreditScore} 
+             className={`absolute top-2 right-2 p-1.5 rounded-full hover:bg-slate-100 text-slate-400 ${refreshingScore ? 'animate-spin' : ''}`}
+             title="Recalcular Score"
+          >
+              <RefreshCw size={14} />
+          </button>
           <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 opacity-10 rounded-bl-full"></div>
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Nortex Score</p>
-              <h3 className="text-2xl font-bold text-blue-600">{tenantData.creditScore} <span className="text-sm text-slate-400 font-normal">/ 1000</span></h3>
+              <h3 className="text-2xl font-bold text-blue-600">{tenantData.creditScore} <span className="text-sm text-slate-400 font-normal">/ 850</span></h3>
             </div>
             <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
               <Activity size={20} />
             </div>
           </div>
-          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-            <div className="bg-blue-500 h-full rounded-full" style={{ width: `${tenantData.creditScore / 10}%` }}></div>
+          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mb-2">
+            <div className="bg-blue-500 h-full rounded-full transition-all duration-1000" style={{ width: `${(tenantData.creditScore / 850) * 100}%` }}></div>
           </div>
-          <p className="text-xs text-slate-400 mt-2">Excelente capacidad de pago</p>
+          {scoreFactors.length > 0 ? (
+             <p className="text-[10px] text-slate-500 truncate" title={scoreFactors.join(', ')}>
+                 Factores: {scoreFactors[0]} {scoreFactors.length > 1 && `+${scoreFactors.length - 1}`}
+             </p>
+          ) : (
+             <p className="text-xs text-slate-400">Sin historial suficiente</p>
+          )}
         </div>
 
         {/* Credit Line Card */}
@@ -252,10 +289,11 @@ const Dashboard: React.FC = () => {
           </div>
           <button 
             onClick={() => setShowLoanModal(true)}
-            disabled={tenantData.creditLimit <= 0}
+            disabled={tenantData.creditLimit <= 100 || tenantData.creditScore < 500}
             className="relative z-10 w-full py-2 bg-nortex-accent hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-nortex-900 text-sm font-bold rounded transition-colors flex items-center justify-center gap-2"
           >
-            <Banknote size={16} /> SOLICITAR DESEMBOLSO
+            {tenantData.creditScore < 500 ? <Lock size={16}/> : <Banknote size={16} />} 
+            {tenantData.creditScore < 500 ? 'MEJORA TU SCORE' : 'SOLICITAR DESEMBOLSO'}
           </button>
         </div>
 

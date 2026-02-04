@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { ShieldCheck, AlertTriangle, Eye, Lock } from 'lucide-react';
-import { AuditLog } from '../types';
+import { ShieldCheck, AlertTriangle, Eye, Lock, TrendingUp, TrendingDown, Package, Award } from 'lucide-react';
+import { AuditLog, Product } from '../types';
 import { MOCK_PRODUCTS } from '../constants';
 
 const Reports: React.FC = () => {
@@ -9,10 +9,15 @@ const Reports: React.FC = () => {
     revenue: 0,
     cogs: 0,
     grossProfit: 0,
-    margin: 0
+    margin: 0,
+    avgTicket: 0
   });
   const [audits, setAudits] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // New State for Advanced Reports
+  const [topProducts, setTopProducts] = useState<any[]>([]);
+  const [criticalStock, setCriticalStock] = useState<Product[]>([]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -20,26 +25,58 @@ const Reports: React.FC = () => {
       const token = localStorage.getItem('nortex_token');
       
       try {
-        // 1. Fetch Profit (Mocking backend aggregation for demo, but normally /api/reports/profit)
-        // We'll simulate fetching real data by calling the endpoint in a real scenario
-        // For now, let's keep the mock generation for Profit Chart so it looks good immediately
+        // 1. Generate Advanced Mock Data for Analytics
         const simulatedSales = Array.from({ length: 50 }).map((_, i) => {
           const product = MOCK_PRODUCTS[Math.floor(Math.random() * MOCK_PRODUCTS.length)];
           const qty = Math.floor(Math.random() * 5) + 1;
           return {
             id: `s_${i}`,
+            productId: product.id,
+            productName: product.name,
             revenue: product.price * qty,
             cost: product.costPrice * qty,
-            date: new Date(Date.now() - Math.floor(Math.random() * 30) * 24 * 60 * 60 * 1000).toISOString()
+            price: product.price,
+            costPrice: product.costPrice,
+            qty
           };
         });
+
         const revenue = simulatedSales.reduce((acc, s) => acc + s.revenue, 0);
         const cogs = simulatedSales.reduce((acc, s) => acc + s.cost, 0);
         const grossProfit = revenue - cogs;
-        const margin = (grossProfit / revenue) * 100;
-        setMetrics({ revenue, cogs, grossProfit, margin });
+        const margin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
+        const avgTicket = revenue / simulatedSales.length;
 
-        // 2. Fetch Audit Logs (Real API)
+        setMetrics({ revenue, cogs, grossProfit, margin, avgTicket });
+
+        // Calculate Top Products (By Margin & Volume)
+        const productStats: Record<string, any> = {};
+        simulatedSales.forEach(s => {
+            if (!productStats[s.productId]) {
+                productStats[s.productId] = { 
+                    name: s.productName, 
+                    sold: 0, 
+                    revenue: 0, 
+                    margin: ((s.price - s.costPrice) / s.price) * 100 
+                };
+            }
+            productStats[s.productId].sold += s.qty;
+            productStats[s.productId].revenue += s.revenue;
+        });
+
+        const sortedProducts = Object.values(productStats).sort((a, b) => b.sold - a.sold).slice(0, 5);
+        setTopProducts(sortedProducts);
+
+        // Identify Critical Stock
+        // For simulation, we randomly drop stock of mock products to < 10 for display purposes if all are high
+        const stockAlerts = MOCK_PRODUCTS.map(p => ({
+            ...p,
+            stock: Math.random() > 0.7 ? Math.floor(Math.random() * 8) : p.stock // Randomly simulate low stock
+        })).filter(p => p.stock < 10);
+        
+        setCriticalStock(stockAlerts);
+
+        // 2. Fetch Audit Logs
         const res = await fetch('http://localhost:3000/api/audit-logs', {
             headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -71,7 +108,7 @@ const Reports: React.FC = () => {
         <h1 className="text-3xl font-bold text-nortex-900 flex items-center gap-2">
            <ShieldCheck className="text-nortex-500" /> Inteligencia Financiera
         </h1>
-        <p className="text-slate-500">Reporte de Utilidad Real (Revenue - COGS) y Auditoría.</p>
+        <p className="text-slate-500">Reporte de Utilidad Real, Inventario Crítico y Auditoría.</p>
       </header>
 
       {/* KPI Cards */}
@@ -79,10 +116,11 @@ const Reports: React.FC = () => {
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
            <div className="text-xs font-mono text-slate-500 mb-1">VENTAS TOTALES (REVENUE)</div>
            <div className="text-2xl font-bold text-slate-800">${metrics.revenue.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+           <div className="text-xs text-green-600 flex items-center mt-2"><TrendingUp size={12} className="mr-1"/> +15% vs mes anterior</div>
         </div>
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-           <div className="text-xs font-mono text-slate-500 mb-1">COSTO MERCADERÍA (COGS)</div>
-           <div className="text-2xl font-bold text-red-500">-${metrics.cogs.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+           <div className="text-xs font-mono text-slate-500 mb-1">TICKET PROMEDIO</div>
+           <div className="text-2xl font-bold text-slate-800">${metrics.avgTicket.toFixed(2)}</div>
         </div>
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
            <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-500/10 rounded-bl-full"></div>
@@ -92,13 +130,72 @@ const Reports: React.FC = () => {
         <div className="bg-nortex-900 text-white p-6 rounded-xl shadow-lg">
            <div className="text-xs font-mono text-slate-400 mb-1">MARGEN DE GANANCIA</div>
            <div className="text-3xl font-bold text-nortex-accent">{metrics.margin.toFixed(1)}%</div>
+           <div className="text-xs text-slate-400 mt-1">Target: >25%</div>
         </div>
       </div>
 
-      {/* Charts */}
+      {/* New Analysis Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          {/* Top Products */}
+          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+              <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <Award className="text-yellow-500" size={20} /> Top Productos (Volumen)
+              </h3>
+              <div className="overflow-hidden rounded-lg border border-slate-100">
+                  <table className="w-full text-sm">
+                      <thead className="bg-slate-50 text-slate-500 font-mono text-xs">
+                          <tr>
+                              <th className="px-4 py-2 text-left">Producto</th>
+                              <th className="px-4 py-2 text-right">Vendidos</th>
+                              <th className="px-4 py-2 text-right">Margen</th>
+                          </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                          {topProducts.map((p, i) => (
+                              <tr key={i}>
+                                  <td className="px-4 py-3 font-medium text-slate-700">{p.name}</td>
+                                  <td className="px-4 py-3 text-right text-slate-600">{p.sold} u.</td>
+                                  <td className="px-4 py-3 text-right font-bold text-emerald-600">{p.margin.toFixed(1)}%</td>
+                              </tr>
+                          ))}
+                      </tbody>
+                  </table>
+              </div>
+          </div>
+
+          {/* Critical Inventory */}
+          <div className="bg-white p-6 rounded-xl border border-red-100 shadow-sm relative">
+              <div className="absolute top-0 right-0 p-4 opacity-10">
+                  <AlertTriangle size={64} className="text-red-500" />
+              </div>
+              <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <Package className="text-red-500" size={20} /> Alerta de Stock Crítico
+              </h3>
+              <div className="space-y-3">
+                  {criticalStock.length === 0 ? (
+                      <div className="text-center py-8 text-slate-400">Inventario Saludable.</div>
+                  ) : (
+                      criticalStock.map(p => (
+                          <div key={p.id} className="flex justify-between items-center bg-red-50 p-3 rounded-lg border border-red-100">
+                              <div>
+                                  <div className="font-bold text-slate-800">{p.name}</div>
+                                  <div className="text-xs text-red-500 font-mono">SKU: {p.sku}</div>
+                              </div>
+                              <div className="text-right">
+                                  <span className="text-2xl font-bold text-red-600">{p.stock}</span>
+                                  <div className="text-xs text-red-400">Unidades</div>
+                              </div>
+                          </div>
+                      ))
+                  )}
+              </div>
+          </div>
+      </div>
+
+      {/* Main Charts */}
+      <div className="grid grid-cols-1 gap-6 mb-8">
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-           <h3 className="font-bold text-slate-800 mb-6">Tendencia de Rentabilidad</h3>
+           <h3 className="font-bold text-slate-800 mb-6">Tendencia de Rentabilidad (Último Mes)</h3>
            <div className="h-72">
              <ResponsiveContainer width="100%" height="100%">
                <BarChart data={chartData}>
@@ -113,19 +210,6 @@ const Reports: React.FC = () => {
                </BarChart>
              </ResponsiveContainer>
            </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center items-center text-center">
-           <div className="w-48 h-48 rounded-full border-[16px] border-slate-100 flex items-center justify-center relative mb-4">
-              <div className="absolute inset-0 rounded-full border-[16px] border-nortex-accent border-t-transparent rotate-45"></div>
-              <div>
-                  <div className="text-3xl font-bold text-slate-800">OK</div>
-                  <div className="text-xs text-slate-400">Salud Financiera</div>
-              </div>
-           </div>
-           <p className="text-sm text-slate-500 max-w-xs">
-              Tu margen del <span className="font-bold text-slate-800">{metrics.margin.toFixed(1)}%</span> es saludable para el sector Ferretería (Promedio: 25-30%).
-           </p>
         </div>
       </div>
 

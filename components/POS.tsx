@@ -1,14 +1,28 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Shift } from '../types';
-import { ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2 } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert } from 'lucide-react';
+
+interface Customer {
+  id: string;
+  name: string;
+  creditLimit: number;
+  currentDebt: number;
+  isBlocked: boolean;
+}
 
 const POS: React.FC = () => {
   const [products, setProducts] = useState<Product[]>(MOCK_PRODUCTS);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [processing, setProcessing] = useState(false);
-  const [customerName, setCustomerName] = useState('');
+  
+  // CUSTOMER STATE (SMART SEARCH)
+  const [customerList, setCustomerList] = useState<Customer[]>([]);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+
   const [showAddModal, setShowAddModal] = useState(false);
   const [newProduct, setNewProduct] = useState({ name: '', sku: '', price: '', costPrice: '', stock: '', category: 'General' });
 
@@ -36,20 +50,23 @@ const POS: React.FC = () => {
                 setShowOpenShift(false);
             } else {
                 setCurrentShift(null);
-                setShowOpenShift(true); // Enforce Shift Open
+                setShowOpenShift(true); 
             }
 
-            // 2. Check for Ghost Cart (Growth Hack)
+            // 2. Fetch Customers for Dropdown
+            const custRes = await fetch('http://localhost:3000/api/customers', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (custRes.ok) {
+                setCustomerList(await custRes.json());
+            }
+
+            // 3. Check for Ghost Cart
             const pendingCart = localStorage.getItem('nortex_pending_cart');
             if (pendingCart) {
-                const parsedCart = JSON.parse(pendingCart);
-                setCart(parsedCart);
+                setCart(JSON.parse(pendingCart));
                 localStorage.removeItem('nortex_pending_cart');
-                // Optional: If shift is closed, show a welcome message about opening shift to complete the demo sale
-                if (!data) {
-                    // Logic already sets ShowOpenShift true
-                    alert("👋 ¡Bienvenido! Abre tu caja para completar la venta de la demo.");
-                }
+                if (!data) alert("👋 ¡Bienvenido! Abre tu caja para completar la venta de la demo.");
             }
 
         } catch (e) {
@@ -76,16 +93,11 @@ const POS: React.FC = () => {
             body: JSON.stringify({ initialCash: parseFloat(initialCash) })
         });
         const data = await res.json();
-        
         if (!res.ok) throw new Error(data.error);
-        
         setCurrentShift(data);
         setShowOpenShift(false);
-    } catch (error: any) {
-        alert(error.message);
-    } finally {
-        setShiftLoading(false);
-    }
+    } catch (error: any) { alert(error.message); } 
+    finally { setShiftLoading(false); }
   };
 
   const handleCloseShift = async (e: React.FormEvent) => {
@@ -98,25 +110,15 @@ const POS: React.FC = () => {
         const res = await fetch('http://localhost:3000/api/shifts/close', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-            body: JSON.stringify({ 
-                shiftId: currentShift.id,
-                declaredCash: parseFloat(declaredCash) 
-            })
+            body: JSON.stringify({ shiftId: currentShift.id, declaredCash: parseFloat(declaredCash) })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
 
-        // Show Report
-        setShiftReport({ 
-            expected: parseFloat(data.systemExpectedCash), 
-            diff: parseFloat(data.difference) 
-        });
-        setCurrentShift(null); // Local state update
-    } catch (error: any) {
-        alert(error.message);
-    } finally {
-        setShiftLoading(false);
-    }
+        setShiftReport({ expected: parseFloat(data.systemExpectedCash), diff: parseFloat(data.difference) });
+        setCurrentShift(null); 
+    } catch (error: any) { alert(error.message); } 
+    finally { setShiftLoading(false); }
   };
 
   const finishClose = () => {
@@ -124,15 +126,12 @@ const POS: React.FC = () => {
       setShiftReport(null);
       setDeclaredCash('');
       setInitialCash('');
-      setShowOpenShift(true); // Force next open
+      setShowOpenShift(true); 
   };
   // -------------------
 
   const addToCart = (product: Product) => {
-    if (!currentShift) {
-        setShowOpenShift(true);
-        return;
-    }
+    if (!currentShift) { setShowOpenShift(true); return; }
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
       if (existing) return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
@@ -146,7 +145,6 @@ const POS: React.FC = () => {
     setCart(prev => prev.map(item => {
       if (item.id === id) {
         const newQty = Math.max(1, item.quantity + delta);
-        if (delta > 0 && newQty > item.stock) return item;
         return { ...item, quantity: newQty };
       }
       return item;
@@ -155,9 +153,7 @@ const POS: React.FC = () => {
 
   const handleCreateProduct = (e: React.FormEvent) => {
     e.preventDefault();
-    // In real app, call API
     const price = parseFloat(newProduct.price);
-    const cost = parseFloat(newProduct.costPrice);
     const stock = parseInt(newProduct.stock);
     if (isNaN(price) || isNaN(stock)) return;
 
@@ -167,7 +163,7 @@ const POS: React.FC = () => {
       sku: newProduct.sku || `SKU-${Math.floor(Math.random() * 10000)}`,
       category: newProduct.category,
       price,
-      costPrice: cost || price * 0.7, 
+      costPrice: parseFloat(newProduct.costPrice) || price * 0.7, 
       stock,
     };
     setProducts(prev => [productToAdd, ...prev]);
@@ -178,12 +174,23 @@ const POS: React.FC = () => {
   const tax = total * 0.18; 
   const grandTotal = total + tax;
 
+  // SMART CREDIT CHECK
+  const isCreditBlocked = useMemo(() => {
+      if (!selectedCustomer) return true; // Cannot use credit without customer
+      if (selectedCustomer.isBlocked) return true;
+      if (selectedCustomer.currentDebt + grandTotal > selectedCustomer.creditLimit) return true;
+      return false;
+  }, [selectedCustomer, grandTotal]);
+
   const handleCheckout = async (method: 'CASH' | 'CARD' | 'QR' | 'CREDIT') => {
-    if (!currentShift) {
-        setShowOpenShift(true);
+    if (!currentShift) { setShowOpenShift(true); return; }
+    if (cart.length === 0) return;
+    
+    // Front-end Block
+    if (method === 'CREDIT' && isCreditBlocked) {
+        alert("⛔ Crédito Denegado: Cliente bloqueado o sin cupo disponible.");
         return;
     }
-    if (cart.length === 0) return;
     
     setProcessing(true);
     try {
@@ -194,7 +201,8 @@ const POS: React.FC = () => {
             body: JSON.stringify({
                 items: cart.map(c => ({ id: c.id, quantity: c.quantity, price: c.price, costPrice: c.costPrice })),
                 paymentMethod: method,
-                customerName: customerName || 'Cliente General',
+                customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
+                customerId: selectedCustomer?.id,
                 total: grandTotal
             })
         });
@@ -203,7 +211,8 @@ const POS: React.FC = () => {
         if (!res.ok) throw new Error(data.error);
 
         setCart([]);
-        setCustomerName('');
+        setSelectedCustomer(null);
+        setCustomerSearch('');
         alert("✅ Venta registrada exitosamente.");
 
     } catch (error: any) {
@@ -219,14 +228,14 @@ const POS: React.FC = () => {
     return products.filter(p => terms.every(term => `${p.name} ${p.sku} ${p.category}`.toLowerCase().includes(term)));
   }, [searchTerm, products]);
 
-  if (shiftLoading) {
-      return <div className="h-full flex items-center justify-center text-slate-500 gap-2"><Loader2 className="animate-spin"/> Cargando Sistema...</div>;
-  }
+  const filteredCustomers = customerList.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()));
+
+  if (shiftLoading) return <div className="h-full flex items-center justify-center text-slate-500 gap-2"><Loader2 className="animate-spin"/> Cargando Sistema...</div>;
 
   return (
     <div className="flex h-full bg-slate-100 relative">
       
-      {/* HEADER BAR FOR SHIFT CONTROL */}
+      {/* HEADER BAR */}
       <div className="absolute top-0 right-0 left-0 h-14 bg-white border-b border-slate-200 px-6 flex justify-between items-center z-10">
          <div className="font-bold text-nortex-900 flex items-center gap-2">
             PUNTO DE VENTA
@@ -241,7 +250,7 @@ const POS: React.FC = () => {
          )}
       </div>
 
-      {/* --- OPEN SHIFT MODAL (BLOCKING) --- */}
+      {/* --- OPEN SHIFT MODAL --- */}
       {showOpenShift && (
           <div className="absolute inset-0 z-50 bg-slate-900/90 backdrop-blur flex items-center justify-center p-4">
               <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-8 text-center animate-in zoom-in duration-200">
@@ -390,7 +399,7 @@ const POS: React.FC = () => {
         </div>
       )}
 
-      {/* LEFT: PRODUCTS (MT-14 due to Header) */}
+      {/* LEFT: PRODUCTS */}
       <div className="flex-1 flex flex-col p-6 mt-14 overflow-hidden">
         <div className="mb-6 flex gap-3">
           <div className="relative flex-1">
@@ -429,18 +438,74 @@ const POS: React.FC = () => {
         </div>
       </div>
 
-      {/* RIGHT: CART (MT-14 due to Header) */}
+      {/* RIGHT: CART DRAWER */}
       <div className="w-96 bg-white border-l border-slate-200 flex flex-col shadow-xl z-10 mt-14">
-        {/* Same Cart UI as before */}
         <div className="p-5 border-b border-slate-100 bg-slate-50">
           <h2 className="font-bold text-slate-800 flex items-center gap-2"><ShoppingCart size={20} /> Ticket</h2>
         </div>
-        <div className="px-4 pt-4">
+        
+        {/* SMART CUSTOMER SEARCH */}
+        <div className="px-4 pt-4 relative">
            <div className="relative">
               <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-              <input type="text" placeholder="Cliente (Opcional)" className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-lg outline-none" value={customerName} onChange={(e) => setCustomerName(e.target.value)}/>
+              <input 
+                  type="text" 
+                  placeholder="Seleccionar Cliente..." 
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:border-nortex-500" 
+                  value={selectedCustomer ? selectedCustomer.name : customerSearch}
+                  onChange={(e) => {
+                      setCustomerSearch(e.target.value);
+                      setSelectedCustomer(null);
+                      setShowCustomerDropdown(true);
+                  }}
+                  onFocus={() => setShowCustomerDropdown(true)}
+              />
+              {selectedCustomer && (
+                  <button onClick={() => {setSelectedCustomer(null); setCustomerSearch('');}} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500">
+                      <X size={14}/>
+                  </button>
+              )}
            </div>
+
+           {/* Dropdown Results */}
+           {showCustomerDropdown && !selectedCustomer && (
+               <div className="absolute left-4 right-4 top-12 bg-white border border-slate-200 rounded-lg shadow-lg z-20 max-h-48 overflow-y-auto">
+                   {filteredCustomers.length === 0 ? (
+                       <div className="p-3 text-xs text-slate-400 text-center">No encontrado. Ir a Clientes para crear.</div>
+                   ) : (
+                       filteredCustomers.map(c => (
+                           <button 
+                                key={c.id} 
+                                onClick={() => {
+                                    setSelectedCustomer(c);
+                                    setShowCustomerDropdown(false);
+                                }}
+                                className="w-full text-left p-2 hover:bg-slate-50 text-sm border-b border-slate-50 last:border-0"
+                           >
+                               <div className="font-bold text-slate-800">{c.name}</div>
+                               <div className="text-[10px] text-slate-500">Límite: ${c.creditLimit} | Deuda: ${c.currentDebt}</div>
+                           </button>
+                       ))
+                   )}
+               </div>
+           )}
+
+           {/* Credit Status Indicator */}
+           {selectedCustomer && (
+               <div className={`mt-2 p-2 rounded text-xs border ${selectedCustomer.isBlocked ? 'bg-red-50 border-red-200 text-red-700' : 'bg-blue-50 border-blue-100 text-blue-700'}`}>
+                   <div className="flex justify-between font-bold mb-1">
+                       <span>{selectedCustomer.isBlocked ? 'BLOQUEADO' : 'Línea Disponible:'}</span>
+                       {!selectedCustomer.isBlocked && <span>${(selectedCustomer.creditLimit - selectedCustomer.currentDebt).toFixed(2)}</span>}
+                   </div>
+                   {!selectedCustomer.isBlocked && (
+                       <div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden">
+                           <div className="bg-blue-500 h-full" style={{ width: `${Math.min((selectedCustomer.currentDebt/selectedCustomer.creditLimit)*100, 100)}%` }}></div>
+                       </div>
+                   )}
+               </div>
+           )}
         </div>
+
         <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
           {cart.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
@@ -468,9 +533,22 @@ const POS: React.FC = () => {
         </div>
         <div className="p-5 border-t border-slate-100 bg-slate-50">
           <div className="flex justify-between text-xl font-bold text-nortex-900 mb-4 pt-2 border-t border-slate-200"><span>Total</span><span>${grandTotal.toFixed(2)}</span></div>
-          <button onClick={() => handleCheckout('CASH')} disabled={!currentShift} className="w-full py-4 bg-nortex-900 text-white font-bold rounded-xl hover:bg-nortex-800 disabled:bg-slate-400 flex justify-center items-center gap-2">
-            {processing ? <Loader2 className="animate-spin" /> : <><Banknote size={20}/> COBRAR</>}
-          </button>
+          
+          <div className="grid grid-cols-2 gap-2 mb-2">
+               <button onClick={() => handleCheckout('CASH')} disabled={!currentShift || processing} className="py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 text-sm flex items-center justify-center gap-1">
+                   <DollarSign size={16}/> EFECTIVO
+               </button>
+               <button 
+                   onClick={() => handleCheckout('CREDIT')} 
+                   disabled={!currentShift || processing || isCreditBlocked} 
+                   className={`py-3 font-bold rounded-lg text-sm flex items-center justify-center gap-1 ${isCreditBlocked ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-nortex-900 text-white hover:bg-nortex-800'}`}
+               >
+                   {isCreditBlocked ? <Ban size={16}/> : <ShieldAlert size={16}/>} CRÉDITO
+               </button>
+          </div>
+          {isCreditBlocked && selectedCustomer && (
+              <p className="text-[10px] text-center text-red-500 font-bold">⚠️ Crédito no disponible: Límite excedido o cliente bloqueado.</p>
+          )}
         </div>
       </div>
     </div>

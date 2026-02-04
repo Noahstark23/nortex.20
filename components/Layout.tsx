@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -10,7 +10,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
 
   const handleLogout = () => {
-    // Clear Auth Data
     localStorage.removeItem('nortex_token');
     localStorage.removeItem('nortex_user');
     localStorage.removeItem('nortex_tenant_id');
@@ -19,16 +18,18 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const navItems = [
     { path: '/app/pos', label: 'Punto de Venta', icon: ShoppingCart },
-    { path: '/app/receivables', label: 'Crédito y Cobranza', icon: Wallet },
-    { path: '/app/dashboard', label: 'Panel Financiero', icon: LayoutGrid },
-    { path: '/app/reports', label: 'Reportes y Utilidad', icon: PieChart }, // NEW LINK
+    { path: '/app/clients', label: 'Clientes (CRM)', icon: Users }, // NEW
+    { path: '/app/suppliers', label: 'Proveedores', icon: Truck }, // NEW
+    { path: '/app/quotations', label: 'Cotizaciones', icon: FileText },
+    { path: '/app/receivables', label: 'Cobranza', icon: Wallet },
+    { path: '/app/dashboard', label: 'Finanzas', icon: LayoutGrid },
     { path: '/app/marketplace', label: 'Mercado B2B', icon: ShoppingBag },
-    { path: '/app/blueprint', label: 'Modo Dios (CTO)', icon: Code2 },
+    { path: '/app/reports', label: 'Reportes', icon: PieChart },
+    { path: '/app/blueprint', label: 'Modo Dios', icon: Code2 },
   ];
 
   return (
     <div className="flex h-screen w-screen bg-slate-900 overflow-hidden">
-      {/* Sidebar */}
       <aside className="w-20 lg:w-64 bg-nortex-900 border-r border-nortex-800 flex flex-col justify-between transition-all duration-300">
         <div>
           <div className="h-16 flex items-center justify-center lg:justify-start lg:px-6 border-b border-nortex-800">
@@ -38,7 +39,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <span className="font-mono font-bold text-white hidden lg:block tracking-widest">NORTEX</span>
           </div>
 
-          <nav className="p-2 lg:p-4 space-y-2 mt-4">
+          <nav className="p-2 lg:p-4 space-y-1 mt-4 overflow-y-auto max-h-[calc(100vh-160px)] custom-scrollbar">
             {navItems.map((item) => {
               const Icon = item.icon;
               return (
@@ -71,7 +72,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className="flex-1 overflow-hidden relative">
         {children}
       </main>

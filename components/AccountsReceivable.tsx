@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { MOCK_DEBTORS } from '../constants';
 import { Sale, Payment } from '../types';
-import { DollarSign, Calendar, User, CheckCircle, Clock, ChevronRight, ChevronDown, Wallet } from 'lucide-react';
+import { DollarSign, Calendar, User, CheckCircle, Clock, ChevronRight, ChevronDown, Wallet, MessageCircle, Send } from 'lucide-react';
 
 const AccountsReceivable: React.FC = () => {
   // In a real app, fetch from API. Here we use Mock Data + Local State manipulation
@@ -60,6 +60,12 @@ const AccountsReceivable: React.FC = () => {
     } else {
       alert(`✅ Abono registrado. Restan $${newBalance.toFixed(2)}`);
     }
+  };
+
+  const handleNotifyWhatsapp = (sale: Sale) => {
+      const message = `Hola ${sale.customerName}, tu deuda en Ferretería Nortex es de $${sale.balance.toFixed(2)}. Paga aquí: link.nortex.com/pago/${sale.id}`;
+      const url = `https://wa.me/?text=${encodeURIComponent(message)}`;
+      window.open(url, '_blank');
   };
 
   return (
@@ -128,8 +134,18 @@ const AccountsReceivable: React.FC = () => {
                   <h1 className="text-2xl font-bold text-nortex-900">{selectedSale.customerName}</h1>
                   <span className="text-sm text-slate-400 font-mono">ID Venta: {selectedSale.id}</span>
                 </div>
-                <div className={`px-3 py-1 rounded-full text-sm font-bold ${selectedSale.status === 'PAID' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                  {selectedSale.status === 'PAID' ? 'COMPLETADO' : 'PENDIENTE DE PAGO'}
+                <div className="flex gap-2">
+                   {selectedSale.status !== 'PAID' && (
+                       <button 
+                         onClick={() => handleNotifyWhatsapp(selectedSale)}
+                         className="px-3 py-1 bg-green-100 hover:bg-green-200 text-green-700 rounded-lg flex items-center gap-2 font-bold text-sm transition-colors"
+                       >
+                           <MessageCircle size={16} /> WhatsApp
+                       </button>
+                   )}
+                   <div className={`px-3 py-1 rounded-full text-sm font-bold flex items-center ${selectedSale.status === 'PAID' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                    {selectedSale.status === 'PAID' ? 'COMPLETADO' : 'PENDIENTE DE PAGO'}
+                   </div>
                 </div>
               </div>
 

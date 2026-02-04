@@ -1,3 +1,4 @@
+
 export interface Product {
   id: string;
   name: string;
@@ -106,7 +107,21 @@ export interface MarketplaceOrder {
   itemsCount: number;
 }
 
-export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS' | 'MARKETPLACE' | 'REPORTS';
+// B2B QUOTATIONS
+export interface Quotation {
+  id: string;
+  customerName: string;
+  customerRuc?: string;
+  items: CartItem[];
+  subtotal: number;
+  tax: number;
+  total: number;
+  createdAt: string;
+  expiresAt: string;
+  status: 'DRAFT' | 'SENT' | 'CONVERTED' | 'EXPIRED';
+}
+
+export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS' | 'MARKETPLACE' | 'REPORTS' | 'QUOTATIONS';
 
 export interface BlueprintFile {
   name: string;

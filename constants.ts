@@ -93,26 +93,43 @@ model Tenant {
   id        String @id @default(uuid())
   name      String
   customers Customer[]
+  suppliers Supplier[]
   sales     Sale[]
   shifts    Shift[]
 }
 
+// GESTIÓN DE CLIENTES Y RIESGO
 model Customer {
   id          String   @id @default(uuid())
   tenantId    String
-  tenant      Tenant   @relation(fields: [tenantId], references: [id])
   name        String
-  dni         String?  // RUC o DNI
+  taxId       String?  // DNI o RUC
   phone       String?
-  address     String?
   email       String?
+  address     String?
   
-  // Fintech Core
-  creditLimit Decimal  @default(0.00) @db.Decimal(12, 2)
-  currentDebt Decimal  @default(0.00) @db.Decimal(12, 2)
-  score       Int      @default(500) // 0 - 1000 Scoring interno
+  // FINTECH CORE
+  creditLimit Decimal  @default(0)   @db.Decimal(12, 2)
+  currentDebt Decimal  @default(0)   @db.Decimal(12, 2)
+  isBlocked   Boolean  @default(false)
   
   sales       Sale[]
+  payments    Payment[] // Historial de pagos
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  createdAt   DateTime  @default(now())
+}
+
+// GESTIÓN DE PROVEEDORES
+model Supplier {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  contactName String?
+  phone       String?
+  email       String?
+  category    String?  // Ej: "Cementos", "Pinturas"
+  
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
   createdAt   DateTime @default(now())
 }
 
@@ -138,16 +155,15 @@ model Sale {
   tenantId      String
   tenant        Tenant     @relation(fields: [tenantId], references: [id])
   
-  // Relación con Cliente (Opcional para ventas al contado anónimas)
   customerId    String?
   customer      Customer?  @relation(fields: [customerId], references: [id])
-  customerName  String?    // Snapshot del nombre por si se borra el cliente
+  customerName  String?    
   
   total         Decimal    @db.Decimal(12, 2)
-  balance       Decimal    @default(0.00) @db.Decimal(12, 2) // Lo que falta pagar
-  status        String     @default("COMPLETED") // COMPLETED, CREDIT_PENDING, PAID
-  paymentMethod String     // CASH, CREDIT, CARD, QR
-  dueDate       DateTime?  // Fecha límite pago crédito
+  balance       Decimal    @default(0.00) @db.Decimal(12, 2)
+  status        String     @default("COMPLETED") 
+  paymentMethod String     
+  dueDate       DateTime?  
   
   shiftId       String?
   shift         Shift?     @relation(fields: [shiftId], references: [id])
@@ -157,17 +173,20 @@ model Sale {
   createdAt     DateTime   @default(now())
 }
 
-// 4. Pagos y Abonos
+// 4. Pagos
 model Payment {
   id            String   @id @default(uuid())
   saleId        String
   sale          Sale     @relation(fields: [saleId], references: [id])
+  
+  // Opcional: Relacionar pago directo a cliente sin venta específica (Abono a capital)
+  customerId    String?
+  customer      Customer? @relation(fields: [customerId], references: [id])
+
   amount        Decimal  @db.Decimal(12, 2)
   date          DateTime @default(now())
-  method        String   // CASH, TRANSFER
-  
-  // Auditoría
-  collectedBy   String   // userId del cobrador
+  method        String   
+  collectedBy   String   
 }
 
 model SaleItem {
@@ -185,12 +204,12 @@ export const BLUEPRINTS: BlueprintFile[] = [
     name: 'schema.prisma',
     language: 'prisma',
     content: PRISMA_SCHEMA_CODE,
-    description: 'Schema Bancario: Clientes, Scoring, Deudas y Pagos.'
+    description: 'Schema Bancario: Clientes (CRM), Proveedores (SRM) y Scoring.'
   },
   {
     name: 'server.ts',
     language: 'typescript',
-    content: '// Endpoints Bancarios: /api/customers, /api/sales (Risk Engine), /api/payments',
-    description: 'Backend: Lógica de Riesgo Crediticio y Cobranza.'
+    content: '// Endpoints Bancarios y de Gestión',
+    description: 'Backend: Lógica de Negocio y Endpoints API.'
   },
 ];
