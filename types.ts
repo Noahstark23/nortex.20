@@ -2,6 +2,7 @@ export interface Product {
   id: string;
   name: string;
   price: number;
+  costPrice: number; // NUEVO: Para calcular utilidad real
   stock: number;
   sku: string;
   category: string;
@@ -14,14 +15,34 @@ export interface CartItem extends Product {
 export interface Tenant {
   id: string;
   name: string;
-  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE'; // Expanded types
+  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE'; 
   creditScore: number;
   creditLimit: number;
   walletBalance: number;
-  // Billing Fields
   subscriptionStatus: 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
   plan: string;
-  trialEndsAt: string; // ISO Date
+  trialEndsAt: string; 
+}
+
+export interface Shift {
+  id: string;
+  userId: string;
+  tenantId: string;
+  startTime: string;
+  endTime?: string;
+  initialCash: number;
+  finalCashDeclared?: number;
+  systemExpectedCash?: number;
+  difference?: number; // declared - expected
+  status: 'OPEN' | 'CLOSED';
+}
+
+export interface AuditLog {
+  id: string;
+  action: 'DELETE_SALE' | 'ADJUST_STOCK' | 'CLOSE_SHIFT' | 'OPEN_SHIFT';
+  details: string;
+  userId: string;
+  timestamp: string;
 }
 
 export interface Payment {
@@ -39,9 +60,10 @@ export interface Sale {
   status: 'COMPLETED' | 'CREDIT_PENDING' | 'PAID';
   paymentMethod: 'CASH' | 'CARD' | 'QR' | 'CREDIT';
   customerName?: string;
-  balance: number; // Lo que falta por pagar
+  balance: number; 
   dueDate?: string;
   payments?: Payment[];
+  shiftId?: string; // Link to Shift
 }
 
 export interface Loan {
@@ -54,7 +76,6 @@ export interface Loan {
   createdAt: string;
 }
 
-// MARKETPLACE B2B ENTITIES
 export interface Wholesaler {
   id: string;
   name: string;
@@ -65,11 +86,11 @@ export interface Wholesaler {
 export interface CatalogItem {
   id: string;
   wholesalerId: string;
-  wholesalerName: string; // Denormalized for UI
+  wholesalerName: string; 
   name: string;
   description: string;
   sku: string;
-  price: number; // Wholesale price
+  price: number; 
   category: string;
   sector: string;
   imageUrl?: string;
@@ -85,7 +106,7 @@ export interface MarketplaceOrder {
   itemsCount: number;
 }
 
-export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS' | 'MARKETPLACE';
+export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS' | 'MARKETPLACE' | 'REPORTS';
 
 export interface BlueprintFile {
   name: string;
