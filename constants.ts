@@ -88,51 +88,86 @@ export const MOCK_CATALOG: CatalogItem[] = [
 
 const PRISMA_SCHEMA_CODE = `// ESTO VA EN: /backend/prisma/schema.prisma
 
-// 1. Control de Turnos (Caja)
+// 1. Tenants & Clientes (Core Bancario)
+model Tenant {
+  id        String @id @default(uuid())
+  name      String
+  customers Customer[]
+  sales     Sale[]
+  shifts    Shift[]
+}
+
+model Customer {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  name        String
+  dni         String?  // RUC o DNI
+  phone       String?
+  address     String?
+  email       String?
+  
+  // Fintech Core
+  creditLimit Decimal  @default(0.00) @db.Decimal(12, 2)
+  currentDebt Decimal  @default(0.00) @db.Decimal(12, 2)
+  score       Int      @default(500) // 0 - 1000 Scoring interno
+  
+  sales       Sale[]
+  createdAt   DateTime @default(now())
+}
+
+// 2. Control de Turnos
 model Shift {
   id               String    @id @default(uuid())
   tenantId         String
   tenant           Tenant    @relation(fields: [tenantId], references: [id])
-  userId           String    // El cajero responsable
+  userId           String
   startTime        DateTime  @default(now())
   endTime          DateTime?
   initialCash      Decimal   @db.Decimal(10, 2)
   finalCashDeclared Decimal? @db.Decimal(10, 2)
   systemExpectedCash Decimal? @db.Decimal(10, 2)
-  difference       Decimal?  @db.Decimal(10, 2) // (Actual - Expected)
-  status           String    @default("OPEN") // OPEN, CLOSED
-  
-  sales            Sale[]    
+  difference       Decimal?  @db.Decimal(10, 2)
+  status           String    @default("OPEN") 
+  sales            Sale[]
 }
 
-// 2. Auditoría (El "Chismoso")
-model AuditLog {
-  id        String   @id @default(uuid())
-  tenantId  String
-  tenant    Tenant   @relation(fields: [tenantId], references: [id])
-  userId    String
-  action    String   // DELETE_SALE, CLOSE_SHIFT_DISCREPANCY, THEFT_ALERT
-  details   String   @db.Text
-  ipAddress String?
-  createdAt DateTime @default(now())
-}
-
-// 3. Ventas
+// 3. Ventas y Crédito
 model Sale {
   id            String     @id @default(uuid())
-  total         Decimal    @db.Decimal(12, 2)
-  status        String     @default("COMPLETED")
-  paymentMethod String     
-  balance       Decimal    @default(0.00) @db.Decimal(12, 2)
-  
-  shiftId       String?    // Link al turno
-  shift         Shift?     @relation(fields: [shiftId], references: [id])
-
   tenantId      String
   tenant        Tenant     @relation(fields: [tenantId], references: [id])
+  
+  // Relación con Cliente (Opcional para ventas al contado anónimas)
+  customerId    String?
+  customer      Customer?  @relation(fields: [customerId], references: [id])
+  customerName  String?    // Snapshot del nombre por si se borra el cliente
+  
+  total         Decimal    @db.Decimal(12, 2)
+  balance       Decimal    @default(0.00) @db.Decimal(12, 2) // Lo que falta pagar
+  status        String     @default("COMPLETED") // COMPLETED, CREDIT_PENDING, PAID
+  paymentMethod String     // CASH, CREDIT, CARD, QR
+  dueDate       DateTime?  // Fecha límite pago crédito
+  
+  shiftId       String?
+  shift         Shift?     @relation(fields: [shiftId], references: [id])
+
   items         SaleItem[]
   payments      Payment[]
   createdAt     DateTime   @default(now())
+}
+
+// 4. Pagos y Abonos
+model Payment {
+  id            String   @id @default(uuid())
+  saleId        String
+  sale          Sale     @relation(fields: [saleId], references: [id])
+  amount        Decimal  @db.Decimal(12, 2)
+  date          DateTime @default(now())
+  method        String   // CASH, TRANSFER
+  
+  // Auditoría
+  collectedBy   String   // userId del cobrador
 }
 
 model SaleItem {
@@ -142,7 +177,7 @@ model SaleItem {
   productId     String
   quantity      Int
   priceAtSale   Decimal  @db.Decimal(10, 2)
-  costAtSale    Decimal  @db.Decimal(10, 2) // COGS tracking
+  costAtSale    Decimal  @db.Decimal(10, 2)
 }`;
 
 export const BLUEPRINTS: BlueprintFile[] = [
@@ -150,12 +185,12 @@ export const BLUEPRINTS: BlueprintFile[] = [
     name: 'schema.prisma',
     language: 'prisma',
     content: PRISMA_SCHEMA_CODE,
-    description: 'Schema Operativo: Turnos, Auditoría y Costos.'
+    description: 'Schema Bancario: Clientes, Scoring, Deudas y Pagos.'
   },
   {
     name: 'server.ts',
     language: 'typescript',
-    content: '// Endpoints para /api/shifts, /api/sales (con validación) y /api/audit-logs',
-    description: 'Backend: Lógica de Control de Caja y Prevención de Robos.'
+    content: '// Endpoints Bancarios: /api/customers, /api/sales (Risk Engine), /api/payments',
+    description: 'Backend: Lógica de Riesgo Crediticio y Cobranza.'
   },
 ];
