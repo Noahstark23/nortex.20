@@ -21,10 +21,11 @@ const POS: React.FC = () => {
   const [shiftReport, setShiftReport] = useState<{expected: number, diff: number} | null>(null);
   const [shiftLoading, setShiftLoading] = useState(true);
 
-  // Check Shift Status on Mount
+  // Check Shift Status on Mount AND PENDING GUEST CART
   useEffect(() => {
-    const checkShift = async () => {
+    const initPOS = async () => {
         try {
+            // 1. Check Shift
             const token = localStorage.getItem('nortex_token');
             const res = await fetch('http://localhost:3000/api/shifts/current', {
                 headers: { 'Authorization': `Bearer ${token}` }
@@ -37,6 +38,20 @@ const POS: React.FC = () => {
                 setCurrentShift(null);
                 setShowOpenShift(true); // Enforce Shift Open
             }
+
+            // 2. Check for Ghost Cart (Growth Hack)
+            const pendingCart = localStorage.getItem('nortex_pending_cart');
+            if (pendingCart) {
+                const parsedCart = JSON.parse(pendingCart);
+                setCart(parsedCart);
+                localStorage.removeItem('nortex_pending_cart');
+                // Optional: If shift is closed, show a welcome message about opening shift to complete the demo sale
+                if (!data) {
+                    // Logic already sets ShowOpenShift true
+                    alert("👋 ¡Bienvenido! Abre tu caja para completar la venta de la demo.");
+                }
+            }
+
         } catch (e) {
             console.error("Failed to check shift", e);
             setShowOpenShift(true);
@@ -44,7 +59,7 @@ const POS: React.FC = () => {
             setShiftLoading(false);
         }
     };
-    checkShift();
+    initPOS();
   }, []);
 
   // --- SHIFT LOGIC (API) ---
