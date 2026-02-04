@@ -13,6 +13,7 @@ import Login from './components/Login';
 import QuotationManager from './components/QuotationManager';
 import Clients from './components/Clients';
 import Suppliers from './components/Suppliers';
+import HRM from './components/HRM';
 
 const ProtectedApp = () => {
   const token = localStorage.getItem('nortex_token');
@@ -25,6 +26,7 @@ const ProtectedApp = () => {
         <Route path="pos" element={<POS />} />
         <Route path="clients" element={<Clients />} />
         <Route path="suppliers" element={<Suppliers />} />
+        <Route path="hr" element={<HRM />} />
         <Route path="quotations" element={<QuotationManager />} />
         <Route path="receivables" element={<AccountsReceivable />} />
         <Route path="reports" element={<Reports />} />

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { MOCK_TENANT } from '../constants';
-import { TrendingUp, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, AlertTriangle, Lock, RefreshCw } from 'lucide-react';
+import { MOCK_TENANT, MOCK_PRODUCTS } from '../constants';
+import { TrendingUp, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, Lock, RefreshCw, ShoppingCart, ArrowRight } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Loan, Tenant } from '../types';
+import { useNavigate } from 'react-router-dom';
 
 const data = [
   { name: 'Lun', sales: 4000, risk: 240 },
@@ -15,6 +16,7 @@ const data = [
 ];
 
 const Dashboard: React.FC = () => {
+  const navigate = useNavigate();
   // State for Lending
   const [showLoanModal, setShowLoanModal] = useState(false);
   const [loanAmount, setLoanAmount] = useState('');
@@ -24,6 +26,9 @@ const Dashboard: React.FC = () => {
   const [processingSub, setProcessingSub] = useState(false);
   const [refreshingScore, setRefreshingScore] = useState(false);
   const [scoreFactors, setScoreFactors] = useState<string[]>([]);
+  
+  // Smart Restock State
+  const [lowStockItems, setLowStockItems] = useState<any[]>([]);
 
   // Simulation of fetching data
   useEffect(() => {
@@ -34,6 +39,10 @@ const Dashboard: React.FC = () => {
            setTenantData(parsed);
        }
        await refreshCreditScore();
+       
+       // AI Prediction Simulation
+       const critical = MOCK_PRODUCTS.filter(p => p.stock < 10);
+       setLowStockItems(critical);
     };
     initDashboard();
   }, []);
@@ -223,6 +232,33 @@ const Dashboard: React.FC = () => {
            </span>
         </div>
       </header>
+
+      {/* --- SMART RESTOCK AI WIDGET --- */}
+      {lowStockItems.length > 0 && (
+          <div className="mb-8 bg-nortex-900 rounded-xl p-6 shadow-xl border border-nortex-800 relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-nortex-accent blur-[100px] opacity-10"></div>
+              <div className="relative z-10 flex flex-col md:flex-row justify-between items-center gap-6">
+                  <div className="flex items-start gap-4">
+                      <div className="p-3 bg-red-500/20 text-red-400 rounded-lg animate-pulse">
+                          <AlertCircle size={32} />
+                      </div>
+                      <div>
+                          <h3 className="text-xl font-bold text-white mb-1">Nortex AI: Alerta de Quiebre de Stock</h3>
+                          <p className="text-slate-400 text-sm max-w-xl">
+                              Tus ventas proyectan que <span className="text-white font-bold">{lowStockItems[0].name}</span> se agotará en <span className="text-red-400 font-bold">48 horas</span>. 
+                              {lowStockItems.length > 1 && ` Además, otros ${lowStockItems.length - 1} productos están en nivel crítico.`}
+                          </p>
+                      </div>
+                  </div>
+                  <button 
+                      onClick={() => navigate('/app/marketplace')}
+                      className="px-6 py-3 bg-white text-nortex-900 font-bold rounded-lg hover:bg-nortex-accent transition-colors flex items-center gap-2 shadow-lg"
+                  >
+                      <ShoppingCart size={18} /> Pedir Reabastecimiento <ArrowRight size={18} />
+                  </button>
+              </div>
+          </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">

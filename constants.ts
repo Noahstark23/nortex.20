@@ -16,9 +16,9 @@ export const MOCK_PRODUCTS: Product[] = [
   { id: '1', name: 'Cemento Sol 50kg', price: 28.50, costPrice: 24.00, stock: 150, sku: 'CEM-001', category: 'Construcción' },
   { id: '2', name: 'Fierro 1/2" x 9m', price: 45.00, costPrice: 38.50, stock: 300, sku: 'FIE-002', category: 'Construcción' },
   { id: '3', name: 'Ladrillo King Kong', price: 1.20, costPrice: 0.80, stock: 5000, sku: 'LAD-003', category: 'Albañilería' },
-  { id: '4', name: 'Pintura Latek 1GL', price: 35.00, costPrice: 22.00, stock: 45, sku: 'PIN-004', category: 'Acabados' },
+  { id: '4', name: 'Pintura Latek 1GL', price: 35.00, costPrice: 22.00, stock: 8, sku: 'PIN-004', category: 'Acabados' }, // Stock bajo para demo
   { id: '5', name: 'Tubo PVC 4"', price: 18.90, costPrice: 12.50, stock: 120, sku: 'TUB-005', category: 'Gasfitería' },
-  { id: '6', name: 'Martillo Carpintero', price: 25.00, costPrice: 15.00, stock: 15, sku: 'HER-006', category: 'Herramientas' },
+  { id: '6', name: 'Martillo Carpintero', price: 25.00, costPrice: 15.00, stock: 5, sku: 'HER-006', category: 'Herramientas' }, // Stock bajo
   { id: '7', name: 'Thinner Acrílico', price: 12.00, costPrice: 8.00, stock: 40, sku: 'QUI-007', category: 'Químicos' },
 ];
 
@@ -94,6 +94,7 @@ model Tenant {
   name      String
   customers Customer[]
   suppliers Supplier[]
+  employees Employee[]
   sales     Sale[]
   shifts    Shift[]
 }
@@ -114,7 +115,7 @@ model Customer {
   isBlocked   Boolean  @default(false)
   
   sales       Sale[]
-  payments    Payment[] // Historial de pagos
+  payments    Payment[]
   tenant      Tenant    @relation(fields: [tenantId], references: [id])
   createdAt   DateTime  @default(now())
 }
@@ -127,10 +128,40 @@ model Supplier {
   contactName String?
   phone       String?
   email       String?
-  category    String?  // Ej: "Cementos", "Pinturas"
+  category    String?  
   
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
   createdAt   DateTime @default(now())
+}
+
+// --- MÓDULO RRHH (WOLF PACK) ---
+model Employee {
+  id             String   @id @default(uuid())
+  tenantId       String
+  firstName      String
+  lastName       String
+  role           String   @default("VENDEDOR") // MANAGER, VENDEDOR, BODEGA
+  baseSalary     Decimal  @default(0)
+  commissionRate Decimal  @default(0) // Ej: 0.05 para 5%
+  phone          String?
+  hiredAt        DateTime @default(now())
+  
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  sales          Sale[]   // Relación inversa
+  payrolls       Payroll[]
+}
+
+model Payroll {
+  id          String   @id @default(uuid())
+  employeeId  String
+  periodStart DateTime
+  periodEnd   DateTime
+  baseSalary  Decimal
+  commissions Decimal  // Calculado automático
+  totalPaid   Decimal
+  status      String   @default("PENDING") // PAID, PENDING
+  
+  employee    Employee @relation(fields: [employeeId], references: [id])
 }
 
 // 2. Control de Turnos
@@ -159,6 +190,9 @@ model Sale {
   customer      Customer?  @relation(fields: [customerId], references: [id])
   customerName  String?    
   
+  employeeId    String?    // Vendedor responsable
+  employee      Employee?  @relation(fields: [employeeId], references: [id])
+
   total         Decimal    @db.Decimal(12, 2)
   balance       Decimal    @default(0.00) @db.Decimal(12, 2)
   status        String     @default("COMPLETED") 
@@ -172,39 +206,14 @@ model Sale {
   payments      Payment[]
   createdAt     DateTime   @default(now())
 }
-
-// 4. Pagos
-model Payment {
-  id            String   @id @default(uuid())
-  saleId        String
-  sale          Sale     @relation(fields: [saleId], references: [id])
-  
-  // Opcional: Relacionar pago directo a cliente sin venta específica (Abono a capital)
-  customerId    String?
-  customer      Customer? @relation(fields: [customerId], references: [id])
-
-  amount        Decimal  @db.Decimal(12, 2)
-  date          DateTime @default(now())
-  method        String   
-  collectedBy   String   
-}
-
-model SaleItem {
-  id            String   @id @default(uuid())
-  saleId        String
-  sale          Sale     @relation(fields: [saleId], references: [id])
-  productId     String
-  quantity      Int
-  priceAtSale   Decimal  @db.Decimal(10, 2)
-  costAtSale    Decimal  @db.Decimal(10, 2)
-}`;
+`;
 
 export const BLUEPRINTS: BlueprintFile[] = [
   {
     name: 'schema.prisma',
     language: 'prisma',
     content: PRISMA_SCHEMA_CODE,
-    description: 'Schema Bancario: Clientes (CRM), Proveedores (SRM) y Scoring.'
+    description: 'Schema Bancario: Clientes (CRM), Proveedores (SRM), RRHH y Scoring.'
   },
   {
     name: 'server.ts',

@@ -65,6 +65,7 @@ export interface Sale {
   dueDate?: string;
   payments?: Payment[];
   shiftId?: string; // Link to Shift
+  employeeId?: string; // NUEVO: Para comisiones
 }
 
 export interface Loan {
@@ -128,4 +129,27 @@ export interface BlueprintFile {
   language: string;
   content: string;
   description: string;
+}
+
+// HRM - RECURSOS HUMANOS
+export interface Employee {
+  id: string;
+  firstName: string;
+  lastName: string;
+  role: 'MANAGER' | 'VENDEDOR' | 'BODEGA';
+  baseSalary: number;
+  commissionRate: number; // 0.05 = 5%
+  salesMonthToDate: number;
+  phone?: string;
+}
+
+export interface Payroll {
+  id: string;
+  employeeName: string;
+  period: string;
+  baseSalary: number;
+  salesAmount: number;
+  commissionAmount: number;
+  totalPaid: number;
+  status: 'PAID' | 'PENDING';
 }

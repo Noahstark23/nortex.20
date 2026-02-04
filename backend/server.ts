@@ -155,12 +155,55 @@ app.post('/api/suppliers', authenticate, async (req: any, res: any) => {
 
 
 // ==========================================
+// 👔 RRHH: EMPLEADOS & NÓMINA
+// ==========================================
+
+app.get('/api/employees', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        // En un caso real, haríamos join con Ventas para calcular salesMonthToDate
+        const employees = await prisma.employee.findMany({
+            where: { tenantId: authReq.tenantId },
+            orderBy: { firstName: 'asc' }
+        });
+        
+        // Simulación de ventas acumuladas
+        const employeesWithSales = employees.map((e: any) => ({
+            ...e,
+            salesMonthToDate: Math.random() * 5000 // Mock data
+        }));
+
+        res.json(employeesWithSales);
+    } catch (error) { res.status(500).json({ error: 'Error' }); }
+});
+
+app.post('/api/employees', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { firstName, lastName, role, baseSalary, commissionRate, phone } = req.body;
+    try {
+        const employee = await prisma.employee.create({
+            data: { 
+                tenantId: authReq.tenantId, 
+                firstName, 
+                lastName, 
+                role, 
+                baseSalary: Number(baseSalary), 
+                commissionRate: Number(commissionRate), 
+                phone 
+            }
+        });
+        res.json(employee);
+    } catch (error) { res.status(500).json({ error: 'Error' }); }
+});
+
+
+// ==========================================
 // 🛒 MÓDULO DE VENTAS (CON MOTOR DE RIESGO)
 // ==========================================
 
 app.post('/api/sales', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { items, paymentMethod, customerId, customerName, total } = req.body; 
+    const { items, paymentMethod, customerId, customerName, total, employeeId } = req.body; 
     const saleTotal = Number(total);
 
     try {
@@ -213,6 +256,7 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
                     paymentMethod: paymentMethod,
                     customerName: customerName,
                     customerId: customerId || null,
+                    employeeId: employeeId || null, // Registro del vendedor
                     balance: balance,
                     dueDate: dueDate,
                     shiftId: currentShift.id,
