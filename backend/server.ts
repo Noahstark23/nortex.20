@@ -36,7 +36,7 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             where: { id: tenantId }
         });
 
-        // 2. Calculate Sales Last 7 Days
+        // 2. Calculate Sales Last 7 Days (Real DB Query)
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
@@ -65,16 +65,10 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
 
             return { name: dayName, sales: dayTotal };
         });
-
-        // 3. Calculate Active Debt (Loans mock or real debt)
-        // Since we don't have a Loan table in the schema provided in constants yet (it's simulated in frontend currently),
-        // we will check if any customers have debt, or use the tenant's wallet vs limit as a proxy if needed.
-        // For now, let's return the credit info which is real.
         
         res.json({
             tenant: tenant,
             chartData: chartData,
-            // If we had a Loan model: activeDebt = await prisma.loan.aggregate(...)
         });
 
     } catch (error) {
@@ -116,7 +110,7 @@ app.post('/api/loans/request', authenticate, async (req: any, res: any) => {
 });
 
 // ==========================================
-// 🌍 B2B MARKETPLACE (ACID TRANSACTIONS)
+// 🌍 B2B MARKETPLACE (ACID TRANSACTIONS + EXPENSE TRACKING)
 // ==========================================
 
 app.post('/api/b2b/order', authenticate, async (req: any, res: any) => {
@@ -125,7 +119,7 @@ app.post('/api/b2b/order', authenticate, async (req: any, res: any) => {
     const orderTotal = Number(total);
 
     try {
-        // Transaction: Check Balance -> Deduct -> Create Order
+        // Transaction: Check Balance -> Deduct -> Create Order -> Register Expense
         const result = await prisma.$transaction(async (tx: any) => {
             // 1. Lock & Fetch Tenant
             const tenant = await tx.tenant.findUnique({ where: { id: authReq.tenantId } });
@@ -140,13 +134,23 @@ app.post('/api/b2b/order', authenticate, async (req: any, res: any) => {
                 data: { walletBalance: { decrement: orderTotal } }
             });
 
-            // 3. Create Order Record
+            // 3. Create Marketplace Order Record
             const order = await tx.b2BOrder.create({
                 data: {
                     tenantId: authReq.tenantId,
                     total: orderTotal,
                     items: items, // Stored as JSON
                     status: 'PENDING'
+                }
+            });
+
+            // 4. Register Expense (Accounting)
+            await tx.expense.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    amount: orderTotal,
+                    description: `Orden B2B #${order.id.slice(0,8)}`,
+                    category: 'INVENTORY'
                 }
             });
 
@@ -260,36 +264,40 @@ app.post('/api/suppliers', authenticate, async (req: any, res: any) => {
 
 
 // ==========================================
-// 👔 RRHH: EMPLEADOS & NÓMINA (LÓGICA REAL)
+// 👔 RRHH: EMPLEADOS & NÓMINA (LÓGICA REAL AGREGADA)
 // ==========================================
 
 app.get('/api/employees', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        // Calcular inicio del mes actual
         const now = new Date();
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
+        // 1. Fetch Employees
         const employees = await prisma.employee.findMany({
             where: { tenantId: authReq.tenantId },
-            orderBy: { firstName: 'asc' },
-            include: {
-                sales: {
-                    where: {
-                        createdAt: { gte: startOfMonth }
-                    },
-                    select: { total: true }
-                }
+            orderBy: { firstName: 'asc' }
+        });
+
+        // 2. Aggregate Sales by Employee (SQL Optimized)
+        const salesStats = await prisma.sale.groupBy({
+            by: ['employeeId'],
+            where: {
+                tenantId: authReq.tenantId,
+                createdAt: { gte: startOfMonth },
+                employeeId: { not: null }
+            },
+            _sum: {
+                total: true
             }
         });
-        
-        // Calcular total vendido sumando los registros de Sales (Query Real)
-        const employeesWithSales = employees.map((e: any) => {
-            const totalSales = e.sales.reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
-            const { sales, ...employeeData } = e; 
+
+        // 3. Map Results
+        const employeesWithSales = employees.map((emp: any) => {
+            const stat = salesStats.find((s: any) => s.employeeId === emp.id);
             return {
-                ...employeeData,
-                salesMonthToDate: totalSales
+                ...emp,
+                salesMonthToDate: stat?._sum.total ? Number(stat._sum.total) : 0
             };
         });
 

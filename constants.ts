@@ -98,6 +98,7 @@ model Tenant {
   sales     Sale[]
   shifts    Shift[]
   b2bOrders B2BOrder[]
+  expenses  Expense[]
 }
 
 // GESTIÓN DE CLIENTES Y RIESGO
@@ -217,6 +218,17 @@ model B2BOrder {
   items     Json     // Guardamos el carrito como JSON simple
   status    String   @default("PENDING") // PENDING, SHIPPED, DELIVERED
   createdAt DateTime @default(now())
+}
+
+// 5. Gastos Operativos (Nuevo)
+model Expense {
+  id          String   @id @default(uuid())
+  tenantId    String
+  amount      Decimal  @db.Decimal(12, 2)
+  description String   // Ej: "Compra Marketplace: Cemento"
+  category    String   @default("INVENTORY") // INVENTORY, RENT, UTILITIES
+  date        DateTime @default(now())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
 }
 `;
 
