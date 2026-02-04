@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Shift } from '../types';
-import { ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2 } from 'lucide-react';
 
 const POS: React.FC = () => {
   const [products, setProducts] = useState<Product[]>(MOCK_PRODUCTS);
@@ -19,51 +19,89 @@ const POS: React.FC = () => {
   const [initialCash, setInitialCash] = useState('');
   const [declaredCash, setDeclaredCash] = useState('');
   const [shiftReport, setShiftReport] = useState<{expected: number, diff: number} | null>(null);
+  const [shiftLoading, setShiftLoading] = useState(true);
 
-  // Load Shift from LocalStorage
+  // Check Shift Status on Mount
   useEffect(() => {
-    const savedShift = localStorage.getItem('nortex_current_shift');
-    if (savedShift) {
-        setCurrentShift(JSON.parse(savedShift));
-    } else {
-        setShowOpenShift(true); // Force open shift if none exists
-    }
+    const checkShift = async () => {
+        try {
+            const token = localStorage.getItem('nortex_token');
+            const res = await fetch('http://localhost:3000/api/shifts/current', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await res.json();
+            if (res.ok && data) {
+                setCurrentShift(data);
+                setShowOpenShift(false);
+            } else {
+                setCurrentShift(null);
+                setShowOpenShift(true); // Enforce Shift Open
+            }
+        } catch (e) {
+            console.error("Failed to check shift", e);
+            setShowOpenShift(true);
+        } finally {
+            setShiftLoading(false);
+        }
+    };
+    checkShift();
   }, []);
 
-  // --- SHIFT LOGIC ---
-  const handleOpenShift = (e: React.FormEvent) => {
+  // --- SHIFT LOGIC (API) ---
+  const handleOpenShift = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!initialCash) return;
+    setShiftLoading(true);
     
-    const newShift: Shift = {
-        id: `sh_${Date.now()}`,
-        userId: 'user_01',
-        tenantId: 'tnt_01',
-        startTime: new Date().toISOString(),
-        initialCash: parseFloat(initialCash),
-        status: 'OPEN'
-    };
-    
-    setCurrentShift(newShift);
-    localStorage.setItem('nortex_current_shift', JSON.stringify(newShift));
-    setShowOpenShift(false);
+    try {
+        const token = localStorage.getItem('nortex_token');
+        const res = await fetch('http://localhost:3000/api/shifts/open', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ initialCash: parseFloat(initialCash) })
+        });
+        const data = await res.json();
+        
+        if (!res.ok) throw new Error(data.error);
+        
+        setCurrentShift(data);
+        setShowOpenShift(false);
+    } catch (error: any) {
+        alert(error.message);
+    } finally {
+        setShiftLoading(false);
+    }
   };
 
-  const handleCloseShift = (e: React.FormEvent) => {
+  const handleCloseShift = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentShift || !declaredCash) return;
+    setShiftLoading(true);
 
-    // Simulate Backend Calculation
-    // In real app, we fetch sales by shiftId. Here we assume all sales in session count for demo.
-    // We'll simulate expected cash as Initial + Random Sales for demo effect
-    const expected = currentShift.initialCash + 500; // Mock sales
-    const declared = parseFloat(declaredCash);
-    const diff = declared - expected;
+    try {
+        const token = localStorage.getItem('nortex_token');
+        const res = await fetch('http://localhost:3000/api/shifts/close', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ 
+                shiftId: currentShift.id,
+                declaredCash: parseFloat(declaredCash) 
+            })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
 
-    setShiftReport({ expected, diff });
-    localStorage.removeItem('nortex_current_shift'); // Clear session
-    setCurrentShift(null);
-    // Modal stays open to show report
+        // Show Report
+        setShiftReport({ 
+            expected: parseFloat(data.systemExpectedCash), 
+            diff: parseFloat(data.difference) 
+        });
+        setCurrentShift(null); // Local state update
+    } catch (error: any) {
+        alert(error.message);
+    } finally {
+        setShiftLoading(false);
+    }
   };
 
   const finishClose = () => {
@@ -71,21 +109,14 @@ const POS: React.FC = () => {
       setShiftReport(null);
       setDeclaredCash('');
       setInitialCash('');
-      setShowOpenShift(true); // Force open new shift
+      setShowOpenShift(true); // Force next open
   };
   // -------------------
 
   const addToCart = (product: Product) => {
     if (!currentShift) {
-        alert("⚠️ Debes abrir caja antes de vender.");
         setShowOpenShift(true);
         return;
-    }
-    const existingInCart = cart.find(item => item.id === product.id);
-    const currentQuantity = existingInCart ? existingInCart.quantity : 0;
-    if (currentQuantity + 1 > product.stock) {
-      alert(`Stock insuficiente para ${product.name}.`);
-      return;
     }
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
@@ -109,6 +140,7 @@ const POS: React.FC = () => {
 
   const handleCreateProduct = (e: React.FormEvent) => {
     e.preventDefault();
+    // In real app, call API
     const price = parseFloat(newProduct.price);
     const cost = parseFloat(newProduct.costPrice);
     const stock = parseInt(newProduct.stock);
@@ -120,7 +152,7 @@ const POS: React.FC = () => {
       sku: newProduct.sku || `SKU-${Math.floor(Math.random() * 10000)}`,
       category: newProduct.category,
       price,
-      costPrice: cost || price * 0.7, // Default cost if missing
+      costPrice: cost || price * 0.7, 
       stock,
     };
     setProducts(prev => [productToAdd, ...prev]);
@@ -131,20 +163,39 @@ const POS: React.FC = () => {
   const tax = total * 0.18; 
   const grandTotal = total + tax;
 
-  const handleCheckout = (method: 'CASH' | 'CARD' | 'QR' | 'CREDIT') => {
-    if (!currentShift) return;
-    if (cart.length === 0) return;
-    if (method === 'CREDIT' && !customerName.trim()) {
-      alert("⛔ ERROR: Para ventas a CRÉDITO debe ingresar cliente.");
-      return;
+  const handleCheckout = async (method: 'CASH' | 'CARD' | 'QR' | 'CREDIT') => {
+    if (!currentShift) {
+        setShowOpenShift(true);
+        return;
     }
+    if (cart.length === 0) return;
+    
     setProcessing(true);
-    setTimeout(() => {
-      setProcessing(false);
-      setCart([]);
-      setCustomerName('');
-      alert("✅ Venta procesada y registrada en el Turno Actual.");
-    }, 1000);
+    try {
+        const token = localStorage.getItem('nortex_token');
+        const res = await fetch('http://localhost:3000/api/sales', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({
+                items: cart.map(c => ({ id: c.id, quantity: c.quantity, price: c.price, costPrice: c.costPrice })),
+                paymentMethod: method,
+                customerName: customerName || 'Cliente General',
+                total: grandTotal
+            })
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+
+        setCart([]);
+        setCustomerName('');
+        alert("✅ Venta registrada exitosamente.");
+
+    } catch (error: any) {
+        alert(error.message);
+    } finally {
+        setProcessing(false);
+    }
   };
 
   const filteredProducts = useMemo(() => {
@@ -152,6 +203,10 @@ const POS: React.FC = () => {
     const terms = searchTerm.toLowerCase().split(' ').filter(t => t.length > 0);
     return products.filter(p => terms.every(term => `${p.name} ${p.sku} ${p.category}`.toLowerCase().includes(term)));
   }, [searchTerm, products]);
+
+  if (shiftLoading) {
+      return <div className="h-full flex items-center justify-center text-slate-500 gap-2"><Loader2 className="animate-spin"/> Cargando Sistema...</div>;
+  }
 
   return (
     <div className="flex h-full bg-slate-100 relative">
@@ -171,15 +226,15 @@ const POS: React.FC = () => {
          )}
       </div>
 
-      {/* --- OPEN SHIFT MODAL --- */}
+      {/* --- OPEN SHIFT MODAL (BLOCKING) --- */}
       {showOpenShift && (
           <div className="absolute inset-0 z-50 bg-slate-900/90 backdrop-blur flex items-center justify-center p-4">
-              <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-8 text-center">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-8 text-center animate-in zoom-in duration-200">
                   <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
                       <Banknote size={32} />
                   </div>
                   <h2 className="text-2xl font-bold text-slate-800 mb-2">Apertura de Caja</h2>
-                  <p className="text-slate-500 text-sm mb-6">Ingresa el fondo de efectivo inicial para comenzar a vender.</p>
+                  <p className="text-slate-500 text-sm mb-6">El sistema está bloqueado. Ingresa el fondo inicial.</p>
                   <form onSubmit={handleOpenShift}>
                       <input 
                         type="number" 
@@ -190,8 +245,8 @@ const POS: React.FC = () => {
                         onChange={e => setInitialCash(e.target.value)}
                         required
                       />
-                      <button type="submit" className="w-full py-3 bg-nortex-900 text-white font-bold rounded-lg hover:bg-nortex-800">
-                          ABRIR TURNO
+                      <button type="submit" disabled={shiftLoading} className="w-full py-3 bg-nortex-900 text-white font-bold rounded-lg hover:bg-nortex-800">
+                          {shiftLoading ? 'ABRIENDO...' : 'ABRIR TURNO'}
                       </button>
                   </form>
               </div>
@@ -201,7 +256,7 @@ const POS: React.FC = () => {
       {/* --- CLOSE SHIFT MODAL --- */}
       {showCloseShift && (
           <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur flex items-center justify-center p-4">
-              <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
                   {!shiftReport ? (
                       <div className="p-8">
                           <h2 className="text-xl font-bold text-slate-800 mb-1">Cierre de Caja (Ciego)</h2>
@@ -222,7 +277,9 @@ const POS: React.FC = () => {
                               </div>
                               <div className="flex gap-3">
                                   <button type="button" onClick={() => setShowCloseShift(false)} className="flex-1 py-3 text-slate-600 font-medium hover:bg-slate-50 rounded-lg">Cancelar</button>
-                                  <button type="submit" className="flex-1 py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700">REALIZAR CORTE Z</button>
+                                  <button type="submit" disabled={shiftLoading} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700">
+                                      {shiftLoading ? 'CERRANDO...' : 'REALIZAR CORTE Z'}
+                                  </button>
                               </div>
                           </form>
                       </div>
@@ -234,7 +291,7 @@ const POS: React.FC = () => {
                               </div>
                               <h2 className="text-2xl font-bold text-slate-800">Resumen de Cierre</h2>
                               <p className={`text-lg font-bold mt-2 ${shiftReport.diff >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                  {shiftReport.diff >= 0 ? 'Cuadre Exitoso' : 'Faltante de Caja'}
+                                  {shiftReport.diff >= 0 ? 'Cuadre Exitoso' : 'Discrepancia de Efectivo'}
                               </p>
                           </div>
                           <div className="p-8 space-y-4">
@@ -397,7 +454,7 @@ const POS: React.FC = () => {
         <div className="p-5 border-t border-slate-100 bg-slate-50">
           <div className="flex justify-between text-xl font-bold text-nortex-900 mb-4 pt-2 border-t border-slate-200"><span>Total</span><span>${grandTotal.toFixed(2)}</span></div>
           <button onClick={() => handleCheckout('CASH')} disabled={!currentShift} className="w-full py-4 bg-nortex-900 text-white font-bold rounded-xl hover:bg-nortex-800 disabled:bg-slate-400 flex justify-center items-center gap-2">
-            {processing ? '...' : <><Banknote size={20}/> COBRAR</>}
+            {processing ? <Loader2 className="animate-spin" /> : <><Banknote size={20}/> COBRAR</>}
           </button>
         </div>
       </div>

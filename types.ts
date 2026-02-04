@@ -39,7 +39,7 @@ export interface Shift {
 
 export interface AuditLog {
   id: string;
-  action: 'DELETE_SALE' | 'ADJUST_STOCK' | 'CLOSE_SHIFT' | 'OPEN_SHIFT';
+  action: 'DELETE_SALE' | 'ADJUST_STOCK' | 'CLOSE_SHIFT' | 'OPEN_SHIFT' | 'THEFT_ALERT' | 'SURPLUS_ALERT';
   details: string;
   userId: string;
   timestamp: string;

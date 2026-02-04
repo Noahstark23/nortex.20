@@ -88,61 +88,74 @@ export const MOCK_CATALOG: CatalogItem[] = [
 
 const PRISMA_SCHEMA_CODE = `// ESTO VA EN: /backend/prisma/schema.prisma
 
-model Tenant {
-  id            String    @id @default(uuid())
-  // ... (campos anteriores)
-  shifts        Shift[]
-  auditLogs     AuditLog[]
-}
-
+// 1. Control de Turnos (Caja)
 model Shift {
-  id                String    @id @default(uuid())
-  tenantId          String
-  tenant            Tenant    @relation(fields: [tenantId], references: [id])
-  userId            String    // Cajero
-  startTime         DateTime  @default(now())
-  endTime           DateTime?
-  initialCash       Decimal   @db.Decimal(10, 2)
-  finalCashDeclared Decimal?  @db.Decimal(10, 2)
+  id               String    @id @default(uuid())
+  tenantId         String
+  tenant           Tenant    @relation(fields: [tenantId], references: [id])
+  userId           String    // El cajero responsable
+  startTime        DateTime  @default(now())
+  endTime          DateTime?
+  initialCash      Decimal   @db.Decimal(10, 2)
+  finalCashDeclared Decimal? @db.Decimal(10, 2)
   systemExpectedCash Decimal? @db.Decimal(10, 2)
-  difference        Decimal?  @db.Decimal(10, 2)
-  status            String    @default("OPEN") // OPEN, CLOSED
-  sales             Sale[]
+  difference       Decimal?  @db.Decimal(10, 2) // (Actual - Expected)
+  status           String    @default("OPEN") // OPEN, CLOSED
+  
+  sales            Sale[]    
 }
 
+// 2. Auditoría (El "Chismoso")
+model AuditLog {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  userId    String
+  action    String   // DELETE_SALE, CLOSE_SHIFT_DISCREPANCY, THEFT_ALERT
+  details   String   @db.Text
+  ipAddress String?
+  createdAt DateTime @default(now())
+}
+
+// 3. Ventas
 model Sale {
-  // ... (campos anteriores)
-  shiftId       String?
-  shift         Shift?    @relation(fields: [shiftId], references: [id])
+  id            String     @id @default(uuid())
+  total         Decimal    @db.Decimal(12, 2)
+  status        String     @default("COMPLETED")
+  paymentMethod String     
+  balance       Decimal    @default(0.00) @db.Decimal(12, 2)
+  
+  shiftId       String?    // Link al turno
+  shift         Shift?     @relation(fields: [shiftId], references: [id])
+
+  tenantId      String
+  tenant        Tenant     @relation(fields: [tenantId], references: [id])
+  items         SaleItem[]
+  payments      Payment[]
+  createdAt     DateTime   @default(now())
 }
 
 model SaleItem {
-  // ...
-  costAtSale    Decimal   @db.Decimal(10, 2) // COGS tracking
-}
-
-model AuditLog {
-  id          String    @id @default(uuid())
-  tenantId    String
-  tenant      Tenant    @relation(fields: [tenantId], references: [id])
-  userId      String
-  action      String    // DELETE_SALE, CLOSE_SHIFT, etc
-  details     String    @db.Text
-  timestamp   DateTime  @default(now())
-}
-`;
+  id            String   @id @default(uuid())
+  saleId        String
+  sale          Sale     @relation(fields: [saleId], references: [id])
+  productId     String
+  quantity      Int
+  priceAtSale   Decimal  @db.Decimal(10, 2)
+  costAtSale    Decimal  @db.Decimal(10, 2) // COGS tracking
+}`;
 
 export const BLUEPRINTS: BlueprintFile[] = [
   {
     name: 'schema.prisma',
     language: 'prisma',
     content: PRISMA_SCHEMA_CODE,
-    description: 'Schema B2B + Operaciones: Shifts, Audits & Cost Tracking.'
+    description: 'Schema Operativo: Turnos, Auditoría y Costos.'
   },
   {
     name: 'server.ts',
     language: 'typescript',
-    content: '// Endpoints para /api/shifts y /api/reports/profit',
-    description: 'Backend: Lógica de Cierre de Caja y Cálculo de Utilidad.'
+    content: '// Endpoints para /api/shifts, /api/sales (con validación) y /api/audit-logs',
+    description: 'Backend: Lógica de Control de Caja y Prevención de Robos.'
   },
 ];
