@@ -25,5 +25,5 @@ RUN npm run build
 # 8. Puerto en el que corre la app
 EXPOSE 3000
 
-# 9. Comando para arrancar en producción
-CMD ["npm", "run", "start"]
+# 9. Comando para arrancar en producción (con migración automática)
+CMD ["sh", "-c", "npx prisma db push --schema=backend/prisma/schema.prisma && npm run start"]
