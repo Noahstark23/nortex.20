@@ -4,11 +4,13 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "start": "tsx backend/server.ts",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "tsx": "^4.7.1",
     "@stripe/stripe-js": "^8.7.0",
     "bcryptjs": "^3.0.3",
     "compression": "^1.8.1",

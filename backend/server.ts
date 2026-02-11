@@ -18,23 +18,28 @@ import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import Stripe from 'stripe';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ==========================================
 // ⚡ PRISMA OPTIMIZADO (Connection Pool + Slow Query Log)
 // ==========================================
 const prisma = new PrismaClient({
-  log: [
-    { emit: 'event', level: 'query' },
-    { emit: 'stdout', level: 'warn' },
-    { emit: 'stdout', level: 'error' },
-  ],
+    log: [
+        { emit: 'event', level: 'query' },
+        { emit: 'stdout', level: 'warn' },
+        { emit: 'stdout', level: 'error' },
+    ],
 });
 
 // Slow Query Logger: alerta si una query tarda > 500ms
 (prisma.$on as any)('query', (e: any) => {
-  if (e.duration > 500) {
-    console.warn(`🐌 SLOW QUERY (${e.duration}ms): ${e.query.substring(0, 200)}`);
-  }
+    if (e.duration > 500) {
+        console.warn(`🐌 SLOW QUERY (${e.duration}ms): ${e.query.substring(0, 200)}`);
+    }
 });
 
 const app = express();
@@ -49,8 +54,8 @@ app.use(compression() as any);
 
 // CORS
 app.use(cors({
-  origin: 'http://localhost:5173',
-  credentials: true,
+    origin: 'http://localhost:5173',
+    credentials: true,
 }));
 
 // ⚠️ Stripe Webhook DEBE ir ANTES de express.json() (necesita raw body)
@@ -94,34 +99,34 @@ app.use(express.json({ limit: '2mb' }) as any);
 
 // Rate Limit Global: 100 req / 15 min por IP
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 300,
-  message: { error: '⚠️ Demasiadas peticiones. Intenta en unos minutos.' },
-  standardHeaders: true,
-  legacyHeaders: false,
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    message: { error: '⚠️ Demasiadas peticiones. Intenta en unos minutos.' },
+    standardHeaders: true,
+    legacyHeaders: false,
 });
 app.use('/api/', globalLimiter as any);
 
 // Rate Limit Estricto para Login: 5 intentos / hora (anti brute-force)
 const loginLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 10,
-  message: { error: '🔒 Demasiados intentos de inicio de sesión. Espera 1 hora.' },
-  standardHeaders: true,
-  legacyHeaders: false,
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    message: { error: '🔒 Demasiados intentos de inicio de sesión. Espera 1 hora.' },
+    standardHeaders: true,
+    legacyHeaders: false,
 });
 app.use('/api/auth/login', loginLimiter as any);
 
 // Response time header (para monitoreo)
 app.use((req: any, res: any, next: any) => {
-  const start = Date.now();
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    if (duration > 200) {
-      console.warn(`⏱️ SLOW RESPONSE (${duration}ms): ${req.method} ${req.originalUrl}`);
-    }
-  });
-  next();
+    const start = Date.now();
+    res.on('finish', () => {
+        const duration = Date.now() - start;
+        if (duration > 200) {
+            console.warn(`⏱️ SLOW RESPONSE (${duration}ms): ${req.method} ${req.originalUrl}`);
+        }
+    });
+    next();
 });
 
 // ==========================================
@@ -1225,7 +1230,7 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN']), a
     } catch (error: any) {
         console.error('Error en ajuste de inventario:', error);
         res.status(error.message?.includes('no encontrado') || error.message?.includes('insuficiente') ? 400 : 500)
-           .json({ error: error.message || 'Error procesando ajuste de inventario' });
+            .json({ error: error.message || 'Error procesando ajuste de inventario' });
     }
 });
 
@@ -1737,7 +1742,7 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER']), async (re
         // Calcular ventas del mes por empleado para comisiones
         const startOfMonth = new Date(year, month - 1, 1);
         const endOfMonth = new Date(year, month, 0, 23, 59, 59);
-        
+
         const salesByEmployee = await prisma.sale.groupBy({
             by: ['employeeId'],
             where: {
@@ -1758,7 +1763,7 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER']), async (re
             const baseSalary = Number(emp.baseSalary);
             const ventasMes = salesMap.get(emp.id) || 0;
             const comisiones = ventasMes * Number(emp.commissionRate);
-            
+
             const calc = calculatePayroll(baseSalary, comisiones);
 
             // Upsert en DB
@@ -1875,7 +1880,7 @@ app.get('/api/labor-liabilities', authenticate, async (req: any, res: any) => {
             where: { tenantId: authReq.tenantId },
         });
 
-        const liabilities = employees.map(emp => 
+        const liabilities = employees.map(emp =>
             calculateLaborLiability(
                 emp.id,
                 `${emp.firstName} ${emp.lastName}`,
@@ -1904,7 +1909,7 @@ app.post('/api/tax-report/generate', authenticate, checkRole(['OWNER']), async (
 
     try {
         const report = await generateMonthlyReport(authReq.tenantId!, Number(month), Number(year));
-        
+
         // Guardar en DB
         await saveMonthlyReport(authReq.tenantId!, report);
 
@@ -1960,7 +1965,7 @@ app.get('/api/admin/stats', authenticate, requireSuperAdmin, async (req: any, re
             tenants = await prisma.tenant.findMany({
                 select: { id: true, subscriptionStatus: true, walletBalance: true, creditScore: true }
             });
-        } catch(e) { console.error('Stats: tenants query failed', e); }
+        } catch (e) { console.error('Stats: tenants query failed', e); }
 
         try {
             totalLoans = await prisma.b2bOrder.aggregate({
@@ -1968,7 +1973,7 @@ app.get('/api/admin/stats', authenticate, requireSuperAdmin, async (req: any, re
                 _sum: { total: true },
                 _count: true,
             }) as any;
-        } catch(e) { console.error('Stats: b2bOrder query failed', e); }
+        } catch (e) { console.error('Stats: b2bOrder query failed', e); }
 
         try {
             allSales = await prisma.sale.aggregate({
@@ -1980,18 +1985,18 @@ app.get('/api/admin/stats', authenticate, requireSuperAdmin, async (req: any, re
                 _sum: { total: true },
                 _count: true,
             }) as any;
-        } catch(e) { console.error('Stats: sales query failed', e); }
+        } catch (e) { console.error('Stats: sales query failed', e); }
 
         try {
             activeUsers = await prisma.user.count();
-        } catch(e) { console.error('Stats: user count failed', e); }
+        } catch (e) { console.error('Stats: user count failed', e); }
 
         const activeTenants = tenants.filter((t: any) => !t.subscriptionStatus || (t.subscriptionStatus !== 'PAST_DUE' && t.subscriptionStatus !== 'CANCELLED')).length;
         const morosos = tenants.filter((t: any) => t.subscriptionStatus === 'PAST_DUE' || t.subscriptionStatus === 'CANCELLED').length;
         const totalWallet = tenants.reduce((s: number, t: any) => s + Number(t.walletBalance || 0), 0);
         const totalDebtLent = Number((totalLoans._sum as any)?.total || 0);
         const monthlySales = Number(allSales._sum?.total || 0);
-        
+
         // MRR: 2% de ventas mensuales como fee de plataforma
         const platformFee = Math.round(monthlySales * 0.02 * 100) / 100;
         // Intereses: 5% mensual sobre deuda prestada
@@ -2133,7 +2138,7 @@ app.get('/api/admin/loan-requests', authenticate, requireSuperAdmin, async (req:
 // POST /api/admin/loans/approve - Aprobar préstamo
 app.post('/api/admin/loans/approve', authenticate, requireSuperAdmin, async (req: any, res: any) => {
     const { orderId, amount } = req.body;
-    
+
     if (!orderId || !amount) {
         return res.status(400).json({ error: 'Se requiere orderId y amount' });
     }
@@ -2174,7 +2179,7 @@ app.post('/api/admin/loans/approve', authenticate, requireSuperAdmin, async (req
 // POST /api/admin/loans/reject - Rechazar préstamo
 app.post('/api/admin/loans/reject', authenticate, requireSuperAdmin, async (req: any, res: any) => {
     const { orderId } = req.body;
-    
+
     try {
         const order = await prisma.b2bOrder.update({
             where: { id: orderId },
@@ -2389,6 +2394,25 @@ app.post('/api/admin/manual-payments/:id/reject', authenticate, requireSuperAdmi
         res.status(500).json({ error: 'Error al rechazar pago' });
     }
 });
+
+// ==========================================
+// 🚀 SERVE FRONTEND IN PRODUCTION
+// ==========================================
+const isProduction = process.env.NODE_ENV === 'production';
+if (isProduction) {
+    // Serve static files from the React app
+    const distPath = path.join(__dirname, '../dist'); // Go up one level from backend/
+    app.use(express.static(distPath));
+
+    // The "catchall" handler: for any request that doesn't
+    // match one above, send back React's index.html file.
+    app.get('*', (req: any, res: any) => {
+        if (!req.path.startsWith('/api')) {
+            res.sendFile(path.join(distPath, 'index.html'));
+        }
+    });
+    console.log(`📂 Serving static files from: ${distPath}`);
+}
 
 // ==========================================
 // 🚀 START SERVER
