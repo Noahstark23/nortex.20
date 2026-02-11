@@ -2406,10 +2406,9 @@ if (isProduction) {
 
     // The "catchall" handler: for any request that doesn't
     // match one above, send back React's index.html file.
-    app.get('(.*)', (req: any, res: any) => {
-        if (!req.path.startsWith('/api')) {
-            res.sendFile(path.join(distPath, 'index.html'));
-        }
+    // Usamos RegExp para evitar problemas con path-to-regexp en Express 5
+    app.get(/^(?!\/api).+/, (req: any, res: any) => {
+        res.sendFile(path.join(distPath, 'index.html'));
     });
     console.log(`📂 Serving static files from: ${distPath}`);
 }
@@ -2418,5 +2417,5 @@ if (isProduction) {
 // 🚀 START SERVER
 // ==========================================
 
-const PORT = 3000;
-app.listen(PORT, () => console.log(`🚀 Nortex Banking Core Ready :${PORT}`));
+const PORT = process.env.PORT || 3000;
+app.listen(Number(PORT), '0.0.0.0', () => console.log(`🚀 Nortex Banking Core Ready :${PORT}`));
