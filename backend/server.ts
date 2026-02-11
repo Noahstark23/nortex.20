@@ -49,6 +49,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'nortex_super_secret_key_2026';
 // 🛡️ MIDDLEWARE DE RENDIMIENTO
 // ==========================================
 
+// Trust Proxy (para Cloudflare / Coolify)
+app.set('trust proxy', 1);
+
 // GZIP Compression: reduce JSON en ~70% (crítico para internet lento en NI)
 app.use(compression() as any);
 
