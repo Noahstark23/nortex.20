@@ -2406,7 +2406,7 @@ if (isProduction) {
 
     // The "catchall" handler: for any request that doesn't
     // match one above, send back React's index.html file.
-    app.get('*', (req: any, res: any) => {
+    app.get('(.*)', (req: any, res: any) => {
         if (!req.path.startsWith('/api')) {
             res.sendFile(path.join(distPath, 'index.html'));
         }
