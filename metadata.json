@@ -1,0 +1,5 @@
+{
+  "name": "NORTEX OS",
+  "description": "Sistema Operativo Financiero & POS Multi-tenant. Capa superficial: Punto de Venta. Capa profunda: Scoring Crediticio y Fintech.",
+  "requestFramePermissions": []
+}
