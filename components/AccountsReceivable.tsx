@@ -1,23 +1,46 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MOCK_DEBTORS } from '../constants';
 import { Sale, Payment } from '../types';
 import { DollarSign, Calendar, User, CheckCircle, Clock, ChevronRight, ChevronDown, Wallet, MessageCircle, Send } from 'lucide-react';
 
 const AccountsReceivable: React.FC = () => {
   // In a real app, fetch from API. Here we use Mock Data + Local State manipulation
-  const [sales, setSales] = useState<Sale[]>(MOCK_DEBTORS);
+  const [sales, setSales] = useState<Sale[]>([]);
+
+  useEffect(() => {
+    fetchDebtors();
+  }, []);
+
+  const fetchDebtors = async () => {
+    try {
+      const token = localStorage.getItem('nortex_token');
+      const res = await fetch('/api/credits/debtors', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSales(data);
+      }
+    } catch (error) {
+      console.error('Error fetching debtors:', error);
+    }
+  };
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [showPayModal, setShowPayModal] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
 
   // Derived Stats
-  const totalReceivable = sales.reduce((acc, sale) => acc + (sale.status === 'CREDIT_PENDING' ? Number(sale.balance) : 0), 0);
-  const collectedToday = sales
+  const safeSales = Array.isArray(sales) ? sales : [];
+
+  console.log('AccountsReceivable Render. Sales:', sales);
+
+  const totalReceivable = safeSales.reduce((acc, sale) => acc + (sale.status === 'CREDIT_PENDING' ? Number(sale.balance) : 0), 0);
+  const collectedToday = safeSales
     .flatMap(s => s.payments || [])
     .filter(p => new Date(p.date).toDateString() === new Date().toDateString())
     .reduce((acc, p) => acc + Number(p.amount), 0);
 
-  const handleRegisterPayment = (e: React.FormEvent) => {
+  const handleRegisterPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSale || !paymentAmount) return;
 
@@ -32,33 +55,35 @@ const AccountsReceivable: React.FC = () => {
       return;
     }
 
-    // Update Local State (Mocking backend logic)
-    const newBalance = selectedSale.balance - amount;
-    const newStatus: 'PAID' | 'CREDIT_PENDING' = newBalance <= 0.01 ? 'PAID' : 'CREDIT_PENDING';
+    try {
+      const token = localStorage.getItem('nortex_token');
+      const res = await fetch('/api/credits/payment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          saleId: selectedSale.id,
+          amount,
+          method: 'CASH' // TODO: Add selector in UI if needed, currently hardcoded in frontend form but could be dynamic
+        })
+      });
 
-    const newPayment: Payment = {
-      id: `pay_${Date.now()}`,
-      amount: amount,
-      date: new Date().toISOString(),
-      method: 'CASH'
-    };
-
-    const updatedSale = {
-      ...selectedSale,
-      balance: newBalance,
-      status: newStatus,
-      payments: [...(selectedSale.payments || []), newPayment]
-    };
-
-    setSales(prev => prev.map(s => s.id === selectedSale.id ? updatedSale : s));
-    setSelectedSale(updatedSale); // Keep detail view open with new data
-    setShowPayModal(false);
-    setPaymentAmount('');
-
-    if (newStatus === 'PAID') {
-      alert("✅ ¡Deuda pagada en su totalidad!");
-    } else {
-      alert(`✅ Abono registrado. Restan $${newBalance.toFixed(2)}`);
+      if (res.ok) {
+        const updatedSale = await res.json();
+        setSales(prev => prev.map(s => s.id === updatedSale.id ? updatedSale : s));
+        setSelectedSale(updatedSale);
+        setShowPayModal(false);
+        setPaymentAmount('');
+        alert(`✅ Abono registrado exitosamente.`);
+      } else {
+        const error = await res.json();
+        alert(error.error || 'Error al registrar pago');
+      }
+    } catch (error) {
+      console.error('Payment error:', error);
+      alert('Error de conexión al registrar pago');
     }
   };
 
@@ -69,6 +94,7 @@ const AccountsReceivable: React.FC = () => {
   };
 
   return (
+
     <div className="flex h-full bg-slate-100 overflow-hidden">
 
       {/* LEFT: Debtors List */}
@@ -90,7 +116,7 @@ const AccountsReceivable: React.FC = () => {
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar">
-          {sales.map(sale => (
+          {safeSales.map(sale => (
             <button
               key={sale.id}
               onClick={() => setSelectedSale(sale)}

@@ -2372,7 +2372,185 @@ app.post('/api/admin/manual-payments/:id/approve', authenticate, requireSuperAdm
     }
 });
 
-// POST /api/admin/manual-payments/:id/reject - Rechazar pago manual
+// ==========================================
+// 📜 COTIZACIONES (QUOTATIONS)
+// ==========================================
+
+// GET /api/quotations - Historial
+app.get('/api/quotations', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const quotes = await prisma.quotation.findMany({
+            where: { tenantId: authReq.tenantId },
+            orderBy: { createdAt: 'desc' },
+            take: 50
+        });
+        // Frontend expects numbers, Prisma returns Decimal
+        const safeQuotes = quotes.map((q: any) => ({
+            ...q,
+            subtotal: Number(q.subtotal),
+            tax: Number(q.tax),
+            total: Number(q.total)
+        }));
+        res.json(safeQuotes);
+    } catch (error) {
+        res.status(500).json({ error: 'Error al obtener cotizaciones' });
+    }
+});
+
+// POST /api/quotations - Crear
+app.post('/api/quotations', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { customerName, customerRuc, items, expiresAt } = req.body;
+
+    if (!items || items.length === 0) return res.status(400).json({ error: 'Faltan items' });
+
+    try {
+        // Calculate totals server-side for security
+        let subtotal = 0;
+        const formattedItems = items.map((item: any) => {
+            const total = Number(item.price) * Number(item.quantity);
+            subtotal += total;
+            return {
+                productId: item.id || item.productId,
+                name: item.name,
+                price: item.price,
+                quantity: item.quantity
+            };
+        });
+
+        const tax = subtotal * 0.15;
+        const total = subtotal + tax;
+
+        const quote = await prisma.quotation.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                customerName,
+                customerRuc,
+                subtotal,
+                tax,
+                total,
+                expiresAt: new Date(expiresAt),
+                items: {
+                    create: formattedItems
+                }
+            }
+        });
+
+        res.json({ ...quote, subtotal, tax, total });
+    } catch (error) {
+        console.error('Create quotation error:', error);
+        res.status(500).json({ error: 'Error al crear cotización' });
+    }
+});
+
+// ==========================================
+// 💰 COBRANZA & CRÉDITOS (RECEIVABLES)
+// ==========================================
+
+// GET /api/credits/debtors - Clientes con deuda pendiente
+app.get('/api/credits/debtors', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        // Buscar ventas a CRÉDITO con saldo pendiente > 0
+        const sales = await prisma.sale.findMany({
+            where: {
+                tenantId: authReq.tenantId,
+                paymentMethod: 'CREDIT',
+                balance: { gt: 0 }
+            },
+            include: {
+                payments: { orderBy: { createdAt: 'desc' } },
+                customer: { select: { name: true, phone: true } }
+            },
+            orderBy: { dueDate: 'asc' }
+        });
+
+        const formatted = sales.map((s: any) => ({
+            id: s.id,
+            customerName: s.customer?.name || s.customerName || 'Cliente General',
+            date: s.createdAt,
+            dueDate: s.dueDate,
+            total: Number(s.total),
+            balance: Number(s.balance),
+            status: Number(s.balance) > 0 ? 'CREDIT_PENDING' : 'PAID',
+            payments: s.payments.map((p: any) => ({
+                id: p.id,
+                amount: Number(p.amount),
+                date: p.createdAt,
+                method: p.method
+            }))
+        }));
+
+        res.json(formatted);
+    } catch (error) {
+        console.error('Error fetching debtors:', error);
+        res.status(500).json({ error: 'Error al obtener deudores' });
+    }
+});
+
+// POST /api/credits/payment - Registrar abono
+app.post('/api/credits/payment', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { saleId, amount, method } = req.body;
+
+    if (!saleId || !amount) return res.status(400).json({ error: 'Faltan datos' });
+
+    try {
+        await prisma.$transaction(async (tx: any) => {
+            const sale = await tx.sale.findUnique({ where: { id: saleId } });
+            if (!sale) throw new Error('Venta no encontrada');
+
+            const newBalance = Number(sale.balance) - Number(amount);
+            if (newBalance < -0.01) throw new Error('El abono excede el saldo pendiente');
+
+            // 1. Crear Pago
+            await tx.payment.create({
+                data: {
+                    saleId,
+                    amount: Number(amount),
+                    method: method || 'CASH',
+                    collectedBy: authReq.userId!
+                }
+            });
+
+            // 2. Actualizar Venta
+            const updatedSale = await tx.sale.update({
+                where: { id: saleId },
+                data: {
+                    balance: newBalance,
+                    status: newBalance <= 0.01 ? 'COMPLETED' : 'PENDING' // Update status if fully paid
+                },
+                include: {
+                    payments: { orderBy: { createdAt: 'desc' } },
+                    customer: { select: { name: true } }
+                }
+            });
+
+            // Format response
+            const formatted = {
+                id: updatedSale.id,
+                customerName: updatedSale.customer?.name || updatedSale.customerName,
+                date: updatedSale.createdAt,
+                dueDate: updatedSale.dueDate,
+                total: Number(updatedSale.total),
+                balance: Number(updatedSale.balance),
+                status: Number(updatedSale.balance) > 0 ? 'CREDIT_PENDING' : 'PAID',
+                payments: updatedSale.payments.map((p: any) => ({
+                    id: p.id,
+                    amount: Number(p.amount),
+                    date: p.createdAt,
+                    method: p.method
+                }))
+            };
+
+            res.json(formatted);
+        });
+    } catch (error: any) {
+        console.error('Register payment error:', error);
+        res.status(400).json({ error: error.message || 'Error al registrar pago' });
+    }
+});
 app.post('/api/admin/manual-payments/:id/reject', authenticate, requireSuperAdmin, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { reason } = req.body;

@@ -1,0 +1,14 @@
+Prisma schema loaded from backend\prisma\schema.prisma
+Error: Prisma schema validation - (get-config wasm)
+Error code: P1012
+error: Environment variable not found: DATABASE_URL.
+  -->  backend\prisma\schema.prisma:10
+   | 
+ 9 |   provider = "mysql"
+10 |   url      = env("DATABASE_URL")
+   | 
+
+Validation Error Count: 1
+[Context: getConfig]
+
+Prisma CLI Version : 5.19.0
