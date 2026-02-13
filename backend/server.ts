@@ -13,6 +13,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
+import { sendPasswordResetEmail } from './services/email';
 import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
@@ -647,6 +648,192 @@ app.delete('/api/team/invite/:invitationId', authenticate, async (req: any, res:
     } catch (error) {
         console.error('Cancel invite error:', error);
         res.status(500).json({ error: 'Error cancelando invitación' });
+    }
+});
+
+
+// ==========================================
+// 🔑 PASSWORD RESET
+// ==========================================
+
+// Rate limiter para forgot-password (3 intentos por IP cada 15 min)
+const forgotPasswordLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    message: { error: 'Demasiados intentos. Intenta de nuevo en 15 minutos.' }
+});
+
+// POST /api/auth/forgot-password — Solicitar reset
+app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req: any, res: any) => {
+    const { email } = req.body;
+
+    try {
+        if (!email) {
+            return res.status(400).json({ error: 'Email es requerido.' });
+        }
+
+        // SIEMPRE devolver el mismo mensaje (seguridad: no revelar si el email existe)
+        const genericMsg = 'Si el email está registrado, recibirás un link para restablecer tu contraseña.';
+
+        const user = await prisma.user.findUnique({ where: { email } });
+        if (!user) {
+            // No revelar que el email no existe
+            return res.json({ message: genericMsg });
+        }
+
+        // Verificar que no haya muchos resets pendientes (anti-spam)
+        const recentResets = await prisma.passwordReset.count({
+            where: {
+                userId: user.id,
+                createdAt: { gte: new Date(Date.now() - 15 * 60 * 1000) }
+            }
+        });
+        if (recentResets >= 3) {
+            return res.json({ message: genericMsg });
+        }
+
+        // Generar token
+        const crypto = require('crypto');
+        const token = crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+
+        await prisma.passwordReset.create({
+            data: {
+                userId: user.id,
+                token,
+                expiresAt,
+            }
+        });
+
+        // Enviar email
+        const baseUrl = process.env.FRONTEND_URL || 'https://somosnortex.com';
+        const resetLink = `${baseUrl}/reset-password/${token}`;
+
+        const emailSent = await sendPasswordResetEmail(user.email, resetLink, user.name);
+
+        if (!emailSent) {
+            // Si no se pudo enviar email (sin API key), devolver el link para dev/testing
+            console.log(`🔗 Reset link (no email configured): ${resetLink}`);
+        }
+
+        res.json({ message: genericMsg });
+    } catch (error) {
+        console.error('Forgot password error:', error);
+        res.status(500).json({ error: 'Error procesando solicitud.' });
+    }
+});
+
+// GET /api/auth/reset-password/:token — Validar token
+app.get('/api/auth/reset-password/:token', async (req: any, res: any) => {
+    const { token } = req.params;
+
+    try {
+        const resetRecord = await prisma.passwordReset.findUnique({
+            where: { token },
+            include: { user: { select: { email: true, name: true } } }
+        });
+
+        if (!resetRecord) {
+            return res.status(404).json({ error: 'Link inválido o expirado.' });
+        }
+
+        if (resetRecord.used) {
+            return res.status(400).json({ error: 'Este link ya fue utilizado.' });
+        }
+
+        if (new Date() > resetRecord.expiresAt) {
+            return res.status(400).json({ error: 'Este link ha expirado. Solicita uno nuevo.' });
+        }
+
+        res.json({
+            valid: true,
+            email: resetRecord.user.email,
+            name: resetRecord.user.name,
+        });
+    } catch (error) {
+        console.error('Validate reset token error:', error);
+        res.status(500).json({ error: 'Error validando link.' });
+    }
+});
+
+// POST /api/auth/reset-password/:token — Cambiar contraseña
+app.post('/api/auth/reset-password/:token', async (req: any, res: any) => {
+    const { token } = req.params;
+    const { password } = req.body;
+
+    try {
+        if (!password || password.length < 6) {
+            return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres.' });
+        }
+
+        const resetRecord = await prisma.passwordReset.findUnique({
+            where: { token },
+            include: { user: true }
+        });
+
+        if (!resetRecord) {
+            return res.status(404).json({ error: 'Link inválido o expirado.' });
+        }
+
+        if (resetRecord.used) {
+            return res.status(400).json({ error: 'Este link ya fue utilizado.' });
+        }
+
+        if (new Date() > resetRecord.expiresAt) {
+            return res.status(400).json({ error: 'Este link ha expirado. Solicita uno nuevo.' });
+        }
+
+        // Hashear nueva contraseña y actualizar
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        await prisma.$transaction(async (tx: any) => {
+            await tx.user.update({
+                where: { id: resetRecord.userId },
+                data: { password: hashedPassword }
+            });
+
+            // Invalidar este token
+            await tx.passwordReset.update({
+                where: { id: resetRecord.id },
+                data: { used: true }
+            });
+
+            // Invalidar todos los tokens pendientes de este usuario
+            await tx.passwordReset.updateMany({
+                where: {
+                    userId: resetRecord.userId,
+                    used: false,
+                    id: { not: resetRecord.id }
+                },
+                data: { used: true }
+            });
+        });
+
+        // Auto-login
+        const jwtToken = jwt.sign(
+            {
+                userId: resetRecord.user.id,
+                tenantId: resetRecord.user.tenantId,
+                role: resetRecord.user.role,
+                email: resetRecord.user.email
+            },
+            JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        res.json({
+            message: 'Contraseña actualizada exitosamente.',
+            token: jwtToken,
+            user: {
+                id: resetRecord.user.id,
+                email: resetRecord.user.email,
+                name: resetRecord.user.name,
+                role: resetRecord.user.role
+            }
+        });
+    } catch (error) {
+        console.error('Reset password error:', error);
+        res.status(500).json({ error: 'Error restableciendo contraseña.' });
     }
 });
 

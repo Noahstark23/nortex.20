@@ -33,7 +33,7 @@ const Login: React.FC = () => {
       localStorage.setItem('nortex_token', data.token);
       localStorage.setItem('nortex_user', JSON.stringify(data.user));
       localStorage.setItem('nortex_tenant_id', data.tenant.id);
-      
+
       // SUPER_ADMIN redirect
       const SUPER_ADMIN_EMAILS = ['noelpinedaa96@gmail.com'];
       if (data.user.role === 'SUPER_ADMIN' || SUPER_ADMIN_EMAILS.includes(data.user.email)) {
@@ -52,12 +52,12 @@ const Login: React.FC = () => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-nortex-900 p-4">
       <div className="absolute inset-0 overflow-hidden">
-         <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-nortex-500/10 rounded-full blur-[120px]"></div>
-         <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[120px]"></div>
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-nortex-500/10 rounded-full blur-[120px]"></div>
+        <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[120px]"></div>
       </div>
 
       <div className="w-full max-w-sm bg-nortex-800/50 backdrop-blur-md border border-nortex-700 p-8 rounded-2xl shadow-2xl relative z-10">
-        
+
         <div className="text-center mb-8">
           <div className="w-10 h-10 bg-nortex-accent rounded flex items-center justify-center mx-auto mb-4 shadow-[0_0_15px_rgba(16,185,129,0.4)]">
             <span className="font-bold text-nortex-900 text-lg">N</span>
@@ -83,7 +83,7 @@ const Login: React.FC = () => {
                 className="w-full bg-nortex-900/50 border border-nortex-700 text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:border-nortex-accent focus:ring-1 focus:ring-nortex-accent/50 transition-all"
                 placeholder="usuario@empresa.com"
                 value={formData.email}
-                onChange={e => setFormData({...formData, email: e.target.value})}
+                onChange={e => setFormData({ ...formData, email: e.target.value })}
               />
             </div>
           </div>
@@ -98,9 +98,15 @@ const Login: React.FC = () => {
                 className="w-full bg-nortex-900/50 border border-nortex-700 text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:border-nortex-accent focus:ring-1 focus:ring-nortex-accent/50 transition-all"
                 placeholder="••••••••"
                 value={formData.password}
-                onChange={e => setFormData({...formData, password: e.target.value})}
+                onChange={e => setFormData({ ...formData, password: e.target.value })}
               />
             </div>
+          </div>
+
+          <div className="text-right">
+            <Link to="/forgot-password" className="text-xs text-slate-400 hover:text-nortex-accent transition-colors">
+              ¿Olvidaste tu contraseña?
+            </Link>
           </div>
 
           <button
@@ -109,9 +115,9 @@ const Login: React.FC = () => {
             className="w-full mt-2 bg-white text-nortex-900 font-bold py-3.5 rounded-lg hover:bg-slate-200 transition-all flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-white/5"
           >
             {loading ? <Loader2 className="animate-spin" size={20} /> : (
-               <>
-                 <LogIn size={20} /> Iniciar Sesión
-               </>
+              <>
+                <LogIn size={20} /> Iniciar Sesión
+              </>
             )}
           </button>
         </form>

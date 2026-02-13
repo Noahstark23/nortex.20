@@ -62,6 +62,7 @@ model User {
   auditLogs       AuditLog[]
   productsCreated Product[]
   kardexMovements KardexMovement[]
+  passwordResets  PasswordReset[]
 
   @@index([tenantId])
 }
@@ -84,6 +85,23 @@ model Invitation {
   tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId])
+  @@index([token])
+}
+
+// ==========================================
+// RECUPERACIÓN DE CONTRASEÑA
+// ==========================================
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  used      Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
   @@index([token])
 }
 
