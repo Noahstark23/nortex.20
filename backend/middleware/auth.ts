@@ -4,7 +4,13 @@ import { PrismaClient } from '@prisma/client';
 // @ts-ignore
 import NodeCache from 'node-cache';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'nortex_super_secret_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET || (() => {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('🚨 CRITICAL: JWT_SECRET not set in production!');
+    process.exit(1);
+  }
+  return 'nortex_dev_secret_key_2026';
+})();
 const prisma = new PrismaClient();
 
 // ==========================================
@@ -122,7 +128,7 @@ export const authenticate = async (req: any, res: any, next: any) => {
  */
 export const requireSuperAdmin = async (req: any, res: any, next: any) => {
   const authReq = req as AuthRequest;
-  
+
   if (authReq.role === 'SUPER_ADMIN' || SUPER_ADMIN_EMAILS.includes(authReq.email || '')) {
     next();
     return;

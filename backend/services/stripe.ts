@@ -10,6 +10,7 @@ const prisma = new PrismaClient();
 
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID || '';
+const BASE_URL = process.env.FRONTEND_URL || 'https://somosnortex.com';
 
 // Inicializar Stripe (solo si hay key configurada)
 let stripe: Stripe | null = null;
@@ -88,8 +89,8 @@ export async function createCheckoutSession(tenantId: string): Promise<string> {
                 tenantId: tenantId,
             },
         },
-        success_url: 'http://localhost:5173/app/billing?status=success',
-        cancel_url: 'http://localhost:5173/app/billing?status=cancelled',
+        success_url: `${BASE_URL}/app/billing?status=success`,
+        cancel_url: `${BASE_URL}/app/billing?status=cancelled`,
     });
 
     if (!session.url) throw new Error('No se pudo crear la sesión de pago');
@@ -108,7 +109,7 @@ export async function createPortalSession(tenantId: string): Promise<string> {
 
     const session = await stripe.billingPortal.sessions.create({
         customer: tenant.stripeCustomerId,
-        return_url: 'http://localhost:5173/app/billing',
+        return_url: `${BASE_URL}/app/billing`,
     });
 
     return session.url;

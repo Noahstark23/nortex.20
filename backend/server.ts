@@ -43,7 +43,13 @@ const prisma = new PrismaClient({
 });
 
 const app = express();
-const JWT_SECRET = process.env.JWT_SECRET || 'nortex_super_secret_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET || (() => {
+    if (process.env.NODE_ENV === 'production') {
+        console.error('🚨 CRITICAL: JWT_SECRET not set in production!');
+        process.exit(1);
+    }
+    return 'nortex_dev_secret_key_2026';
+})();
 
 // ==========================================
 // 🛡️ MIDDLEWARE DE RENDIMIENTO
@@ -55,9 +61,22 @@ app.set('trust proxy', 1);
 // GZIP Compression: reduce JSON en ~70% (crítico para internet lento en NI)
 app.use(compression() as any);
 
-// CORS
+// CORS: Permite orígenes de desarrollo y producción
+const ALLOWED_ORIGINS = [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'https://somosnortex.com',
+    'https://www.somosnortex.com',
+    process.env.FRONTEND_URL,
+].filter(Boolean) as string[];
+
 app.use(cors({
-    origin: 'http://localhost:5173',
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+        // Permitir requests sin origin (mobile apps, curl, server-to-server)
+        if (!origin) return callback(null, true);
+        if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+        callback(new Error(`CORS: Origin ${origin} not allowed`));
+    },
     credentials: true,
 }));
 
