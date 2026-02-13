@@ -1,8 +1,17 @@
-import { Resend } from 'resend';
+// Email service con importación resiliente
+let resendClient: any = null;
 
-const resend = process.env.RESEND_API_KEY
-    ? new Resend(process.env.RESEND_API_KEY)
-    : null;
+try {
+  const { Resend } = require('resend');
+  if (process.env.RESEND_API_KEY) {
+    resendClient = new Resend(process.env.RESEND_API_KEY);
+    console.log('✅ Resend email service initialized');
+  } else {
+    console.log('⚠️ RESEND_API_KEY not set — emails will be logged to console');
+  }
+} catch (err) {
+  console.warn('⚠️ Resend package not available — emails disabled');
+}
 
 const FROM_EMAIL = process.env.EMAIL_FROM || 'Nortex <onboarding@resend.dev>';
 
@@ -10,22 +19,21 @@ const FROM_EMAIL = process.env.EMAIL_FROM || 'Nortex <onboarding@resend.dev>';
  * Envía email de recuperación de contraseña.
  */
 export async function sendPasswordResetEmail(
-    to: string,
-    resetLink: string,
-    userName: string
+  to: string,
+  resetLink: string,
+  userName: string
 ): Promise<boolean> {
-    if (!resend) {
-        console.warn('⚠️ RESEND_API_KEY no configurada. Email no enviado.');
-        console.log(`📧 [DEV] Reset link para ${to}: ${resetLink}`);
-        return false;
-    }
+  if (!resendClient) {
+    console.log(`📧 [DEV] Reset link para ${to}: ${resetLink}`);
+    return false;
+  }
 
-    try {
-        await resend.emails.send({
-            from: FROM_EMAIL,
-            to,
-            subject: 'Recupera tu contraseña — Nortex',
-            html: `
+  try {
+    await resendClient.emails.send({
+      from: FROM_EMAIL,
+      to,
+      subject: 'Recupera tu contraseña — Nortex',
+      html: `
 <!DOCTYPE html>
 <html>
 <head>
@@ -68,11 +76,11 @@ export async function sendPasswordResetEmail(
 </body>
 </html>
             `,
-        });
-        console.log(`✅ Email de reset enviado a ${to}`);
-        return true;
-    } catch (error) {
-        console.error('❌ Error enviando email:', error);
-        return false;
-    }
+    });
+    console.log(`✅ Email de reset enviado a ${to}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error enviando email:', error);
+    return false;
+  }
 }
