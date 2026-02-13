@@ -1,16 +1,12 @@
-// Email service con importación resiliente
-let resendClient: any = null;
+import { Resend } from 'resend';
 
-try {
-  const { Resend } = require('resend');
-  if (process.env.RESEND_API_KEY) {
-    resendClient = new Resend(process.env.RESEND_API_KEY);
-    console.log('✅ Resend email service initialized');
-  } else {
-    console.log('⚠️ RESEND_API_KEY not set — emails will be logged to console');
-  }
-} catch (err) {
-  console.warn('⚠️ Resend package not available — emails disabled');
+let resendClient: Resend | null = null;
+
+if (process.env.RESEND_API_KEY) {
+  resendClient = new Resend(process.env.RESEND_API_KEY);
+  console.log('✅ Resend email service initialized');
+} else {
+  console.log('⚠️ RESEND_API_KEY not set — emails will be logged to console');
 }
 
 const FROM_EMAIL = process.env.EMAIL_FROM || 'Nortex <onboarding@resend.dev>';

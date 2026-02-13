@@ -14,6 +14,7 @@ import jwt from 'jsonwebtoken';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
 import { sendPasswordResetEmail } from './services/email';
+import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
@@ -346,7 +347,6 @@ app.post('/api/team/invite', authenticate, async (req: any, res: any) => {
         }
 
         // Generar token seguro
-        const crypto = require('crypto');
         const token = crypto.randomUUID();
 
         // Crear invitación (expira en 48 horas)
@@ -693,7 +693,6 @@ app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req: any, re
         }
 
         // Generar token
-        const crypto = require('crypto');
         const token = crypto.randomUUID();
         const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
 
