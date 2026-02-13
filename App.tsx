@@ -18,6 +18,8 @@ import Inventory from './components/Inventory';
 import Purchases from './components/Purchases';
 import Billing from './components/Billing';
 import SuperAdmin from './components/SuperAdmin';
+import TermsOfService from './components/TermsOfService';
+import PrivacyPolicy from './components/PrivacyPolicy';
 
 // Emails autorizados como SUPER_ADMIN
 const SUPER_ADMIN_EMAILS = ['noelpinedaa96@gmail.com'];
@@ -35,7 +37,7 @@ const ProtectedApp = () => {
         return <Navigate to="/admin" replace />;
       }
     }
-  } catch(e) {}
+  } catch (e) { }
 
   return (
     <Layout>
@@ -72,7 +74,7 @@ const ProtectedAdmin = () => {
         return <SuperAdmin />;
       }
     }
-  } catch(e) {}
+  } catch (e) { }
 
   return <Navigate to="/app/dashboard" replace />;
 };
@@ -84,6 +86,8 @@ function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/register" element={<RegisterTenant />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/terms" element={<TermsOfService />} />
+        <Route path="/privacy" element={<PrivacyPolicy />} />
         <Route path="/admin" element={<ProtectedAdmin />} />
         <Route path="/app/*" element={<ProtectedApp />} />
       </Routes>

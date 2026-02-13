@@ -184,6 +184,13 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
             {loading ? <Loader2 className="animate-spin" /> : (isModal ? 'Registrar y Cobrar' : 'Registrar Empresa')}
             {!loading && <ArrowRight size={18} />}
           </button>
+
+          <p className="text-xs text-slate-500 text-center mt-3">
+            Al registrarte, aceptas nuestros{' '}
+            <Link to="/terms" className="text-nortex-accent hover:underline">Términos de Servicio</Link>
+            {' '}y{' '}
+            <Link to="/privacy" className="text-nortex-accent hover:underline">Política de Privacidad</Link>.
+          </p>
         </form>
 
         {!isModal && (

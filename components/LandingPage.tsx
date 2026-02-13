@@ -323,6 +323,8 @@ const LandingPage: React.FC = () => {
                     <div className="flex gap-6 text-sm text-slate-500">
                         <Link to="/login" className="hover:text-white transition-colors">Iniciar Sesion</Link>
                         <Link to="/register" className="hover:text-white transition-colors">Registrarse</Link>
+                        <Link to="/terms" className="hover:text-white transition-colors">Términos</Link>
+                        <Link to="/privacy" className="hover:text-white transition-colors">Privacidad</Link>
                     </div>
                 </div>
             </footer>
