@@ -41,16 +41,20 @@ model Tenant {
   purchases       Purchase[]
   manualPayments  ManualPayment[]
   quotations      Quotation[]
+  invitations     Invitation[]
 }
 
 model User {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   tenantId  String
-  email     String   @unique
+  email     String    @unique
   password  String
   name      String
-  role      String   @default("EMPLOYEE") // OWNER, EMPLOYEE
-  createdAt DateTime @default(now())
+  role      String    @default("EMPLOYEE") // OWNER, ADMIN, MANAGER, CASHIER, VIEWER
+  status    String    @default("ACTIVE") // ACTIVE, DISABLED
+  lastLogin DateTime?
+  invitedBy String?
+  createdAt DateTime  @default(now())
 
   tenant          Tenant           @relation(fields: [tenantId], references: [id])
   shifts          Shift[]
@@ -60,6 +64,27 @@ model User {
   kardexMovements KardexMovement[]
 
   @@index([tenantId])
+}
+
+// ==========================================
+// INVITACIONES DE EQUIPO
+// ==========================================
+
+model Invitation {
+  id        String   @id @default(cuid())
+  tenantId  String
+  email     String
+  role      String   // MANAGER, CASHIER, VIEWER
+  token     String   @unique
+  status    String   @default("PENDING") // PENDING, ACCEPTED, EXPIRED
+  invitedBy String   // userId del que invitó
+  createdAt DateTime @default(now())
+  expiresAt DateTime // 48 horas después de creación
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([token])
 }
 
 model Customer {

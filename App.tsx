@@ -20,6 +20,8 @@ import Billing from './components/Billing';
 import SuperAdmin from './components/SuperAdmin';
 import TermsOfService from './components/TermsOfService';
 import PrivacyPolicy from './components/PrivacyPolicy';
+import TeamManagement from './components/TeamManagement';
+import AcceptInvitation from './components/AcceptInvitation';
 
 // Emails autorizados como SUPER_ADMIN
 const SUPER_ADMIN_EMAILS = ['noelpinedaa96@gmail.com'];
@@ -54,6 +56,7 @@ const ProtectedApp = () => {
         <Route path="reports" element={<Reports />} />
         <Route path="marketplace" element={<B2BMarketplace />} />
         <Route path="billing" element={<Billing />} />
+        <Route path="team" element={<TeamManagement />} />
         <Route path="blueprint" element={<BlueprintViewer />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
@@ -88,6 +91,7 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/terms" element={<TermsOfService />} />
         <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/invite/:token" element={<AcceptInvitation />} />
         <Route path="/admin" element={<ProtectedAdmin />} />
         <Route path="/app/*" element={<ProtectedApp />} />
       </Routes>

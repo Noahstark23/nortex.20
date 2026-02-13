@@ -231,7 +231,18 @@ app.post('/api/auth/login', async (req: any, res: any) => {
             return res.status(401).json({ error: 'Credenciales incorrectas' });
         }
 
-        // 3. Generate JWT (incluir email para Super Admin detection)
+        // 2.5 Check if user is disabled
+        if (user.status === 'DISABLED') {
+            return res.status(403).json({ error: 'Tu cuenta ha sido desactivada. Contacta al administrador.' });
+        }
+
+        // 3. Update lastLogin
+        await prisma.user.update({
+            where: { id: user.id },
+            data: { lastLogin: new Date() }
+        });
+
+        // 4. Generate JWT (incluir email para Super Admin detection)
         const token = jwt.sign(
             { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email },
             JWT_SECRET,
@@ -247,6 +258,395 @@ app.post('/api/auth/login', async (req: any, res: any) => {
     } catch (error) {
         console.error('Login error:', error);
         res.status(500).json({ error: 'Error en el inicio de sesión' });
+    }
+});
+
+
+// ==========================================
+// 👥 TEAM MANAGEMENT (INVITE SYSTEM)
+// ==========================================
+
+// GET /api/team — Lista todos los usuarios del tenant
+app.get('/api/team', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        // Solo OWNER/ADMIN pueden ver el equipo completo
+        if (!['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(authReq.role || '')) {
+            return res.status(403).json({ error: 'Solo el dueño puede gestionar el equipo.' });
+        }
+
+        const users = await prisma.user.findMany({
+            where: { tenantId: authReq.tenantId },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+                status: true,
+                lastLogin: true,
+                invitedBy: true,
+                createdAt: true,
+            },
+            orderBy: { createdAt: 'asc' }
+        });
+
+        const invitations = await prisma.invitation.findMany({
+            where: { tenantId: authReq.tenantId, status: 'PENDING' },
+            select: {
+                id: true,
+                email: true,
+                role: true,
+                status: true,
+                token: true,
+                expiresAt: true,
+                createdAt: true,
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        res.json({ users, invitations });
+    } catch (error) {
+        console.error('Team fetch error:', error);
+        res.status(500).json({ error: 'Error obteniendo equipo' });
+    }
+});
+
+// POST /api/team/invite — Crear invitación
+app.post('/api/team/invite', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { email, role } = req.body;
+
+    try {
+        if (!['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(authReq.role || '')) {
+            return res.status(403).json({ error: 'Solo el dueño puede invitar miembros.' });
+        }
+
+        if (!email || !role) {
+            return res.status(400).json({ error: 'Email y rol son requeridos.' });
+        }
+
+        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE'];
+        if (!validRoles.includes(role)) {
+            return res.status(400).json({ error: `Rol inválido. Opciones: ${validRoles.join(', ')}` });
+        }
+
+        // Verificar que no exista ya un usuario con ese email
+        const existingUser = await prisma.user.findUnique({ where: { email } });
+        if (existingUser) {
+            return res.status(400).json({ error: 'Ya existe un usuario con ese email.' });
+        }
+
+        // Verificar que no haya una invitación pendiente para ese email
+        const existingInvite = await prisma.invitation.findFirst({
+            where: { tenantId: authReq.tenantId, email, status: 'PENDING' }
+        });
+        if (existingInvite) {
+            return res.status(400).json({ error: 'Ya hay una invitación pendiente para ese email.' });
+        }
+
+        // Generar token seguro
+        const crypto = require('crypto');
+        const token = crypto.randomUUID();
+
+        // Crear invitación (expira en 48 horas)
+        const expiresAt = new Date();
+        expiresAt.setHours(expiresAt.getHours() + 48);
+
+        const invitation = await prisma.invitation.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                email,
+                role,
+                token,
+                invitedBy: authReq.userId!,
+                expiresAt,
+            }
+        });
+
+        // Registrar en audit log
+        await prisma.auditLog.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                action: 'INVITE_TEAM_MEMBER',
+                details: `Invitó a ${email} como ${role}`,
+            }
+        });
+
+        // Generar link de invitación
+        const baseUrl = process.env.FRONTEND_URL || 'https://somosnortex.com';
+        const inviteLink = `${baseUrl}/invite/${token}`;
+
+        res.json({
+            invitation,
+            inviteLink,
+            message: `Invitación creada. Comparte este link con ${email}`
+        });
+    } catch (error) {
+        console.error('Invite error:', error);
+        res.status(500).json({ error: 'Error creando invitación' });
+    }
+});
+
+// DELETE /api/team/:userId — Desactivar miembro
+app.delete('/api/team/:userId', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { userId } = req.params;
+
+    try {
+        if (!['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(authReq.role || '')) {
+            return res.status(403).json({ error: 'Solo el dueño puede gestionar el equipo.' });
+        }
+
+        // No puede desactivarse a sí mismo
+        if (userId === authReq.userId) {
+            return res.status(400).json({ error: 'No puedes desactivarte a ti mismo.' });
+        }
+
+        // Verificar que el usuario pertenece al mismo tenant
+        const targetUser = await prisma.user.findFirst({
+            where: { id: userId, tenantId: authReq.tenantId }
+        });
+
+        if (!targetUser) {
+            return res.status(404).json({ error: 'Usuario no encontrado.' });
+        }
+
+        // No puede desactivar a otro OWNER
+        if (['OWNER', 'ADMIN'].includes(targetUser.role)) {
+            return res.status(400).json({ error: 'No puedes desactivar al dueño del negocio.' });
+        }
+
+        await prisma.user.update({
+            where: { id: userId },
+            data: { status: 'DISABLED' }
+        });
+
+        await prisma.auditLog.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                action: 'DISABLE_TEAM_MEMBER',
+                details: `Desactivó a ${targetUser.name} (${targetUser.email})`,
+            }
+        });
+
+        res.json({ success: true, message: `${targetUser.name} ha sido desactivado.` });
+    } catch (error) {
+        console.error('Team delete error:', error);
+        res.status(500).json({ error: 'Error desactivando usuario' });
+    }
+});
+
+// PATCH /api/team/:userId/role — Cambiar rol de miembro
+app.patch('/api/team/:userId/role', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { userId } = req.params;
+    const { role } = req.body;
+
+    try {
+        if (!['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(authReq.role || '')) {
+            return res.status(403).json({ error: 'Solo el dueño puede cambiar roles.' });
+        }
+
+        if (userId === authReq.userId) {
+            return res.status(400).json({ error: 'No puedes cambiar tu propio rol.' });
+        }
+
+        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE'];
+        if (!validRoles.includes(role)) {
+            return res.status(400).json({ error: `Rol inválido. Opciones: ${validRoles.join(', ')}` });
+        }
+
+        const targetUser = await prisma.user.findFirst({
+            where: { id: userId, tenantId: authReq.tenantId }
+        });
+
+        if (!targetUser) {
+            return res.status(404).json({ error: 'Usuario no encontrado.' });
+        }
+
+        if (['OWNER', 'ADMIN'].includes(targetUser.role)) {
+            return res.status(400).json({ error: 'No puedes cambiar el rol del dueño.' });
+        }
+
+        await prisma.user.update({
+            where: { id: userId },
+            data: { role }
+        });
+
+        await prisma.auditLog.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                action: 'CHANGE_TEAM_ROLE',
+                details: `Cambió rol de ${targetUser.name} de ${targetUser.role} a ${role}`,
+            }
+        });
+
+        res.json({ success: true, message: `Rol de ${targetUser.name} actualizado a ${role}.` });
+    } catch (error) {
+        console.error('Role change error:', error);
+        res.status(500).json({ error: 'Error cambiando rol' });
+    }
+});
+
+// GET /api/invite/:token — Validar invitación (público, sin auth)
+app.get('/api/invite/:token', async (req: any, res: any) => {
+    const { token } = req.params;
+
+    try {
+        const invitation = await prisma.invitation.findUnique({
+            where: { token },
+            include: {
+                tenant: { select: { businessName: true } }
+            }
+        });
+
+        if (!invitation) {
+            return res.status(404).json({ error: 'Invitación no encontrada.' });
+        }
+
+        if (invitation.status === 'ACCEPTED') {
+            return res.status(400).json({ error: 'Esta invitación ya fue utilizada.' });
+        }
+
+        if (new Date() > invitation.expiresAt) {
+            await prisma.invitation.update({
+                where: { id: invitation.id },
+                data: { status: 'EXPIRED' }
+            });
+            return res.status(400).json({ error: 'Esta invitación ha expirado. Solicita una nueva.' });
+        }
+
+        res.json({
+            email: invitation.email,
+            role: invitation.role,
+            businessName: invitation.tenant.businessName,
+            expiresAt: invitation.expiresAt,
+        });
+    } catch (error) {
+        console.error('Invite validation error:', error);
+        res.status(500).json({ error: 'Error validando invitación' });
+    }
+});
+
+// POST /api/invite/:token/accept — Aceptar invitación y crear usuario
+app.post('/api/invite/:token/accept', async (req: any, res: any) => {
+    const { token } = req.params;
+    const { name, password } = req.body;
+
+    try {
+        if (!name || !password) {
+            return res.status(400).json({ error: 'Nombre y contraseña son requeridos.' });
+        }
+
+        if (password.length < 6) {
+            return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres.' });
+        }
+
+        const invitation = await prisma.invitation.findUnique({
+            where: { token },
+            include: { tenant: true }
+        });
+
+        if (!invitation) {
+            return res.status(404).json({ error: 'Invitación no encontrada.' });
+        }
+
+        if (invitation.status !== 'PENDING') {
+            return res.status(400).json({ error: 'Esta invitación ya no es válida.' });
+        }
+
+        if (new Date() > invitation.expiresAt) {
+            await prisma.invitation.update({
+                where: { id: invitation.id },
+                data: { status: 'EXPIRED' }
+            });
+            return res.status(400).json({ error: 'Esta invitación ha expirado.' });
+        }
+
+        // Verificar que no exista ya un usuario con ese email
+        const existingUser = await prisma.user.findUnique({ where: { email: invitation.email } });
+        if (existingUser) {
+            return res.status(400).json({ error: 'Ya existe una cuenta con este email.' });
+        }
+
+        // Crear usuario y marcar invitación como aceptada
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        const result = await prisma.$transaction(async (tx: any) => {
+            const user = await tx.user.create({
+                data: {
+                    tenantId: invitation.tenantId,
+                    email: invitation.email,
+                    password: hashedPassword,
+                    name,
+                    role: invitation.role,
+                    invitedBy: invitation.invitedBy,
+                    lastLogin: new Date(),
+                }
+            });
+
+            await tx.invitation.update({
+                where: { id: invitation.id },
+                data: { status: 'ACCEPTED' }
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: invitation.tenantId,
+                    userId: user.id,
+                    action: 'ACCEPT_INVITATION',
+                    details: `${name} (${invitation.email}) se unió como ${invitation.role}`,
+                }
+            });
+
+            return user;
+        });
+
+        // Generar JWT para auto-login
+        const jwtToken = jwt.sign(
+            { userId: result.id, tenantId: result.tenantId, role: result.role, email: result.email },
+            JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        res.json({
+            token: jwtToken,
+            user: { id: result.id, email: result.email, name: result.name, role: result.role },
+            tenant: invitation.tenant,
+        });
+    } catch (error) {
+        console.error('Accept invitation error:', error);
+        res.status(500).json({ error: 'Error aceptando invitación' });
+    }
+});
+
+// DELETE /api/team/invite/:invitationId — Cancelar invitación pendiente
+app.delete('/api/team/invite/:invitationId', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { invitationId } = req.params;
+
+    try {
+        if (!['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(authReq.role || '')) {
+            return res.status(403).json({ error: 'Solo el dueño puede cancelar invitaciones.' });
+        }
+
+        const invitation = await prisma.invitation.findFirst({
+            where: { id: invitationId, tenantId: authReq.tenantId }
+        });
+
+        if (!invitation) {
+            return res.status(404).json({ error: 'Invitación no encontrada.' });
+        }
+
+        await prisma.invitation.delete({ where: { id: invitationId } });
+
+        res.json({ success: true, message: 'Invitación cancelada.' });
+    } catch (error) {
+        console.error('Cancel invite error:', error);
+        res.status(500).json({ error: 'Error cancelando invitación' });
     }
 });
 

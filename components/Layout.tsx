@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -29,6 +29,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { path: '/app/marketplace', label: 'Mercado B2B', icon: ShoppingBag },
     { path: '/app/reports', label: 'Reportes', icon: PieChart },
     { path: '/app/billing', label: 'Facturación', icon: CreditCard },
+    { path: '/app/team', label: 'Mi Equipo', icon: UserPlus },
     { path: '/app/blueprint', label: 'Modo Dios', icon: Code2 },
   ];
 
