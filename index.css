@@ -2,6 +2,31 @@
 @tailwind components;
 @tailwind utilities;
 
+@media print {
+  body * {
+    visibility: hidden;
+    height: 0;
+    overflow: hidden; 
+  }
+  #receipt-area, #receipt-area * {
+    visibility: visible;
+    height: auto;
+    overflow: visible;
+  }
+  #receipt-area {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  @page {
+    size: 80mm auto;
+    margin: 0mm;
+  }
+}
+
 /* Custom scrollbar for "Hacker/Dev" aesthetic */
 ::-webkit-scrollbar {
   width: 8px;

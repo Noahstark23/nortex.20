@@ -3,6 +3,8 @@ import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Shift } from '../types';
 import { ArrowDownCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX } from 'lucide-react';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
+import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
+import { ReceiptTicket } from './ReceiptTicket';
 import * as XLSX from 'xlsx';
 
 interface Customer {
@@ -97,7 +99,49 @@ const POS: React.FC = () => {
     // BARCODE SCANNER STATE
     const [scannerActive, setScannerActive] = useState(true);
     const [lastScanFeedback, setLastScanFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+    const [lastScanFeedback, setLastScanFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const scanBufferRef = useRef('');
+    const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    // GLOBAL SCANNER LISTENER (Independent of focus)
+    useEffect(() => {
+        const handleKv = (e: KeyboardEvent) => {
+            // Ignore if user is typing in a real input field
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+
+            const char = e.key;
+            // Scanner sends 'Enter' at the end
+            if (char === 'Enter') {
+                const code = scanBufferRef.current;
+                if (code.length > 2) {
+                    // Try to find product
+                    const product = products.find(p => p.sku === code);
+                    if (product) {
+                        addToCart(product);
+                        playBeep();
+                        setLastScanFeedback({ message: `Escaneado: ${product.name}`, type: 'success' });
+                    } else {
+                        playErrorBeep();
+                        setLastScanFeedback({ message: `NO ENCONTRADO: ${code}`, type: 'error' });
+                    }
+                    setTimeout(() => setLastScanFeedback(null), 3000);
+                }
+                scanBufferRef.current = '';
+            } else if (char.length === 1) {
+                // Buffer char
+                scanBufferRef.current += char;
+                // Clear buffer if typing too slow (human typing vs scanner machinegun)
+                if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+                scanTimeoutRef.current = setTimeout(() => {
+                    scanBufferRef.current = '';
+                }, 100); // 100ms tolerance
+            }
+        };
+
+        window.addEventListener('keydown', handleKv);
+        return () => window.removeEventListener('keydown', handleKv);
+    }, [products, addToCart]);
     const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // QUICK CREATE MODAL STATE
@@ -561,6 +605,8 @@ const POS: React.FC = () => {
                 saleId: data.id,
                 date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
             });
+            // AUTO-PRINT TICKET (Wait for React render)
+            setTimeout(() => window.print(), 100);
             setCashReceived('');
 
         } catch (error: any) {
@@ -1436,6 +1482,15 @@ const POS: React.FC = () => {
                             </button>
                         </div>
                     </div>
+                </div>
+            )}
+            {/* HIDDEN RECEIPT COMPONENT FOR PRINTING */}
+            <ReceiptTicket data={completedSale ? buildInvoiceData() : null} />
+
+            {/* SCAN FEEDBACK TOAST */}
+            {lastScanFeedback && (
+                <div className={`fixed bottom-24 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full font-bold shadow-2xl z-50 animate-in slide-in-from-bottom-5 ${lastScanFeedback.type === 'success' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
+                    {lastScanFeedback.message}
                 </div>
             )}
         </div>
