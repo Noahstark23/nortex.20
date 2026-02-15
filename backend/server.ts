@@ -711,8 +711,9 @@ app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req: any, re
         const emailSent = await sendPasswordResetEmail(user.email, resetLink, user.name);
 
         if (!emailSent) {
-            // Si no se pudo enviar email (sin API key), devolver el link para dev/testing
-            console.log(`🔗 Reset link (no email configured): ${resetLink}`);
+            console.error(`❌ FAILED TO SEND RESET EMAIL to ${user.email}`);
+            console.log(`🔗 Reset link (fallback): ${resetLink}`);
+            return res.status(500).json({ error: 'Error interno: No se pudo enviar el correo. Revisa los logs del servidor.' });
         }
 
         res.json({ message: genericMsg });
