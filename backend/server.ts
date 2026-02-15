@@ -716,7 +716,7 @@ app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req: any, re
             return res.status(500).json({ error: 'Error interno: No se pudo enviar el correo. Revisa los logs del servidor.' });
         }
 
-        res.json({ message: genericMsg, debugLink: resetLink });
+        res.json({ message: genericMsg });
     } catch (error) {
         console.error('Forgot password error:', error);
         res.status(500).json({ error: 'Error procesando solicitud.' });
