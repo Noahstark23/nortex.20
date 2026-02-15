@@ -11,7 +11,7 @@ COPY package*.json ./
 COPY backend/prisma ./backend/prisma/
 
 # 4. Instalar dependencias
-RUN npm install
+RUN npm install --force
 
 # 5. Copiar el resto del código
 COPY . .
