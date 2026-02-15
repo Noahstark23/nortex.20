@@ -3,7 +3,6 @@ import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Shift } from '../types';
 import { ArrowDownCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX } from 'lucide-react';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
-import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { ReceiptTicket } from './ReceiptTicket';
 import * as XLSX from 'xlsx';
 
@@ -99,49 +98,9 @@ const POS: React.FC = () => {
     // BARCODE SCANNER STATE
     const [scannerActive, setScannerActive] = useState(true);
     const [lastScanFeedback, setLastScanFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-    const [lastScanFeedback, setLastScanFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const scanBufferRef = useRef('');
     const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-    // GLOBAL SCANNER LISTENER (Independent of focus)
-    useEffect(() => {
-        const handleKv = (e: KeyboardEvent) => {
-            // Ignore if user is typing in a real input field
-            const target = e.target as HTMLElement;
-            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-
-            const char = e.key;
-            // Scanner sends 'Enter' at the end
-            if (char === 'Enter') {
-                const code = scanBufferRef.current;
-                if (code.length > 2) {
-                    // Try to find product
-                    const product = products.find(p => p.sku === code);
-                    if (product) {
-                        addToCart(product);
-                        playBeep();
-                        setLastScanFeedback({ message: `Escaneado: ${product.name}`, type: 'success' });
-                    } else {
-                        playErrorBeep();
-                        setLastScanFeedback({ message: `NO ENCONTRADO: ${code}`, type: 'error' });
-                    }
-                    setTimeout(() => setLastScanFeedback(null), 3000);
-                }
-                scanBufferRef.current = '';
-            } else if (char.length === 1) {
-                // Buffer char
-                scanBufferRef.current += char;
-                // Clear buffer if typing too slow (human typing vs scanner machinegun)
-                if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
-                scanTimeoutRef.current = setTimeout(() => {
-                    scanBufferRef.current = '';
-                }, 100); // 100ms tolerance
-            }
-        };
-
-        window.addEventListener('keydown', handleKv);
-        return () => window.removeEventListener('keydown', handleKv);
-    }, [products, addToCart]);
     const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // QUICK CREATE MODAL STATE
@@ -363,6 +322,50 @@ const POS: React.FC = () => {
             return [...prev, { ...product, quantity: 1 }];
         });
     }, [currentShift]);
+
+    // GLOBAL SCANNER LISTENER (Independent of focus)
+    // Moved here to strictly follow React ordering (addToCart must be defined)
+    useEffect(() => {
+        if (!scannerActive) return;
+
+        const handleKv = (e: KeyboardEvent) => {
+            // Ignore if user is typing in a real input field
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return;
+
+            const char = e.key;
+            // Scanner sends 'Enter' at the end
+            if (char === 'Enter') {
+                const code = scanBufferRef.current.trim(); // Trim whitespace
+                if (code.length >= 2) { // Allow shorter codes if needed, but usually >2
+                    // Try to find product (case insensitive)
+                    const found = products.find(p => p.sku.toUpperCase() === code.toUpperCase());
+
+                    if (found) {
+                        addToCart(found);
+                        playBeep();
+                        setLastScanFeedback({ message: `Escaneado: ${found.name}`, type: 'success' });
+                    } else {
+                        playErrorBeep();
+                        setLastScanFeedback({ message: `NO ENCONTRADO: ${code}`, type: 'error' });
+                    }
+                    setTimeout(() => setLastScanFeedback(null), 3000);
+                }
+                scanBufferRef.current = '';
+            } else if (char.length === 1) {
+                // Buffer char
+                scanBufferRef.current += char;
+                // Clear buffer if typing too slow (human typing vs scanner machinegun)
+                if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+                scanTimeoutRef.current = setTimeout(() => {
+                    scanBufferRef.current = '';
+                }, 100); // 100ms tolerance
+            }
+        };
+
+        window.addEventListener('keydown', handleKv);
+        return () => window.removeEventListener('keydown', handleKv);
+    }, [products, addToCart, scannerActive]);
 
     const removeFromCart = (id: string) => setCart(prev => prev.filter(item => item.id !== id));
 
