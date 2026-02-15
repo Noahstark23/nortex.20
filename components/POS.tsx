@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Shift } from '../types';
-import { ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, ArrowDownCircle } from 'lucide-react';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import * as XLSX from 'xlsx';
 
@@ -678,8 +678,8 @@ const POS: React.FC = () => {
                     <button
                         onClick={() => setScannerActive(!scannerActive)}
                         className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full transition-all ${scannerActive
-                                ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
-                                : 'bg-slate-100 text-slate-500 border border-slate-200'
+                            ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                            : 'bg-slate-100 text-slate-500 border border-slate-200'
                             }`}
                         title={scannerActive ? 'Escáner activo' : 'Escáner desactivado'}
                     >
@@ -701,8 +701,8 @@ const POS: React.FC = () => {
             {/* SCANNER FEEDBACK TOAST */}
             {lastScanFeedback && (
                 <div className={`absolute top-16 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-2xl font-bold text-sm animate-in fade-in slide-in-from-top duration-200 flex items-center gap-2 ${lastScanFeedback.type === 'success'
-                        ? 'bg-emerald-500 text-white'
-                        : 'bg-red-500 text-white'
+                    ? 'bg-emerald-500 text-white'
+                    : 'bg-red-500 text-white'
                     }`}>
                     <ScanBarcode size={18} />
                     {lastScanFeedback.message}
