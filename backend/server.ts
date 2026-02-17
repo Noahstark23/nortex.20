@@ -1382,17 +1382,109 @@ app.post('/api/shifts/close', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { declaredCash, shiftId } = req.body;
     try {
-        const shift = await prisma.shift.findUnique({ where: { id: shiftId }, include: { sales: true } });
+        const shift = await prisma.shift.findUnique({
+            where: { id: shiftId },
+            include: { sales: true, employee: { select: { id: true, firstName: true, lastName: true, role: true } } }
+        });
+        if (!shift) return res.status(404).json({ error: 'Turno no encontrado' });
+
         const cashSales = shift.sales.filter((s: any) => s.paymentMethod === 'CASH').reduce((sum: number, s: any) => sum + Number(s.total), 0);
+        const cardSales = shift.sales.filter((s: any) => s.paymentMethod !== 'CASH' && s.paymentMethod !== 'CREDIT').reduce((sum: number, s: any) => sum + Number(s.total), 0);
         const expectedCash = Number(shift.initialCash) + cashSales;
         const difference = Number(declaredCash) - expectedCash;
-        const closedShift = await prisma.shift.update({
-            where: { id: shiftId },
-            data: { endTime: new Date(), status: 'CLOSED', finalCashDeclared: declaredCash, systemExpectedCash: expectedCash, difference: difference }
+
+        const cajeroName = shift.employee ? `${shift.employee.firstName} ${shift.employee.lastName}` : 'Sin asignar';
+
+        // Transacción: cerrar turno + crear audit log inmutable
+        const closedShift = await prisma.$transaction(async (tx: any) => {
+            const updated = await tx.shift.update({
+                where: { id: shiftId },
+                data: {
+                    endTime: new Date(),
+                    status: 'CLOSED',
+                    finalCashDeclared: declaredCash,
+                    systemExpectedCash: expectedCash,
+                    difference: difference
+                },
+                include: {
+                    employee: { select: { id: true, firstName: true, lastName: true, role: true } }
+                }
+            });
+
+            // AUDIT LOG INMUTABLE — rastro de cierre de caja
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    userId: authReq.userId,
+                    action: 'SHIFT_CLOSED',
+                    details: JSON.stringify({
+                        esperado: expectedCash,
+                        declarado: Number(declaredCash),
+                        diferencia: difference,
+                        cajero: cajeroName,
+                        totalEfectivo: cashSales,
+                        totalTarjeta: cardSales,
+                        fondoInicial: Number(shift.initialCash),
+                        totalVentas: shift.sales.length
+                    })
+                }
+            });
+
+            return updated;
         });
+
         res.json(closedShift);
-    } catch (e) { res.status(500).json({ error: 'Error' }) }
+    } catch (e: any) {
+        console.error('Error closing shift:', e);
+        res.status(500).json({ error: e.message || 'Error cerrando caja' });
+    }
 });
+
+// GET /api/shifts/history — Historial de cierres de caja (auditoría)
+app.get('/api/shifts/history', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const shifts = await prisma.shift.findMany({
+            where: { tenantId: authReq.tenantId, status: 'CLOSED' },
+            orderBy: { endTime: 'desc' },
+            take: 100,
+            include: {
+                employee: { select: { id: true, firstName: true, lastName: true, role: true } },
+                user: { select: { id: true, name: true, email: true } },
+                sales: { select: { id: true, total: true, paymentMethod: true } }
+            }
+        });
+
+        // Enriquecer con totales por método de pago
+        const enriched = shifts.map((s: any) => {
+            const cashTotal = s.sales.filter((sale: any) => sale.paymentMethod === 'CASH').reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
+            const cardTotal = s.sales.filter((sale: any) => sale.paymentMethod !== 'CASH' && sale.paymentMethod !== 'CREDIT').reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
+            const creditTotal = s.sales.filter((sale: any) => sale.paymentMethod === 'CREDIT').reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
+            return {
+                id: s.id,
+                startTime: s.startTime,
+                endTime: s.endTime,
+                initialCash: Number(s.initialCash),
+                finalCashDeclared: s.finalCashDeclared ? Number(s.finalCashDeclared) : null,
+                systemExpectedCash: s.systemExpectedCash ? Number(s.systemExpectedCash) : null,
+                difference: s.difference ? Number(s.difference) : null,
+                employee: s.employee,
+                user: s.user,
+                totalSales: s.sales.length,
+                cashTotal,
+                cardTotal,
+                creditTotal,
+                grandTotal: cashTotal + cardTotal + creditTotal
+            };
+        });
+
+        res.json(enriched);
+    } catch (e: any) {
+        console.error('Error fetching shift history:', e);
+        res.status(500).json({ error: 'Error obteniendo historial de cajas' });
+    }
+});
+
 app.get('/api/audit-logs', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {

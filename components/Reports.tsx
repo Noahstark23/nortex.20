@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { ShieldCheck, TrendingUp, TrendingDown, Package, DollarSign, Receipt, Warehouse, FileSpreadsheet, Loader2, Calendar, AlertTriangle, RefreshCw, Landmark, Scale, Copy, CheckCircle, Building2 } from 'lucide-react';
+import { ShieldCheck, TrendingUp, TrendingDown, Package, DollarSign, Receipt, Warehouse, FileSpreadsheet, Loader2, Calendar, AlertTriangle, RefreshCw, Landmark, Scale, Copy, CheckCircle, Building2, Printer, Clock, Users } from 'lucide-react';
+import { ShiftReportTicket, type ShiftReportData } from './ShiftReportTicket';
 
 // Helpers
 const IVA_RATE = 0.15;
@@ -63,7 +64,7 @@ interface TaxReportData {
 }
 
 const Reports: React.FC = () => {
-    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'CONTADOR'>('DASHBOARD');
+    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'CONTADOR' | 'CAJAS'>('DASHBOARD');
     const [dates, setDates] = useState(getDefaultDates);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -78,6 +79,11 @@ const Reports: React.FC = () => {
     const [taxReport, setTaxReport] = useState<TaxReportData | null>(null);
     const [generatingTax, setGeneratingTax] = useState(false);
     const [copiedVET, setCopiedVET] = useState(false);
+
+    // Cajas (Shift History) tab state
+    const [shiftHistory, setShiftHistory] = useState<any[]>([]);
+    const [shiftHistoryLoading, setShiftHistoryLoading] = useState(false);
+    const [zReportData, setZReportData] = useState<ShiftReportData | null>(null);
 
     const token = localStorage.getItem('nortex_token');
     const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -108,6 +114,47 @@ const Reports: React.FC = () => {
         fetchReports();
     }, [fetchReports]);
 
+    // Fetch shift history when CAJAS tab is active
+    const fetchShiftHistory = useCallback(async () => {
+        setShiftHistoryLoading(true);
+        try {
+            const res = await fetch('/api/shifts/history', { headers });
+            if (res.ok) setShiftHistory(await res.json());
+        } catch (e) { console.error('Error fetching shift history:', e); }
+        finally { setShiftHistoryLoading(false); }
+    }, []);
+
+    useEffect(() => {
+        if (activeTab === 'CAJAS') fetchShiftHistory();
+    }, [activeTab]);
+
+    const getTenantName = () => {
+        try {
+            const t = localStorage.getItem('nortex_tenant');
+            return t ? JSON.parse(t).businessName : 'Mi Negocio';
+        } catch { return 'Mi Negocio'; }
+    };
+
+    const handleReprintZ = (shift: any) => {
+        const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        setZReportData({
+            businessName: getTenantName(),
+            cashierName: shift.employee ? `${shift.employee.firstName} ${shift.employee.lastName}` : 'Sin asignar',
+            startTime: formatDate(shift.startTime),
+            endTime: formatDate(shift.endTime),
+            initialCash: shift.initialCash,
+            cashTotal: shift.cashTotal,
+            cardTotal: shift.cardTotal,
+            creditTotal: shift.creditTotal,
+            grandTotal: shift.grandTotal,
+            systemExpectedCash: shift.systemExpectedCash ?? 0,
+            finalCashDeclared: shift.finalCashDeclared ?? 0,
+            difference: shift.difference ?? 0,
+            totalSales: shift.totalSales,
+        });
+        setTimeout(() => window.print(), 200);
+    };
+
     // Computed
     const utilidadNeta = (salesData?.ventasNetas ?? 0) - (salesData?.totalCOGS ?? 0) - (expensesData?.totalExpenses ?? 0);
     const margen = salesData && salesData.ventasNetas > 0
@@ -130,7 +177,7 @@ const Reports: React.FC = () => {
                 const err = await res.json();
                 alert(err.error || 'Error al generar reporte fiscal');
             }
-        } catch(e: any) { alert('Error de conexión: ' + e?.message); }
+        } catch (e: any) { alert('Error de conexión: ' + e?.message); }
         finally { setGeneratingTax(false); }
     };
 
@@ -142,7 +189,7 @@ const Reports: React.FC = () => {
         }
     };
 
-    const monthNames = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
     if (loading) {
         return (
@@ -176,6 +223,12 @@ const Reports: React.FC = () => {
                         className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CONTADOR' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
                     >
                         <Landmark size={14} /> Contador DGI
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('CAJAS')}
+                        className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CAJAS' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                    >
+                        <Clock size={14} /> Historial Cajas
                     </button>
                 </div>
             </div>
@@ -609,9 +662,8 @@ const Reports: React.FC = () => {
                                         </h3>
                                         <button
                                             onClick={handleCopyVET}
-                                            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                                                copiedVET ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                            }`}
+                                            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${copiedVET ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                                }`}
                                         >
                                             {copiedVET ? <><CheckCircle size={14} /> Copiado!</> : <><Copy size={14} /> Copiar</>}
                                         </button>
@@ -620,7 +672,7 @@ const Reports: React.FC = () => {
                                         {taxReport.vetSummary}
                                     </div>
                                     <p className="text-xs text-slate-400 mt-3">
-                                        Copia este resumen y pégalo en la <strong>Ventanilla Electrónica Tributaria (VET)</strong> de la DGI: 
+                                        Copia este resumen y pégalo en la <strong>Ventanilla Electrónica Tributaria (VET)</strong> de la DGI:
                                         <a href="https://ventanilla.dgi.gob.ni" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline ml-1">
                                             ventanilla.dgi.gob.ni
                                         </a>
@@ -631,6 +683,116 @@ const Reports: React.FC = () => {
                     )}
                 </div>
             )}
+
+            {/* ==================== TAB: HISTORIAL DE CAJAS ==================== */}
+            {activeTab === 'CAJAS' && (
+                <div>
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+                        <div>
+                            <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                                <Users className="text-nortex-500" /> Auditoría de Cajas
+                            </h2>
+                            <p className="text-slate-500 text-sm">Historial completo de cierres — rastro inmutable anti-robo hormiga</p>
+                        </div>
+                        <button
+                            onClick={fetchShiftHistory}
+                            disabled={shiftHistoryLoading}
+                            className="p-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 shadow-sm text-slate-600"
+                            title="Actualizar"
+                        >
+                            <RefreshCw size={18} className={shiftHistoryLoading ? 'animate-spin' : ''} />
+                        </button>
+                    </div>
+
+                    {shiftHistoryLoading ? (
+                        <div className="flex items-center justify-center py-20 text-slate-400 gap-2">
+                            <Loader2 className="animate-spin" size={24} /> Cargando historial...
+                        </div>
+                    ) : shiftHistory.length === 0 ? (
+                        <div className="text-center py-20 text-slate-400">
+                            <Clock size={64} className="mx-auto mb-4 opacity-30" />
+                            <p className="text-lg font-bold">Sin cierres de caja registrados</p>
+                            <p className="text-sm mt-1">Los cierres aparecerán aquí automáticamente</p>
+                        </div>
+                    ) : (
+                        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="bg-slate-50 border-b border-slate-200">
+                                            <th className="px-4 py-3 text-left font-bold text-slate-600">Fecha Cierre</th>
+                                            <th className="px-4 py-3 text-left font-bold text-slate-600">Cajero</th>
+                                            <th className="px-4 py-3 text-right font-bold text-slate-600">Ventas</th>
+                                            <th className="px-4 py-3 text-right font-bold text-slate-600">Esperado</th>
+                                            <th className="px-4 py-3 text-right font-bold text-slate-600">Declarado</th>
+                                            <th className="px-4 py-3 text-right font-bold text-slate-600">Diferencia</th>
+                                            <th className="px-4 py-3 text-center font-bold text-slate-600">Estado</th>
+                                            <th className="px-4 py-3 text-center font-bold text-slate-600">Acción</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {shiftHistory.map((s: any) => {
+                                            const diff = s.difference ?? 0;
+                                            const diffColor = diff < 0 ? 'text-red-600' : diff > 0 ? 'text-amber-600' : 'text-emerald-600';
+                                            const diffBg = diff < 0 ? 'bg-red-50' : diff > 0 ? 'bg-amber-50' : 'bg-emerald-50';
+                                            const statusLabel = diff < 0 ? 'FALTANTE' : diff > 0 ? 'SOBRANTE' : 'CUADRADO';
+                                            const statusIcon = diff < 0 ? '🔴' : diff > 0 ? '🟡' : '🟢';
+
+                                            return (
+                                                <tr key={s.id} className="hover:bg-slate-50 transition-colors">
+                                                    <td className="px-4 py-3">
+                                                        <div className="font-mono text-slate-800">
+                                                            {new Date(s.endTime).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                                        </div>
+                                                        <div className="text-xs text-slate-400">
+                                                            {new Date(s.endTime).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })}
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        <div className="font-bold text-slate-800">
+                                                            {s.employee ? `${s.employee.firstName} ${s.employee.lastName}` : 'N/A'}
+                                                        </div>
+                                                        <div className="text-xs text-slate-400">{s.totalSales} ventas</div>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">
+                                                        C$ {s.grandTotal.toFixed(2)}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right font-mono text-slate-700">
+                                                        C$ {(s.systemExpectedCash ?? 0).toFixed(2)}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right font-mono text-slate-700">
+                                                        C$ {(s.finalCashDeclared ?? 0).toFixed(2)}
+                                                    </td>
+                                                    <td className={`px-4 py-3 text-right font-mono font-bold ${diffColor}`}>
+                                                        {diff > 0 ? '+' : ''}C$ {diff.toFixed(2)}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center">
+                                                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold ${diffBg} ${diffColor}`}>
+                                                            {statusIcon} {statusLabel}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center">
+                                                        <button
+                                                            onClick={() => handleReprintZ(s)}
+                                                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-nortex-900 text-white text-xs font-bold rounded-lg hover:bg-nortex-800 transition-colors shadow-sm"
+                                                            title="Reimprimir Reporte Z"
+                                                        >
+                                                            <Printer size={14} /> Reporte Z
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* HIDDEN: Shift Report Ticket for printing */}
+            <ShiftReportTicket data={zReportData} />
         </div>
     );
 };

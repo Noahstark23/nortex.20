@@ -8,12 +8,13 @@
     height: 0;
     overflow: hidden; 
   }
-  #receipt-area, #receipt-area * {
+  #receipt-area, #receipt-area *,
+  #shift-report-area, #shift-report-area * {
     visibility: visible;
     height: auto;
     overflow: visible;
   }
-  #receipt-area {
+  #receipt-area, #shift-report-area {
     position: fixed;
     left: 0;
     top: 0;
