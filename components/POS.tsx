@@ -1486,7 +1486,18 @@ const POS: React.FC = () => {
                 </div>
             )}
             {/* HIDDEN RECEIPT COMPONENT FOR PRINTING */}
-            <ReceiptTicket data={completedSale ? buildInvoiceData() : null} />
+            <ReceiptTicket data={completedSale ? {
+                tenantName: getTenantName(),
+                date: completedSale.date,
+                saleId: completedSale.saleId,
+                customerName: completedSale.customerName,
+                items: completedSale.items,
+                subtotal: completedSale.subtotal,
+                tax: completedSale.tax,
+                total: completedSale.grandTotal,
+                paymentMethod: completedSale.paymentMethod,
+                user: currentShift?.employee ? `${currentShift.employee.firstName} ${currentShift.employee.lastName}` : 'Cajero',
+            } : null} />
 
             {/* SCAN FEEDBACK TOAST */}
             {lastScanFeedback && (
