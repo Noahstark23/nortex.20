@@ -608,8 +608,6 @@ const POS: React.FC = () => {
                 saleId: data.id,
                 date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
             });
-            // AUTO-PRINT TICKET (Wait for React render)
-            setTimeout(() => window.print(), 100);
             setCashReceived('');
 
         } catch (error: any) {
@@ -656,9 +654,9 @@ const POS: React.FC = () => {
     };
 
     const handlePrintTicket = () => {
-        const inv = buildInvoiceData();
-        if (!inv) return;
-        printTicket(inv);
+        // Use the in-DOM ReceiptTicket + @media print CSS
+        // Wait 150ms to ensure React has rendered the receipt data
+        setTimeout(() => window.print(), 150);
     };
 
     const handlePrintA4 = () => {
