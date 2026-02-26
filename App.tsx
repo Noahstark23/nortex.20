@@ -24,6 +24,7 @@ import TeamManagement from './components/TeamManagement';
 import AcceptInvitation from './components/AcceptInvitation';
 import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
+import CashRegisters from './components/CashRegisters';
 
 // Emails autorizados como SUPER_ADMIN
 const SUPER_ADMIN_EMAILS = ['noelpinedaa96@gmail.com'];
@@ -48,6 +49,7 @@ const ProtectedApp = () => {
       <Routes>
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="pos" element={<POS />} />
+        <Route path="cash-registers" element={<CashRegisters />} />
         <Route path="inventory" element={<Inventory />} />
         <Route path="clients" element={<Clients />} />
         <Route path="suppliers" element={<Suppliers />} />

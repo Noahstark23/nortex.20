@@ -1569,6 +1569,147 @@ app.get('/api/shifts/history', authenticate, async (req: any, res: any) => {
     }
 });
 
+// GET /api/shifts/monitor — PANÓPTICO: Monitor en vivo de todas las cajas del tenant
+app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+
+    try {
+        // Role gate: solo OWNER, ADMIN, MANAGER
+        if (!['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(authReq.role || '')) {
+            return res.status(403).json({ error: 'Acceso denegado. Solo administradores pueden acceder al monitor de cajas.' });
+        }
+
+        // ====== ZONA 1: CAJAS ACTIVAS (LIVE) ======
+        const activeShifts = await prisma.shift.findMany({
+            where: { tenantId: authReq.tenantId, status: 'OPEN' },
+            include: {
+                employee: { select: { id: true, firstName: true, lastName: true, role: true } },
+                user: { select: { id: true, name: true, email: true } },
+                sales: { select: { id: true, total: true, paymentMethod: true, createdAt: true } },
+                cashMovements: { where: { isVoided: false }, select: { id: true, type: true, amount: true, category: true, description: true, createdAt: true } }
+            },
+            orderBy: { startTime: 'asc' }
+        });
+
+        const liveCards = activeShifts.map((shift: any) => {
+            // Bóveda 1: Ventas (solo efectivo)
+            const cashSales = shift.sales
+                .filter((s: any) => s.paymentMethod === 'CASH')
+                .reduce((sum: number, s: any) => sum + Number(s.total), 0);
+            // Ventas tarjeta/transferencia
+            const cardSales = shift.sales
+                .filter((s: any) => s.paymentMethod !== 'CASH' && s.paymentMethod !== 'CREDIT')
+                .reduce((sum: number, s: any) => sum + Number(s.total), 0);
+            // Ventas crédito
+            const creditSales = shift.sales
+                .filter((s: any) => s.paymentMethod === 'CREDIT')
+                .reduce((sum: number, s: any) => sum + Number(s.total), 0);
+
+            // Bóveda 2: Entradas manuales
+            const manualINs = shift.cashMovements
+                .filter((m: any) => m.type === 'IN')
+                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+
+            // Bóveda 3: Salidas manuales
+            const manualOUTs = shift.cashMovements
+                .filter((m: any) => m.type === 'OUT')
+                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+
+            // EL NÚMERO SAGRADO: Efectivo físico estimado en la gaveta
+            const estimatedPhysicalCash = Number(shift.initialCash) + cashSales + manualINs - manualOUTs;
+
+            // Última venta
+            const sortedSales = shift.sales.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            const lastSaleAt = sortedSales.length > 0 ? sortedSales[0].createdAt : null;
+
+            // Movimientos recientes (últimos 5)
+            const recentMovements = shift.cashMovements
+                .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                .slice(0, 5)
+                .map((m: any) => ({
+                    type: m.type,
+                    amount: Number(m.amount),
+                    category: m.category,
+                    description: m.description,
+                    createdAt: m.createdAt
+                }));
+
+            return {
+                id: shift.id,
+                employee: shift.employee,
+                user: shift.user,
+                startTime: shift.startTime,
+                initialCash: Number(shift.initialCash),
+                // Las 3 Bóvedas:
+                vaultCashSales: cashSales,
+                vaultCardSales: cardSales,
+                vaultCreditSales: creditSales,
+                vaultManualINs: manualINs,
+                vaultManualOUTs: manualOUTs,
+                // El Número Sagrado:
+                estimatedPhysicalCash,
+                // Meta:
+                salesCount: shift.sales.length,
+                movementsCount: shift.cashMovements.length,
+                lastSaleAt,
+                recentMovements,
+            };
+        });
+
+        // ====== ZONA 2: HISTORIAL DE CIERRES (últimos 50) ======
+        const closedShifts = await prisma.shift.findMany({
+            where: { tenantId: authReq.tenantId, status: 'CLOSED' },
+            orderBy: { endTime: 'desc' },
+            take: 50,
+            include: {
+                employee: { select: { id: true, firstName: true, lastName: true, role: true } },
+                user: { select: { id: true, name: true } },
+                sales: { select: { total: true, paymentMethod: true } }
+            }
+        });
+
+        // Fetch tenant threshold
+        const tenant = await prisma.tenant.findUnique({ where: { id: authReq.tenantId } });
+        const theftThreshold = tenant ? Number(tenant.theftAlertThreshold) : 500;
+
+        const closedHistory = closedShifts.map((s: any) => {
+            const cashTotal = s.sales.filter((sale: any) => sale.paymentMethod === 'CASH').reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
+            const cardTotal = s.sales.filter((sale: any) => sale.paymentMethod !== 'CASH' && sale.paymentMethod !== 'CREDIT').reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
+            const creditTotal = s.sales.filter((sale: any) => sale.paymentMethod === 'CREDIT').reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
+            const diff = s.difference ? Number(s.difference) : 0;
+
+            return {
+                id: s.id,
+                startTime: s.startTime,
+                endTime: s.endTime,
+                employee: s.employee,
+                user: s.user,
+                initialCash: Number(s.initialCash),
+                finalCashDeclared: s.finalCashDeclared ? Number(s.finalCashDeclared) : null,
+                systemExpectedCash: s.systemExpectedCash ? Number(s.systemExpectedCash) : null,
+                difference: diff,
+                // Status flag for UI coloring
+                status: Math.abs(diff) === 0 ? 'PERFECT' : Math.abs(diff) <= theftThreshold ? 'WARNING' : 'ALERT',
+                salesCount: s.sales.length,
+                cashTotal,
+                cardTotal,
+                creditTotal,
+                grandTotal: cashTotal + cardTotal + creditTotal,
+            };
+        });
+
+        res.json({
+            activeShifts: liveCards,
+            closedShifts: closedHistory,
+            theftThreshold,
+        });
+
+    } catch (e: any) {
+        console.error('Error in shift monitor:', e);
+        res.status(500).json({ error: e.message || 'Error en el monitor de cajas' });
+    }
+});
+
 app.get('/api/audit-logs', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {

@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -16,8 +16,22 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     navigate('/login');
   };
 
+  // Decode JWT to get user role for sidebar gating
+  const token = localStorage.getItem('nortex_token');
+  let userRole = '';
+  try {
+    if (token) {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      userRole = payload.role || '';
+    }
+  } catch (e) { /* ignore decode errors */ }
+
   const navItems = [
     { path: '/app/pos', label: 'Punto de Venta', icon: ShoppingCart },
+    // Cajas y Arqueos: only for OWNER/ADMIN/MANAGER
+    ...(['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(userRole)
+      ? [{ path: '/app/cash-registers', label: 'Cajas y Arqueos', icon: Monitor }]
+      : []),
     { path: '/app/inventory', label: 'Inventario', icon: Package },
     { path: '/app/clients', label: 'Clientes (CRM)', icon: Users },
     { path: '/app/purchases', label: 'Compras', icon: Truck },
