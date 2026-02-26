@@ -25,6 +25,7 @@ model Tenant {
   stripeCustomerId     String? // Stripe Customer ID (cus_xxx)
   stripeSubscriptionId String? // Stripe Subscription ID (sub_xxx)
   subscriptionEndsAt   DateTime? // Fecha de vencimiento de la suscripción
+  theftAlertThreshold  Decimal   @default(500) @db.Decimal(10, 2) // Umbral de alerta "Robo Hormiga" (NIO)
   createdAt            DateTime  @default(now())
 
   users           User[]
@@ -42,6 +43,7 @@ model Tenant {
   manualPayments  ManualPayment[]
   quotations      Quotation[]
   invitations     Invitation[]
+  cashMovements   CashMovement[]
 }
 
 model User {
@@ -63,6 +65,7 @@ model User {
   productsCreated Product[]
   kardexMovements KardexMovement[]
   passwordResets  PasswordReset[]
+  cashMovements   CashMovement[]
 
   @@index([tenantId])
 }
@@ -340,10 +343,11 @@ model Shift {
   startTime          DateTime  @default(now())
   endTime            DateTime?
 
-  tenant   Tenant    @relation(fields: [tenantId], references: [id])
-  user     User      @relation(fields: [userId], references: [id])
-  employee Employee? @relation(fields: [employeeId], references: [id])
-  sales    Sale[]
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  user          User           @relation(fields: [userId], references: [id])
+  employee      Employee?      @relation(fields: [employeeId], references: [id])
+  sales         Sale[]
+  cashMovements CashMovement[]
 
   @@index([tenantId])
   @@index([userId])
@@ -358,10 +362,42 @@ model Expense {
   category    String
   createdAt   DateTime @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id])
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  cashMovement CashMovement?
 
   @@index([tenantId])
   @@index([category])
+}
+
+// ==========================================
+// 💰 CASH MOVEMENTS (ENTRADAS/SALIDAS DE CAJA)
+// ==========================================
+
+model CashMovement {
+  id          String    @id @default(cuid())
+  tenantId    String
+  shiftId     String
+  userId      String
+  type        String    // IN | OUT
+  amount      Decimal   @db.Decimal(10, 2)
+  currency    String    @default("NIO") // NIO | USD
+  category    String    // GASTO_OPERATIVO | PAGO_PROVEEDOR | RETIRO_PERSONAL | CAMBIO | INYECCION_CAPITAL | AJUSTE
+  description String    @db.Text
+  expenseId   String?   @unique // Auto-linked Expense (for OUT movements)
+  isVoided    Boolean   @default(false) // Soft delete: movimiento anulado
+  voidReason  String?   @db.Text
+  voidedAt    DateTime?
+  voidedBy    String?
+  createdAt   DateTime  @default(now())
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id])
+  shift   Shift    @relation(fields: [shiftId], references: [id])
+  user    User     @relation(fields: [userId], references: [id])
+  expense Expense? @relation(fields: [expenseId], references: [id])
+
+  @@index([tenantId])
+  @@index([shiftId])
+  @@index([createdAt])
 }
 
 model B2BOrder {

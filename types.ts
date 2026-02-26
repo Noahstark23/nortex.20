@@ -16,13 +16,13 @@ export interface CartItem extends Product {
 export interface Tenant {
   id: string;
   name: string;
-  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE'; 
+  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE';
   creditScore: number;
   creditLimit: number;
   walletBalance: number;
   subscriptionStatus: 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
   plan: string;
-  trialEndsAt: string; 
+  trialEndsAt: string;
 }
 
 export interface Shift {
@@ -38,6 +38,20 @@ export interface Shift {
   systemExpectedCash?: number;
   difference?: number; // declared - expected
   status: 'OPEN' | 'CLOSED';
+}
+
+export interface CashMovement {
+  id: string;
+  shiftId: string;
+  userId: string;
+  type: 'IN' | 'OUT';
+  amount: number;
+  currency: 'NIO' | 'USD';
+  category: string;
+  description: string;
+  isVoided: boolean;
+  createdAt: string;
+  user?: { id: string; name: string };
 }
 
 export interface AuditLog {
@@ -63,7 +77,7 @@ export interface Sale {
   status: 'COMPLETED' | 'CREDIT_PENDING' | 'PAID';
   paymentMethod: 'CASH' | 'CARD' | 'QR' | 'CREDIT';
   customerName?: string;
-  balance: number; 
+  balance: number;
   dueDate?: string;
   payments?: Payment[];
   shiftId?: string; // Link to Shift
@@ -90,11 +104,11 @@ export interface Wholesaler {
 export interface CatalogItem {
   id: string;
   wholesalerId: string;
-  wholesalerName: string; 
+  wholesalerName: string;
   name: string;
   description: string;
   sku: string;
-  price: number; 
+  price: number;
   category: string;
   sector: string;
   imageUrl?: string;

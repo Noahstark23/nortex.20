@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { MOCK_TENANT, MOCK_PRODUCTS } from '../constants';
-import { TrendingUp, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, Lock, RefreshCw, ShoppingCart, ArrowRight } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, Lock, RefreshCw, ShoppingCart, ArrowRight, ShieldAlert } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Loan, Tenant } from '../types';
 import { useNavigate } from 'react-router-dom';
@@ -23,6 +23,10 @@ const Dashboard: React.FC = () => {
   // Smart Restock State
   const [lowStockItems, setLowStockItems] = useState<any[]>([]);
 
+  // 📊 Today Stats & Alerts
+  const [todayStats, setTodayStats] = useState<{ totalSales: number; totalExpenses: number; netProfit: number } | null>(null);
+  const [theftAlerts, setTheftAlerts] = useState<any[]>([]);
+
   // FETCH REAL DATA
   useEffect(() => {
     const initDashboard = async () => {
@@ -38,6 +42,8 @@ const Dashboard: React.FC = () => {
           const data = await res.json();
           setTenantData(data.tenant);
           setChartData(data.chartData);
+          if (data.todayStats) setTodayStats(data.todayStats);
+          if (data.alerts) setTheftAlerts(data.alerts);
           localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
         }
 
@@ -233,7 +239,7 @@ const Dashboard: React.FC = () => {
           <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold uppercase tracking-wider">{tenantData.type}</span>
           <span className="text-slate-500">{tenantData.name}</span>
           <span className={`px-2 py-1 rounded text-xs font-bold uppercase tracking-wider ${tenantData.subscriptionStatus === 'ACTIVE' ? 'bg-green-100 text-green-700' :
-              tenantData.subscriptionStatus === 'PAST_DUE' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
+            tenantData.subscriptionStatus === 'PAST_DUE' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
             }`}>
             {tenantData.subscriptionStatus}
           </span>
@@ -263,6 +269,66 @@ const Dashboard: React.FC = () => {
             >
               <ShoppingCart size={18} /> Pedir Reabastecimiento <ArrowRight size={18} />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 🚨 THEFT ALERT BANNER */}
+      {theftAlerts.length > 0 && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-red-100 text-red-600 rounded-lg">
+              <ShieldAlert size={20} />
+            </div>
+            <div>
+              <h3 className="font-bold text-red-700">⚠️ Alerta de Auditoría</h3>
+              <p className="text-xs text-red-500">{theftAlerts.length} discrepancia(s) detectada(s) en los últimos 7 días</p>
+            </div>
+          </div>
+          <div className="space-y-1">
+            {theftAlerts.slice(0, 3).map((alert: any) => (
+              <div key={alert.id} className="text-xs bg-red-100 text-red-700 px-3 py-1.5 rounded-lg flex justify-between">
+                <span>{alert.details?.cajero || 'Cajero'}: {alert.details?.tipo}</span>
+                <span className="font-bold">C${Math.abs(alert.details?.diferencia || 0).toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 📊 TODAY'S PERFORMANCE KPIs */}
+      {todayStats && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+            <div className="flex justify-between items-center">
+              <div>
+                <p className="text-xs font-medium text-slate-500 uppercase">Ventas Hoy</p>
+                <h3 className="text-xl font-bold text-slate-800">C${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+              </div>
+              <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><TrendingUp size={18} /></div>
+            </div>
+          </div>
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+            <div className="flex justify-between items-center">
+              <div>
+                <p className="text-xs font-medium text-slate-500 uppercase">Gastos Hoy</p>
+                <h3 className="text-xl font-bold text-red-600">C${todayStats.totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+              </div>
+              <div className="p-2 bg-red-100 text-red-600 rounded-lg"><TrendingDown size={18} /></div>
+            </div>
+          </div>
+          <div className={`p-4 rounded-xl shadow-sm border ${todayStats.netProfit >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+            <div className="flex justify-between items-center">
+              <div>
+                <p className="text-xs font-medium text-slate-500 uppercase">Utilidad Neta Hoy</p>
+                <h3 className={`text-xl font-bold ${todayStats.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                  C${todayStats.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </h3>
+              </div>
+              <div className={`p-2 rounded-lg ${todayStats.netProfit >= 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
+                <DollarSign size={18} />
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { MOCK_PRODUCTS } from '../constants';
-import { Product, CartItem, Shift } from '../types';
-import { ArrowDownCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX } from 'lucide-react';
+import { Product, CartItem, Shift, CashMovement } from '../types';
+import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet } from 'lucide-react';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { ReceiptTicket } from './ReceiptTicket';
 import * as XLSX from 'xlsx';
@@ -115,6 +115,16 @@ const POS: React.FC = () => {
     const [importResult, setImportResult] = useState<{ created: number; updated: number; errors: string[] } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // 💰 CASH MOVEMENT STATE
+    const [showCashModal, setShowCashModal] = useState<'IN' | 'OUT' | null>(null);
+    const [cashAmount, setCashAmount] = useState('');
+    const [cashCategory, setCashCategory] = useState('');
+    const [cashDescription, setCashDescription] = useState('');
+    const [cashMovementLoading, setCashMovementLoading] = useState(false);
+    const [cashBalance, setCashBalance] = useState<number | null>(null);
+    const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
+    const [showMovementsList, setShowMovementsList] = useState(false);
+
     const token = localStorage.getItem('nortex_token');
     const headers = useMemo(() => ({
         'Content-Type': 'application/json',
@@ -193,6 +203,86 @@ const POS: React.FC = () => {
         initPOS();
         fetchProducts();
     }, []);
+
+    // ==========================================
+    // 💰 CASH MOVEMENT FUNCTIONS
+    // ==========================================
+    const fetchCashBalance = useCallback(async () => {
+        try {
+            const res = await fetch('/api/cash-movements/balance', { headers });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.hasOpenShift) setCashBalance(data.balance);
+            }
+        } catch (e) { /* silently fail */ }
+    }, [headers]);
+
+    const fetchCashMovements = useCallback(async () => {
+        try {
+            const res = await fetch('/api/cash-movements', { headers });
+            if (res.ok) {
+                setCashMovements(await res.json());
+            }
+        } catch (e) { /* silently fail */ }
+    }, [headers]);
+
+    // Fetch balance when shift changes
+    useEffect(() => {
+        if (currentShift) {
+            fetchCashBalance();
+            fetchCashMovements();
+        } else {
+            setCashBalance(null);
+            setCashMovements([]);
+        }
+    }, [currentShift]);
+
+    const handleCashMovement = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!showCashModal || !cashAmount || !cashCategory || !cashDescription) return;
+        setCashMovementLoading(true);
+
+        try {
+            const res = await fetch('/api/cash-movements', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    type: showCashModal,
+                    amount: parseFloat(cashAmount),
+                    currency: 'NIO',
+                    category: cashCategory,
+                    description: cashDescription.trim(),
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error);
+
+            // Reset & refresh
+            setShowCashModal(null);
+            setCashAmount('');
+            setCashCategory('');
+            setCashDescription('');
+            fetchCashBalance();
+            fetchCashMovements();
+        } catch (error: any) {
+            alert(error.message);
+        } finally {
+            setCashMovementLoading(false);
+        }
+    };
+
+    const inCategories = [
+        { value: 'INYECCION_CAPITAL', label: '💵 Inyección de Capital' },
+        { value: 'CAMBIO', label: '🔄 Cambio de Billete' },
+        { value: 'AJUSTE', label: '📋 Ajuste' },
+    ];
+    const outCategories = [
+        { value: 'GASTO_OPERATIVO', label: '🧊 Gasto Operativo' },
+        { value: 'PAGO_PROVEEDOR', label: '🚚 Pago a Proveedor' },
+        { value: 'RETIRO_PERSONAL', label: '👤 Retiro Personal' },
+        { value: 'CAMBIO', label: '🔄 Cambio' },
+        { value: 'AJUSTE', label: '📋 Ajuste' },
+    ];
 
     // ==========================================
     // BARCODE SCANNER (Global keydown listener)
@@ -720,7 +810,43 @@ const POS: React.FC = () => {
                     )}
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                    {/* 💰 CASH BALANCE INDICATOR */}
+                    {currentShift && cashBalance !== null && (
+                        <button
+                            onClick={() => setShowMovementsList(!showMovementsList)}
+                            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 transition-all cursor-pointer"
+                            title="Efectivo en caja"
+                        >
+                            <Wallet size={14} />
+                            <span className="font-bold">C${cashBalance.toFixed(2)}</span>
+                        </button>
+                    )}
+
+                    {/* 💰 QUICK ACTION: ENTRADA DE EFECTIVO */}
+                    {currentShift && (
+                        <button
+                            onClick={() => { setShowCashModal('IN'); setCashCategory(''); }}
+                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-all shadow-sm"
+                            title="Entrada de Efectivo"
+                        >
+                            <ArrowDownCircle size={14} />
+                            <span className="hidden lg:inline">Entrada</span>
+                        </button>
+                    )}
+
+                    {/* 💸 QUICK ACTION: SALIDA DE EFECTIVO */}
+                    {currentShift && (
+                        <button
+                            onClick={() => { setShowCashModal('OUT'); setCashCategory(''); }}
+                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-all shadow-sm"
+                            title="Salida de Efectivo"
+                        >
+                            <ArrowUpCircle size={14} />
+                            <span className="hidden lg:inline">Salida</span>
+                        </button>
+                    )}
+
                     {/* Scanner indicator */}
                     <button
                         onClick={() => setScannerActive(!scannerActive)}
@@ -753,6 +879,132 @@ const POS: React.FC = () => {
                     }`}>
                     <ScanBarcode size={18} />
                     {lastScanFeedback.message}
+                </div>
+            )}
+            {/* --- CASH MOVEMENT MODAL --- */}
+            {showCashModal && (
+                <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in duration-200">
+                        <div className="flex items-center justify-between mb-5">
+                            <div className="flex items-center gap-3">
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${showCashModal === 'IN' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+                                    {showCashModal === 'IN' ? <ArrowDownCircle size={24} /> : <ArrowUpCircle size={24} />}
+                                </div>
+                                <div>
+                                    <h2 className="text-lg font-bold text-slate-800">
+                                        {showCashModal === 'IN' ? 'Entrada de Efectivo' : 'Salida de Efectivo'}
+                                    </h2>
+                                    {showCashModal === 'OUT' && cashBalance !== null && (
+                                        <p className="text-xs text-slate-500">Disponible: <span className="font-bold text-slate-700">C${cashBalance.toFixed(2)}</span></p>
+                                    )}
+                                </div>
+                            </div>
+                            <button onClick={() => setShowCashModal(null)} className="text-slate-400 hover:text-slate-600 p-1">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleCashMovement} className="space-y-4">
+                            {/* Category - Quick Select Buttons */}
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Categoría</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {(showCashModal === 'IN' ? inCategories : outCategories).map(cat => (
+                                        <button
+                                            key={cat.value}
+                                            type="button"
+                                            onClick={() => setCashCategory(cat.value)}
+                                            className={`text-left text-sm px-3 py-2.5 rounded-lg border-2 transition-all ${cashCategory === cat.value
+                                                ? showCashModal === 'IN'
+                                                    ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-bold'
+                                                    : 'border-amber-500 bg-amber-50 text-amber-700 font-bold'
+                                                : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                                                }`}
+                                        >
+                                            {cat.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Amount */}
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Monto (C$)</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0.01"
+                                    value={cashAmount}
+                                    onChange={e => setCashAmount(e.target.value)}
+                                    placeholder="0.00"
+                                    className="w-full text-2xl font-bold text-center border-2 border-slate-300 rounded-xl p-4 focus:border-nortex-500 outline-none text-slate-800 bg-slate-50"
+                                    autoFocus
+                                    required
+                                />
+                            </div>
+
+                            {/* Description */}
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Descripción</label>
+                                <input
+                                    type="text"
+                                    value={cashDescription}
+                                    onChange={e => setCashDescription(e.target.value)}
+                                    placeholder={showCashModal === 'OUT' ? 'Ej: Compra de hielo para el local' : 'Ej: Cambio de billete de C$500'}
+                                    className="w-full border-2 border-slate-200 rounded-lg px-4 py-3 text-sm focus:border-nortex-500 outline-none text-slate-700"
+                                    required
+                                    minLength={3}
+                                />
+                            </div>
+
+                            <button
+                                type="submit"
+                                disabled={cashMovementLoading || !cashCategory || !cashAmount || !cashDescription}
+                                className={`w-full py-3.5 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2 ${showCashModal === 'IN'
+                                    ? 'bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-300'
+                                    : 'bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300'
+                                    }`}
+                            >
+                                {cashMovementLoading ? (
+                                    <><Loader2 className="animate-spin" size={18} /> Registrando...</>
+                                ) : (
+                                    <>{showCashModal === 'IN' ? <ArrowDownCircle size={18} /> : <ArrowUpCircle size={18} />} Registrar {showCashModal === 'IN' ? 'Entrada' : 'Salida'}</>
+                                )}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* --- MOVEMENTS LIST DROPDOWN --- */}
+            {showMovementsList && currentShift && (
+                <div className="absolute top-14 right-4 z-40 w-80 bg-white rounded-xl shadow-2xl border border-slate-200 max-h-80 overflow-y-auto animate-in slide-in-from-top duration-200">
+                    <div className="p-3 border-b border-slate-100 flex justify-between items-center sticky top-0 bg-white">
+                        <h3 className="text-sm font-bold text-slate-700">Movimientos del Turno</h3>
+                        <button onClick={() => setShowMovementsList(false)} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
+                    </div>
+                    {cashMovements.length === 0 ? (
+                        <p className="text-sm text-slate-400 text-center py-6">Sin movimientos</p>
+                    ) : (
+                        <div className="divide-y divide-slate-100">
+                            {cashMovements.filter(m => !m.isVoided).map(m => (
+                                <div key={m.id} className="px-3 py-2.5 flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${m.type === 'IN' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+                                            {m.type === 'IN' ? '↓' : '↑'}
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-medium text-slate-700 truncate max-w-[160px]">{m.description}</p>
+                                            <p className="text-[10px] text-slate-400">{new Date(m.createdAt).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })}</p>
+                                        </div>
+                                    </div>
+                                    <span className={`text-sm font-bold ${m.type === 'IN' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                        {m.type === 'IN' ? '+' : '-'}C${Number(m.amount).toFixed(2)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
 

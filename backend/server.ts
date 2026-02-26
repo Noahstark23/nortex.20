@@ -882,9 +882,51 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             return { name: dayName, sales: dayTotal };
         });
 
+        // 3. Calculate Today's Expenses (Gastos operativos del día)
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        const todayExpenses = await prisma.expense.findMany({
+            where: {
+                tenantId: tenantId,
+                createdAt: { gte: todayStart }
+            }
+        });
+        const totalExpensesToday = todayExpenses.reduce((sum: number, e: any) => sum + Number(e.amount), 0);
+
+        // 4. Calculate Today's Sales
+        const totalSalesToday = recentSales
+            .filter((s: any) => new Date(s.createdAt).toDateString() === new Date().toDateString())
+            .reduce((sum: number, s: any) => sum + Number(s.total), 0);
+
+        // 5. Net Profit = Ventas Brutas - Gastos Operativos
+        const netProfitToday = totalSalesToday - totalExpensesToday;
+
+        // 6. Recent Theft/Surplus Alerts (últimos 7 días)
+        const recentAlerts = await prisma.auditLog.findMany({
+            where: {
+                tenantId: tenantId,
+                action: { in: ['THEFT_ALERT', 'SURPLUS_ALERT'] },
+                createdAt: { gte: sevenDaysAgo }
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 10
+        });
+
         res.json({
             tenant: tenant,
             chartData: chartData,
+            todayStats: {
+                totalSales: totalSalesToday,
+                totalExpenses: totalExpensesToday,
+                netProfit: netProfitToday,
+            },
+            alerts: recentAlerts.map((a: any) => ({
+                id: a.id,
+                action: a.action,
+                details: a.details ? JSON.parse(a.details) : {},
+                createdAt: a.createdAt
+            })),
         });
 
     } catch (error) {
@@ -1384,18 +1426,29 @@ app.post('/api/shifts/close', authenticate, async (req: any, res: any) => {
     try {
         const shift = await prisma.shift.findUnique({
             where: { id: shiftId },
-            include: { sales: true, employee: { select: { id: true, firstName: true, lastName: true, role: true } } }
+            include: {
+                sales: true,
+                cashMovements: { where: { isVoided: false } },
+                employee: { select: { id: true, firstName: true, lastName: true, role: true } }
+            }
         });
         if (!shift) return res.status(404).json({ error: 'Turno no encontrado' });
 
+        // ARQUEO DINÁMICO: initialCash + cashSales + manualINs - manualOUTs = expectedCash
         const cashSales = shift.sales.filter((s: any) => s.paymentMethod === 'CASH').reduce((sum: number, s: any) => sum + Number(s.total), 0);
         const cardSales = shift.sales.filter((s: any) => s.paymentMethod !== 'CASH' && s.paymentMethod !== 'CREDIT').reduce((sum: number, s: any) => sum + Number(s.total), 0);
-        const expectedCash = Number(shift.initialCash) + cashSales;
+        const manualINs = shift.cashMovements.filter((m: any) => m.type === 'IN').reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+        const manualOUTs = shift.cashMovements.filter((m: any) => m.type === 'OUT').reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+        const expectedCash = Number(shift.initialCash) + cashSales + manualINs - manualOUTs;
         const difference = Number(declaredCash) - expectedCash;
 
         const cajeroName = shift.employee ? `${shift.employee.firstName} ${shift.employee.lastName}` : 'Sin asignar';
 
-        // Transacción: cerrar turno + crear audit log inmutable
+        // Fetch tenant threshold for theft alert
+        const tenant = await prisma.tenant.findUnique({ where: { id: authReq.tenantId } });
+        const theftThreshold = tenant ? Number(tenant.theftAlertThreshold) : 500;
+
+        // Transacción: cerrar turno + crear audit log inmutable + alerta robo hormiga
         const closedShift = await prisma.$transaction(async (tx: any) => {
             const updated = await tx.shift.update({
                 where: { id: shiftId },
@@ -1424,16 +1477,47 @@ app.post('/api/shifts/close', authenticate, async (req: any, res: any) => {
                         cajero: cajeroName,
                         totalEfectivo: cashSales,
                         totalTarjeta: cardSales,
+                        entradasManuales: manualINs,
+                        salidasManuales: manualOUTs,
                         fondoInicial: Number(shift.initialCash),
-                        totalVentas: shift.sales.length
+                        totalVentas: shift.sales.length,
+                        totalMovimientos: shift.cashMovements.length
                     })
                 }
             });
 
+            // 🚨 ALERTA ROBO HORMIGA — si la diferencia supera el umbral
+            if (Math.abs(difference) > theftThreshold) {
+                const alertType = difference < 0 ? 'THEFT_ALERT' : 'SURPLUS_ALERT';
+                await tx.auditLog.create({
+                    data: {
+                        tenantId: authReq.tenantId,
+                        userId: authReq.userId,
+                        action: alertType,
+                        details: JSON.stringify({
+                            tipo: difference < 0 ? '⚠️ FALTANTE EN CAJA' : '⚠️ SOBRANTE EN CAJA',
+                            diferencia: difference,
+                            esperado: expectedCash,
+                            declarado: Number(declaredCash),
+                            cajero: cajeroName,
+                            umbral: theftThreshold,
+                            turnoId: shiftId,
+                            fecha: new Date().toISOString()
+                        })
+                    }
+                });
+                console.warn(`🚨 ${alertType}: Diferencia C$${Math.abs(difference).toFixed(2)} (umbral: C$${theftThreshold}) - Cajero: ${cajeroName}`);
+            }
+
             return updated;
         });
 
-        res.json(closedShift);
+        res.json({
+            ...closedShift,
+            manualINs,
+            manualOUTs,
+            theftAlert: Math.abs(difference) > theftThreshold
+        });
     } catch (e: any) {
         console.error('Error closing shift:', e);
         res.status(500).json({ error: e.message || 'Error cerrando caja' });
@@ -1491,6 +1575,274 @@ app.get('/api/audit-logs', authenticate, async (req: any, res: any) => {
         const logs = await prisma.auditLog.findMany({ where: { tenantId: authReq.tenantId }, orderBy: { createdAt: 'desc' }, take: 50 });
         res.json(logs);
     } catch (error) { res.status(500).json({ error: 'Error' }); }
+});
+
+
+// ==========================================
+// 💰 CASH MOVEMENTS (ENTRADAS/SALIDAS DE CAJA)
+// ==========================================
+
+// POST /api/cash-movements — Registrar entrada o salida de caja
+app.post('/api/cash-movements', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { type, amount, currency, category, description } = req.body;
+
+    try {
+        // VALIDACIÓN ESTRICTA — cero tolerancia
+        if (!type || !['IN', 'OUT'].includes(type)) {
+            return res.status(400).json({ error: 'Tipo inválido. Debe ser IN o OUT.' });
+        }
+        if (!amount || Number(amount) <= 0) {
+            return res.status(400).json({ error: 'El monto debe ser mayor a 0.' });
+        }
+        if (!category) {
+            return res.status(400).json({ error: 'Categoría es requerida.' });
+        }
+        if (!description || description.trim().length < 3) {
+            return res.status(400).json({ error: 'Descripción es requerida (mínimo 3 caracteres).' });
+        }
+
+        const validCategories = ['GASTO_OPERATIVO', 'PAGO_PROVEEDOR', 'RETIRO_PERSONAL', 'CAMBIO', 'INYECCION_CAPITAL', 'AJUSTE'];
+        if (!validCategories.includes(category)) {
+            return res.status(400).json({ error: `Categoría inválida. Opciones: ${validCategories.join(', ')}` });
+        }
+
+        // A. VALIDAR CAJA ABIERTA
+        const currentShift = await prisma.shift.findFirst({
+            where: { userId: authReq.userId, status: 'OPEN' },
+            include: {
+                sales: true,
+                cashMovements: { where: { isVoided: false } }
+            }
+        });
+        if (!currentShift) {
+            return res.status(400).json({ error: 'No hay caja abierta. Abre una caja primero.' });
+        }
+
+        // B. VALIDACIÓN DE SALDO PARA SALIDAS — CERO TOLERANCIA A SALIDAS FANTASMA
+        if (type === 'OUT') {
+            const cashSalesTotal = currentShift.sales
+                .filter((s: any) => s.paymentMethod === 'CASH')
+                .reduce((sum: number, s: any) => sum + Number(s.total), 0);
+            const totalINs = currentShift.cashMovements
+                .filter((m: any) => m.type === 'IN')
+                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+            const totalOUTs = currentShift.cashMovements
+                .filter((m: any) => m.type === 'OUT')
+                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+
+            const availableCash = Number(currentShift.initialCash) + cashSalesTotal + totalINs - totalOUTs;
+
+            if (Number(amount) > availableCash) {
+                return res.status(400).json({
+                    error: `Saldo insuficiente. Efectivo disponible: C$${availableCash.toFixed(2)}. Intentas sacar: C$${Number(amount).toFixed(2)}`,
+                    availableCash
+                });
+            }
+        }
+
+        // C. TRANSACCIÓN: crear movimiento + auto-crear Expense si es salida
+        const result = await prisma.$transaction(async (tx: any) => {
+            let expenseId = null;
+
+            // Auto-crear Expense para salidas operativas
+            if (type === 'OUT' && ['GASTO_OPERATIVO', 'PAGO_PROVEEDOR'].includes(category)) {
+                const expense = await tx.expense.create({
+                    data: {
+                        tenantId: authReq.tenantId,
+                        amount: Number(amount),
+                        description: `[CAJA] ${description}`,
+                        category: category === 'PAGO_PROVEEDOR' ? 'SUPPLIER_PAYMENT' : 'OPERATIONAL',
+                    }
+                });
+                expenseId = expense.id;
+            }
+
+            const movement = await tx.cashMovement.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    shiftId: currentShift.id,
+                    userId: authReq.userId,
+                    type,
+                    amount: Number(amount),
+                    currency: currency || 'NIO',
+                    category,
+                    description: description.trim(),
+                    expenseId,
+                }
+            });
+
+            // AUDIT LOG inmutable
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    userId: authReq.userId,
+                    action: type === 'IN' ? 'CASH_IN' : 'CASH_OUT',
+                    details: JSON.stringify({
+                        movimientoId: movement.id,
+                        tipo: type,
+                        monto: Number(amount),
+                        moneda: currency || 'NIO',
+                        categoria: category,
+                        descripcion: description.trim(),
+                        turnoId: currentShift.id,
+                        expenseId,
+                    })
+                }
+            });
+
+            return movement;
+        });
+
+        res.json(result);
+    } catch (error: any) {
+        console.error('Error creating cash movement:', error);
+        res.status(500).json({ error: error.message || 'Error registrando movimiento de caja' });
+    }
+});
+
+// GET /api/cash-movements — Listar movimientos del turno actual o de un turno específico
+app.get('/api/cash-movements', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { shiftId } = req.query;
+
+    try {
+        let whereClause: any = { tenantId: authReq.tenantId };
+
+        if (shiftId) {
+            whereClause.shiftId = shiftId;
+        } else {
+            // Default: turno actual abierto del usuario
+            const currentShift = await prisma.shift.findFirst({
+                where: { userId: authReq.userId, status: 'OPEN' }
+            });
+            if (!currentShift) {
+                return res.json([]);
+            }
+            whereClause.shiftId = currentShift.id;
+        }
+
+        const movements = await prisma.cashMovement.findMany({
+            where: whereClause,
+            orderBy: { createdAt: 'desc' },
+            include: {
+                user: { select: { id: true, name: true } }
+            }
+        });
+
+        res.json(movements);
+    } catch (error) {
+        console.error('Error fetching cash movements:', error);
+        res.status(500).json({ error: 'Error obteniendo movimientos de caja' });
+    }
+});
+
+// GET /api/cash-movements/balance — Saldo de efectivo en caja en tiempo real
+app.get('/api/cash-movements/balance', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+
+    try {
+        const currentShift = await prisma.shift.findFirst({
+            where: { userId: authReq.userId, status: 'OPEN' },
+            include: {
+                sales: { select: { total: true, paymentMethod: true } },
+                cashMovements: { where: { isVoided: false } }
+            }
+        });
+
+        if (!currentShift) {
+            return res.json({ balance: 0, hasOpenShift: false });
+        }
+
+        const cashSales = currentShift.sales
+            .filter((s: any) => s.paymentMethod === 'CASH')
+            .reduce((sum: number, s: any) => sum + Number(s.total), 0);
+        const totalINs = currentShift.cashMovements
+            .filter((m: any) => m.type === 'IN')
+            .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+        const totalOUTs = currentShift.cashMovements
+            .filter((m: any) => m.type === 'OUT')
+            .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+
+        const balance = Number(currentShift.initialCash) + cashSales + totalINs - totalOUTs;
+
+        res.json({
+            balance,
+            hasOpenShift: true,
+            breakdown: {
+                initialCash: Number(currentShift.initialCash),
+                cashSales,
+                manualINs: totalINs,
+                manualOUTs: totalOUTs
+            }
+        });
+    } catch (error) {
+        console.error('Error calculating cash balance:', error);
+        res.status(500).json({ error: 'Error calculando saldo de caja' });
+    }
+});
+
+// POST /api/cash-movements/:id/void — Anular movimiento (soft delete)
+app.post('/api/cash-movements/:id/void', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    try {
+        if (!reason || reason.trim().length < 3) {
+            return res.status(400).json({ error: 'Razón de anulación requerida (mínimo 3 caracteres).' });
+        }
+
+        // Solo OWNER/ADMIN pueden anular
+        if (!['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(authReq.role || '')) {
+            return res.status(403).json({ error: 'Solo el dueño o gerente puede anular movimientos.' });
+        }
+
+        const movement = await prisma.cashMovement.findFirst({
+            where: { id, tenantId: authReq.tenantId }
+        });
+
+        if (!movement) {
+            return res.status(404).json({ error: 'Movimiento no encontrado.' });
+        }
+
+        if (movement.isVoided) {
+            return res.status(400).json({ error: 'Este movimiento ya fue anulado.' });
+        }
+
+        const result = await prisma.$transaction(async (tx: any) => {
+            const voided = await tx.cashMovement.update({
+                where: { id },
+                data: {
+                    isVoided: true,
+                    voidReason: reason.trim(),
+                    voidedAt: new Date(),
+                    voidedBy: authReq.userId,
+                }
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    userId: authReq.userId,
+                    action: 'CASH_MOVEMENT_VOIDED',
+                    details: JSON.stringify({
+                        movimientoId: id,
+                        tipoOriginal: movement.type,
+                        montoOriginal: Number(movement.amount),
+                        razon: reason.trim(),
+                    })
+                }
+            });
+
+            return voided;
+        });
+
+        res.json(result);
+    } catch (error: any) {
+        console.error('Error voiding cash movement:', error);
+        res.status(500).json({ error: error.message || 'Error anulando movimiento' });
+    }
 });
 
 
