@@ -34,6 +34,8 @@ interface CompletedSale {
     customerPhone?: string;
     saleId?: string;
     date: string;
+    invoiceNumber?: number;
+    invoiceSeries?: string;
 }
 
 // ==========================================
@@ -898,6 +900,8 @@ const POS: React.FC = () => {
                 customerPhone: selectedCustomer?.phone,
                 saleId: data.id,
                 date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                invoiceNumber: data.invoiceNumber,
+                invoiceSeries: data.invoiceSeries,
             });
             setCashReceived('');
 
@@ -2420,8 +2424,14 @@ const POS: React.FC = () => {
             {/* HIDDEN RECEIPT COMPONENT FOR PRINTING */}
             <ReceiptTicket data={completedSale ? {
                 tenantName: getTenantName(),
+                ruc: (() => { try { const t = localStorage.getItem('nortex_tenant'); return t ? JSON.parse(t).taxId : undefined; } catch { return undefined; } })(),
+                address: (() => { try { const t = localStorage.getItem('nortex_tenant'); return t ? JSON.parse(t).address : undefined; } catch { return undefined; } })(),
+                phone: (() => { try { const t = localStorage.getItem('nortex_tenant'); return t ? JSON.parse(t).phone : undefined; } catch { return undefined; } })(),
+                dgiAuthCode: (() => { try { const t = localStorage.getItem('nortex_tenant'); return t ? JSON.parse(t).dgiAuthCode : undefined; } catch { return undefined; } })(),
                 date: completedSale.date,
                 saleId: completedSale.saleId,
+                invoiceNumber: completedSale.invoiceNumber,
+                invoiceSeries: completedSale.invoiceSeries,
                 customerName: completedSale.customerName,
                 items: completedSale.items,
                 subtotal: completedSale.subtotal,

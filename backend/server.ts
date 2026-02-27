@@ -1256,6 +1256,16 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
 
         // C. EJECUCIÓN TRANSACCIONAL
         const result = await prisma.$transaction(async (tx: any) => {
+            // 🧾 CONSECUTIVO FISCAL: Atómico dentro de transacción
+            const counter = await tx.invoiceSeries.upsert({
+                where: { tenantId_series: { tenantId: authReq.tenantId!, series: 'A' } },
+                update: { lastNumber: { increment: 1 } },
+                create: { tenantId: authReq.tenantId!, series: 'A', lastNumber: 1 },
+            });
+            if (counter.lastNumber > counter.rangeEnd) {
+                throw new Error('Rango de facturación DGI agotado. Solicite nuevo rango.');
+            }
+
             const sale = await tx.sale.create({
                 data: {
                     tenantId: authReq.tenantId,
@@ -1264,11 +1274,13 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
                     paymentMethod: paymentMethod,
                     customerName: customerName,
                     customerId: customerId || null,
-                    employeeId: employeeId || null, // Registro del vendedor REAL
+                    employeeId: employeeId || null,
                     balance: balance,
                     dueDate: dueDate,
                     shiftId: currentShift.id,
                     globalDiscount: Number(globalDiscount) || 0,
+                    invoiceNumber: counter.lastNumber,
+                    invoiceSeries: 'A',
                 }
             });
 

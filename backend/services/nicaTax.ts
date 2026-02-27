@@ -19,31 +19,27 @@ const IMI_RATE = 0.01;          // 1% impuesto municipal (Alcaldía)
 export interface MonthlyTaxReport {
     month: number;
     year: number;
-    
+
     // Ventas
     totalSales: number;           // Ventas brutas (con IVA)
     salesNetasSinIVA: number;     // Ventas sin IVA
     totalIVACollected: number;    // IVA cobrado en ventas
-    
+
     // Compras
     totalPurchases: number;       // Compras brutas (con IVA)
     totalIVAPaid: number;         // IVA pagado en compras (crédito fiscal)
-    
+
     // Impuestos a pagar
     ivaNeto: number;              // IVA Ventas - IVA Compras (min 0)
     ivaCredito: number;           // Crédito fiscal a favor (si IVA Compras > IVA Ventas)
     anticipoIR: number;           // 1% sobre ventas netas
     imiAlcaldia: number;          // 1% sobre ventas netas (Alcaldía)
     totalToPay: number;           // Total a pagar al fisco
-    
+
     // Desglose para VET (Ventanilla Electrónica Tributaria)
     vetSummary: string;
 }
 
-/**
- * Genera el reporte fiscal mensual para un tenant.
- * Calcula IVA, Anticipo IR y Cuota Alcaldía según LCT 822.
- */
 export async function generateMonthlyReport(
     tenantId: string,
     month: number,
@@ -53,18 +49,18 @@ export async function generateMonthlyReport(
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0, 23, 59, 59);
 
-    // 1. Obtener ventas del mes
+    // 1. Obtener ventas del mes (FIXED: createdAt, not date)
     const salesResult = await prisma.sale.aggregate({
         where: {
             tenantId,
-            date: { gte: startDate, lte: endDate },
+            createdAt: { gte: startDate, lte: endDate },
         },
         _sum: { total: true },
         _count: true,
     });
-    
+
     const totalSalesRaw = Number(salesResult._sum.total || 0);
-    
+
     // Separar IVA de las ventas (total incluye IVA)
     const salesNetasSinIVA = Math.round((totalSalesRaw / (1 + IVA_RATE)) * 100) / 100;
     const totalIVACollected = Math.round((totalSalesRaw - salesNetasSinIVA) * 100) / 100;
@@ -97,7 +93,7 @@ export async function generateMonthlyReport(
     const totalToPay = Math.round((ivaNeto + anticipoIR + imiAlcaldia) * 100) / 100;
 
     // 7. Generar resumen para VET
-    const monthNames = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
     const vetSummary = `
 === DECLARACIÓN MENSUAL ${monthNames[month - 1].toUpperCase()} ${year} ===
 Preparado por: NORTEX ERP
@@ -140,6 +136,85 @@ Preparado por: NORTEX ERP
 }
 
 /**
+ * Genera el reporte DMI-V2.1 con rangos de facturas para la DGI
+ */
+export async function generateDMIReport(tenantId: string, month: number, year: number) {
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0, 23, 59, 59);
+
+    // Obtener rango de facturas emitidas en el período
+    const invoiceRange = await prisma.sale.aggregate({
+        where: {
+            tenantId,
+            createdAt: { gte: startDate, lte: endDate },
+            invoiceNumber: { not: null },
+        },
+        _min: { invoiceNumber: true },
+        _max: { invoiceNumber: true },
+        _count: true,
+    });
+
+    // Obtener tenant info
+    const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { businessName: true, taxId: true, dgiAuthCode: true },
+    });
+
+    // Generar reporte fiscal base
+    const taxReport = await generateMonthlyReport(tenantId, month, year);
+
+    const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    const pad = (n: number | null, len = 6) => n ? String(n).padStart(len, '0') : '------';
+
+    const dmiReport = `
+══════════════════════════════════════════════
+   DECLARACIÓN MENSUAL DE IMPUESTOS - DMI V2.1
+══════════════════════════════════════════════
+Contribuyente: ${tenant?.businessName || 'N/A'}
+RUC: ${tenant?.taxId || 'N/A'}
+Aut. DGI: ${tenant?.dgiAuthCode || 'Pendiente'}
+Período: ${monthNames[month - 1].toUpperCase()} ${year}
+══════════════════════════════════════════════
+
+🧾 RANGO DE FACTURAS UTILIZADAS
+   Serie A: ${pad(invoiceRange._min.invoiceNumber)} — ${pad(invoiceRange._max.invoiceNumber)}
+   Total Facturas Emitidas: ${invoiceRange._count}
+
+📊 RESUMEN DE VENTAS
+   Ventas Gravadas (sin IVA):  C$ ${taxReport.salesNetasSinIVA.toFixed(2)}
+   IVA 15%:                     C$ ${taxReport.totalIVACollected.toFixed(2)}
+   Ventas Exentas:              C$ 0.00
+   Total Ventas (con IVA):      C$ ${taxReport.totalSales.toFixed(2)}
+
+🛒 COMPRAS Y CRÉDITO FISCAL
+   Compras (con IVA):           C$ ${taxReport.totalPurchases.toFixed(2)}
+   IVA Crédito Fiscal:          C$ ${taxReport.totalIVAPaid.toFixed(2)}
+
+💰 IMPUESTOS A PAGAR
+   IVA Neto:                    C$ ${taxReport.ivaNeto.toFixed(2)}${taxReport.ivaCredito > 0 ? `\n   Crédito a Favor:              C$ ${taxReport.ivaCredito.toFixed(2)}` : ''}
+   Anticipo IR (1%):             C$ ${taxReport.anticipoIR.toFixed(2)}
+   IMI Alcaldía (1%):            C$ ${taxReport.imiAlcaldia.toFixed(2)}
+   ──────────────────────────────────────
+   TOTAL A PAGAR:                C$ ${taxReport.totalToPay.toFixed(2)}
+
+══════════════════════════════════════════════
+   Generado por: NORTEX ERP - Motor Fiscal
+   Sistema autorizado de Facturación Computarizada
+══════════════════════════════════════════════
+`.trim();
+
+    return {
+        ...taxReport,
+        invoiceRangeStart: invoiceRange._min.invoiceNumber,
+        invoiceRangeEnd: invoiceRange._max.invoiceNumber,
+        totalInvoices: invoiceRange._count,
+        dmiReport,
+        tenantName: tenant?.businessName,
+        tenantRuc: tenant?.taxId,
+    };
+}
+
+/**
  * Guarda o actualiza el reporte fiscal en la base de datos.
  */
 export async function saveMonthlyReport(tenantId: string, report: MonthlyTaxReport) {
@@ -174,3 +249,4 @@ export async function saveMonthlyReport(tenantId: string, report: MonthlyTaxRepo
         },
     });
 }
+

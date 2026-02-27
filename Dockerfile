@@ -26,4 +26,4 @@ RUN npm run build
 EXPOSE 3000
 
 # 9. Comando para arrancar en producción (con migración automática)
-CMD ["sh", "-c", "npx prisma db push --schema=backend/prisma/schema.prisma && npm run start"]
+CMD ["sh", "-c", "npx prisma db push --schema=backend/prisma/schema.prisma --accept-data-loss && npm run start"]

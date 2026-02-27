@@ -25,7 +25,12 @@ model Tenant {
   stripeCustomerId     String? // Stripe Customer ID (cus_xxx)
   stripeSubscriptionId String? // Stripe Subscription ID (sub_xxx)
   subscriptionEndsAt   DateTime? // Fecha de vencimiento de la suscripción
-  theftAlertThreshold  Decimal   @default(500) @db.Decimal(10, 2) // Umbral de alerta "Robo Hormiga" (NIO)
+  theftAlertThreshold  Decimal   @default(500) @db.Decimal(10, 2)
+  // Campos Fiscales DGI
+  address       String?   // Dirección fiscal
+  phone         String?   // Teléfono del negocio
+  dgiAuthCode   String?   // Código autorización DGI (AIMS-xxxx)
+  dgiAuthDate   DateTime? // Fecha de autorización DGI
   createdAt            DateTime  @default(now())
 
   users           User[]
@@ -48,6 +53,7 @@ model Tenant {
   accounts        Account[]
   journalEntries  JournalEntry[]
   fiscalRetentions FiscalRetention[]
+  invoiceSeries   InvoiceSeries[]
 }
 
 model User {
@@ -293,7 +299,10 @@ model Sale {
   dueDate       DateTime?
   shiftId       String?
   createdAt     DateTime  @default(now())
-  globalDiscount Float     @default(0) // Global discount percentage (0-100)
+  globalDiscount Float     @default(0)
+  // Facturación DGI
+  invoiceNumber  Int?      // Consecutivo controlado (1, 2, 3...)
+  invoiceSeries  String?   // Serie: "A", "B" (por sucursal)
 
   tenant   Tenant     @relation(fields: [tenantId], references: [id])
   customer Customer?  @relation(fields: [customerId], references: [id])
@@ -660,4 +669,23 @@ model FiscalRetention {
 
   @@index([tenantId])
   @@index([period])
+}
+
+// ==========================================
+// 🧾 FACTURACIÓN COMPUTARIZADA DGI
+// ==========================================
+
+model InvoiceSeries {
+  id         String  @id @default(cuid())
+  tenantId   String
+  series     String  @default("A") // Serie de factura (A, B, etc.)
+  lastNumber Int     @default(0)    // Último consecutivo emitido
+  rangeStart Int     @default(1)    // Rango autorizado DGI: desde
+  rangeEnd   Int     @default(999999) // Rango autorizado DGI: hasta
+  isActive   Boolean @default(true)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, series])
+  @@index([tenantId])
 }
