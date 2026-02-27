@@ -74,14 +74,14 @@ const Login: React.FC = () => {
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label className="block text-xs font-mono text-slate-400 mb-1.5 ml-1">CORREO ELECTRÓNICO</label>
+            <label className="block text-xs font-mono text-slate-400 mb-1.5 ml-1">USUARIO O CORREO</label>
             <div className="relative group">
               <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-nortex-accent transition-colors" size={18} />
               <input
-                type="email"
+                type="text"
                 required
                 className="w-full bg-nortex-900/50 border border-nortex-700 text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:border-nortex-accent focus:ring-1 focus:ring-nortex-accent/50 transition-all"
-                placeholder="usuario@empresa.com"
+                placeholder="jperez_caja1 o juan@empresa.com"
                 value={formData.email}
                 onChange={e => setFormData({ ...formData, email: e.target.value })}
               />

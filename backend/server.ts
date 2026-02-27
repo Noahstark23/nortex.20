@@ -218,11 +218,19 @@ app.post('/api/auth/register', async (req: any, res: any) => {
 });
 
 app.post('/api/auth/login', async (req: any, res: any) => {
-    const { email, password } = req.body;
+    const { email, password } = req.body; // 'email' might contain a username
 
     try {
-        // 1. Find user
-        const user = await prisma.user.findUnique({ where: { email }, include: { tenant: true } });
+        // 1. Find user by email or username
+        const user = await prisma.user.findFirst({
+            where: {
+                OR: [
+                    { email: email },
+                    { username: email }
+                ]
+            },
+            include: { tenant: true }
+        });
 
         if (!user) {
             return res.status(401).json({ error: 'Credenciales incorrectas' });
@@ -314,18 +322,18 @@ app.get('/api/team', authenticate, async (req: any, res: any) => {
     }
 });
 
-// POST /api/team/invite — Crear invitación
-app.post('/api/team/invite', authenticate, async (req: any, res: any) => {
+// POST /api/team/create-direct — Crear empleado directamente (Modo Dictador)
+app.post('/api/team/create-direct', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { email, role } = req.body;
+    const { name, username, role, password } = req.body;
 
     try {
-        if (!['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(authReq.role || '')) {
-            return res.status(403).json({ error: 'Solo el dueño puede invitar miembros.' });
+        if (!['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(authReq.role || '')) {
+            return res.status(403).json({ error: 'No tienes permisos para crear miembros del equipo.' });
         }
 
-        if (!email || !role) {
-            return res.status(400).json({ error: 'Email y rol son requeridos.' });
+        if (!name || !username || !role || !password) {
+            return res.status(400).json({ error: 'Nombre, usuario, rol y contraseña son requeridos.' });
         }
 
         const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE'];
@@ -333,35 +341,23 @@ app.post('/api/team/invite', authenticate, async (req: any, res: any) => {
             return res.status(400).json({ error: `Rol inválido. Opciones: ${validRoles.join(', ')}` });
         }
 
-        // Verificar que no exista ya un usuario con ese email
-        const existingUser = await prisma.user.findUnique({ where: { email } });
+        // Verificar que no exista ya ese username
+        const existingUser = await prisma.user.findFirst({ where: { username } });
         if (existingUser) {
-            return res.status(400).json({ error: 'Ya existe un usuario con ese email.' });
+            return res.status(400).json({ error: 'Ese nombre de usuario ya está en uso. Elige otro.' });
         }
 
-        // Verificar que no haya una invitación pendiente para ese email
-        const existingInvite = await prisma.invitation.findFirst({
-            where: { tenantId: authReq.tenantId, email, status: 'PENDING' }
-        });
-        if (existingInvite) {
-            return res.status(400).json({ error: 'Ya hay una invitación pendiente para ese email.' });
-        }
+        // Hashear el password (soporta PINs simples)
+        const hashedPassword = await bcrypt.hash(password, 10);
 
-        // Generar token seguro
-        const token = crypto.randomUUID();
-
-        // Crear invitación (expira en 48 horas)
-        const expiresAt = new Date();
-        expiresAt.setHours(expiresAt.getHours() + 48);
-
-        const invitation = await prisma.invitation.create({
+        // Crear usuario directamente inyectando el tenantId seguro del token JWT
+        const user = await prisma.user.create({
             data: {
                 tenantId: authReq.tenantId!,
-                email,
+                username,
+                password: hashedPassword,
+                name,
                 role,
-                token,
-                invitedBy: authReq.userId!,
-                expiresAt,
             }
         });
 
@@ -370,23 +366,18 @@ app.post('/api/team/invite', authenticate, async (req: any, res: any) => {
             data: {
                 tenantId: authReq.tenantId!,
                 userId: authReq.userId!,
-                action: 'INVITE_TEAM_MEMBER',
-                details: `Invitó a ${email} como ${role}`,
+                action: 'CREATE_TEAM_MEMBER',
+                details: `Creó directamente a ${user.name} (${user.username}) como ${role}`,
             }
         });
 
-        // Generar link de invitación
-        const baseUrl = process.env.FRONTEND_URL || 'https://somosnortex.com';
-        const inviteLink = `${baseUrl}/invite/${token}`;
-
-        res.json({
-            invitation,
-            inviteLink,
-            message: `Invitación creada. Comparte este link con ${email}`
+        res.status(201).json({
+            user: { id: user.id, username: user.username, name: user.name, role: user.role },
+            message: `Usuario ${user.username} creado exitosamente. Ya puede iniciar sesión.`
         });
     } catch (error) {
-        console.error('Invite error:', error);
-        res.status(500).json({ error: 'Error creando invitación' });
+        console.error('Create direct error:', error);
+        res.status(500).json({ error: 'Error creando usuario' });
     }
 });
 

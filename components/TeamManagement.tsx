@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
-    Users, Plus, Shield, Eye, ShoppingCart, UserCog, Copy, Check,
-    Trash2, Clock, Mail, ChevronDown, AlertCircle, Loader2, UserPlus
+    Users, Plus, Shield, Eye, ShoppingCart, UserCog, Check,
+    Trash2, Clock, AlertCircle, Loader2, UserPlus
 } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -9,21 +9,11 @@ const API = import.meta.env.VITE_API_URL || '';
 interface TeamUser {
     id: string;
     name: string;
-    email: string;
+    username: string | null;
+    email: string | null;
     role: string;
     status: string;
     lastLogin: string | null;
-    invitedBy: string | null;
-    createdAt: string;
-}
-
-interface Invitation {
-    id: string;
-    email: string;
-    role: string;
-    status: string;
-    token: string;
-    expiresAt: string;
     createdAt: string;
 }
 
@@ -74,14 +64,16 @@ const ROLE_CONFIG: Record<string, { label: string; icon: React.ReactNode; color:
 
 const TeamManagement: React.FC = () => {
     const [users, setUsers] = useState<TeamUser[]>([]);
-    const [invitations, setInvitations] = useState<Invitation[]>([]);
     const [loading, setLoading] = useState(true);
-    const [showInviteModal, setShowInviteModal] = useState(false);
-    const [inviteEmail, setInviteEmail] = useState('');
-    const [inviteRole, setInviteRole] = useState('CASHIER');
-    const [inviteLoading, setInviteLoading] = useState(false);
-    const [generatedLink, setGeneratedLink] = useState('');
-    const [copiedLink, setCopiedLink] = useState(false);
+    const [showCreateModal, setShowCreateModal] = useState(false);
+
+    // Form state for creating user
+    const [formName, setFormName] = useState('');
+    const [formUsername, setFormUsername] = useState('');
+    const [formPassword, setFormPassword] = useState('');
+    const [formRole, setFormRole] = useState('CASHIER');
+
+    const [createLoading, setCreateLoading] = useState(false);
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
 
@@ -95,7 +87,6 @@ const TeamManagement: React.FC = () => {
             const data = await res.json();
             if (res.ok) {
                 setUsers(data.users);
-                setInvitations(data.invitations);
             }
         } catch (err) {
             console.error('Error fetching team:', err);
@@ -106,37 +97,37 @@ const TeamManagement: React.FC = () => {
 
     useEffect(() => { fetchTeam(); }, []);
 
-    const handleInvite = async () => {
-        setInviteLoading(true);
+    const handleCreateUser = async () => {
+        setCreateLoading(true);
         setError('');
-        setGeneratedLink('');
         try {
-            const res = await fetch(`${API}/api/team/invite`, {
+            const res = await fetch(`${API}/api/team/create-direct`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${token}`
                 },
-                body: JSON.stringify({ email: inviteEmail, role: inviteRole })
+                body: JSON.stringify({
+                    name: formName,
+                    username: formUsername,
+                    password: formPassword,
+                    role: formRole
+                })
             });
             const data = await res.json();
             if (res.ok) {
-                setGeneratedLink(data.inviteLink);
+                setSuccessMsg(data.message || 'Usuario creado exitosamente');
+                setShowCreateModal(false);
                 fetchTeam();
+                setTimeout(() => setSuccessMsg(''), 5000);
             } else {
-                setError(data.error || 'Error creando invitación');
+                setError(data.error || 'Error creando usuario');
             }
         } catch (err) {
-            setError('Error de conexión');
+            setError('Error de conexión con el servidor');
         } finally {
-            setInviteLoading(false);
+            setCreateLoading(false);
         }
-    };
-
-    const handleCopyLink = () => {
-        navigator.clipboard.writeText(generatedLink);
-        setCopiedLink(true);
-        setTimeout(() => setCopiedLink(false), 3000);
     };
 
     const handleDisableUser = async (userId: string, userName: string) => {
@@ -178,23 +169,6 @@ const TeamManagement: React.FC = () => {
         }
     };
 
-    const handleCancelInvite = async (invitationId: string) => {
-        if (!confirm('¿Cancelar esta invitación?')) return;
-        try {
-            const res = await fetch(`${API}/api/team/invite/${invitationId}`, {
-                method: 'DELETE',
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (res.ok) {
-                fetchTeam();
-                setSuccessMsg('Invitación cancelada.');
-                setTimeout(() => setSuccessMsg(''), 3000);
-            }
-        } catch (err) {
-            console.error(err);
-        }
-    };
-
     const formatDate = (d: string | null) => {
         if (!d) return 'Nunca';
         return new Date(d).toLocaleDateString('es-NI', {
@@ -224,15 +198,16 @@ const TeamManagement: React.FC = () => {
                 </div>
                 <button
                     onClick={() => {
-                        setShowInviteModal(true);
-                        setInviteEmail('');
-                        setInviteRole('CASHIER');
-                        setGeneratedLink('');
+                        setShowCreateModal(true);
+                        setFormName('');
+                        setFormUsername('');
+                        setFormPassword('');
+                        setFormRole('CASHIER');
                         setError('');
                     }}
                     className="flex items-center gap-2 px-5 py-2.5 bg-nortex-accent text-nortex-900 font-bold rounded-lg hover:bg-emerald-400 transition-all shadow-lg shadow-nortex-accent/20"
                 >
-                    <UserPlus size={18} /> Invitar Miembro
+                    <UserPlus size={18} /> Añadir Empleado
                 </button>
             </div>
 
@@ -266,7 +241,10 @@ const TeamManagement: React.FC = () => {
                                                 <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded font-mono">DESACTIVADO</span>
                                             )}
                                         </div>
-                                        <p className="text-xs text-slate-500 truncate">{u.email}</p>
+                                        <p className="text-xs text-slate-500 truncate flex flex-col xl:flex-row xl:gap-2">
+                                            {u.username && <span>Usuario: <strong className="text-slate-300">{u.username}</strong></span>}
+                                            {u.email && <span>Email: {u.email}</span>}
+                                        </p>
                                     </div>
                                 </div>
 
@@ -309,53 +287,6 @@ const TeamManagement: React.FC = () => {
                 </div>
             </div>
 
-            {/* Pending Invitations */}
-            {invitations.length > 0 && (
-                <div className="bg-nortex-800/50 border border-slate-700/50 rounded-xl overflow-hidden">
-                    <div className="px-5 py-3 border-b border-slate-700/50">
-                        <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">Invitaciones Pendientes</h2>
-                    </div>
-                    <div className="divide-y divide-slate-700/30">
-                        {invitations.map(inv => {
-                            const rc = ROLE_CONFIG[inv.role] || ROLE_CONFIG.EMPLOYEE;
-                            const expiresIn = Math.max(0, Math.floor((new Date(inv.expiresAt).getTime() - Date.now()) / 3600000));
-                            const baseUrl = window.location.origin;
-                            const link = `${baseUrl}/invite/${inv.token}`;
-                            return (
-                                <div key={inv.id} className="px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3 hover:bg-slate-800/30 transition-colors">
-                                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                                        <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm bg-slate-700/50 text-slate-400 border border-dashed border-slate-600 shrink-0">
-                                            <Mail size={16} />
-                                        </div>
-                                        <div className="min-w-0">
-                                            <p className="text-white font-medium truncate">{inv.email}</p>
-                                            <p className="text-xs text-slate-500">Expira en {expiresIn}h</p>
-                                        </div>
-                                    </div>
-                                    <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border ${rc.bg} ${rc.color} shrink-0`}>
-                                        {rc.icon} {rc.label}
-                                    </div>
-                                    <div className="flex items-center gap-2 shrink-0">
-                                        <button
-                                            onClick={() => { navigator.clipboard.writeText(link); setSuccessMsg('Link copiado!'); setTimeout(() => setSuccessMsg(''), 2000); }}
-                                            className="flex items-center gap-1 px-3 py-1.5 bg-slate-700 text-slate-300 rounded text-xs hover:bg-slate-600 transition-colors"
-                                        >
-                                            <Copy size={12} /> Copiar Link
-                                        </button>
-                                        <button
-                                            onClick={() => handleCancelInvite(inv.id)}
-                                            className="p-1.5 text-red-400 hover:bg-red-500/10 rounded transition-colors"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            )}
-
             {/* Role Permissions Info */}
             <div className="bg-nortex-800/50 border border-slate-700/50 rounded-xl p-5">
                 <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4">Permisos por Rol</h3>
@@ -374,117 +305,102 @@ const TeamManagement: React.FC = () => {
                 </div>
             </div>
 
-            {/* ====== INVITE MODAL ====== */}
-            {showInviteModal && (
+            {/* ====== CREATE EMPLOYEE MODAL (DICTATOR MODE) ====== */}
+            {showCreateModal && (
                 <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
                     <div className="bg-nortex-800 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl">
                         <div className="p-6">
                             <h2 className="text-xl font-bold text-white flex items-center gap-2 mb-1">
-                                <UserPlus className="text-nortex-accent" size={22} /> Invitar Miembro
+                                <UserPlus className="text-nortex-accent" size={22} /> Crear Empleado
                             </h2>
-                            <p className="text-sm text-slate-400 mb-6">El invitado recibirá un link para crear su cuenta.</p>
+                            <p className="text-sm text-slate-400 mb-6">El usuario tendrá acceso inmediato para operar el sistema con el Rol asignado.</p>
 
-                            {!generatedLink ? (
-                                <>
-                                    {/* Email */}
-                                    <div className="mb-4">
-                                        <label className="text-sm font-medium text-slate-300 block mb-1.5">Email</label>
-                                        <input
-                                            type="email"
-                                            value={inviteEmail}
-                                            onChange={e => setInviteEmail(e.target.value)}
-                                            placeholder="empleado@ejemplo.com"
-                                            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder:text-slate-500 focus:border-nortex-accent focus:outline-none"
-                                        />
-                                    </div>
+                            {/* Name */}
+                            <div className="mb-4">
+                                <label className="text-sm font-medium text-slate-300 block mb-1.5">Nombre Completo</label>
+                                <input
+                                    type="text"
+                                    value={formName}
+                                    onChange={e => setFormName(e.target.value)}
+                                    placeholder="Ej: Juan Pérez"
+                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder:text-slate-500 focus:border-nortex-accent focus:outline-none"
+                                />
+                            </div>
 
-                                    {/* Role */}
-                                    <div className="mb-6">
-                                        <label className="text-sm font-medium text-slate-300 block mb-2">Rol</label>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            {['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE'].map(role => {
-                                                const rc = ROLE_CONFIG[role];
-                                                const isSelected = inviteRole === role;
-                                                return (
-                                                    <button
-                                                        key={role}
-                                                        onClick={() => setInviteRole(role)}
-                                                        className={`p-3 rounded-lg border text-left transition-all ${isSelected
-                                                                ? `${rc.bg} border-current ${rc.color} ring-1 ring-current`
-                                                                : 'border-slate-700 hover:border-slate-600'
-                                                            }`}
-                                                    >
-                                                        <div className={`flex items-center gap-1.5 text-sm font-medium mb-0.5 ${isSelected ? rc.color : 'text-slate-300'}`}>
-                                                            {rc.icon} {rc.label}
-                                                        </div>
-                                                        <p className="text-[11px] text-slate-500">{rc.description}</p>
-                                                    </button>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
+                            {/* Username / Phone */}
+                            <div className="mb-4">
+                                <label className="text-sm font-medium text-slate-300 block mb-1.5">Nombre de Usuario para Login</label>
+                                <input
+                                    type="text"
+                                    value={formUsername}
+                                    onChange={e => setFormUsername(e.target.value)}
+                                    placeholder="Ej: jperez_caja1"
+                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder:text-slate-500 focus:border-nortex-accent focus:outline-none"
+                                />
+                                <p className="text-[11px] text-slate-500 mt-1">Debe ser único. Con este usuario iniciará sesión (sin emails).</p>
+                            </div>
 
-                                    {error && (
-                                        <div className="mb-4 bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-sm text-red-400 flex items-center gap-2">
-                                            <AlertCircle size={16} /> {error}
-                                        </div>
-                                    )}
+                            {/* Password */}
+                            <div className="mb-4">
+                                <label className="text-sm font-medium text-slate-300 block mb-1.5">Contraseña (PIN recomendado)</label>
+                                <input
+                                    type="text" // Shown as text for immediate physical handover
+                                    value={formPassword}
+                                    onChange={e => setFormPassword(e.target.value)}
+                                    placeholder="Ej: 123456"
+                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-white font-mono placeholder:text-slate-500 focus:border-nortex-accent focus:outline-none"
+                                />
+                                <p className="text-[11px] text-slate-500 mt-1">Dale esta contraseña al empleado para que entre ahora mismo.</p>
+                            </div>
 
-                                    <div className="flex gap-3">
-                                        <button
-                                            onClick={() => setShowInviteModal(false)}
-                                            className="flex-1 px-4 py-2.5 border border-slate-600 text-slate-300 rounded-lg hover:bg-slate-700 transition-colors"
-                                        >
-                                            Cancelar
-                                        </button>
-                                        <button
-                                            onClick={handleInvite}
-                                            disabled={!inviteEmail || inviteLoading}
-                                            className="flex-1 px-4 py-2.5 bg-nortex-accent text-nortex-900 font-bold rounded-lg hover:bg-emerald-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                                        >
-                                            {inviteLoading ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
-                                            {inviteLoading ? 'Creando...' : 'Crear Invitación'}
-                                        </button>
-                                    </div>
-                                </>
-                            ) : (
-                                /* Link Generated */
-                                <div className="space-y-4">
-                                    <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-4 text-center">
-                                        <Check className="text-emerald-400 mx-auto mb-2" size={32} />
-                                        <p className="text-emerald-400 font-medium">¡Invitación Creada!</p>
-                                        <p className="text-xs text-slate-400 mt-1">Comparte este link con <strong className="text-white">{inviteEmail}</strong></p>
-                                    </div>
+                            {/* Role */}
+                            <div className="mb-6">
+                                <label className="text-sm font-medium text-slate-300 block mb-2">Rol Operativo</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE'].map(role => {
+                                        const rc = ROLE_CONFIG[role];
+                                        const isSelected = formRole === role;
+                                        return (
+                                            <button
+                                                key={role}
+                                                onClick={() => setFormRole(role)}
+                                                className={`p-3 rounded-lg border text-left transition-all ${isSelected
+                                                    ? `${rc.bg} border-current ${rc.color} ring-1 ring-current`
+                                                    : 'border-slate-700 hover:border-slate-600'
+                                                    }`}
+                                            >
+                                                <div className={`flex items-center gap-1.5 text-sm font-medium mb-0.5 ${isSelected ? rc.color : 'text-slate-300'}`}>
+                                                    {rc.icon} {rc.label}
+                                                </div>
+                                                <p className="text-[11px] text-slate-500">{rc.description}</p>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
 
-                                    <div className="bg-slate-900 rounded-lg p-3 flex items-center gap-2">
-                                        <input
-                                            readOnly
-                                            value={generatedLink}
-                                            className="flex-1 bg-transparent text-sm text-nortex-accent font-mono truncate border-none outline-none"
-                                        />
-                                        <button
-                                            onClick={handleCopyLink}
-                                            className={`shrink-0 px-3 py-1.5 rounded text-sm font-medium transition-all flex items-center gap-1 ${copiedLink
-                                                    ? 'bg-emerald-500/20 text-emerald-400'
-                                                    : 'bg-slate-700 text-white hover:bg-slate-600'
-                                                }`}
-                                        >
-                                            {copiedLink ? <><Check size={14} /> Copiado</> : <><Copy size={14} /> Copiar</>}
-                                        </button>
-                                    </div>
-
-                                    <p className="text-xs text-slate-500 text-center">
-                                        El link expira en 48 horas. Puedes compartirlo por WhatsApp, email, etc.
-                                    </p>
-
-                                    <button
-                                        onClick={() => setShowInviteModal(false)}
-                                        className="w-full px-4 py-2.5 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors"
-                                    >
-                                        Cerrar
-                                    </button>
+                            {error && (
+                                <div className="mb-4 bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-sm text-red-400 flex items-center gap-2">
+                                    <AlertCircle size={16} /> {error}
                                 </div>
                             )}
+
+                            <div className="flex gap-3 mt-6">
+                                <button
+                                    onClick={() => setShowCreateModal(false)}
+                                    className="flex-1 px-4 py-2.5 border border-slate-600 text-slate-300 rounded-lg hover:bg-slate-700 transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={handleCreateUser}
+                                    disabled={!formName || !formUsername || !formPassword || createLoading}
+                                    className="flex-1 px-4 py-2.5 bg-nortex-accent text-nortex-900 font-bold rounded-lg hover:bg-emerald-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(16,185,129,0.2)]"
+                                >
+                                    {createLoading ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
+                                    {createLoading ? 'Creando...' : 'Crear Acceso Ahora'}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

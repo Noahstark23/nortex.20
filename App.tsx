@@ -21,7 +21,6 @@ import SuperAdmin from './components/SuperAdmin';
 import TermsOfService from './components/TermsOfService';
 import PrivacyPolicy from './components/PrivacyPolicy';
 import TeamManagement from './components/TeamManagement';
-import AcceptInvitation from './components/AcceptInvitation';
 import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
 import CashRegisters from './components/CashRegisters';
@@ -95,7 +94,6 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/terms" element={<TermsOfService />} />
         <Route path="/privacy" element={<PrivacyPolicy />} />
-        <Route path="/invite/:token" element={<AcceptInvitation />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password/:token" element={<ResetPassword />} />
         <Route path="/admin" element={<ProtectedAdmin />} />
