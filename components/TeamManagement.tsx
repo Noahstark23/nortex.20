@@ -77,7 +77,7 @@ const TeamManagement: React.FC = () => {
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
 
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('nortex_token');
 
     const fetchTeam = async () => {
         try {
