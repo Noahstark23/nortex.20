@@ -1,45 +1,58 @@
 import React, { useState } from 'react';
 import { X, Clock, CheckCircle, AlertCircle } from 'lucide-react';
-import api from '../utils/api';
 
 interface PinPadClockProps {
-    onClose: () => void;
+  onClose: () => void;
 }
 
 export const PinPadClock: React.FC<PinPadClockProps> = ({ onClose }) => {
-    const [pin, setPin] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [successMsg, setSuccessMsg] = useState('');
-    const [errorMsg, setErrorMsg] = useState('');
+  const [pin, setPin] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
 
-    const handleKeyPress = (num: string) => {
-        if (pin.length < 4) setPin(prev => prev + num);
-    };
+  const handleKeyPress = (num: string) => {
+    if (pin.length < 4) setPin(prev => prev + num);
+  };
 
-    const handleDelete = () => setPin(prev => prev.slice(0, -1));
-    const handleClear = () => setPin('');
+  const handleDelete = () => setPin(prev => prev.slice(0, -1));
+  const handleClear = () => setPin('');
 
-    const handleAction = async (action: 'clock-in' | 'clock-out') => {
-        if (pin.length !== 4) {
-            setErrorMsg('El PIN debe tener 4 dígitos');
-            return;
-        }
+  const handleAction = async (action: 'clock-in' | 'clock-out') => {
+    if (pin.length !== 4) {
+      setErrorMsg('El PIN debe tener 4 dígitos');
+      return;
+    }
 
-        setLoading(true);
-        setErrorMsg('');
-        setSuccessMsg('');
+    setLoading(true);
+    setErrorMsg('');
+    setSuccessMsg('');
 
-        try {
-            const { data } = await api.post(\`/hr/\${action}\`, { pin });
-      setSuccessMsg(data.message);
-      setPin('');
-      
-      // Auto close after success
-      setTimeout(() => {
-        onClose();
-      }, 2000);
+    try {
+      const token = localStorage.getItem('nortex_token');
+      const res = await fetch(`/api/hr/${action}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ pin })
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        setSuccessMsg(data.message);
+        setPin('');
+
+        // Auto close after success
+        setTimeout(() => {
+          onClose();
+        }, 2000);
+      } else {
+        setErrorMsg(data.error || 'Error de conexión');
+      }
     } catch (err: any) {
-      setErrorMsg(err.response?.data?.error || 'Error de conexión');
+      setErrorMsg(err.message || 'Error de conexión');
     } finally {
       setLoading(false);
     }
@@ -51,7 +64,7 @@ export const PinPadClock: React.FC<PinPadClockProps> = ({ onClose }) => {
         {/* Glow effect */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-32 bg-indigo-500 rounded-full blur-3xl opacity-20 pointer-events-none"></div>
 
-        <button 
+        <button
           onClick={onClose}
           className="absolute top-4 right-4 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 p-2 rounded-full transition-colors"
         >
@@ -69,13 +82,13 @@ export const PinPadClock: React.FC<PinPadClockProps> = ({ onClose }) => {
         {/* Display PIN */}
         <div className="flex justify-center gap-3 mb-8">
           {[...Array(4)].map((_, i) => (
-            <div 
-              key={i} 
-              className={\`w-14 h-16 rounded-xl flex items-center justify-center text-3xl font-bold
-                \${pin.length > i 
-                  ? 'bg-indigo-600 text-white border border-indigo-500 shadow-[0_0_15px_rgba(79,70,229,0.5)]' 
+            <div
+              key={i}
+              className={`w-14 h-16 rounded-xl flex items-center justify-center text-3xl font-bold
+                ${pin.length > i
+                  ? 'bg-indigo-600 text-white border border-indigo-500 shadow-[0_0_15px_rgba(79,70,229,0.5)]'
                   : 'bg-slate-800 text-slate-500 border border-slate-700'
-                } transition-all duration-200\`}
+                } transition-all duration-200`}
             >
               {pin.length > i ? '•' : ''}
             </div>
@@ -141,7 +154,7 @@ export const PinPadClock: React.FC<PinPadClockProps> = ({ onClose }) => {
             <span className="text-sm opacity-80 uppercase tracking-wider">Entrada</span>
             <span className="text-xl">Clock IN</span>
           </button>
-          
+
           <button
             onClick={() => handleAction('clock-out')}
             disabled={loading || pin.length !== 4}
