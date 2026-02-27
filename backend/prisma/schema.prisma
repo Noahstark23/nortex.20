@@ -44,6 +44,10 @@ model Tenant {
   quotations      Quotation[]
   invitations     Invitation[]
   cashMovements   CashMovement[]
+  productReturns  ProductReturn[]
+  accounts        Account[]
+  journalEntries  JournalEntry[]
+  fiscalRetentions FiscalRetention[]
 }
 
 model User {
@@ -289,6 +293,7 @@ model Sale {
   dueDate       DateTime?
   shiftId       String?
   createdAt     DateTime  @default(now())
+  globalDiscount Float     @default(0) // Global discount percentage (0-100)
 
   tenant   Tenant     @relation(fields: [tenantId], references: [id])
   customer Customer?  @relation(fields: [customerId], references: [id])
@@ -296,6 +301,7 @@ model Sale {
   shift    Shift?     @relation(fields: [shiftId], references: [id])
   items    SaleItem[]
   payments Payment[]
+  productReturns ProductReturn[]
 
   @@index([tenantId])
   @@index([customerId])
@@ -307,9 +313,10 @@ model SaleItem {
   id          String  @id @default(cuid())
   saleId      String
   productId   String
-  quantity    Int
+  quantity    Float
   priceAtSale Decimal @db.Decimal(10, 2)
   costAtSale  Decimal @db.Decimal(10, 2)
+  discount    Float   @default(0) // Item discount percentage (0-100)
 
   sale Sale @relation(fields: [saleId], references: [id])
 
@@ -447,8 +454,8 @@ model Product {
   cost  Float // Costo de compra
 
   // Inventario
-  stock    Int    @default(0)
-  minStock Int    @default(0) // Stock mínimo para alerta
+  stock    Float  @default(0)
+  minStock Float  @default(0) // Stock mínimo para alerta
   unit     String @default("unidad") // kg, litro, unidad, caja, etc.
 
   // Auditoría
@@ -475,11 +482,11 @@ model KardexMovement {
 
   // Tipo de movimiento
   type     String // IN (entrada), OUT (salida), SALE (venta), ADJUSTMENT (ajuste), RETURN (devolución)
-  quantity Int // Cantidad (positiva para entradas, negativa para salidas)
+  quantity Float // Cantidad (positiva para entradas, negativa para salidas)
 
   // Stock antes/después para auditoría
-  stockBefore Int
-  stockAfter  Int
+  stockBefore Float
+  stockAfter  Float
 
   // Referencia opcional (ID de venta, compra, etc.)
   referenceId   String?
@@ -559,4 +566,98 @@ model QuotationItem {
   quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
 
   @@index([quotationId])
+}
+
+// ==========================================
+// 🔄 DEVOLUCIONES / NOTAS DE CRÉDITO
+// ==========================================
+
+model ProductReturn {
+  id        String   @id @default(cuid())
+  tenantId  String
+  saleId    String
+  total     Decimal  @db.Decimal(10, 2) // Total del reembolso
+  reason    String   @db.Text
+  items     Json     // [{productId, name, quantity, price}]
+  createdBy String
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  sale   Sale   @relation(fields: [saleId], references: [id])
+
+  @@index([tenantId])
+  @@index([saleId])
+}
+
+// ==========================================
+// 📊 CONTABILIDAD DE PARTIDA DOBLE (NIIF PyMES)
+// ==========================================
+
+model Account {
+  id       String  @id @default(cuid())
+  tenantId String
+  code     String  // "1.1.1", "4.1.1", etc.
+  name     String  // "Caja General", "Inventario", "Ventas"
+  type     String  // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
+  subtype  String? // CURRENT_ASSET, FIXED_ASSET, CURRENT_LIABILITY, etc.
+  balance  Decimal @default(0) @db.Decimal(14, 2)
+  isSystem Boolean @default(true) // Cuentas del sistema (no borrables)
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id])
+  lines  JournalLine[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([type])
+}
+
+model JournalEntry {
+  id            String   @id @default(cuid())
+  tenantId      String
+  date          DateTime @default(now())
+  description   String   @db.Text
+  referenceId   String?  // Sale.id, Purchase.id, etc.
+  referenceType String?  // SALE, PURCHASE, EXPENSE, PAYROLL, ADJUSTMENT, RETURN, PAYMENT
+  isAutomatic   Boolean  @default(true)
+  createdBy     String
+  createdAt     DateTime @default(now())
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id])
+  lines  JournalLine[]
+
+  @@index([tenantId])
+  @@index([referenceId])
+  @@index([date])
+}
+
+model JournalLine {
+  id             String  @id @default(cuid())
+  journalEntryId String
+  accountId      String
+  debit          Decimal @default(0) @db.Decimal(14, 2)
+  credit         Decimal @default(0) @db.Decimal(14, 2)
+
+  entry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account Account      @relation(fields: [accountId], references: [id])
+
+  @@index([journalEntryId])
+  @@index([accountId])
+}
+
+model FiscalRetention {
+  id          String   @id @default(cuid())
+  tenantId    String
+  type        String   // IR_2PCT, IMI_1PCT, IVA_RETENIDO
+  amount      Decimal  @db.Decimal(10, 2)
+  baseAmount  Decimal  @db.Decimal(10, 2)
+  supplierId  String?
+  purchaseId  String?
+  description String   @db.Text
+  period      String   // "2026-02"
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([period])
 }

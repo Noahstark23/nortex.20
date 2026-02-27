@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Shift, CashMovement } from '../types';
-import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw } from 'lucide-react';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { ReceiptTicket } from './ReceiptTicket';
 import * as XLSX from 'xlsx';
@@ -13,6 +13,14 @@ interface Customer {
     creditLimit: number;
     currentDebt: number;
     isBlocked: boolean;
+}
+
+interface HeldCart {
+    id: string;
+    label: string;
+    items: CartItem[];
+    customer: Customer | null;
+    heldAt: Date;
 }
 
 // Post-sale state
@@ -66,6 +74,23 @@ const playErrorBeep = () => {
 const POS: React.FC = () => {
     const [products, setProducts] = useState<Product[]>(MOCK_PRODUCTS);
     const [cart, setCart] = useState<CartItem[]>([]);
+
+    // 🅿️ PARQUEO DE VENTAS STATE
+    const [heldCarts, setHeldCarts] = useState<HeldCart[]>([]);
+    const [showHeldCarts, setShowHeldCarts] = useState(false);
+
+    // 🔴 FIADO INTELIGENTE STATE
+    const [showCreditPanel, setShowCreditPanel] = useState(false);
+    const [creditOverridePin, setCreditOverridePin] = useState('');
+    const [creditOverrideAuthorized, setCreditOverrideAuthorized] = useState(false);
+
+    // 💸 DESCUENTOS STATE
+    const [globalDiscount, setGlobalDiscount] = useState(0);
+
+    // 💱 NIO/USD STATE
+    const [exchangeRate] = useState(36.56);
+    const [payingInUSD, setPayingInUSD] = useState(false);
+    const [usdAmount, setUsdAmount] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const [processing, setProcessing] = useState(false);
 
@@ -89,7 +114,15 @@ const POS: React.FC = () => {
     const [shiftLoading, setShiftLoading] = useState(true);
 
     // UI State
-    const [showMobileCart, setShowMobileCart] = useState(false); // NEW: Mobile Cart Drawer Toggle
+    const [showMobileCart, setShowMobileCart] = useState(false);
+
+    // 🔄 RETURNS STATE
+    const [showReturnModal, setShowReturnModal] = useState(false);
+    const [returnSaleSearch, setReturnSaleSearch] = useState('');
+    const [returnSaleData, setReturnSaleData] = useState<any>(null);
+    const [returnItems, setReturnItems] = useState<{ productId: string, name: string, quantity: number, price: number, maxQty: number }[]>([]);
+    const [returnReason, setReturnReason] = useState('');
+    const [returnProcessing, setReturnProcessing] = useState(false);
 
     // POST-SALE MODAL STATE
     const [completedSale, setCompletedSale] = useState<CompletedSale | null>(null);
@@ -100,8 +133,8 @@ const POS: React.FC = () => {
     const [lastScanFeedback, setLastScanFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const scanBufferRef = useRef('');
     const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
     const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const searchRef = useRef<HTMLInputElement>(null);
 
     // QUICK CREATE MODAL STATE
     const [showQuickCreate, setShowQuickCreate] = useState(false);
@@ -148,6 +181,7 @@ const POS: React.FC = () => {
                     costPrice: p.cost,
                     stock: p.stock,
                     category: p.category || 'General',
+                    unit: p.unit || 'unidad',
                 }));
                 setProducts(mapped);
             }
@@ -462,12 +496,160 @@ const POS: React.FC = () => {
     const updateQuantity = (id: string, delta: number) => {
         setCart(prev => prev.map(item => {
             if (item.id === id) {
-                const newQty = Math.max(1, item.quantity + delta);
+                const newQty = Math.max(0.01, Math.round((item.quantity + delta) * 100) / 100);
                 return { ...item, quantity: newQty };
             }
             return item;
         }));
     };
+
+    const setQuantity = (id: string, qty: number) => {
+        setCart(prev => prev.map(item => {
+            if (item.id === id) {
+                return { ...item, quantity: Math.max(0.01, qty) };
+            }
+            return item;
+        }));
+    };
+
+    // Per-item discount
+    const setItemDiscount = (id: string, discount: number) => {
+        setCart(prev => prev.map(item => {
+            if (item.id === id) {
+                return { ...item, discount: Math.min(100, Math.max(0, discount)) };
+            }
+            return item;
+        }));
+    };
+
+    // ==========================================
+    // 🅿️ PARQUEO DE VENTAS (Hold Cart)
+    // ==========================================
+    const handleHoldCart = useCallback(() => {
+        if (cart.length === 0) return;
+        if (heldCarts.length >= 5) {
+            alert('Máximo 5 carritos aparcados. Restaura uno primero.');
+            return;
+        }
+        const held: HeldCart = {
+            id: Date.now().toString(),
+            label: selectedCustomer?.name || `Carrito ${heldCarts.length + 1}`,
+            items: [...cart],
+            customer: selectedCustomer,
+            heldAt: new Date(),
+        };
+        setHeldCarts(prev => [...prev, held]);
+        setCart([]);
+        setSelectedCustomer(null);
+        setCustomerSearch('');
+        setGlobalDiscount(0);
+        setCreditOverrideAuthorized(false);
+        setCreditOverridePin('');
+    }, [cart, heldCarts, selectedCustomer]);
+
+    const handleRestoreCart = useCallback((heldId: string) => {
+        const toRestore = heldCarts.find(h => h.id === heldId);
+        if (!toRestore) return;
+        // If current cart has items, park it first
+        if (cart.length > 0) {
+            if (heldCarts.length >= 5) {
+                alert('Máximo 5 carritos. Limpia el carrito actual primero.');
+                return;
+            }
+            const currentHeld: HeldCart = {
+                id: Date.now().toString(),
+                label: selectedCustomer?.name || `Carrito ${heldCarts.length + 1}`,
+                items: [...cart],
+                customer: selectedCustomer,
+                heldAt: new Date(),
+            };
+            setHeldCarts(prev => [...prev.filter(h => h.id !== heldId), currentHeld]);
+        } else {
+            setHeldCarts(prev => prev.filter(h => h.id !== heldId));
+        }
+        setCart(toRestore.items);
+        setSelectedCustomer(toRestore.customer);
+        setCustomerSearch(toRestore.customer?.name || '');
+        setShowHeldCarts(false);
+        setGlobalDiscount(0);
+    }, [cart, heldCarts, selectedCustomer]);
+
+    const handleRemoveHeldCart = useCallback((heldId: string) => {
+        setHeldCarts(prev => prev.filter(h => h.id !== heldId));
+    }, []);
+
+    // ==========================================
+    // ⌨️ HOTKEYS BÉLICOS
+    // ==========================================
+    useEffect(() => {
+        const handleHotkey = (e: KeyboardEvent) => {
+            // F-keys always work (don't type in inputs)
+            switch (e.key) {
+                case 'F2':
+                    e.preventDefault();
+                    searchRef.current?.focus();
+                    return;
+                case 'F4':
+                    e.preventDefault();
+                    handleHoldCart();
+                    return;
+                case 'F7':
+                    e.preventDefault();
+                    if (currentShift) { setShowCashModal('OUT'); setCashCategory(''); }
+                    return;
+                case 'F8':
+                    e.preventDefault();
+                    if (currentShift) { setShowCashModal('IN'); setCashCategory(''); }
+                    return;
+                case 'F9':
+                    e.preventDefault();
+                    if (currentShift && cart.length > 0) handleCheckout('CASH');
+                    return;
+                case 'Escape':
+                    e.preventDefault();
+                    // Close any open modal
+                    if (completedSale) { handleNewSale(); return; }
+                    if (showCashModal) { setShowCashModal(null); return; }
+                    if (showCreditPanel) { setShowCreditPanel(false); return; }
+                    if (showHeldCarts) { setShowHeldCarts(false); return; }
+                    if (showQuickCreate) { setShowQuickCreate(false); return; }
+                    if (showAddModal) { setShowAddModal(false); return; }
+                    if (showImportModal) { closeImportModal(); return; }
+                    if (showCloseShift) { setShowCloseShift(false); return; }
+                    if (showMovementsList) { setShowMovementsList(false); return; }
+                    return;
+            }
+        };
+        window.addEventListener('keydown', handleHotkey);
+        return () => window.removeEventListener('keydown', handleHotkey);
+    }, [handleHoldCart, currentShift, cart, completedSale, showCashModal, showCreditPanel, showHeldCarts, showQuickCreate, showAddModal, showImportModal, showCloseShift, showMovementsList]);
+
+    // ==========================================
+    // 🔴 FIADO INTELIGENTE (Credit Override)
+    // ==========================================
+    const handleCreditOverride = useCallback(async () => {
+        if (creditOverridePin.length !== 4) return;
+        try {
+            // Fetch employees to find OWNER with matching PIN
+            const res = await fetch('/api/employees', { headers });
+            if (!res.ok) return;
+            const employees = await res.json();
+            const owner = employees.find((e: any) =>
+                (e.role === 'MANAGER' || e.role === 'OWNER') && e.pin === creditOverridePin
+            );
+            if (owner) {
+                setCreditOverrideAuthorized(true);
+                setShowCreditPanel(false);
+                playBeep();
+            } else {
+                playErrorBeep();
+                alert('PIN incorrecto o no tiene permisos de Dueño/Gerente.');
+                setCreditOverridePin('');
+            }
+        } catch {
+            alert('Error verificando PIN');
+        }
+    }, [creditOverridePin, headers]);
 
     // ==========================================
     // QUICK CREATE PRODUCT (saves to DB + adds to cart)
@@ -642,25 +824,43 @@ const POS: React.FC = () => {
         }
     };
 
-    const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const tax = total * 0.15; // IVA 15% Nicaragua
-    const grandTotal = total + tax;
+    const total = cart.reduce((sum, item) => {
+        const lineDiscount = (item as any).discount || 0;
+        return sum + (item.price * item.quantity * (1 - lineDiscount / 100));
+    }, 0);
+    const discountedTotal = total * (1 - globalDiscount / 100);
+    const tax = discountedTotal * 0.15; // IVA 15% Nicaragua
+    const grandTotal = discountedTotal + tax;
 
     // SMART CREDIT CHECK
     const isCreditBlocked = useMemo(() => {
+        if (creditOverrideAuthorized) return false; // Owner override
         if (!selectedCustomer) return true; // Cannot use credit without customer
         if (selectedCustomer.isBlocked) return true;
         if (selectedCustomer.currentDebt + grandTotal > selectedCustomer.creditLimit) return true;
         return false;
+    }, [selectedCustomer, grandTotal, creditOverrideAuthorized]);
+
+    // CREDIT THERMOMETER DATA
+    const creditInfo = useMemo(() => {
+        if (!selectedCustomer) return null;
+        const limit = selectedCustomer.creditLimit;
+        const currentDebt = selectedCustomer.currentDebt;
+        const debtPct = limit > 0 ? (currentDebt / limit) * 100 : 100;
+        const projectedDebt = currentDebt + grandTotal;
+        const projectedPct = limit > 0 ? (projectedDebt / limit) * 100 : 100;
+        const color = debtPct >= 80 || selectedCustomer.isBlocked ? 'red' : debtPct >= 50 ? 'yellow' : 'green';
+        const projectedColor = projectedPct >= 100 ? 'red' : projectedPct >= 80 ? 'yellow' : 'green';
+        return { limit, currentDebt, debtPct, projectedDebt, projectedPct, color, projectedColor, available: Math.max(0, limit - currentDebt) };
     }, [selectedCustomer, grandTotal]);
 
     const handleCheckout = async (method: 'CASH' | 'CARD' | 'QR' | 'CREDIT') => {
         if (!currentShift) { setShowOpenShift(true); return; }
         if (cart.length === 0) return;
 
-        // Front-end Block
-        if (method === 'CREDIT' && isCreditBlocked) {
-            alert("Credito Denegado: Cliente bloqueado o sin cupo disponible.");
+        // Front-end Block (skip if override authorized)
+        if (method === 'CREDIT' && isCreditBlocked && !creditOverrideAuthorized) {
+            setShowCreditPanel(true);
             return;
         }
 
@@ -671,11 +871,12 @@ const POS: React.FC = () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify({
-                    items: cart.map(c => ({ id: c.id, quantity: c.quantity, price: c.price, costPrice: c.costPrice })),
+                    items: cart.map(c => ({ id: c.id, quantity: c.quantity, price: c.price, costPrice: c.costPrice, discount: (c as any).discount || 0 })),
                     paymentMethod: method,
                     customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
                     customerId: selectedCustomer?.id,
                     total: grandTotal,
+                    globalDiscount: globalDiscount,
                     employeeId: currentShift?.employeeId || currentShift?.employee?.id || null
                 })
             });
@@ -761,6 +962,12 @@ const POS: React.FC = () => {
         setCart([]);
         setSelectedCustomer(null);
         setCustomerSearch('');
+        setGlobalDiscount(0);
+        setCreditOverrideAuthorized(false);
+        setCreditOverridePin('');
+        setShowCreditPanel(false);
+        setPayingInUSD(false);
+        setUsdAmount('');
     };
 
     const filteredProducts = useMemo(() => {
@@ -811,6 +1018,20 @@ const POS: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2">
+                    {/* 🅿️ PARQUEO BADGE */}
+                    {currentShift && (
+                        <button
+                            onClick={() => setShowHeldCarts(!showHeldCarts)}
+                            className={`relative flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg transition-all shadow-sm ${heldCarts.length > 0 ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200'}`}
+                            title={`Carritos aparcados (F4 para aparcar)`}
+                        >
+                            <ParkingCircle size={14} />
+                            {heldCarts.length > 0 && (
+                                <span className="bg-white text-blue-600 text-[10px] font-black w-4 h-4 rounded-full flex items-center justify-center">{heldCarts.length}</span>
+                            )}
+                            <span className="hidden lg:inline">{heldCarts.length > 0 ? 'Aparcados' : 'Aparcar'}</span>
+                        </button>
+                    )}
                     {/* 💰 CASH BALANCE INDICATOR */}
                     {currentShift && cashBalance !== null && (
                         <button
@@ -844,6 +1065,18 @@ const POS: React.FC = () => {
                         >
                             <ArrowUpCircle size={14} />
                             <span className="hidden lg:inline">Salida</span>
+                        </button>
+                    )}
+
+                    {/* 🔄 QUICK ACTION: DEVOLUCIÓN */}
+                    {currentShift && (
+                        <button
+                            onClick={() => setShowReturnModal(true)}
+                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-all shadow-sm"
+                            title="Devolución de Producto"
+                        >
+                            <RefreshCw size={14} />
+                            <span className="hidden lg:inline">Devolución</span>
                         </button>
                     )}
 
@@ -1003,6 +1236,75 @@ const POS: React.FC = () => {
                                     </span>
                                 </div>
                             ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* --- 🅿️ HELD CARTS DROPDOWN --- */}
+            {showHeldCarts && currentShift && (
+                <div className="absolute top-14 right-4 z-40 w-96 bg-white rounded-xl shadow-2xl border border-slate-200 max-h-[420px] overflow-y-auto animate-in slide-in-from-top duration-200">
+                    <div className="p-3 border-b border-slate-100 flex justify-between items-center sticky top-0 bg-white z-10">
+                        <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                            <ParkingCircle size={16} className="text-blue-500" /> Carritos Aparcados ({heldCarts.length}/5)
+                        </h3>
+                        <button onClick={() => setShowHeldCarts(false)} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
+                    </div>
+                    {heldCarts.length === 0 ? (
+                        <div className="p-8 text-center">
+                            <ParkingCircle size={32} className="text-slate-300 mx-auto mb-2" />
+                            <p className="text-sm text-slate-400">Sin carritos aparcados</p>
+                            <p className="text-[10px] text-slate-300 mt-1">Usa F4 o el botón 🅿️ para aparcar el carrito actual</p>
+                        </div>
+                    ) : (
+                        <div className="divide-y divide-slate-100">
+                            {heldCarts.map(held => {
+                                const heldTotal = held.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+                                const minutesAgo = Math.round((Date.now() - new Date(held.heldAt).getTime()) / 60000);
+                                return (
+                                    <div key={held.id} className="p-3 hover:bg-slate-50 transition-colors">
+                                        <div className="flex items-start justify-between mb-2">
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm font-bold text-slate-800 truncate">{held.label}</p>
+                                                <p className="text-[11px] text-slate-500">
+                                                    {held.items.length} {held.items.length === 1 ? 'item' : 'items'} · C${heldTotal.toFixed(2)} · Hace {minutesAgo < 1 ? '<1' : minutesAgo} min
+                                                </p>
+                                            </div>
+                                            <div className="flex items-center gap-1.5 ml-2">
+                                                <button
+                                                    onClick={() => handleRestoreCart(held.id)}
+                                                    className="text-xs font-bold px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-1"
+                                                >
+                                                    <RotateCcw size={12} /> Restaurar
+                                                </button>
+                                                <button
+                                                    onClick={() => handleRemoveHeldCart(held.id)}
+                                                    className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                                                    title="Descartar carrito"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                        {/* Mini preview of items */}
+                                        <div className="flex flex-wrap gap-1">
+                                            {held.items.slice(0, 3).map((item, i) => (
+                                                <span key={i} className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                                                    {item.quantity}x {item.name.length > 15 ? item.name.slice(0, 15) + '…' : item.name}
+                                                </span>
+                                            ))}
+                                            {held.items.length > 3 && (
+                                                <span className="text-[10px] text-slate-400">+{held.items.length - 3} más</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                    {heldCarts.length > 0 && cart.length > 0 && (
+                        <div className="p-2 border-t border-slate-100 bg-slate-50">
+                            <p className="text-[10px] text-slate-400 text-center">Al restaurar, el carrito actual se aparcará automáticamente</p>
                         </div>
                     )}
                 </div>
@@ -1467,6 +1769,22 @@ const POS: React.FC = () => {
                         </button>
                     ))}
                 </div>
+
+                {/* ⌨️ HOTKEY CHEAT SHEET */}
+                <div className="hidden lg:flex items-center gap-3 mt-2 px-2 py-1.5 text-[10px] text-slate-400 font-mono select-none flex-shrink-0">
+                    <Keyboard size={12} className="text-slate-300" />
+                    <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">F2</span> Buscar
+                    <span className="text-slate-300">·</span>
+                    <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">F4</span> Aparcar
+                    <span className="text-slate-300">·</span>
+                    <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">F7</span> Salida
+                    <span className="text-slate-300">·</span>
+                    <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">F8</span> Entrada
+                    <span className="text-slate-300">·</span>
+                    <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">F9</span> Cobrar
+                    <span className="text-slate-300">·</span>
+                    <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">Esc</span> Cerrar
+                </div>
             </div>
 
             {/* RIGHT: CART DRAWER (Responsive) */}
@@ -1583,26 +1901,82 @@ const POS: React.FC = () => {
                             <p className="text-[10px] text-slate-300">Escanea un codigo de barras o selecciona un producto</p>
                         </div>
                     ) : (
-                        cart.map(item => (
-                            <div key={item.id} className="flex items-center gap-3 bg-slate-50 p-3 rounded-lg border border-slate-100 text-slate-800">
-                                <div className="flex-1">
-                                    <h4 className="text-sm font-medium text-slate-800 line-clamp-1">{item.name}</h4>
-                                    <div className="text-xs text-slate-500 mt-1">C$ {item.price.toFixed(2)}</div>
+                        cart.map(item => {
+                            const lineDiscount = (item as any).discount || 0;
+                            const lineTotal = item.price * item.quantity * (1 - lineDiscount / 100);
+                            return (
+                                <div key={item.id} className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-slate-800">
+                                    <div className="flex items-center gap-3">
+                                        <div className="flex-1 min-w-0">
+                                            <h4 className="text-sm font-medium text-slate-800 line-clamp-1">{item.name}</h4>
+                                            <div className="text-xs text-slate-500 mt-0.5">C$ {item.price.toFixed(2)} / {(item as any).unit || 'und'}</div>
+                                        </div>
+                                        <div className="flex items-center gap-1 bg-white rounded border border-slate-200 p-1 text-slate-800">
+                                            <button onClick={() => updateQuantity(item.id, -0.5)} className="p-1 hover:bg-slate-100 rounded text-slate-600"><Minus size={14} /></button>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                min="0.01"
+                                                className="w-14 text-center text-sm font-mono font-bold border-0 outline-none bg-transparent text-slate-800 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                value={item.quantity}
+                                                onChange={e => {
+                                                    const val = parseFloat(e.target.value);
+                                                    if (!isNaN(val) && val > 0) setQuantity(item.id, val);
+                                                }}
+                                            />
+                                            <button onClick={() => updateQuantity(item.id, 0.5)} className="p-1 hover:bg-slate-100 rounded text-slate-600"><Plus size={14} /></button>
+                                        </div>
+                                        <div className="text-right min-w-[60px]">
+                                            <div className="text-sm font-bold text-slate-900">C$ {lineTotal.toFixed(2)}</div>
+                                            <button onClick={() => removeFromCart(item.id)} className="text-red-400 hover:text-red-600 mt-1"><Trash2 size={14} className="ml-auto" /></button>
+                                        </div>
+                                    </div>
+                                    {/* Per-item discount row */}
+                                    <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-slate-100">
+                                        <Percent size={11} className="text-slate-400" />
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            max="100"
+                                            step="1"
+                                            placeholder="0"
+                                            className="w-12 text-[11px] text-center border border-slate-200 rounded px-1 py-0.5 outline-none focus:border-blue-400 text-slate-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                            value={lineDiscount || ''}
+                                            onChange={e => setItemDiscount(item.id, parseFloat(e.target.value) || 0)}
+                                        />
+                                        <span className="text-[10px] text-slate-400">% desc</span>
+                                        {lineDiscount > 0 && (
+                                            <span className="text-[10px] text-red-500 font-bold ml-auto">-C${(item.price * item.quantity * lineDiscount / 100).toFixed(2)}</span>
+                                        )}
+                                    </div>
                                 </div>
-                                <div className="flex items-center gap-2 bg-white rounded border border-slate-200 p-1 text-slate-800">
-                                    <button onClick={() => updateQuantity(item.id, -1)} className="p-1 hover:bg-slate-100 rounded text-slate-600"><Minus size={14} /></button>
-                                    <span className="text-sm font-mono w-4 text-center">{item.quantity}</span>
-                                    <button onClick={() => updateQuantity(item.id, 1)} className="p-1 hover:bg-slate-100 rounded text-slate-600"><Plus size={14} /></button>
-                                </div>
-                                <div className="text-right min-w-[60px]">
-                                    <div className="text-sm font-bold text-slate-900">C$ {(item.price * item.quantity).toFixed(2)}</div>
-                                    <button onClick={() => removeFromCart(item.id)} className="text-red-400 hover:text-red-600 mt-1"><Trash2 size={14} className="ml-auto" /></button>
-                                </div>
-                            </div>
-                        ))
+                            );
+                        })
                     )}
                 </div>
                 <div className="p-5 border-t border-slate-100 bg-slate-50 text-slate-800">
+                    {/* 💸 Global Discount */}
+                    <div className="flex items-center gap-2 mb-2">
+                        <Percent size={14} className="text-slate-400" />
+                        <span className="text-xs text-slate-500 font-bold">Descuento Global</span>
+                        <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="1"
+                            placeholder="0"
+                            className="w-14 text-xs text-center border border-slate-200 rounded px-1 py-1 outline-none focus:border-blue-400 text-slate-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            value={globalDiscount || ''}
+                            onChange={e => setGlobalDiscount(parseFloat(e.target.value) || 0)}
+                        />
+                        <span className="text-xs text-slate-400">%</span>
+                        {globalDiscount > 0 && (
+                            <span className="text-xs text-red-500 font-bold ml-auto">-C${(total * globalDiscount / 100).toFixed(2)}</span>
+                        )}
+                    </div>
+                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>Subtotal</span><span>C$ {total.toFixed(2)}</span></div>
+                    {globalDiscount > 0 && <div className="flex justify-between text-sm text-red-500 mb-1"><span>Descuento ({globalDiscount}%)</span><span>-C$ {(total * globalDiscount / 100).toFixed(2)}</span></div>}
+                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>IVA (15%)</span><span>C$ {tax.toFixed(2)}</span></div>
                     <div className="flex justify-between text-xl font-bold text-nortex-900 mb-4 pt-2 border-t border-slate-200 text-slate-800"><span>Total</span><span>C$ {grandTotal.toFixed(2)}</span></div>
 
                     <div className="grid grid-cols-2 gap-2 mb-2">
@@ -1622,6 +1996,267 @@ const POS: React.FC = () => {
                     )}
                 </div>
             </div>
+
+            {/* =============================== */}
+            {/* 🔄 RETURNS MODAL                */}
+            {/* =============================== */}
+            {showReturnModal && (
+                <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200 max-h-[90vh] flex flex-col">
+                        <div className="bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-4 flex items-center justify-between">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2"><RefreshCw size={20} /> Devolución de Producto</h3>
+                            <button onClick={() => { setShowReturnModal(false); setReturnSaleData(null); setReturnItems([]); setReturnSaleSearch(''); setReturnReason(''); }} className="text-white/80 hover:text-white"><X size={20} /></button>
+                        </div>
+                        <div className="p-5 flex-1 overflow-y-auto space-y-4">
+                            {/* Sale Search */}
+                            <div>
+                                <label className="text-xs font-bold text-slate-600 mb-1 block">Buscar Venta por ID</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="Ej: clp8..."
+                                        className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-amber-500 text-slate-800"
+                                        value={returnSaleSearch}
+                                        onChange={e => setReturnSaleSearch(e.target.value)}
+                                    />
+                                    <button
+                                        onClick={async () => {
+                                            if (!returnSaleSearch.trim()) return;
+                                            try {
+                                                const token = localStorage.getItem('nortex_token');
+                                                const res = await fetch(`/api/sales/search?q=${returnSaleSearch}`, { headers: { 'Authorization': `Bearer ${token}` } });
+                                                const data = await res.json();
+                                                if (!res.ok) throw new Error(data.error);
+                                                setReturnSaleData(data);
+                                                setReturnItems(data.items.map((item: any) => ({
+                                                    productId: item.productId,
+                                                    name: item.productId, // Will be populated
+                                                    quantity: 0,
+                                                    price: Number(item.priceAtSale),
+                                                    maxQty: Number(item.quantity)
+                                                })));
+                                            } catch (err: any) { alert(err.message); }
+                                        }}
+                                        className="px-4 py-2 bg-amber-500 text-white font-bold rounded-lg hover:bg-amber-600 text-sm"
+                                    >
+                                        <Search size={16} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Sale Found */}
+                            {returnSaleData && (
+                                <>
+                                    <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                                        <div className="flex justify-between text-xs mb-1">
+                                            <span className="text-slate-500">ID:</span>
+                                            <span className="font-mono font-bold text-slate-700">{returnSaleData.id.slice(0, 12)}...</span>
+                                        </div>
+                                        <div className="flex justify-between text-xs mb-1">
+                                            <span className="text-slate-500">Total:</span>
+                                            <span className="font-bold text-slate-800">C$ {Number(returnSaleData.total).toFixed(2)}</span>
+                                        </div>
+                                        <div className="flex justify-between text-xs">
+                                            <span className="text-slate-500">Método:</span>
+                                            <span className="text-slate-700">{returnSaleData.paymentMethod}</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Items Selection */}
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-600 mb-2 block">Seleccionar Items a Devolver</label>
+                                        <div className="space-y-2">
+                                            {returnItems.map((item, idx) => (
+                                                <div key={idx} className="flex items-center gap-3 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-xs font-medium text-slate-700 truncate">{returnSaleData.items[idx]?.productId?.slice(0, 8) || item.productId.slice(0, 8)}...</p>
+                                                        <p className="text-[10px] text-slate-400">C$ {item.price.toFixed(2)} · Max: {item.maxQty}</p>
+                                                    </div>
+                                                    <div className="flex items-center gap-1">
+                                                        <button
+                                                            onClick={() => { const n = [...returnItems]; n[idx].quantity = Math.max(0, n[idx].quantity - 1); setReturnItems(n); }}
+                                                            className="p-1 hover:bg-slate-200 rounded text-slate-500"
+                                                        ><Minus size={12} /></button>
+                                                        <span className="w-8 text-center text-sm font-bold text-slate-800">{item.quantity}</span>
+                                                        <button
+                                                            onClick={() => { const n = [...returnItems]; n[idx].quantity = Math.min(n[idx].maxQty, n[idx].quantity + 1); setReturnItems(n); }}
+                                                            className="p-1 hover:bg-slate-200 rounded text-slate-500"
+                                                        ><Plus size={12} /></button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Reason */}
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-600 mb-1 block">Motivo</label>
+                                        <input
+                                            type="text"
+                                            placeholder="Ej: Producto defectuoso"
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:border-amber-500 text-slate-800"
+                                            value={returnReason}
+                                            onChange={e => setReturnReason(e.target.value)}
+                                        />
+                                    </div>
+
+                                    {/* Confirm */}
+                                    {returnItems.some(i => i.quantity > 0) && (
+                                        <div>
+                                            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
+                                                <div className="flex justify-between font-bold">
+                                                    <span className="text-amber-800">Total Devolución:</span>
+                                                    <span className="text-amber-700">C$ {returnItems.reduce((sum, i) => sum + i.price * i.quantity, 0).toFixed(2)}</span>
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={async () => {
+                                                    setReturnProcessing(true);
+                                                    try {
+                                                        const token = localStorage.getItem('nortex_token');
+                                                        const itemsToReturn = returnItems.filter(i => i.quantity > 0);
+                                                        const res = await fetch('/api/returns', {
+                                                            method: 'POST',
+                                                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                                                            body: JSON.stringify({
+                                                                saleId: returnSaleData.id,
+                                                                items: itemsToReturn,
+                                                                reason: returnReason
+                                                            })
+                                                        });
+                                                        const data = await res.json();
+                                                        if (!res.ok) throw new Error(data.error);
+                                                        alert('✅ Devolución procesada. Stock restaurado.');
+                                                        setShowReturnModal(false);
+                                                        setReturnSaleData(null);
+                                                        setReturnItems([]);
+                                                        setReturnSaleSearch('');
+                                                        setReturnReason('');
+                                                        fetchProducts();
+                                                    } catch (err: any) { alert(err.message); } finally { setReturnProcessing(false); }
+                                                }}
+                                                disabled={returnProcessing}
+                                                className="w-full py-3 bg-amber-500 text-white font-bold rounded-lg hover:bg-amber-600 disabled:opacity-50 flex items-center justify-center gap-2"
+                                            >
+                                                {returnProcessing ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
+                                                Confirmar Devolución
+                                            </button>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* =============================== */}
+            {/* 🔴 CREDIT THERMOMETER PANEL       */}
+            {/* =============================== */}
+            {showCreditPanel && selectedCustomer && creditInfo && (
+                <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-200">
+                        <div className={`px-6 py-4 text-center ${creditInfo.color === 'red' ? 'bg-gradient-to-r from-red-500 to-rose-600' :
+                            creditInfo.color === 'yellow' ? 'bg-gradient-to-r from-amber-400 to-orange-500' :
+                                'bg-gradient-to-r from-emerald-500 to-green-600'
+                            }`}>
+                            <h3 className="text-lg font-bold text-white flex items-center justify-center gap-2">
+                                {creditInfo.color === 'red' ? '🔴' : creditInfo.color === 'yellow' ? '🟡' : '🟢'} SEMÁFORO DE CRÉDITO
+                            </h3>
+                        </div>
+                        <div className="p-5 space-y-4">
+                            <div className="text-center">
+                                <p className="text-lg font-bold text-slate-800">{selectedCustomer.name}</p>
+                            </div>
+
+                            {/* Current Debt Bar */}
+                            <div>
+                                <div className="flex justify-between text-xs mb-1">
+                                    <span className="text-slate-500">Deuda Actual</span>
+                                    <span className="font-bold text-slate-800">C$ {creditInfo.currentDebt.toFixed(2)}</span>
+                                </div>
+                                <div className="w-full bg-slate-200 h-3 rounded-full overflow-hidden">
+                                    <div className={`h-full rounded-full transition-all duration-500 ${creditInfo.color === 'red' ? 'bg-red-500' : creditInfo.color === 'yellow' ? 'bg-amber-400' : 'bg-emerald-500'
+                                        }`} style={{ width: `${Math.min(creditInfo.debtPct, 100)}%` }} />
+                                </div>
+                                <div className="flex justify-between text-[10px] mt-1">
+                                    <span className="text-slate-400">Límite: C$ {creditInfo.limit.toFixed(2)}</span>
+                                    <span className="font-bold text-slate-600">{Math.round(creditInfo.debtPct)}%</span>
+                                </div>
+                            </div>
+
+                            {/* Projected */}
+                            <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
+                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+C$ {grandTotal.toFixed(2)}):</p>
+                                <div className="flex justify-between">
+                                    <span className="text-sm font-bold text-slate-700">Nuevo total:</span>
+                                    <span className={`text-sm font-bold ${creditInfo.projectedColor === 'red' ? 'text-red-600' : creditInfo.projectedColor === 'yellow' ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                        C$ {creditInfo.projectedDebt.toFixed(2)} ({Math.round(creditInfo.projectedPct)}%)
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Override PIN */}
+                            {isCreditBlocked && !creditOverrideAuthorized && (
+                                <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 space-y-3">
+                                    <p className="text-sm font-bold text-red-700 text-center">🔴 CRÉDITO DENEGADO</p>
+                                    <p className="text-xs text-red-600 text-center">PIN del Dueño/Gerente requerido para autorizar</p>
+                                    <div className="flex justify-center gap-2">
+                                        {[0, 1, 2, 3].map(i => (
+                                            <input
+                                                key={i}
+                                                type="password"
+                                                inputMode="numeric"
+                                                maxLength={1}
+                                                className="w-12 h-12 text-center text-xl font-bold border-2 border-red-300 rounded-lg focus:border-red-500 outline-none text-slate-800 bg-white"
+                                                value={creditOverridePin[i] || ''}
+                                                autoFocus={i === 0}
+                                                onChange={(e) => {
+                                                    const val = e.target.value.replace(/\D/g, '');
+                                                    if (val.length <= 1) {
+                                                        const newPin = creditOverridePin.split('');
+                                                        newPin[i] = val;
+                                                        setCreditOverridePin(newPin.join(''));
+                                                        if (val && i < 3) {
+                                                            const next = e.target.parentElement?.children[i + 1] as HTMLInputElement;
+                                                            next?.focus();
+                                                        }
+                                                    }
+                                                }}
+                                            />
+                                        ))}
+                                    </div>
+                                    <button
+                                        onClick={handleCreditOverride}
+                                        disabled={creditOverridePin.length !== 4}
+                                        className="w-full py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2 text-sm"
+                                    >
+                                        <ShieldAlert size={16} /> Autorizar Override
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Actions */}
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => { setShowCreditPanel(false); setCreditOverridePin(''); }}
+                                    className="flex-1 py-2.5 text-slate-600 font-medium hover:bg-slate-50 rounded-lg border border-slate-200 text-sm"
+                                >
+                                    Cancelar
+                                </button>
+                                {(!isCreditBlocked || creditOverrideAuthorized) && (
+                                    <button
+                                        onClick={() => { setShowCreditPanel(false); handleCheckout('CREDIT'); }}
+                                        className="flex-1 py-2.5 bg-nortex-900 text-white font-bold rounded-lg hover:bg-nortex-800 text-sm flex items-center justify-center gap-1"
+                                    >
+                                        <Check size={16} /> Confirmar Crédito
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* =============================== */}
             {/* POST-SALE SUCCESS MODAL         */}
@@ -1665,35 +2300,80 @@ const POS: React.FC = () => {
                                 {/* Cash change calculator - only for CASH */}
                                 {completedSale.paymentMethod === 'CASH' && (
                                     <div className="mt-3 pt-3 border-t border-slate-200">
-                                        <div className="flex items-center gap-2 mb-2">
+                                        {/* 💱 USD Toggle */}
+                                        <div className="flex items-center justify-between mb-2">
                                             <label className="text-xs font-mono text-slate-500 font-bold">EFECTIVO RECIBIDO</label>
+                                            <button
+                                                onClick={() => { setPayingInUSD(!payingInUSD); setUsdAmount(''); setCashReceived(''); }}
+                                                className={`text-[10px] font-bold px-2 py-1 rounded-full border transition-all ${payingInUSD ? 'bg-blue-500 text-white border-blue-500' : 'bg-slate-100 text-slate-500 border-slate-200 hover:border-blue-300'
+                                                    }`}
+                                            >
+                                                💱 {payingInUSD ? 'USD ✔' : 'Paga en USD?'}
+                                            </button>
                                         </div>
-                                        <div className="relative">
-                                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">C$</span>
-                                            <input
-                                                type="number"
-                                                autoFocus
-                                                className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-lg font-bold text-slate-800 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30"
-                                                placeholder={completedSale.grandTotal.toFixed(2)}
-                                                value={cashReceived}
-                                                onChange={e => setCashReceived(e.target.value)}
-                                            />
-                                        </div>
-                                        {cashReceived && parseFloat(cashReceived) >= completedSale.grandTotal && (
-                                            <div className="flex justify-between items-center mt-2 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
-                                                <span className="font-bold text-emerald-700 text-sm">CAMBIO</span>
-                                                <span className="text-xl font-bold text-emerald-600">
-                                                    C$ {(parseFloat(cashReceived) - completedSale.grandTotal).toFixed(2)}
-                                                </span>
+
+                                        {payingInUSD ? (
+                                            <div className="space-y-2">
+                                                <div className="relative">
+                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500 font-bold text-sm">$</span>
+                                                    <input
+                                                        type="number"
+                                                        autoFocus
+                                                        className="w-full pl-8 pr-4 py-2 border border-blue-300 rounded-lg text-lg font-bold text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 bg-blue-50"
+                                                        placeholder="0.00"
+                                                        value={usdAmount}
+                                                        onChange={e => {
+                                                            setUsdAmount(e.target.value);
+                                                            const usd = parseFloat(e.target.value);
+                                                            if (!isNaN(usd)) setCashReceived((usd * exchangeRate).toFixed(2));
+                                                        }}
+                                                    />
+                                                </div>
+                                                <div className="text-xs text-blue-600 text-center font-medium">
+                                                    Tasa: 1 USD = C${exchangeRate.toFixed(2)} NIO
+                                                </div>
+                                                {usdAmount && parseFloat(usdAmount) > 0 && (
+                                                    <div className="bg-blue-50 px-3 py-2 rounded-lg border border-blue-200 text-sm">
+                                                        <div className="flex justify-between"><span className="text-blue-600">Equivalente NIO:</span><span className="font-bold text-blue-800">C$ {(parseFloat(usdAmount) * exchangeRate).toFixed(2)}</span></div>
+                                                        {parseFloat(usdAmount) * exchangeRate >= completedSale.grandTotal && (
+                                                            <div className="flex justify-between mt-1 pt-1 border-t border-blue-200"><span className="font-bold text-emerald-600">Cambio NIO:</span><span className="font-bold text-emerald-600">C$ {(parseFloat(usdAmount) * exchangeRate - completedSale.grandTotal).toFixed(2)}</span></div>
+                                                        )}
+                                                        {parseFloat(usdAmount) * exchangeRate >= completedSale.grandTotal && (
+                                                            <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-emerald-500 text-xs">$ {(parseFloat(usdAmount) - completedSale.grandTotal / exchangeRate).toFixed(2)}</span></div>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
-                                        )}
-                                        {cashReceived && parseFloat(cashReceived) < completedSale.grandTotal && (
-                                            <div className="flex justify-between items-center mt-2 bg-red-50 px-3 py-2 rounded-lg border border-red-200">
-                                                <span className="font-bold text-red-600 text-sm">FALTANTE</span>
-                                                <span className="text-xl font-bold text-red-600">
-                                                    C$ {(completedSale.grandTotal - parseFloat(cashReceived)).toFixed(2)}
-                                                </span>
-                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="relative">
+                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">C$</span>
+                                                    <input
+                                                        type="number"
+                                                        autoFocus
+                                                        className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-lg font-bold text-slate-800 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30"
+                                                        placeholder={completedSale.grandTotal.toFixed(2)}
+                                                        value={cashReceived}
+                                                        onChange={e => setCashReceived(e.target.value)}
+                                                    />
+                                                </div>
+                                                {cashReceived && parseFloat(cashReceived) >= completedSale.grandTotal && (
+                                                    <div className="flex justify-between items-center mt-2 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
+                                                        <span className="font-bold text-emerald-700 text-sm">CAMBIO</span>
+                                                        <span className="text-xl font-bold text-emerald-600">
+                                                            C$ {(parseFloat(cashReceived) - completedSale.grandTotal).toFixed(2)}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                {cashReceived && parseFloat(cashReceived) < completedSale.grandTotal && (
+                                                    <div className="flex justify-between items-center mt-2 bg-red-50 px-3 py-2 rounded-lg border border-red-200">
+                                                        <span className="font-bold text-red-600 text-sm">FALTANTE</span>
+                                                        <span className="text-xl font-bold text-red-600">
+                                                            C$ {(completedSale.grandTotal - parseFloat(cashReceived)).toFixed(2)}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                            </>
                                         )}
                                     </div>
                                 )}

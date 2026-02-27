@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { ShieldCheck, TrendingUp, TrendingDown, Package, DollarSign, Receipt, Warehouse, FileSpreadsheet, Loader2, Calendar, AlertTriangle, RefreshCw, Landmark, Scale, Copy, CheckCircle, Building2, Printer, Clock, Users } from 'lucide-react';
+import { ShieldCheck, TrendingUp, TrendingDown, Package, DollarSign, Receipt, Warehouse, FileSpreadsheet, Loader2, Calendar, AlertTriangle, RefreshCw, Landmark, Scale, Copy, CheckCircle, Building2, Printer, Clock, Users, BookOpen, BarChart3, ArrowRight } from 'lucide-react';
 import { ShiftReportTicket, type ShiftReportData } from './ShiftReportTicket';
 
 // Helpers
@@ -64,7 +64,7 @@ interface TaxReportData {
 }
 
 const Reports: React.FC = () => {
-    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'CONTADOR' | 'CAJAS'>('DASHBOARD');
+    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'CONTADOR' | 'CAJAS' | 'CONTABILIDAD'>('DASHBOARD');
     const [dates, setDates] = useState(getDefaultDates);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -84,6 +84,13 @@ const Reports: React.FC = () => {
     const [shiftHistory, setShiftHistory] = useState<any[]>([]);
     const [shiftHistoryLoading, setShiftHistoryLoading] = useState(false);
     const [zReportData, setZReportData] = useState<ShiftReportData | null>(null);
+
+    // Contabilidad tab state
+    const [balanceGeneral, setBalanceGeneral] = useState<any>(null);
+    const [estadoResultados, setEstadoResultados] = useState<any>(null);
+    const [journalEntries, setJournalEntries] = useState<any[]>([]);
+    const [accountingLoading, setAccountingLoading] = useState(false);
+    const [accountingSubTab, setAccountingSubTab] = useState<'BALANCE' | 'ESTADO' | 'DIARIO'>('BALANCE');
 
     const token = localStorage.getItem('nortex_token');
     const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -126,7 +133,23 @@ const Reports: React.FC = () => {
 
     useEffect(() => {
         if (activeTab === 'CAJAS') fetchShiftHistory();
+        if (activeTab === 'CONTABILIDAD') fetchAccounting();
     }, [activeTab]);
+
+    const fetchAccounting = useCallback(async () => {
+        setAccountingLoading(true);
+        try {
+            const [balRes, estRes, jourRes] = await Promise.all([
+                fetch('/api/accounting/balance-general', { headers }),
+                fetch('/api/accounting/estado-resultados', { headers }),
+                fetch('/api/accounting/journal', { headers }),
+            ]);
+            if (balRes.ok) setBalanceGeneral(await balRes.json());
+            if (estRes.ok) setEstadoResultados(await estRes.json());
+            if (jourRes.ok) setJournalEntries(await jourRes.json());
+        } catch (e) { console.error('Error fetching accounting:', e); }
+        finally { setAccountingLoading(false); }
+    }, []);
 
     const getTenantName = () => {
         try {
@@ -229,6 +252,12 @@ const Reports: React.FC = () => {
                         className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CAJAS' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
                     >
                         <Clock size={14} /> Historial Cajas
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('CONTABILIDAD')}
+                        className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CONTABILIDAD' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                    >
+                        <BookOpen size={14} /> Contabilidad
                     </button>
                 </div>
             </div>
@@ -787,6 +816,225 @@ const Reports: React.FC = () => {
                                 </table>
                             </div>
                         </div>
+                    )}
+                </div>
+            )}
+
+            {/* ==================== TAB: CONTABILIDAD ==================== */}
+            {activeTab === 'CONTABILIDAD' && (
+                <div>
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                        <div>
+                            <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                                <BookOpen className="text-indigo-600" /> Motor Contable (Partida Doble)
+                            </h2>
+                            <p className="text-slate-500 text-sm">Balance General, Estado de Resultados y Libro Diario — NIIF PyMES</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="flex bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+                                {(['BALANCE', 'ESTADO', 'DIARIO'] as const).map(tab => (
+                                    <button
+                                        key={tab}
+                                        onClick={() => setAccountingSubTab(tab)}
+                                        className={`px-3 py-1.5 text-xs font-bold transition-colors ${accountingSubTab === tab ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                                    >
+                                        {tab === 'BALANCE' ? 'Balance General' : tab === 'ESTADO' ? 'Estado de Resultados' : 'Libro Diario'}
+                                    </button>
+                                ))}
+                            </div>
+                            <button onClick={fetchAccounting} disabled={accountingLoading} className="p-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 shadow-sm">
+                                <RefreshCw size={16} className={accountingLoading ? 'animate-spin text-indigo-500' : 'text-slate-500'} />
+                            </button>
+                        </div>
+                    </div>
+
+                    {accountingLoading ? (
+                        <div className="flex items-center justify-center py-20 text-slate-400 gap-2">
+                            <Loader2 className="animate-spin" size={24} /> Cargando datos contables...
+                        </div>
+                    ) : (
+                        <>
+                            {/* ===== SUB-TAB: BALANCE GENERAL ===== */}
+                            {accountingSubTab === 'BALANCE' && balanceGeneral && (
+                                <div className="space-y-6">
+                                    {/* Cuadra? */}
+                                    <div className={`p-4 rounded-xl border-2 flex items-center justify-between ${balanceGeneral.totals.isBalanced ? 'bg-emerald-50 border-emerald-300' : 'bg-red-50 border-red-300'}`}>
+                                        <div className="flex items-center gap-3">
+                                            <div className={`p-2 rounded-full ${balanceGeneral.totals.isBalanced ? 'bg-emerald-200 text-emerald-700' : 'bg-red-200 text-red-700'}`}>
+                                                {balanceGeneral.totals.isBalanced ? <CheckCircle size={24} /> : <AlertTriangle size={24} />}
+                                            </div>
+                                            <div>
+                                                <p className={`font-bold ${balanceGeneral.totals.isBalanced ? 'text-emerald-800' : 'text-red-800'}`}>
+                                                    {balanceGeneral.totals.isBalanced ? '✅ Balance Cuadrado' : '⚠️ Balance Descuadrado'}
+                                                </p>
+                                                <p className="text-xs text-slate-500">Activos = Pasivos + Capital + Utilidad</p>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-xs text-slate-500">Activos: {formatC(balanceGeneral.totals.assets)}</p>
+                                            <p className="text-xs text-slate-500">P+C: {formatC(balanceGeneral.totals.liabilities + balanceGeneral.totals.equityPlusIncome)}</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                        {/* ACTIVOS */}
+                                        <div className="bg-white p-6 rounded-xl border border-blue-200 shadow-sm">
+                                            <h3 className="font-bold text-blue-800 mb-4 flex items-center gap-2">
+                                                <BarChart3 size={18} className="text-blue-500" /> ACTIVOS
+                                            </h3>
+                                            <div className="space-y-2">
+                                                {balanceGeneral.assets.map((a: any) => (
+                                                    <div key={a.code} className="flex justify-between items-center py-1.5 border-b border-slate-50">
+                                                        <span className="text-xs text-slate-600"><span className="font-mono text-slate-400">{a.code}</span> {a.name}</span>
+                                                        <span className={`text-xs font-mono font-bold ${a.balance > 0 ? 'text-blue-700' : 'text-slate-400'}`}>{formatC(a.balance)}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div className="mt-4 pt-3 border-t-2 border-blue-200 flex justify-between">
+                                                <span className="font-bold text-blue-800">Total Activos</span>
+                                                <span className="font-bold font-mono text-blue-800">{formatC(balanceGeneral.totals.assets)}</span>
+                                            </div>
+                                        </div>
+
+                                        {/* PASIVOS */}
+                                        <div className="bg-white p-6 rounded-xl border border-red-200 shadow-sm">
+                                            <h3 className="font-bold text-red-800 mb-4 flex items-center gap-2">
+                                                <TrendingDown size={18} className="text-red-500" /> PASIVOS
+                                            </h3>
+                                            <div className="space-y-2">
+                                                {balanceGeneral.liabilities.map((a: any) => (
+                                                    <div key={a.code} className="flex justify-between items-center py-1.5 border-b border-slate-50">
+                                                        <span className="text-xs text-slate-600"><span className="font-mono text-slate-400">{a.code}</span> {a.name}</span>
+                                                        <span className={`text-xs font-mono font-bold ${Math.abs(a.balance) > 0 ? 'text-red-700' : 'text-slate-400'}`}>{formatC(Math.abs(a.balance))}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div className="mt-4 pt-3 border-t-2 border-red-200 flex justify-between">
+                                                <span className="font-bold text-red-800">Total Pasivos</span>
+                                                <span className="font-bold font-mono text-red-800">{formatC(balanceGeneral.totals.liabilities)}</span>
+                                            </div>
+                                        </div>
+
+                                        {/* CAPITAL */}
+                                        <div className="bg-white p-6 rounded-xl border border-emerald-200 shadow-sm">
+                                            <h3 className="font-bold text-emerald-800 mb-4 flex items-center gap-2">
+                                                <TrendingUp size={18} className="text-emerald-500" /> CAPITAL
+                                            </h3>
+                                            <div className="space-y-2">
+                                                {balanceGeneral.equity.map((a: any) => (
+                                                    <div key={a.code} className="flex justify-between items-center py-1.5 border-b border-slate-50">
+                                                        <span className="text-xs text-slate-600"><span className="font-mono text-slate-400">{a.code}</span> {a.name}</span>
+                                                        <span className={`text-xs font-mono font-bold ${a.balance > 0 ? 'text-emerald-700' : 'text-slate-400'}`}>{formatC(a.balance)}</span>
+                                                    </div>
+                                                ))}
+                                                <div className="flex justify-between items-center py-1.5 bg-indigo-50 px-2 rounded">
+                                                    <span className="text-xs font-bold text-indigo-700">Utilidad del Ejercicio</span>
+                                                    <span className={`text-xs font-mono font-bold ${balanceGeneral.totals.netIncome >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{formatC(balanceGeneral.totals.netIncome)}</span>
+                                                </div>
+                                            </div>
+                                            <div className="mt-4 pt-3 border-t-2 border-emerald-200 flex justify-between">
+                                                <span className="font-bold text-emerald-800">Total Capital</span>
+                                                <span className="font-bold font-mono text-emerald-800">{formatC(balanceGeneral.totals.equityPlusIncome)}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* ===== SUB-TAB: ESTADO DE RESULTADOS ===== */}
+                            {accountingSubTab === 'ESTADO' && estadoResultados && (
+                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm max-w-2xl">
+                                    <h3 className="font-bold text-slate-800 mb-4 text-lg">Estado de Resultados — {estadoResultados.period}</h3>
+                                    <div className="overflow-hidden rounded-lg border border-slate-100">
+                                        <table className="w-full text-sm">
+                                            <tbody className="divide-y divide-slate-100">
+                                                <tr className="bg-blue-50/50"><td className="px-4 py-3 font-bold text-blue-700" colSpan={2}>INGRESOS</td></tr>
+                                                <tr className="hover:bg-slate-50">
+                                                    <td className="px-4 py-3 text-slate-600">Ventas Netas</td>
+                                                    <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">{formatC(estadoResultados.revenue.total)}</td>
+                                                </tr>
+                                                <tr className="hover:bg-slate-50">
+                                                    <td className="px-4 py-3 text-slate-600">(-) Costo de Ventas</td>
+                                                    <td className="px-4 py-3 text-right font-mono font-bold text-red-600">-{formatC(estadoResultados.costOfSales)}</td>
+                                                </tr>
+                                                <tr className="bg-emerald-50/50">
+                                                    <td className="px-4 py-3 font-bold text-emerald-700">= Utilidad Bruta</td>
+                                                    <td className="px-4 py-3 text-right font-mono font-bold text-emerald-700">{formatC(estadoResultados.grossProfit)}</td>
+                                                </tr>
+                                                <tr className="bg-red-50/30"><td className="px-4 py-3 font-bold text-red-700" colSpan={2}>GASTOS OPERATIVOS</td></tr>
+                                                {estadoResultados.operatingExpenses.lines.map((l: any, i: number) => (
+                                                    <tr key={i} className="hover:bg-slate-50">
+                                                        <td className="px-4 py-2 text-slate-600 text-xs pl-8">{l.account}</td>
+                                                        <td className="px-4 py-2 text-right font-mono text-xs text-red-500">-{formatC(l.amount)}</td>
+                                                    </tr>
+                                                ))}
+                                                <tr className="hover:bg-slate-50">
+                                                    <td className="px-4 py-3 text-slate-600">(-) Total Gastos Operativos</td>
+                                                    <td className="px-4 py-3 text-right font-mono font-bold text-red-600">-{formatC(estadoResultados.operatingExpenses.total)}</td>
+                                                </tr>
+                                                <tr className={`${estadoResultados.netIncome >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                                                    <td className={`px-4 py-4 font-bold text-lg ${estadoResultados.netIncome >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>= UTILIDAD NETA</td>
+                                                    <td className={`px-4 py-4 text-right font-mono font-bold text-lg ${estadoResultados.netIncome >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{formatC(estadoResultados.netIncome)}</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* ===== SUB-TAB: LIBRO DIARIO ===== */}
+                            {accountingSubTab === 'DIARIO' && (
+                                <div className="space-y-3">
+                                    {journalEntries.length === 0 ? (
+                                        <div className="text-center py-20 text-slate-400">
+                                            <BookOpen size={64} className="mx-auto mb-4 opacity-30" />
+                                            <p className="text-lg font-bold">Sin asientos contables</p>
+                                            <p className="text-sm mt-1">Los asientos se generan automáticamente con cada venta, compra o gasto</p>
+                                        </div>
+                                    ) : journalEntries.map((entry: any) => (
+                                        <div key={entry.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                                            <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-b border-slate-100">
+                                                <div className="flex items-center gap-3">
+                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${entry.referenceType === 'SALE' ? 'bg-blue-100 text-blue-700' :
+                                                            entry.referenceType === 'PURCHASE' ? 'bg-emerald-100 text-emerald-700' :
+                                                                entry.referenceType === 'EXPENSE' ? 'bg-red-100 text-red-700' :
+                                                                    entry.referenceType === 'RETURN' ? 'bg-amber-100 text-amber-700' :
+                                                                        'bg-slate-100 text-slate-700'
+                                                        }`}>{entry.referenceType || 'MANUAL'}</span>
+                                                    <span className="text-sm font-medium text-slate-700">{entry.description}</span>
+                                                </div>
+                                                <span className="text-xs text-slate-400 font-mono">{new Date(entry.date).toLocaleDateString('es-NI')}</span>
+                                            </div>
+                                            <table className="w-full text-xs">
+                                                <thead>
+                                                    <tr className="text-slate-400">
+                                                        <th className="px-4 py-2 text-left">Cuenta</th>
+                                                        <th className="px-4 py-2 text-right">Debe</th>
+                                                        <th className="px-4 py-2 text-right">Haber</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-50">
+                                                    {entry.lines.map((line: any) => (
+                                                        <tr key={line.id} className="hover:bg-slate-50">
+                                                            <td className="px-4 py-2 text-slate-700">
+                                                                <span className="font-mono text-slate-400 mr-1">{line.account.code}</span>
+                                                                {line.account.name}
+                                                            </td>
+                                                            <td className={`px-4 py-2 text-right font-mono font-bold ${Number(line.debit) > 0 ? 'text-blue-700' : 'text-slate-300'}`}>
+                                                                {Number(line.debit) > 0 ? formatC(Number(line.debit)) : '-'}
+                                                            </td>
+                                                            <td className={`px-4 py-2 text-right font-mono font-bold ${Number(line.credit) > 0 ? 'text-emerald-700' : 'text-slate-300'}`}>
+                                                                {Number(line.credit) > 0 ? formatC(Number(line.credit)) : '-'}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
             )}

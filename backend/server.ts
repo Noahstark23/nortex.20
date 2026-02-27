@@ -18,6 +18,7 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados } from './services/accounting';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import Stripe from 'stripe';
 import path from 'path';
@@ -1210,7 +1211,7 @@ app.post('/api/employees', authenticate, async (req: any, res: any) => {
 
 app.post('/api/sales', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { items, paymentMethod, customerId, customerName, total, employeeId } = req.body;
+    const { items, paymentMethod, customerId, customerName, total, employeeId, globalDiscount } = req.body;
     const saleTotal = Number(total);
 
     try {
@@ -1267,6 +1268,7 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
                     balance: balance,
                     dueDate: dueDate,
                     shiftId: currentShift.id,
+                    globalDiscount: Number(globalDiscount) || 0,
                 }
             });
 
@@ -1275,16 +1277,17 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
                     data: {
                         saleId: sale.id,
                         productId: item.id,
-                        quantity: item.quantity,
+                        quantity: Number(item.quantity),
                         priceAtSale: item.price,
-                        costAtSale: item.costPrice || 0
+                        costAtSale: item.costPrice || 0,
+                        discount: Number(item.discount) || 0
                     }
                 });
 
                 // KARDEX BLINDADO: Registrar salida por venta
                 const product = await tx.product.findUnique({ where: { id: item.id } });
                 if (product) {
-                    const newStock = product.stock - item.quantity;
+                    const newStock = Number(product.stock) - Number(item.quantity);
                     await tx.product.update({
                         where: { id: item.id },
                         data: { stock: newStock }
@@ -1294,8 +1297,8 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
                             tenantId: authReq.tenantId,
                             productId: item.id,
                             type: 'OUT_SALE',
-                            quantity: -item.quantity,
-                            stockBefore: product.stock,
+                            quantity: -Number(item.quantity),
+                            stockBefore: Number(product.stock),
                             stockAfter: newStock,
                             referenceId: sale.id,
                             referenceType: 'SALE',
@@ -1312,12 +1315,121 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
                     data: { currentDebt: { increment: saleTotal } }
                 });
             }
+            // 📊 MOTOR CONTABLE: Registrar asiento contable de venta
+            const costTotal = items.reduce((sum: number, item: any) => sum + (Number(item.costPrice) || 0) * Number(item.quantity), 0);
+            try {
+                await recordSale(tx, authReq.tenantId!, authReq.userId!, sale.id, saleTotal, costTotal, paymentMethod);
+            } catch (accErr) { console.warn('⚠️ Accounting hook failed (sale continues):', accErr); }
+
             return sale;
         });
         res.json(result);
     } catch (error: any) {
         console.error(error);
         res.status(500).json({ error: error.message || 'Error procesando venta' });
+    }
+});
+
+// ==========================================
+// 🔄 DEVOLUCIONES / NOTAS DE CRÉDITO
+// ==========================================
+
+// Search sale for return flow
+app.get('/api/sales/search', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { q } = req.query;
+    try {
+        const sale = await prisma.sale.findFirst({
+            where: {
+                tenantId: authReq.tenantId,
+                id: { startsWith: String(q) }
+            },
+            include: {
+                items: true,
+                customer: { select: { id: true, name: true } }
+            }
+        });
+        if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
+        res.json(sale);
+    } catch (error) { res.status(500).json({ error: 'Error buscando venta' }); }
+});
+
+// Process return
+app.post('/api/returns', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { saleId, items, reason } = req.body;
+    // items: [{productId, name, quantity, price}]
+
+    try {
+        const sale = await prisma.sale.findFirst({
+            where: { id: saleId, tenantId: authReq.tenantId }
+        });
+        if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
+
+        const returnTotal = items.reduce((sum: number, item: any) => sum + Number(item.price) * Number(item.quantity), 0);
+
+        const result = await prisma.$transaction(async (tx: any) => {
+            // 1. Create return record
+            const productReturn = await tx.productReturn.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    saleId,
+                    total: returnTotal,
+                    reason: reason || 'Devolución de producto',
+                    items: items,
+                    createdBy: authReq.userId,
+                }
+            });
+
+            // 2. Restore stock for each returned item
+            for (const item of items) {
+                const product = await tx.product.findUnique({ where: { id: item.productId } });
+                if (product) {
+                    const newStock = Number(product.stock) + Number(item.quantity);
+                    await tx.product.update({
+                        where: { id: item.productId },
+                        data: { stock: newStock }
+                    });
+
+                    // Kardex: register stock return
+                    await tx.kardexMovement.create({
+                        data: {
+                            tenantId: authReq.tenantId,
+                            productId: item.productId,
+                            type: 'RETURN',
+                            quantity: Number(item.quantity),
+                            stockBefore: Number(product.stock),
+                            stockAfter: newStock,
+                            referenceId: productReturn.id,
+                            referenceType: 'RETURN',
+                            reason: `Devolución: ${reason || 'Sin motivo'}`,
+                            userId: authReq.userId,
+                        }
+                    });
+                }
+            }
+
+            // 3. Update customer debt if credit sale
+            if (sale.customerId && sale.paymentMethod === 'CREDIT') {
+                await tx.customer.update({
+                    where: { id: sale.customerId },
+                    data: { currentDebt: { decrement: returnTotal } }
+                });
+            }
+
+            // 📊 MOTOR CONTABLE: Registrar devolución
+            const costTotal = items.reduce((sum: number, item: any) => sum + (Number(item.price) * 0.7) * Number(item.quantity), 0); // Approx cost
+            try {
+                await recordReturn(tx, authReq.tenantId!, authReq.userId!, productReturn.id, returnTotal, costTotal);
+            } catch (accErr) { console.warn('⚠️ Accounting hook failed (return continues):', accErr); }
+
+            return productReturn;
+        });
+
+        res.json(result);
+    } catch (error: any) {
+        console.error(error);
+        res.status(500).json({ error: error.message || 'Error procesando devolución' });
     }
 });
 
@@ -3765,6 +3877,76 @@ app.post('/api/admin/manual-payments/:id/reject', authenticate, requireSuperAdmi
     } catch (error) {
         res.status(500).json({ error: 'Error al rechazar pago' });
     }
+});
+
+// ==========================================
+// 📊 CONTABILIDAD - FINANCIAL STATEMENT ENDPOINTS
+// ==========================================
+
+// Seed chart of accounts on first access
+app.post('/api/accounting/seed', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        await seedChartOfAccounts(authReq.tenantId!);
+        res.json({ message: 'Chart of Accounts seeded successfully' });
+    } catch (error) { res.status(500).json({ error: 'Error seeding accounts' }); }
+});
+
+// Balance General
+app.get('/api/accounting/balance-general', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const balance = await getBalanceGeneral(authReq.tenantId!);
+        res.json(balance);
+    } catch (error) { res.status(500).json({ error: 'Error generating Balance General' }); }
+});
+
+// Estado de Resultados
+app.get('/api/accounting/estado-resultados', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { month, year } = req.query;
+    try {
+        const estado = await getEstadoResultados(
+            authReq.tenantId!,
+            month ? parseInt(month) : undefined,
+            year ? parseInt(year) : undefined
+        );
+        res.json(estado);
+    } catch (error) { res.status(500).json({ error: 'Error generating Estado de Resultados' }); }
+});
+
+// Chart of Accounts (Catálogo de cuentas)
+app.get('/api/accounting/chart', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        await seedChartOfAccounts(authReq.tenantId!);
+        const accounts = await prisma.account.findMany({
+            where: { tenantId: authReq.tenantId },
+            orderBy: { code: 'asc' }
+        });
+        res.json(accounts);
+    } catch (error) { res.status(500).json({ error: 'Error fetching accounts' }); }
+});
+
+// Libro Diario (Journal Entries)
+app.get('/api/accounting/journal', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { month, year } = req.query;
+    try {
+        const where: any = { tenantId: authReq.tenantId };
+        if (month && year) {
+            const startDate = new Date(parseInt(year), parseInt(month) - 1, 1);
+            const endDate = new Date(parseInt(year), parseInt(month), 0, 23, 59, 59);
+            where.date = { gte: startDate, lte: endDate };
+        }
+        const entries = await prisma.journalEntry.findMany({
+            where,
+            include: { lines: { include: { account: { select: { code: true, name: true, type: true } } } } },
+            orderBy: { date: 'desc' },
+            take: 200
+        });
+        res.json(entries);
+    } catch (error) { res.status(500).json({ error: 'Error fetching journal' }); }
 });
 
 // ==========================================
