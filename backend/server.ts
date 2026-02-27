@@ -3892,6 +3892,47 @@ app.post('/api/admin/manual-payments/:id/reject', authenticate, requireSuperAdmi
 });
 
 // ==========================================
+// 🧾 FACTURACIÓN COMPUTARIZADA DGI
+// ==========================================
+
+import { generateDMIReport } from './services/nicaTax';
+
+// Generar Reporte DMI-V2.1 para la DGI
+app.get('/api/tax-report/dmi', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
+    const year = parseInt(req.query.year as string) || new Date().getFullYear();
+
+    try {
+        const report = await generateDMIReport(authReq.tenantId!, month, year);
+        res.json(report);
+    } catch (error: any) {
+        res.status(500).json({ error: 'Error al generar reporte DMI', details: error.message });
+    }
+});
+
+// Configurar datos fiscales del Tenant
+app.put('/api/tenant/fiscal', authenticate, checkRole(['ADMIN', 'OWNER']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { taxId, address, phone, dgiAuthCode } = req.body;
+
+    try {
+        const tenant = await prisma.tenant.update({
+            where: { id: authReq.tenantId! },
+            data: {
+                taxId: taxId || undefined,
+                address: address !== undefined ? address : undefined,
+                phone: phone !== undefined ? phone : undefined,
+                dgiAuthCode: dgiAuthCode !== undefined ? dgiAuthCode : undefined,
+            }
+        });
+        res.json(tenant);
+    } catch (error: any) {
+        res.status(500).json({ error: 'Error al actualizar configuración fiscal', details: error.message });
+    }
+});
+
+// ==========================================
 // 📊 CONTABILIDAD - FINANCIAL STATEMENT ENDPOINTS
 // ==========================================
 

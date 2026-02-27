@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { MOCK_TENANT, MOCK_PRODUCTS } from '../constants';
-import { TrendingUp, TrendingDown, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, Lock, RefreshCw, ShoppingCart, ArrowRight, ShieldAlert } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, Lock, RefreshCw, ShoppingCart, ArrowRight, ShieldAlert, FileText, Settings } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Loan, Tenant } from '../types';
 import { useNavigate } from 'react-router-dom';
@@ -23,6 +23,11 @@ const Dashboard: React.FC = () => {
   // Smart Restock State
   const [lowStockItems, setLowStockItems] = useState<any[]>([]);
 
+  // Fiscal Settings State
+  const [showFiscalModal, setShowFiscalModal] = useState(false);
+  const [fiscalData, setFiscalData] = useState({ taxId: '', address: '', phone: '', dgiAuthCode: '' });
+  const [savingFiscal, setSavingFiscal] = useState(false);
+
   // 📊 Today Stats & Alerts
   const [todayStats, setTodayStats] = useState<{ totalSales: number; totalExpenses: number; netProfit: number } | null>(null);
   const [theftAlerts, setTheftAlerts] = useState<any[]>([]);
@@ -41,6 +46,12 @@ const Dashboard: React.FC = () => {
         if (res.ok) {
           const data = await res.json();
           setTenantData(data.tenant);
+          setFiscalData({
+            taxId: data.tenant.taxId || '',
+            address: data.tenant.address || '',
+            phone: data.tenant.phone || '',
+            dgiAuthCode: data.tenant.dgiAuthCode || ''
+          });
           setChartData(data.chartData);
           if (data.todayStats) setTodayStats(data.todayStats);
           if (data.alerts) setTheftAlerts(data.alerts);
@@ -196,6 +207,34 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  const handleSaveFiscalData = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingFiscal(true);
+    try {
+      const token = localStorage.getItem('nortex_token');
+      const res = await fetch('/api/tenant/fiscal', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(fiscalData)
+      });
+
+      if (!res.ok) throw new Error('Error al guardar datos fiscales');
+
+      const updatedTenant = await res.json();
+      setTenantData(updatedTenant);
+      localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
+      setShowFiscalModal(false);
+      alert('✅ Configuración Fiscal (DGI) actualizada correctamente.');
+    } catch (error: any) {
+      alert(error.message);
+    } finally {
+      setSavingFiscal(false);
+    }
+  };
+
   return (
     <div className="p-6 h-full overflow-y-auto bg-slate-50 text-slate-800 relative">
 
@@ -233,17 +272,25 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
-      <header className="mb-8">
-        <h1 className="text-3xl font-bold text-nortex-900">Panel Financiero</h1>
-        <div className="flex items-center gap-2 mt-2">
-          <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold uppercase tracking-wider">{tenantData.type}</span>
-          <span className="text-slate-500">{tenantData.name}</span>
-          <span className={`px-2 py-1 rounded text-xs font-bold uppercase tracking-wider ${tenantData.subscriptionStatus === 'ACTIVE' ? 'bg-green-100 text-green-700' :
-            tenantData.subscriptionStatus === 'PAST_DUE' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
-            }`}>
-            {tenantData.subscriptionStatus}
-          </span>
+      <header className="mb-8 flex justify-between items-start">
+        <div>
+          <h1 className="text-3xl font-bold text-nortex-900">Panel Financiero</h1>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold uppercase tracking-wider">{tenantData.type}</span>
+            <span className="text-slate-500">{tenantData.name}</span>
+            <span className={`px-2 py-1 rounded text-xs font-bold uppercase tracking-wider ${tenantData.subscriptionStatus === 'ACTIVE' ? 'bg-green-100 text-green-700' :
+              tenantData.subscriptionStatus === 'PAST_DUE' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
+              }`}>
+              {tenantData.subscriptionStatus}
+            </span>
+          </div>
         </div>
+        <button
+          onClick={() => setShowFiscalModal(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-sm font-bold text-slate-700 rounded-lg hover:bg-slate-50 shadow-sm transition-colors"
+        >
+          <Settings size={16} /> Configuración DGI
+        </button>
       </header>
 
       {/* --- SMART RESTOCK AI WIDGET --- */}
@@ -547,6 +594,92 @@ const Dashboard: React.FC = () => {
                   </>
                 )}
               </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* FISCAL SETTINGS MODAL */}
+      {showFiscalModal && (
+        <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
+            <div className="bg-slate-800 p-6 relative overflow-hidden">
+              <button
+                onClick={() => setShowFiscalModal(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+              >
+                <X size={20} />
+              </button>
+              <h3 className="text-xl font-bold text-white flex items-center gap-2 relative z-10">
+                <FileText size={24} className="text-blue-400" /> Facturación DGI
+              </h3>
+              <p className="text-slate-300 text-sm mt-1 relative z-10">Configura los datos fiscales para tus recibos.</p>
+            </div>
+
+            <form onSubmit={handleSaveFiscalData} className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">RUC DE LA EMPRESA</label>
+                <input
+                  type="text"
+                  required
+                  className="w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="Ej. J0310000123456"
+                  value={fiscalData.taxId}
+                  onChange={e => setFiscalData({ ...fiscalData, taxId: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">DIRECCIÓN FÍSICA</label>
+                <input
+                  type="text"
+                  required
+                  className="w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="Dirección del local para la factura"
+                  value={fiscalData.address}
+                  onChange={e => setFiscalData({ ...fiscalData, address: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">TELÉFONO</label>
+                <input
+                  type="text"
+                  className="w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="Teléfono (Opcional)"
+                  value={fiscalData.phone}
+                  onChange={e => setFiscalData({ ...fiscalData, phone: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">RESOLUCIÓN DGI (AUTORIZACIÓN)</label>
+                <input
+                  type="text"
+                  className="w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none bg-yellow-50"
+                  placeholder="Ej. Autorización DGI No. 12345"
+                  value={fiscalData.dgiAuthCode}
+                  onChange={e => setFiscalData({ ...fiscalData, dgiAuthCode: e.target.value })}
+                />
+                <p className="text-xs text-slate-500 mt-1">Este código aparecerá al pie de tus tickets para darle validez fiscal.</p>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowFiscalModal(false)}
+                  className="flex-1 py-3 text-slate-600 font-bold hover:bg-slate-100 rounded transition-colors"
+                >
+                  CANCELAR
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingFiscal}
+                  className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded transition-colors"
+                >
+                  {savingFiscal ? 'GUARDANDO...' : 'GUARDAR DATOS'}
+                </button>
+              </div>
             </form>
           </div>
         </div>
