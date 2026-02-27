@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock } from 'lucide-react';
+import { PinPadClock } from './PinPadClock';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -8,6 +9,7 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
+  const [showClock, setShowClock] = useState(false);
 
   const handleLogout = () => {
     localStorage.removeItem('nortex_token');
@@ -83,6 +85,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
         <div className="p-4 border-t border-nortex-800">
           <button
+            onClick={() => setShowClock(true)}
+            className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-3 rounded-xl bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 hover:text-indigo-300 transition-colors border border-indigo-500/20 shadow-[0_0_15px_rgba(99,102,241,0.1)]"
+          >
+            <Clock size={20} />
+            <span className="font-bold text-sm uppercase tracking-wider">Clock In/Out</span>
+          </button>
+          <button
             onClick={handleLogout}
             className="w-full flex items-center justify-start gap-3 px-3 py-3 rounded-xl text-slate-500 hover:bg-red-500/10 hover:text-red-400 transition-colors"
           >
@@ -117,6 +126,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <main className="flex-1 overflow-hidden relative mb-16 lg:mb-0">
         {children}
       </main>
+
+      {showClock && <PinPadClock onClose={() => setShowClock(false)} />}
     </div>
   );
 };
