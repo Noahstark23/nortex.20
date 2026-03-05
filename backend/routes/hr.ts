@@ -122,7 +122,7 @@ router.post('/advance/request', authenticate, async (req: any, res: any) => {
         // Validar límite (ej: 30% del salario base)
         const maxAdvance = Number(employee.baseSalary) * 0.30;
         if (amount > maxAdvance) {
-            return res.status(400).json({ error: \`El monto excede tu límite permitido de C$ \${maxAdvance}\` });
+            return res.status(400).json({ error: `El monto excede tu límite permitido de C$ ${maxAdvance}` });
         }
 
         const advance = await prisma.salaryAdvance.create({
@@ -159,7 +159,7 @@ router.post('/advance/approve', authenticate, requireHRAdmin, async (req: any, r
         });
 
         // NOTA: Si es APPROVED, el cajero procede a darle el dinero. El descuento en nómina se hace después.
-        res.json({ message: \`Adelanto \${action === 'APPROVED' ? 'Aprobado' : 'Rechazado'}\` });
+        res.json({ message: `Adelanto ${action === 'APPROVED' ? 'Aprobado' : 'Rechazado'}` });
     } catch (error) {
         console.error('Advance Approve Error:', error);
         res.status(500).json({ error: 'Error al procesar el adelanto' });
@@ -220,22 +220,22 @@ router.post('/payroll/preview', authenticate, requireHRAdmin, async (req: any, r
 
         const lines = employees.map(emp => {
             const baseSalary = Number(emp.baseSalary); // Simplificado: base completo
-            
+
             // Comisiones dinámicas
             const totalSales = emp.sales.reduce((acc: number, sale: any) => acc + Number(sale.total), 0);
             const commissions = totalSales * (Number(emp.commissionRate) / 100);
-            
+
             const grossPay = baseSalary + commissions;
             const inss = grossPay * 0.07; // 7% INSS Laboral sobre el bruto (salario + comisión)
             // IR Progressivo ignorado para simplificar la demo
-            
+
             const advances = emp.salaryAdvances.reduce((acc: number, adv: any) => acc + Number(adv.amount) + Number(adv.fee), 0);
-            
+
             const netPay = grossPay - inss - advances;
 
             return {
                 employeeId: emp.id,
-                name: \`\${emp.firstName} \${emp.lastName}\`,
+                name: `${emp.firstName} ${emp.lastName}`,
                 basePay: baseSalary,
                 commissions,
                 totalSales,
@@ -271,9 +271,9 @@ router.post('/termination/calculate', authenticate, requireHRAdmin, async (req: 
         const terminateDt = new Date(terminationDate);
         const hireDt = new Date(emp.hireDate);
         const monthsWorked = (terminateDt.getTime() - hireDt.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-        
+
         const baseMonthly = Number(emp.baseSalary);
-        
+
         let aguinaldo = (baseMonthly / 12) * (monthsWorked % 12);
         let vacaciones = (baseMonthly / 12) * (monthsWorked % 12);
         let antiguedad = reason === 'DISMISSAL' ? (baseMonthly * Math.floor(monthsWorked / 12)) : 0; // Solo en despido (Art. 45)
