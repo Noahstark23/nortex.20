@@ -424,3 +424,170 @@ export async function getEstadoResultados(tenantId: string, month?: number, year
         netIncome: totalRevenue - totalCOGS - totalExpenses,
     };
 }
+
+// ==========================================
+// RETENCIONES DGI (IR 2%, IMI 1%, IVA RETENIDO)
+// ==========================================
+
+const IR_RETENTION_RATE = 0.02;   // 2% sobre compras de bienes/servicios
+const IMI_RETENTION_RATE = 0.01;  // 1% impuesto municipal
+const IVA_RETENTION_RATE = 0.15;  // 15% IVA retenido (gran contribuyente)
+
+/**
+ * Genera retenciones fiscales del periodo desde las compras registradas.
+ * Crea registros en FiscalRetention para cada tipo.
+ */
+export async function generateRetentions(tenantId: string, month: number, year: number) {
+    const period = `${year}-${String(month).padStart(2, '0')}`;
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0, 23, 59, 59);
+
+    // Verificar si ya se generaron para este periodo
+    const existing = await prisma.fiscalRetention.count({
+        where: { tenantId, period }
+    });
+    if (existing > 0) {
+        return { message: `Retenciones ya generadas para ${period}`, existing: true };
+    }
+
+    // Obtener compras del periodo
+    const purchases = await prisma.purchase.findMany({
+        where: {
+            tenantId,
+            date: { gte: startDate, lte: endDate },
+        },
+        include: {
+            supplier: { select: { id: true, name: true } },
+        },
+    });
+
+    const retentions: any[] = [];
+    let totalIR = 0, totalIMI = 0, totalIVA = 0;
+
+    for (const purchase of purchases as any[]) {
+        const baseAmount = Number(purchase.subtotal || purchase.total);
+        const tax = Number(purchase.tax || 0);
+
+        // IR 2% sobre base gravable
+        const irAmount = Math.round(baseAmount * IR_RETENTION_RATE * 100) / 100;
+        if (irAmount > 0) {
+            retentions.push({
+                tenantId,
+                type: 'IR_2PCT',
+                amount: irAmount,
+                baseAmount,
+                supplierId: purchase.supplierId,
+                purchaseId: purchase.id,
+                description: `Retención IR 2% - ${purchase.supplier?.name || 'Proveedor'} - Compra #${purchase.id.slice(0, 8)}`,
+                period,
+            });
+            totalIR += irAmount;
+        }
+
+        // IMI 1% municipal
+        const imiAmount = Math.round(baseAmount * IMI_RETENTION_RATE * 100) / 100;
+        if (imiAmount > 0) {
+            retentions.push({
+                tenantId,
+                type: 'IMI_1PCT',
+                amount: imiAmount,
+                baseAmount,
+                supplierId: purchase.supplierId,
+                purchaseId: purchase.id,
+                description: `Retención IMI 1% - ${purchase.supplier?.name || 'Proveedor'} - Compra #${purchase.id.slice(0, 8)}`,
+                period,
+            });
+            totalIMI += imiAmount;
+        }
+
+        // IVA Retenido (si aplica)
+        if (tax > 0) {
+            retentions.push({
+                tenantId,
+                type: 'IVA_RETENIDO',
+                amount: tax,
+                baseAmount,
+                supplierId: purchase.supplierId,
+                purchaseId: purchase.id,
+                description: `IVA Retenido - ${purchase.supplier?.name || 'Proveedor'} - Compra #${purchase.id.slice(0, 8)}`,
+                period,
+            });
+            totalIVA += tax;
+        }
+    }
+
+    // Guardar todas las retenciones
+    if (retentions.length > 0) {
+        await prisma.fiscalRetention.createMany({ data: retentions });
+    }
+
+    return {
+        period,
+        existing: false,
+        purchasesProcessed: purchases.length,
+        retentions: {
+            ir2pct: { count: purchases.length, total: totalIR },
+            imi1pct: { count: purchases.length, total: totalIMI },
+            ivaRetenido: { count: retentions.filter(r => r.type === 'IVA_RETENIDO').length, total: totalIVA },
+        },
+        grandTotal: totalIR + totalIMI + totalIVA,
+    };
+}
+
+/**
+ * Cierre fiscal mensual: genera snapshot del Balance General + P&L
+ * y guarda en TaxReport.
+ */
+export async function fiscalClose(tenantId: string, month: number, year: number) {
+    const period = `${year}-${String(month).padStart(2, '0')}`;
+
+    // Generar estados financieros del periodo
+    const balance = await getBalanceGeneral(tenantId);
+    const estado = await getEstadoResultados(tenantId, month, year);
+
+    // Generar retenciones si no existen
+    const retentions = await generateRetentions(tenantId, month, year);
+
+    // Guardar o actualizar TaxReport como snapshot del cierre
+    const existingReport = await prisma.taxReport.findFirst({
+        where: { tenantId, month, year }
+    });
+
+    const reportData = {
+        tenantId,
+        month,
+        year,
+        totalSales: estado.revenue.total,
+        ivaCobrado: Math.round(estado.revenue.total * 0.15 / 1.15 * 100) / 100,
+        totalCompras: estado.costOfSales,
+        ivaPagado: Math.round(estado.costOfSales * 0.15 * 100) / 100,
+        ivaNeto: 0, // Will be calculated
+        anticipoIR: Math.round(estado.revenue.total * 0.01 * 100) / 100,
+        imiAlcaldia: Math.round(estado.revenue.total * 0.01 * 100) / 100,
+    };
+
+    reportData.ivaNeto = Math.max(0, reportData.ivaCobrado - reportData.ivaPagado);
+
+    if (existingReport) {
+        await prisma.taxReport.update({
+            where: { id: existingReport.id },
+            data: reportData,
+        });
+    } else {
+        await prisma.taxReport.create({ data: reportData });
+    }
+
+    return {
+        period,
+        balance: balance.totals,
+        estadoResultados: {
+            revenue: estado.revenue.total,
+            costOfSales: estado.costOfSales,
+            grossProfit: estado.grossProfit,
+            operatingExpenses: estado.operatingExpenses.total,
+            netIncome: estado.netIncome,
+        },
+        retentions: retentions.existing ? 'Ya generadas' : retentions.retentions,
+        taxes: reportData,
+    };
+}

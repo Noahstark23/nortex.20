@@ -25,6 +25,8 @@ import TeamManagement from './components/TeamManagement';
 import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
 import CashRegisters from './components/CashRegisters';
+import FinancialHealth from './components/FinancialHealth';
+import AuditDashboard from './components/AuditDashboard';
 
 // Emails autorizados como SUPER_ADMIN
 const SUPER_ADMIN_EMAILS = ['noelpinedaa96@gmail.com'];
@@ -61,6 +63,8 @@ const ProtectedApp = () => {
         <Route path="marketplace" element={<B2BMarketplace />} />
         <Route path="billing" element={<Billing />} />
         <Route path="team" element={<TeamManagement />} />
+        <Route path="financial-health" element={<FinancialHealth />} />
+        <Route path="audit" element={<AuditDashboard />} />
         <Route path="blueprint" element={<BlueprintViewer />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>

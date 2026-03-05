@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield } from 'lucide-react';
 import { PinPadClock } from './PinPadClock';
 
 interface LayoutProps {
@@ -44,6 +44,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { path: '/app/dashboard', label: 'Finanzas', icon: LayoutGrid },
     { path: '/app/marketplace', label: 'Mercado B2B', icon: ShoppingBag },
     { path: '/app/reports', label: 'Reportes', icon: PieChart },
+    // Auditoría & Finanzas avanzadas: only for OWNER/ADMIN
+    ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
+      ? [
+        { path: '/app/financial-health', label: 'Salud Financiera', icon: BarChart3 },
+        { path: '/app/audit', label: 'Auditoría', icon: Shield },
+      ]
+      : []),
     { path: '/app/billing', label: 'Facturación', icon: CreditCard },
     { path: '/app/team', label: 'Mi Equipo', icon: UserPlus },
     { path: '/app/blueprint', label: 'Modo Dios', icon: Code2 },

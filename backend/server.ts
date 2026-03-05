@@ -4005,6 +4005,214 @@ app.get('/api/accounting/journal', authenticate, async (req: any, res: any) => {
 });
 
 // ==========================================
+// 📊 SALUD FINANCIERA & AUDITORÍA FORENSE
+// ==========================================
+
+// GET /api/financial-health — Dashboard de salud financiera del tenant
+app.get('/api/financial-health', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { getBalanceGeneral, getEstadoResultados, seedChartOfAccounts } = require('./services/accounting');
+        const { calculateTenantScore } = require('./services/scoring');
+
+        await seedChartOfAccounts(authReq.tenantId!);
+        const balance = await getBalanceGeneral(authReq.tenantId!);
+        const estado = await getEstadoResultados(authReq.tenantId!);
+        const score = await calculateTenantScore(authReq.tenantId!);
+
+        // Punto de equilibrio: Gastos fijos / (1 - (Costo Ventas / Ventas))
+        const revenue = estado.revenue.total || 1;
+        const cogsRatio = estado.costOfSales / revenue;
+        const breakEven = cogsRatio < 1 ? estado.operatingExpenses.total / (1 - cogsRatio) : 0;
+
+        // Margen de utilidad real
+        const profitMargin = revenue > 0 ? ((estado.netIncome / revenue) * 100) : 0;
+
+        res.json({
+            kpis: {
+                profitMargin: Math.round(profitMargin * 100) / 100,
+                breakEven: Math.round(breakEven * 100) / 100,
+                ebitda: Math.round((estado.grossProfit - estado.operatingExpenses.total) * 100) / 100,
+                liquidityRatio: score.financialRatios?.liquidityRatio || 0,
+                debtToEquity: score.financialRatios?.debtToEquity || 0,
+                netMargin: score.financialRatios?.netMargin || 0,
+            },
+            score: {
+                value: score.score,
+                rating: score.rating,
+                creditLimit: score.creditLimit,
+                factors: score.factors,
+            },
+            balance: balance,
+            estadoResultados: estado,
+        });
+    } catch (error) {
+        console.error('Financial health error:', error);
+        res.status(500).json({ error: 'Error al calcular salud financiera' });
+    }
+});
+
+// GET /api/audit/feed — Feed de alertas forenses (últimas 50)
+app.get('/api/audit/feed', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { getAuditFeed } = require('./services/audit');
+        const feed = await getAuditFeed(authReq.tenantId!);
+        res.json(feed);
+    } catch (error) {
+        console.error('Audit feed error:', error);
+        res.status(500).json({ error: 'Error al obtener alertas' });
+    }
+});
+
+// GET /api/audit/kardex-suspicious — Movimientos de kardex sospechosos
+app.get('/api/audit/kardex-suspicious', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { detectSuspiciousKardex } = require('./services/audit');
+        const startDate = req.query.startDate ? new Date(req.query.startDate) : undefined;
+        const endDate = req.query.endDate ? new Date(req.query.endDate) : undefined;
+        const results = await detectSuspiciousKardex(authReq.tenantId!, startDate, endDate);
+        res.json(results);
+    } catch (error) {
+        console.error('Kardex suspicious error:', error);
+        res.status(500).json({ error: 'Error al analizar kardex' });
+    }
+});
+
+// GET /api/audit/voided-movements — Análisis de anulaciones por usuario
+app.get('/api/audit/voided-movements', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { analyzeVoidedMovements } = require('./services/audit');
+        const startDate = req.query.startDate ? new Date(req.query.startDate) : undefined;
+        const endDate = req.query.endDate ? new Date(req.query.endDate) : undefined;
+        const results = await analyzeVoidedMovements(authReq.tenantId!, startDate, endDate);
+        res.json(results);
+    } catch (error) {
+        console.error('Voided movements error:', error);
+        res.status(500).json({ error: 'Error al analizar anulaciones' });
+    }
+});
+
+// GET /api/audit/discounts — Reporte de descuentos por cajero
+app.get('/api/audit/discounts', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { analyzeDiscounts } = require('./services/audit');
+        const startDate = req.query.startDate ? new Date(req.query.startDate) : undefined;
+        const endDate = req.query.endDate ? new Date(req.query.endDate) : undefined;
+        const results = await analyzeDiscounts(authReq.tenantId!, startDate, endDate);
+        res.json(results);
+    } catch (error) {
+        console.error('Discount analysis error:', error);
+        res.status(500).json({ error: 'Error al analizar descuentos' });
+    }
+});
+
+// POST /api/accounting/retentions — Generar retenciones DGI del mes
+app.post('/api/accounting/retentions', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { month, year } = req.body;
+    if (!month || !year) return res.status(400).json({ error: 'month y year son requeridos' });
+
+    try {
+        const { generateRetentions } = require('./services/accounting');
+        const result = await generateRetentions(authReq.tenantId!, month, year);
+        res.json(result);
+    } catch (error) {
+        console.error('Generate retentions error:', error);
+        res.status(500).json({ error: 'Error al generar retenciones' });
+    }
+});
+
+// GET /api/accounting/retentions/:period — Consultar retenciones de un periodo
+app.get('/api/accounting/retentions/:period', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { period } = req.params; // "2026-03"
+
+    try {
+        const retentions = await prisma.fiscalRetention.findMany({
+            where: { tenantId: authReq.tenantId!, period },
+            orderBy: { createdAt: 'desc' },
+        });
+
+        // Agrupar por tipo
+        const grouped = {
+            IR_2PCT: retentions.filter((r: any) => r.type === 'IR_2PCT'),
+            IMI_1PCT: retentions.filter((r: any) => r.type === 'IMI_1PCT'),
+            IVA_RETENIDO: retentions.filter((r: any) => r.type === 'IVA_RETENIDO'),
+        };
+
+        const totals = {
+            ir: grouped.IR_2PCT.reduce((s: number, r: any) => s + Number(r.amount), 0),
+            imi: grouped.IMI_1PCT.reduce((s: number, r: any) => s + Number(r.amount), 0),
+            iva: grouped.IVA_RETENIDO.reduce((s: number, r: any) => s + Number(r.amount), 0),
+        };
+
+        res.json({ period, retentions: grouped, totals, grandTotal: totals.ir + totals.imi + totals.iva });
+    } catch (error) {
+        console.error('Fetch retentions error:', error);
+        res.status(500).json({ error: 'Error al obtener retenciones' });
+    }
+});
+
+// POST /api/accounting/fiscal-close — Cierre fiscal mensual
+app.post('/api/accounting/fiscal-close', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { month, year } = req.body;
+    if (!month || !year) return res.status(400).json({ error: 'month y year son requeridos' });
+
+    try {
+        const { fiscalClose } = require('./services/accounting');
+        const result = await fiscalClose(authReq.tenantId!, month, year);
+        res.json({ message: `Cierre fiscal ${month}/${year} completado`, ...result });
+    } catch (error) {
+        console.error('Fiscal close error:', error);
+        res.status(500).json({ error: 'Error al realizar cierre fiscal' });
+    }
+});
+
+// GET /api/hrm/settlement-preview/:employeeId — Calcular aguinaldo + liquidación
+app.get('/api/hrm/settlement-preview/:employeeId', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { employeeId } = req.params;
+
+    try {
+        const employee = await prisma.employee.findFirst({
+            where: { id: employeeId, tenantId: authReq.tenantId! },
+        });
+
+        if (!employee) return res.status(404).json({ error: 'Empleado no encontrado' });
+
+        const { calculateLaborLiability, calculatePayroll } = require('./services/nicaLabor');
+
+        const liability = calculateLaborLiability(
+            employee.id,
+            (employee as any).firstName + ' ' + (employee as any).lastName,
+            (employee as any).hireDate,
+            Number((employee as any).baseSalary || 0)
+        );
+
+        const payroll = calculatePayroll(Number((employee as any).baseSalary || 0));
+
+        res.json({
+            employee: {
+                id: employee.id,
+                name: (employee as any).firstName + ' ' + (employee as any).lastName,
+                hireDate: (employee as any).hireDate,
+                baseSalary: Number((employee as any).baseSalary || 0),
+            },
+            liability,
+            payroll,
+        });
+    } catch (error) {
+        console.error('Settlement preview error:', error);
+        res.status(500).json({ error: 'Error al calcular liquidación' });
+    }
+});
+
+// ==========================================
 // 🌐 PORTAL DE PEDIDOS PÚBLICOS (NO AUTH)
 // ==========================================
 
