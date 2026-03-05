@@ -4005,6 +4005,264 @@ app.get('/api/accounting/journal', authenticate, async (req: any, res: any) => {
 });
 
 // ==========================================
+// 🌐 PORTAL DE PEDIDOS PÚBLICOS (NO AUTH)
+// ==========================================
+
+// PUT /api/tenant/slug — Configurar slug (INMUTABLE una vez creado)
+app.put('/api/tenant/slug', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { slug } = req.body;
+
+    if (!slug || typeof slug !== 'string') {
+        return res.status(400).json({ error: 'Slug es requerido' });
+    }
+
+    // Validar formato: solo letras minúsculas, números y guiones
+    const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+    const cleanSlug = slug.toLowerCase().trim();
+    if (!slugRegex.test(cleanSlug) || cleanSlug.length < 3 || cleanSlug.length > 60) {
+        return res.status(400).json({ error: 'Slug inválido. Usa solo letras, números y guiones (3-60 caracteres). Ej: "ferreteria-jose"' });
+    }
+
+    try {
+        // Verificar si ya tiene slug (INMUTABLE)
+        const current = await prisma.tenant.findUnique({
+            where: { id: authReq.tenantId! },
+            select: { slug: true }
+        });
+
+        if (current?.slug) {
+            return res.status(400).json({
+                error: `Tu slug ya está configurado como "${current.slug}" y no puede ser cambiado. Los links compartidos por WhatsApp dependen de él.`
+            });
+        }
+
+        // Verificar que no esté en uso
+        const existing = await prisma.tenant.findUnique({ where: { slug: cleanSlug } });
+        if (existing) {
+            return res.status(409).json({ error: 'Este slug ya está en uso. Prueba otro.' });
+        }
+
+        const updated = await prisma.tenant.update({
+            where: { id: authReq.tenantId! },
+            data: { slug: cleanSlug }
+        });
+
+        res.json({
+            message: `Slug configurado: "${cleanSlug}". Tu catálogo público estará en /pedidos/${cleanSlug}`,
+            slug: cleanSlug
+        });
+    } catch (error) {
+        console.error('Set slug error:', error);
+        res.status(500).json({ error: 'Error al configurar slug' });
+    }
+});
+
+// Rate limiter estricto para endpoints públicos
+const publicLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    message: { error: 'Demasiadas solicitudes. Intenta en unos minutos.' }
+});
+
+// GET /api/public/catalog/:slug — Catálogo público (NO requiere JWT)
+// 🔒 AUDITORÍA: Solo expone name, price, description, imageUrl, category, unit
+// JAMÁS: cost, stock, tenantId, createdBy, sku, minStock
+app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) => {
+    const { slug } = req.params;
+
+    try {
+        const tenant = await prisma.tenant.findUnique({
+            where: { slug },
+            select: { id: true, businessName: true, slug: true, phone: true }
+        });
+
+        if (!tenant) {
+            return res.status(404).json({ error: 'Negocio no encontrado' });
+        }
+
+        // 🔒 BLINDAJE: select explícito — NUNCA usar findMany sin select en endpoint público
+        const products = await prisma.product.findMany({
+            where: {
+                tenantId: tenant.id,
+                isPublished: true,
+            },
+            select: {
+                id: true,
+                name: true,
+                price: true,
+                description: true,
+                imageUrl: true,
+                category: true,
+                unit: true,
+                // ❌ BLOQUEADOS: cost, stock, minStock, sku, tenantId, createdBy, createdAt, updatedAt
+            },
+            orderBy: { name: 'asc' }
+        });
+
+        res.json({
+            business: {
+                name: tenant.businessName,
+                slug: tenant.slug,
+                phone: tenant.phone,
+            },
+            products,
+        });
+
+    } catch (error) {
+        console.error('Public catalog error:', error);
+        res.status(500).json({ error: 'Error al obtener catálogo' });
+    }
+});
+
+// POST /api/public/orders — Crear pedido público (NO requiere JWT)
+const orderLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    message: { error: 'Demasiados pedidos. Intenta en unos minutos.' }
+});
+
+app.post('/api/public/orders', orderLimiter, async (req: any, res: any) => {
+    const { slug, customerName, customerPhone, items } = req.body;
+
+    if (!slug || !customerName || !items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: 'Faltan datos: slug, customerName y items son requeridos' });
+    }
+
+    // 🔒 Anti-abuso: máximo 50 items por pedido
+    if (items.length > 50) {
+        return res.status(400).json({ error: 'Máximo 50 productos por pedido' });
+    }
+
+    // 🔒 Validar teléfono Nicaragua (8 dígitos) si se proporciona
+    if (customerPhone) {
+        const phoneDigits = String(customerPhone).replace(/\D/g, '');
+        // Acepta: 8 dígitos locales o con código de país (505 + 8 dígitos)
+        if (phoneDigits.length !== 8 && phoneDigits.length !== 11) {
+            return res.status(400).json({ error: 'Número de teléfono inválido. Usa 8 dígitos (ej: 8888-0000)' });
+        }
+    }
+
+    try {
+        // Buscar tenant por slug
+        const tenant = await prisma.tenant.findUnique({ where: { slug } });
+        if (!tenant) {
+            return res.status(404).json({ error: 'Negocio no encontrado' });
+        }
+
+        // Sanitizar items — snapshot con precios congelados al momento del pedido
+        const sanitizedItems = items.map((item: any) => {
+            const price = Math.min(Math.max(Number(item.price) || 0, 0), 999999); // Techo de precio
+            const quantity = Math.min(Math.max(Number(item.quantity) || 1, 0.01), 9999); // Techo de cantidad
+            return {
+                productId: String(item.productId || item.id).substring(0, 50),
+                name: String(item.name).substring(0, 200),
+                quantity,
+                price, // 🔒 SNAPSHOT: precio congelado al momento del pedido
+            };
+        });
+
+        const order = await prisma.publicOrder.create({
+            data: {
+                tenantId: tenant.id,
+                customerName: String(customerName).substring(0, 200),
+                customerPhone: customerPhone ? String(customerPhone).replace(/\D/g, '').substring(0, 15) : null,
+                items: sanitizedItems,
+            }
+        });
+
+        res.json({
+            message: '¡Pedido enviado! El negocio lo revisará pronto.',
+            orderId: order.id,
+        });
+
+    } catch (error) {
+        console.error('Public order error:', error);
+        res.status(500).json({ error: 'Error al crear pedido' });
+    }
+});
+
+// GET /api/public-orders — Pedidos web del tenant (requiere JWT)
+app.get('/api/public-orders', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const orders = await prisma.publicOrder.findMany({
+            where: { tenantId: authReq.tenantId },
+            orderBy: { createdAt: 'desc' },
+            take: 100,
+        });
+        res.json(orders);
+    } catch (error) {
+        console.error('Fetch public orders error:', error);
+        res.status(500).json({ error: 'Error al obtener pedidos web' });
+    }
+});
+
+// PATCH /api/public-orders/:id/convert — Convertir PublicOrder → Quotation
+app.patch('/api/public-orders/:id/convert', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+
+    try {
+        const order = await prisma.publicOrder.findUnique({ where: { id } });
+        if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+        if (order.tenantId !== authReq.tenantId) return res.status(403).json({ error: 'No autorizado' });
+        if (order.status === 'CONVERTED') return res.status(400).json({ error: 'Este pedido ya fue convertido' });
+
+        const items = order.items as any[];
+
+        // Calcular totales
+        let subtotal = 0;
+        const formattedItems = items.map((item: any) => {
+            const total = Number(item.price) * Number(item.quantity);
+            subtotal += total;
+            return {
+                productId: item.productId,
+                name: item.name,
+                price: Number(item.price),
+                quantity: Number(item.quantity),
+            };
+        });
+        const tax = subtotal * 0.15;
+        const total = subtotal + tax;
+
+        // Transacción: crear Quotation + marcar PublicOrder como CONVERTED
+        const result = await prisma.$transaction(async (tx: any) => {
+            const quotation = await tx.quotation.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    customerName: order.customerName,
+                    customerRuc: null,
+                    subtotal,
+                    tax,
+                    total,
+                    expiresAt: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000),
+                    items: {
+                        create: formattedItems,
+                    },
+                },
+            });
+
+            await tx.publicOrder.update({
+                where: { id },
+                data: { status: 'CONVERTED' },
+            });
+
+            return quotation;
+        });
+
+        res.json({
+            message: 'Pedido convertido en cotización exitosamente',
+            quotation: { ...result, subtotal, tax, total },
+        });
+
+    } catch (error) {
+        console.error('Convert public order error:', error);
+        res.status(500).json({ error: 'Error al convertir pedido' });
+    }
+});
+
+// ==========================================
 // 🚀 SERVE FRONTEND IN PRODUCTION
 // ==========================================
 const isProduction = process.env.NODE_ENV === 'production';

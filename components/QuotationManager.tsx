@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Plus, Search, ShoppingCart, Calendar, User, Printer, ArrowRight, Trash2, Clock, CheckCircle } from 'lucide-react';
+import { FileText, Plus, Search, ShoppingCart, Calendar, User, Printer, ArrowRight, Trash2, Clock, CheckCircle, Globe, Phone, Package, Loader2, RefreshCw } from 'lucide-react';
 import { MOCK_PRODUCTS } from '../constants';
-import { Product, CartItem, Quotation } from '../types';
+import { Product, CartItem, Quotation, PublicOrder } from '../types';
 import { useNavigate } from 'react-router-dom';
 
 const QuotationManager: React.FC = () => {
     const navigate = useNavigate();
-    const [activeTab, setActiveTab] = useState<'NEW' | 'HISTORY'>('NEW');
+    const [activeTab, setActiveTab] = useState<'NEW' | 'HISTORY' | 'WEB_ORDERS'>('NEW');
 
     const [products, setProducts] = useState<Product[]>([]);
     const [cart, setCart] = useState<CartItem[]>([]);
@@ -36,6 +36,11 @@ const QuotationManager: React.FC = () => {
     // Persistence for history
     const [history, setHistory] = useState<Quotation[]>([]);
 
+    // Web Orders (Public Orders)
+    const [webOrders, setWebOrders] = useState<PublicOrder[]>([]);
+    const [loadingWebOrders, setLoadingWebOrders] = useState(false);
+    const [convertingId, setConvertingId] = useState<string | null>(null);
+
     // Fetch from API
     const fetchQuotations = async () => {
         try {
@@ -52,8 +57,27 @@ const QuotationManager: React.FC = () => {
         }
     };
 
+    const fetchWebOrders = async () => {
+        setLoadingWebOrders(true);
+        try {
+            const token = localStorage.getItem('nortex_token');
+            const res = await fetch('/api/public-orders', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setWebOrders(data);
+            }
+        } catch (error) {
+            console.error('Error fetching web orders:', error);
+        } finally {
+            setLoadingWebOrders(false);
+        }
+    };
+
     useEffect(() => {
         fetchQuotations();
+        fetchWebOrders();
     }, []);
 
     // --- LOGIC ---
@@ -124,10 +148,40 @@ const QuotationManager: React.FC = () => {
         }
     };
 
+    const convertWebOrder = async (order: PublicOrder) => {
+        if (!confirm(`¿Convertir pedido de "${order.customerName}" en Cotización?`)) return;
+        setConvertingId(order.id);
+
+        try {
+            const token = localStorage.getItem('nortex_token');
+            const res = await fetch(`/api/public-orders/${order.id}/convert`, {
+                method: 'PATCH',
+                headers: { Authorization: `Bearer ${token}` }
+            });
+
+            if (res.ok) {
+                alert('✅ Pedido convertido en cotización exitosamente.');
+                // Refresh both lists
+                await Promise.all([fetchWebOrders(), fetchQuotations()]);
+                setActiveTab('HISTORY');
+            } else {
+                const data = await res.json();
+                alert(data.error || 'Error al convertir pedido');
+            }
+        } catch (error) {
+            console.error('Error converting web order:', error);
+            alert('Error de conexión');
+        } finally {
+            setConvertingId(null);
+        }
+    };
+
     const filteredProducts = products.filter(p =>
         p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         p.sku.toLowerCase().includes(searchTerm.toLowerCase())
     );
+
+    const pendingWebOrders = webOrders.filter(o => o.status === 'PENDING');
 
     return (
         <div className="flex h-full bg-slate-100 overflow-hidden">
@@ -137,18 +191,30 @@ const QuotationManager: React.FC = () => {
                     <h1 className="text-2xl font-bold text-nortex-900 flex items-center gap-2">
                         <FileText className="text-nortex-500" /> Cotizaciones B2B
                     </h1>
-                    <div className="flex gap-4 mt-6">
+                    <div className="flex gap-2 mt-6">
                         <button
                             onClick={() => setActiveTab('NEW')}
                             className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'NEW' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-white border-slate-200 text-slate-500'}`}
                         >
-                            + NUEVA COTIZACIÓN
+                            + NUEVA
                         </button>
                         <button
                             onClick={() => setActiveTab('HISTORY')}
                             className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'HISTORY' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-white border-slate-200 text-slate-500'}`}
                         >
                             HISTORIAL
+                        </button>
+                        <button
+                            onClick={() => { setActiveTab('WEB_ORDERS'); fetchWebOrders(); }}
+                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all relative ${activeTab === 'WEB_ORDERS' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-500'}`}
+                        >
+                            <Globe size={14} className="inline mr-1" />
+                            PEDIDOS WEB
+                            {pendingWebOrders.length > 0 && (
+                                <span className="absolute -top-2 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                                    {pendingWebOrders.length}
+                                </span>
+                            )}
                         </button>
                     </div>
                 </div>
@@ -184,7 +250,7 @@ const QuotationManager: React.FC = () => {
                             ))}
                         </div>
                     </div>
-                ) : (
+                ) : activeTab === 'HISTORY' ? (
                     <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
                         {history.length === 0 && <div className="text-center text-slate-400 mt-10">No hay cotizaciones guardadas.</div>}
                         {history.map(quote => (
@@ -219,6 +285,114 @@ const QuotationManager: React.FC = () => {
                                 </div>
                             </div>
                         ))}
+                    </div>
+                ) : (
+                    /* WEB_ORDERS Tab */
+                    <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                        <div className="flex items-center justify-between mb-4">
+                            <p className="text-sm text-slate-500">
+                                Pedidos recibidos desde tu catálogo público
+                            </p>
+                            <button
+                                onClick={fetchWebOrders}
+                                disabled={loadingWebOrders}
+                                className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                            >
+                                <RefreshCw size={16} className={loadingWebOrders ? 'animate-spin' : ''} />
+                            </button>
+                        </div>
+
+                        {loadingWebOrders && webOrders.length === 0 ? (
+                            <div className="text-center py-10 text-slate-400">
+                                <Loader2 className="animate-spin mx-auto mb-2" size={24} />
+                                <p className="text-sm">Cargando pedidos...</p>
+                            </div>
+                        ) : webOrders.length === 0 ? (
+                            <div className="text-center py-10 text-slate-400">
+                                <Globe className="mx-auto mb-3 opacity-40" size={40} />
+                                <p className="font-medium text-slate-500">No hay pedidos web</p>
+                                <p className="text-xs mt-1">Comparte tu catálogo para recibir pedidos</p>
+                            </div>
+                        ) : (
+                            webOrders.map(order => {
+                                const orderItems = (order.items || []) as any[];
+                                const orderTotal = orderItems.reduce((sum: number, item: any) =>
+                                    sum + (Number(item.price) * Number(item.quantity)), 0
+                                );
+
+                                return (
+                                    <div
+                                        key={order.id}
+                                        className={`p-4 mb-3 border rounded-xl transition-all ${order.status === 'PENDING'
+                                            ? 'border-emerald-200 bg-emerald-50/50 hover:shadow-md'
+                                            : 'border-slate-200 bg-slate-50 opacity-70'
+                                            }`}
+                                    >
+                                        <div className="flex justify-between items-start mb-3">
+                                            <div>
+                                                <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                                                    <User size={14} className="text-slate-400" />
+                                                    {order.customerName}
+                                                </h3>
+                                                {order.customerPhone && (
+                                                    <a
+                                                        href={`https://wa.me/${order.customerPhone.replace(/\D/g, '')}`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="text-xs text-green-600 hover:underline flex items-center gap-1 mt-0.5"
+                                                    >
+                                                        <Phone size={10} /> {order.customerPhone}
+                                                    </a>
+                                                )}
+                                            </div>
+                                            <span className={`text-xs px-2 py-1 rounded font-bold ${order.status === 'PENDING'
+                                                ? 'bg-amber-100 text-amber-700'
+                                                : 'bg-green-100 text-green-700'
+                                                }`}>
+                                                {order.status === 'PENDING' ? 'PENDIENTE' : 'CONVERTIDO'}
+                                            </span>
+                                        </div>
+
+                                        {/* Items preview */}
+                                        <div className="bg-white/80 rounded-lg p-2 mb-3 space-y-1">
+                                            {orderItems.slice(0, 4).map((item: any, idx: number) => (
+                                                <div key={idx} className="flex justify-between text-xs text-slate-600">
+                                                    <span className="truncate flex-1">{item.quantity}× {item.name}</span>
+                                                    <span className="font-medium ml-2">C${(Number(item.price) * Number(item.quantity)).toFixed(2)}</span>
+                                                </div>
+                                            ))}
+                                            {orderItems.length > 4 && (
+                                                <p className="text-xs text-slate-400">+{orderItems.length - 4} más...</p>
+                                            )}
+                                        </div>
+
+                                        <div className="flex justify-between items-center">
+                                            <div className="text-xs text-slate-400 flex items-center gap-1">
+                                                <Clock size={12} />
+                                                {new Date(order.createdAt).toLocaleString()}
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                <span className="font-bold text-slate-900">C${orderTotal.toFixed(2)}</span>
+                                                {order.status === 'PENDING' && (
+                                                    <button
+                                                        onClick={() => convertWebOrder(order)}
+                                                        disabled={convertingId === order.id}
+                                                        className="flex items-center gap-1.5 text-xs bg-emerald-600 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-700 transition-colors font-semibold disabled:opacity-50"
+                                                    >
+                                                        {convertingId === order.id ? (
+                                                            <Loader2 className="animate-spin" size={12} />
+                                                        ) : (
+                                                            <ArrowRight size={12} />
+                                                        )}
+                                                        Convertir en Cotización
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
                     </div>
                 )}
             </div>

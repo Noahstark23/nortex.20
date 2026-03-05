@@ -18,6 +18,7 @@ model Tenant {
   id                   String    @id @default(cuid())
   businessName         String
   taxId                String    @unique
+  slug                 String?   @unique // URL amigable para catálogo público (ej: "ferreteria-jose")
   walletBalance        Decimal   @default(0) @db.Decimal(12, 2)
   creditLimit          Decimal   @default(0) @db.Decimal(12, 2)
   creditScore          Int       @default(0)
@@ -54,6 +55,7 @@ model Tenant {
   journalEntries  JournalEntry[]
   fiscalRetentions FiscalRetention[]
   invoiceSeries   InvoiceSeries[]
+  publicOrders    PublicOrder[]
 
   // HR Module
   leaveRequests         LeaveRequest[]
@@ -488,6 +490,10 @@ model Product {
   minStock Float  @default(0) // Stock mínimo para alerta
   unit     String @default("unidad") // kg, litro, unidad, caja, etc.
 
+  // Catálogo Público
+  isPublished Boolean @default(false) // Visible en catálogo público
+  imageUrl    String? // URL de imagen del producto
+
   // Auditoría
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -802,4 +808,23 @@ model TerminationSettlement {
   employee        Employee @relation(fields: [employeeId], references: [id])
 
   @@index([tenantId])
+}
+
+// ==========================================
+// 🌐 PEDIDOS PÚBLICOS (PORTAL WEB)
+// ==========================================
+
+model PublicOrder {
+  id            String   @id @default(cuid())
+  tenantId      String
+  customerName  String
+  customerPhone String?
+  items         Json     // [{productId, name, quantity, price}]
+  status        String   @default("PENDING") // PENDING | CONVERTED
+  createdAt     DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([status])
 }

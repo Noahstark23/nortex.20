@@ -7,6 +7,9 @@ export interface Product {
   stock: number;
   sku: string;
   category: string;
+  isPublished?: boolean;
+  imageUrl?: string;
+  description?: string;
 }
 
 export interface CartItem extends Product {
@@ -16,6 +19,7 @@ export interface CartItem extends Product {
 export interface Tenant {
   id: string;
   name: string;
+  slug?: string;
   type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE';
   creditScore: number;
   creditLimit: number;
@@ -23,6 +27,24 @@ export interface Tenant {
   subscriptionStatus: 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
   plan: string;
   trialEndsAt: string;
+}
+
+// PEDIDOS PÚBLICOS (Portal Web)
+export interface PublicOrderItem {
+  productId: string;
+  name: string;
+  quantity: number;
+  price: number;
+}
+
+export interface PublicOrder {
+  id: string;
+  tenantId: string;
+  customerName: string;
+  customerPhone?: string;
+  items: PublicOrderItem[];
+  status: 'PENDING' | 'CONVERTED';
+  createdAt: string;
 }
 
 export interface Shift {

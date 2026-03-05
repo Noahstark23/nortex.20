@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import POS from './components/POS';
 import Dashboard from './components/Dashboard';
+import PublicCatalog from './components/PublicCatalog';
 import BlueprintViewer from './components/BlueprintViewer';
 import LandingPage from './components/LandingPage';
 import RegisterTenant from './components/RegisterTenant';
@@ -96,6 +97,7 @@ function App() {
         <Route path="/privacy" element={<PrivacyPolicy />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password/:token" element={<ResetPassword />} />
+        <Route path="/pedidos/:slug" element={<PublicCatalog />} />
         <Route path="/admin" element={<ProtectedAdmin />} />
         <Route path="/app/*" element={<ProtectedApp />} />
       </Routes>
