@@ -2,6 +2,7 @@
 export default {
     content: [
         "./index.html",
+        "./*.{js,ts,jsx,tsx}",
         "./src/**/*.{js,ts,jsx,tsx}",
         "./components/**/*.{js,ts,jsx,tsx}",
         "./app/**/*.{js,ts,jsx,tsx}",
@@ -14,11 +15,17 @@ export default {
             },
             colors: {
                 nortex: {
-                    900: '#0f172a', // Slate 900
-                    800: '#1e293b', // Slate 800
-                    500: '#3b82f6', // Blue 500
-                    400: '#60a5fa', // Blue 400
-                    accent: '#10b981', // Emerald 500
+                    50: '#eff6ff',
+                    100: '#dbeafe',
+                    200: '#bfdbfe',
+                    300: '#93c5fd',
+                    400: '#60a5fa',
+                    500: '#3b82f6',
+                    600: '#2563eb',
+                    700: '#1d4ed8',
+                    800: '#1e293b',
+                    900: '#0f172a',
+                    accent: '#10b981',
                     danger: '#ef4444',
                     warning: '#f59e0b',
                 }
