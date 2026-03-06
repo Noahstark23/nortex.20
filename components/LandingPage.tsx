@@ -6,46 +6,6 @@ import {
     Package, BarChart3, FileText, Smartphone
 } from 'lucide-react';
 
-// Dynamic niche content for SEO long-tail pages
-type NicheContent = {
-    badge: string;
-    headline: string;
-    focusWord: string;
-    subtitle: string;
-    gradient: string;
-};
-
-const NICHES: Record<string, NicheContent> = {
-    ferreterias: {
-        badge: '🔩 Para Ferreterías',
-        headline: 'El Sistema Exacto para tu',
-        focusWord: 'Ferretería.',
-        subtitle: 'Controla miles de códigos, vende al contado y crédito, y genera reportes DGI. De Managua a Estelí.',
-        gradient: 'from-orange-500 via-red-500 to-pink-500',
-    },
-    farmacias: {
-        badge: '💊 Para Farmacias',
-        headline: 'Control de Lotes y Vencimientos para',
-        focusWord: 'Farmacias.',
-        subtitle: 'El único POS que alerta vencimientos, controla lotes y automatiza tu facturación DGI.',
-        gradient: 'from-emerald-400 via-teal-500 to-cyan-500',
-    },
-    'contabilidad-dgi': {
-        badge: '📊 Contabilidad DGI',
-        headline: 'Retenciones 2% y 1% en Piloto Automático.',
-        focusWord: 'Facturación DGI.',
-        subtitle: 'Deja de calcular impuestos a mano. Nortex deduce IVA, IR e IMI automáticamente.',
-        gradient: 'from-blue-500 via-indigo-500 to-violet-500',
-    },
-    default: {
-        badge: '🇳🇮 Hecho en Nicaragua',
-        headline: 'No uses Excel. No uses libretas. Usa el sistema de los negocios que',
-        focusWord: 'sí están creciendo.',
-        subtitle: 'Nortex es el Punto de Venta, Control de Inventario y Cierre Fiscal (DGI) más fácil de Nicaragua.',
-        gradient: 'from-blue-500 via-cyan-400 to-emerald-400',
-    },
-};
-
 const LandingPage: React.FC = () => {
     const { niche } = useParams<{ niche: string }>();
     const [scrolled, setScrolled] = useState(false);
@@ -56,30 +16,63 @@ const LandingPage: React.FC = () => {
         return () => window.removeEventListener('scroll', onScroll);
     }, []);
 
-    const c = NICHES[niche?.toLowerCase() || ''] || NICHES.default;
+    // Determine niche content
+    const n = niche?.toLowerCase() || '';
+    let badge = '🇳🇮 Hecho en Nicaragua';
+    let headline = 'No uses Excel. No uses libretas. Usa el sistema de los negocios que';
+    let focusWord = 'sí están creciendo.';
+    let subtitle = 'Nortex es el Punto de Venta, Control de Inventario y Cierre Fiscal (DGI) más fácil de Nicaragua.';
+
+    if (n === 'ferreterias') {
+        badge = '🔩 Para Ferreterías';
+        headline = 'El Sistema Exacto para tu';
+        focusWord = 'Ferretería.';
+        subtitle = 'Controla miles de códigos, vende al contado y crédito, y genera reportes DGI. De Managua a Estelí.';
+    } else if (n === 'farmacias') {
+        badge = '💊 Para Farmacias';
+        headline = 'Control de Lotes y Vencimientos para';
+        focusWord = 'Farmacias.';
+        subtitle = 'El único POS que alerta vencimientos, controla lotes y automatiza tu facturación DGI.';
+    } else if (n === 'contabilidad-dgi') {
+        badge = '📊 Contabilidad DGI';
+        headline = 'Retenciones 2% y 1% en Piloto Automático.';
+        focusWord = 'Facturación DGI.';
+        subtitle = 'Deja de calcular impuestos a mano. Nortex deduce IVA, IR e IMI automáticamente.';
+    }
 
     return (
-        <div className="min-h-screen bg-[#070B14] text-white font-sans selection:bg-blue-500/30 overflow-x-hidden">
+        <div style={{ minHeight: '100vh', background: '#050A12', color: '#fff', fontFamily: 'Inter, sans-serif' }}>
 
             {/* === NAVBAR === */}
-            <nav className={`fixed top-0 w-full z-50 transition-all duration-500 ${scrolled ? 'bg-[#070B14]/80 backdrop-blur-xl border-b border-white/5 py-3' : 'py-5'}`}>
-                <div className="max-w-7xl mx-auto px-6 flex justify-between items-center">
-                    <div className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-emerald-400 flex items-center justify-center shadow-lg shadow-blue-500/20">
-                            <span className="font-black text-white text-lg">N</span>
+            <nav style={{
+                position: 'fixed', top: 0, width: '100%', zIndex: 50,
+                background: scrolled ? 'rgba(5,10,18,0.85)' : 'transparent',
+                backdropFilter: scrolled ? 'blur(20px)' : 'none',
+                borderBottom: scrolled ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                padding: scrolled ? '12px 0' : '20px 0',
+                transition: 'all 0.4s ease'
+            }}>
+                <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{
+                            width: 36, height: 36, borderRadius: 10,
+                            background: 'linear-gradient(135deg, #3B82F6, #10B981)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            boxShadow: '0 4px 20px rgba(59,130,246,0.3)'
+                        }}>
+                            <span style={{ fontWeight: 900, fontSize: 18, color: '#fff' }}>N</span>
                         </div>
-                        <span className="text-xl font-black tracking-tight">NORTEX</span>
+                        <span style={{ fontWeight: 900, fontSize: 20, letterSpacing: '-0.5px' }}>NORTEX</span>
                     </div>
-                    <div className="hidden md:flex items-center gap-8 text-sm text-slate-400 font-semibold">
-                        <a href="#dolor" className="hover:text-white transition-colors">El Problema</a>
-                        <a href="#boost" className="hover:text-amber-400 transition-colors flex items-center gap-1"><Zap size={13} /> Capital</a>
-                        <a href="#precio" className="hover:text-white transition-colors">Precios</a>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <Link to="/login" className="hidden sm:block text-sm font-semibold text-slate-400 hover:text-white transition-colors px-4 py-2">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <Link to="/login" style={{ color: '#94A3B8', fontWeight: 600, fontSize: 14, textDecoration: 'none', padding: '8px 16px' }}>
                             Ingresar
                         </Link>
-                        <Link to="/register" className="text-sm font-bold bg-white text-slate-900 px-5 py-2.5 rounded-full hover:bg-slate-100 transition-all active:scale-95 shadow-lg shadow-white/10">
+                        <Link to="/register" style={{
+                            background: '#fff', color: '#0F172A', fontWeight: 700, fontSize: 14,
+                            padding: '10px 22px', borderRadius: 999, textDecoration: 'none',
+                            boxShadow: '0 4px 20px rgba(255,255,255,0.1)'
+                        }}>
                             Crear Cuenta Gratis
                         </Link>
                     </div>
@@ -87,126 +80,159 @@ const LandingPage: React.FC = () => {
             </nav>
 
             {/* === HERO === */}
-            <section className="relative pt-32 pb-24 overflow-hidden">
-                {/* Ambient glow */}
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[600px] bg-gradient-to-b from-blue-600/15 via-transparent to-transparent rounded-full blur-3xl pointer-events-none" />
-                <div className="absolute top-20 right-0 w-[400px] h-[400px] bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+            <section style={{ position: 'relative', paddingTop: 140, paddingBottom: 80, overflow: 'hidden' }}>
+                {/* Ambient Glow */}
+                <div style={{
+                    position: 'absolute', top: -100, left: '50%', transform: 'translateX(-50%)',
+                    width: 800, height: 500, borderRadius: '50%',
+                    background: 'radial-gradient(circle, rgba(59,130,246,0.15) 0%, transparent 70%)',
+                    pointerEvents: 'none'
+                }} />
+                <div style={{
+                    position: 'absolute', top: 100, right: -200,
+                    width: 500, height: 500, borderRadius: '50%',
+                    background: 'radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%)',
+                    pointerEvents: 'none'
+                }} />
 
-                <div className="relative max-w-5xl mx-auto px-6 text-center">
+                <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 24px', textAlign: 'center', position: 'relative' }}>
                     {/* Badge */}
-                    <div className="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded-full px-4 py-1.5 text-sm font-semibold text-slate-300 mb-8 backdrop-blur-sm">
-                        {c.badge}
+                    <div style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 8,
+                        background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: 999, padding: '6px 16px', fontSize: 14, fontWeight: 600,
+                        color: '#CBD5E1', marginBottom: 32, backdropFilter: 'blur(10px)'
+                    }}>
+                        {badge}
                     </div>
 
                     {/* H1 */}
-                    <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-black tracking-tight leading-[1.1] mb-6">
-                        {c.headline}{' '}
-                        <span className={`text-transparent bg-clip-text bg-gradient-to-r ${c.gradient}`}>
-                            {c.focusWord}
+                    <h1 style={{ fontSize: 'clamp(2.2rem, 6vw, 4.2rem)', fontWeight: 900, lineHeight: 1.1, letterSpacing: '-2px', marginBottom: 20 }}>
+                        {headline}{' '}
+                        <span style={{
+                            background: 'linear-gradient(135deg, #60A5FA, #34D399)',
+                            WebkitBackgroundClip: 'text',
+                            WebkitTextFillColor: 'transparent',
+                            backgroundClip: 'text'
+                        }}>
+                            {focusWord}
                         </span>
                     </h1>
 
                     {/* Subtitle */}
-                    <p className="text-lg md:text-xl text-slate-400 max-w-2xl mx-auto mb-10 leading-relaxed font-medium">
-                        {c.subtitle}
+                    <p style={{ fontSize: 'clamp(1rem, 2.5vw, 1.25rem)', color: '#94A3B8', maxWidth: 600, margin: '0 auto 40px', lineHeight: 1.7, fontWeight: 500 }}>
+                        {subtitle}
                     </p>
 
                     {/* CTA */}
-                    <div className="flex flex-col sm:flex-row gap-4 justify-center mb-6">
-                        <Link
-                            to="/register"
-                            className={`group inline-flex items-center justify-center gap-2 px-8 py-4 rounded-full font-bold text-lg bg-gradient-to-r ${c.gradient} text-white shadow-2xl shadow-blue-500/25 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition-all active:scale-95`}
-                        >
-                            Empieza Gratis en 2 Minutos
-                            <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
-                        </Link>
-                    </div>
-                    <p className="text-slate-500 text-sm font-medium flex items-center justify-center gap-2">
-                        <CheckCircle size={14} className="text-emerald-500" />
-                        Sin tarjeta de crédito · Configuración en 3 clics
+                    <Link to="/register" style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 10,
+                        background: 'linear-gradient(135deg, #3B82F6, #10B981)',
+                        color: '#fff', fontWeight: 700, fontSize: 18,
+                        padding: '16px 36px', borderRadius: 999, textDecoration: 'none',
+                        boxShadow: '0 8px 40px rgba(59,130,246,0.35)',
+                        transition: 'transform 0.2s, box-shadow 0.2s'
+                    }}
+                        onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 12px 50px rgba(59,130,246,0.5)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 8px 40px rgba(59,130,246,0.35)'; }}
+                    >
+                        Empieza Gratis en 2 Minutos <ArrowRight size={20} />
+                    </Link>
+
+                    <p style={{ color: '#64748B', fontSize: 13, marginTop: 16, fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                        <CheckCircle size={14} color="#10B981" /> Sin tarjeta de crédito · Configuración en 3 clics
                     </p>
 
                     {/* Social Proof */}
-                    <div className="mt-14 flex flex-col sm:flex-row items-center justify-center gap-4">
-                        <div className="flex -space-x-2">
-                            {['bg-blue-500', 'bg-emerald-500', 'bg-violet-500', 'bg-amber-500'].map((bg, i) => (
-                                <div key={i} className={`w-9 h-9 rounded-full ${bg} border-2 border-[#070B14] flex items-center justify-center text-xs font-bold text-white`}>
-                                    {i === 3 ? '+' : ''}
+                    <div style={{ marginTop: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
+                        <div style={{ display: 'flex' }}>
+                            {['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B'].map((c, i) => (
+                                <div key={i} style={{
+                                    width: 36, height: 36, borderRadius: '50%', background: c,
+                                    border: '2px solid #050A12', marginLeft: i > 0 ? -8 : 0,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    fontSize: 11, fontWeight: 700
+                                }}>
+                                    {i === 3 && '+'}
                                 </div>
                             ))}
                         </div>
-                        <div className="text-left">
-                            <p className="text-sm font-bold text-white">+150 negocios creciendo con Nortex</p>
-                            <p className="text-xs text-slate-500">Procesando más de C$10M mensuales</p>
+                        <div style={{ textAlign: 'left' }}>
+                            <p style={{ fontSize: 13, fontWeight: 700 }}>+150 negocios en Nicaragua</p>
+                            <p style={{ fontSize: 11, color: '#64748B' }}>Procesando más de C$10M mensuales</p>
                         </div>
                     </div>
                 </div>
             </section>
 
-            {/* === TRUSTED-BY BAR === */}
-            <section className="border-y border-white/5 py-8">
-                <div className="max-w-5xl mx-auto px-6 flex flex-wrap items-center justify-center gap-8 md:gap-16 text-slate-500">
+            {/* === TRUST BAR === */}
+            <section style={{ borderTop: '1px solid rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.05)', padding: '24px 0' }}>
+                <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 24px', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '24px 48px' }}>
                     {[
-                        { icon: <Shield size={18} />, text: 'Cifrado AES-256' },
-                        { icon: <TrendingUp size={18} />, text: '99.9% Uptime' },
-                        { icon: <Smartphone size={18} />, text: 'Funciona en Cualquier Dispositivo' },
-                        { icon: <FileText size={18} />, text: 'Cumple con DGI Nicaragua' },
+                        { icon: <Shield size={16} color="#10B981" />, text: 'Cifrado AES-256' },
+                        { icon: <TrendingUp size={16} color="#10B981" />, text: '99.9% Uptime' },
+                        { icon: <Smartphone size={16} color="#10B981" />, text: 'Cualquier Dispositivo' },
+                        { icon: <FileText size={16} color="#10B981" />, text: 'Cumple DGI' },
                     ].map((item, i) => (
-                        <div key={i} className="flex items-center gap-2 text-sm font-semibold">
-                            <span className="text-emerald-500">{item.icon}</span>
-                            {item.text}
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#64748B' }}>
+                            {item.icon} {item.text}
                         </div>
                     ))}
                 </div>
             </section>
 
             {/* === DOLOR VS SOLUCIÓN === */}
-            <section id="dolor" className="py-24">
-                <div className="max-w-6xl mx-auto px-6">
-                    <div className="text-center mb-16">
-                        <h2 className="text-3xl md:text-5xl font-black tracking-tight mb-4">
-                            Sobrevivir vs. <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400">Crecer de Verdad</span>
+            <section id="dolor" style={{ padding: '80px 0' }}>
+                <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
+                    <div style={{ textAlign: 'center', marginBottom: 48 }}>
+                        <h2 style={{ fontSize: 'clamp(1.8rem, 4vw, 2.8rem)', fontWeight: 900, letterSpacing: '-1px', marginBottom: 12 }}>
+                            Sobrevivir vs.{' '}
+                            <span style={{ background: 'linear-gradient(135deg, #34D399, #22D3EE)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                                Crecer de Verdad
+                            </span>
                         </h2>
-                        <p className="text-slate-400 text-lg max-w-xl mx-auto font-medium">
-                            Tu negocio merece tecnología que trabaje para ti.
-                        </p>
+                        <p style={{ color: '#94A3B8', fontSize: 17, fontWeight: 500 }}>Tu negocio merece tecnología que trabaje para ti.</p>
                     </div>
 
-                    <div className="grid md:grid-cols-2 gap-6">
-                        {/* PAIN */}
-                        <div className="bg-red-500/5 border border-red-500/10 rounded-2xl p-8">
-                            <div className="inline-flex items-center gap-2 bg-red-500/10 text-red-400 text-xs font-bold uppercase tracking-wider rounded-lg px-3 py-1.5 mb-6">
-                                <XCircle size={14} /> La Pesadilla Tradicional
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
+                        {/* Pain */}
+                        <div style={{ background: 'rgba(239,68,68,0.04)', border: '1px solid rgba(239,68,68,0.12)', borderRadius: 20, padding: 32 }}>
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(239,68,68,0.1)', color: '#F87171', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', borderRadius: 8, padding: '5px 12px', marginBottom: 24 }}>
+                                <XCircle size={13} /> La Pesadilla
                             </div>
-                            <ul className="space-y-5">
+                            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                                 {[
                                     'Cuadres de caja que nunca dan, faltando C$200 diario.',
-                                    'Pánico de fin de mes calculando IVA y Retenciones a mano.',
+                                    'Pánico calculando IVA y Retenciones a mano.',
                                     'Robos hormiga de inventario imposibles de detectar.',
-                                    'Horas perdidas calculando INSS y liquidaciones Ley 185.',
+                                    'Horas perdidas calculando INSS y liquidaciones.',
                                 ].map((t, i) => (
-                                    <li key={i} className="flex gap-3 text-slate-300 font-medium">
-                                        <XCircle className="text-red-500/70 flex-shrink-0 mt-0.5" size={18} />
+                                    <li key={i} style={{ display: 'flex', gap: 10, marginBottom: 16, color: '#CBD5E1', fontWeight: 500, fontSize: 15 }}>
+                                        <XCircle size={17} color="#EF4444" style={{ flexShrink: 0, marginTop: 3 }} />
                                         <span>{t}</span>
                                     </li>
                                 ))}
                             </ul>
                         </div>
 
-                        {/* SOLUTION */}
-                        <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-2xl p-8 shadow-2xl shadow-emerald-500/5">
-                            <div className="inline-flex items-center gap-2 bg-emerald-500/10 text-emerald-400 text-xs font-bold uppercase tracking-wider rounded-lg px-3 py-1.5 mb-6">
-                                <CheckCircle size={14} /> El Paraíso Nortex
+                        {/* Solution */}
+                        <div style={{
+                            background: 'rgba(16,185,129,0.04)', border: '1px solid rgba(16,185,129,0.12)',
+                            borderRadius: 20, padding: 32,
+                            boxShadow: '0 8px 40px rgba(16,185,129,0.06)'
+                        }}>
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(16,185,129,0.1)', color: '#34D399', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', borderRadius: 8, padding: '5px 12px', marginBottom: 24 }}>
+                                <CheckCircle size={13} /> Con Nortex
                             </div>
-                            <ul className="space-y-5">
+                            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                                 {[
                                     'Cierres de turno ciegos, automatizados en segundos.',
-                                    'Reportes DGI y Retenciones listos a un clic.',
-                                    'Auditoría forense de Kardex detectando ajustes sospechosos.',
-                                    'Nómina y Aguinaldo calculados en piloto automático.',
+                                    'Reportes DGI y Retenciones a un clic.',
+                                    'Auditoría forense detectando ajustes sospechosos.',
+                                    'Nómina y Aguinaldo en piloto automático.',
                                 ].map((t, i) => (
-                                    <li key={i} className="flex gap-3 text-white font-medium">
-                                        <CheckCircle className="text-emerald-400 flex-shrink-0 mt-0.5" size={18} />
+                                    <li key={i} style={{ display: 'flex', gap: 10, marginBottom: 16, color: '#fff', fontWeight: 500, fontSize: 15 }}>
+                                        <CheckCircle size={17} color="#10B981" style={{ flexShrink: 0, marginTop: 3 }} />
                                         <span>{t}</span>
                                     </li>
                                 ))}
@@ -216,128 +242,178 @@ const LandingPage: React.FC = () => {
                 </div>
             </section>
 
-            {/* === FEATURES GRID === */}
-            <section className="py-24 border-y border-white/5">
-                <div className="max-w-6xl mx-auto px-6">
-                    <div className="text-center mb-16">
-                        <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">Un Solo Sistema. Todo el Control.</h2>
-                        <p className="text-slate-400 text-lg font-medium max-w-lg mx-auto">Sustituye 5 apps desconectadas por un motor central.</p>
+            {/* === FEATURES === */}
+            <section style={{ padding: '80px 0', borderTop: '1px solid rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
+                    <div style={{ textAlign: 'center', marginBottom: 48 }}>
+                        <h2 style={{ fontSize: 'clamp(1.6rem, 3.5vw, 2.2rem)', fontWeight: 900, letterSpacing: '-0.5px', marginBottom: 8 }}>Un Solo Sistema. Todo el Control.</h2>
+                        <p style={{ color: '#94A3B8', fontSize: 16, fontWeight: 500 }}>Sustituye 5 apps desconectadas por un motor central.</p>
                     </div>
-                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
                         {[
-                            { icon: <ScanBarcode size={24} />, title: 'Punto de Venta', desc: 'Vende en segundos. Código de barras, descuentos, crédito.', color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/10' },
-                            { icon: <Package size={24} />, title: 'Inventario & Kardex', desc: 'Stock exacto, alertas de agotamiento, auditoría forense.', color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/10' },
-                            { icon: <Users size={24} />, title: 'RRHH & NicaLabor', desc: 'Nómina Ley 185, aguinaldos, liquidaciones automáticas.', color: 'text-violet-400', bg: 'bg-violet-500/10', border: 'border-violet-500/10' },
-                            { icon: <Calculator size={24} />, title: 'DGI Automático', desc: 'Retenciones IR 2%, IMI 1%, IVA deducido por factura.', color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/10' },
-                            { icon: <BarChart3 size={24} />, title: 'Salud Financiera', desc: 'Balance General, P&L, Nortex Score de tu negocio.', color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/10' },
-                            { icon: <Building2 size={24} />, title: 'Mercado B2B', desc: 'Conecta con proveedores mayoristas directamente.', color: 'text-pink-400', bg: 'bg-pink-500/10', border: 'border-pink-500/10' },
+                            { icon: <ScanBarcode size={22} />, title: 'Punto de Venta', desc: 'Vende en segundos. Código de barras, descuentos, crédito.', color: '#3B82F6' },
+                            { icon: <Package size={22} />, title: 'Inventario & Kardex', desc: 'Stock exacto, alertas de agotamiento, auditoría forense.', color: '#10B981' },
+                            { icon: <Users size={22} />, title: 'RRHH & NicaLabor', desc: 'Nómina Ley 185, aguinaldos, liquidaciones automáticas.', color: '#8B5CF6' },
+                            { icon: <Calculator size={22} />, title: 'DGI Automático', desc: 'Retenciones IR 2%, IMI 1%, IVA deducido por factura.', color: '#06B6D4' },
+                            { icon: <BarChart3 size={22} />, title: 'Salud Financiera', desc: 'Balance General, P&L, Nortex Score de tu negocio.', color: '#F59E0B' },
+                            { icon: <Building2 size={22} />, title: 'Mercado B2B', desc: 'Conecta con proveedores mayoristas directamente.', color: '#EC4899' },
                         ].map((f, i) => (
-                            <div key={i} className={`group ${bg(f.bg)} border ${f.border} rounded-2xl p-6 hover:border-white/10 hover:bg-white/[0.03] transition-all duration-300`}>
-                                <div className={`w-12 h-12 rounded-xl ${f.bg} ${f.color} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                            <div key={i} style={{
+                                background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
+                                borderRadius: 16, padding: 24, transition: 'all 0.3s ease', cursor: 'default'
+                            }}
+                                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; }}
+                            >
+                                <div style={{
+                                    width: 44, height: 44, borderRadius: 12,
+                                    background: `${f.color}15`, color: f.color,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    marginBottom: 16
+                                }}>
                                     {f.icon}
                                 </div>
-                                <h3 className="text-white font-bold text-lg mb-2">{f.title}</h3>
-                                <p className="text-slate-400 text-sm font-medium leading-relaxed">{f.desc}</p>
+                                <h3 style={{ fontWeight: 700, fontSize: 17, marginBottom: 6 }}>{f.title}</h3>
+                                <p style={{ color: '#94A3B8', fontSize: 14, fontWeight: 500, lineHeight: 1.6, margin: 0 }}>{f.desc}</p>
                             </div>
                         ))}
                     </div>
                 </div>
             </section>
 
-            {/* === NORTEX BOOST (EMBEDDED FINANCE) === */}
-            <section id="boost" className="py-24 relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-b from-amber-500/5 via-transparent to-transparent pointer-events-none" />
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-amber-500/10 rounded-full blur-[120px] pointer-events-none" />
+            {/* === NORTEX BOOST === */}
+            <section id="boost" style={{ padding: '80px 0', position: 'relative', overflow: 'hidden' }}>
+                <div style={{
+                    position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+                    width: 600, height: 600, borderRadius: '50%',
+                    background: 'radial-gradient(circle, rgba(245,158,11,0.08) 0%, transparent 70%)',
+                    pointerEvents: 'none'
+                }} />
 
-                <div className="relative max-w-4xl mx-auto px-6 text-center">
-                    <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-400 text-sm font-bold rounded-full px-4 py-1.5 mb-8">
-                        <Zap size={15} className="fill-amber-400" /> NORTEX BOOST
+                <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 24px', textAlign: 'center', position: 'relative' }}>
+                    <div style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 8,
+                        background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)',
+                        color: '#FBBF24', fontSize: 13, fontWeight: 700, borderRadius: 999, padding: '6px 16px', marginBottom: 32
+                    }}>
+                        <Zap size={14} style={{ fill: '#FBBF24' }} /> NORTEX BOOST
                     </div>
 
-                    <h2 className="text-3xl md:text-5xl font-black tracking-tight mb-6">
-                        Tu data de ventas vale oro. <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">Literalmente.</span>
+                    <h2 style={{ fontSize: 'clamp(1.8rem, 4vw, 2.8rem)', fontWeight: 900, letterSpacing: '-1px', marginBottom: 20 }}>
+                        Tu data de ventas vale oro.{' '}
+                        <span style={{ background: 'linear-gradient(135deg, #FBBF24, #F97316)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                            Literalmente.
+                        </span>
                     </h2>
 
-                    <p className="text-lg text-slate-300 max-w-2xl mx-auto mb-12 font-medium leading-relaxed">
-                        ¿Necesitas llenar tus tramos para diciembre? El sistema analiza tus ventas y te ofrece
-                        <strong className="text-white"> adelantos de capital al instante.</strong>{' '}
+                    <p style={{ fontSize: 17, color: '#CBD5E1', maxWidth: 650, margin: '0 auto 40px', lineHeight: 1.7, fontWeight: 500 }}>
+                        ¿Necesitas llenar tus tramos para diciembre? El sistema analiza tus ventas y te ofrece{' '}
+                        <strong style={{ color: '#fff' }}>adelantos de capital al instante.</strong>{' '}
                         Sin bancos, sin fiadores, sin papeleos.
                     </p>
 
-                    <div className="grid sm:grid-cols-3 gap-4 mb-12">
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginBottom: 40 }}>
                         {[
-                            { icon: <Building size={22} />, title: 'Sin Bancos', desc: 'No pedimos estados financieros sellados.' },
-                            { icon: <Users size={22} />, title: 'Sin Fiadores', desc: 'Tus ventas en Nortex son tu garantía.' },
-                            { icon: <Clock size={22} />, title: 'Al Instante', desc: 'Crédito pre-aprobado en 24 horas.' },
+                            { icon: <Building size={20} />, title: 'Sin Bancos', desc: 'No pedimos estados financieros sellados.' },
+                            { icon: <Users size={20} />, title: 'Sin Fiadores', desc: 'Tus ventas en Nortex son tu garantía.' },
+                            { icon: <Clock size={20} />, title: 'Al Instante', desc: 'Crédito pre-aprobado en 24 horas.' },
                         ].map((f, i) => (
-                            <div key={i} className="bg-white/[0.03] border border-white/5 rounded-2xl p-6 text-left">
-                                <div className="w-10 h-10 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center mb-3">
+                            <div key={i} style={{
+                                background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+                                borderRadius: 16, padding: 20, textAlign: 'left'
+                            }}>
+                                <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(245,158,11,0.1)', color: '#FBBF24', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
                                     {f.icon}
                                 </div>
-                                <h4 className="text-white font-bold mb-1">{f.title}</h4>
-                                <p className="text-slate-400 text-sm font-medium">{f.desc}</p>
+                                <h4 style={{ fontWeight: 700, fontSize: 15, marginBottom: 4, margin: '0 0 4px 0' }}>{f.title}</h4>
+                                <p style={{ color: '#94A3B8', fontSize: 13, fontWeight: 500, margin: 0, lineHeight: 1.5 }}>{f.desc}</p>
                             </div>
                         ))}
                     </div>
 
-                    <div className="bg-white/[0.03] backdrop-blur border border-amber-500/20 rounded-2xl p-8 inline-block">
-                        <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-2">Línea de Crédito Hasta</p>
-                        <p className="text-5xl md:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-400">
+                    <div style={{
+                        background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(245,158,11,0.2)',
+                        borderRadius: 20, padding: 32, display: 'inline-block'
+                    }}>
+                        <p style={{ color: '#94A3B8', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8, margin: '0 0 8px 0' }}>Línea de Crédito Hasta</p>
+                        <p style={{
+                            fontSize: 'clamp(2.5rem, 5vw, 3.5rem)', fontWeight: 900, margin: 0,
+                            background: 'linear-gradient(135deg, #FBBF24, #F97316)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
+                        }}>
                             C$ 150,000
                         </p>
-                        <p className="text-slate-500 text-xs mt-2">*Solo para negocios con Nortex Pro activo 3+ meses.</p>
+                        <p style={{ color: '#64748B', fontSize: 11, marginTop: 8, margin: '8px 0 0 0' }}>*Para negocios con Nortex Pro activo 3+ meses.</p>
                     </div>
                 </div>
             </section>
 
             {/* === PRICING === */}
-            <section id="precio" className="py-24 border-t border-white/5">
-                <div className="max-w-5xl mx-auto px-6">
-                    <div className="text-center mb-14">
-                        <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-3">Precios Honestos.</h2>
-                        <p className="text-slate-400 text-lg font-medium">Diseñado para que crezcas, no para exprimirte.</p>
+            <section id="precio" style={{ padding: '80px 0', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 24px' }}>
+                    <div style={{ textAlign: 'center', marginBottom: 48 }}>
+                        <h2 style={{ fontSize: 'clamp(1.6rem, 3.5vw, 2.2rem)', fontWeight: 900, letterSpacing: '-0.5px', marginBottom: 8 }}>Precios Honestos.</h2>
+                        <p style={{ color: '#94A3B8', fontSize: 16, fontWeight: 500 }}>Diseñado para que crezcas, no para exprimirte.</p>
                     </div>
 
-                    <div className="grid md:grid-cols-2 gap-6 max-w-3xl mx-auto">
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
                         {/* Free */}
-                        <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-8 flex flex-col">
-                            <h3 className="text-xl font-black mb-1">Comienza Hoy</h3>
-                            <p className="text-slate-500 text-sm font-medium mb-6">Probá el sistema en tu tienda real.</p>
-                            <div className="flex items-end gap-1 mb-8">
-                                <span className="text-5xl font-black">$0</span>
-                                <span className="text-slate-500 font-bold mb-1.5">/prueba</span>
+                        <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 20, padding: 32, display: 'flex', flexDirection: 'column' }}>
+                            <h3 style={{ fontWeight: 900, fontSize: 20, marginBottom: 4 }}>Comienza Hoy</h3>
+                            <p style={{ color: '#64748B', fontSize: 14, fontWeight: 500, marginBottom: 20 }}>Probá el sistema en tu tienda real.</p>
+                            <div style={{ marginBottom: 24 }}>
+                                <span style={{ fontSize: 48, fontWeight: 900 }}>$0</span>
+                                <span style={{ color: '#64748B', fontWeight: 600, marginLeft: 4 }}>/prueba</span>
                             </div>
-                            <ul className="space-y-3 mb-8 flex-1">
+                            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px 0', flex: 1 }}>
                                 {['POS Web completo', 'Inventario básico', 'Hasta 50 productos', '14 días gratis'].map((t, i) => (
-                                    <li key={i} className="flex items-center gap-2 text-sm text-slate-300 font-medium">
-                                        <CheckCircle size={16} className="text-slate-500" /> {t}
+                                    <li key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 14, color: '#CBD5E1', fontWeight: 500 }}>
+                                        <CheckCircle size={15} color="#64748B" /> {t}
                                     </li>
                                 ))}
                             </ul>
-                            <Link to="/register" className="w-full py-3 text-center bg-white/5 border border-white/10 text-white font-bold rounded-xl hover:bg-white/10 transition-colors">
+                            <Link to="/register" style={{
+                                display: 'block', textAlign: 'center', padding: '12px 20px',
+                                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                                borderRadius: 12, color: '#fff', fontWeight: 700, textDecoration: 'none', fontSize: 14
+                            }}>
                                 Instalar Gratis
                             </Link>
                         </div>
 
                         {/* Pro */}
-                        <div className="relative bg-gradient-to-b from-blue-500/10 to-transparent border border-blue-500/20 rounded-2xl p-8 flex flex-col shadow-2xl shadow-blue-500/10">
-                            <div className="absolute top-0 right-6 -translate-y-1/2 bg-gradient-to-r from-blue-500 to-cyan-400 text-white text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full">
+                        <div style={{
+                            background: 'linear-gradient(180deg, rgba(59,130,246,0.08) 0%, rgba(59,130,246,0) 100%)',
+                            border: '1px solid rgba(59,130,246,0.2)', borderRadius: 20, padding: 32,
+                            display: 'flex', flexDirection: 'column', position: 'relative',
+                            boxShadow: '0 8px 40px rgba(59,130,246,0.1)'
+                        }}>
+                            <div style={{
+                                position: 'absolute', top: 0, right: 24, transform: 'translateY(-50%)',
+                                background: 'linear-gradient(135deg, #3B82F6, #06B6D4)', color: '#fff',
+                                fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
+                                padding: '4px 12px', borderRadius: 999
+                            }}>
                                 Popular
                             </div>
-                            <h3 className="text-xl font-black mb-1">Nortex Pro</h3>
-                            <p className="text-slate-400 text-sm font-medium mb-6">Todo el arsenal. Sin límites.</p>
-                            <div className="flex items-end gap-1 mb-8">
-                                <span className="text-5xl font-black">$25</span>
-                                <span className="text-slate-500 font-bold mb-1.5">/mes</span>
+                            <h3 style={{ fontWeight: 900, fontSize: 20, marginBottom: 4 }}>Nortex Pro</h3>
+                            <p style={{ color: '#94A3B8', fontSize: 14, fontWeight: 500, marginBottom: 20 }}>Todo el arsenal. Sin límites.</p>
+                            <div style={{ marginBottom: 24 }}>
+                                <span style={{ fontSize: 48, fontWeight: 900 }}>$25</span>
+                                <span style={{ color: '#64748B', fontWeight: 600, marginLeft: 4 }}>/mes</span>
                             </div>
-                            <ul className="space-y-3 mb-8 flex-1">
-                                {['Usuarios y productos ilimitados', 'Auditoría Forense + Salud Financiera', 'NicaLabor (Nómina y Aguinaldo)', 'Retenciones DGI automáticas', 'Elegible para Nortex Boost'].map((t, i) => (
-                                    <li key={i} className="flex items-center gap-2 text-sm text-white font-medium">
-                                        <CheckCircle size={16} className="text-blue-400" /> {t}
+                            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px 0', flex: 1 }}>
+                                {['Usuarios y productos ilimitados', 'Auditoría Forense + Dashboard', 'NicaLabor (Nómina y Aguinaldo)', 'Retenciones DGI automáticas', 'Elegible para Nortex Boost'].map((t, i) => (
+                                    <li key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 14, color: '#fff', fontWeight: 600 }}>
+                                        <CheckCircle size={15} color="#3B82F6" /> {t}
                                     </li>
                                 ))}
                             </ul>
-                            <Link to="/register" className="w-full py-3 text-center bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-cyan-600 transition-all shadow-lg shadow-blue-500/25">
+                            <Link to="/register" style={{
+                                display: 'block', textAlign: 'center', padding: '12px 20px',
+                                background: 'linear-gradient(135deg, #3B82F6, #06B6D4)', borderRadius: 12,
+                                color: '#fff', fontWeight: 700, textDecoration: 'none', fontSize: 14,
+                                boxShadow: '0 4px 20px rgba(59,130,246,0.3)'
+                            }}>
                                 Crear Cuenta Pro
                             </Link>
                         </div>
@@ -346,27 +422,24 @@ const LandingPage: React.FC = () => {
             </section>
 
             {/* === FOOTER === */}
-            <footer className="border-t border-white/5 py-10">
-                <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4">
-                    <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-md bg-gradient-to-br from-blue-500 to-emerald-400 flex items-center justify-center">
-                            <span className="font-black text-white text-sm">N</span>
+            <footer style={{ borderTop: '1px solid rgba(255,255,255,0.05)', padding: '32px 0' }}>
+                <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 28, height: 28, borderRadius: 7, background: 'linear-gradient(135deg, #3B82F6, #10B981)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <span style={{ fontWeight: 900, fontSize: 14, color: '#fff' }}>N</span>
                         </div>
-                        <span className="font-black text-sm">NORTEX</span>
+                        <span style={{ fontWeight: 900, fontSize: 14 }}>NORTEX</span>
                     </div>
-                    <p className="text-slate-600 text-xs font-medium">© {new Date().getFullYear()} Nortex Technology · Managua, Nicaragua</p>
-                    <div className="flex gap-5 text-xs font-semibold text-slate-500">
-                        <Link to="/login" className="hover:text-white transition-colors">Login</Link>
-                        <Link to="/terms" className="hover:text-white transition-colors">Términos</Link>
-                        <Link to="/privacy" className="hover:text-white transition-colors">Privacidad</Link>
+                    <p style={{ color: '#475569', fontSize: 12, fontWeight: 500, margin: 0 }}>© {new Date().getFullYear()} Nortex Technology · Managua, Nicaragua</p>
+                    <div style={{ display: 'flex', gap: 20 }}>
+                        <Link to="/login" style={{ color: '#64748B', fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>Login</Link>
+                        <Link to="/terms" style={{ color: '#64748B', fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>Términos</Link>
+                        <Link to="/privacy" style={{ color: '#64748B', fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>Privacidad</Link>
                     </div>
                 </div>
             </footer>
         </div>
     );
 };
-
-// Helper to pass bg class (Tailwind needs full class names for purging)
-const bg = (cls: string) => cls;
 
 export default LandingPage;
