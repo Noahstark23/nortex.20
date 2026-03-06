@@ -2155,7 +2155,7 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
 // POST /api/products - Crear producto (OWNER o ADMIN)
 app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, sku, description, category, price, cost, stock, minStock, unit } = req.body;
+    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished } = req.body;
 
     try {
         // Verificar que SKU no exista
@@ -2185,6 +2185,7 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (re
                 stock: parseInt(stock) || 0,
                 minStock: parseInt(minStock) || 0,
                 unit: unit || 'unidad',
+                isPublished: Boolean(isPublished),
                 createdBy: authReq.userId!
             }
         });
@@ -2390,6 +2391,33 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
     } catch (error) {
         console.error('Error updating product:', error);
         res.status(500).json({ error: 'Error actualizando producto' });
+    }
+});
+
+// PATCH /api/products/:id/publish - Toggle public catalog visibility (Solo OWNER/ADMIN)
+app.patch('/api/products/:id/publish', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    const { isPublished } = req.body;
+
+    try {
+        const product = await prisma.product.findFirst({
+            where: { id, tenantId: authReq.tenantId! }
+        });
+
+        if (!product) {
+            return res.status(404).json({ error: 'Producto no encontrado' });
+        }
+
+        const updated = await prisma.product.update({
+            where: { id },
+            data: { isPublished }
+        });
+
+        res.json(updated);
+    } catch (error) {
+        console.error('Error toggling product publish status:', error);
+        res.status(500).json({ error: 'Error actualizando estado del producto' });
     }
 });
 
