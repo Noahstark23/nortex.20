@@ -1,440 +1,342 @@
-import React, { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import React from 'react';
+import { Link } from 'react-router-dom';
 import {
-    ArrowRight, CheckCircle, Users, Calculator, ScanBarcode,
-    Building2, XCircle, Zap, Building, Clock, Shield, TrendingUp,
-    Package, BarChart3, FileText, Smartphone
+    ArrowRight, ShieldCheck, Lock, Cloud, Server,
+    CheckCircle, BarChart3, Users, Calculator, ScanBarcode, ChevronRight,
+    Building2, FileText, Smartphone, Globe, AlertCircle, Building, HeadphonesIcon
 } from 'lucide-react';
 
 const LandingPage: React.FC = () => {
-    const { niche } = useParams<{ niche: string }>();
-    const [scrolled, setScrolled] = useState(false);
-
-    useEffect(() => {
-        const onScroll = () => setScrolled(window.scrollY > 30);
-        window.addEventListener('scroll', onScroll);
-        return () => window.removeEventListener('scroll', onScroll);
-    }, []);
-
-    // Determine niche content
-    const n = niche?.toLowerCase() || '';
-    let badge = '🇳🇮 Hecho en Nicaragua';
-    let headline = 'No uses Excel. No uses libretas. Usa el sistema de los negocios que';
-    let focusWord = 'sí están creciendo.';
-    let subtitle = 'Nortex es el Punto de Venta, Control de Inventario y Cierre Fiscal (DGI) más fácil de Nicaragua.';
-
-    if (n === 'ferreterias') {
-        badge = '🔩 Para Ferreterías';
-        headline = 'El Sistema Exacto para tu';
-        focusWord = 'Ferretería.';
-        subtitle = 'Controla miles de códigos, vende al contado y crédito, y genera reportes DGI. De Managua a Estelí.';
-    } else if (n === 'farmacias') {
-        badge = '💊 Para Farmacias';
-        headline = 'Control de Lotes y Vencimientos para';
-        focusWord = 'Farmacias.';
-        subtitle = 'El único POS que alerta vencimientos, controla lotes y automatiza tu facturación DGI.';
-    } else if (n === 'contabilidad-dgi') {
-        badge = '📊 Contabilidad DGI';
-        headline = 'Retenciones 2% y 1% en Piloto Automático.';
-        focusWord = 'Facturación DGI.';
-        subtitle = 'Deja de calcular impuestos a mano. Nortex deduce IVA, IR e IMI automáticamente.';
-    }
-
     return (
-        <div style={{ minHeight: '100vh', background: '#050A12', color: '#fff', fontFamily: 'Inter, sans-serif' }}>
+        <div className="min-h-screen bg-slate-50 text-slate-800 font-sans selection:bg-blue-600 selection:text-white overflow-x-hidden">
 
-            {/* === NAVBAR === */}
-            <nav style={{
-                position: 'fixed', top: 0, width: '100%', zIndex: 50,
-                background: scrolled ? 'rgba(5,10,18,0.85)' : 'transparent',
-                backdropFilter: scrolled ? 'blur(20px)' : 'none',
-                borderBottom: scrolled ? '1px solid rgba(255,255,255,0.05)' : 'none',
-                padding: scrolled ? '12px 0' : '20px 0',
-                transition: 'all 0.4s ease'
-            }}>
-                <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div style={{
-                            width: 36, height: 36, borderRadius: 10,
-                            background: 'linear-gradient(135deg, #3B82F6, #10B981)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            boxShadow: '0 4px 20px rgba(59,130,246,0.3)'
-                        }}>
-                            <span style={{ fontWeight: 900, fontSize: 18, color: '#fff' }}>N</span>
-                        </div>
-                        <span style={{ fontWeight: 900, fontSize: 20, letterSpacing: '-0.5px' }}>NORTEX</span>
+            {/* ==========================================
+                NAVBAR CORPORATIVA
+               ========================================== */}
+            <nav className="container mx-auto px-6 py-5 flex justify-between items-center bg-transparent relative z-50">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-blue-900 rounded-xl flex items-center justify-center shadow-lg shadow-blue-900/20">
+                        <span className="font-bold text-white text-xl">N</span>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <Link to="/login" style={{ color: '#94A3B8', fontWeight: 600, fontSize: 14, textDecoration: 'none', padding: '8px 16px' }}>
-                            Ingresar
-                        </Link>
-                        <Link to="/register" style={{
-                            background: '#fff', color: '#0F172A', fontWeight: 700, fontSize: 14,
-                            padding: '10px 22px', borderRadius: 999, textDecoration: 'none',
-                            boxShadow: '0 4px 20px rgba(255,255,255,0.1)'
-                        }}>
-                            Crear Cuenta Gratis
-                        </Link>
+                    <div>
+                        <span className="text-2xl font-bold tracking-tight text-blue-950 block leading-none">NORTEX</span>
                     </div>
+                </div>
+                <div className="hidden md:flex gap-10 text-sm font-bold text-slate-500">
+                    <a href="#features" className="hover:text-blue-700 transition-colors">Infraestructura</a>
+                    <a href="#pricing" className="hover:text-blue-700 transition-colors">Precios</a>
+                    <a href="#security" className="hover:text-blue-700 transition-colors">Seguridad</a>
+                </div>
+                <div className="flex gap-4">
+                    <Link to="/login" className="px-5 py-2.5 text-sm font-bold text-slate-600 hover:text-blue-800 transition-colors">
+                        Portal de Clientes
+                    </Link>
+                    <Link to="/register" className="px-6 py-2.5 text-sm font-bold bg-blue-700 text-white rounded-xl hover:bg-blue-800 transition-all shadow-lg shadow-blue-700/30 active:scale-95">
+                        Crear Cuenta
+                    </Link>
                 </div>
             </nav>
 
-            {/* === HERO === */}
-            <section style={{ position: 'relative', paddingTop: 140, paddingBottom: 80, overflow: 'hidden' }}>
-                {/* Ambient Glow */}
-                <div style={{
-                    position: 'absolute', top: -100, left: '50%', transform: 'translateX(-50%)',
-                    width: 800, height: 500, borderRadius: '50%',
-                    background: 'radial-gradient(circle, rgba(59,130,246,0.15) 0%, transparent 70%)',
-                    pointerEvents: 'none'
-                }} />
-                <div style={{
-                    position: 'absolute', top: 100, right: -200,
-                    width: 500, height: 500, borderRadius: '50%',
-                    background: 'radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%)',
-                    pointerEvents: 'none'
-                }} />
+            {/* ==========================================
+                HERO SECTION (DICTADOR/FINTECH)
+               ========================================== */}
+            <header className="container mx-auto px-6 pt-20 pb-20 relative text-center">
+                {/* Iluminación de fondo */}
+                <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-blue-500 rounded-full blur-[180px] opacity-[0.07] pointer-events-none"></div>
+                <div className="absolute top-1/2 right-0 -translate-y-1/2 w-[600px] h-[600px] bg-emerald-500 rounded-full blur-[180px] opacity-[0.05] pointer-events-none"></div>
 
-                <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 24px', textAlign: 'center', position: 'relative' }}>
-                    {/* Badge */}
-                    <div style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 8,
-                        background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)',
-                        borderRadius: 999, padding: '6px 16px', fontSize: 14, fontWeight: 600,
-                        color: '#CBD5E1', marginBottom: 32, backdropFilter: 'blur(10px)'
-                    }}>
-                        {badge}
-                    </div>
+                <h1 className="text-5xl md:text-7xl lg:text-[5.5rem] font-black text-blue-950 mb-8 tracking-tighter leading-[1.05] max-w-5xl mx-auto">
+                    El Sistema Operativo Financiero para <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-700 to-emerald-600">tu Empresa.</span>
+                </h1>
 
-                    {/* H1 */}
-                    <h1 style={{ fontSize: 'clamp(2.2rem, 6vw, 4.2rem)', fontWeight: 900, lineHeight: 1.1, letterSpacing: '-2px', marginBottom: 20 }}>
-                        {headline}{' '}
-                        <span style={{
-                            background: 'linear-gradient(135deg, #60A5FA, #34D399)',
-                            WebkitBackgroundClip: 'text',
-                            WebkitTextFillColor: 'transparent',
-                            backgroundClip: 'text'
-                        }}>
-                            {focusWord}
-                        </span>
-                    </h1>
+                <p className="text-xl md:text-2xl text-slate-500 max-w-4xl mx-auto mb-12 leading-relaxed font-medium">
+                    Mucho más que un POS. Controla tu inventario, automatiza tu nómina (NicaLabor) y asegura tu liquidez en una sola plataforma blindada.
+                </p>
 
-                    {/* Subtitle */}
-                    <p style={{ fontSize: 'clamp(1rem, 2.5vw, 1.25rem)', color: '#94A3B8', maxWidth: 600, margin: '0 auto 40px', lineHeight: 1.7, fontWeight: 500 }}>
-                        {subtitle}
-                    </p>
-
-                    {/* CTA */}
-                    <Link to="/register" style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 10,
-                        background: 'linear-gradient(135deg, #3B82F6, #10B981)',
-                        color: '#fff', fontWeight: 700, fontSize: 18,
-                        padding: '16px 36px', borderRadius: 999, textDecoration: 'none',
-                        boxShadow: '0 8px 40px rgba(59,130,246,0.35)',
-                        transition: 'transform 0.2s, box-shadow 0.2s'
-                    }}
-                        onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 12px 50px rgba(59,130,246,0.5)'; }}
-                        onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 8px 40px rgba(59,130,246,0.35)'; }}
-                    >
-                        Empieza Gratis en 2 Minutos <ArrowRight size={20} />
+                <div className="flex flex-col sm:flex-row gap-5 justify-center z-20 relative mb-24">
+                    <Link to="/register" className="group px-10 py-5 bg-blue-700 text-white font-bold rounded-2xl hover:bg-blue-800 transition-all flex items-center justify-center gap-3 shadow-2xl shadow-blue-700/30 text-lg hover:-translate-y-1">
+                        EMPEZAR A VENDER HOY
+                        <ArrowRight size={24} className="group-hover:translate-x-1 transition-transform" />
                     </Link>
+                    <a href="#demo" className="px-10 py-5 bg-white border-2 border-slate-200 text-slate-700 font-bold rounded-2xl hover:border-slate-300 hover:text-blue-900 transition-all flex items-center justify-center gap-3 text-lg shadow-sm hover:-translate-y-1">
+                        Ver Demo Técnica <ChevronRight size={22} className="text-slate-400" />
+                    </a>
+                </div>
 
-                    <p style={{ color: '#64748B', fontSize: 13, marginTop: 16, fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                        <CheckCircle size={14} color="#10B981" /> Sin tarjeta de crédito · Configuración en 3 clics
-                    </p>
+                {/* ==========================================
+                    MOCKUP VISUAL (DASHBOARD FINANCIERO)
+                   ========================================== */}
+                <div className="relative max-w-6xl mx-auto z-20 perspective-1000">
+                    <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-emerald-500 rounded-[2.5rem] blur-xl opacity-20 translate-y-4"></div>
+                    <div className="relative bg-white rounded-[2rem] border border-slate-200 shadow-2xl overflow-hidden flex flex-col transform hover:-translate-y-2 transition-transform duration-500">
 
-                    {/* Social Proof */}
-                    <div style={{ marginTop: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
-                        <div style={{ display: 'flex' }}>
-                            {['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B'].map((c, i) => (
-                                <div key={i} style={{
-                                    width: 36, height: 36, borderRadius: '50%', background: c,
-                                    border: '2px solid #050A12', marginLeft: i > 0 ? -8 : 0,
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    fontSize: 11, fontWeight: 700
-                                }}>
-                                    {i === 3 && '+'}
+                        {/* Mockup TOPBAR */}
+                        <div className="h-14 bg-slate-50 border-b border-slate-200 flex items-center px-6 gap-3">
+                            <div className="flex gap-2">
+                                <div className="w-3.5 h-3.5 rounded-full bg-slate-200"></div>
+                                <div className="w-3.5 h-3.5 rounded-full bg-slate-200"></div>
+                                <div className="w-3.5 h-3.5 rounded-full bg-slate-200"></div>
+                            </div>
+                            <div className="w-full flex justify-center">
+                                <div className="h-6 w-64 bg-slate-100 rounded-md border border-slate-200 flex items-center justify-center">
+                                    <Lock size={12} className="text-slate-400 mr-2" />
+                                    <div className="h-2 w-32 bg-slate-200 rounded"></div>
                                 </div>
-                            ))}
-                        </div>
-                        <div style={{ textAlign: 'left' }}>
-                            <p style={{ fontSize: 13, fontWeight: 700 }}>+150 negocios en Nicaragua</p>
-                            <p style={{ fontSize: 11, color: '#64748B' }}>Procesando más de C$10M mensuales</p>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            {/* === TRUST BAR === */}
-            <section style={{ borderTop: '1px solid rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.05)', padding: '24px 0' }}>
-                <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 24px', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '24px 48px' }}>
-                    {[
-                        { icon: <Shield size={16} color="#10B981" />, text: 'Cifrado AES-256' },
-                        { icon: <TrendingUp size={16} color="#10B981" />, text: '99.9% Uptime' },
-                        { icon: <Smartphone size={16} color="#10B981" />, text: 'Cualquier Dispositivo' },
-                        { icon: <FileText size={16} color="#10B981" />, text: 'Cumple DGI' },
-                    ].map((item, i) => (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#64748B' }}>
-                            {item.icon} {item.text}
-                        </div>
-                    ))}
-                </div>
-            </section>
-
-            {/* === DOLOR VS SOLUCIÓN === */}
-            <section id="dolor" style={{ padding: '80px 0' }}>
-                <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
-                    <div style={{ textAlign: 'center', marginBottom: 48 }}>
-                        <h2 style={{ fontSize: 'clamp(1.8rem, 4vw, 2.8rem)', fontWeight: 900, letterSpacing: '-1px', marginBottom: 12 }}>
-                            Sobrevivir vs.{' '}
-                            <span style={{ background: 'linear-gradient(135deg, #34D399, #22D3EE)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                                Crecer de Verdad
-                            </span>
-                        </h2>
-                        <p style={{ color: '#94A3B8', fontSize: 17, fontWeight: 500 }}>Tu negocio merece tecnología que trabaje para ti.</p>
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
-                        {/* Pain */}
-                        <div style={{ background: 'rgba(239,68,68,0.04)', border: '1px solid rgba(239,68,68,0.12)', borderRadius: 20, padding: 32 }}>
-                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(239,68,68,0.1)', color: '#F87171', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', borderRadius: 8, padding: '5px 12px', marginBottom: 24 }}>
-                                <XCircle size={13} /> La Pesadilla
                             </div>
-                            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                                {[
-                                    'Cuadres de caja que nunca dan, faltando C$200 diario.',
-                                    'Pánico calculando IVA y Retenciones a mano.',
-                                    'Robos hormiga de inventario imposibles de detectar.',
-                                    'Horas perdidas calculando INSS y liquidaciones.',
-                                ].map((t, i) => (
-                                    <li key={i} style={{ display: 'flex', gap: 10, marginBottom: 16, color: '#CBD5E1', fontWeight: 500, fontSize: 15 }}>
-                                        <XCircle size={17} color="#EF4444" style={{ flexShrink: 0, marginTop: 3 }} />
-                                        <span>{t}</span>
-                                    </li>
-                                ))}
-                            </ul>
                         </div>
 
-                        {/* Solution */}
-                        <div style={{
-                            background: 'rgba(16,185,129,0.04)', border: '1px solid rgba(16,185,129,0.12)',
-                            borderRadius: 20, padding: 32,
-                            boxShadow: '0 8px 40px rgba(16,185,129,0.06)'
-                        }}>
-                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(16,185,129,0.1)', color: '#34D399', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', borderRadius: 8, padding: '5px 12px', marginBottom: 24 }}>
-                                <CheckCircle size={13} /> Con Nortex
-                            </div>
-                            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                                {[
-                                    'Cierres de turno ciegos, automatizados en segundos.',
-                                    'Reportes DGI y Retenciones a un clic.',
-                                    'Auditoría forense detectando ajustes sospechosos.',
-                                    'Nómina y Aguinaldo en piloto automático.',
-                                ].map((t, i) => (
-                                    <li key={i} style={{ display: 'flex', gap: 10, marginBottom: 16, color: '#fff', fontWeight: 500, fontSize: 15 }}>
-                                        <CheckCircle size={17} color="#10B981" style={{ flexShrink: 0, marginTop: 3 }} />
-                                        <span>{t}</span>
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-            </section>
+                        {/* Mockup DATA */}
+                        <div className="flex-1 p-8 grid grid-cols-1 md:grid-cols-4 gap-8 bg-slate-50/50">
 
-            {/* === FEATURES === */}
-            <section style={{ padding: '80px 0', borderTop: '1px solid rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
-                    <div style={{ textAlign: 'center', marginBottom: 48 }}>
-                        <h2 style={{ fontSize: 'clamp(1.6rem, 3.5vw, 2.2rem)', fontWeight: 900, letterSpacing: '-0.5px', marginBottom: 8 }}>Un Solo Sistema. Todo el Control.</h2>
-                        <p style={{ color: '#94A3B8', fontSize: 16, fontWeight: 500 }}>Sustituye 5 apps desconectadas por un motor central.</p>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-                        {[
-                            { icon: <ScanBarcode size={22} />, title: 'Punto de Venta', desc: 'Vende en segundos. Código de barras, descuentos, crédito.', color: '#3B82F6' },
-                            { icon: <Package size={22} />, title: 'Inventario & Kardex', desc: 'Stock exacto, alertas de agotamiento, auditoría forense.', color: '#10B981' },
-                            { icon: <Users size={22} />, title: 'RRHH & NicaLabor', desc: 'Nómina Ley 185, aguinaldos, liquidaciones automáticas.', color: '#8B5CF6' },
-                            { icon: <Calculator size={22} />, title: 'DGI Automático', desc: 'Retenciones IR 2%, IMI 1%, IVA deducido por factura.', color: '#06B6D4' },
-                            { icon: <BarChart3 size={22} />, title: 'Salud Financiera', desc: 'Balance General, P&L, Nortex Score de tu negocio.', color: '#F59E0B' },
-                            { icon: <Building2 size={22} />, title: 'Mercado B2B', desc: 'Conecta con proveedores mayoristas directamente.', color: '#EC4899' },
-                        ].map((f, i) => (
-                            <div key={i} style={{
-                                background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)',
-                                borderRadius: 16, padding: 24, transition: 'all 0.3s ease', cursor: 'default'
-                            }}
-                                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; }}
-                                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.02)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; }}
-                            >
-                                <div style={{
-                                    width: 44, height: 44, borderRadius: 12,
-                                    background: `${f.color}15`, color: f.color,
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    marginBottom: 16
-                                }}>
-                                    {f.icon}
+                            {/* SIDEBAR */}
+                            <div className="col-span-1 border-r border-slate-200 pr-8 hidden md:flex flex-col gap-6">
+                                <div className="flex items-center gap-3 mb-4">
+                                    <div className="w-8 h-8 bg-blue-900 rounded-lg"></div>
+                                    <div className="h-4 bg-slate-200 rounded w-24"></div>
                                 </div>
-                                <h3 style={{ fontWeight: 700, fontSize: 17, marginBottom: 6 }}>{f.title}</h3>
-                                <p style={{ color: '#94A3B8', fontSize: 14, fontWeight: 500, lineHeight: 1.6, margin: 0 }}>{f.desc}</p>
+                                <div className="space-y-4">
+                                    <div className="h-10 bg-blue-50 border border-blue-100 rounded-xl w-full flex items-center px-4">
+                                        <div className="h-2 w-16 bg-blue-300 rounded"></div>
+                                    </div>
+                                    <div className="h-10 bg-transparent rounded-xl w-full flex items-center px-4">
+                                        <div className="h-2 w-20 bg-slate-200 rounded"></div>
+                                    </div>
+                                    <div className="h-10 bg-transparent rounded-xl w-full flex items-center px-4">
+                                        <div className="h-2 w-12 bg-slate-200 rounded"></div>
+                                    </div>
+                                </div>
                             </div>
-                        ))}
+
+                            {/* MAIN CONTENT */}
+                            <div className="col-span-4 md:col-span-3 flex flex-col gap-8">
+                                <div className="flex justify-between items-end">
+                                    <div>
+                                        <div className="h-4 bg-slate-200 rounded w-32 mb-2"></div>
+                                        <div className="h-10 bg-slate-300 rounded-lg w-64"></div>
+                                    </div>
+                                    <div className="h-12 bg-blue-600 rounded-xl w-40 shadow-lg shadow-blue-600/20"></div>
+                                </div>
+                                <div className="grid grid-cols-3 gap-6">
+                                    <div className="h-32 bg-white border border-slate-200 rounded-2xl shadow-sm p-5 flex flex-col justify-between relative overflow-hidden">
+                                        <div className="h-4 bg-slate-100 rounded w-20"></div>
+                                        <div className="h-10 bg-emerald-100 rounded w-32"></div>
+                                        <div className="absolute right-0 bottom-0 w-24 h-24 bg-emerald-50 rounded-tl-full -z-10"></div>
+                                    </div>
+                                    <div className="h-32 bg-white border border-slate-200 rounded-2xl shadow-sm p-5 flex flex-col justify-between relative overflow-hidden">
+                                        <div className="h-4 bg-slate-100 rounded w-20"></div>
+                                        <div className="h-10 bg-blue-100 rounded w-40"></div>
+                                        <div className="absolute right-0 bottom-0 w-24 h-24 bg-blue-50 rounded-tl-full -z-10"></div>
+                                    </div>
+                                    <div className="h-32 bg-white border border-slate-200 rounded-2xl shadow-sm p-5 flex flex-col justify-between relative overflow-hidden">
+                                        <div className="h-4 bg-slate-100 rounded w-24"></div>
+                                        <div className="h-10 bg-amber-100 rounded w-24"></div>
+                                        <div className="absolute right-0 bottom-0 w-24 h-24 bg-amber-50 rounded-tl-full -z-10"></div>
+                                    </div>
+                                </div>
+                                <div className="h-64 bg-white border border-slate-200 rounded-2xl shadow-sm w-full p-6">
+                                    {/* Table Mockup */}
+                                    <div className="h-8 bg-slate-50 border-b border-slate-100 mb-4 flex items-center justify-between px-4">
+                                        <div className="h-2 w-16 bg-slate-200 rounded"></div>
+                                        <div className="h-2 w-24 bg-slate-200 rounded"></div>
+                                        <div className="h-2 w-12 bg-slate-200 rounded"></div>
+                                    </div>
+                                    <div className="space-y-4 px-4">
+                                        {[1, 2, 3, 4].map(i => (
+                                            <div key={i} className="flex justify-between items-center">
+                                                <div className="h-3 w-32 bg-slate-100 rounded"></div>
+                                                <div className="h-3 w-40 bg-slate-100 rounded"></div>
+                                                <div className="h-3 w-16 bg-slate-200 rounded"></div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            {/* ==========================================
+                TRUST BAR (SEGURIDAD BANCARIA)
+               ========================================== */}
+            <section id="security" className="py-10 bg-blue-950 border-y border-blue-900 shadow-inner">
+                <div className="container mx-auto px-6">
+                    <div className="flex flex-col md:flex-row items-center justify-center gap-10 md:gap-20 text-slate-300 text-sm md:text-base font-bold tracking-wide">
+                        <div className="flex items-center gap-3">
+                            <Lock className="text-emerald-400 w-6 h-6" />
+                            <span>Cifrado de Grado Militar (AES-256)</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <Cloud className="text-emerald-400 w-6 h-6" />
+                            <span>Backups Automáticos Diarios</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <Server className="text-emerald-400 w-6 h-6" />
+                            <span>Infraestructura Cloud Segura</span>
+                        </div>
                     </div>
                 </div>
             </section>
 
-            {/* === NORTEX BOOST === */}
-            <section id="boost" style={{ padding: '80px 0', position: 'relative', overflow: 'hidden' }}>
-                <div style={{
-                    position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
-                    width: 600, height: 600, borderRadius: '50%',
-                    background: 'radial-gradient(circle, rgba(245,158,11,0.08) 0%, transparent 70%)',
-                    pointerEvents: 'none'
-                }} />
-
-                <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 24px', textAlign: 'center', position: 'relative' }}>
-                    <div style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 8,
-                        background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)',
-                        color: '#FBBF24', fontSize: 13, fontWeight: 700, borderRadius: 999, padding: '6px 16px', marginBottom: 32
-                    }}>
-                        <Zap size={14} style={{ fill: '#FBBF24' }} /> NORTEX BOOST
-                    </div>
-
-                    <h2 style={{ fontSize: 'clamp(1.8rem, 4vw, 2.8rem)', fontWeight: 900, letterSpacing: '-1px', marginBottom: 20 }}>
-                        Tu data de ventas vale oro.{' '}
-                        <span style={{ background: 'linear-gradient(135deg, #FBBF24, #F97316)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                            Literalmente.
-                        </span>
-                    </h2>
-
-                    <p style={{ fontSize: 17, color: '#CBD5E1', maxWidth: 650, margin: '0 auto 40px', lineHeight: 1.7, fontWeight: 500 }}>
-                        ¿Necesitas llenar tus tramos para diciembre? El sistema analiza tus ventas y te ofrece{' '}
-                        <strong style={{ color: '#fff' }}>adelantos de capital al instante.</strong>{' '}
-                        Sin bancos, sin fiadores, sin papeleos.
-                    </p>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14, marginBottom: 40 }}>
-                        {[
-                            { icon: <Building size={20} />, title: 'Sin Bancos', desc: 'No pedimos estados financieros sellados.' },
-                            { icon: <Users size={20} />, title: 'Sin Fiadores', desc: 'Tus ventas en Nortex son tu garantía.' },
-                            { icon: <Clock size={20} />, title: 'Al Instante', desc: 'Crédito pre-aprobado en 24 horas.' },
-                        ].map((f, i) => (
-                            <div key={i} style={{
-                                background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
-                                borderRadius: 16, padding: 20, textAlign: 'left'
-                            }}>
-                                <div style={{ width: 38, height: 38, borderRadius: 10, background: 'rgba(245,158,11,0.1)', color: '#FBBF24', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
-                                    {f.icon}
-                                </div>
-                                <h4 style={{ fontWeight: 700, fontSize: 15, marginBottom: 4, margin: '0 0 4px 0' }}>{f.title}</h4>
-                                <p style={{ color: '#94A3B8', fontSize: 13, fontWeight: 500, margin: 0, lineHeight: 1.5 }}>{f.desc}</p>
-                            </div>
-                        ))}
-                    </div>
-
-                    <div style={{
-                        background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(245,158,11,0.2)',
-                        borderRadius: 20, padding: 32, display: 'inline-block'
-                    }}>
-                        <p style={{ color: '#94A3B8', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8, margin: '0 0 8px 0' }}>Línea de Crédito Hasta</p>
-                        <p style={{
-                            fontSize: 'clamp(2.5rem, 5vw, 3.5rem)', fontWeight: 900, margin: 0,
-                            background: 'linear-gradient(135deg, #FBBF24, #F97316)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
-                        }}>
-                            C$ 150,000
+            {/* ==========================================
+                CORE FEATURES (LA TRAMPA DE DATA)
+               ========================================== */}
+            <section id="features" className="py-32 bg-white relative">
+                <div className="container mx-auto px-6">
+                    <div className="text-center mb-20">
+                        <h2 className="text-4xl md:text-5xl font-extrabold text-blue-950 mb-6 tracking-tight">Arquitectura de Clase Mundial</h2>
+                        <p className="text-xl text-slate-500 max-w-3xl mx-auto font-medium leading-relaxed">
+                            Construímos las fundaciones perfectas. Sustituye 5 aplicaciones desconectadas por un solo motor central que gobierna sobre tu efectivo, tu inventario y tu personal.
                         </p>
-                        <p style={{ color: '#64748B', fontSize: 11, marginTop: 8, margin: '8px 0 0 0' }}>*Para negocios con Nortex Pro activo 3+ meses.</p>
-                    </div>
-                </div>
-            </section>
-
-            {/* === PRICING === */}
-            <section id="precio" style={{ padding: '80px 0', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 24px' }}>
-                    <div style={{ textAlign: 'center', marginBottom: 48 }}>
-                        <h2 style={{ fontSize: 'clamp(1.6rem, 3.5vw, 2.2rem)', fontWeight: 900, letterSpacing: '-0.5px', marginBottom: 8 }}>Precios Honestos.</h2>
-                        <p style={{ color: '#94A3B8', fontSize: 16, fontWeight: 500 }}>Diseñado para que crezcas, no para exprimirte.</p>
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
-                        {/* Free */}
-                        <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 20, padding: 32, display: 'flex', flexDirection: 'column' }}>
-                            <h3 style={{ fontWeight: 900, fontSize: 20, marginBottom: 4 }}>Comienza Hoy</h3>
-                            <p style={{ color: '#64748B', fontSize: 14, fontWeight: 500, marginBottom: 20 }}>Probá el sistema en tu tienda real.</p>
-                            <div style={{ marginBottom: 24 }}>
-                                <span style={{ fontSize: 48, fontWeight: 900 }}>$0</span>
-                                <span style={{ color: '#64748B', fontWeight: 600, marginLeft: 4 }}>/prueba</span>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-7xl mx-auto">
+
+                        {/* FEATURE 1: POS */}
+                        <div className="group bg-slate-50 border border-slate-200 rounded-[2rem] p-10 hover:shadow-2xl hover:shadow-blue-900/10 transition-all duration-300 hover:-translate-y-2">
+                            <div className="w-20 h-20 bg-white border border-slate-100 text-blue-600 rounded-2xl flex items-center justify-center mb-8 shadow-sm group-hover:scale-110 transition-transform duration-300">
+                                <ScanBarcode size={40} />
                             </div>
-                            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px 0', flex: 1 }}>
-                                {['POS Web completo', 'Inventario básico', 'Hasta 50 productos', '14 días gratis'].map((t, i) => (
-                                    <li key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 14, color: '#CBD5E1', fontWeight: 500 }}>
-                                        <CheckCircle size={15} color="#64748B" /> {t}
-                                    </li>
-                                ))}
-                            </ul>
-                            <Link to="/register" style={{
-                                display: 'block', textAlign: 'center', padding: '12px 20px',
-                                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
-                                borderRadius: 12, color: '#fff', fontWeight: 700, textDecoration: 'none', fontSize: 14
-                            }}>
-                                Instalar Gratis
-                            </Link>
+                            <h3 className="text-2xl font-bold text-blue-950 mb-4">Punto de Venta (POS) Fricción Cero</h3>
+                            <p className="text-slate-600 text-lg leading-relaxed font-medium">
+                                Vende en segundos. Compatible con lectores de código de barras y modo offline. La caja nunca se detiene.
+                            </p>
                         </div>
 
-                        {/* Pro */}
-                        <div style={{
-                            background: 'linear-gradient(180deg, rgba(59,130,246,0.08) 0%, rgba(59,130,246,0) 100%)',
-                            border: '1px solid rgba(59,130,246,0.2)', borderRadius: 20, padding: 32,
-                            display: 'flex', flexDirection: 'column', position: 'relative',
-                            boxShadow: '0 8px 40px rgba(59,130,246,0.1)'
-                        }}>
-                            <div style={{
-                                position: 'absolute', top: 0, right: 24, transform: 'translateY(-50%)',
-                                background: 'linear-gradient(135deg, #3B82F6, #06B6D4)', color: '#fff',
-                                fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
-                                padding: '4px 12px', borderRadius: 999
-                            }}>
-                                Popular
+                        {/* FEATURE 2: INVENTARIO */}
+                        <div className="group bg-slate-50 border border-slate-200 rounded-[2rem] p-10 hover:shadow-2xl hover:shadow-emerald-900/10 transition-all duration-300 hover:-translate-y-2">
+                            <div className="w-20 h-20 bg-white border border-slate-100 text-emerald-600 rounded-2xl flex items-center justify-center mb-8 shadow-sm group-hover:scale-110 transition-transform duration-300">
+                                <BarChart3 size={40} />
                             </div>
-                            <h3 style={{ fontWeight: 900, fontSize: 20, marginBottom: 4 }}>Nortex Pro</h3>
-                            <p style={{ color: '#94A3B8', fontSize: 14, fontWeight: 500, marginBottom: 20 }}>Todo el arsenal. Sin límites.</p>
-                            <div style={{ marginBottom: 24 }}>
-                                <span style={{ fontSize: 48, fontWeight: 900 }}>$25</span>
-                                <span style={{ color: '#64748B', fontWeight: 600, marginLeft: 4 }}>/mes</span>
+                            <h3 className="text-2xl font-bold text-blue-950 mb-4">Inventario y Compras</h3>
+                            <p className="text-slate-600 text-lg leading-relaxed font-medium">
+                                Control exacto y milimétrico. Alertas de stock bajo y costeos automáticos para proteger tus márgenes de ganancia.
+                            </p>
+                        </div>
+
+                        {/* FEATURE 3: NICALABOR */}
+                        <div className="group bg-blue-950 border border-blue-900 text-white rounded-[2rem] p-10 shadow-2xl shadow-blue-900/20 hover:shadow-blue-900/40 transition-all duration-300 hover:-translate-y-2 relative overflow-hidden">
+                            <div className="absolute top-0 right-0 w-48 h-48 bg-emerald-500 rounded-bl-full blur-3xl opacity-20"></div>
+                            <div className="w-20 h-20 bg-blue-900 border border-blue-800 text-emerald-400 rounded-2xl flex items-center justify-center mb-8 group-hover:scale-110 transition-transform duration-300">
+                                <Users size={40} />
                             </div>
-                            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px 0', flex: 1 }}>
-                                {['Usuarios y productos ilimitados', 'Auditoría Forense + Dashboard', 'NicaLabor (Nómina y Aguinaldo)', 'Retenciones DGI automáticas', 'Elegible para Nortex Boost'].map((t, i) => (
-                                    <li key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 14, color: '#fff', fontWeight: 600 }}>
-                                        <CheckCircle size={15} color="#3B82F6" /> {t}
-                                    </li>
-                                ))}
-                            </ul>
-                            <Link to="/register" style={{
-                                display: 'block', textAlign: 'center', padding: '12px 20px',
-                                background: 'linear-gradient(135deg, #3B82F6, #06B6D4)', borderRadius: 12,
-                                color: '#fff', fontWeight: 700, textDecoration: 'none', fontSize: 14,
-                                boxShadow: '0 4px 20px rgba(59,130,246,0.3)'
-                            }}>
-                                Crear Cuenta Pro
-                            </Link>
+                            <h3 className="text-2xl font-bold text-white mb-4">Recursos Humanos & NicaLabor</h3>
+                            <p className="text-blue-100 text-lg leading-relaxed font-medium">
+                                El ÚNICO sistema que calcula tus planillas, aguinaldos y liquidaciones automáticas según la ley. Adiós a los Excel, adiós a las multas de Mitrab.
+                            </p>
                         </div>
                     </div>
                 </div>
             </section>
 
-            {/* === FOOTER === */}
-            <footer style={{ borderTop: '1px solid rgba(255,255,255,0.05)', padding: '32px 0' }}>
-                <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{ width: 28, height: 28, borderRadius: 7, background: 'linear-gradient(135deg, #3B82F6, #10B981)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <span style={{ fontWeight: 900, fontSize: 14, color: '#fff' }}>N</span>
-                        </div>
-                        <span style={{ fontWeight: 900, fontSize: 14 }}>NORTEX</span>
+            {/* ==========================================
+                PRICING (UN SOLO PLAN DICTATORIAL)
+               ========================================== */}
+            <section id="pricing" className="py-32 bg-slate-50 border-t border-slate-200">
+                <div className="container mx-auto px-6 flex flex-col items-center">
+
+                    <div className="text-center mb-16">
+                        <h2 className="text-4xl md:text-5xl font-extrabold text-blue-950 mb-6 tracking-tight">Cero Complejidad.</h2>
+                        <p className="text-xl text-slate-500 max-w-2xl mx-auto font-medium">Olvídate de módulos bloqueados y planes falsos. Te damos el arsenal completo corporativo por una tarifa plana.</p>
                     </div>
-                    <p style={{ color: '#475569', fontSize: 12, fontWeight: 500, margin: 0 }}>© {new Date().getFullYear()} Nortex Technology · Managua, Nicaragua</p>
-                    <div style={{ display: 'flex', gap: 20 }}>
-                        <Link to="/login" style={{ color: '#64748B', fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>Login</Link>
-                        <Link to="/terms" style={{ color: '#64748B', fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>Términos</Link>
-                        <Link to="/privacy" style={{ color: '#64748B', fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>Privacidad</Link>
+
+                    <div className="w-full max-w-2xl bg-white border border-slate-200 rounded-[3rem] p-12 md:p-16 shadow-2xl shadow-slate-200/50 relative overflow-hidden">
+                        {/* Glows Decorativos */}
+                        <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500 rounded-full blur-[100px] opacity-10 -translate-y-1/2 translate-x-1/3 pointer-events-none"></div>
+                        <div className="absolute bottom-0 left-0 w-64 h-64 bg-blue-500 rounded-full blur-[100px] opacity-10 translate-y-1/2 -translate-x-1/3 pointer-events-none"></div>
+
+                        <div className="relative z-10 text-center mb-10 border-b border-slate-100 pb-10">
+                            <h3 className="text-xl font-bold text-blue-600 mb-4 uppercase tracking-widest">Plan Empresarial Total</h3>
+                            <div className="flex justify-center items-end gap-1 mb-2">
+                                <span className="text-7xl font-black text-blue-950 tracking-tighter">$25</span>
+                                <span className="text-2xl font-bold text-slate-400 mb-2">/mes</span>
+                            </div>
+                            <p className="text-slate-500 font-medium">Todo incluido. Facturado mensualmente. Sin contratos ocultos.</p>
+                        </div>
+
+                        <ul className="relative z-10 space-y-6 mb-12 max-w-md mx-auto">
+                            {[
+                                "Usuarios ilimitados (Gerentes, Cajeros, Bodega)",
+                                "Ingreso de Productos ilimitados",
+                                "Soporte Técnico Local (Nicaragua)",
+                                "Módulo de HR y Planillas (NicaLabor)",
+                                "Facturación Electrónica Ultrarrápida"
+                            ].map((feature, i) => (
+                                <li key={i} className="flex items-center gap-5 text-blue-950 font-bold text-lg">
+                                    <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                                        <CheckCircle className="text-emerald-600 w-5 h-5" />
+                                    </div>
+                                    {feature}
+                                </li>
+                            ))}
+                        </ul>
+
+                        <div className="text-center relative z-10">
+                            <Link to="/register" className="inline-block w-full py-6 bg-blue-950 text-white font-bold rounded-2xl text-xl hover:bg-blue-900 transition-colors shadow-2xl shadow-blue-900/30 hover:-translate-y-1 active:scale-95">
+                                Empezar a Configurar mi Empresa
+                            </Link>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            {/* ==========================================
+                FOOTER CORPORATIVO
+               ========================================== */}
+            <footer className="bg-blue-950 pt-24 pb-12 border-t border-blue-900">
+                <div className="container mx-auto px-6">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-12 mb-16 border-b border-blue-900/50 pb-16">
+                        <div className="col-span-1 md:col-span-2">
+                            <div className="flex items-center gap-3 mb-8">
+                                <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/20">
+                                    <span className="font-bold text-white text-xl">N</span>
+                                </div>
+                                <span className="text-2xl font-bold tracking-tight text-white block leading-none">NORTEX</span>
+                            </div>
+                            <p className="text-blue-200/80 font-medium max-w-sm mb-8 text-lg leading-relaxed">
+                                Infraestructura tecnológica y de software base para empresas y comercios de alto volumen en Centroamérica.
+                            </p>
+
+                            {/* Dirección Local */}
+                            <div className="flex items-start gap-3 text-blue-300 text-sm font-medium">
+                                <Building className="w-5 h-5 shrink-0 text-emerald-400" />
+                                <div>
+                                    <p className="font-bold text-white mb-1">Centro de Operaciones</p>
+                                    <p>Edificio Corporativo Norte</p>
+                                    <p>Managua, Nicaragua.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 className="text-white font-bold mb-6 text-lg tracking-wide">Plataforma</h4>
+                            <ul className="space-y-4 text-blue-200/80 text-base font-medium">
+                                <li><Link to="/register" className="hover:text-emerald-400 transition-colors flex items-center gap-2"><ArrowRight size={14} /> Crear Cuenta</Link></li>
+                                <li><Link to="/login" className="hover:text-emerald-400 transition-colors flex items-center gap-2"><ArrowRight size={14} /> Acceso a Clientes</Link></li>
+                                <li><a href="#features" className="hover:text-emerald-400 transition-colors flex items-center gap-2"><ArrowRight size={14} /> Características Core</a></li>
+                            </ul>
+                        </div>
+
+                        <div>
+                            <h4 className="text-white font-bold mb-6 text-lg tracking-wide">Legal & Seguridad</h4>
+                            <ul className="space-y-4 text-blue-200/80 text-base font-medium">
+                                <li><Link to="/terms" className="hover:text-emerald-400 transition-colors flex items-center gap-2"><FileText size={14} /> Términos de Servicio</Link></li>
+                                <li><Link to="/privacy" className="hover:text-emerald-400 transition-colors flex items-center gap-2"><ShieldCheck size={14} /> Política de Privacidad</Link></li>
+                                <li className="pt-4 mt-4 border-t border-blue-900/50">
+                                    <span className="flex items-center gap-2 text-white font-mono text-xs bg-blue-900 px-3 py-1.5 rounded-lg inline-flex border border-blue-800">
+                                        RUC: J0310000000000
+                                    </span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+                        <p className="text-blue-400/60 text-sm font-medium">&copy; {new Date().getFullYear()} Nortex Technology. Todos los derechos reservados bajo las regulaciones comerciales locales.</p>
+                        <div className="flex gap-3">
+                            <span className="text-xs font-bold font-mono tracking-widest bg-emerald-500/10 text-emerald-400 px-4 py-1.5 rounded-full border border-emerald-500/20">SISTEMA ENCRIPTADO</span>
+                            <span className="text-xs font-bold font-mono tracking-widest bg-blue-500/10 text-blue-400 px-4 py-1.5 rounded-full border border-blue-500/20">UPTIME 99.99%</span>
+                        </div>
                     </div>
                 </div>
             </footer>

@@ -106,7 +106,6 @@ function App() {
         <Route path="/pedidos/:slug" element={<PublicCatalog />} />
         <Route path="/admin" element={<ProtectedAdmin />} />
         <Route path="/app/*" element={<ProtectedApp />} />
-        <Route path="/:niche" element={<LandingPage />} />
       </Routes>
     </BrowserRouter>
   );
