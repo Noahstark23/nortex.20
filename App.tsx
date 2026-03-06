@@ -95,6 +95,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<LandingPage />} />
+        <Route path="/:niche" element={<LandingPage />} />
         <Route path="/register" element={<RegisterTenant />} />
         <Route path="/login" element={<Login />} />
         <Route path="/terms" element={<TermsOfService />} />
