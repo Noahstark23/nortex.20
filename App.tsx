@@ -27,6 +27,7 @@ import ResetPassword from './components/ResetPassword';
 import CashRegisters from './components/CashRegisters';
 import FinancialHealth from './components/FinancialHealth';
 import AuditDashboard from './components/AuditDashboard';
+import InventoryOracle from './components/InventoryOracle';
 
 // Emails autorizados como SUPER_ADMIN
 const SUPER_ADMIN_EMAILS = ['noelpinedaa96@gmail.com'];
@@ -53,6 +54,7 @@ const ProtectedApp = () => {
         <Route path="pos" element={<POS />} />
         <Route path="cash-registers" element={<CashRegisters />} />
         <Route path="inventory" element={<Inventory />} />
+        <Route path="smart-purchases" element={<InventoryOracle />} />
         <Route path="clients" element={<Clients />} />
         <Route path="suppliers" element={<Suppliers />} />
         <Route path="purchases" element={<Purchases />} />

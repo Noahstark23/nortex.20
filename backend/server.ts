@@ -4005,6 +4005,188 @@ app.get('/api/accounting/journal', authenticate, async (req: any, res: any) => {
 });
 
 // ==========================================
+// 🔮 ORÁCULO DE INVENTARIO (COMPRAS INTELIGENTES)
+// ==========================================
+
+// GET /api/inventory/oracle — Detecta productos que se agotarán en ≤5 días
+app.get('/api/inventory/oracle', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        // Obtener movimientos de venta de los últimos 30 días
+        const saleMovements = await prisma.kardexMovement.findMany({
+            where: {
+                tenantId: authReq.tenantId,
+                type: 'SALE',
+                date: { gte: thirtyDaysAgo }
+            },
+            select: { productId: true, quantity: true }
+        });
+
+        // Agrupar ventas por producto (quantity es negativo en SALE)
+        const salesByProduct: Record<string, number> = {};
+        for (const m of saleMovements) {
+            salesByProduct[m.productId] = (salesByProduct[m.productId] || 0) + Math.abs(m.quantity);
+        }
+
+        // Obtener productos activos con stock > 0
+        const products = await prisma.product.findMany({
+            where: {
+                tenantId: authReq.tenantId,
+                stock: { gt: 0 }
+            },
+            select: { id: true, name: true, stock: true, cost: true, price: true }
+        });
+
+        const alerts = [];
+        for (const p of products) {
+            const totalSold = salesByProduct[p.id] || 0;
+            if (totalSold === 0) continue; // Sin ventas = sin predicción
+
+            const vpd = totalSold / 30; // Venta Diaria Promedio
+            const daysRemaining = p.stock / vpd;
+
+            if (daysRemaining <= 5) {
+                const suggestedQty = Math.ceil(vpd * 15); // Restock para 15 días
+                const cost = Number(p.cost) || 0;
+                alerts.push({
+                    productId: p.id,
+                    name: p.name,
+                    currentStock: p.stock,
+                    price: Number(p.price),
+                    cost,
+                    vpd: Math.round(vpd * 100) / 100,
+                    daysRemaining: Math.round(daysRemaining * 10) / 10,
+                    suggestedQty,
+                    suggestedCost: Math.round(suggestedQty * cost * 100) / 100
+                });
+            }
+        }
+
+        // Ordenar por urgencia (menos días restantes primero)
+        alerts.sort((a, b) => a.daysRemaining - b.daysRemaining);
+
+        res.json({ alerts, totalEstimatedCost: alerts.reduce((s, a) => s + a.suggestedCost, 0) });
+    } catch (error) {
+        console.error('Oracle Error:', error);
+        res.status(500).json({ error: 'Error calculando predicciones del Oráculo' });
+    }
+});
+
+// POST /api/capital/finance-purchase — Financiar compra con Nortex Capital
+app.post('/api/capital/finance-purchase', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { supplierId, items } = req.body;
+    // items: [{ productId, productName, quantity, unitCost }]
+
+    if (!supplierId || !items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: 'supplierId e items son requeridos.' });
+    }
+
+    try {
+        // 1. Validar límite de crédito del tenant
+        const tenant = await prisma.tenant.findUnique({ where: { id: authReq.tenantId } });
+        if (!tenant) return res.status(404).json({ error: 'Tenant no encontrado.' });
+
+        const subtotal = items.reduce((s: number, i: any) => s + (i.quantity * i.unitCost), 0);
+        const tax = subtotal * 0.15; // IVA 15%
+        const total = subtotal + tax;
+        const interestRate = 0.05; // 5% flat
+        const totalDue = total * (1 + interestRate);
+
+        const creditLimit = Number(tenant.creditLimit);
+        if (total > creditLimit) {
+            return res.status(403).json({
+                error: `Monto C$ ${total.toFixed(2)} excede tu límite de crédito C$ ${creditLimit.toFixed(2)}. Mejora tu Nortex Score vendiendo más.`,
+                creditLimit,
+                requested: total
+            });
+        }
+
+        // 2. Transacción atómica: Purchase + CapitalLoan + JournalEntry
+        const result = await prisma.$transaction(async (tx: any) => {
+
+            // a) Crear la compra al proveedor con estado PENDING_PAYMENT
+            const purchase = await tx.purchase.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    supplierId,
+                    invoiceNumber: `NXC-${Date.now()}`,
+                    subtotal,
+                    tax,
+                    total,
+                    status: 'PENDING_PAYMENT',
+                    paymentMethod: 'NORTEX_CAPITAL',
+                    notes: 'Compra financiada por Nortex Capital - Oráculo de Inventario',
+                    createdBy: authReq.userId!,
+                    items: {
+                        create: items.map((i: any) => ({
+                            productId: i.productId,
+                            productName: i.productName,
+                            quantity: i.quantity,
+                            unitCost: i.unitCost,
+                            totalCost: i.quantity * i.unitCost
+                        }))
+                    }
+                }
+            });
+
+            // b) Crear el préstamo de Nortex Capital
+            const dueDate = new Date();
+            dueDate.setDate(dueDate.getDate() + 30);
+
+            const loan = await tx.capitalLoan.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    amount: total,
+                    interestRate,
+                    totalDue,
+                    dueDate,
+                    status: 'ACTIVE',
+                    linkedPurchaseId: purchase.id
+                }
+            });
+
+            // c) Asiento contable (Partida Doble)
+            // Debe: Inventario de Mercancías (1.1.4) — aumenta activo
+            // Haber: Préstamos Nortex Capital por Pagar (2.1.8) — aumenta pasivo
+            const { createJournalEntry } = require('./services/accounting');
+            await createJournalEntry(
+                tx,
+                authReq.tenantId!,
+                `Compra financiada por Nortex Capital - ${items.length} productos`,
+                purchase.id,
+                'CAPITAL_LOAN',
+                authReq.userId!,
+                [
+                    { accountCode: '1.1.4', debit: total, credit: 0 },    // Inventario ↑
+                    { accountCode: '2.1.8', debit: 0, credit: total },    // Préstamo por Pagar ↑
+                ]
+            );
+
+            return { purchase, loan };
+        });
+
+        res.json({
+            message: '✅ Compra financiada exitosamente con Nortex Capital',
+            purchaseId: result.purchase.id,
+            loanId: result.loan.id,
+            loanTerms: {
+                amount: total,
+                interest: `${interestRate * 100}%`,
+                totalDue,
+                dueDate: result.loan.dueDate
+            }
+        });
+    } catch (error) {
+        console.error('Capital Finance Error:', error);
+        res.status(500).json({ error: 'Error procesando el financiamiento' });
+    }
+});
+
+// ==========================================
 // 📊 SALUD FINANCIERA & AUDITORÍA FORENSE
 // ==========================================
 

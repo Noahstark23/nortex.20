@@ -33,6 +33,7 @@ const CHART_OF_ACCOUNTS = [
     { code: '2.1.5', name: 'INSS Patronal por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     { code: '2.1.6', name: 'INATEC por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     { code: '2.1.7', name: 'Retenciones por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    { code: '2.1.8', name: 'Préstamos Nortex Capital por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     // CAPITAL (3.x.x)
     { code: '3.1.1', name: 'Capital Social', type: 'EQUITY', subtype: null },
     { code: '3.1.2', name: 'Utilidades Retenidas', type: 'EQUITY', subtype: null },

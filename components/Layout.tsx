@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap } from 'lucide-react';
 import { PinPadClock } from './PinPadClock';
 
 interface LayoutProps {
@@ -35,6 +35,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       ? [{ path: '/app/cash-registers', label: 'Cajas y Arqueos', icon: Monitor }]
       : []),
     { path: '/app/inventory', label: 'Inventario', icon: Package },
+    // Compras Inteligentes (Oracle + Capital): only for OWNER/ADMIN
+    ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
+      ? [{ path: '/app/smart-purchases', label: 'Compras Inteligentes', icon: Zap }]
+      : []),
     { path: '/app/clients', label: 'Clientes (CRM)', icon: Users },
     { path: '/app/purchases', label: 'Compras', icon: Truck },
     { path: '/app/suppliers', label: 'Proveedores', icon: ClipboardList },
