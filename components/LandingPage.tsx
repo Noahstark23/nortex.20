@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
     ArrowRight, ShieldCheck, Lock, CheckCircle, BarChart3, Users, Calculator, ScanBarcode, ChevronRight,
-    Building2, FileText, Smartphone, Globe, AlertCircle, Building, HeadphonesIcon, XCircle, Zap, DollarSign, Wallet
+    Building2, FileText, Smartphone, Globe, AlertCircle, Building, HeadphonesIcon, XCircle, Zap, DollarSign, Wallet, Clock
 } from 'lucide-react';
 
 // Tipos estructurados para SEO Dinámico por Nicho

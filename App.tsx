@@ -97,7 +97,6 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<LandingPage />} />
-        <Route path="/:niche" element={<LandingPage />} />
         <Route path="/register" element={<RegisterTenant />} />
         <Route path="/login" element={<Login />} />
         <Route path="/terms" element={<TermsOfService />} />
@@ -107,6 +106,7 @@ function App() {
         <Route path="/pedidos/:slug" element={<PublicCatalog />} />
         <Route path="/admin" element={<ProtectedAdmin />} />
         <Route path="/app/*" element={<ProtectedApp />} />
+        <Route path="/:niche" element={<LandingPage />} />
       </Routes>
     </BrowserRouter>
   );
