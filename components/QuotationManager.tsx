@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Plus, Search, ShoppingCart, Calendar, User, Printer, ArrowRight, Trash2, Clock, CheckCircle, Globe, Phone, Package, Loader2, RefreshCw } from 'lucide-react';
+import { FileText, Plus, Search, ShoppingCart, Calendar, User, Printer, ArrowRight, Trash2, Clock, CheckCircle, Globe, Phone, Package, Loader2, RefreshCw, Copy } from 'lucide-react';
 import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Quotation, PublicOrder } from '../types';
 import { useNavigate } from 'react-router-dom';
@@ -41,6 +41,12 @@ const QuotationManager: React.FC = () => {
     const [loadingWebOrders, setLoadingWebOrders] = useState(false);
     const [convertingId, setConvertingId] = useState<string | null>(null);
 
+    // Tenant Info for Public Catalog Link
+    const [tenantSlug, setTenantSlug] = useState<string | null>(null);
+    const [businessName, setBusinessName] = useState<string>('');
+    const [copiedInfo, setCopiedInfo] = useState(false);
+    const [creatingSlug, setCreatingSlug] = useState(false);
+
     // Fetch from API
     const fetchQuotations = async () => {
         try {
@@ -75,9 +81,66 @@ const QuotationManager: React.FC = () => {
         }
     };
 
+    const fetchTenantInfo = async () => {
+        try {
+            const token = localStorage.getItem('nortex_token');
+            const res = await fetch('/api/tenant/info', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setTenantSlug(data.slug);
+                setBusinessName(data.businessName || 'tienda');
+            }
+        } catch (error) {
+            console.error('Error fetching tenant info:', error);
+        }
+    };
+
+    const handleCreateSlug = async () => {
+        if (!businessName) return;
+        setCreatingSlug(true);
+        // Generar un slug simple (letras, números, guiones) sin espacios ni caracteres raros
+        let baseSlug = businessName.toLowerCase().trim()
+            .replace(/[^\w\s-]/g, '') // Remove non-word [a-z0-9_], non-whitespace, non-hyphen chars
+            .replace(/[\s_-]+/g, '-') // Swap whitespace, underscores and hyphens with a single hyphen
+            .replace(/^-+|-+$/g, ''); // Trim hyphens
+
+        // Si el baseSlug queda muy corto, le agregamos un prefijo
+        if (baseSlug.length < 3) baseSlug = `tienda-${baseSlug || Math.floor(Math.random() * 10000)}`;
+
+        const generatedSlug = baseSlug;
+
+        try {
+            const token = localStorage.getItem('nortex_token');
+            const res = await fetch('/api/tenant/slug', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify({ slug: generatedSlug })
+            });
+
+            if (res.ok) {
+                setTenantSlug(generatedSlug);
+                alert('¡Enlace de catálogo generado exitosamente!');
+            } else {
+                const data = await res.json();
+                alert(data.error || 'Error al generar el enlace. Intenta cambiar el nombre de tu empresa.');
+            }
+        } catch (error) {
+            console.error('Error creating slug:', error);
+            alert('Error de conexión al generar el enlace');
+        } finally {
+            setCreatingSlug(false);
+        }
+    };
+
     useEffect(() => {
         fetchQuotations();
         fetchWebOrders();
+        fetchTenantInfo();
     }, []);
 
     // --- LOGIC ---
@@ -289,6 +352,66 @@ const QuotationManager: React.FC = () => {
                 ) : (
                     /* WEB_ORDERS Tab */
                     <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                        {tenantSlug ? (
+                            <div className="mb-6 bg-gradient-to-r from-slate-900 to-slate-800 rounded-xl p-5 text-white shadow-lg relative overflow-hidden">
+                                {/* Decorative Blur */}
+                                <div className="absolute -top-10 -right-10 w-32 h-32 bg-nortex-500/30 rounded-full blur-3xl pointer-events-none"></div>
+
+                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+                                    <div>
+                                        <h3 className="font-bold text-lg mb-1 flex items-center gap-2">
+                                            <Globe className="text-nortex-400" size={20} />
+                                            Tu Catálogo Público
+                                        </h3>
+                                        <p className="text-sm text-slate-300 mb-3">
+                                            Comparte este enlace para que tus clientes hagan pedidos directamente.
+                                        </p>
+                                        <div className="flex items-center gap-2 bg-black/30 p-2 rounded-lg border border-white/10 w-fit">
+                                            <span className="text-sm font-mono text-slate-200 select-all pb-1">
+                                                {`${window.location.origin}/pedidos/${tenantSlug}`}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col gap-2 min-w-[180px]">
+                                        <button
+                                            onClick={() => {
+                                                navigator.clipboard.writeText(`${window.location.origin}/pedidos/${tenantSlug}`);
+                                                setCopiedInfo(true);
+                                                setTimeout(() => setCopiedInfo(false), 2000);
+                                            }}
+                                            className="px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all"
+                                        >
+                                            {copiedInfo ? <CheckCircle size={16} className="text-green-400" /> : <Copy size={16} />}
+                                            {copiedInfo ? '¡Copiado!' : 'Copiar Enlace'}
+                                        </button>
+                                        <a
+                                            href={`https://wa.me/?text=${encodeURIComponent(`¡Hola! Visita nuestro catálogo en línea y haz tu pedido aquí: ${window.location.origin}/pedidos/${tenantSlug}`)}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="px-4 py-2 bg-[#25D366] hover:bg-[#1ebd5a] text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"
+                                        >
+                                            <Phone size={16} />
+                                            Enviar por WhatsApp
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="mb-6 bg-white border border-slate-200 rounded-xl p-5 shadow-sm text-center">
+                                <Globe className="mx-auto text-slate-400 mb-2" size={32} />
+                                <h3 className="font-bold text-slate-800 mb-1">Activa tu Catálogo Público</h3>
+                                <p className="text-sm text-slate-500 mb-4">Aún no tienes un enlace público para compartir con tus clientes.</p>
+                                <button
+                                    onClick={handleCreateSlug}
+                                    disabled={creatingSlug}
+                                    className="px-4 py-2 bg-nortex-900 hover:bg-nortex-800 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all mx-auto disabled:opacity-50"
+                                >
+                                    {creatingSlug ? <Loader2 size={16} className="animate-spin" /> : <Globe size={16} />}
+                                    Generar Enlace Ahora
+                                </button>
+                            </div>
+                        )}
+
                         <div className="flex items-center justify-between mb-4">
                             <p className="text-sm text-slate-500">
                                 Pedidos recibidos desde tu catálogo público

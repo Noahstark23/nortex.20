@@ -4398,6 +4398,32 @@ app.get('/api/hrm/settlement-preview/:employeeId', authenticate, async (req: any
 // 🌐 PORTAL DE PEDIDOS PÚBLICOS (NO AUTH)
 // ==========================================
 
+// GET /api/tenant/info — Info básica del negocio (requiere autenticación)
+app.get('/api/tenant/info', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: authReq.tenantId! },
+            select: {
+                id: true,
+                businessName: true,
+                slug: true,
+                phone: true,
+                address: true,
+            }
+        });
+
+        if (!tenant) {
+            return res.status(404).json({ error: 'Tenant no encontrado' });
+        }
+
+        res.json(tenant);
+    } catch (error) {
+        console.error('Error fetching tenant info:', error);
+        res.status(500).json({ error: 'Error al obtener información del negocio' });
+    }
+});
+
 // PUT /api/tenant/slug — Configurar slug (INMUTABLE una vez creado)
 app.put('/api/tenant/slug', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
