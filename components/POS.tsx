@@ -200,8 +200,8 @@ const POS: React.FC = () => {
             try {
                 const token = localStorage.getItem('nortex_token');
 
-                // 1. Check Shift
-                const res = await fetch('/api/shifts/current', {
+                // 1. Check Shift (Cache busting to avoid stale 'not found' after navigating)
+                const res = await fetch(`/api/shifts/current?t=${Date.now()}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 const data = await res.json();

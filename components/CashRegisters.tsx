@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Monitor, RefreshCw, Clock, ShoppingCart, ArrowDownCircle, ArrowUpCircle, DollarSign, AlertTriangle, CheckCircle, X, Printer, User, TrendingUp, Banknote } from 'lucide-react';
+import { Monitor, RefreshCw, Clock, ShoppingCart, ArrowDownCircle, ArrowUpCircle, DollarSign, AlertTriangle, CheckCircle, X, Printer, User, TrendingUp, Banknote, Lock, Calculator, Loader2 } from 'lucide-react';
 
 interface LiveShift {
     id: string;
@@ -45,6 +45,59 @@ const CashRegisters: React.FC = () => {
     const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
     const [selectedShift, setSelectedShift] = useState<ClosedShift | null>(null);
     const [error, setError] = useState<string | null>(null);
+
+    // Force Close Modal State
+    const [shiftToClose, setShiftToClose] = useState<LiveShift | null>(null);
+    const [closing, setClosing] = useState(false);
+    const [auditNotes, setAuditNotes] = useState('');
+    const [denominations, setDenominations] = useState({
+        1000: 0, 500: 0, 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0
+    });
+
+    const calculateTotalDeclared = () => {
+        return Object.entries(denominations).reduce((total, [value, count]) => {
+            return total + (Number(value) * Number(count));
+        }, 0);
+    };
+
+    const handleDenominationChange = (value: number, count: string) => {
+        const parsed = parseInt(count) || 0;
+        setDenominations(prev => ({ ...prev, [value]: Math.max(0, parsed) }));
+    };
+
+    const handleForceClose = async () => {
+        if (!shiftToClose) return;
+        setClosing(true);
+        const finalCashDeclared = calculateTotalDeclared();
+
+        try {
+            const res = await fetch(`/api/shifts/${shiftToClose.id}/close`, {
+                method: 'POST', // Or PATCH depending on backend, using POST as per standard action endpoints
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...headers
+                },
+                body: JSON.stringify({
+                    finalCashDeclared,
+                    auditNotes
+                })
+            });
+
+            if (res.ok) {
+                setShiftToClose(null);
+                setDenominations({ 1000: 0, 500: 0, 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 });
+                setAuditNotes('');
+                fetchMonitor();
+            } else {
+                const data = await res.json();
+                alert(data.error || 'Error al cerrar la caja');
+            }
+        } catch (err) {
+            alert('Error de conexión al cerrar la caja');
+        } finally {
+            setClosing(false);
+        }
+    };
 
     const token = localStorage.getItem('nortex_token');
     const headers = { 'Authorization': `Bearer ${token}` };
@@ -221,14 +274,20 @@ const CashRegisters: React.FC = () => {
                                     </div>
 
                                     {/* Card Footer */}
-                                    <div className="bg-slate-50 px-4 py-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
-                                        <span className="flex items-center gap-1">
-                                            {shift.vaultCardSales > 0 && <span>💳 C${shift.vaultCardSales.toFixed(0)}</span>}
-                                            {shift.vaultCreditSales > 0 && <span> · 📝 C${shift.vaultCreditSales.toFixed(0)} crédito</span>}
-                                        </span>
-                                        <span>
-                                            {shift.lastSaleAt ? `Última venta: ${timeAgo(shift.lastSaleAt)}` : 'Sin ventas'}
-                                        </span>
+                                    <div className="bg-slate-50 px-4 py-3 border-t border-slate-100 flex items-center justify-between">
+                                        <div className="text-[10px] text-slate-400">
+                                            <span className="flex items-center gap-1 mb-1">
+                                                {shift.vaultCardSales > 0 && <span>💳 C${shift.vaultCardSales.toFixed(0)}</span>}
+                                                {shift.vaultCreditSales > 0 && <span> · 📝 C${shift.vaultCreditSales.toFixed(0)} crédito</span>}
+                                            </span>
+                                            <span>{shift.lastSaleAt ? `Última venta: ${timeAgo(shift.lastSaleAt)}` : 'Sin ventas'}</span>
+                                        </div>
+                                        <button
+                                            onClick={() => setShiftToClose(shift)}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 font-bold text-xs rounded-lg transition-colors border border-red-100"
+                                        >
+                                            <Lock size={14} /> Forzar Cierre
+                                        </button>
                                     </div>
                                 </div>
                             ))}
@@ -288,7 +347,7 @@ const CashRegisters: React.FC = () => {
                                                 <td className="px-4 py-3 text-right text-slate-600">{shift.systemExpectedCash !== null ? `C$${shift.systemExpectedCash.toFixed(2)}` : '—'}</td>
                                                 <td className="px-4 py-3 text-right text-slate-600">{shift.finalCashDeclared !== null ? `C$${shift.finalCashDeclared.toFixed(2)}` : '—'}</td>
                                                 <td className={`px-4 py-3 text-right font-bold ${shift.status === 'PERFECT' ? 'text-green-600' :
-                                                        shift.status === 'WARNING' ? 'text-amber-600' : 'text-red-600'
+                                                    shift.status === 'WARNING' ? 'text-amber-600' : 'text-red-600'
                                                     }`}>
                                                     {shift.difference > 0 ? '+' : ''}C${shift.difference.toFixed(2)}
                                                 </td>
@@ -334,11 +393,11 @@ const CashRegisters: React.FC = () => {
                         <div className="p-6 space-y-6">
                             {/* Difference Card */}
                             <div className={`rounded-xl p-4 text-center ${selectedShift.status === 'PERFECT' ? 'bg-green-50 border border-green-200' :
-                                    selectedShift.status === 'WARNING' ? 'bg-amber-50 border border-amber-200' : 'bg-red-50 border border-red-200'
+                                selectedShift.status === 'WARNING' ? 'bg-amber-50 border border-amber-200' : 'bg-red-50 border border-red-200'
                                 }`}>
                                 <p className="text-xs font-bold text-slate-500 uppercase mb-1">Diferencia</p>
                                 <p className={`text-3xl font-black ${selectedShift.status === 'PERFECT' ? 'text-green-600' :
-                                        selectedShift.status === 'WARNING' ? 'text-amber-600' : 'text-red-600'
+                                    selectedShift.status === 'WARNING' ? 'text-amber-600' : 'text-red-600'
                                     }`}>
                                     {selectedShift.difference > 0 ? '+' : ''}C${selectedShift.difference.toFixed(2)}
                                 </p>
@@ -382,6 +441,45 @@ const CashRegisters: React.FC = () => {
                                 </div>
                             </div>
 
+                            {/* Ticket Promedio */}
+                            <div className="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center">
+                                        <TrendingUp size={20} />
+                                    </div>
+                                    <div>
+                                        <p className="text-xs font-bold text-slate-500 uppercase">Ticket Promedio</p>
+                                        <p className="text-sm font-medium text-slate-700">{selectedShift.salesCount > 0 ? `${selectedShift.salesCount} ventas procesadas` : 'Sin ventas'}</p>
+                                    </div>
+                                </div>
+                                <span className="text-xl font-black text-slate-800">
+                                    C${selectedShift.salesCount > 0 ? (selectedShift.grandTotal / selectedShift.salesCount).toFixed(2) : '0.00'}
+                                </span>
+                            </div>
+
+                            {/* Recent Movements (Only showing up to 3) */}
+                            {selectedShift.recentMovements && selectedShift.recentMovements.length > 0 && (
+                                <div className="space-y-3">
+                                    <h4 className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
+                                        <ArrowDownCircle size={14} /> Movimientos Manuales (Últimos 3)
+                                    </h4>
+                                    <div className="bg-slate-50 rounded-xl overflow-hidden border border-slate-100">
+                                        {selectedShift.recentMovements.slice(0, 3).map((mov, idx) => (
+                                            <div key={idx} className="p-3 border-b border-slate-100 last:border-0 flex justify-between items-center bg-white">
+                                                <div>
+                                                    <p className="text-sm font-bold text-slate-700">{mov.category}</p>
+                                                    <p className="text-xs text-slate-500 truncate max-w-[200px]">{mov.description}</p>
+                                                    <p className="text-[10px] text-slate-400 mt-0.5">{formatTime(mov.createdAt)}</p>
+                                                </div>
+                                                <span className={`font-bold ${mov.type === 'IN' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                                    {mov.type === 'IN' ? '+' : '-'}C${mov.amount.toFixed(2)}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Stats */}
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="bg-blue-50 rounded-xl p-3 text-center">
@@ -393,6 +491,107 @@ const CashRegisters: React.FC = () => {
                                     <p className="text-lg font-black text-emerald-700">C${selectedShift.grandTotal.toFixed(2)}</p>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ====== MODAL: FORZAR CIERRE DE CAJA (Calculadora de Denominaciones) ====== */}
+            {shiftToClose && (
+                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        {/* Modal Header */}
+                        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-red-100 text-red-600 rounded-xl flex items-center justify-center">
+                                    <Lock size={20} />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-bold text-slate-800">Forzar Cierre de Caja</h3>
+                                    <p className="text-xs text-slate-500 flex items-center gap-1">
+                                        <User size={12} /> Cajero: {shiftToClose.employee ? `${shiftToClose.employee.firstName} ${shiftToClose.employee.lastName}` : shiftToClose.user.name}
+                                    </p>
+                                </div>
+                            </div>
+                            <button onClick={() => setShiftToClose(null)} className="text-slate-400 hover:text-slate-600 bg-white p-2 rounded-full hover:bg-slate-200 transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="p-6 overflow-y-auto flex-1 bg-slate-50/50">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {/* Zona Izquierda: Calculadora */}
+                                <div className="space-y-4">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <Calculator className="text-blue-500" size={18} />
+                                        <h4 className="font-bold text-slate-700 text-sm uppercase tracking-wider">Calculadora de Efectivo</h4>
+                                    </div>
+                                    <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm grid grid-cols-2 gap-x-4 gap-y-3">
+                                        {[1000, 500, 200, 100, 50, 20, 10, 5, 1].map(den => (
+                                            <div key={den} className="flex items-center gap-2">
+                                                <span className="text-xs font-bold text-slate-500 w-12 text-right">C$ {den}</span>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    value={denominations[den as keyof typeof denominations] || ''}
+                                                    onChange={(e) => handleDenominationChange(den, e.target.value)}
+                                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all text-center"
+                                                    placeholder="0"
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Zona Derecha: Resumen y Notas */}
+                                <div className="space-y-6 flex flex-col justify-between">
+                                    {/* Total Box */}
+                                    <div className="bg-nortex-900 rounded-2xl p-6 text-center shadow-lg relative overflow-hidden">
+                                        <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2" />
+                                        <p className="text-nortex-accent text-xs font-bold uppercase tracking-widest mb-2 relative z-10">Total Declarado</p>
+                                        <p className="text-4xl font-black text-white tracking-tight relative z-10">
+                                            C${calculateTotalDeclared().toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </p>
+                                    </div>
+
+                                    {/* Expectativa del Sistema (Opcional, puede ocultarse si el cajero no debe verlo, pero al ser Admin, es útil) */}
+                                    <div className="bg-white border border-slate-200 rounded-2xl p-4 flex justify-between items-center shadow-sm">
+                                        <span className="text-xs font-bold text-slate-500 uppercase">Aprox. Sistema</span>
+                                        <span className="font-bold text-slate-800">C${shiftToClose.estimatedPhysicalCash.toFixed(2)}</span>
+                                    </div>
+
+                                    {/* Notas de Auditoría */}
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-2 ml-1">Notas de Auditoría (Opcional)</label>
+                                        <textarea
+                                            rows={3}
+                                            value={auditNotes}
+                                            onChange={(e) => setAuditNotes(e.target.value)}
+                                            placeholder="Justificación del cierre forzado, discrepancias, etc."
+                                            className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all resize-none shadow-sm"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="p-4 border-t border-slate-100 bg-white flex justify-end gap-3">
+                            <button
+                                onClick={() => setShiftToClose(null)}
+                                className="px-6 py-2.5 rounded-xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleForceClose}
+                                disabled={closing}
+                                className="px-6 py-2.5 rounded-xl font-bold text-white bg-red-600 hover:bg-red-700 shadow-lg shadow-red-200 transition-all active:scale-[0.98] flex items-center justify-center gap-2 min-w-[160px] disabled:opacity-75"
+                            >
+                                {closing ? <Loader2 className="animate-spin" size={18} /> : <Lock size={18} />}
+                                {closing ? 'Cerrando...' : 'Confirmar Cierre'}
+                            </button>
                         </div>
                     </div>
                 </div>

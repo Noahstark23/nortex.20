@@ -17,6 +17,7 @@ interface CartItem extends CatalogProduct {
 }
 
 interface BusinessInfo {
+    id: string;
     name: string;
     slug: string;
     phone?: string;
@@ -44,6 +45,9 @@ const PublicCatalog: React.FC = () => {
     const [showCheckout, setShowCheckout] = useState(false);
     const [customerName, setCustomerName] = useState('');
     const [customerPhone, setCustomerPhone] = useState('');
+    const [direccionEntrega, setDireccionEntrega] = useState('');
+    const [referenciaDireccion, setReferenciaDireccion] = useState('');
+    const [notas, setNotas] = useState('');
     const [phoneError, setPhoneError] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [orderSuccess, setOrderSuccess] = useState(false);
@@ -123,22 +127,25 @@ const PublicCatalog: React.FC = () => {
 
     const handleSubmitOrder = async () => {
         if (!customerName.trim()) return alert('Ingresa tu nombre');
+        if (!customerPhone.trim()) return alert('Ingresa tu teléfono');
+        if (!direccionEntrega.trim()) return alert('Ingresa tu dirección de entrega');
         if (!validatePhone(customerPhone)) return;
         setSubmitting(true);
 
         try {
-            const res = await fetch('/api/public/orders', {
+            const res = await fetch('/api/v1/pedidos', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    slug,
-                    customerName: customerName.trim(),
-                    customerPhone: customerPhone.trim() || null,
+                    tenantId: business?.id,
+                    clienteNombre: customerName.trim(),
+                    clienteTelefono: customerPhone.trim(),
+                    direccionEntrega: direccionEntrega.trim(),
+                    referenciaDireccion: referenciaDireccion.trim(),
+                    notas: notas.trim(),
                     items: cart.map(item => ({
-                        productId: item.id,
-                        name: item.name,
-                        quantity: item.quantity,
-                        price: item.price,
+                        productoId: item.id,
+                        cantidad: item.quantity
                     })),
                 }),
             });
@@ -148,6 +155,9 @@ const PublicCatalog: React.FC = () => {
                 setCart([]); // Triggers localStorage cleanup via useEffect
                 setCustomerName('');
                 setCustomerPhone('');
+                setDireccionEntrega('');
+                setReferenciaDireccion('');
+                setNotas('');
                 setPhoneError('');
             } else {
                 const data = await res.json();
@@ -492,7 +502,7 @@ const PublicCatalog: React.FC = () => {
                                 </div>
                                 <div>
                                     <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                                        Teléfono / WhatsApp (opcional)
+                                        Teléfono / WhatsApp *
                                     </label>
                                     <div className="relative">
                                         <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -509,6 +519,44 @@ const PublicCatalog: React.FC = () => {
                                     {phoneError && (
                                         <p className="text-xs text-red-500 mt-1">{phoneError}</p>
                                     )}
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                                        Dirección de Entrega *
+                                    </label>
+                                    <textarea
+                                        placeholder="Ej: Del parque central 2 cuadras al sur..."
+                                        value={direccionEntrega}
+                                        onChange={e => setDireccionEntrega(e.target.value)}
+                                        rows={2}
+                                        className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 text-slate-800 resize-none"
+                                    />
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                                            Referencia (Opcional)
+                                        </label>
+                                        <input
+                                            type="text"
+                                            placeholder="Color de casa, portón, etc."
+                                            value={referenciaDireccion}
+                                            onChange={e => setReferenciaDireccion(e.target.value)}
+                                            className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 text-slate-800"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                                            Notas al comercio
+                                        </label>
+                                        <input
+                                            type="text"
+                                            placeholder="Ej: Empaquetar para regalo"
+                                            value={notas}
+                                            onChange={e => setNotas(e.target.value)}
+                                            className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 text-slate-800"
+                                        />
+                                    </div>
                                 </div>
 
                                 {/* Order Summary */}
@@ -534,7 +582,7 @@ const PublicCatalog: React.FC = () => {
                                     </button>
                                     <button
                                         onClick={handleSubmitOrder}
-                                        disabled={submitting || !customerName.trim()}
+                                        disabled={submitting || !customerName.trim() || !customerPhone.trim() || !direccionEntrega.trim()}
                                         className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 shadow-lg shadow-emerald-200 transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         {submitting ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}

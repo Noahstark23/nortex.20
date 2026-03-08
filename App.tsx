@@ -28,6 +28,9 @@ import CashRegisters from './components/CashRegisters';
 import FinancialHealth from './components/FinancialHealth';
 import AuditDashboard from './components/AuditDashboard';
 import InventoryOracle from './components/InventoryOracle';
+import DeliveryManager from './components/DeliveryManager';
+import MotorizadosPanel from './components/MotorizadosPanel';
+import DriverView from './components/DriverView';
 
 // Emails autorizados como SUPER_ADMIN
 const SUPER_ADMIN_EMAILS = ['noelpinedaa96@gmail.com'];
@@ -68,6 +71,8 @@ const ProtectedApp = () => {
         <Route path="financial-health" element={<FinancialHealth />} />
         <Route path="audit" element={<AuditDashboard />} />
         <Route path="blueprint" element={<BlueprintViewer />} />
+        <Route path="delivery" element={<DeliveryManager />} />
+        <Route path="motorizados" element={<MotorizadosPanel />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
     </Layout>
@@ -104,6 +109,7 @@ function App() {
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password/:token" element={<ResetPassword />} />
         <Route path="/pedidos/:slug" element={<PublicCatalog />} />
+        <Route path="/driver/:id" element={<DriverView />} />
         <Route path="/admin" element={<ProtectedAdmin />} />
         <Route path="/app/*" element={<ProtectedApp />} />
       </Routes>

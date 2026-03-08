@@ -24,6 +24,8 @@ import Stripe from 'stripe';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import hrRouter from './routes/hr';
+import pedidosRouter from './routes/pedidos';
+import motorizadosRouter from './routes/motorizados';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -143,6 +145,8 @@ const loginLimiter = rateLimit({
 });
 app.use('/api/auth/login', loginLimiter as any);
 app.use('/api/hr', hrRouter);
+app.use('/api/v1/pedidos', pedidosRouter);
+app.use('/api/v1/motorizados', motorizadosRouter);
 
 // Response time header (para monitoreo)
 app.use((req: any, res: any, next: any) => {
@@ -4546,6 +4550,7 @@ app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) =
 
         res.json({
             business: {
+                id: tenant.id,
                 name: tenant.businessName,
                 slug: tenant.slug,
                 phone: tenant.phone,
@@ -4701,8 +4706,132 @@ app.patch('/api/public-orders/:id/convert', authenticate, async (req: any, res: 
         });
 
     } catch (error) {
-        console.error('Convert public order error:', error);
-        res.status(500).json({ error: 'Error al convertir pedido' });
+        console.error('Create public order error:', error);
+        res.status(500).json({ error: 'Error al procesar el pedido' });
+    }
+});
+
+// ==========================================
+// DRIVER APP (Rutas Públicas para Motorizados)
+// ==========================================
+
+// GET /api/public/driver/:id/orders
+// Retorna pedidos activos ('preparando', 'en_camino') asignados a este motorizado
+app.get('/api/public/driver/:id/orders', publicLimiter, async (req: any, res: any) => {
+    const motorizadoId = req.params.id;
+    try {
+        const motorizado = await prisma.motorizado.findUnique({ where: { id: motorizadoId } });
+        if (!motorizado || !motorizado.activo) {
+            return res.status(404).json({ error: 'Motorizado no encontrado o inactivo' });
+        }
+
+        const orders = await prisma.pedido.findMany({
+            where: {
+                motorizadoId,
+                estado: { in: ['preparando', 'en_camino'] }
+            },
+            include: {
+                items: {
+                    include: { producto: { select: { name: true } } }
+                }
+            },
+            orderBy: { createdAt: 'asc' }
+        });
+
+        res.json({ driver: motorizado, orders });
+    } catch (error) {
+        console.error('Get driver orders error:', error);
+        res.status(500).json({ error: 'Error al obtener pedidos del motorizado' });
+    }
+});
+
+// PATCH /api/public/driver/:id/orders/:orderId/deliver
+// Permite al motorizado marcar un pedido como 'entregado' (dispara contabilidad)
+app.patch('/api/public/driver/:id/orders/:orderId/deliver', async (req: any, res: any) => {
+    const motorizadoId = req.params.id;
+    const orderId = req.params.orderId;
+
+    try {
+        const pedido = await prisma.pedido.findFirst({
+            where: { id: orderId, motorizadoId },
+            include: { items: true }
+        });
+
+        if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado o no asignado a ti.' });
+        if (pedido.estado === 'entregado' || pedido.estado === 'cancelado') {
+            return res.status(400).json({ error: 'El pedido ya fue procesado.' });
+        }
+
+        // Mismo flujo contable que en routes/pedidos.ts pero sin `authReq.userId` (usa system/motorizado logic)
+        // Reimportamos recordSale localmente para evitar dependencias circulares complejas
+        const { recordSale } = await import('./services/accounting.js');
+
+        const updated = await prisma.$transaction(async (tx: any) => {
+            const p = await tx.pedido.update({
+                where: { id: orderId },
+                data: { estado: 'entregado', entregadoAt: new Date() }
+            });
+
+            await tx.trackingEvento.create({
+                data: {
+                    pedidoId: orderId,
+                    estado: 'entregado',
+                    nota: 'Entregado vía App del Motorizado'
+                }
+            });
+
+            if (!pedido.facturaId) {
+                let costTotal = 0;
+                const saleItemsData = [];
+                for (const item of pedido.items) {
+                    const prod = await tx.product.findUnique({ where: { id: item.productoId } });
+                    if (prod) {
+                        const unitCost = Number(prod.cost || 0);
+                        costTotal += (unitCost * item.cantidad);
+                        saleItemsData.push({
+                            productId: item.productoId,
+                            quantity: item.cantidad,
+                            priceAtSale: item.precioUnitario,
+                            costAtSale: unitCost,
+                            discount: 0
+                        });
+                    }
+                }
+
+                const sale = await tx.sale.create({
+                    data: {
+                        tenantId: pedido.tenantId,
+                        total: pedido.total,
+                        status: 'COMPLETED',
+                        paymentMethod: 'CASH',
+                        customerName: pedido.clienteNombre,
+                        items: { create: saleItemsData }
+                    }
+                });
+
+                await tx.payment.create({
+                    data: {
+                        saleId: sale.id,
+                        amount: pedido.total,
+                        method: 'CASH',
+                        collectedBy: 'SYSTEM_DRIVER' // Motorizado lo cobró
+                    }
+                });
+
+                await recordSale(tx, pedido.tenantId, 'SYSTEM_DRIVER', sale.id, Number(pedido.total), costTotal, 'CASH');
+
+                await tx.pedido.update({
+                    where: { id: orderId },
+                    data: { facturaId: sale.id }
+                });
+            }
+            return p;
+        });
+
+        res.json({ message: 'Entregado exitosamente', pedido: updated });
+    } catch (error) {
+        console.error('Driver deliver error:', error);
+        res.status(500).json({ error: 'Error al procesar la entrega.' });
     }
 });
 

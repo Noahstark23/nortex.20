@@ -28,42 +28,46 @@ model Tenant {
   subscriptionEndsAt   DateTime? // Fecha de vencimiento de la suscripción
   theftAlertThreshold  Decimal   @default(500) @db.Decimal(10, 2)
   // Campos Fiscales DGI
-  address       String?   // Dirección fiscal
-  phone         String?   // Teléfono del negocio
-  dgiAuthCode   String?   // Código autorización DGI (AIMS-xxxx)
-  dgiAuthDate   DateTime? // Fecha de autorización DGI
+  address              String? // Dirección fiscal
+  phone                String? // Teléfono del negocio
+  dgiAuthCode          String? // Código autorización DGI (AIMS-xxxx)
+  dgiAuthDate          DateTime? // Fecha de autorización DGI
   createdAt            DateTime  @default(now())
 
-  users           User[]
-  customers       Customer[]
-  suppliers       Supplier[]
-  employees       Employee[]
-  sales           Sale[]
-  shifts          Shift[]
-  auditLogs       AuditLog[]
-  expenses        Expense[]
-  b2bOrders       B2BOrder[]
-  products        Product[]
-  kardexMovements KardexMovement[]
-  purchases       Purchase[]
-  manualPayments  ManualPayment[]
-  quotations      Quotation[]
-  invitations     Invitation[]
-  cashMovements   CashMovement[]
-  productReturns  ProductReturn[]
-  accounts        Account[]
-  journalEntries  JournalEntry[]
+  users            User[]
+  customers        Customer[]
+  suppliers        Supplier[]
+  employees        Employee[]
+  sales            Sale[]
+  shifts           Shift[]
+  auditLogs        AuditLog[]
+  expenses         Expense[]
+  b2bOrders        B2BOrder[]
+  products         Product[]
+  kardexMovements  KardexMovement[]
+  purchases        Purchase[]
+  manualPayments   ManualPayment[]
+  quotations       Quotation[]
+  invitations      Invitation[]
+  cashMovements    CashMovement[]
+  productReturns   ProductReturn[]
+  accounts         Account[]
+  journalEntries   JournalEntry[]
   fiscalRetentions FiscalRetention[]
-  invoiceSeries   InvoiceSeries[]
-  publicOrders    PublicOrder[]
-  capitalLoans    CapitalLoan[]
+  invoiceSeries    InvoiceSeries[]
+  publicOrders     PublicOrder[]
+  capitalLoans     CapitalLoan[]
 
   // HR Module
-  leaveRequests         LeaveRequest[]
-  payrollRuns           PayrollRun[]
-  payrollLines          PayrollLine[]
-  salaryAdvances        SalaryAdvance[]
+  leaveRequests          LeaveRequest[]
+  payrollRuns            PayrollRun[]
+  payrollLines           PayrollLine[]
+  salaryAdvances         SalaryAdvance[]
   terminationSettlements TerminationSettlement[]
+
+  // Delivery module
+  motorizados Motorizado[]
+  pedidos     Pedido[]
 }
 
 model User {
@@ -99,10 +103,10 @@ model Invitation {
   id        String   @id @default(cuid())
   tenantId  String
   email     String
-  role      String   // MANAGER, CASHIER, VIEWER
+  role      String // MANAGER, CASHIER, VIEWER
   token     String   @unique
   status    String   @default("PENDING") // PENDING, ACCEPTED, EXPIRED
-  invitedBy String   // userId del que invitó
+  invitedBy String // userId del que invitó
   createdAt DateTime @default(now())
   expiresAt DateTime // 48 horas después de creación
 
@@ -309,30 +313,31 @@ model TaxReport {
 }
 
 model Sale {
-  id            String    @id @default(cuid())
-  tenantId      String
-  total         Decimal   @db.Decimal(10, 2)
-  status        String
-  paymentMethod String
-  customerName  String?
-  customerId    String?
-  employeeId    String?
-  balance       Decimal   @default(0) @db.Decimal(10, 2)
-  dueDate       DateTime?
-  shiftId       String?
-  createdAt     DateTime  @default(now())
+  id             String    @id @default(cuid())
+  tenantId       String
+  total          Decimal   @db.Decimal(10, 2)
+  status         String
+  paymentMethod  String
+  customerName   String?
+  customerId     String?
+  employeeId     String?
+  balance        Decimal   @default(0) @db.Decimal(10, 2)
+  dueDate        DateTime?
+  shiftId        String?
+  createdAt      DateTime  @default(now())
   globalDiscount Float     @default(0)
   // Facturación DGI
-  invoiceNumber  Int?      // Consecutivo controlado (1, 2, 3...)
-  invoiceSeries  String?   // Serie: "A", "B" (por sucursal)
+  invoiceNumber  Int? // Consecutivo controlado (1, 2, 3...)
+  invoiceSeries  String? // Serie: "A", "B" (por sucursal)
 
-  tenant   Tenant     @relation(fields: [tenantId], references: [id])
-  customer Customer?  @relation(fields: [customerId], references: [id])
-  employee Employee?  @relation(fields: [employeeId], references: [id])
-  shift    Shift?     @relation(fields: [shiftId], references: [id])
-  items    SaleItem[]
-  payments Payment[]
+  tenant         Tenant          @relation(fields: [tenantId], references: [id])
+  customer       Customer?       @relation(fields: [customerId], references: [id])
+  employee       Employee?       @relation(fields: [employeeId], references: [id])
+  shift          Shift?          @relation(fields: [shiftId], references: [id])
+  items          SaleItem[]
+  payments       Payment[]
   productReturns ProductReturn[]
+  pedidos        Pedido[]
 
   @@index([tenantId])
   @@index([customerId])
@@ -419,10 +424,10 @@ model CashMovement {
   tenantId    String
   shiftId     String
   userId      String
-  type        String    // IN | OUT
+  type        String // IN | OUT
   amount      Decimal   @db.Decimal(10, 2)
   currency    String    @default("NIO") // NIO | USD
-  category    String    // GASTO_OPERATIVO | PAGO_PROVEEDOR | RETIRO_PERSONAL | CAMBIO | INYECCION_CAPITAL | AJUSTE
+  category    String // GASTO_OPERATIVO | PAGO_PROVEEDOR | RETIRO_PERSONAL | CAMBIO | INYECCION_CAPITAL | AJUSTE
   description String    @db.Text
   expenseId   String?   @unique // Auto-linked Expense (for OUT movements)
   isVoided    Boolean   @default(false) // Soft delete: movimiento anulado
@@ -505,6 +510,7 @@ model Product {
   tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   creator         User             @relation(fields: [createdBy], references: [id])
   kardexMovements KardexMovement[]
+  pedidoItems     PedidoItem[]
 
   @@unique([tenantId, sku])
   @@index([tenantId])
@@ -616,7 +622,7 @@ model ProductReturn {
   saleId    String
   total     Decimal  @db.Decimal(10, 2) // Total del reembolso
   reason    String   @db.Text
-  items     Json     // [{productId, name, quantity, price}]
+  items     Json // [{productId, name, quantity, price}]
   createdBy String
   createdAt DateTime @default(now())
 
@@ -634,9 +640,9 @@ model ProductReturn {
 model Account {
   id       String  @id @default(cuid())
   tenantId String
-  code     String  // "1.1.1", "4.1.1", etc.
-  name     String  // "Caja General", "Inventario", "Ventas"
-  type     String  // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
+  code     String // "1.1.1", "4.1.1", etc.
+  name     String // "Caja General", "Inventario", "Ventas"
+  type     String // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
   subtype  String? // CURRENT_ASSET, FIXED_ASSET, CURRENT_LIABILITY, etc.
   balance  Decimal @default(0) @db.Decimal(14, 2)
   isSystem Boolean @default(true) // Cuentas del sistema (no borrables)
@@ -654,8 +660,8 @@ model JournalEntry {
   tenantId      String
   date          DateTime @default(now())
   description   String   @db.Text
-  referenceId   String?  // Sale.id, Purchase.id, etc.
-  referenceType String?  // SALE, PURCHASE, EXPENSE, PAYROLL, ADJUSTMENT, RETURN, PAYMENT
+  referenceId   String? // Sale.id, Purchase.id, etc.
+  referenceType String? // SALE, PURCHASE, EXPENSE, PAYROLL, ADJUSTMENT, RETURN, PAYMENT
   isAutomatic   Boolean  @default(true)
   createdBy     String
   createdAt     DateTime @default(now())
@@ -685,13 +691,13 @@ model JournalLine {
 model FiscalRetention {
   id          String   @id @default(cuid())
   tenantId    String
-  type        String   // IR_2PCT, IMI_1PCT, IVA_RETENIDO
+  type        String // IR_2PCT, IMI_1PCT, IVA_RETENIDO
   amount      Decimal  @db.Decimal(10, 2)
   baseAmount  Decimal  @db.Decimal(10, 2)
   supplierId  String?
   purchaseId  String?
   description String   @db.Text
-  period      String   // "2026-02"
+  period      String // "2026-02"
   createdAt   DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
@@ -708,8 +714,8 @@ model InvoiceSeries {
   id         String  @id @default(cuid())
   tenantId   String
   series     String  @default("A") // Serie de factura (A, B, etc.)
-  lastNumber Int     @default(0)    // Último consecutivo emitido
-  rangeStart Int     @default(1)    // Rango autorizado DGI: desde
+  lastNumber Int     @default(0) // Último consecutivo emitido
+  rangeStart Int     @default(1) // Rango autorizado DGI: desde
   rangeEnd   Int     @default(999999) // Rango autorizado DGI: hasta
   isActive   Boolean @default(true)
 
@@ -727,13 +733,13 @@ model LeaveRequest {
   id         String   @id @default(cuid())
   tenantId   String
   employeeId String
-  type       String   // SICK, VACATION, UNPAID, MATERNITY
+  type       String // SICK, VACATION, UNPAID, MATERNITY
   startDate  DateTime
   endDate    DateTime
   status     String   @default("PENDING") // PENDING, APPROVED, REJECTED
-  
-  tenant     Tenant   @relation(fields: [tenantId], references: [id])
-  employee   Employee @relation(fields: [employeeId], references: [id])
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
 
   @@index([tenantId])
   @@index([employeeId])
@@ -746,7 +752,7 @@ model PayrollRun {
   periodEnd   DateTime
   totalAmount Decimal  @default(0) @db.Decimal(10, 2)
   status      String   @default("DRAFT") // DRAFT, APPROVED, PAID
-  
+
   tenant       Tenant        @relation(fields: [tenantId], references: [id])
   payrollLines PayrollLine[]
 
@@ -754,22 +760,22 @@ model PayrollRun {
 }
 
 model PayrollLine {
-  id                 String   @id @default(cuid())
-  tenantId           String
-  payrollRunId       String
-  employeeId         String
-  basePay            Decimal  @db.Decimal(10, 2)
-  overtimePay        Decimal  @default(0) @db.Decimal(10, 2)
-  commissions        Decimal  @default(0) @db.Decimal(10, 2)
-  bonuses            Decimal  @default(0) @db.Decimal(10, 2)
-  inssDeduction      Decimal  @default(0) @db.Decimal(10, 2)
-  irDeduction        Decimal  @default(0) @db.Decimal(10, 2)
-  advanceDeductions  Decimal  @default(0) @db.Decimal(10, 2)
-  netPay             Decimal  @db.Decimal(10, 2)
+  id                String  @id @default(cuid())
+  tenantId          String
+  payrollRunId      String
+  employeeId        String
+  basePay           Decimal @db.Decimal(10, 2)
+  overtimePay       Decimal @default(0) @db.Decimal(10, 2)
+  commissions       Decimal @default(0) @db.Decimal(10, 2)
+  bonuses           Decimal @default(0) @db.Decimal(10, 2)
+  inssDeduction     Decimal @default(0) @db.Decimal(10, 2)
+  irDeduction       Decimal @default(0) @db.Decimal(10, 2)
+  advanceDeductions Decimal @default(0) @db.Decimal(10, 2)
+  netPay            Decimal @db.Decimal(10, 2)
 
-  tenant       Tenant       @relation(fields: [tenantId], references: [id])
-  payrollRun   PayrollRun   @relation(fields: [payrollRunId], references: [id])
-  employee     Employee     @relation(fields: [employeeId], references: [id])
+  tenant       Tenant          @relation(fields: [tenantId], references: [id])
+  payrollRun   PayrollRun      @relation(fields: [payrollRunId], references: [id])
+  employee     Employee        @relation(fields: [employeeId], references: [id])
   advancesPaid SalaryAdvance[]
 
   @@index([tenantId])
@@ -778,17 +784,17 @@ model PayrollLine {
 }
 
 model SalaryAdvance {
-  id                 String   @id @default(cuid())
+  id                 String  @id @default(cuid())
   tenantId           String
   employeeId         String
-  amount             Decimal  @db.Decimal(10, 2)
-  fee                Decimal  @default(0) @db.Decimal(10, 2)
-  status             String   @default("PENDING") // PENDING, APPROVED, REJECTED, DEDUCTED
+  amount             Decimal @db.Decimal(10, 2)
+  fee                Decimal @default(0) @db.Decimal(10, 2)
+  status             String  @default("PENDING") // PENDING, APPROVED, REJECTED, DEDUCTED
   repaymentPayrollId String?
 
-  tenant             Tenant   @relation(fields: [tenantId], references: [id])
-  employee           Employee @relation(fields: [employeeId], references: [id])
-  repaymentPayroll   PayrollLine? @relation(fields: [repaymentPayrollId], references: [id])
+  tenant           Tenant       @relation(fields: [tenantId], references: [id])
+  employee         Employee     @relation(fields: [employeeId], references: [id])
+  repaymentPayroll PayrollLine? @relation(fields: [repaymentPayrollId], references: [id])
 
   @@index([tenantId])
   @@index([employeeId])
@@ -800,14 +806,14 @@ model TerminationSettlement {
   tenantId        String
   employeeId      String   @unique
   terminationDate DateTime
-  reason          String   // RESIGNATION, DISMISSAL, JUSTIFIED
+  reason          String // RESIGNATION, DISMISSAL, JUSTIFIED
   aguinaldoAmount Decimal  @default(0) @db.Decimal(10, 2)
   vacationAmount  Decimal  @default(0) @db.Decimal(10, 2)
   severanceAmount Decimal  @default(0) @db.Decimal(10, 2)
   totalAmount     Decimal  @default(0) @db.Decimal(10, 2)
 
-  tenant          Tenant   @relation(fields: [tenantId], references: [id])
-  employee        Employee @relation(fields: [employeeId], references: [id])
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
 
   @@index([tenantId])
 }
@@ -821,7 +827,7 @@ model PublicOrder {
   tenantId      String
   customerName  String
   customerPhone String?
-  items         Json     // [{productId, name, quantity, price}]
+  items         Json // [{productId, name, quantity, price}]
   status        String   @default("PENDING") // PENDING | CONVERTED
   createdAt     DateTime @default(now())
 
@@ -836,19 +842,90 @@ model PublicOrder {
 // ==========================================
 
 model CapitalLoan {
-  id               String    @id @default(cuid())
+  id               String   @id @default(cuid())
   tenantId         String
-  amount           Decimal   @db.Decimal(12, 2)  // Monto prestado
-  interestRate     Decimal   @db.Decimal(5, 4)    // 0.05 = 5%
-  totalDue         Decimal   @db.Decimal(12, 2)   // amount * (1 + rate)
-  dueDate          DateTime                       // Vencimiento
-  status           String    @default("ACTIVE")   // ACTIVE | PAID | DEFAULTED
-  linkedPurchaseId String?   @unique              // Compra financiada (1:1)
-  createdAt        DateTime  @default(now())
+  amount           Decimal  @db.Decimal(12, 2) // Monto prestado
+  interestRate     Decimal  @db.Decimal(5, 4) // 0.05 = 5%
+  totalDue         Decimal  @db.Decimal(12, 2) // amount * (1 + rate)
+  dueDate          DateTime // Vencimiento
+  status           String   @default("ACTIVE") // ACTIVE | PAID | DEFAULTED
+  linkedPurchaseId String?  @unique // Compra financiada (1:1)
+  createdAt        DateTime @default(now())
 
   tenant   Tenant    @relation(fields: [tenantId], references: [id])
   purchase Purchase? @relation(fields: [linkedPurchaseId], references: [id])
 
   @@index([tenantId])
   @@index([status])
+}
+
+model Motorizado {
+  id            String   @id @default(uuid())
+  tenantId      String? // Opcional: Si es nulo, es un motorizado global de Nortex
+  tipoFlota     String   @default("PROPIA") // "PROPIA" (de la ferretería) o "NORTEX" (freelance)
+  nombre        String   @db.VarChar(100)
+  telefono      String   @db.VarChar(20)
+  zonaCobertura String   @db.VarChar(100)
+  activo        Boolean  @default(true)
+  walletId      String?  @unique // ¡Su propia cuenta bancaria Nortex!
+  createdAt     DateTime @default(now())
+
+  tenant  Tenant?  @relation(fields: [tenantId], references: [id])
+  pedidos Pedido[]
+
+  @@index([tenantId])
+}
+
+model Pedido {
+  id                  String    @id @default(uuid())
+  tenantId            String
+  clienteNombre       String    @db.VarChar(100)
+  clienteTelefono     String    @db.VarChar(20)
+  direccionEntrega    String    @db.Text
+  referenciaDireccion String?   @db.Text
+  motorizadoId        String?
+  estado              String    @default("pendiente") // pendiente, preparando, en_camino, entregado, cancelado
+  total               Decimal   @db.Decimal(10, 2)
+  costoEntrega        Decimal   @db.Decimal(10, 2)
+  facturaId           String?
+  notas               String?   @db.Text
+  createdAt           DateTime  @default(now())
+  entregadoAt         DateTime?
+
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  motorizado Motorizado?      @relation(fields: [motorizadoId], references: [id])
+  factura    Sale?            @relation(fields: [facturaId], references: [id])
+  items      PedidoItem[]
+  eventos    TrackingEvento[]
+
+  @@index([tenantId])
+  @@index([motorizadoId])
+  @@index([facturaId])
+}
+
+model PedidoItem {
+  id             String  @id @default(uuid())
+  pedidoId       String
+  productoId     String
+  cantidad       Int
+  precioUnitario Decimal @db.Decimal(10, 2)
+  subtotal       Decimal @db.Decimal(10, 2)
+
+  pedido   Pedido  @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  producto Product @relation(fields: [productoId], references: [id])
+
+  @@index([pedidoId])
+  @@index([productoId])
+}
+
+model TrackingEvento {
+  id        String   @id @default(uuid())
+  pedidoId  String
+  estado    String
+  nota      String?  @db.Text
+  createdAt DateTime @default(now())
+
+  pedido Pedido @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+  @@index([pedidoId])
 }
