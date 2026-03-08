@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
-    ArrowDownCircle, ArrowUpCircle, Shield, X, ChevronDown,
-    RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe
+    RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
+    Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle
 } from 'lucide-react';
 import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
@@ -88,6 +88,7 @@ export default function Inventory() {
     const [showKardexModal, setShowKardexModal] = useState(false);
     const [showAdjustModal, setShowAdjustModal] = useState(false);
     const [showDropdown, setShowDropdown] = useState(false);
+    const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
 
     // Kardex
     const [kardexData, setKardexData] = useState<KardexEntry[]>([]);
@@ -141,6 +142,7 @@ export default function Inventory() {
             console.error('Error fetching products:', e);
         } finally {
             setLoading(false);
+            setSelectedProductIds([]); // Reset selection on fetch
         }
     }, [searchTerm, headers]);
 
@@ -389,6 +391,53 @@ export default function Inventory() {
     };
 
     // ==========================================
+    // BULK PUBLISH
+    // ==========================================
+
+    const handleBulkPublish = async (publish: boolean) => {
+        if (selectedProductIds.length === 0) return;
+
+        try {
+            const res = await fetch('/api/products/publish-bulk', {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify({
+                    productIds: selectedProductIds,
+                    isPublished: publish
+                })
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                fetchProducts();
+                setSelectedProductIds([]);
+                // alert(`Catálogo actualizado: ${data.count} productos modificados`);
+            } else {
+                const error = await res.json();
+                alert(`Error: ${error.error}`);
+            }
+        } catch (e) {
+            alert('Error actualizando productos de forma masiva');
+        }
+    };
+
+    const toggleSelection = (productId: string) => {
+        setSelectedProductIds(prev =>
+            prev.includes(productId)
+                ? prev.filter(id => id !== productId)
+                : [...prev, productId]
+        );
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedProductIds.length === filteredProducts.length) {
+            setSelectedProductIds([]);
+        } else {
+            setSelectedProductIds(filteredProducts.map(p => p.id));
+        }
+    };
+
+    // ==========================================
     // FILTERED PRODUCTS
     // ==========================================
 
@@ -531,12 +580,50 @@ export default function Inventory() {
                 </div>
             </div>
 
+            {/* BULK ACTIONS BAR */}
+            {selectedProductIds.length > 0 && isOwner && (
+                <div className="bg-blue-900/40 border border-blue-500/30 rounded-lg p-3 flex items-center justify-between mb-4 shadow-lg animate-in fade-in slide-in-from-top-2">
+                    <div className="flex items-center gap-3">
+                        <CheckSquare size={18} className="text-blue-400" />
+                        <span className="text-white font-medium">
+                            {selectedProductIds.length} productos seleccionados
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={() => handleBulkPublish(true)}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                        >
+                            <Globe size={16} />
+                            Publicar
+                        </button>
+                        <button
+                            onClick={() => handleBulkPublish(false)}
+                            className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors border border-slate-600"
+                        >
+                            <EyeOff size={16} />
+                            Ocultar
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* PRODUCTS TABLE */}
             <div className="bg-slate-800/60 rounded-xl border border-slate-700 overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full">
                         <thead>
                             <tr className="bg-slate-900/80">
+                                {isOwner && (
+                                    <th className="text-center px-4 py-3">
+                                        <input
+                                            type="checkbox"
+                                            checked={filteredProducts.length > 0 && selectedProductIds.length === filteredProducts.length}
+                                            onChange={toggleSelectAll}
+                                            className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-slate-900"
+                                        />
+                                    </th>
+                                )}
                                 <th className="text-left px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">SKU</th>
                                 <th className="text-left px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Producto</th>
                                 <th className="text-left px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Categoría</th>
@@ -580,6 +667,16 @@ export default function Inventory() {
 
                                     return (
                                         <tr key={product.id} className={`${rowBg} transition-colors`}>
+                                            {isOwner && (
+                                                <td className="px-4 py-3 text-center">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedProductIds.includes(product.id)}
+                                                        onChange={() => toggleSelection(product.id)}
+                                                        className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-slate-900"
+                                                    />
+                                                </td>
+                                            )}
                                             <td className="px-4 py-3">
                                                 <span className="font-mono text-sm text-slate-300 bg-slate-900/60 px-2 py-0.5 rounded">
                                                     {product.sku}

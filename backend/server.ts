@@ -2399,6 +2399,31 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
     }
 });
 
+// PATCH /api/products/publish-bulk - Bulk toggle public catalog visibility (Solo OWNER/ADMIN)
+app.patch('/api/products/publish-bulk', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { productIds, isPublished } = req.body;
+
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+        return res.status(400).json({ error: 'Lista de productos inválida' });
+    }
+
+    try {
+        const result = await prisma.product.updateMany({
+            where: {
+                id: { in: productIds },
+                tenantId: authReq.tenantId!
+            },
+            data: { isPublished }
+        });
+
+        res.json({ message: `${result.count} productos actualizados`, count: result.count });
+    } catch (error) {
+        console.error('Error bulk updating products:', error);
+        res.status(500).json({ error: 'Error actualizando productos' });
+    }
+});
+
 // PATCH /api/products/:id/publish - Toggle public catalog visibility (Solo OWNER/ADMIN)
 app.patch('/api/products/:id/publish', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
