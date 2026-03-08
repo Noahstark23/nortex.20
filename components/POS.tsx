@@ -197,10 +197,11 @@ const POS: React.FC = () => {
     // ==========================================
     useEffect(() => {
         const initPOS = async () => {
-            try {
-                const token = localStorage.getItem('nortex_token');
+            const token = localStorage.getItem('nortex_token');
+            let hasOpenShift = false;
 
-                // 1. Check Shift (Cache busting to avoid stale 'not found' after navigating)
+            // 1. Check Shift (Cache busting to avoid stale 'not found' after navigating)
+            try {
                 const res = await fetch(`/api/shifts/current?t=${Date.now()}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -208,32 +209,42 @@ const POS: React.FC = () => {
                 if (res.ok && data) {
                     setCurrentShift(data);
                     setShowOpenShift(false);
+                    hasOpenShift = true;
                 } else {
                     setCurrentShift(null);
                     setShowOpenShift(true);
                 }
+            } catch (e) {
+                console.error("Failed to check shift", e);
+                setCurrentShift(null);
+                setShowOpenShift(true);
+            } finally {
+                setShiftLoading(false);
+            }
 
-                // 2. Fetch Customers for Dropdown
+            // 2. Fetch Customers for Dropdown
+            try {
                 const custRes = await fetch('/api/customers', {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (custRes.ok) {
                     setCustomerList(await custRes.json());
                 }
+            } catch (e) {
+                console.error("Failed to fetch customers", e);
+            }
 
-                // 3. Check for Ghost Cart
+            // 3. Check for Ghost Cart
+            try {
                 const pendingCart = localStorage.getItem('nortex_pending_cart');
-                if (pendingCart) {
+                if (pendingCart && pendingCart !== 'undefined') {
                     setCart(JSON.parse(pendingCart));
                     localStorage.removeItem('nortex_pending_cart');
-                    if (!data) alert("¡Bienvenido! Abre tu caja para completar la venta de la demo.");
+                    if (!hasOpenShift) alert("¡Bienvenido! Abre tu caja para completar la venta de la demo o cotización.");
                 }
-
             } catch (e) {
-                console.error("Failed to check shift", e);
-                setShowOpenShift(true);
-            } finally {
-                setShiftLoading(false);
+                console.error("Failed to parse ghost cart", e);
+                localStorage.removeItem('nortex_pending_cart');
             }
         };
         initPOS();
