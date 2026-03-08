@@ -71,14 +71,15 @@ const CashRegisters: React.FC = () => {
         const finalCashDeclared = calculateTotalDeclared();
 
         try {
-            const res = await fetch(`/api/shifts/${shiftToClose.id}/close`, {
-                method: 'POST', // Or PATCH depending on backend, using POST as per standard action endpoints
+            const res = await fetch(`/api/shifts/close`, {
+                method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     ...headers
                 },
                 body: JSON.stringify({
-                    finalCashDeclared,
+                    shiftId: shiftToClose.id,
+                    declaredCash: finalCashDeclared,
                     auditNotes
                 })
             });

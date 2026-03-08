@@ -1552,7 +1552,7 @@ app.post('/api/shifts/open', authenticate, async (req: any, res: any) => {
 });
 app.post('/api/shifts/close', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { declaredCash, shiftId } = req.body;
+    const { declaredCash, shiftId, auditNotes } = req.body;
     try {
         const shift = await prisma.shift.findUnique({
             where: { id: shiftId },
@@ -1611,7 +1611,8 @@ app.post('/api/shifts/close', authenticate, async (req: any, res: any) => {
                         salidasManuales: manualOUTs,
                         fondoInicial: Number(shift.initialCash),
                         totalVentas: shift.sales.length,
-                        totalMovimientos: shift.cashMovements.length
+                        totalMovimientos: shift.cashMovements.length,
+                        notasRevisor: auditNotes || 'Sin notas.'
                     })
                 }
             });
