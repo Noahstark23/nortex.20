@@ -1,12 +1,12 @@
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
-import { authenticateToken } from '../middleware/auth'; // Usamos tu middleware actual
+import { authenticate } from '../middleware/auth';
 
 const router = express.Router();
 const prisma = new PrismaClient();
 
 // 1. ORIGINAR UN CRÉDITO (Desembolso)
-router.post('/', authenticateToken, async (req: any, res: any) => {
+router.post('/', authenticate, async (req: any, res: any) => {
     try {
         const { clientName, clientPhone, clientAddress, principalAmount, interestRate, installments, frequency, type } = req.body;
         const lenderId = req.user.tenantId; // El tenant que presta el dinero
@@ -48,7 +48,7 @@ router.post('/', authenticateToken, async (req: any, res: any) => {
 });
 
 // 2. REGISTRAR COBRO DIARIO (Para el Motorizado)
-router.post('/:id/repayments', authenticateToken, async (req: any, res: any) => {
+router.post('/:id/repayments', authenticate, async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { amountPaid, collectedBy, notes } = req.body;
@@ -95,7 +95,7 @@ router.post('/:id/repayments', authenticateToken, async (req: any, res: any) => 
 });
 
 // 3. LISTAR CARTERA (Dashboard del Inversor)
-router.get('/', authenticateToken, async (req: any, res: any) => {
+router.get('/', authenticate, async (req: any, res: any) => {
     try {
         const lenderId = req.user.tenantId;
         const loans = await prisma.loan.findMany({
