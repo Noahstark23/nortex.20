@@ -929,3 +929,74 @@ model TrackingEvento {
 
   @@index([pedidoId])
 }
+
+// ==========================================
+// 🦄 MÓDULO NORTEX PRESTAMISTAS (AISLADO)
+// ==========================================
+
+enum LoanType {
+  INFORMAL_FLAT    // Préstamo de calle (Gota a Gota), interés fijo desde el día 1
+  FORMAL_AMORTIZED // Préstamo de financiera, interés sobre saldo
+}
+
+enum PaymentFrequency {
+  DAILY       // Diario (Típico informal)
+  WEEKLY      // Semanal
+  BIWEEKLY    // Quincenal
+  MONTHLY     // Mensual (Típico financiera)
+}
+
+enum LoanStatus {
+  PENDING
+  ACTIVE
+  DEFAULTED   // En mora / incobrable
+  PAID_OFF    // Pagado totalmente
+}
+
+model Loan {
+  id                String           @id @default(uuid())
+  // Relaciones (Opcionales si el cliente no está en el sistema Nortex aún)
+  tenantId          String?          // Si le prestamos a una Ferretería Nortex
+  lenderId          String           // El Tenant que está prestando la plata
+  
+  // Datos del Cliente Externo (Para préstamos de calle)
+  clientName        String
+  clientPhone       String?
+  clientAddress     String?
+
+  // Configuración del Dinero
+  type              LoanType         @default(INFORMAL_FLAT)
+  frequency         PaymentFrequency @default(DAILY)
+  
+  principalAmount   Decimal          @db.Decimal(12, 2) // Capital prestado
+  interestRate      Decimal          @db.Decimal(5, 2)  // Tasa de interés (%)
+  totalToRepay      Decimal          @db.Decimal(12, 2) // Capital + Interés (Flat)
+  balanceRemaining  Decimal          @db.Decimal(12, 2) // Cuánto debe a hoy
+
+  installments      Int              // Número de cuotas (ej: 30 días)
+  installmentAmount Decimal          @db.Decimal(10, 2) // De a cuánto toca la cuota
+  
+  status            LoanStatus       @default(ACTIVE)
+  disbursedAt       DateTime         @default(now())
+  dueDate           DateTime         // Fecha límite final
+
+  // Historial de cobros
+  payments          Repayment[]
+
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+}
+
+model Repayment {
+  id                String   @id @default(uuid())
+  loanId            String
+  loan              Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  
+  amountPaid        Decimal  @db.Decimal(10, 2)
+  paymentDate       DateTime @default(now())
+  collectedBy       String?  // Nombre del cobrador de la moto
+  
+  notes             String?  @db.Text
+  createdAt         DateTime @default(now())
+}
+

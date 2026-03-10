@@ -26,6 +26,7 @@ import { fileURLToPath } from 'url';
 import hrRouter from './routes/hr';
 import pedidosRouter from './routes/pedidos';
 import motorizadosRouter from './routes/motorizados';
+import loanRoutes from './routes/loans';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -147,6 +148,7 @@ app.use('/api/auth/login', loginLimiter as any);
 app.use('/api/hr', hrRouter);
 app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
+app.use('/api/loans', loanRoutes);
 
 // Response time header (para monitoreo)
 app.use((req: any, res: any, next: any) => {
