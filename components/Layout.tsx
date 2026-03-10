@@ -28,6 +28,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     }
   } catch (e) { /* ignore decode errors */ }
 
+  if (userRole === 'COLLECTOR') {
+    // Retorna ÚNICAMENTE la vista del motorizado sin menú lateral completo
+    return (
+      <div className="mobile-only-layout min-h-screen bg-slate-900">
+        {children}
+      </div>
+    );
+  }
+
   const navItems = [
     { path: '/app/pos', label: 'Punto de Venta', icon: ShoppingCart },
     // Cajas y Arqueos: only for OWNER/ADMIN/MANAGER

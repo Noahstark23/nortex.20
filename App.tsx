@@ -29,7 +29,8 @@ import FinancialHealth from './components/FinancialHealth';
 import AuditDashboard from './components/AuditDashboard';
 import InventoryOracle from './components/InventoryOracle';
 import DeliveryManager from './components/DeliveryManager';
-import MotorizadosPanel from './components/MotorizadosPanel';
+import MotorizadosPanel from './components/LenderMode/MotorizadosPanel';
+import LenderDashboard from './components/LenderMode/LenderDashboard';
 import DriverView from './components/DriverView';
 
 // Emails autorizados como SUPER_ADMIN
@@ -46,6 +47,14 @@ const ProtectedApp = () => {
       const user = JSON.parse(userStr);
       if (user.role === 'SUPER_ADMIN' || SUPER_ADMIN_EMAILS.includes(user.email)) {
         return <Navigate to="/admin" replace />;
+      }
+
+      // LENDER Tenant Logic
+      if (user.tenant?.type === 'LENDER') {
+        if (user.role === 'COLLECTOR') {
+          return <MotorizadosPanel />;
+        }
+        return <LenderDashboard />;
       }
     }
   } catch (e) { }
