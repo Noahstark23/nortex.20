@@ -185,6 +185,7 @@ app.post('/api/auth/register', async (req: any, res: any) => {
             const tenant = await tx.tenant.create({
                 data: {
                     businessName: companyName,
+                    type: type || 'FERRETERIA', // GUARDA EL TIPO LENDER AQUI
                     taxId: `TAX-${Date.now()}`, // Generate unique tax ID
                     walletBalance: 10000, // Initial balance for testing
                     creditLimit: 5000,
