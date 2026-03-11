@@ -11,12 +11,30 @@ const MotorizadosPanel: React.FC = () => {
     const [expenseAmount, setExpenseAmount] = useState('');
     const [expenseDesc, setExpenseDesc] = useState('');
     const [expenseSaved, setExpenseSaved] = useState(false);
+    const [offlineQueue, setOfflineQueue] = useState<any[]>(JSON.parse(localStorage.getItem('nortex_offline_queue') || '[]'));
+    const [isOffline, setIsOffline] = useState(!navigator.onLine);
     const navigate = useNavigate();
 
     // 1. CARGAR CARTERA REAL DEL BACKEND
     useEffect(() => {
         fetchLoans();
     }, []);
+
+    // Detector de conexión
+    useEffect(() => {
+        const handleOnline = () => {
+            setIsOffline(false);
+            syncOfflineQueue();
+        };
+        const handleOffline = () => setIsOffline(true);
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, [offlineQueue]);
 
     const fetchLoans = async () => {
         try {
@@ -34,42 +52,80 @@ const MotorizadosPanel: React.FC = () => {
         }
     };
 
-    // 2. REGISTRAR COBRO REAL EN LA BÓVEDA
+    // 2. REGISTRAR COBRO (ONLINE + OFFLINE)
     const handleCobro = async () => {
         if (!selectedLoan || !amount) return;
         setLoading(true);
 
-        try {
-            const token = localStorage.getItem('nortex_token');
-            const userStr = localStorage.getItem('nortex_user');
-            const collectorName = userStr ? JSON.parse(userStr).name : 'MOTO-01';
+        const token = localStorage.getItem('nortex_token');
+        const userStr = localStorage.getItem('nortex_user');
+        const collectorName = userStr ? JSON.parse(userStr).name : 'MOTO-01';
 
+        const payload = {
+            amountPaid: parseFloat(amount),
+            collectedBy: collectorName,
+            notes: isOffline ? 'Cobro registrado OFFLINE' : 'Cobro de ruta diario',
+            timestamp: new Date().toISOString()
+        };
+
+        if (isOffline) {
+            // MODO BUNKER: Guardar localmente
+            const newQueue = [...offlineQueue, { loanId: selectedLoan, payload }];
+            setOfflineQueue(newQueue);
+            localStorage.setItem('nortex_offline_queue', JSON.stringify(newQueue));
+            setSuccess(true);
+            setAmount('');
+            setLoading(false);
+            setTimeout(() => setSuccess(false), 3000);
+            return;
+        }
+
+        try {
             const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/${selectedLoan}/repayments`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    amountPaid: parseFloat(amount),
-                    collectedBy: collectorName,
-                    notes: 'Cobro de ruta diario'
-                })
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify(payload)
             });
-
             const data = await response.json();
-
             if (data.success) {
                 setSuccess(true);
                 setAmount('');
-                fetchLoans(); // Recargar los saldos actualizados
+                fetchLoans();
                 setTimeout(() => setSuccess(false), 8000);
             }
         } catch (error) {
-            console.error("Error al procesar el pago", error);
+            // Si falla el servidor, mandamos a la cola offline
+            const newQueue = [...offlineQueue, { loanId: selectedLoan, payload }];
+            setOfflineQueue(newQueue);
+            localStorage.setItem('nortex_offline_queue', JSON.stringify(newQueue));
+            setSuccess(true);
+            setTimeout(() => setSuccess(false), 3000);
         } finally {
             setLoading(false);
         }
+    };
+
+    // Sincronización automática cuando vuelve la señal
+    const syncOfflineQueue = async () => {
+        if (offlineQueue.length === 0) return;
+        const token = localStorage.getItem('nortex_token');
+        let remainingQueue = [...offlineQueue];
+
+        for (const item of offlineQueue) {
+            try {
+                await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/${item.loanId}/repayments`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify(item.payload)
+                });
+                remainingQueue = remainingQueue.filter(q => q !== item);
+            } catch (error) {
+                console.error('Fallo al sincronizar, se intentará luego', error);
+            }
+        }
+        setOfflineQueue(remainingQueue);
+        localStorage.setItem('nortex_offline_queue', JSON.stringify(remainingQueue));
+        if (remainingQueue.length < offlineQueue.length) fetchLoans();
     };
 
     const handleLogout = () => {
@@ -99,6 +155,24 @@ const MotorizadosPanel: React.FC = () => {
                     <LogOut size={20} />
                 </button>
             </header>
+
+            {/* Alertas de conexión */}
+            {isOffline && (
+                <div className="bg-orange-500/20 border border-orange-500 text-orange-400 p-3 rounded-xl mb-4 flex items-center gap-3 text-sm font-bold">
+                    <AlertCircle size={20} />
+                    <span>MODO SIN CONEXIÓN. Los cobros se guardarán y se enviarán al recuperar la señal.</span>
+                </div>
+            )}
+            {offlineQueue.length > 0 && !isOffline && (
+                <div className="bg-blue-500/20 border border-blue-500 text-blue-400 p-3 rounded-xl mb-4 flex justify-between items-center text-sm font-bold animate-pulse">
+                    <span>Sincronizando {offlineQueue.length} pagos retenidos...</span>
+                </div>
+            )}
+            {offlineQueue.length > 0 && isOffline && (
+                <div className="bg-slate-800 border border-slate-600 text-slate-300 p-3 rounded-xl mb-4 text-sm">
+                    📦 {offlineQueue.length} cobro(s) en cola esperando señal.
+                </div>
+            )}
 
             {success && (
                 <div className="bg-emerald-500/10 border border-emerald-500 p-6 rounded-xl mb-6 flex flex-col items-center gap-4">
