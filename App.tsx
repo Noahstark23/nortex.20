@@ -49,6 +49,29 @@ const ProtectedApp = () => {
         return <Navigate to="/admin" replace />;
       }
 
+      // GUILLOTINA: Verificar suscripción antes de dar acceso a cualquier módulo
+      const isDelinquent = user.tenant?.subscriptionStatus === 'PAST_DUE' || user.tenant?.subscriptionStatus === 'CANCELLED';
+      if (isDelinquent) {
+        if (user.role === 'OWNER' || user.role === 'ADMIN') {
+          return (
+            <Layout>
+              <Routes>
+                <Route path="*" element={<Billing />} />
+              </Routes>
+            </Layout>
+          );
+        } else {
+          return (
+            <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+              <div className="bg-red-500/10 border border-red-500 p-8 rounded-2xl max-w-md text-center">
+                <h1 className="text-xl font-bold text-red-500 mb-2">Acceso Suspendido</h1>
+                <p className="text-slate-300 text-sm">El sistema está suspendido por falta de pago. Contacte a su administrador.</p>
+              </div>
+            </div>
+          );
+        }
+      }
+
       // LENDER Tenant Logic
       if (user.tenant?.type === 'LENDER') {
         if (user.role === 'COLLECTOR') {
