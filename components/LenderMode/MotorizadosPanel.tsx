@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Banknote, Save, AlertCircle, CheckCircle2, LogOut } from 'lucide-react';
+import { Banknote, Save, AlertCircle, CheckCircle2, LogOut, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const MotorizadosPanel: React.FC = () => {
@@ -8,6 +8,9 @@ const MotorizadosPanel: React.FC = () => {
     const [amount, setAmount] = useState<string>('');
     const [loading, setLoading] = useState(false);
     const [success, setSuccess] = useState(false);
+    const [expenseAmount, setExpenseAmount] = useState('');
+    const [expenseDesc, setExpenseDesc] = useState('');
+    const [expenseSaved, setExpenseSaved] = useState(false);
     const navigate = useNavigate();
 
     // 1. CARGAR CARTERA REAL DEL BACKEND
@@ -182,6 +185,63 @@ const MotorizadosPanel: React.FC = () => {
                         </>
                     )}
                 </button>
+
+                {/* Gastos de Ruta */}
+                <div className="mt-8 border-t border-slate-700 pt-6">
+                    <h3 className="text-sm font-bold text-orange-400 mb-4 flex items-center gap-2">
+                        <AlertTriangle size={16} />
+                        Registrar Gasto de Ruta (Se descuenta del canguro)
+                    </h3>
+                    {expenseSaved && (
+                        <div className="bg-orange-500/20 border border-orange-500 text-orange-400 p-3 rounded-lg mb-3 text-sm font-bold text-center">
+                            ¡Gasto registrado exitosamente!
+                        </div>
+                    )}
+                    <div className="flex gap-2">
+                        <input
+                            type="number"
+                            placeholder="Monto ($)"
+                            value={expenseAmount}
+                            onChange={(e) => setExpenseAmount(e.target.value)}
+                            className="w-1/3 bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-orange-400 outline-none"
+                        />
+                        <input
+                            type="text"
+                            placeholder="Ej: Gasolina Moto 1"
+                            value={expenseDesc}
+                            onChange={(e) => setExpenseDesc(e.target.value)}
+                            className="w-2/3 bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-orange-400 outline-none"
+                        />
+                    </div>
+                    <button
+                        onClick={async () => {
+                            if (!expenseAmount || !expenseDesc) return;
+                            try {
+                                const token = localStorage.getItem('nortex_token');
+                                const userStr = localStorage.getItem('nortex_user');
+                                const collectorName = userStr ? JSON.parse(userStr).name : 'MOTO-01';
+                                const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/route-expenses`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                                    body: JSON.stringify({ amount: expenseAmount, description: expenseDesc, collectedBy: collectorName })
+                                });
+                                const data = await response.json();
+                                if (data.success) {
+                                    setExpenseAmount('');
+                                    setExpenseDesc('');
+                                    setExpenseSaved(true);
+                                    setTimeout(() => setExpenseSaved(false), 3000);
+                                }
+                            } catch (error) {
+                                console.error('Error registrando gasto:', error);
+                            }
+                        }}
+                        disabled={!expenseAmount || !expenseDesc}
+                        className="w-full mt-3 py-3 bg-orange-500/20 text-orange-400 border border-orange-500/50 rounded-lg font-bold hover:bg-orange-500 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                        GUARDAR GASTO
+                    </button>
+                </div>
             </div>
         </div>
     );

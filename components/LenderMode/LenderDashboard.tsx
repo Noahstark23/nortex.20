@@ -7,6 +7,10 @@ const LenderDashboard: React.FC = () => {
     const [showModal, setShowModal] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [expandedLoan, setExpandedLoan] = useState<string | null>(null);
+    const [routeExpenses, setRouteExpenses] = useState<any[]>([]);
+    const [showRefiModal, setShowRefiModal] = useState(false);
+    const [refiLoan, setRefiLoan] = useState<any>(null);
+    const [refiData, setRefiData] = useState({ newPrincipal: '', interestRate: '', installments: '', frequency: 'DAILY', type: 'INFORMAL_FLAT' });
     const [formData, setFormData] = useState({
         clientName: '',
         principalAmount: '',
@@ -18,6 +22,7 @@ const LenderDashboard: React.FC = () => {
 
     useEffect(() => {
         fetchPortfolio();
+        fetchRouteExpenses();
     }, []);
 
     const fetchPortfolio = async () => {
@@ -61,6 +66,42 @@ const LenderDashboard: React.FC = () => {
         }
     };
 
+    const fetchRouteExpenses = async () => {
+        try {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/route-expenses`, {
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` }
+            });
+            const data = await response.json();
+            if (data.success) setRouteExpenses(data.data);
+        } catch (error) {
+            console.error('Error cargando gastos de ruta:', error);
+        }
+    };
+
+    const handleRefinance = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!refiLoan) return;
+        setSubmitting(true);
+        try {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/${refiLoan.id}/refinance`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
+                body: JSON.stringify(refiData)
+            });
+            const data = await response.json();
+            if (data.success) {
+                setShowRefiModal(false);
+                setRefiLoan(null);
+                setRefiData({ newPrincipal: '', interestRate: '', installments: '', frequency: 'DAILY', type: 'INFORMAL_FLAT' });
+                fetchPortfolio();
+            }
+        } catch (error) {
+            console.error('Error refinanciando:', error);
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
     // Cálculos financieros en tiempo real
     const totalDeployed = loans.reduce((acc, loan) => acc + Number(loan.principalAmount), 0);
     const expectedReturn = loans.reduce((acc, loan) => acc + Number(loan.totalToRepay), 0);
@@ -84,6 +125,10 @@ const LenderDashboard: React.FC = () => {
         });
         return acc;
     }, {} as Record<string, number>);
+
+    // Gastos de ruta del día
+    const todayExpenses = routeExpenses.filter((e: any) => e.date?.startsWith(today));
+    const totalExpensesToday = todayExpenses.reduce((acc, e) => acc + Number(e.amount), 0);
 
     return (
         <div className="p-8 h-full overflow-y-auto bg-slate-900 text-slate-100 font-sans">
@@ -146,7 +191,10 @@ const LenderDashboard: React.FC = () => {
                         <Banknote size={20} className="text-emerald-400" />
                     </div>
                     <h3 className="text-3xl font-black text-emerald-400">${collectedToday.toFixed(2)}</h3>
-                    <p className="text-xs text-emerald-500 mt-2">Lo que los motorizados traen en el canguro.</p>
+                    {totalExpensesToday > 0 && (
+                        <p className="text-xs text-orange-400 mt-1">- Gastos: ${totalExpensesToday.toFixed(2)} = Neto: <span className="font-bold text-emerald-300">${(collectedToday - totalExpensesToday).toFixed(2)}</span></p>
+                    )}
+                    <p className="text-xs text-emerald-500 mt-1">Lo que los motorizados traen en el canguro.</p>
 
                     {/* Desglose por cobrador */}
                     <div className="mt-4 pt-4 border-t border-emerald-500/30">
@@ -245,6 +293,25 @@ const LenderDashboard: React.FC = () => {
                                                                     ) : (
                                                                         <p className="text-slate-500 italic">No hay pagos registrados aún.</p>
                                                                     )}
+                                                                </div>
+
+                                                                {/* Botón de Refinanciamiento */}
+                                                                <div className="mt-4 pt-4 border-t border-slate-700 flex justify-between items-center">
+                                                                    <div className="text-sm text-slate-400">
+                                                                        Saldo actual: <span className="font-bold text-white">${Number(loan.balanceRemaining).toFixed(2)}</span>
+                                                                    </div>
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            setRefiLoan(loan);
+                                                                            setRefiData({ ...refiData, type: loan.type, frequency: loan.frequency, interestRate: String(loan.interestRate) });
+                                                                            setShowRefiModal(true);
+                                                                        }}
+                                                                        className="px-4 py-2 bg-purple-500/20 text-purple-400 border border-purple-500/50 rounded-lg font-bold text-xs hover:bg-purple-500 hover:text-white transition-colors flex items-center gap-2"
+                                                                    >
+                                                                        <Activity size={14} />
+                                                                        REFINANCIAR / RENOVAR
+                                                                    </button>
                                                                 </div>
                                                             </td>
                                                         </tr>
@@ -349,6 +416,76 @@ const LenderDashboard: React.FC = () => {
                                 className="w-full bg-nortex-accent hover:bg-emerald-400 text-slate-900 font-bold py-4 rounded-xl mt-6 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {submitting ? 'PROCESANDO...' : 'DESEMBOLSAR CAPITAL'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal de Refinanciamiento */}
+            {showRefiModal && refiLoan && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-purple-500/50 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
+                        <div className="p-6 border-b border-purple-500/30 flex justify-between items-center">
+                            <div>
+                                <h2 className="text-xl font-bold text-purple-400">Refinanciar Crédito</h2>
+                                <p className="text-sm text-slate-400 mt-1">{refiLoan.clientName} — Saldo: ${Number(refiLoan.balanceRemaining).toFixed(2)}</p>
+                            </div>
+                            <button onClick={() => { setShowRefiModal(false); setRefiLoan(null); }} className="text-slate-500 hover:text-white transition-colors">
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleRefinance} className="p-6 space-y-4">
+                            <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3 text-sm text-purple-300">
+                                El saldo pendiente de <strong>${Number(refiLoan.balanceRemaining).toFixed(2)}</strong> se sumará automáticamente al nuevo capital.
+                            </div>
+
+                            <input
+                                type="number"
+                                placeholder="Capital Nuevo a Inyectar ($)"
+                                required
+                                value={refiData.newPrincipal}
+                                onChange={(e) => setRefiData({ ...refiData, newPrincipal: e.target.value })}
+                                className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-purple-400 outline-none"
+                            />
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <input
+                                    type="number"
+                                    placeholder="Tasa (%)"
+                                    required
+                                    value={refiData.interestRate}
+                                    onChange={(e) => setRefiData({ ...refiData, interestRate: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-purple-400"
+                                />
+                                <input
+                                    type="number"
+                                    placeholder="N° Cuotas"
+                                    required
+                                    value={refiData.installments}
+                                    onChange={(e) => setRefiData({ ...refiData, installments: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-purple-400"
+                                />
+                            </div>
+
+                            <select
+                                value={refiData.frequency}
+                                onChange={(e) => setRefiData({ ...refiData, frequency: e.target.value })}
+                                className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-purple-400"
+                            >
+                                <option value="DAILY">Diario</option>
+                                <option value="WEEKLY">Semanal</option>
+                                <option value="BIWEEKLY">Quincenal</option>
+                                <option value="MONTHLY">Mensual</option>
+                            </select>
+
+                            <button
+                                type="submit"
+                                disabled={submitting}
+                                className="w-full bg-purple-500 hover:bg-purple-400 text-white font-bold py-4 rounded-xl mt-4 transition-all disabled:opacity-50"
+                            >
+                                {submitting ? 'PROCESANDO...' : `RENOVAR TARJETA (+$${refiData.newPrincipal || '0'})`}
                             </button>
                         </form>
                     </div>

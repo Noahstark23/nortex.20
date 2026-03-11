@@ -1001,3 +1001,13 @@ model Repayment {
   createdAt         DateTime @default(now())
 }
 
+model RouteExpense {
+  id          String   @id @default(uuid())
+  lenderId    String   // El Tenant prestamista
+  collectedBy String   // Nombre del motorizado
+  amount      Decimal  @db.Decimal(10, 2)
+  description String   // "Gasolina Moto 1", "Pinchazo llanta"
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+}
+
