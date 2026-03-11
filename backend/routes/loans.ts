@@ -5,21 +5,39 @@ import { authenticate } from '../middleware/auth';
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// 1. ORIGINAR UN CRÉDITO (Desembolso)
+// 1. ORIGINAR UN CRÉDITO (Desembolso) — Motor Dual
 router.post('/', authenticate, async (req: any, res: any) => {
     try {
         const { clientName, clientPhone, clientAddress, principalAmount, interestRate, installments, frequency, type } = req.body;
-        const lenderId = req.user.tenantId; // El tenant que presta el dinero
+        const lenderId = req.user.tenantId;
 
-        // Lógica matemática básica (Flat para gota a gota)
         const amount = parseFloat(principalAmount);
-        const rate = parseFloat(interestRate);
-        const totalToRepay = amount + (amount * (rate / 100));
-        const installmentAmount = totalToRepay / installments;
+        const rate = parseFloat(interestRate) / 100; // Convertir 5% a 0.05
+        const n = parseInt(installments);
 
-        // Calculamos fecha de vencimiento básica (simplificado para el MVP)
+        let totalToRepay = 0;
+        let installmentAmount = 0;
+
+        if (type === 'FORMAL_AMORTIZED') {
+            // Matemática de Financiera (Sistema Francés - Cuota Fija)
+            // Fórmula: Cuota = Capital * ( i * (1+i)^n ) / ( (1+i)^n - 1 )
+            if (rate === 0) {
+                installmentAmount = amount / n;
+            } else {
+                installmentAmount = amount * (rate * Math.pow(1 + rate, n)) / (Math.pow(1 + rate, n) - 1);
+            }
+            totalToRepay = installmentAmount * n;
+        } else {
+            // Matemática de Calle (Gota a Gota - Flat)
+            // El interés se cobra sobre el principal total desde el día 1
+            totalToRepay = amount + (amount * rate);
+            installmentAmount = totalToRepay / n;
+        }
+
+        // Calcular fecha de vencimiento según frecuencia
         const dueDate = new Date();
-        dueDate.setDate(dueDate.getDate() + installments); // Asumiendo cobro diario para el MVP
+        const freqDays: Record<string, number> = { DAILY: 1, WEEKLY: 7, BIWEEKLY: 15, MONTHLY: 30 };
+        dueDate.setDate(dueDate.getDate() + (n * (freqDays[frequency] || 1)));
 
         const newLoan = await prisma.loan.create({
             data: {
@@ -28,11 +46,11 @@ router.post('/', authenticate, async (req: any, res: any) => {
                 clientPhone,
                 clientAddress,
                 principalAmount: amount,
-                interestRate: rate,
-                totalToRepay,
-                balanceRemaining: totalToRepay,
-                installments,
-                installmentAmount,
+                interestRate: parseFloat(interestRate),
+                totalToRepay: Math.round(totalToRepay * 100) / 100,
+                balanceRemaining: Math.round(totalToRepay * 100) / 100,
+                installments: n,
+                installmentAmount: Math.round(installmentAmount * 100) / 100,
                 frequency: frequency || 'DAILY',
                 type: type || 'INFORMAL_FLAT',
                 dueDate,
