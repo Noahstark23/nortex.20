@@ -31,8 +31,9 @@ const Login: React.FC = () => {
 
       // SECURE STORAGE
       localStorage.setItem('nortex_token', data.token);
-      localStorage.setItem('nortex_user', JSON.stringify(data.user));
+      localStorage.setItem('nortex_user', JSON.stringify({ ...data.user, tenant: data.tenant }));
       localStorage.setItem('nortex_tenant_id', data.tenant.id);
+      localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
 
       // SUPER_ADMIN redirect
       const SUPER_ADMIN_EMAILS = ['noelpinedaa96@gmail.com'];
