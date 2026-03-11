@@ -98,25 +98,24 @@ const MotorizadosPanel: React.FC = () => {
             </header>
 
             {success && (
-                <div className="bg-emerald-500/20 border border-emerald-500 p-6 rounded-xl mb-6 flex flex-col items-center gap-4">
+                <div className="bg-emerald-500/10 border border-emerald-500 p-6 rounded-xl mb-6 flex flex-col items-center gap-4">
                     <div className="flex items-center gap-3 text-emerald-400">
-                        <CheckCircle2 size={32} />
-                        <span className="text-xl font-bold">¡Pago Guardado!</span>
+                        <CheckCircle2 size={32} className="animate-bounce" />
+                        <span className="text-xl font-bold">¡Billete a la Bóveda!</span>
                     </div>
 
                     {/* Botón Mágico de WhatsApp */}
                     <button
                         onClick={() => {
                             const clientName = loans.find(l => l.id === selectedLoan)?.clientName || 'Cliente';
-                            const userStr = localStorage.getItem('nortex_user');
-                            const collectorName = userStr ? JSON.parse(userStr).name : 'MOTO-01';
-                            const text = `Hola ${clientName} 👋\n\nConfirmamos la recepción de su pago por *$${amount}* en Nortex Capital.\n\nFecha: ${new Date().toLocaleString()}\nCobrador: ${collectorName}\n\nGracias por su puntualidad. 🤝`;
+                            const userName = JSON.parse(localStorage.getItem('nortex_user') || '{}').name || 'Tu Cobrador';
+                            const text = `*NORTEX CAPITAL* 🏦\n\nHola *${clientName}* 👋,\nConfirmamos la recepción de tu pago.\n\n💰 *Monto:* $${parseFloat(amount || '0').toFixed(2)}\n👤 *Cobrador:* ${userName}\n📅 *Fecha:* ${new Date().toLocaleString()}\n\n_Gracias por tu puntualidad. Tu saldo ha sido actualizado._`;
                             window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
                         }}
-                        className="w-full py-3 bg-[#25D366] hover:bg-[#1ebe57] text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-[#25D366]/20 transition-all"
+                        className="w-full py-4 bg-[#25D366] hover:bg-[#1ebe57] text-white font-bold rounded-xl flex items-center justify-center gap-3 shadow-lg shadow-[#25D366]/20 transition-all active:scale-95"
                     >
                         <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>
-                        ENVIAR RECIBO POR WHATSAPP
+                        ENVIAR RECIBO (WHATSAPP)
                     </button>
                 </div>
             )}

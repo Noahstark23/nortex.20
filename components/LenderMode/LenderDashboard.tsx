@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, Activity, AlertTriangle, Plus, Users, Wallet, X } from 'lucide-react';
+import { DollarSign, Activity, AlertTriangle, Plus, Users, Wallet, X, Banknote } from 'lucide-react';
 
 const LenderDashboard: React.FC = () => {
     const [loans, setLoans] = useState<any[]>([]);
@@ -67,6 +67,14 @@ const LenderDashboard: React.FC = () => {
     const totalCollected = loans.reduce((acc, loan) => acc + (Number(loan.totalToRepay) - Number(loan.balanceRemaining)), 0);
     const activeClients = loans.filter(l => l.status === 'ACTIVE').length;
 
+    // Liquidación diaria: cuánto se cobró HOY
+    const today = new Date().toISOString().split('T')[0];
+    const collectedToday = loans.reduce((total, loan) => {
+        const todayPayments = loan.payments?.filter((p: any) => p.paymentDate?.startsWith(today)) || [];
+        const sumToday = todayPayments.reduce((acc: number, p: any) => acc + Number(p.amountPaid), 0);
+        return total + sumToday;
+    }, 0);
+
     return (
         <div className="p-8 h-full overflow-y-auto bg-slate-900 text-slate-100 font-sans">
             <header className="flex justify-between items-end mb-8 border-b border-slate-800 pb-4">
@@ -87,7 +95,7 @@ const LenderDashboard: React.FC = () => {
             </header>
 
             {/* KPI Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
                 <div className="bg-slate-800 border border-slate-700 p-6 rounded-2xl">
                     <div className="flex justify-between items-start mb-2">
                         <p className="text-sm font-medium text-slate-400">Capital Desplegado</p>
@@ -119,6 +127,16 @@ const LenderDashboard: React.FC = () => {
                         <Users size={20} className="text-orange-400" />
                     </div>
                     <h3 className="text-2xl font-bold text-white">{activeClients}</h3>
+                </div>
+
+                {/* Cuadre de Ruta - Liquidación Diaria */}
+                <div className="bg-emerald-900/30 border border-emerald-500/50 p-6 rounded-2xl relative overflow-hidden ring-1 ring-emerald-500/20">
+                    <div className="flex justify-between items-start mb-2">
+                        <p className="text-sm font-bold text-emerald-400">Efectivo a Recibir HOY</p>
+                        <Banknote size={20} className="text-emerald-400" />
+                    </div>
+                    <h3 className="text-3xl font-black text-emerald-400">${collectedToday.toFixed(2)}</h3>
+                    <p className="text-xs text-emerald-500 mt-2">Lo que los motorizados traen en el canguro.</p>
                 </div>
             </div>
 
