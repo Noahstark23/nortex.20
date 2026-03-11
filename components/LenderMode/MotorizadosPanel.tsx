@@ -60,7 +60,7 @@ const MotorizadosPanel: React.FC = () => {
                 setSuccess(true);
                 setAmount('');
                 fetchLoans(); // Recargar los saldos actualizados
-                setTimeout(() => setSuccess(false), 3000);
+                setTimeout(() => setSuccess(false), 8000);
             }
         } catch (error) {
             console.error("Error al procesar el pago", error);
@@ -98,9 +98,26 @@ const MotorizadosPanel: React.FC = () => {
             </header>
 
             {success && (
-                <div className="bg-emerald-500/20 border border-emerald-500 text-emerald-400 p-4 rounded-xl mb-6 flex items-center gap-3 animate-pulse">
-                    <CheckCircle2 size={24} />
-                    <span className="font-bold">¡Pago registrado en la bóveda!</span>
+                <div className="bg-emerald-500/20 border border-emerald-500 p-6 rounded-xl mb-6 flex flex-col items-center gap-4">
+                    <div className="flex items-center gap-3 text-emerald-400">
+                        <CheckCircle2 size={32} />
+                        <span className="text-xl font-bold">¡Pago Guardado!</span>
+                    </div>
+
+                    {/* Botón Mágico de WhatsApp */}
+                    <button
+                        onClick={() => {
+                            const clientName = loans.find(l => l.id === selectedLoan)?.clientName || 'Cliente';
+                            const userStr = localStorage.getItem('nortex_user');
+                            const collectorName = userStr ? JSON.parse(userStr).name : 'MOTO-01';
+                            const text = `Hola ${clientName} 👋\n\nConfirmamos la recepción de su pago por *$${amount}* en Nortex Capital.\n\nFecha: ${new Date().toLocaleString()}\nCobrador: ${collectorName}\n\nGracias por su puntualidad. 🤝`;
+                            window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+                        }}
+                        className="w-full py-3 bg-[#25D366] hover:bg-[#1ebe57] text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-[#25D366]/20 transition-all"
+                    >
+                        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>
+                        ENVIAR RECIBO POR WHATSAPP
+                    </button>
                 </div>
             )}
 
@@ -119,8 +136,8 @@ const MotorizadosPanel: React.FC = () => {
                                 key={loan.id}
                                 onClick={() => setSelectedLoan(loan.id)}
                                 className={`p-4 rounded-xl border text-left transition-all ${selectedLoan === loan.id
-                                        ? 'bg-nortex-800 border-nortex-accent shadow-[0_0_15px_rgba(16,185,129,0.2)]'
-                                        : 'bg-slate-800 border-slate-700 opacity-70'
+                                    ? 'bg-nortex-800 border-nortex-accent shadow-[0_0_15px_rgba(16,185,129,0.2)]'
+                                    : 'bg-slate-800 border-slate-700 opacity-70'
                                     }`}
                             >
                                 <h3 className="text-lg font-bold text-white uppercase">{loan.clientName}</h3>
@@ -153,8 +170,8 @@ const MotorizadosPanel: React.FC = () => {
                     onClick={handleCobro}
                     disabled={!selectedLoan || !amount || loading}
                     className={`w-full py-5 rounded-xl font-bold text-xl flex justify-center items-center gap-2 transition-all shadow-lg active:scale-95 ${!selectedLoan || !amount
-                            ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                            : 'bg-nortex-accent text-slate-900 hover:bg-emerald-400 shadow-emerald-500/20'
+                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                        : 'bg-nortex-accent text-slate-900 hover:bg-emerald-400 shadow-emerald-500/20'
                         }`}
                 >
                     {loading ? (
