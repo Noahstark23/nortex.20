@@ -70,7 +70,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { path: '/app/purchases', label: 'Compras', icon: Truck },
         { path: '/app/suppliers', label: 'Proveedores', icon: ClipboardList },
         { path: '/app/hr', label: 'Recursos Humanos', icon: Briefcase },
-        { path: '/app/motorizados', label: 'Motorizados', icon: Truck },
         { path: '/app/delivery', label: 'Entregas (Kanban)', icon: Code2 },
         { path: '/app/quotations', label: 'Cotizaciones', icon: FileText },
         { path: '/app/receivables', label: 'Cobranza', icon: Wallet },

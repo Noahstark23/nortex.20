@@ -81,7 +81,6 @@ const ProtectedApp = () => {
         <Route path="audit" element={<AuditDashboard />} />
         <Route path="blueprint" element={<BlueprintViewer />} />
         <Route path="delivery" element={<DeliveryManager />} />
-        <Route path="motorizados" element={<MotorizadosPanel />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
     </Layout>
