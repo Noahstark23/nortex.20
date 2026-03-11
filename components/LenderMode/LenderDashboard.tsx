@@ -11,7 +11,7 @@ const LenderDashboard: React.FC = () => {
     const [showRefiModal, setShowRefiModal] = useState(false);
     const [refiLoan, setRefiLoan] = useState<any>(null);
     const [refiData, setRefiData] = useState({ newPrincipal: '', interestRate: '', installments: '', frequency: 'DAILY', type: 'INFORMAL_FLAT' });
-    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'CLIENTS' | 'REPORTS'>('DASHBOARD');
+    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'CLIENTS' | 'REPORTS' | 'TEAM' | 'ACCOUNTING'>('DASHBOARD');
     const [clientSearch, setClientSearch] = useState('');
     const [formData, setFormData] = useState({
         clientName: '',
@@ -155,7 +155,9 @@ const LenderDashboard: React.FC = () => {
             <div className="flex border-b border-slate-800 mb-8 gap-6">
                 <button onClick={() => setActiveTab('DASHBOARD')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'DASHBOARD' ? 'border-nortex-accent text-nortex-accent' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>PANEL DE CONTROL</button>
                 <button onClick={() => setActiveTab('CLIENTS')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'CLIENTS' ? 'border-blue-400 text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>DIRECTORIO DE CLIENTES</button>
-                <button onClick={() => setActiveTab('REPORTS')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'REPORTS' ? 'border-purple-400 text-purple-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>REPORTES Y RENDIMIENTO</button>
+                <button onClick={() => setActiveTab('REPORTS')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'REPORTS' ? 'border-purple-400 text-purple-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>REPORTES</button>
+                <button onClick={() => setActiveTab('TEAM')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'TEAM' ? 'border-orange-400 text-orange-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>TROPAS Y COMISIONES</button>
+                <button onClick={() => setActiveTab('ACCOUNTING')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'ACCOUNTING' ? 'border-emerald-400 text-emerald-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>CAJA CHICA</button>
             </div>
 
             {/* TAB: Dashboard */}
@@ -445,6 +447,84 @@ const LenderDashboard: React.FC = () => {
                                 <span className="font-mono font-bold text-orange-400">${totalExpensesToday.toFixed(2)}</span>
                             </div>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* TAB: Tropas y Comisiones */}
+            {activeTab === 'TEAM' && (
+                <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="text-lg font-bold text-white flex items-center gap-2"><Users size={20} className="text-orange-400" /> Gestión de Cobradores</h3>
+                        <div className="text-sm text-slate-400">Mes en curso: <span className="text-white font-bold">{new Date().toLocaleDateString('es', { month: 'long', year: 'numeric' })}</span></div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {(() => {
+                            const thisMonth = new Date().toISOString().slice(0, 7);
+                            const monthlyTotals = loans.reduce((acc, loan) => {
+                                const monthlyPayments = loan.payments?.filter((p: any) => p.paymentDate?.startsWith(thisMonth)) || [];
+                                monthlyPayments.forEach((p: any) => {
+                                    const cobrador = p.collectedBy || 'Desconocido';
+                                    acc[cobrador] = (acc[cobrador] || 0) + Number(p.amountPaid);
+                                });
+                                return acc;
+                            }, {} as Record<string, number>);
+
+                            const entries = Object.entries(monthlyTotals);
+                            if (entries.length === 0) {
+                                return <p className="text-slate-500 col-span-2 text-center py-8">No hay cobros registrados este mes aún.</p>;
+                            }
+                            return entries.map(([moto, recuperado]) => (
+                                <div key={moto} className="bg-slate-900 border border-slate-700 p-5 rounded-xl flex justify-between items-center">
+                                    <div>
+                                        <h4 className="font-bold text-orange-400 text-lg">{moto}</h4>
+                                        <p className="text-sm text-slate-400">Recuperado este mes: <span className="font-mono text-white">${Number(recuperado).toFixed(2)}</span></p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-xs font-bold text-slate-500 uppercase">Comisión (5%)</p>
+                                        <p className="text-2xl font-mono font-bold text-emerald-400">${(Number(recuperado) * 0.05).toFixed(2)}</p>
+                                    </div>
+                                </div>
+                            ));
+                        })()}
+                    </div>
+                </div>
+            )}
+
+            {/* TAB: Caja Chica */}
+            {activeTab === 'ACCOUNTING' && (
+                <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
+                        <h3 className="text-lg font-bold text-white">Caja Chica y Gastos Operativos</h3>
+                        <div className="text-sm text-slate-400">Total registrado: <span className="font-mono font-bold text-red-400">${routeExpenses.reduce((acc, e) => acc + Number(e.amount), 0).toFixed(2)}</span></div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                            <thead className="bg-slate-900/50 text-slate-400 text-sm">
+                                <tr>
+                                    <th className="p-4 font-medium">Fecha</th>
+                                    <th className="p-4 font-medium">Concepto</th>
+                                    <th className="p-4 font-medium">Responsable</th>
+                                    <th className="p-4 font-medium text-right">Monto</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-700/50 text-sm">
+                                {routeExpenses.length === 0 ? (
+                                    <tr><td colSpan={4} className="p-8 text-center text-slate-500">No hay gastos registrados.</td></tr>
+                                ) : (
+                                    routeExpenses.map((expense: any) => (
+                                        <tr key={expense.id} className="hover:bg-slate-700/30 transition-colors">
+                                            <td className="p-4 text-slate-300 font-mono text-xs">{new Date(expense.date).toLocaleDateString()}</td>
+                                            <td className="p-4 text-white">{expense.description}</td>
+                                            <td className="p-4 text-slate-400">{expense.collectedBy}</td>
+                                            <td className="p-4 text-right font-mono text-red-400 font-bold">-${Number(expense.amount).toFixed(2)}</td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             )}
