@@ -39,9 +39,23 @@ router.post('/', authenticate, async (req: any, res: any) => {
         const freqDays: Record<string, number> = { DAILY: 1, WEEKLY: 7, BIWEEKLY: 15, MONTHLY: 30 };
         dueDate.setDate(dueDate.getDate() + (n * (freqDays[frequency] || 1)));
 
+        // Auto-crear o vincular al cliente CRM
+        let customer = await prisma.lenderClient.findFirst({
+            where: { tenantId: lenderId, name: clientName }
+        });
+        if (!customer) {
+            customer = await prisma.lenderClient.create({
+                data: { tenantId: lenderId, name: clientName, phone: clientPhone, address: clientAddress }
+            });
+        }
+        if (customer.isBlocked) {
+            return res.status(403).json({ success: false, error: 'Cliente bloqueado. No se puede originar crédito.' });
+        }
+
         const newLoan = await prisma.loan.create({
             data: {
                 lenderId,
+                customerId: customer.id,
                 clientName,
                 clientPhone,
                 clientAddress,
@@ -234,6 +248,39 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
     } catch (error) {
         console.error('Error refinanciando:', error);
         res.status(500).json({ success: false, error: 'Error en el refinanciamiento' });
+    }
+});
+
+// 7. DIRECTORIO CRM DE CLIENTES
+router.get('/clients', authenticate, async (req: any, res: any) => {
+    try {
+        const lenderId = req.user.tenantId;
+        const clients = await prisma.lenderClient.findMany({
+            where: { tenantId: lenderId },
+            include: { loans: { select: { id: true, principalAmount: true, balanceRemaining: true, status: true, type: true, createdAt: true, dueDate: true } } },
+            orderBy: { createdAt: 'desc' }
+        });
+        res.json({ success: true, data: clients });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Error obteniendo clientes' });
+    }
+});
+
+// 8. ACTUALIZAR CLIENTE (Bloquear / Cambiar Límite)
+router.patch('/clients/:clientId', authenticate, async (req: any, res: any) => {
+    try {
+        const { clientId } = req.params;
+        const { isBlocked, creditLimit } = req.body;
+        const updated = await prisma.lenderClient.update({
+            where: { id: clientId },
+            data: {
+                ...(isBlocked !== undefined && { isBlocked }),
+                ...(creditLimit !== undefined && { creditLimit: parseFloat(creditLimit) })
+            }
+        });
+        res.json({ success: true, data: updated });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Error actualizando cliente' });
     }
 });
 

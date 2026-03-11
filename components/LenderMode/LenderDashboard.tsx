@@ -13,6 +13,7 @@ const LenderDashboard: React.FC = () => {
     const [refiData, setRefiData] = useState({ newPrincipal: '', interestRate: '', installments: '', frequency: 'DAILY', type: 'INFORMAL_FLAT' });
     const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'CLIENTS' | 'REPORTS' | 'TEAM' | 'ACCOUNTING'>('DASHBOARD');
     const [clientSearch, setClientSearch] = useState('');
+    const [lenderClients, setLenderClients] = useState<any[]>([]);
     const [formData, setFormData] = useState({
         clientName: '',
         principalAmount: '',
@@ -25,6 +26,7 @@ const LenderDashboard: React.FC = () => {
     useEffect(() => {
         fetchPortfolio();
         fetchRouteExpenses();
+        fetchClients();
     }, []);
 
     const fetchPortfolio = async () => {
@@ -77,6 +79,31 @@ const LenderDashboard: React.FC = () => {
             if (data.success) setRouteExpenses(data.data);
         } catch (error) {
             console.error('Error cargando gastos de ruta:', error);
+        }
+    };
+
+    const fetchClients = async () => {
+        try {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/clients`, {
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` }
+            });
+            const data = await response.json();
+            if (data.success) setLenderClients(data.data);
+        } catch (error) {
+            console.error('Error cargando clientes:', error);
+        }
+    };
+
+    const toggleBlockClient = async (clientId: string, currentBlocked: boolean) => {
+        try {
+            await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/clients/${clientId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
+                body: JSON.stringify({ isBlocked: !currentBlocked })
+            });
+            fetchClients();
+        } catch (error) {
+            console.error('Error actualizando cliente:', error);
         }
     };
 
@@ -342,11 +369,14 @@ const LenderDashboard: React.FC = () => {
                 </div>
             </div>)}
 
-            {/* TAB: Directorio de Clientes */}
+            {/* TAB: CRM de Clientes */}
             {activeTab === 'CLIENTS' && (
-                <div className="bg-slate-800 border border-slate-700 rounded-2xl overflow-hidden">
-                    <div className="p-6 border-b border-slate-700 flex justify-between items-center bg-slate-800/50">
-                        <h3 className="text-lg font-bold text-white flex items-center gap-2"><Users size={20} /> Cartera Histórica de Clientes</h3>
+                <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                            <Users className="text-blue-400" size={20} />
+                            Gestión de Clientes (CRM)
+                        </h3>
                         <input
                             type="text"
                             placeholder="Buscar cliente..."
@@ -355,48 +385,76 @@ const LenderDashboard: React.FC = () => {
                             className="bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-sm text-white focus:border-blue-500 outline-none"
                         />
                     </div>
-                    <div className="p-0">
-                        {Array.from(new Set(loans.map(l => l.clientName)))
-                            .filter(name => name.toLowerCase().includes(clientSearch.toLowerCase()))
-                            .map(clientName => {
-                                const clientLoans = loans.filter(l => l.clientName === clientName);
-                                const totalDebt = clientLoans.reduce((acc, l) => acc + Number(l.balanceRemaining), 0);
-                                const isMoroso = clientLoans.some(l => l.status === 'ACTIVE' && new Date(l.dueDate) < new Date());
 
-                                return (
-                                    <div key={clientName} className="border-b border-slate-700/50 p-6 hover:bg-slate-700/20 transition-colors">
-                                        <div className="flex justify-between items-start mb-4">
-                                            <div>
-                                                <h4 className="text-xl font-bold text-white flex items-center gap-2">
-                                                    {clientName}
-                                                    {isMoroso && <span className="bg-red-500/20 text-red-400 text-xs px-2 py-1 rounded-full font-bold">MOROSO</span>}
-                                                </h4>
-                                                <p className="text-sm text-slate-400 mt-1">Créditos Históricos: {clientLoans.length}</p>
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="text-sm text-slate-400">Deuda Global Actual</p>
-                                                <p className="text-2xl font-mono font-bold text-nortex-accent">${totalDebt.toFixed(2)}</p>
-                                            </div>
-                                        </div>
+                    {lenderClients.length === 0 ? (
+                        <p className="text-slate-500 text-center py-12">No hay clientes registrados aún. Se crean automáticamente al originar créditos.</p>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {lenderClients
+                                .filter(c => c.name.toLowerCase().includes(clientSearch.toLowerCase()))
+                                .map((client: any) => {
+                                    const initials = client.name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase();
+                                    const activeDebt = client.loans?.filter((l: any) => l.status === 'ACTIVE').reduce((acc: number, l: any) => acc + Number(l.balanceRemaining), 0) || 0;
+                                    const isMoroso = client.loans?.some((l: any) => l.status === 'ACTIVE' && new Date(l.dueDate) < new Date());
+                                    const totalLoans = client.loans?.length || 0;
 
-                                        <div className="bg-slate-900/50 rounded-lg p-4">
-                                            <h5 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Expediente de Créditos</h5>
-                                            <div className="space-y-2">
-                                                {clientLoans.map(loan => (
-                                                    <div key={loan.id} className="flex justify-between items-center text-sm border-l-2 border-slate-600 pl-3 py-1">
-                                                        <span className="text-slate-300 font-mono text-xs">{new Date(loan.createdAt).toLocaleDateString()}</span>
-                                                        <span className="text-slate-400">{loan.type === 'INFORMAL_FLAT' ? 'Gota a Gota' : 'Financiera'}</span>
-                                                        <span className="text-slate-300">Prestó: ${Number(loan.principalAmount).toFixed(2)}</span>
-                                                        <span className={`font-bold ${loan.status === 'PAID_OFF' ? 'text-blue-400' : 'text-orange-400'}`}>{loan.status}</span>
-                                                    </div>
-                                                ))}
+                                    return (
+                                        <div key={client.id} className={`bg-slate-900 border rounded-xl p-5 relative overflow-hidden transition-colors ${client.isBlocked ? 'border-red-500/50 opacity-60' : 'border-slate-700 hover:border-blue-500/50'}`}>
+                                            <button
+                                                onClick={() => toggleBlockClient(client.id, client.isBlocked)}
+                                                className={`absolute top-4 right-4 transition-colors ${client.isBlocked ? 'text-red-500 hover:text-red-400' : 'text-slate-500 hover:text-red-500'}`}
+                                                title={client.isBlocked ? 'Desbloquear' : 'Bloquear (Lista Negra)'}
+                                            >
+                                                <AlertTriangle size={20} />
+                                            </button>
+
+                                            <div className="flex items-center gap-4 mb-4">
+                                                <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl ${client.isBlocked ? 'bg-red-500/20 text-red-400' : 'bg-blue-500/20 text-blue-400'}`}>
+                                                    {initials}
+                                                </div>
+                                                <div>
+                                                    <h4 className="font-bold text-white text-lg flex items-center gap-2">
+                                                        {client.name}
+                                                        {client.isBlocked && <span className="bg-red-500/20 text-red-400 text-xs px-2 py-0.5 rounded font-bold">BLOQUEADO</span>}
+                                                        {isMoroso && !client.isBlocked && <span className="bg-orange-500/20 text-orange-400 text-xs px-2 py-0.5 rounded font-bold">MOROSO</span>}
+                                                    </h4>
+                                                    <p className="text-xs text-slate-400">{client.phone || 'Sin teléfono'}</p>
+                                                </div>
                                             </div>
+
+                                            <div className="space-y-2 mb-4">
+                                                <div className="flex justify-between text-sm">
+                                                    <span className="text-slate-400">Límite de Crédito:</span>
+                                                    <span className="font-bold text-white">${Number(client.creditLimit).toFixed(2)}</span>
+                                                </div>
+                                                <div className="flex justify-between text-sm">
+                                                    <span className="text-slate-400">Deuda Activa:</span>
+                                                    <span className={`font-bold font-mono ${activeDebt > Number(client.creditLimit) ? 'text-red-400' : 'text-orange-400'}`}>${activeDebt.toFixed(2)}</span>
+                                                </div>
+                                                <div className="flex justify-between text-sm">
+                                                    <span className="text-slate-400">Créditos Totales:</span>
+                                                    <span className="text-white font-bold">{totalLoans}</span>
+                                                </div>
+                                            </div>
+
+                                            {/* Mini historial */}
+                                            {client.loans && client.loans.length > 0 && (
+                                                <div className="bg-slate-800 rounded-lg p-3 space-y-1">
+                                                    {client.loans.slice(0, 3).map((loan: any) => (
+                                                        <div key={loan.id} className="flex justify-between text-xs">
+                                                            <span className="text-slate-400 font-mono">{new Date(loan.createdAt).toLocaleDateString()}</span>
+                                                            <span className="text-slate-300">${Number(loan.principalAmount).toFixed(2)}</span>
+                                                            <span className={`font-bold ${loan.status === 'PAID_OFF' ? 'text-blue-400' : 'text-orange-400'}`}>{loan.status}</span>
+                                                        </div>
+                                                    ))}
+                                                    {client.loans.length > 3 && <p className="text-xs text-slate-500 text-center">+{client.loans.length - 3} más</p>}
+                                                </div>
+                                            )}
                                         </div>
-                                    </div>
-                                );
-                            })}
-                        {loans.length === 0 && <p className="p-8 text-center text-slate-500">No hay clientes en el directorio aún.</p>}
-                    </div>
+                                    );
+                                })}
+                        </div>
+                    )}
                 </div>
             )}
 
