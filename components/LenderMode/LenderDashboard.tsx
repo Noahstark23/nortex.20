@@ -75,6 +75,16 @@ const LenderDashboard: React.FC = () => {
         return total + sumToday;
     }, 0);
 
+    // Desglose por cobrador (Arqueo)
+    const collectorTotals = loans.reduce((acc, loan) => {
+        const todayPayments = loan.payments?.filter((p: any) => p.paymentDate?.startsWith(today)) || [];
+        todayPayments.forEach((p: any) => {
+            const cobrador = p.collectedBy || 'Desconocido';
+            acc[cobrador] = (acc[cobrador] || 0) + Number(p.amountPaid);
+        });
+        return acc;
+    }, {} as Record<string, number>);
+
     return (
         <div className="p-8 h-full overflow-y-auto bg-slate-900 text-slate-100 font-sans">
             <header className="flex justify-between items-end mb-8 border-b border-slate-800 pb-4">
@@ -137,6 +147,23 @@ const LenderDashboard: React.FC = () => {
                     </div>
                     <h3 className="text-3xl font-black text-emerald-400">${collectedToday.toFixed(2)}</h3>
                     <p className="text-xs text-emerald-500 mt-2">Lo que los motorizados traen en el canguro.</p>
+
+                    {/* Desglose por cobrador */}
+                    <div className="mt-4 pt-4 border-t border-emerald-500/30">
+                        <p className="text-xs font-bold text-emerald-500 mb-2 uppercase">Efectivo en canguros:</p>
+                        {Object.entries(collectorTotals).length === 0 ? (
+                            <p className="text-xs text-slate-400 italic">Nadie ha cobrado hoy.</p>
+                        ) : (
+                            <div className="space-y-1">
+                                {Object.entries(collectorTotals).map(([moto, total]) => (
+                                    <div key={moto} className="flex justify-between text-sm">
+                                        <span className="text-emerald-100">{moto}</span>
+                                        <span className="font-mono font-bold text-emerald-400">${Number(total).toFixed(2)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -167,56 +194,64 @@ const LenderDashboard: React.FC = () => {
                             ) : (
                                 loans.map((loan) => (
                                     <React.Fragment key={loan.id}>
-                                        <tr
-                                            onClick={() => setExpandedLoan(expandedLoan === loan.id ? null : loan.id)}
-                                            className="hover:bg-slate-700/50 transition-colors cursor-pointer group"
-                                        >
-                                            <td className="p-4 font-medium text-white flex items-center gap-2">
-                                                <span className="text-slate-500 group-hover:text-nortex-accent transition-colors">{expandedLoan === loan.id ? '▼' : '▶'}</span>
-                                                {loan.clientName}
-                                            </td>
-                                            <td className="p-4">
-                                                <span className={`px-2 py-1 rounded text-xs font-bold ${loan.type === 'FORMAL_AMORTIZED' ? 'bg-blue-500/20 text-blue-400' : 'bg-amber-500/20 text-amber-400'}`}>
-                                                    {loan.type === 'FORMAL_AMORTIZED' ? 'FINANCIERA' : 'GOTA'}
-                                                </span>
-                                            </td>
-                                            <td className="p-4 text-slate-400 text-sm">{loan.frequency}</td>
-                                            <td className="p-4 text-right font-mono text-slate-300">${Number(loan.principalAmount).toFixed(2)}</td>
-                                            <td className="p-4 text-right font-mono text-slate-300">${Number(loan.installmentAmount).toFixed(2)}</td>
-                                            <td className="p-4 text-right font-mono font-bold text-nortex-accent">${Number(loan.balanceRemaining).toFixed(2)}</td>
-                                            <td className="p-4 text-center">
-                                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${loan.status === 'ACTIVE' ? 'bg-emerald-500/20 text-emerald-400' :
-                                                    loan.status === 'PAID_OFF' ? 'bg-blue-500/20 text-blue-400' :
-                                                        'bg-red-500/20 text-red-400'
-                                                    }`}>
-                                                    {loan.status}
-                                                </span>
-                                            </td>
-                                        </tr>
+                                        {(() => {
+                                            const isOverdue = loan.status === 'ACTIVE' && new Date(loan.dueDate) < new Date();
+                                            return (
+                                                <>
+                                                    <tr
+                                                        onClick={() => setExpandedLoan(expandedLoan === loan.id ? null : loan.id)}
+                                                        className={`transition-colors cursor-pointer group ${isOverdue ? 'bg-red-900/10 hover:bg-red-900/20' : 'hover:bg-slate-700/50'}`}
+                                                    >
+                                                        <td className="p-4 font-medium text-white flex items-center gap-2">
+                                                            <span className="text-slate-500 group-hover:text-nortex-accent transition-colors">{expandedLoan === loan.id ? '▼' : '▶'}</span>
+                                                            {loan.clientName}
+                                                            {isOverdue && <AlertTriangle size={14} className="text-red-500 ml-2 animate-pulse" title="Cliente en Mora" />}
+                                                        </td>
+                                                        <td className="p-4">
+                                                            <span className={`px-2 py-1 rounded text-xs font-bold ${loan.type === 'FORMAL_AMORTIZED' ? 'bg-blue-500/20 text-blue-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                                                                {loan.type === 'FORMAL_AMORTIZED' ? 'FINANCIERA' : 'GOTA'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-4 text-slate-400 text-sm">{loan.frequency}</td>
+                                                        <td className="p-4 text-right font-mono text-slate-300">${Number(loan.principalAmount).toFixed(2)}</td>
+                                                        <td className="p-4 text-right font-mono text-slate-300">${Number(loan.installmentAmount).toFixed(2)}</td>
+                                                        <td className="p-4 text-right font-mono font-bold text-nortex-accent">${Number(loan.balanceRemaining).toFixed(2)}</td>
+                                                        <td className="p-4 text-center">
+                                                            <span className={`px-3 py-1 rounded-full text-xs font-bold ${loan.status === 'ACTIVE' ? 'bg-emerald-500/20 text-emerald-400' :
+                                                                loan.status === 'PAID_OFF' ? 'bg-blue-500/20 text-blue-400' :
+                                                                    'bg-red-500/20 text-red-400'
+                                                                }`}>
+                                                                {loan.status}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
 
-                                        {/* Panel expandible con historial de pagos */}
-                                        {expandedLoan === loan.id && (
-                                            <tr className="bg-slate-900/50">
-                                                <td colSpan={7} className="p-4 border-l-2 border-nortex-accent">
-                                                    <div className="text-sm">
-                                                        <h4 className="font-bold text-slate-400 mb-2">Historial de Pagos</h4>
-                                                        {loan.payments && loan.payments.length > 0 ? (
-                                                            <div className="space-y-2">
-                                                                {loan.payments.map((payment: any) => (
-                                                                    <div key={payment.id} className="flex justify-between items-center bg-slate-800 p-3 rounded-lg">
-                                                                        <span className="text-slate-300">{new Date(payment.paymentDate).toLocaleDateString()}</span>
-                                                                        <span className="text-slate-400 font-mono">{payment.collectedBy}</span>
-                                                                        <span className="text-emerald-400 font-bold font-mono">+${Number(payment.amountPaid).toFixed(2)}</span>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        ) : (
-                                                            <p className="text-slate-500 italic">No hay pagos registrados aún.</p>
-                                                        )}
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        )}
+                                                    {/* Panel expandible con historial de pagos */}
+                                                    {expandedLoan === loan.id && (
+                                                        <tr className="bg-slate-900/50">
+                                                            <td colSpan={7} className="p-4 border-l-2 border-nortex-accent">
+                                                                <div className="text-sm">
+                                                                    <h4 className="font-bold text-slate-400 mb-2">Historial de Pagos</h4>
+                                                                    {loan.payments && loan.payments.length > 0 ? (
+                                                                        <div className="space-y-2">
+                                                                            {loan.payments.map((payment: any) => (
+                                                                                <div key={payment.id} className="flex justify-between items-center bg-slate-800 p-3 rounded-lg">
+                                                                                    <span className="text-slate-300">{new Date(payment.paymentDate).toLocaleDateString()}</span>
+                                                                                    <span className="text-slate-400 font-mono">{payment.collectedBy}</span>
+                                                                                    <span className="text-emerald-400 font-bold font-mono">+${Number(payment.amountPaid).toFixed(2)}</span>
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    ) : (
+                                                                        <p className="text-slate-500 italic">No hay pagos registrados aún.</p>
+                                                                    )}
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    )}
+                                                </>
+                                            );
+                                        })()}
                                     </React.Fragment>
                                 ))
                             )}
