@@ -149,6 +149,8 @@ model Customer {
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
   sales  Sale[]
+  
+  loans  Loan[]
 
   @@index([tenantId])
 }
@@ -954,20 +956,7 @@ enum LoanStatus {
   PAID_OFF    // Pagado totalmente
 }
 
-model Customer {
-  id            String   @id @default(uuid())
-  tenantId      String   // El Tenant prestamista
-  name          String
-  phone         String?
-  address       String?
-  creditLimit   Decimal  @db.Decimal(12, 2) @default(1000)
-  isBlocked     Boolean  @default(false)
-  loans         Loan[]
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
 
-  @@index([tenantId])
-}
 
 model Loan {
   id                String           @id @default(uuid())
