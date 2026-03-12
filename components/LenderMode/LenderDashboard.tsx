@@ -33,7 +33,7 @@ const LenderDashboard: React.FC = () => {
 
     const fetchPortfolio = async () => {
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans`, {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans`, {
                 headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` }
             });
             const data = await response.json();
@@ -51,7 +51,7 @@ const LenderDashboard: React.FC = () => {
         e.preventDefault();
         setSubmitting(true);
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans`, {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -78,7 +78,7 @@ const LenderDashboard: React.FC = () => {
 
     const fetchRouteExpenses = async () => {
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/route-expenses`, {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/route-expenses`, {
                 headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` }
             });
             const data = await response.json();
@@ -90,7 +90,7 @@ const LenderDashboard: React.FC = () => {
 
     const fetchClients = async () => {
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/clients`, {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/clients`, {
                 headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` }
             });
             const data = await response.json();
@@ -102,7 +102,7 @@ const LenderDashboard: React.FC = () => {
 
     const toggleBlockClient = async (clientId: string, currentBlocked: boolean) => {
         try {
-            await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/clients/${clientId}`, {
+            await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/clients/${clientId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
                 body: JSON.stringify({ isBlocked: !currentBlocked })
@@ -117,7 +117,7 @@ const LenderDashboard: React.FC = () => {
         e.preventDefault();
         setSubmitting(true);
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/collectors`, {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/collectors`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
                 body: JSON.stringify(motoData)
@@ -142,7 +142,7 @@ const LenderDashboard: React.FC = () => {
         if (!refiLoan) return;
         setSubmitting(true);
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/${refiLoan.id}/refinance`, {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/${refiLoan.id}/refinance`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
                 body: JSON.stringify(refiData)

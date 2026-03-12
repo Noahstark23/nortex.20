@@ -39,7 +39,7 @@ const MotorizadosPanel: React.FC = () => {
     const fetchLoans = async () => {
         try {
             const token = localStorage.getItem('nortex_token');
-            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans`, {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const data = await response.json();
@@ -81,7 +81,7 @@ const MotorizadosPanel: React.FC = () => {
         }
 
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/${selectedLoan}/repayments`, {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/${selectedLoan}/repayments`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify(payload)
@@ -113,7 +113,7 @@ const MotorizadosPanel: React.FC = () => {
 
         for (const item of offlineQueue) {
             try {
-                await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/${item.loanId}/repayments`, {
+                await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/${item.loanId}/repayments`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                     body: JSON.stringify(item.payload)
@@ -294,7 +294,7 @@ const MotorizadosPanel: React.FC = () => {
                                 const token = localStorage.getItem('nortex_token');
                                 const userStr = localStorage.getItem('nortex_user');
                                 const collectorName = userStr ? JSON.parse(userStr).name : 'MOTO-01';
-                                const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/route-expenses`, {
+                                const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/route-expenses`, {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                                     body: JSON.stringify({ amount: expenseAmount, description: expenseDesc, collectedBy: collectorName })
