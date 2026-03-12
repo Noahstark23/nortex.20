@@ -46,7 +46,12 @@ router.post('/', authenticate, async (req: any, res: any) => {
         });
         if (!customer) {
             customer = await prisma.customer.create({
-                data: { tenantId: lenderId, name: clientName, phone: clientPhone, address: clientAddress }
+                data: {
+                    tenantId: lenderId,
+                    name: clientName,
+                    phone: clientPhone || null,
+                    address: clientAddress || null
+                }
             });
         }
         if (customer.isBlocked) {
@@ -58,8 +63,8 @@ router.post('/', authenticate, async (req: any, res: any) => {
                 lenderId,
                 customerId: customer.id,
                 clientName,
-                clientPhone,
-                clientAddress,
+                clientPhone: clientPhone || null,
+                clientAddress: clientAddress || null,
                 principalAmount: amount,
                 interestRate: parseFloat(interestRate),
                 totalToRepay: Math.round(totalToRepay * 100) / 100,
@@ -74,9 +79,9 @@ router.post('/', authenticate, async (req: any, res: any) => {
         });
 
         res.status(201).json({ success: true, data: newLoan });
-    } catch (error) {
-        console.error('Error originando crédito:', error);
-        res.status(500).json({ success: false, error: 'Error interno del motor financiero' });
+    } catch (error: any) {
+        console.error('Error originando crédito:', error.message, error.stack);
+        res.status(500).json({ success: false, error: 'Error interno del motor financiero: ' + error.message });
     }
 });
 
@@ -312,9 +317,9 @@ router.post('/collectors', authenticate, async (req: any, res: any) => {
         });
 
         res.status(201).json({ success: true, data: { id: newCollector.id, name: newCollector.name } });
-    } catch (error) {
-        console.error('Error creando motorizado:', error);
-        res.status(500).json({ success: false, error: 'Error interno al reclutar cobrador.' });
+    } catch (error: any) {
+        console.error('Error creando motorizado:', error.message, error.stack);
+        res.status(500).json({ success: false, error: 'Error interno al reclutar cobrador: ' + error.message });
     }
 });
 
