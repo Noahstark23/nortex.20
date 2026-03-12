@@ -62,9 +62,13 @@ const LenderDashboard: React.FC = () => {
                 setShowModal(false);
                 setFormData({ clientName: '', principalAmount: '', interestRate: '', installments: '', frequency: 'DAILY', type: 'INFORMAL_FLAT' });
                 fetchPortfolio();
+                fetchClients();
+            } else {
+                alert("Error al desembolsar: " + data.error);
             }
         } catch (error) {
             console.error("Error originando crédito", error);
+            alert("Error de conexión con la Bóveda.");
         } finally {
             setSubmitting(false);
         }

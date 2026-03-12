@@ -40,11 +40,11 @@ router.post('/', authenticate, async (req: any, res: any) => {
         dueDate.setDate(dueDate.getDate() + (n * (freqDays[frequency] || 1)));
 
         // Auto-crear o vincular al cliente CRM
-        let customer = await prisma.lenderClient.findFirst({
+        let customer = await prisma.customer.findFirst({
             where: { tenantId: lenderId, name: clientName }
         });
         if (!customer) {
-            customer = await prisma.lenderClient.create({
+            customer = await prisma.customer.create({
                 data: { tenantId: lenderId, name: clientName, phone: clientPhone, address: clientAddress }
             });
         }
@@ -145,7 +145,7 @@ router.get('/', authenticate, async (req: any, res: any) => {
 router.get('/clients', authenticate, async (req: any, res: any) => {
     try {
         const lenderId = req.user.tenantId;
-        const clients = await prisma.lenderClient.findMany({
+        const clients = await prisma.customer.findMany({
             where: { tenantId: lenderId },
             include: { loans: { select: { id: true, principalAmount: true, balanceRemaining: true, status: true, type: true, createdAt: true, dueDate: true } } },
             orderBy: { createdAt: 'desc' }
@@ -161,7 +161,7 @@ router.patch('/clients/:clientId', authenticate, async (req: any, res: any) => {
     try {
         const { clientId } = req.params;
         const { isBlocked, creditLimit } = req.body;
-        const updated = await prisma.lenderClient.update({
+        const updated = await prisma.customer.update({
             where: { id: clientId },
             data: {
                 ...(isBlocked !== undefined && { isBlocked }),

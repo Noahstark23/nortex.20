@@ -954,7 +954,7 @@ enum LoanStatus {
   PAID_OFF    // Pagado totalmente
 }
 
-model LenderClient {
+model Customer {
   id            String   @id @default(uuid())
   tenantId      String   // El Tenant prestamista
   name          String
@@ -977,7 +977,7 @@ model Loan {
   
   // Enlace CRM
   customerId        String?
-  customer          LenderClient?    @relation(fields: [customerId], references: [id])
+  customer          Customer?    @relation(fields: [customerId], references: [id])
   
   // Datos del Cliente Externo (Para préstamos de calle)
   clientName        String
