@@ -11,6 +11,8 @@ const LenderDashboard: React.FC = () => {
     const [showRefiModal, setShowRefiModal] = useState(false);
     const [refiLoan, setRefiLoan] = useState<any>(null);
     const [refiData, setRefiData] = useState({ newPrincipal: '', interestRate: '', installments: '', frequency: 'DAILY', type: 'INFORMAL_FLAT' });
+    const [showMotoModal, setShowMotoModal] = useState(false);
+    const [motoData, setMotoData] = useState({ name: '', email: '', password: '' });
     const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'CLIENTS' | 'REPORTS' | 'TEAM' | 'ACCOUNTING'>('DASHBOARD');
     const [clientSearch, setClientSearch] = useState('');
     const [lenderClients, setLenderClients] = useState<any[]>([]);
@@ -108,6 +110,30 @@ const LenderDashboard: React.FC = () => {
             fetchClients();
         } catch (error) {
             console.error('Error actualizando cliente:', error);
+        }
+    };
+
+    const handleCreateMoto = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setSubmitting(true);
+        try {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/loans/collectors`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
+                body: JSON.stringify(motoData)
+            });
+            const data = await response.json();
+            if (data.success) {
+                setShowMotoModal(false);
+                setMotoData({ name: '', email: '', password: '' });
+                alert("¡Motorizado reclutado! Ya puede descargar la app e iniciar sesión.");
+            } else {
+                alert("Error: " + data.error);
+            }
+        } catch (error) {
+            alert("Error de conexión con la Bóveda.");
+        } finally {
+            setSubmitting(false);
         }
     };
 
@@ -517,8 +543,16 @@ const LenderDashboard: React.FC = () => {
             {activeTab === 'TEAM' && (
                 <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6">
                     <div className="flex justify-between items-center mb-6">
-                        <h3 className="text-lg font-bold text-white flex items-center gap-2"><Users size={20} className="text-orange-400" /> Gestión de Cobradores</h3>
-                        <div className="text-sm text-slate-400">Mes en curso: <span className="text-white font-bold">{new Date().toLocaleDateString('es', { month: 'long', year: 'numeric' })}</span></div>
+                        <div className="flex flex-col gap-1">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2"><Users size={20} className="text-orange-400" /> Gestión de Cobradores</h3>
+                            <div className="text-sm text-slate-400">Mes en curso: <span className="text-white font-bold">{new Date().toLocaleDateString('es', { month: 'long', year: 'numeric' })}</span></div>
+                        </div>
+                        <button
+                            onClick={() => setShowMotoModal(true)}
+                            className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors"
+                        >
+                            + NUEVO MOTORIZADO
+                        </button>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -750,6 +784,49 @@ const LenderDashboard: React.FC = () => {
                                 className="w-full bg-purple-500 hover:bg-purple-400 text-white font-bold py-4 rounded-xl mt-4 transition-all disabled:opacity-50"
                             >
                                 {submitting ? 'PROCESANDO...' : `RENOVAR TARJETA (+$${refiData.newPrincipal || '0'})`}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal de Nuevo Motorizado */}
+            {showMotoModal && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-orange-500/50 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+                        <div className="p-6 border-b border-orange-500/30 flex justify-between items-center">
+                            <h2 className="text-xl font-bold text-orange-400">Reclutar Motorizado</h2>
+                            <button onClick={() => setShowMotoModal(false)} className="text-slate-500 hover:text-white">✕</button>
+                        </div>
+
+                        <form onSubmit={handleCreateMoto} className="p-6 space-y-4">
+                            <div>
+                                <label className="text-xs text-slate-400 mb-1 block">Nombre del Cobrador (Alias/Moto)</label>
+                                <input type="text" required placeholder="Ej: MOTO-01 o Carlos"
+                                    value={motoData.name} onChange={(e) => setMotoData({ ...motoData, name: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-orange-400 outline-none" />
+                            </div>
+                            <div>
+                                <label className="text-xs text-slate-400 mb-1 block">Correo de Acceso (Usuario)</label>
+                                <input type="email" required placeholder="moto1@financiera.com"
+                                    value={motoData.email} onChange={(e) => setMotoData({ ...motoData, email: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-orange-400 outline-none" />
+                            </div>
+                            <div>
+                                <label className="text-xs text-slate-400 mb-1 block">Contraseña Temporal</label>
+                                <input type="password" required placeholder="123456"
+                                    value={motoData.password} onChange={(e) => setMotoData({ ...motoData, password: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-orange-400 outline-none" />
+                            </div>
+
+                            <div className="bg-orange-500/10 border border-orange-500/30 p-3 rounded-lg mt-4">
+                                <p className="text-xs text-orange-300">
+                                    Al guardar, el motorizado tendrá acceso <strong>ÚNICAMENTE</strong> a la pantalla de cobranza de calle. No podrá ver la contabilidad ni el directorio de clientes.
+                                </p>
+                            </div>
+
+                            <button type="submit" disabled={submitting} className="w-full bg-orange-500 hover:bg-orange-400 text-white font-bold py-3 rounded-xl mt-4 transition-all disabled:opacity-50">
+                                {submitting ? 'CREANDO...' : 'REGISTRAR COBRADOR'}
                             </button>
                         </form>
                     </div>

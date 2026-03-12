@@ -1,5 +1,6 @@
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 import { authenticate } from '../middleware/auth';
 
 const router = express.Router();
@@ -281,6 +282,39 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
     } catch (error) {
         console.error('Error refinanciando:', error);
         res.status(500).json({ success: false, error: 'Error en el refinanciamiento' });
+    }
+});
+
+// 9. CREAR NUEVO MOTORIZADO (Auto-gestión del Prestamista)
+router.post('/collectors', authenticate, async (req: any, res: any) => {
+    try {
+        const { name, email, password } = req.body;
+        const lenderId = req.user.tenantId;
+
+        // Validar que el correo no exista en todo Nortex
+        const existingUser = await prisma.user.findUnique({ where: { email } });
+        if (existingUser) {
+            return res.status(400).json({ success: false, error: 'Ese correo ya está registrado.' });
+        }
+
+        // Encriptar la contraseña
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Crear al empleado forzando el rol COLLECTOR y amarrándolo a la bóveda del prestamista
+        const newCollector = await prisma.user.create({
+            data: {
+                name,
+                email,
+                password: hashedPassword,
+                role: 'COLLECTOR',
+                tenantId: lenderId
+            }
+        });
+
+        res.status(201).json({ success: true, data: { id: newCollector.id, name: newCollector.name } });
+    } catch (error) {
+        console.error('Error creando motorizado:', error);
+        res.status(500).json({ success: false, error: 'Error interno al reclutar cobrador.' });
     }
 });
 
