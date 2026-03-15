@@ -650,9 +650,53 @@ export default function Inventory() {
                                 </tr>
                             ) : filteredProducts.length === 0 ? (
                                 <tr>
-                                    <td colSpan={isOwner ? 8 : 6} className="text-center py-12 text-slate-400">
-                                        <Package size={40} className="mx-auto mb-2 opacity-30" />
-                                        {searchTerm ? 'No se encontraron resultados' : 'No hay productos. Crea el primero.'}
+                                    <td colSpan={isOwner ? 8 : 6} className="text-center py-16 px-4">
+                                        <div className="flex flex-col items-center justify-center max-w-md mx-auto">
+                                            <div className="w-20 h-20 bg-blue-900/30 rounded-full flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(59,130,246,0.2)]">
+                                                <Package size={40} className="text-blue-400" />
+                                            </div>
+
+                                            {searchTerm ? (
+                                                <>
+                                                    <h3 className="text-xl font-bold text-white mb-2">No se encontraron resultados</h3>
+                                                    <p className="text-slate-400 text-center mb-6">
+                                                        No hay ningún producto que coincida con "{searchTerm}". Intenta con otro nombre o SKU.
+                                                    </p>
+                                                    <button
+                                                        onClick={() => setSearchTerm('')}
+                                                        className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-xl transition-colors border border-slate-700"
+                                                    >
+                                                        Limpiar Búsqueda
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <h3 className="text-2xl font-bold text-white mb-3">Tu inventario está vacío</h3>
+                                                    <p className="text-slate-400 text-center mb-8">
+                                                        ¡Bienvenido a Nortex! Comienza a facturar agregando tu primer producto al sistema en menos de 10 segundos.
+                                                    </p>
+
+                                                    {isOwner && (
+                                                        <div className="flex flex-col sm:flex-row gap-4 w-full">
+                                                            <button
+                                                                onClick={() => { setShowQuickAddModal(true); setQuickAddSKU(''); }}
+                                                                className="flex-1 flex items-center justify-center gap-2 px-6 py-4 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.4)] hover:shadow-[0_0_30px_rgba(59,130,246,0.6)] hover:-translate-y-1"
+                                                            >
+                                                                <Zap size={20} />
+                                                                Modo Rápido 🔫
+                                                            </button>
+                                                            <button
+                                                                onClick={() => setShowCreateModal(true)}
+                                                                className="flex items-center justify-center gap-2 px-6 py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-all border border-slate-700 hover:border-slate-500"
+                                                            >
+                                                                <Plus size={20} />
+                                                                Manual
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
                             ) : (

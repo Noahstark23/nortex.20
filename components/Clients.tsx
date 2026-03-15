@@ -126,6 +126,45 @@ const Clients: React.FC = () => {
                     <tbody className="divide-y divide-slate-100">
                         {loading ? (
                             <tr><td colSpan={5} className="p-8 text-center text-slate-400">Cargando...</td></tr>
+                        ) : filtered.length === 0 ? (
+                            <tr>
+                                <td colSpan={5} className="py-16 px-4">
+                                    <div className="flex flex-col items-center justify-center max-w-md mx-auto text-center">
+                                        <div className="w-20 h-20 bg-nortex-100 rounded-full flex items-center justify-center mb-6 border border-nortex-200">
+                                            <Users size={40} className="text-nortex-500" />
+                                        </div>
+
+                                        {searchTerm ? (
+                                            <>
+                                                <h3 className="text-xl font-bold text-slate-800 mb-2">No se encontraron clientes</h3>
+                                                <p className="text-slate-500 mb-6">
+                                                    No hay ningún cliente que coincida con "{searchTerm}". Intenta con otro nombre o documento.
+                                                </p>
+                                                <button
+                                                    onClick={() => setSearchTerm('')}
+                                                    className="px-6 py-2.5 bg-white hover:bg-slate-50 text-slate-700 font-semibold rounded-xl transition-colors border border-slate-300 shadow-sm"
+                                                >
+                                                    Limpiar Búsqueda
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <h3 className="text-2xl font-bold text-slate-800 mb-3">Sin clientes registrados</h3>
+                                                <p className="text-slate-500 mb-8">
+                                                    Construye tu cartera de clientes desde el día 1. Regístralos para asignarles crédito y empezar a facturar de inmediato.
+                                                </p>
+                                                <button
+                                                    onClick={() => setShowModal(true)}
+                                                    className="flex items-center justify-center gap-2 px-8 py-4 bg-nortex-900 hover:bg-nortex-800 text-white font-bold rounded-xl transition-all shadow-md hover:shadow-lg hover:-translate-y-1"
+                                                >
+                                                    <Plus size={20} />
+                                                    Registrar Mi Primer Cliente
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                </td>
+                            </tr>
                         ) : filtered.map(c => {
                             const usage = c.creditLimit > 0 ? (c.currentDebt / c.creditLimit) * 100 : 0;
                             const isOverLimit = c.currentDebt > c.creditLimit;

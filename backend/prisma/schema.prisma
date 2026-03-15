@@ -92,6 +92,7 @@ model User {
   passwordResets  PasswordReset[]
   cashMovements   CashMovement[]
   employeeProfile Employee?
+  loansAssigned   Loan[]           @relation("LoanCollector")
 
   @@index([tenantId])
 }

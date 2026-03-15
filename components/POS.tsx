@@ -466,9 +466,19 @@ const POS: React.FC = () => {
         if (!scannerActive) return;
 
         const handleKv = (e: KeyboardEvent) => {
-            // Ignore if user is typing in a real input field
+            // Ignore if user is typing in a real input field except the search bar itself
             const target = e.target as HTMLElement;
-            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return;
+            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') {
+                return;
+            }
+
+            // Global auto-focus on the search bar for friction-less typing/scanning
+            if (searchRef.current && document.activeElement !== searchRef.current) {
+                // Don't focus on Control keys, Shift, etc.
+                if (e.key.length === 1) {
+                    searchRef.current.focus();
+                }
+            }
 
             const char = e.key;
             // Scanner sends 'Enter' at the end
@@ -1735,9 +1745,10 @@ const POS: React.FC = () => {
                     <div className="relative flex-1">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                         <input
+                            ref={searchRef}
                             type="text"
                             placeholder="Buscar producto o escanear codigo..."
-                            className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-nortex-500 shadow-sm text-slate-800"
+                            className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-nortex-500 shadow-sm text-slate-800 font-medium"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             onKeyDown={handleSearchKeyDown}
@@ -1764,6 +1775,28 @@ const POS: React.FC = () => {
                         <Upload size={18} /> <span className="hidden xl:inline">Excel</span>
                     </button>
                 </div>
+
+                {/* TOP SELLERS QUICK ACCESS */}
+                {searchTerm === '' && (
+                    <div className="mb-4">
+                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                            <Zap size={14} className="text-amber-500" /> Mas Vendidos
+                        </h3>
+                        <div className="grid grid-cols-3 lg:grid-cols-5 gap-2">
+                            {filteredProducts.slice(0, 5).map(product => (
+                                <button
+                                    key={`top-${product.id}`}
+                                    onClick={() => { addToCart(product); playBeep(); }}
+                                    className="bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-nortex-500 p-3 rounded-xl text-center active:scale-95 transition-all flex flex-col items-center justify-center gap-1 h-24 shadow-[0_0_15px_rgba(0,0,0,0.1)] group"
+                                >
+                                    <Package size={24} className="text-blue-400 group-hover:text-blue-300 transition-colors mb-1" />
+                                    <span className="text-[10px] font-bold text-slate-300 leading-tight line-clamp-2">{product.name}</span>
+                                    <span className="text-xs font-black text-emerald-400 mt-auto">C${product.price}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 overflow-y-auto pb-4 custom-scrollbar">
                     {filteredProducts.map(product => (
@@ -2361,6 +2394,24 @@ const POS: React.FC = () => {
                                             </div>
                                         ) : (
                                             <>
+                                                {/* FAST CASH BUTTONS */}
+                                                <div className="flex gap-2 mb-3 mt-1 overflow-x-auto pb-1 pb-safe custom-scrollbar">
+                                                    <button
+                                                        onClick={() => setCashReceived(completedSale.grandTotal.toFixed(2))}
+                                                        className="flex-shrink-0 px-3 py-1.5 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-bold rounded-lg text-xs border border-emerald-200 transition-colors"
+                                                    >
+                                                        Monto Exacto
+                                                    </button>
+                                                    {[100, 200, 500, 1000].map(amt => (
+                                                        <button
+                                                            key={amt}
+                                                            onClick={() => setCashReceived(amt.toString())}
+                                                            className="flex-shrink-0 px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 font-bold rounded-lg text-xs border border-slate-200 transition-colors flex items-center gap-1"
+                                                        >
+                                                            C$ {amt}
+                                                        </button>
+                                                    ))}
+                                                </div>
                                                 <div className="relative">
                                                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">C$</span>
                                                     <input
