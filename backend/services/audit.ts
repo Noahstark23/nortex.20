@@ -236,26 +236,25 @@ export async function analyzeDiscounts(
     if (startDate) dateFilter.gte = startDate;
     if (endDate) dateFilter.lte = endDate;
 
-    // Obtener ventas con descuento (discount > 0)
     const sales = await prisma.sale.findMany({
         where: {
             tenantId,
-            discount: { gt: 0 },
+            globalDiscount: { gt: 0 },
             ...(startDate || endDate ? { createdAt: dateFilter } : {}),
         },
         select: {
             id: true,
-            userId: true,
+            employeeId: true,
             total: true,
             subtotal: true,
-            discount: true,
+            globalDiscount: true,
             createdAt: true,
         },
     });
 
     // Total de ventas por usuario (para calcular %)
     const allSalesCount = await prisma.sale.groupBy({
-        by: ['userId'],
+        by: ['employeeId'],
         where: {
             tenantId,
             ...(startDate || endDate ? { createdAt: dateFilter } : {}),
@@ -263,10 +262,10 @@ export async function analyzeDiscounts(
         _count: true,
     });
 
-    const salesCountMap = new Map(allSalesCount.map((s: any) => [s.userId, s._count]));
+    const salesCountMap = new Map(allSalesCount.map((s: any) => [s.employeeId, s._count]));
 
     // Obtener nombres de usuarios
-    const userIds = [...new Set(sales.map((s: any) => s.userId))];
+    const userIds = [...new Set(sales.map((s: any) => s.employeeId).filter(Boolean))];
     const users = await prisma.user.findMany({
         where: { id: { in: userIds } },
         select: { id: true, name: true, email: true },
@@ -277,7 +276,8 @@ export async function analyzeDiscounts(
     const byUser = new Map<string, DiscountAnalysis>();
 
     for (const sale of sales as any[]) {
-        const userId = sale.userId;
+        const userId = sale.employeeId;
+        if (!userId) continue;
         if (!byUser.has(userId)) {
             byUser.set(userId, {
                 userId,
@@ -291,7 +291,7 @@ export async function analyzeDiscounts(
         }
         const entry = byUser.get(userId)!;
         entry.salesWithDiscount++;
-        entry.totalDiscountGiven += Number(sale.discount);
+        entry.totalDiscountGiven += Number(sale.globalDiscount);
     }
 
     // Calcular promedios y riesgo
@@ -326,12 +326,12 @@ export async function getAuditFeed(tenantId: string, limit: number = 50): Promis
             tenantId,
             status: 'CLOSED',
             NOT: { difference: 0 },
-            closedAt: { gte: thirtyDaysAgo },
+            endTime: { gte: thirtyDaysAgo },
         },
         include: {
             user: { select: { name: true, email: true } },
         },
-        orderBy: { closedAt: 'desc' },
+        orderBy: { endTime: 'desc' },
         take: 20,
     });
 
@@ -347,7 +347,7 @@ export async function getAuditFeed(tenantId: string, limit: number = 50): Promis
             userId: shift.userId,
             userName: shift.user?.name || shift.user?.email,
             amount: diff,
-            timestamp: shift.closedAt || shift.createdAt,
+            timestamp: shift.endTime || shift.createdAt,
         });
     }
 

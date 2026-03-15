@@ -559,15 +559,16 @@ export async function fiscalClose(tenantId: string, month: number, year: number)
         month,
         year,
         totalSales: estado.revenue.total,
-        ivaCobrado: Math.round(estado.revenue.total * 0.15 / 1.15 * 100) / 100,
+        totalIVACollected: Math.round(estado.revenue.total * 0.15 / 1.15 * 100) / 100,
         totalCompras: estado.costOfSales,
-        ivaPagado: Math.round(estado.costOfSales * 0.15 * 100) / 100,
+        totalIVAPaid: 0,
         ivaNeto: 0, // Will be calculated
         anticipoIR: Math.round(estado.revenue.total * 0.01 * 100) / 100,
         imiAlcaldia: Math.round(estado.revenue.total * 0.01 * 100) / 100,
+        totalToPay: 0,
     };
 
-    reportData.ivaNeto = Math.max(0, reportData.ivaCobrado - reportData.ivaPagado);
+    reportData.ivaNeto = Math.max(0, reportData.totalIVACollected - reportData.totalIVAPaid);
 
     if (existingReport) {
         await prisma.taxReport.update({

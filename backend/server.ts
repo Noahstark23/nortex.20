@@ -2141,17 +2141,17 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
             ];
         }
 
-        if (lowStock === 'true') {
-            whereClause.stock = { lte: prisma.product.fields.minStock };
-        }
-
-        const products = await prisma.product.findMany({
+        let products = await prisma.product.findMany({
             where: whereClause,
             orderBy: { name: 'asc' },
             include: {
                 creator: { select: { name: true, email: true } }
             }
         });
+
+        if (lowStock === 'true') {
+            products = products.filter((p: any) => Number(p.stock) <= Number(p.minStock));
+        }
 
         res.json(products);
     } catch (error) {
@@ -2620,13 +2620,12 @@ app.get('/api/inventory/low-stock', authenticate, checkRole(['OWNER', 'ADMIN']),
     const authReq = req as AuthRequest;
 
     try {
-        const products = await prisma.product.findMany({
-            where: {
-                tenantId: authReq.tenantId!,
-                stock: { lte: prisma.product.fields.minStock }
-            },
+        const allProducts = await prisma.product.findMany({
+            where: { tenantId: authReq.tenantId! },
             orderBy: { stock: 'asc' }
         });
+
+        const products = allProducts.filter((p: any) => Number(p.stock) <= Number(p.minStock));
 
         res.json(products);
     } catch (error) {
@@ -4792,8 +4791,7 @@ app.patch('/api/public/driver/:id/orders/:orderId/deliver', async (req: any, res
         }
 
         // Mismo flujo contable que en routes/pedidos.ts pero sin `authReq.userId` (usa system/motorizado logic)
-        // Reimportamos recordSale localmente para evitar dependencias circulares complejas
-        const { recordSale } = await import('./services/accounting.js');
+        // Usando el recordSale del top-level import
 
         const updated = await prisma.$transaction(async (tx: any) => {
             const p = await tx.pedido.update({
@@ -4843,11 +4841,11 @@ app.patch('/api/public/driver/:id/orders/:orderId/deliver', async (req: any, res
                         saleId: sale.id,
                         amount: pedido.total,
                         method: 'CASH',
-                        collectedBy: 'SYSTEM_DRIVER' // Motorizado lo cobró
+                        collectedBy: authReq.userId ?? null // Motorizado lo cobró
                     }
                 });
 
-                await recordSale(tx, pedido.tenantId, 'SYSTEM_DRIVER', sale.id, Number(pedido.total), costTotal, 'CASH');
+                await recordSale(tx, pedido.tenantId, authReq.userId ?? null, sale.id, Number(pedido.total), costTotal, 'CASH');
 
                 await tx.pedido.update({
                     where: { id: orderId },

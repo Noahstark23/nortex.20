@@ -10,7 +10,7 @@ const prisma = new PrismaClient();
 router.post('/', authenticate, async (req: any, res: any) => {
     try {
         const { clientName, clientPhone, clientAddress, principalAmount, interestRate, installments, frequency, type } = req.body;
-        const lenderId = req.user.tenantId;
+        const lenderId = req.tenantId;
 
         const amount = parseFloat(principalAmount);
         const rate = parseFloat(interestRate) / 100; // Convertir 5% a 0.05
@@ -294,7 +294,7 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
 router.post('/collectors', authenticate, async (req: any, res: any) => {
     try {
         const { name, email, password } = req.body;
-        const lenderId = req.user.tenantId;
+        const lenderId = req.tenantId;
 
         // Validar que el correo no exista en todo Nortex
         const existingUser = await prisma.user.findUnique({ where: { email } });
