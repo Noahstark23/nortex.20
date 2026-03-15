@@ -6,8 +6,13 @@ const LenderDashboard: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
     const [submitting, setSubmitting] = useState(false);
+    const [showDepositModal, setShowDepositModal] = useState(false);
+    const [depositData, setDepositData] = useState({ collectorId: '', motoName: '', amount: '', notes: '' });
     const [expandedLoan, setExpandedLoan] = useState<string | null>(null);
     const [routeExpenses, setRouteExpenses] = useState<any[]>([]);
+    const [collectors, setCollectors] = useState<any[]>([]);
+    const [showPenaltyModal, setShowPenaltyModal] = useState(false);
+    const [penaltyData, setPenaltyData] = useState({ loanId: '', clientName: '', amount: '', reason: 'Multa por atraso' });
     const [showRefiModal, setShowRefiModal] = useState(false);
     const [refiLoan, setRefiLoan] = useState<any>(null);
     const [refiData, setRefiData] = useState({ newPrincipal: '', interestRate: '', installments: '', frequency: 'DAILY', type: 'INFORMAL_FLAT' });
@@ -29,6 +34,7 @@ const LenderDashboard: React.FC = () => {
         fetchPortfolio();
         fetchRouteExpenses();
         fetchClients();
+        fetchCollectors();
     }, []);
 
     const fetchPortfolio = async () => {
@@ -88,6 +94,18 @@ const LenderDashboard: React.FC = () => {
         }
     };
 
+    const fetchCollectors = async () => {
+        try {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/collectors`, {
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` }
+            });
+            const data = await response.json();
+            if (data.success) setCollectors(data.data);
+        } catch (error) {
+            console.error('Error cargando cobradores:', error);
+        }
+    };
+
     const fetchClients = async () => {
         try {
             const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/clients`, {
@@ -132,6 +150,74 @@ const LenderDashboard: React.FC = () => {
             }
         } catch (error) {
             alert("Error de conexión con la Bóveda.");
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleDeposit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setSubmitting(true);
+        try {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/vault/deposit`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
+                body: JSON.stringify({ collectorId: depositData.collectorId, amount: depositData.amount, notes: depositData.notes })
+            });
+            const data = await response.json();
+            if (data.success) {
+                setShowDepositModal(false);
+                setDepositData({ collectorId: '', motoName: '', amount: '', notes: '' });
+                alert(`¡✅ Exito! Se han ingresado $${depositData.amount} a la Bóveda General Nortex.`);
+            } else {
+                alert("Error: " + data.error);
+            }
+        } catch (error) {
+            alert("Error de conexión con la Bóveda.");
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleAssignCollector = async (loanId: string, collectorId: string) => {
+        try {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/${loanId}/assign`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
+                body: JSON.stringify({ assignedToId: collectorId || null })
+            });
+            const data = await response.json();
+            if (data.success) {
+                // Actualizar estado local
+                setLoans(loans.map(l => l.id === loanId ? { ...l, assignedToId: collectorId, assignedTo: collectors.find(c => c.id === collectorId) || null } : l));
+            } else {
+                alert("Error al asignar: " + data.error);
+            }
+        } catch (error) {
+            console.error("Error de conexión:", error);
+        }
+    };
+
+    const handlePenalty = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setSubmitting(true);
+        try {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/${penaltyData.loanId}/penalty`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
+                body: JSON.stringify({ penaltyAmount: penaltyData.amount, reason: penaltyData.reason })
+            });
+            const data = await response.json();
+            if (data.success) {
+                setShowPenaltyModal(false);
+                setPenaltyData({ loanId: '', clientName: '', amount: '', reason: 'Multa por atraso' });
+                alert(`¡Multa aplicada! El saldo deudor ha incrementado en $${penaltyData.amount}.`);
+                fetchPortfolio();
+            } else {
+                alert("Error aplicando multa: " + data.error);
+            }
+        } catch (error) {
+            alert("Error de conexión al aplicar multa.");
         } finally {
             setSubmitting(false);
         }
@@ -299,17 +385,18 @@ const LenderDashboard: React.FC = () => {
                                     <th className="p-4 font-medium">Cliente</th>
                                     <th className="p-4 font-medium">Tipo</th>
                                     <th className="p-4 font-medium">Frecuencia</th>
-                                    <th className="p-4 font-medium text-right">Prestado</th>
+                                    <th className="p-4 font-medium text-right">Capital</th>
                                     <th className="p-4 font-medium text-right">Cuota</th>
-                                    <th className="p-4 font-medium text-right">Saldo Deudor</th>
+                                    <th className="p-4 font-medium text-right">Saldo</th>
                                     <th className="p-4 font-medium text-center">Estado</th>
+                                    <th className="p-4 font-medium text-center">Ruta / Motorizado</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-700/50">
                                 {loading ? (
-                                    <tr><td colSpan={7} className="p-8 text-center text-slate-500 animate-pulse">Cargando bóveda...</td></tr>
+                                    <tr><td colSpan={8} className="p-8 text-center text-slate-500 animate-pulse">Cargando bóveda...</td></tr>
                                 ) : loans.length === 0 ? (
-                                    <tr><td colSpan={7} className="p-8 text-center text-slate-500">No hay capital en la calle.</td></tr>
+                                    <tr><td colSpan={8} className="p-8 text-center text-slate-500">No hay capital en la calle.</td></tr>
                                 ) : (
                                     loans.map((loan) => (
                                         <React.Fragment key={loan.id}>
@@ -343,6 +430,18 @@ const LenderDashboard: React.FC = () => {
                                                                     {loan.status}
                                                                 </span>
                                                             </td>
+                                                            <td className="p-4" onClick={(e) => e.stopPropagation()}>
+                                                                <select
+                                                                    value={loan.assignedToId || ''}
+                                                                    onChange={(e) => handleAssignCollector(loan.id, e.target.value)}
+                                                                    className="bg-slate-800 border border-slate-700 text-xs text-slate-300 rounded px-2 py-1 outline-none focus:border-nortex-accent w-full max-w-[120px]"
+                                                                >
+                                                                    <option value="">Sin Asignar</option>
+                                                                    {collectors.map(c => (
+                                                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                                                    ))}
+                                                                </select>
+                                                            </td>
                                                         </tr>
 
                                                         {/* Panel expandible con historial de pagos */}
@@ -366,23 +465,37 @@ const LenderDashboard: React.FC = () => {
                                                                         )}
                                                                     </div>
 
-                                                                    {/* Botón de Refinanciamiento */}
-                                                                    <div className="mt-4 pt-4 border-t border-slate-700 flex justify-between items-center">
-                                                                        <div className="text-sm text-slate-400">
-                                                                            Saldo actual: <span className="font-bold text-white">${Number(loan.balanceRemaining).toFixed(2)}</span>
+                                                                    {/* Botones de Acción (Refinanciar / Multar) */}
+                                                                    <div className="mt-4 pt-4 border-t border-slate-700 flex justify-between items-center bg-slate-800/50 p-3 rounded-lg">
+                                                                        <div className="text-sm text-slate-400 font-mono">
+                                                                            Saldo: <span className="font-bold text-white text-lg">${Number(loan.balanceRemaining).toFixed(2)}</span>
                                                                         </div>
-                                                                        <button
-                                                                            onClick={(e) => {
-                                                                                e.stopPropagation();
-                                                                                setRefiLoan(loan);
-                                                                                setRefiData({ ...refiData, type: loan.type, frequency: loan.frequency, interestRate: String(loan.interestRate) });
-                                                                                setShowRefiModal(true);
-                                                                            }}
-                                                                            className="px-4 py-2 bg-purple-500/20 text-purple-400 border border-purple-500/50 rounded-lg font-bold text-xs hover:bg-purple-500 hover:text-white transition-colors flex items-center gap-2"
-                                                                        >
-                                                                            <Activity size={14} />
-                                                                            REFINANCIAR / RENOVAR
-                                                                        </button>
+                                                                        <div className="flex gap-3">
+                                                                            <button
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    setPenaltyData({ loanId: loan.id, clientName: loan.clientName, amount: '', reason: 'Multa por atraso' });
+                                                                                    setShowPenaltyModal(true);
+                                                                                }}
+                                                                                className="px-4 py-2 bg-red-500/10 text-red-400 border border-red-500/30 rounded-lg font-bold text-xs hover:bg-red-500 hover:text-white transition-colors flex items-center gap-2"
+                                                                            >
+                                                                                <AlertTriangle size={14} />
+                                                                                APLICAR PENALIDAD
+                                                                            </button>
+
+                                                                            <button
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    setRefiLoan(loan);
+                                                                                    setRefiData({ ...refiData, type: loan.type, frequency: loan.frequency, interestRate: String(loan.interestRate) });
+                                                                                    setShowRefiModal(true);
+                                                                                }}
+                                                                                className="px-4 py-2 bg-purple-500/20 text-purple-400 border border-purple-500/50 rounded-lg font-bold text-xs hover:bg-purple-500 hover:text-white transition-colors flex items-center gap-2"
+                                                                            >
+                                                                                <Activity size={14} />
+                                                                                REFINANCIAR
+                                                                            </button>
+                                                                        </div>
                                                                     </div>
                                                                 </td>
                                                             </tr>
@@ -562,24 +675,36 @@ const LenderDashboard: React.FC = () => {
                                 const monthlyPayments = loan.payments?.filter((p: any) => p.paymentDate?.startsWith(thisMonth)) || [];
                                 monthlyPayments.forEach((p: any) => {
                                     const cobrador = p.collectedBy || 'Desconocido';
-                                    acc[cobrador] = (acc[cobrador] || 0) + Number(p.amountPaid);
+                                    if (!acc[cobrador]) acc[cobrador] = { amount: 0, uid: p.collectedById || cobrador };
+                                    acc[cobrador].amount += Number(p.amountPaid);
                                 });
                                 return acc;
-                            }, {} as Record<string, number>);
+                            }, {} as Record<string, { amount: number, uid: string }>);
 
                             const entries = Object.entries(monthlyTotals);
                             if (entries.length === 0) {
                                 return <p className="text-slate-500 col-span-2 text-center py-8">No hay cobros registrados este mes aún.</p>;
                             }
-                            return entries.map(([moto, recuperado]) => (
-                                <div key={moto} className="bg-slate-900 border border-slate-700 p-5 rounded-xl flex justify-between items-center">
+                            return entries.map(([moto, data]) => (
+                                <div key={moto} className="bg-slate-900 border border-slate-700 p-5 rounded-xl flex justify-between items-center group">
                                     <div>
                                         <h4 className="font-bold text-orange-400 text-lg">{moto}</h4>
-                                        <p className="text-sm text-slate-400">Recuperado este mes: <span className="font-mono text-white">${Number(recuperado).toFixed(2)}</span></p>
+                                        <p className="text-sm text-slate-400">Recuperado este mes: <span className="font-mono text-white">${Number(data.amount).toFixed(2)}</span></p>
                                     </div>
-                                    <div className="text-right">
-                                        <p className="text-xs font-bold text-slate-500 uppercase">Comisión (5%)</p>
-                                        <p className="text-2xl font-mono font-bold text-emerald-400">${(Number(recuperado) * 0.05).toFixed(2)}</p>
+                                    <div className="flex flex-col items-end gap-2">
+                                        <div className="text-right">
+                                            <p className="text-xs font-bold text-slate-500 uppercase">Comisión (5%)</p>
+                                            <p className="text-2xl font-mono font-bold text-emerald-400">${(Number(data.amount) * 0.05).toFixed(2)}</p>
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                setDepositData({ collectorId: data.uid, motoName: moto, amount: '', notes: `Depositado por ${moto}` });
+                                                setShowDepositModal(true);
+                                            }}
+                                            className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500 hover:text-white px-3 py-1 rounded-lg text-xs font-bold transition-all opacity-0 group-hover:opacity-100"
+                                        >
+                                            RECIBIR EFECTIVO
+                                        </button>
                                     </div>
                                 </div>
                             ));
@@ -827,6 +952,105 @@ const LenderDashboard: React.FC = () => {
 
                             <button type="submit" disabled={submitting} className="w-full bg-orange-500 hover:bg-orange-400 text-white font-bold py-3 rounded-xl mt-4 transition-all disabled:opacity-50">
                                 {submitting ? 'CREANDO...' : 'REGISTRAR COBRADOR'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal de Ingreso a Bóveda */}
+            {showDepositModal && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-emerald-500/50 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+                        <div className="p-6 border-b border-emerald-500/30 flex justify-between items-center">
+                            <div>
+                                <h2 className="text-xl font-bold text-emerald-400">Ingresar a Bóveda</h2>
+                                <p className="text-sm text-slate-400 mt-1">Recibiendo efectivo de: <span className="text-white font-bold">{depositData.motoName}</span></p>
+                            </div>
+                            <button onClick={() => setShowDepositModal(false)} className="text-slate-500 hover:text-white transition-colors">
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <form onSubmit={handleDeposit} className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Monto Físico Recibido ($)</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    required
+                                    value={depositData.amount}
+                                    onChange={(e) => setDepositData({ ...depositData, amount: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-4 text-white font-mono text-2xl focus:border-emerald-400 outline-none"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Notas / Concepto</label>
+                                <input
+                                    type="text"
+                                    value={depositData.notes}
+                                    onChange={(e) => setDepositData({ ...depositData, notes: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-emerald-400 outline-none"
+                                    placeholder="Ej. Liquidación ruta martes"
+                                />
+                            </div>
+                            <button
+                                type="submit"
+                                disabled={submitting}
+                                className="w-full bg-emerald-500 hover:bg-emerald-400 text-white font-bold py-4 rounded-xl mt-2 transition-all disabled:opacity-50"
+                            >
+                                {submitting ? 'GUARDANDO EN BÓVEDA...' : 'CONFIRMAR INGRESO'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal de Penalidad / Multa */}
+            {showPenaltyModal && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-red-500/50 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl">
+                        <div className="p-6 border-b border-red-500/30 flex justify-between items-center bg-red-500/10">
+                            <div>
+                                <h2 className="text-xl font-bold text-red-400">Penalizar Atraso</h2>
+                                <p className="text-sm text-slate-300 mt-1">{penaltyData.clientName}</p>
+                            </div>
+                            <button onClick={() => setShowPenaltyModal(false)} className="text-red-400 hover:text-white transition-colors">
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <form onSubmit={handlePenalty} className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Monto de la Multa ($)</label>
+                                <input
+                                    type="number"
+                                    step="1"
+                                    required
+                                    value={penaltyData.amount}
+                                    onChange={(e) => setPenaltyData({ ...penaltyData, amount: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-red-400 outline-none font-mono"
+                                    placeholder="Ej: 5.00"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Motivo</label>
+                                <input
+                                    type="text"
+                                    required
+                                    value={penaltyData.reason}
+                                    onChange={(e) => setPenaltyData({ ...penaltyData, reason: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-red-400 outline-none text-sm"
+                                />
+                            </div>
+                            <div className="bg-red-900/20 border border-red-500/20 p-3 rounded-lg text-xs text-red-200 mt-2">
+                                <AlertTriangle size={14} className="inline mr-1 -mt-0.5" />
+                                Esta acción sumará el monto al saldo deudor actual y no se puede deshacer de forma sencilla.
+                            </div>
+                            <button
+                                type="submit"
+                                disabled={submitting || !penaltyData.amount}
+                                className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl mt-2 transition-all disabled:opacity-50"
+                            >
+                                {submitting ? 'CARGANDO...' : 'CARGAR MULTA AL SALDO'}
                             </button>
                         </form>
                     </div>

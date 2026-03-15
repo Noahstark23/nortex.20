@@ -211,16 +211,67 @@ const MotorizadosPanel: React.FC = () => {
                             <button
                                 key={loan.id}
                                 onClick={() => setSelectedLoan(loan.id)}
-                                className={`p-4 rounded-xl border text-left transition-all ${selectedLoan === loan.id
+                                className={`p-4 rounded-xl border text-left transition-all relative overflow-hidden ${selectedLoan === loan.id
                                     ? 'bg-nortex-800 border-nortex-accent shadow-[0_0_15px_rgba(16,185,129,0.2)]'
-                                    : 'bg-slate-800 border-slate-700 opacity-70'
+                                    : 'bg-slate-800 border-slate-700 opacity-70 hover:opacity-100 hover:border-slate-500'
                                     }`}
                             >
                                 <h3 className="text-lg font-bold text-white uppercase">{loan.clientName}</h3>
-                                <div className="flex justify-between mt-2 text-sm">
-                                    <span className="text-slate-400">Saldo: ${Number(loan.balanceRemaining).toFixed(2)}</span>
-                                    <span className="text-nortex-accent font-mono font-bold">Cuota: ${Number(loan.installmentAmount).toFixed(2)}</span>
-                                </div>
+
+                                {(() => {
+                                    // Cálculo de Mora vs Cuota Esperada
+                                    const oneDay = 24 * 60 * 60 * 1000;
+                                    const disbursedStr = loan.disbursedAt || loan.createdAt;
+                                    const disbursementDate = new Date(disbursedStr);
+
+                                    // Días transcurridos (básico, sin saltar domingos por ahora para mantener la robustez)
+                                    const daysElapsed = Math.max(1, Math.floor((new Date().getTime() - disbursementDate.getTime()) / oneDay));
+
+                                    const totalPaidSoFar = Number(loan.totalToRepay) - Number(loan.balanceRemaining);
+                                    let expectedToDate = 0;
+
+                                    if (loan.frequency === 'DAILY') {
+                                        expectedToDate = daysElapsed * Number(loan.installmentAmount);
+                                    } else if (loan.frequency === 'WEEKLY') {
+                                        expectedToDate = Math.max(1, Math.floor(daysElapsed / 7)) * Number(loan.installmentAmount);
+                                    } else if (loan.frequency === 'BIWEEKLY') {
+                                        expectedToDate = Math.max(1, Math.floor(daysElapsed / 15)) * Number(loan.installmentAmount);
+                                    } else if (loan.frequency === 'MONTHLY') {
+                                        expectedToDate = Math.max(1, Math.floor(daysElapsed / 30)) * Number(loan.installmentAmount);
+                                    }
+
+                                    // Limitamos lo esperado al total a pagar
+                                    expectedToDate = Math.min(expectedToDate, Number(loan.totalToRepay));
+
+                                    const atraso = Math.max(0, expectedToDate - totalPaidSoFar);
+                                    const totalAExigirHoy = Number(loan.installmentAmount) + atraso;
+
+                                    return (
+                                        <div className="mt-3 space-y-2">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="text-slate-400">Saldo Restante:</span>
+                                                <span className="text-slate-200 font-bold">${Number(loan.balanceRemaining).toFixed(2)}</span>
+                                            </div>
+
+                                            <div className="flex justify-between text-xs items-center bg-slate-900/50 p-2 rounded">
+                                                <span className="text-slate-400">Cuota Base:</span>
+                                                <span className="text-white font-mono font-bold">${Number(loan.installmentAmount).toFixed(2)}</span>
+                                            </div>
+
+                                            {atraso > 0 && (
+                                                <div className="flex justify-between text-xs items-center bg-red-900/20 text-red-400 p-2 rounded border border-red-500/20">
+                                                    <span className="flex items-center gap-1"><AlertTriangle size={12} /> Atraso Acumulado:</span>
+                                                    <span className="font-mono font-bold">+${atraso.toFixed(2)}</span>
+                                                </div>
+                                            )}
+
+                                            <div className="border-t border-slate-700/50 pt-2 mt-2 flex justify-between text-sm items-center">
+                                                <span className="text-nortex-accent font-bold">TOTAL A COBRAR HOY:</span>
+                                                <span className="text-nortex-accent font-mono text-lg font-black">${Math.min(totalAExigirHoy, Number(loan.balanceRemaining)).toFixed(2)}</span>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
                             </button>
                         ))}
                     </div>

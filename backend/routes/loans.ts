@@ -89,8 +89,22 @@ router.post('/', authenticate, async (req: any, res: any) => {
 router.post('/:id/repayments', authenticate, async (req: any, res: any) => {
     try {
         const { id } = req.params;
-        const { amountPaid, collectedBy, notes } = req.body;
+        const { amountPaid, collectedBy, notes, timestamp } = req.body;
         const payment = parseFloat(amountPaid);
+
+        // Hacking prevention: Offline Clock Validation
+        // Si mandan timestamp (modo offline), validar que no tenga más de 48h de desfase
+        // con la hora del servidor, previniendo viajes en el tiempo para evitar multas.
+        if (timestamp) {
+            const clientTime = new Date(timestamp).getTime();
+            const serverTime = new Date().getTime();
+            const diffHours = Math.abs(serverTime - clientTime) / (1000 * 60 * 60);
+
+            if (diffHours > 48) {
+                console.warn(`[FRAUD ALERT] Moto ${collectedBy} intentó un viaje en el tiempo de ${diffHours.toFixed(2)}h`);
+                return res.status(400).json({ success: false, error: 'Fecha del dispositivo inválida o excesivamente desfasada. Sincronice el reloj de su celular.' });
+            }
+        }
 
         // Transacción Atómica: Registramos el pago y bajamos el saldo en la misma operación
         const transaction = await prisma.$transaction(async (tx) => {
@@ -100,7 +114,9 @@ router.post('/:id/repayments', authenticate, async (req: any, res: any) => {
                     loanId: id,
                     amountPaid: payment,
                     collectedBy,
-                    notes
+                    notes,
+                    // Usamos el timestamp si vino y es válido, si no, el default (now)
+                    paymentDate: timestamp ? new Date(timestamp) : undefined
                 }
             });
 
@@ -135,22 +151,61 @@ router.post('/:id/repayments', authenticate, async (req: any, res: any) => {
 // 3. LISTAR CARTERA (Dashboard del Inversor)
 router.get('/', authenticate, async (req: any, res: any) => {
     try {
-        const lenderId = req.user.tenantId;
+        const lenderId = req.tenantId;
+
+        // Si es MOTORIZADO, solo ve los asignados a su ID
+        const whereClause: any = { lenderId };
+        if (req.user?.role === 'COLLECTOR') {
+            whereClause.assignedToId = req.user.id;
+        }
+
+        // Optimization: Para evitar cargar TAAAAAANTOS pagos y volar la RAM
+        // Solo traemos los pagos de "hoy" para el cálculo del Arqueo Diario
+        const todayStr = new Date().toISOString().split('T')[0];
+
         const loans = await prisma.loan.findMany({
-            where: { lenderId },
+            where: whereClause,
             orderBy: { createdAt: 'desc' },
-            include: { payments: true }
+            include: {
+                payments: {
+                    where: { paymentDate: { startsWith: todayStr } },
+                    orderBy: { createdAt: 'desc' }
+                }
+            }
         });
         res.json({ success: true, data: loans });
     } catch (error) {
+        console.error('Error obteniendo cartera:', error);
         res.status(500).json({ success: false, error: 'Error obteniendo la cartera' });
+    }
+});
+
+// 3.B OBTENER HISTORIAL DE PAGOS DE UN PRÉSTAMO (Lazy Loading)
+router.get('/:id/payments', authenticate, async (req: any, res: any) => {
+    try {
+        const { id } = req.params;
+        const lenderId = req.tenantId;
+
+        // Verificar pertenencia (abierto a moto o lender)
+        const loan = await prisma.loan.findFirst({ where: { id, lenderId } });
+        if (!loan) return res.status(404).json({ success: false, error: 'Préstamo no encontrado' });
+
+        const payments = await prisma.repayment.findMany({
+            where: { loanId: id },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        res.json({ success: true, data: payments });
+    } catch (error) {
+        console.error('Error obteniendo pagos:', error);
+        res.status(500).json({ success: false, error: 'Error obteniendo historial de pagos' });
     }
 });
 
 // 7. DIRECTORIO CRM DE CLIENTES
 router.get('/clients', authenticate, async (req: any, res: any) => {
     try {
-        const lenderId = req.user.tenantId;
+        const lenderId = req.tenantId;
         const clients = await prisma.customer.findMany({
             where: { tenantId: lenderId },
             include: { loans: { select: { id: true, principalAmount: true, balanceRemaining: true, status: true, type: true, createdAt: true, dueDate: true } } },
@@ -184,7 +239,7 @@ router.patch('/clients/:clientId', authenticate, async (req: any, res: any) => {
 router.post('/route-expenses', authenticate, async (req: any, res: any) => {
     try {
         const { amount, description, collectedBy } = req.body;
-        const lenderId = req.user.tenantId;
+        const lenderId = req.tenantId;
 
         const expense = await prisma.routeExpense.create({
             data: {
@@ -205,7 +260,7 @@ router.post('/route-expenses', authenticate, async (req: any, res: any) => {
 // 5. LISTAR GASTOS DE RUTA (Dashboard del Jefe)
 router.get('/route-expenses', authenticate, async (req: any, res: any) => {
     try {
-        const lenderId = req.user.tenantId;
+        const lenderId = req.tenantId;
         const expenses = await prisma.routeExpense.findMany({
             where: { lenderId },
             orderBy: { date: 'desc' }
@@ -221,7 +276,7 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { newPrincipal, interestRate, installments, frequency, type } = req.body;
-        const lenderId = req.user.tenantId;
+        const lenderId = req.tenantId;
 
         const result = await prisma.$transaction(async (tx) => {
             // 1. Obtener el préstamo viejo
@@ -287,6 +342,50 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
     } catch (error) {
         console.error('Error refinanciando:', error);
         res.status(500).json({ success: false, error: 'Error en el refinanciamiento' });
+    }
+});
+
+// APLICAR PENALIDAD A UN PRÉSTAMO
+router.post('/:id/penalty', authenticate, async (req: any, res: any) => {
+    try {
+        const { id } = req.params;
+        const { penaltyAmount, reason } = req.body;
+        const lenderId = req.tenantId;
+
+        const amount = parseFloat(penaltyAmount);
+        if (isNaN(amount) || amount <= 0) {
+            return res.status(400).json({ success: false, error: 'Monto de penalidad inválido' });
+        }
+
+        const loan = await prisma.loan.findFirst({ where: { id, lenderId } });
+        if (!loan) return res.status(404).json({ success: false, error: 'Préstamo no encontrado' });
+
+        const result = await prisma.$transaction(async (tx) => {
+            const updatedLoan = await tx.loan.update({
+                where: { id },
+                data: {
+                    balanceRemaining: { increment: amount },
+                    totalToRepay: { increment: amount }
+                }
+            });
+
+            await tx.repayment.create({
+                data: {
+                    loanId: id,
+                    amountPaid: -amount,
+                    collectedById: req.user?.id || null,
+                    collectedBy: req.user?.name || 'Sistema',
+                    notes: `Penalidad / Multa: ${reason || 'Atraso'}`
+                }
+            });
+
+            return updatedLoan;
+        });
+
+        res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        console.error('Error applying penalty:', error);
+        res.status(500).json({ success: false, error: 'Error aplicando penalidad' });
     }
 });
 
