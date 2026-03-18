@@ -3348,7 +3348,7 @@ app.get('/api/admin/stats', authenticate, requireSuperAdmin, async (req: any, re
         } catch (e) { console.error('Stats: tenants query failed', e); }
 
         try {
-            totalLoans = await prisma.b2bOrder.aggregate({
+            totalLoans = await prisma.b2BOrder.aggregate({
                 where: { status: { in: ['PENDING', 'APPROVED', 'DELIVERED'] } },
                 _sum: { total: true },
                 _count: true,
@@ -3499,7 +3499,7 @@ app.post('/api/admin/tenants/:id/reactivate', authenticate, requireSuperAdmin, a
 // GET /api/admin/loan-requests - Solicitudes de crédito pendientes
 app.get('/api/admin/loan-requests', authenticate, requireSuperAdmin, async (req: any, res: any) => {
     try {
-        const requests = await prisma.b2bOrder.findMany({
+        const requests = await prisma.b2BOrder.findMany({
             where: { status: 'PENDING' },
             include: {
                 tenant: {
@@ -3561,7 +3561,7 @@ app.post('/api/admin/loans/reject', authenticate, requireSuperAdmin, async (req:
     const { orderId } = req.body;
 
     try {
-        const order = await prisma.b2bOrder.update({
+        const order = await prisma.b2BOrder.update({
             where: { id: orderId },
             data: { status: 'REJECTED' }
         });
@@ -4841,11 +4841,11 @@ app.patch('/api/public/driver/:id/orders/:orderId/deliver', async (req: any, res
                         saleId: sale.id,
                         amount: pedido.total,
                         method: 'CASH',
-                        collectedBy: authReq.userId ?? null // Motorizado lo cobró
+                        collectedBy: motorizadoId ?? null // Motorizado lo cobró
                     }
                 });
 
-                await recordSale(tx, pedido.tenantId, authReq.userId ?? null, sale.id, Number(pedido.total), costTotal, 'CASH');
+                await recordSale(tx, pedido.tenantId, motorizadoId ?? null, sale.id, Number(pedido.total), costTotal, 'CASH');
 
                 await tx.pedido.update({
                     where: { id: orderId },

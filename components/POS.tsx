@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Shift, CashMovement } from '../types';
-import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw } from 'lucide-react';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { ReceiptTicket } from './ReceiptTicket';
 import * as XLSX from 'xlsx';

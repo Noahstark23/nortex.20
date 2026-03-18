@@ -148,7 +148,7 @@ export async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
 
         case 'invoice.paid': {
             const invoice = event.data.object as Stripe.Invoice;
-            const subscriptionId = invoice.subscription as string;
+            const subscriptionId = (invoice as any).subscription as string;
 
             if (subscriptionId) {
                 const tenant = await prisma.tenant.findFirst({
@@ -191,7 +191,7 @@ export async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
 
         case 'invoice.payment_failed': {
             const invoice = event.data.object as Stripe.Invoice;
-            const subscriptionId = invoice.subscription as string;
+            const subscriptionId = (invoice as any).subscription as string;
 
             if (subscriptionId) {
                 const tenant = await prisma.tenant.findFirst({

@@ -159,16 +159,17 @@ router.get('/', authenticate, async (req: any, res: any) => {
             whereClause.assignedToId = req.user.id;
         }
 
-        // Optimization: Para evitar cargar TAAAAAANTOS pagos y volar la RAM
         // Solo traemos los pagos de "hoy" para el cálculo del Arqueo Diario
         const todayStr = new Date().toISOString().split('T')[0];
+        const startOfDay = new Date(todayStr + 'T00:00:00.000Z');
+        const endOfDay = new Date(todayStr + 'T23:59:59.999Z');
 
         const loans = await prisma.loan.findMany({
             where: whereClause,
             orderBy: { createdAt: 'desc' },
             include: {
                 payments: {
-                    where: { paymentDate: { startsWith: todayStr } },
+                    where: { paymentDate: { gte: startOfDay, lte: endOfDay } },
                     orderBy: { createdAt: 'desc' }
                 }
             }
@@ -373,7 +374,6 @@ router.post('/:id/penalty', authenticate, async (req: any, res: any) => {
                 data: {
                     loanId: id,
                     amountPaid: -amount,
-                    collectedById: req.user?.id || null,
                     collectedBy: req.user?.name || 'Sistema',
                     notes: `Penalidad / Multa: ${reason || 'Atraso'}`
                 }

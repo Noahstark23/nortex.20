@@ -246,7 +246,6 @@ export async function analyzeDiscounts(
             id: true,
             employeeId: true,
             total: true,
-            subtotal: true,
             globalDiscount: true,
             createdAt: true,
         },

@@ -40,7 +40,8 @@ const LenderDashboard: React.FC = () => {
     const fetchPortfolio = async () => {
         try {
             const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans`, {
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` }
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
+                cache: 'no-store'
             });
             const data = await response.json();
             if (data.success) {
@@ -85,7 +86,8 @@ const LenderDashboard: React.FC = () => {
     const fetchRouteExpenses = async () => {
         try {
             const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/route-expenses`, {
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` }
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
+                cache: 'no-store'
             });
             const data = await response.json();
             if (data.success) setRouteExpenses(data.data);
@@ -97,7 +99,8 @@ const LenderDashboard: React.FC = () => {
     const fetchCollectors = async () => {
         try {
             const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/collectors`, {
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` }
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
+                cache: 'no-store'
             });
             const data = await response.json();
             if (data.success) setCollectors(data.data);
@@ -109,7 +112,8 @@ const LenderDashboard: React.FC = () => {
     const fetchClients = async () => {
         try {
             const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/clients`, {
-                headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` }
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
+                cache: 'no-store'
             });
             const data = await response.json();
             if (data.success) setLenderClients(data.data);
@@ -685,7 +689,7 @@ const LenderDashboard: React.FC = () => {
                             if (entries.length === 0) {
                                 return <p className="text-slate-500 col-span-2 text-center py-8">No hay cobros registrados este mes aún.</p>;
                             }
-                            return entries.map(([moto, data]) => (
+                            return entries.map(([moto, data]: [string, any]) => (
                                 <div key={moto} className="bg-slate-900 border border-slate-700 p-5 rounded-xl flex justify-between items-center group">
                                     <div>
                                         <h4 className="font-bold text-orange-400 text-lg">{moto}</h4>
