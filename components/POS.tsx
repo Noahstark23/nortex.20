@@ -1042,7 +1042,7 @@ const POS: React.FC = () => {
                     )}
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-1 min-w-0 justify-end overflow-x-auto custom-scrollbar whitespace-nowrap pl-4 pb-2 pt-2 lg:pb-0 lg:pt-0 lg:overflow-visible">
                     {/* 🅿️ PARQUEO BADGE */}
                     {currentShift && (
                         <button
@@ -1740,7 +1740,7 @@ const POS: React.FC = () => {
             )}
 
             {/* LEFT: PRODUCTS */}
-            <div className="w-full lg:flex-1 flex flex-col p-4 lg:p-6 mt-14 overflow-hidden mb-16 lg:mb-0">
+            <div className="w-full flex-1 flex flex-col p-4 lg:p-6 mt-14 overflow-hidden mb-16 lg:mb-0">
                 <div className="mb-4 flex gap-2">
                     <div className="relative flex-1">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
@@ -1798,7 +1798,7 @@ const POS: React.FC = () => {
                     </div>
                 )}
 
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 overflow-y-auto pb-4 custom-scrollbar">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 overflow-y-auto pb-4 custom-scrollbar flex-1 min-h-0">
                     {filteredProducts.map(product => (
                         <button key={product.id} onClick={() => { addToCart(product); playBeep(); }} className="bg-white p-4 rounded-xl border border-slate-200 hover:border-nortex-500 hover:shadow-md transition-all text-left flex flex-col justify-between text-slate-800 active:scale-[0.98]">
                             <div>
@@ -1854,8 +1854,8 @@ const POS: React.FC = () => {
 
             {/* Cart Container - Drawer on Mobile, Sidebar on Desktop */}
             <div className={`
-          fixed inset-0 z-50 bg-white lg:static lg:z-auto lg:w-96 lg:border-l lg:border-slate-200 lg:flex flex-col lg:shadow-xl lg:mt-14 transition-transform duration-300
-          ${showMobileCart ? 'translate-y-0' : 'translate-y-full lg:translate-y-0'}
+          fixed inset-0 z-50 bg-white lg:static lg:z-auto lg:w-96 lg:border-l lg:border-slate-200 lg:flex flex-col lg:shadow-xl lg:mt-14 transition-all duration-300
+          ${showMobileCart ? 'translate-y-0 opacity-100' : 'translate-y-full lg:translate-y-0 opacity-0 pointer-events-none lg:opacity-100 lg:pointer-events-auto'}
       `}>
                 <div className="p-5 border-b border-slate-100 bg-slate-50 text-slate-800 flex items-center justify-between">
                     <h2 className="font-bold text-slate-800 flex items-center gap-2"><ShoppingCart size={20} /> Ticket</h2>
