@@ -1854,7 +1854,7 @@ const POS: React.FC = () => {
 
             {/* Cart Container - Drawer on Mobile, Sidebar on Desktop */}
             <div className={`
-          fixed inset-0 z-50 bg-white lg:static lg:z-auto lg:w-96 lg:border-l lg:border-slate-200 lg:flex flex-col lg:shadow-xl lg:mt-14 transition-all duration-300
+          fixed inset-0 z-50 bg-white lg:static lg:z-auto lg:w-96 lg:border-l lg:border-slate-200 flex flex-col lg:shadow-xl lg:mt-14 transition-all duration-300
           ${showMobileCart ? 'translate-y-0 opacity-100' : 'translate-y-full lg:translate-y-0 opacity-0 pointer-events-none lg:opacity-100 lg:pointer-events-auto'}
       `}>
                 <div className="p-5 border-b border-slate-100 bg-slate-50 text-slate-800 flex items-center justify-between">
