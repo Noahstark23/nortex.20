@@ -923,6 +923,35 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             take: 10
         });
 
+        // 7. SURVIVAL DASHBOARD (NIIF PyMES)
+        const balanceData = await getBalanceGeneral(tenantId);
+        const assets = balanceData.assets || [];
+        const liabilities = balanceData.liabilities || [];
+
+        const cashObj = assets.find((a: any) => a.code === '1.1.1');
+        const bankObj = assets.find((a: any) => a.code === '1.1.2');
+        const cxcObj = assets.find((a: any) => a.code === '1.1.3');
+        const invObj = assets.find((a: any) => a.code === '1.1.4');
+        const cxpObj = liabilities.find((a: any) => a.code === '2.1.1');
+
+        const caja = cashObj ? Number(cashObj.balance) : 0;
+        const bancos = bankObj ? Number(bankObj.balance) : 0;
+        const cxc = cxcObj ? Number(cxcObj.balance) : 0;
+        const inventario = invObj ? Number(invObj.balance) : 0;
+        const cxp = cxpObj ? Number(cxpObj.balance) : 0;
+
+        const liquidezLibre = (caja + bancos) - cxp;
+
+        const survivalData = {
+            cajaGeneral: caja,
+            bancos: bancos,
+            efectivoTotal: caja + bancos,
+            cuentasPorCobrar: cxc,
+            inventario: inventario,
+            cuentasPorPagar: cxp,
+            liquidezLibre: liquidezLibre
+        };
+
         res.json({
             tenant: tenant,
             chartData: chartData,
@@ -937,6 +966,7 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
                 details: a.details ? JSON.parse(a.details) : {},
                 createdAt: a.createdAt
             })),
+            survivalData: survivalData
         });
 
     } catch (error) {

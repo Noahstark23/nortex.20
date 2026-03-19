@@ -7,9 +7,6 @@ export interface Product {
   stock: number;
   sku: string;
   category: string;
-  isPublished?: boolean;
-  imageUrl?: string;
-  description?: string;
 }
 
 export interface CartItem extends Product {
@@ -19,40 +16,19 @@ export interface CartItem extends Product {
 export interface Tenant {
   id: string;
   name: string;
-  slug?: string;
-  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE';
+  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE'; 
   creditScore: number;
   creditLimit: number;
   walletBalance: number;
   subscriptionStatus: 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
   plan: string;
-  trialEndsAt: string;
-}
-
-// PEDIDOS PÚBLICOS (Portal Web)
-export interface PublicOrderItem {
-  productId: string;
-  name: string;
-  quantity: number;
-  price: number;
-}
-
-export interface PublicOrder {
-  id: string;
-  tenantId: string;
-  customerName: string;
-  customerPhone?: string;
-  items: PublicOrderItem[];
-  status: 'PENDING' | 'CONVERTED';
-  createdAt: string;
+  trialEndsAt: string; 
 }
 
 export interface Shift {
   id: string;
   userId: string;
   tenantId: string;
-  employeeId?: string;
-  employee?: { id: string; firstName: string; lastName: string; role: string };
   startTime: string;
   endTime?: string;
   initialCash: number;
@@ -60,20 +36,6 @@ export interface Shift {
   systemExpectedCash?: number;
   difference?: number; // declared - expected
   status: 'OPEN' | 'CLOSED';
-}
-
-export interface CashMovement {
-  id: string;
-  shiftId: string;
-  userId: string;
-  type: 'IN' | 'OUT';
-  amount: number;
-  currency: 'NIO' | 'USD';
-  category: string;
-  description: string;
-  isVoided: boolean;
-  createdAt: string;
-  user?: { id: string; name: string };
 }
 
 export interface AuditLog {
@@ -99,7 +61,7 @@ export interface Sale {
   status: 'COMPLETED' | 'CREDIT_PENDING' | 'PAID';
   paymentMethod: 'CASH' | 'CARD' | 'QR' | 'CREDIT';
   customerName?: string;
-  balance: number;
+  balance: number; 
   dueDate?: string;
   payments?: Payment[];
   shiftId?: string; // Link to Shift
@@ -126,11 +88,11 @@ export interface Wholesaler {
 export interface CatalogItem {
   id: string;
   wholesalerId: string;
-  wholesalerName: string;
+  wholesalerName: string; 
   name: string;
   description: string;
   sku: string;
-  price: number;
+  price: number; 
   category: string;
   sector: string;
   imageUrl?: string;
@@ -175,7 +137,6 @@ export interface Employee {
   firstName: string;
   lastName: string;
   role: 'MANAGER' | 'VENDEDOR' | 'BODEGA';
-  pin?: string; // PIN de 4 dígitos para acceso rápido
   baseSalary: number;
   commissionRate: number; // 0.05 = 5%
   salesMonthToDate: number;

@@ -32,6 +32,9 @@ const Dashboard: React.FC = () => {
   const [todayStats, setTodayStats] = useState<{ totalSales: number; totalExpenses: number; netProfit: number } | null>(null);
   const [theftAlerts, setTheftAlerts] = useState<any[]>([]);
 
+  // 🛡️ Survival Data (NIIF PyMES)
+  const [survivalData, setSurvivalData] = useState<any>(null);
+
   // FETCH REAL DATA
   useEffect(() => {
     const initDashboard = async () => {
@@ -55,6 +58,7 @@ const Dashboard: React.FC = () => {
           setChartData(data.chartData);
           if (data.todayStats) setTodayStats(data.todayStats);
           if (data.alerts) setTheftAlerts(data.alerts);
+          if (data.survivalData) setSurvivalData(data.survivalData);
           localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
         }
 
@@ -469,6 +473,65 @@ const Dashboard: React.FC = () => {
           </p>
         </div>
       </div>
+
+      {/* 🛡️ DASHBOARD DE SUPERVIVENCIA (NIIF PyMES) */}
+      {survivalData && (
+        <div className="mb-8 border-t border-slate-200 pt-8">
+          <h2 className="text-2xl font-bold text-nortex-900 mb-6 flex items-center gap-2">
+            <ShieldAlert className="text-emerald-600" /> Dashboard de Supervivencia
+          </h2>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            {/* Safe Withdrawal Widget */}
+            <div className={`p-6 rounded-xl shadow-lg text-white relative overflow-hidden flex flex-col justify-center border
+              ${survivalData.liquidezLibre > 0 ? 'bg-emerald-600 border-emerald-500' : 'bg-red-600 border-red-500'}
+            `}>
+              <div className="absolute -top-10 -right-10 w-48 h-48 bg-white blur-[60px] opacity-10 rounded-full"></div>
+              <h3 className="text-lg font-bold text-white/90 mb-1 relative z-10 flex items-center gap-2">
+                {survivalData.liquidezLibre > 0 ? <Check size={18} /> : <AlertCircle size={18} />} Retiro Seguro Permitido
+              </h3>
+              <p className="text-sm text-white/80 mb-6 relative z-10">
+                Efectivo real menos proveedores. Esto puedes sacarlo sin quebrar el negocio.
+              </p>
+              <h2 className="text-4xl font-extrabold mb-2 relative z-10 tracking-tight">
+                C${survivalData.liquidezLibre > 0 ? survivalData.liquidezLibre.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '0.00'}
+              </h2>
+              {survivalData.liquidezLibre <= 0 && (
+                <div className="text-sm font-bold bg-white/20 px-3 py-1 rounded w-fit mt-2 border border-white/30 backdrop-blur-sm relative z-10">
+                  Faltan C${Math.abs(survivalData.liquidezLibre).toLocaleString(undefined, { minimumFractionDigits: 2 })} para cubrir deudas
+                </div>
+              )}
+            </div>
+
+            {/* Survival Chart */}
+            <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <h3 className="text-lg font-bold text-slate-800 mb-1">Efectivo vs Créditos vs Deudas</h3>
+              <p className="text-xs text-slate-500 mb-6">Muestra dónde está la plata (NIIF PyMES)</p>
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={[
+                    { name: 'Efectivo Físico', monto: survivalData.efectivoTotal, fill: '#10b981' },
+                    { name: 'Cuentas x Cobrar', monto: survivalData.cuentasPorCobrar, fill: '#f59e0b' },
+                    { name: 'Deuda Proveedor (CxP)', monto: survivalData.cuentasPorPagar, fill: '#ef4444' },
+                    { name: 'Inventario (Valor)', monto: survivalData.inventario, fill: '#3b82f6' }
+                  ]}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 13, fontWeight: 500 }} dy={10} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
+                    <Tooltip
+                      cursor={{ fill: '#f1f5f9' }}
+                      contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                      formatter={(value: number) => [`C$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Total']}
+                    />
+                    <Bar dataKey="monto" radius={[6, 6, 0, 0]} barSize={50} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {/* Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
