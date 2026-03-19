@@ -4786,7 +4786,7 @@ app.get('/api/public/driver/:id/orders', publicLimiter, async (req: any, res: an
         const orders = await prisma.pedido.findMany({
             where: {
                 motorizadoId,
-                estado: { in: ['preparando', 'en_camino'] }
+                estado: { in: ['asignado', 'preparando', 'en_tienda', 'en_ruta', 'en_camino', 'en_punto'] }
             },
             include: {
                 items: {
@@ -4796,7 +4796,30 @@ app.get('/api/public/driver/:id/orders', publicLimiter, async (req: any, res: an
             orderBy: { createdAt: 'asc' }
         });
 
-        res.json({ driver: motorizado, orders });
+        // 💰 Liquidación en tiempo real para el Uber View
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        const hoyPedidos = await prisma.pedido.findMany({
+            where: { motorizadoId, estado: 'entregado', entregadoAt: { gte: todayStart } }
+        });
+
+        let totalCobradoEfectivo = 0;
+        let totalComisiones = 0;
+
+        for (const p of hoyPedidos) {
+            totalCobradoEfectivo += Number(p.total);
+            totalComisiones += Number(p.costoEntrega);
+        }
+
+        const liquidacionDiaria = {
+            pedidosEntregados: hoyPedidos.length,
+            totalCobrado: totalCobradoEfectivo,
+            comisionesGanadas: totalComisiones,
+            netoADepositarA_Tienda: totalCobradoEfectivo - totalComisiones > 0 ? totalCobradoEfectivo - totalComisiones : 0
+        };
+
+        res.json({ driver: motorizado, orders, liquidacionDiaria });
     } catch (error) {
         console.error('Get driver orders error:', error);
         res.status(500).json({ error: 'Error al obtener pedidos del motorizado' });
@@ -4808,6 +4831,7 @@ app.get('/api/public/driver/:id/orders', publicLimiter, async (req: any, res: an
 app.patch('/api/public/driver/:id/orders/:orderId/deliver', async (req: any, res: any) => {
     const motorizadoId = req.params.id;
     const orderId = req.params.orderId;
+    const { lat, lng } = req.body || {}; // Extraemos GPS tracking
 
     try {
         const pedido = await prisma.pedido.findFirst({
@@ -4824,18 +4848,39 @@ app.patch('/api/public/driver/:id/orders/:orderId/deliver', async (req: any, res
         // Usando el recordSale del top-level import
 
         const updated = await prisma.$transaction(async (tx: any) => {
+            const entregadoAtCalculated = new Date();
             const p = await tx.pedido.update({
                 where: { id: orderId },
-                data: { estado: 'entregado', entregadoAt: new Date() }
+                data: { estado: 'entregado', entregadoAt: entregadoAtCalculated }
             });
 
             await tx.trackingEvento.create({
                 data: {
                     pedidoId: orderId,
                     estado: 'entregado',
-                    nota: 'Entregado vía App del Motorizado'
+                    nota: 'Entregado vía App del Motorizado',
+                    lat: lat ? Number(lat) : null,
+                    lng: lng ? Number(lng) : null
                 }
             });
+
+            // Alerta de proximidad GPS si aplican coordenadas
+            if (lat && lng) {
+                await tx.auditLog.create({
+                    data: {
+                        tenantId: pedido.tenantId,
+                        userId: 'SYSTEM',
+                        action: 'GPS_AUDIT_ALERT',
+                        details: JSON.stringify({
+                            mensaje: 'Pedido entregado por motorizado desde la Driver App.',
+                            lat: Number(lat),
+                            lng: Number(lng),
+                            pedidoId: orderId,
+                            motorizadoId: motorizadoId
+                        })
+                    }
+                });
+            }
 
             if (!pedido.facturaId) {
                 let costTotal = 0;

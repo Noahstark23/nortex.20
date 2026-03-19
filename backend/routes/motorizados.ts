@@ -90,4 +90,62 @@ router.patch('/:id', authenticate, async (req: any, res: any) => {
     }
 });
 
+// GET /api/v1/motorizados/:id/liquidacion
+// Liquidación Diaria Automática (Efectivo Neto a entregar en Caja Central)
+router.get('/:id/liquidacion', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+
+    try {
+        const motorizado = await prisma.motorizado.findFirst({
+            where: { id, tenantId: authReq.tenantId }
+        });
+
+        if (!motorizado) {
+            return res.status(404).json({ error: 'Motorizado no encontrado.' });
+        }
+
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        // Fetch today's delivered orders for this driver
+        const hoyPedidos = await prisma.pedido.findMany({
+            where: {
+                motorizadoId: id,
+                tenantId: authReq.tenantId,
+                estado: 'entregado',
+                entregadoAt: { gte: todayStart }
+            }
+        });
+
+        let totalCobradoEfectivo = 0;
+        let totalComisiones = 0; // Comisión dinámica = costoEntrega (asuminos que el delivery fee es del driver)
+
+        for (const p of hoyPedidos) {
+            // Asumimos que todos cobrados al momento (CASH default for deliveries in this flow)
+            totalCobradoEfectivo += Number(p.total);
+            totalComisiones += Number(p.costoEntrega);
+        }
+
+        const netoADepositar = totalCobradoEfectivo - totalComisiones;
+
+        res.json({
+            motorizado: {
+                nombre: motorizado.nombre,
+                walletId: motorizado.walletId,
+                calificacionPromedio: motorizado.calificacionPromedio
+            },
+            liquidacionDiaria: {
+                pedidosEntregados: hoyPedidos.length,
+                totalCobrado: totalCobradoEfectivo,
+                comisionesGanadas: totalComisiones,
+                netoADepositarA_Tienda: netoADepositar > 0 ? netoADepositar : 0
+            }
+        });
+    } catch (error) {
+        console.error('Liquidacion Error:', error);
+        res.status(500).json({ error: 'Error al calcular liquidación.' });
+    }
+});
+
 export default router;

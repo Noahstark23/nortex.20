@@ -28,10 +28,18 @@ interface Driver {
     tipoFlota: string;
 }
 
+interface Liquidacion {
+    pedidosEntregados: number;
+    totalCobrado: number;
+    comisionesGanadas: number;
+    netoADepositarA_Tienda: number;
+}
+
 const DriverView: React.FC = () => {
     const { id: driverId } = useParams<{ id: string }>();
     const [driver, setDriver] = useState<Driver | null>(null);
     const [orders, setOrders] = useState<Order[]>([]);
+    const [liquidacion, setLiquidacion] = useState<Liquidacion | null>(null);
     const [loading, setLoading] = useState(true);
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [error, setError] = useState('');
@@ -50,6 +58,7 @@ const DriverView: React.FC = () => {
                 const data = await res.json();
                 setDriver(data.driver);
                 setOrders(data.orders);
+                if (data.liquidacionDiaria) setLiquidacion(data.liquidacionDiaria);
             } else {
                 setError('Enlace inválido o motorizado inactivo.');
             }
@@ -65,13 +74,31 @@ const DriverView: React.FC = () => {
         if (!confirmResult) return;
 
         setProcessingId(orderId);
+
+        let lat = null;
+        let lng = null;
+
+        try {
+            // Intentar capturar coordenadas GPS
+            const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000, enableHighAccuracy: true });
+            });
+            lat = pos.coords.latitude;
+            lng = pos.coords.longitude;
+        } catch (e) {
+            console.warn("GPS no disponible:", e);
+        }
+
         try {
             const res = await fetch(`/api/public/driver/${driverId}/orders/${orderId}/deliver`, {
-                method: 'PATCH'
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lat, lng })
             });
             if (res.ok) {
-                // Quitar de la lista
+                // Quitar de la lista y actualizar liquidación
                 setOrders(prev => prev.filter(o => o.id !== orderId));
+                fetchOrders();
             } else {
                 const data = await res.json();
                 alert(data.error || 'Error al procesar la entrega');
@@ -105,19 +132,41 @@ const DriverView: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-slate-100 pb-20">
-            {/* Header Flotante */}
-            <div className="bg-blue-600 text-white p-5 rounded-b-3xl shadow-md sticky top-0 z-10">
-                <div className="flex items-center gap-3">
-                    <div className="bg-white/20 p-2.5 rounded-2xl backdrop-blur-sm">
-                        <Truck size={24} />
-                    </div>
-                    <div>
-                        <h1 className="font-bold text-xl leading-tight">{driver.nombre}</h1>
-                        <p className="text-blue-100 text-sm font-medium">
-                            {driver.tipoFlota === 'NORTEX' ? '⚡ Freelance Nortex' : 'Flota Propia'}
-                        </p>
+            {/* Header Flotante & Resumen Uber (Billetera) */}
+            <div className="bg-slate-900 text-white p-5 rounded-b-3xl shadow-lg sticky top-0 z-20">
+                <div className="flex justify-between items-start mb-4">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-white/10 p-2.5 rounded-2xl backdrop-blur-sm border border-white/20">
+                            <Truck size={24} className="text-emerald-400" />
+                        </div>
+                        <div>
+                            <h1 className="font-bold text-lg leading-tight">{driver.nombre}</h1>
+                            <p className="text-slate-400 text-xs font-medium">
+                                {driver.tipoFlota === 'NORTEX' ? '⚡ Flota Nortex' : 'Flota Base'}
+                            </p>
+                        </div>
                     </div>
                 </div>
+
+                {/* Billetera (Uber View) */}
+                {liquidacion && (
+                    <div className="grid grid-cols-2 gap-3 mt-4 border-t border-white/10 pt-4">
+                        <div className="bg-white/5 p-3 rounded-2xl border border-white/10">
+                            <p className="text-slate-400 text-[10px] uppercase font-bold tracking-wider mb-1">Rendimiento Hoy</p>
+                            <div className="flex items-baseline gap-1">
+                                <span className="text-2xl font-black text-emerald-400">C${Number(liquidacion.comisionesGanadas).toFixed(2)}</span>
+                            </div>
+                            <p className="text-slate-500 text-xs mt-1">{liquidacion.pedidosEntregados} entregas finalizadas</p>
+                        </div>
+                        <div className="bg-emerald-500/10 p-3 rounded-2xl border border-emerald-500/20">
+                            <p className="text-emerald-300 text-[10px] uppercase font-bold tracking-wider mb-1">Entregar a Caja</p>
+                            <div className="flex items-baseline gap-1">
+                                <span className="text-2xl font-black text-white">C${Number(liquidacion.netoADepositarA_Tienda).toFixed(2)}</span>
+                            </div>
+                            <p className="text-emerald-400/80 text-xs mt-1">Efectivo retenido</p>
+                        </div>
+                    </div>
+                )}
             </div>
 
             <div className="p-4 space-y-4 max-w-md mx-auto mt-2">

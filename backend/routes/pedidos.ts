@@ -195,9 +195,9 @@ router.get('/:id/tracking', async (req: any, res: any) => {
 router.patch('/:id/estado', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { estado, nota } = req.body;
+    const { estado, nota, lat, lng } = req.body;
 
-    const estadosValidos = ['pendiente', 'preparando', 'en_camino', 'entregado', 'cancelado'];
+    const estadosValidos = ['pendiente', 'asignado', 'preparando', 'en_tienda', 'en_ruta', 'en_camino', 'en_punto', 'entregado', 'cancelado'];
 
     if (!estadosValidos.includes(estado)) {
         return res.status(400).json({ error: `Estado inválido. Opciones: ${estadosValidos.join(', ')}` });
@@ -226,9 +226,70 @@ router.patch('/:id/estado', authenticate, async (req: any, res: any) => {
                 data: {
                     pedidoId: id,
                     estado,
-                    nota
+                    nota,
+                    lat: lat ? Number(lat) : null,
+                    lng: lng ? Number(lng) : null
                 }
             });
+
+            // FASE: Reserva Exclusiva de Kardex (Inventario)
+            if (estado === 'preparando') {
+                const existingReservas = await tx.kardexMovement.count({
+                    where: { referenceId: id, referenceType: 'PEDIDO_RESERVA' }
+                });
+
+                if (existingReservas === 0) {
+                    for (const item of pedido.items) {
+                        const prod = await tx.product.findUnique({ where: { id: item.productoId } });
+                        if (prod) {
+                            const stockBefore = Number(prod.stock);
+                            const stockAfter = stockBefore - item.cantidad;
+
+                            // 1. Decrementar físicamente para que no se venda en mostrador
+                            await tx.product.update({
+                                where: { id: item.productoId },
+                                data: { stock: stockAfter }
+                            });
+
+                            // 2. Registrar en Kardex
+                            await tx.kardexMovement.create({
+                                data: {
+                                    tenantId: authReq.tenantId,
+                                    productId: item.productoId,
+                                    type: 'OUT',
+                                    quantity: -item.cantidad,
+                                    stockBefore,
+                                    stockAfter,
+                                    referenceId: id,
+                                    referenceType: 'PEDIDO_RESERVA',
+                                    reason: `Reserva para envío. Pedido: ${id}`,
+                                    userId: authReq.userId
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+
+            // FASE: Auditoría de Geolocalización (Proximity Alert)
+            if (estado === 'entregado' && lat && lng) {
+                // Generamos una Alerta de Auditoría simulando un cálculo de distancia
+                // ya que no almacenamos lat/lng del cliente originalmente, 
+                // pero alertaremos al dueño del negocio para revisión si el delivery "lo cerró desde la calle"
+                await tx.auditLog.create({
+                    data: {
+                        tenantId: authReq.tenantId,
+                        userId: authReq.userId,
+                        action: 'GPS_AUDIT_ALERT',
+                        details: JSON.stringify({
+                            mensaje: 'Pedido entregado. Coordenadas GPS han sido registradas para verificación cruzada.',
+                            lat: Number(lat),
+                            lng: Number(lng),
+                            pedidoId: id
+                        })
+                    }
+                });
+            }
 
             // FASE 2: Integración de Facturación
             // Si el estado pasa a "entregado" y no tiene factura asociada, procedemos a facturar.

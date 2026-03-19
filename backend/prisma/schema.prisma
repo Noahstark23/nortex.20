@@ -150,8 +150,8 @@ model Customer {
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
   sales  Sale[]
-  
-  loans  Loan[]
+
+  loans Loan[]
 
   @@index([tenantId])
 }
@@ -398,6 +398,7 @@ model Shift {
   employee      Employee?      @relation(fields: [employeeId], references: [id])
   sales         Sale[]
   cashMovements CashMovement[]
+  RouteExpense  RouteExpense[]
 
   @@index([tenantId])
   @@index([userId])
@@ -864,15 +865,17 @@ model CapitalLoan {
 }
 
 model Motorizado {
-  id            String   @id @default(uuid())
-  tenantId      String? // Opcional: Si es nulo, es un motorizado global de Nortex
-  tipoFlota     String   @default("PROPIA") // "PROPIA" (de la ferretería) o "NORTEX" (freelance)
-  nombre        String   @db.VarChar(100)
-  telefono      String   @db.VarChar(20)
-  zonaCobertura String   @db.VarChar(100)
-  activo        Boolean  @default(true)
-  walletId      String?  @unique // ¡Su propia cuenta bancaria Nortex!
-  createdAt     DateTime @default(now())
+  id                   String   @id @default(uuid())
+  tenantId             String? // Opcional: Si es nulo, es un motorizado global de Nortex
+  tipoFlota            String   @default("PROPIA") // "PROPIA" (de la ferretería) o "NORTEX" (freelance)
+  nombre               String   @db.VarChar(100)
+  telefono             String   @db.VarChar(20)
+  zonaCobertura        String   @db.VarChar(100)
+  activo               Boolean  @default(true)
+  walletId             String?  @unique // ¡Su propia cuenta bancaria Nortex!
+  calificacionPromedio Float    @default(5.0)
+  vehiculoPlaca        String?  @db.VarChar(20)
+  createdAt            DateTime @default(now())
 
   tenant  Tenant?  @relation(fields: [tenantId], references: [id])
   pedidos Pedido[]
@@ -895,6 +898,8 @@ model Pedido {
   notas               String?   @db.Text
   createdAt           DateTime  @default(now())
   entregadoAt         DateTime?
+  distanciaEstimada   Float? // Distancia en KM
+  tiempoEntregaReal   Int? // Tiempo en minutos
 
   tenant     Tenant           @relation(fields: [tenantId], references: [id])
   motorizado Motorizado?      @relation(fields: [motorizadoId], references: [id])
@@ -927,6 +932,8 @@ model TrackingEvento {
   pedidoId  String
   estado    String
   nota      String?  @db.Text
+  lat       Float? // GPS tracking
+  lng       Float? // GPS tracking
   createdAt DateTime @default(now())
 
   pedido Pedido @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
@@ -939,88 +946,88 @@ model TrackingEvento {
 // ==========================================
 
 enum LoanType {
-  INFORMAL_FLAT    // Préstamo de calle (Gota a Gota), interés fijo desde el día 1
+  INFORMAL_FLAT // Préstamo de calle (Gota a Gota), interés fijo desde el día 1
   FORMAL_AMORTIZED // Préstamo de financiera, interés sobre saldo
 }
 
 enum PaymentFrequency {
-  DAILY       // Diario (Típico informal)
-  WEEKLY      // Semanal
-  BIWEEKLY    // Quincenal
-  MONTHLY     // Mensual (Típico financiera)
+  DAILY // Diario (Típico informal)
+  WEEKLY // Semanal
+  BIWEEKLY // Quincenal
+  MONTHLY // Mensual (Típico financiera)
 }
 
 enum LoanStatus {
   PENDING
   ACTIVE
-  DEFAULTED   // En mora / incobrable
-  PAID_OFF    // Pagado totalmente
+  DEFAULTED // En mora / incobrable
+  PAID_OFF // Pagado totalmente
 }
 
-
-
 model Loan {
-  id                String           @id @default(uuid())
+  id       String  @id @default(uuid())
   // Relaciones (Opcionales si el cliente no está en el sistema Nortex aún)
-  tenantId          String?          // Si le prestamos a una Ferretería Nortex
-  lenderId          String           // El Tenant que está prestando la plata
-  
+  tenantId String? // Si le prestamos a una Ferretería Nortex
+  lenderId String // El Tenant que está prestando la plata
+
   // Enlace CRM
-  customerId        String?
-  customer          Customer?    @relation(fields: [customerId], references: [id])
-  
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+
   // Datos del Cliente Externo (Para préstamos de calle)
-  clientName        String
-  clientPhone       String?
-  clientAddress     String?
+  clientName    String
+  clientPhone   String?
+  clientAddress String?
 
   // Configuración del Dinero
-  type              LoanType         @default(INFORMAL_FLAT)
-  frequency         PaymentFrequency @default(DAILY)
-  
-  principalAmount   Decimal          @db.Decimal(12, 2) // Capital prestado
-  interestRate      Decimal          @db.Decimal(5, 2)  // Tasa de interés (%)
-  totalToRepay      Decimal          @db.Decimal(12, 2) // Capital + Interés (Flat)
-  balanceRemaining  Decimal          @db.Decimal(12, 2) // Cuánto debe a hoy
+  type      LoanType         @default(INFORMAL_FLAT)
+  frequency PaymentFrequency @default(DAILY)
 
-  installments      Int              // Número de cuotas (ej: 30 días)
-  installmentAmount Decimal          @db.Decimal(10, 2) // De a cuánto toca la cuota
-  
-  status            LoanStatus       @default(ACTIVE)
-  disbursedAt       DateTime         @default(now())
-  dueDate           DateTime         // Fecha límite final
+  principalAmount  Decimal @db.Decimal(12, 2) // Capital prestado
+  interestRate     Decimal @db.Decimal(5, 2) // Tasa de interés (%)
+  totalToRepay     Decimal @db.Decimal(12, 2) // Capital + Interés (Flat)
+  balanceRemaining Decimal @db.Decimal(12, 2) // Cuánto debe a hoy
+
+  installments      Int // Número de cuotas (ej: 30 días)
+  installmentAmount Decimal @db.Decimal(10, 2) // De a cuánto toca la cuota
+
+  status      LoanStatus @default(ACTIVE)
+  disbursedAt DateTime   @default(now())
+  dueDate     DateTime // Fecha límite final
 
   // Historial de cobros
-  payments          Repayment[]
+  payments Repayment[]
 
   // Asignación de Ruta (Motorizado encargado de cobrar)
-  assignedToId      String?
-  assignedTo        User?            @relation("LoanCollector", fields: [assignedToId], references: [id])
+  assignedToId String?
+  assignedTo   User?   @relation("LoanCollector", fields: [assignedToId], references: [id])
 
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Repayment {
-  id                String   @id @default(uuid())
-  loanId            String
-  loan              Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
-  
-  amountPaid        Decimal  @db.Decimal(10, 2)
-  paymentDate       DateTime @default(now())
-  collectedBy       String?  // Nombre del cobrador de la moto
-  
-  notes             String?  @db.Text
-  createdAt         DateTime @default(now())
+  id     String @id @default(uuid())
+  loanId String
+  loan   Loan   @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  amountPaid  Decimal  @db.Decimal(10, 2)
+  paymentDate DateTime @default(now())
+  collectedBy String? // Nombre del cobrador de la moto
+
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
 }
 
 model RouteExpense {
   id          String   @id @default(uuid())
-  lenderId    String   // El Tenant prestamista
-  collectedBy String   // Nombre del motorizado
+  lenderId    String // El Tenant prestamista
+  collectedBy String // Nombre del motorizado
   amount      Decimal  @db.Decimal(10, 2)
-  description String   // "Gasolina Moto 1", "Pinchazo llanta"
+  description String // "Gasolina Moto 1", "Pinchazo llanta"
+  shiftId     String? // Turno vinculado
   date        DateTime @default(now())
   createdAt   DateTime @default(now())
-}
 
+  shift Shift? @relation(fields: [shiftId], references: [id])
+}
