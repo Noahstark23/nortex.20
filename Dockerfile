@@ -17,7 +17,7 @@ RUN npm install --force
 COPY . .
 
 # 6. Generar el cliente de Prisma
-RUN npx prisma generate --schema=backend/prisma/schema.prisma
+RUN DATABASE_URL="mysql://dummy/dummy" npx prisma generate --schema=backend/prisma/schema.prisma
 
 # 7. Construir la aplicación (React + Backend)
 RUN npm run build
