@@ -4,8 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "start": "tsx backend/server.ts",
     "dev": "vite",
     "build": "vite build",
+    "build:seo": "vite build && node scripts/prerender.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

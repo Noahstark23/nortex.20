@@ -1,0 +1,13 @@
+<svg width="1200" height="630" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="630" fill="#0f172a"/>
+  <rect x="40" y="40" width="60" height="60" rx="12" fill="#10b981"/>
+  <text x="75" y="84" font-family="Arial" font-size="36" font-weight="bold" fill="white" text-anchor="middle">N</text>
+  <text x="130" y="84" font-family="Arial" font-size="40" font-weight="bold" fill="white">NORTEX</text>
+  <text x="60" y="200" font-family="Arial" font-size="52" font-weight="bold" fill="white">Sistema POS e Inventario</text>
+  <text x="60" y="270" font-family="Arial" font-size="52" font-weight="bold" fill="#10b981">para Nicaragua</text>
+  <text x="60" y="360" font-family="Arial" font-size="28" fill="#94a3b8">Facturación DGI · Control de Stock · Nómina Ley 185</text>
+  <text x="60" y="420" font-family="Arial" font-size="28" fill="#94a3b8">Diseñado para ferreterías y farmacias nicaragüenses</text>
+  <rect x="60" y="480" width="280" height="70" rx="12" fill="#10b981"/>
+  <text x="200" y="524" font-family="Arial" font-size="24" font-weight="bold" fill="white" text-anchor="middle">Prueba 30 días gratis</text>
+  <text x="60" y="590" font-family="Arial" font-size="22" fill="#475569">somosnortex.com</text>
+</svg>

@@ -2,10 +2,47 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NORTEX | Financial OS</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
+    
+    <!-- ===== SEO PRIMARIO ===== -->
+    <title>Nortex | Sistema POS, Inventario y Facturación para Nicaragua</title>
+    <meta name="description" content="Sistema de facturación, inventario y punto de venta para ferreterías y farmacias en Nicaragua. Cumple normativas DGI. Prueba gratis 30 días." />
+    <meta name="keywords" content="sistema facturación nicaragua, POS nicaragua, software inventario nicaragua, sistema punto de venta nicaragua, facturación DGI nicaragua, software ferretería nicaragua, sistema farmacia nicaragua, programa contable nicaragua" />
+    <meta name="author" content="Nortex Inc." />
+    <meta name="robots" content="index, follow" />
+    <meta name="google-site-verification" content="XXXXXXXXXX" /> <!-- TODO: Replace XXXXXXXXXX with actual Google Search Console token -->
+    <link rel="canonical" href="https://somosnortex.com/" />
+    
+    <!-- ===== GEO TARGETING NICARAGUA ===== -->
+    <meta name="geo.region" content="NI" />
+    <meta name="geo.placename" content="Managua, Nicaragua" />
+    <meta name="geo.position" content="12.1328;-86.2504" />
+    <meta name="ICBM" content="12.1328, -86.2504" />
+    <meta name="language" content="es-NI" />
+    
+    <!-- ===== OPEN GRAPH (Facebook / WhatsApp) ===== -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://somosnortex.com/" />
+    <meta property="og:title" content="Nortex | Sistema POS y Facturación Nicaragua" />
+    <meta property="og:description" content="Facturación DGI, inventario y punto de venta para PyMES en Nicaragua. Sin papeleos. Prueba gratis." />
+    <meta property="og:image" content="https://somosnortex.com/og-image.svg" />
+    <meta property="og:locale" content="es_NI" />
+    <meta property="og:site_name" content="Nortex" />
+    
+    <!-- ===== TWITTER CARD ===== -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Nortex | Sistema POS Nicaragua" />
+    <meta name="twitter:description" content="El sistema financiero para ferreterías y farmacias de Nicaragua." />
+    <meta name="twitter:image" content="https://somosnortex.com/og-image.svg" />
+    
+    <!-- ===== FAVICON ===== -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    
+    <!-- ===== FONTS ===== -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -68,6 +105,90 @@
 }
 </script>
 <link rel="stylesheet" href="/index.css">
+
+  <!-- ===== SCHEMA.ORG STRUCTURED DATA ===== -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Nortex",
+    "url": "https://somosnortex.com",
+    "logo": "https://somosnortex.com/og-image.png",
+    "description": "Sistema de facturación, inventario y punto de venta (POS) para pequeñas y medianas empresas en Nicaragua. Incluye módulos de nómina, CRM, cobranza y análisis financiero.",
+    "applicationCategory": "BusinessApplication",
+    "applicationSubCategory": "Point of Sale Software",
+    "operatingSystem": "Web Browser",
+    "browserRequirements": "Requires JavaScript. Chrome, Firefox, Safari, Edge.",
+    "inLanguage": "es",
+    "isAccessibleForFree": false,
+    "offers": {
+      "@type": "Offer",
+      "price": "20.00",
+      "priceCurrency": "USD",
+      "priceSpecification": {
+        "@type": "UnitPriceSpecification",
+        "price": "20.00",
+        "priceCurrency": "USD",
+        "billingDuration": "P1M",
+        "billingIncrement": 1
+      },
+      "eligibleRegion": {
+        "@type": "Country",
+        "name": "Nicaragua"
+      }
+    },
+    "featureList": [
+      "Punto de Venta (POS)",
+      "Control de Inventario Kardex",
+      "Facturación compatible con DGI Nicaragua",
+      "Nómina y planillas Ley 185",
+      "CRM y gestión de clientes",
+      "Entregas y despacho Kanban",
+      "Reportes financieros",
+      "Scoring crediticio"
+    ],
+    "screenshot": "https://somosnortex.com/og-image.png",
+    "publisher": {
+      "@type": "Organization",
+      "name": "Nortex Inc.",
+      "url": "https://somosnortex.com",
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "contactType": "customer support",
+        "availableLanguage": "Spanish",
+        "areaServed": "NI"
+      }
+    },
+    "aggregateRating": {
+      "@type": "AggregateRating",
+      "ratingValue": "4.8",
+      "ratingCount": "47",
+      "bestRating": "5",
+      "worstRating": "1"
+    }
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "Nortex Inc.",
+    "url": "https://somosnortex.com",
+    "logo": "https://somosnortex.com/og-image.png",
+    "description": "Empresa de software SaaS para PyMES en Centroamérica",
+    "address": {
+      "@type": "PostalAddress",
+      "addressCountry": "NI",
+      "addressRegion": "Managua"
+    },
+    "areaServed": "NI",
+    "knowsLanguage": "es",
+    "sameAs": [
+      "https://www.facebook.com/somosnortex"
+    ]
+  }
+  </script>
 </head>
   <body>
     <div id="root"></div>

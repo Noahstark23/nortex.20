@@ -1,0 +1,15 @@
+User-agent: *
+Allow: /
+Allow: /ferreterias
+Allow: /farmacias
+Allow: /nicaragua
+Allow: /blog
+Allow: /register
+Disallow: /app/
+Disallow: /admin
+Disallow: /api/
+
+Sitemap: https://somosnortex.com/sitemap.xml
+
+# Crawl-delay for polite bots
+Crawl-delay: 1

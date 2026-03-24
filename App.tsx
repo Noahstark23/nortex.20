@@ -15,6 +15,13 @@ import Clients from './components/Clients';
 import Suppliers from './components/Suppliers';
 import HRM from './components/HRM';
 
+// SEO Landing Pages & Blog
+import LandingFerreteria from './components/LandingFerreteria';
+import LandingFarmacia from './components/LandingFarmacia';
+import LandingNicaragua from './components/LandingNicaragua';
+import Blog from './components/Blog';
+import BlogPost from './components/BlogPost';
+
 const ProtectedApp = () => {
   const token = localStorage.getItem('nortex_token');
   if (!token) return <Navigate to="/login" replace />;
@@ -45,6 +52,11 @@ function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/register" element={<RegisterTenant />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/ferreterias" element={<LandingFerreteria />} />
+        <Route path="/farmacias" element={<LandingFarmacia />} />
+        <Route path="/nicaragua" element={<LandingNicaragua />} />
+        <Route path="/blog" element={<Blog />} />
+        <Route path="/blog/:slug" element={<BlogPost />} />
         <Route path="/app/*" element={<ProtectedApp />} />
       </Routes>
     </BrowserRouter>
