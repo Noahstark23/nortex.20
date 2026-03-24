@@ -1880,14 +1880,19 @@ const POS: React.FC = () => {
                     </div>
                 )}
 
-                {/* SMART CUSTOMER SEARCH */}
+                {/* 👑 SMART CUSTOMER SEARCH - GOD-TIER SELECTOR */}
                 <div className="px-4 pt-4 relative">
+                    <label className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                        <User size={12} /> CLIENTE PARA SCORING
+                    </label>
                     <div className="relative">
-                        <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                        <div className="absolute left-4 top-1/2 -translate-y-1/2 w-9 h-9 bg-indigo-100 rounded-full flex items-center justify-center">
+                            <User className="text-indigo-600" size={20} />
+                        </div>
                         <input
                             type="text"
-                            placeholder="Seleccionar Cliente..."
-                            className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:border-nortex-500"
+                            placeholder="🔍 Buscar o seleccionar cliente..."
+                            className="w-full pl-16 pr-10 py-4 text-base font-bold border-2 border-indigo-500 rounded-xl outline-none focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20 bg-indigo-50/50 text-slate-800 placeholder:text-indigo-300 placeholder:font-medium transition-all shadow-sm"
                             value={selectedCustomer ? selectedCustomer.name : customerSearch}
                             onChange={(e) => {
                                 setCustomerSearch(e.target.value);
@@ -1897,17 +1902,17 @@ const POS: React.FC = () => {
                             onFocus={() => setShowCustomerDropdown(true)}
                         />
                         {selectedCustomer && (
-                            <button onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500">
-                                <X size={14} />
+                            <button onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); }} className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 bg-red-100 rounded-full text-red-500 hover:bg-red-200 hover:text-red-700 transition-colors">
+                                <X size={16} />
                             </button>
                         )}
                     </div>
 
                     {/* Dropdown Results */}
                     {showCustomerDropdown && !selectedCustomer && (
-                        <div className="absolute left-4 right-4 top-12 bg-white border border-slate-200 rounded-lg shadow-lg z-20 max-h-48 overflow-y-auto text-slate-800">
+                        <div className="absolute left-4 right-4 top-[72px] bg-white border-2 border-indigo-200 rounded-xl shadow-2xl z-20 max-h-56 overflow-y-auto text-slate-800">
                             {filteredCustomers.length === 0 ? (
-                                <div className="p-3 text-xs text-slate-400 text-center">No encontrado. Ir a Clientes para crear.</div>
+                                <div className="p-4 text-sm text-slate-400 text-center">No encontrado. Ir a Clientes para crear.</div>
                             ) : (
                                 filteredCustomers.map(c => (
                                     <button
@@ -1916,10 +1921,10 @@ const POS: React.FC = () => {
                                             setSelectedCustomer(c);
                                             setShowCustomerDropdown(false);
                                         }}
-                                        className="w-full text-left p-2 hover:bg-slate-50 text-sm border-b border-slate-50 last:border-0 text-slate-800"
+                                        className="w-full text-left px-4 py-3 hover:bg-indigo-50 border-b border-slate-100 last:border-0 text-slate-800 transition-colors"
                                     >
-                                        <div className="font-bold text-slate-800">{c.name}</div>
-                                        <div className="text-[10px] text-slate-500">Limite: ${c.creditLimit} | Deuda: ${c.currentDebt}</div>
+                                        <div className="font-bold text-slate-800 text-sm">{c.name}</div>
+                                        <div className="text-[11px] text-slate-500 mt-0.5">Limite: C${c.creditLimit} | Deuda: C${c.currentDebt}</div>
                                     </button>
                                 ))
                             )}
@@ -1928,14 +1933,14 @@ const POS: React.FC = () => {
 
                     {/* Credit Status Indicator */}
                     {selectedCustomer && (
-                        <div className={`mt-2 p-2 rounded text-xs border ${selectedCustomer.isBlocked ? 'bg-red-50 border-red-200 text-red-700' : 'bg-blue-50 border-blue-100 text-blue-700'}`}>
-                            <div className="flex justify-between font-bold mb-1">
-                                <span>{selectedCustomer.isBlocked ? 'BLOQUEADO' : 'Linea Disponible:'}</span>
-                                {!selectedCustomer.isBlocked && <span>${(selectedCustomer.creditLimit - selectedCustomer.currentDebt).toFixed(2)}</span>}
+                        <div className={`mt-2.5 p-3 rounded-xl text-xs border-2 ${selectedCustomer.isBlocked ? 'bg-red-50 border-red-300 text-red-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
+                            <div className="flex justify-between font-bold mb-1.5">
+                                <span className="flex items-center gap-1">{selectedCustomer.isBlocked ? '🔴 BLOQUEADO' : '🟢 Linea Disponible:'}</span>
+                                {!selectedCustomer.isBlocked && <span className="text-sm">C${(selectedCustomer.creditLimit - selectedCustomer.currentDebt).toFixed(2)}</span>}
                             </div>
                             {!selectedCustomer.isBlocked && (
-                                <div className="w-full bg-blue-200 h-1.5 rounded-full overflow-hidden">
-                                    <div className="bg-blue-500 h-full" style={{ width: `${Math.min((selectedCustomer.currentDebt / selectedCustomer.creditLimit) * 100, 100)}%` }}></div>
+                                <div className="w-full bg-blue-200 h-2 rounded-full overflow-hidden">
+                                    <div className="bg-blue-500 h-full transition-all" style={{ width: `${Math.min((selectedCustomer.currentDebt / selectedCustomer.creditLimit) * 100, 100)}%` }}></div>
                                 </div>
                             )}
                         </div>
@@ -2027,20 +2032,29 @@ const POS: React.FC = () => {
                     <div className="flex justify-between text-sm text-slate-500 mb-1"><span>IVA (15%)</span><span>C$ {tax.toFixed(2)}</span></div>
                     <div className="flex justify-between text-xl font-bold text-nortex-900 mb-4 pt-2 border-t border-slate-200 text-slate-800"><span>Total</span><span>C$ {grandTotal.toFixed(2)}</span></div>
 
-                    <div className="grid grid-cols-2 gap-2 mb-2">
-                        <button onClick={() => handleCheckout('CASH')} disabled={!currentShift || processing} className="py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 text-sm flex items-center justify-center gap-1">
-                            <DollarSign size={16} /> EFECTIVO
+                    {/* 💥 MASSIVE PAYMENT BUTTONS - FAT FINGER FRIENDLY */}
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                        <button
+                            onClick={() => handleCheckout('CASH')}
+                            disabled={!currentShift || processing}
+                            className="h-16 bg-gradient-to-b from-green-500 to-green-700 text-white font-black rounded-xl hover:from-green-600 hover:to-green-800 text-xl flex items-center justify-center gap-2.5 shadow-lg hover:shadow-xl active:scale-[0.97] transition-all disabled:opacity-50 disabled:cursor-not-allowed border-2 border-green-400/30"
+                        >
+                            <Banknote size={28} strokeWidth={2.5} /> EFECTIVO
                         </button>
                         <button
                             onClick={() => handleCheckout('CREDIT')}
                             disabled={!currentShift || processing || isCreditBlocked}
-                            className={`py-3 font-bold rounded-lg text-sm flex items-center justify-center gap-1 ${isCreditBlocked ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-nortex-900 text-white hover:bg-nortex-800'}`}
+                            className={`h-16 font-black rounded-xl text-xl flex items-center justify-center gap-2.5 shadow-lg active:scale-[0.97] transition-all border-2 ${
+                                isCreditBlocked
+                                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed border-slate-200'
+                                    : 'bg-gradient-to-b from-indigo-500 to-indigo-700 text-white hover:from-indigo-600 hover:to-indigo-800 hover:shadow-xl border-indigo-400/30'
+                            }`}
                         >
-                            {isCreditBlocked ? <Ban size={16} /> : <ShieldAlert size={16} />} CREDITO
+                            {isCreditBlocked ? <Ban size={28} strokeWidth={2.5} /> : <CreditCard size={28} strokeWidth={2.5} />} CRÉDITO
                         </button>
                     </div>
                     {isCreditBlocked && selectedCustomer && (
-                        <p className="text-[10px] text-center text-red-500 font-bold">Credito no disponible: Limite excedido o cliente bloqueado.</p>
+                        <p className="text-xs text-center text-red-500 font-bold mb-1">🔴 Credito no disponible: Limite excedido o cliente bloqueado.</p>
                     )}
                 </div>
             </div>

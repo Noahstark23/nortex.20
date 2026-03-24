@@ -198,8 +198,25 @@ const DeliveryManager: React.FC = () => {
                                     </div>
                                 ))}
                                 {columnPedidos.length === 0 && (
-                                    <div className="text-center py-6 text-sm text-slate-400 font-medium">
-                                        Sin pedidos
+                                    <div className="text-center py-10 px-4">
+                                        <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                                            {col.id === 'pendiente' && <Clock size={28} className="text-slate-300" />}
+                                            {col.id === 'preparando' && <Package size={28} className="text-slate-300" />}
+                                            {col.id === 'en_camino' && <Truck size={28} className="text-slate-300" />}
+                                            {col.id === 'entregado' && <CheckCircle size={28} className="text-slate-300" />}
+                                        </div>
+                                        <p className="text-sm font-bold text-slate-400 mb-1">
+                                            {col.id === 'pendiente' && 'Sin pedidos nuevos'}
+                                            {col.id === 'preparando' && 'Nada en preparación'}
+                                            {col.id === 'en_camino' && 'Sin entregas en ruta'}
+                                            {col.id === 'entregado' && 'Sin entregas completadas'}
+                                        </p>
+                                        <p className="text-xs text-slate-300 leading-relaxed">
+                                            {col.id === 'pendiente' && 'Los pedidos de la tienda en línea aparecerán aquí automáticamente.'}
+                                            {col.id === 'preparando' && 'Mueve pedidos aquí cuando los estés empacando.'}
+                                            {col.id === 'en_camino' && 'Despacha pedidos preparados para verlos en ruta.'}
+                                            {col.id === 'entregado' && 'Los pedidos completados se registran aquí.'}
+                                        </p>
                                     </div>
                                 )}
                             </div>

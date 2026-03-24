@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { MOCK_TENANT, MOCK_PRODUCTS } from '../constants';
 import { TrendingUp, TrendingDown, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, Lock, RefreshCw, ShoppingCart, ArrowRight, ShieldAlert, FileText, Settings } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Loan, Tenant } from '../types';
@@ -11,7 +10,8 @@ const Dashboard: React.FC = () => {
   const [showLoanModal, setShowLoanModal] = useState(false);
   const [loanAmount, setLoanAmount] = useState('');
   const [loadingLoan, setLoadingLoan] = useState(false);
-  const [tenantData, setTenantData] = useState<Tenant>(MOCK_TENANT);
+  const [tenantData, setTenantData] = useState<Tenant | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [activeLoans, setActiveLoans] = useState<Loan[]>([]);
   const [processingSub, setProcessingSub] = useState(false);
   const [refreshingScore, setRefreshingScore] = useState(false);
@@ -65,12 +65,19 @@ const Dashboard: React.FC = () => {
         // 2. Refresh Credit Score (Algorithm)
         await refreshCreditScore();
 
-        // 3. AI Prediction Simulation (Still simulated as we don't have stock history yet in DB fully populated)
-        const critical = MOCK_PRODUCTS.filter(p => p.stock < 10);
-        setLowStockItems(critical);
+        // 3. Low Stock Items (Real API)
+        const lowStockRes = await fetch('/api/inventory/low-stock', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (lowStockRes.ok) {
+          const critical = await lowStockRes.json();
+          setLowStockItems(critical);
+        }
 
       } catch (e) {
         console.error("Dashboard Sync Failed", e);
+      } finally {
+        setIsLoading(false);
       }
     };
     initDashboard();
@@ -99,6 +106,18 @@ const Dashboard: React.FC = () => {
   };
 
   const activeDebt = activeLoans.reduce((acc, loan) => acc + Number(loan.totalDue), 0);
+
+  // Loading spinner
+  if (isLoading || !tenantData) {
+    return (
+      <div className="h-full flex items-center justify-center bg-slate-50">
+        <div className="flex flex-col items-center gap-3">
+          <RefreshCw className="animate-spin text-slate-400" size={32} />
+          <span className="text-sm text-slate-500 font-medium">Cargando panel financiero...</span>
+        </div>
+      </div>
+    );
+  }
 
   // PAYWALL LOGIC
   const daysLeftInTrial = tenantData.trialEndsAt
