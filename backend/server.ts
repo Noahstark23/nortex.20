@@ -4242,7 +4242,7 @@ app.post('/api/capital/finance-purchase', authenticate, async (req: any, res: an
             // c) Asiento contable (Partida Doble)
             // Debe: Inventario de Mercancías (1.1.4) — aumenta activo
             // Haber: Préstamos Nortex Capital por Pagar (2.1.8) — aumenta pasivo
-            const { createJournalEntry } = require('./services/accounting');
+            const { createJournalEntry } = await import('./services/accounting');
             await createJournalEntry(
                 tx,
                 authReq.tenantId!,
@@ -4284,8 +4284,8 @@ app.post('/api/capital/finance-purchase', authenticate, async (req: any, res: an
 app.get('/api/financial-health', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        const { getBalanceGeneral, getEstadoResultados, seedChartOfAccounts } = require('./services/accounting');
-        const { calculateTenantScore } = require('./services/scoring');
+        const { getBalanceGeneral, getEstadoResultados, seedChartOfAccounts } = await import('./services/accounting');
+        const { calculateTenantScore } = await import('./services/scoring');
 
         await seedChartOfAccounts(authReq.tenantId!);
         const balance = await getBalanceGeneral(authReq.tenantId!);
@@ -4328,7 +4328,7 @@ app.get('/api/financial-health', authenticate, async (req: any, res: any) => {
 app.get('/api/audit/feed', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        const { getAuditFeed } = require('./services/audit');
+        const { getAuditFeed } = await import('./services/audit');
         const feed = await getAuditFeed(authReq.tenantId!);
         res.json(feed);
     } catch (error) {
@@ -4457,7 +4457,7 @@ app.get('/api/hrm/settlement-preview/:employeeId', authenticate, async (req: any
 
         if (!employee) return res.status(404).json({ error: 'Empleado no encontrado' });
 
-        const { calculateLaborLiability, calculatePayroll } = require('./services/nicaLabor');
+        const { calculateLaborLiability, calculatePayroll } = await import('./services/nicaLabor');
 
         const liability = calculateLaborLiability(
             employee.id,
