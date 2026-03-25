@@ -74,7 +74,9 @@ const ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'https://somosnortex.com',
     'https://www.somosnortex.com',
+    'http://206.189.183.163:3000',
     process.env.FRONTEND_URL,
+    process.env.COOLIFY_URL,
 ].filter(Boolean) as string[];
 
 app.use(cors({
@@ -4341,7 +4343,7 @@ app.get('/api/audit/feed', authenticate, async (req: any, res: any) => {
 app.get('/api/audit/kardex-suspicious', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        const { detectSuspiciousKardex } = require('./services/audit');
+        const { detectSuspiciousKardex } = await import('./services/audit');
         const startDate = req.query.startDate ? new Date(req.query.startDate) : undefined;
         const endDate = req.query.endDate ? new Date(req.query.endDate) : undefined;
         const results = await detectSuspiciousKardex(authReq.tenantId!, startDate, endDate);
@@ -4356,7 +4358,7 @@ app.get('/api/audit/kardex-suspicious', authenticate, async (req: any, res: any)
 app.get('/api/audit/voided-movements', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        const { analyzeVoidedMovements } = require('./services/audit');
+        const { analyzeVoidedMovements } = await import('./services/audit');
         const startDate = req.query.startDate ? new Date(req.query.startDate) : undefined;
         const endDate = req.query.endDate ? new Date(req.query.endDate) : undefined;
         const results = await analyzeVoidedMovements(authReq.tenantId!, startDate, endDate);
@@ -4371,7 +4373,7 @@ app.get('/api/audit/voided-movements', authenticate, async (req: any, res: any) 
 app.get('/api/audit/discounts', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        const { analyzeDiscounts } = require('./services/audit');
+        const { analyzeDiscounts } = await import('./services/audit');
         const startDate = req.query.startDate ? new Date(req.query.startDate) : undefined;
         const endDate = req.query.endDate ? new Date(req.query.endDate) : undefined;
         const results = await analyzeDiscounts(authReq.tenantId!, startDate, endDate);
@@ -4389,7 +4391,7 @@ app.post('/api/accounting/retentions', authenticate, async (req: any, res: any) 
     if (!month || !year) return res.status(400).json({ error: 'month y year son requeridos' });
 
     try {
-        const { generateRetentions } = require('./services/accounting');
+        const { generateRetentions } = await import('./services/accounting');
         const result = await generateRetentions(authReq.tenantId!, month, year);
         res.json(result);
     } catch (error) {
@@ -4436,7 +4438,7 @@ app.post('/api/accounting/fiscal-close', authenticate, async (req: any, res: any
     if (!month || !year) return res.status(400).json({ error: 'month y year son requeridos' });
 
     try {
-        const { fiscalClose } = require('./services/accounting');
+        const { fiscalClose } = await import('./services/accounting');
         const result = await fiscalClose(authReq.tenantId!, month, year);
         res.json({ message: `Cierre fiscal ${month}/${year} completado`, ...result });
     } catch (error) {
