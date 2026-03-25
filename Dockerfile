@@ -10,11 +10,10 @@ WORKDIR /app
 COPY package*.json ./
 COPY backend/prisma ./backend/prisma/
 
-# 4. Instalar dependencias sin ejecutar scripts de postinstall problemáticos
-RUN npm install --ignore-scripts --force
+# 4. Instalar dependencias
+RUN npm install
 
 # 5. Generar Prisma explicitamente con variables de entorno limpias
-# Evitamos usar ARG de Coolify, pasando la URL directamente al comando
 RUN DATABASE_URL="mysql://dummy:dummy@localhost:3306/dummy" npx prisma generate --schema=backend/prisma/schema.prisma
 
 # 6. Copiar el resto del código
