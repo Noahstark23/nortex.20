@@ -17,7 +17,13 @@ RUN npm install --force
 COPY . .
 
 # 6. Generar el cliente de Prisma
-RUN DATABASE_URL="mysql://dummy:dummy@localhost/dummy" npx prisma generate --schema=backend/prisma/schema.prisma
+# ENV forzado para que Prisma genere el cliente sin conectar a DB real.
+# Coolify inyecta ARG DATABASE_URL que puede estar vacío en build time;
+# ENV tiene mayor prioridad que ARG en Docker.
+ENV DATABASE_URL="mysql://build:build@localhost:3306/build"
+RUN npx prisma generate --schema=backend/prisma/schema.prisma
+# Limpiar para que en runtime use el DATABASE_URL real
+ENV DATABASE_URL=""
 
 # 7. Construir la aplicación (React + Backend)
 RUN npm run build
