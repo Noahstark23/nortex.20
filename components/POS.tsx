@@ -130,6 +130,9 @@ const POS: React.FC = () => {
     const [completedSale, setCompletedSale] = useState<CompletedSale | null>(null);
     const [cashReceived, setCashReceived] = useState('');
 
+    // PRE-SALE CASH MODAL STATE
+    const [showCashPreModal, setShowCashPreModal] = useState(false);
+
     // BARCODE SCANNER STATE
     const [scannerActive, setScannerActive] = useState(true);
     const [lastScanFeedback, setLastScanFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -2035,8 +2038,8 @@ const POS: React.FC = () => {
                     {/* 💥 MASSIVE PAYMENT BUTTONS - FAT FINGER FRIENDLY */}
                     <div className="grid grid-cols-2 gap-3 mb-3">
                         <button
-                            onClick={() => handleCheckout('CASH')}
-                            disabled={!currentShift || processing}
+                            onClick={() => { setCashReceived(''); setPayingInUSD(false); setUsdAmount(''); setShowCashPreModal(true); }}
+                            disabled={!currentShift || processing || cart.length === 0}
                             className="h-16 bg-gradient-to-b from-green-500 to-green-700 text-white font-black rounded-xl hover:from-green-600 hover:to-green-800 text-xl flex items-center justify-center gap-2.5 shadow-lg hover:shadow-xl active:scale-[0.97] transition-all disabled:opacity-50 disabled:cursor-not-allowed border-2 border-green-400/30"
                         >
                             <Banknote size={28} strokeWidth={2.5} /> EFECTIVO
@@ -2323,6 +2326,114 @@ const POS: React.FC = () => {
             {/* =============================== */}
             {/* POST-SALE SUCCESS MODAL         */}
             {/* =============================== */}
+            {/* =============================== */}
+            {/* 💵 PRE-SALE CASH MODAL          */}
+            {/* =============================== */}
+            {showCashPreModal && (
+                <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-200">
+                        <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-5 text-center">
+                            <Banknote size={32} className="text-white mx-auto mb-2" />
+                            <h2 className="text-lg font-bold text-white">Cobro en Efectivo</h2>
+                            <p className="text-emerald-100 text-2xl font-black mt-1">C$ {grandTotal.toFixed(2)}</p>
+                        </div>
+                        <div className="p-5 space-y-4">
+                            {/* USD toggle */}
+                            <div className="flex items-center justify-between">
+                                <label className="text-xs font-mono text-slate-500 font-bold">EFECTIVO RECIBIDO</label>
+                                <button
+                                    onClick={() => { setPayingInUSD(!payingInUSD); setUsdAmount(''); setCashReceived(''); }}
+                                    className={`text-[10px] font-bold px-2 py-1 rounded-full border transition-all ${payingInUSD ? 'bg-blue-500 text-white border-blue-500' : 'bg-slate-100 text-slate-500 border-slate-200 hover:border-blue-300'}`}
+                                >
+                                    💱 {payingInUSD ? 'USD ✔' : 'Paga en USD?'}
+                                </button>
+                            </div>
+
+                            {payingInUSD ? (
+                                <div className="space-y-2">
+                                    <div className="relative">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500 font-bold text-sm">$</span>
+                                        <input
+                                            type="number"
+                                            autoFocus
+                                            className="w-full pl-8 pr-4 py-3 border border-blue-300 rounded-lg text-xl font-bold text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 bg-blue-50"
+                                            placeholder="0.00"
+                                            value={usdAmount}
+                                            onChange={e => {
+                                                setUsdAmount(e.target.value);
+                                                const usd = parseFloat(e.target.value);
+                                                if (!isNaN(usd)) setCashReceived((usd * exchangeRate).toFixed(2));
+                                            }}
+                                        />
+                                    </div>
+                                    <div className="text-xs text-blue-600 text-center font-medium">Tasa: 1 USD = C${exchangeRate.toFixed(2)} NIO</div>
+                                    {usdAmount && parseFloat(usdAmount) > 0 && (
+                                        <div className="bg-blue-50 px-3 py-2 rounded-lg border border-blue-200 text-sm">
+                                            <div className="flex justify-between"><span className="text-blue-600">Equivalente NIO:</span><span className="font-bold text-blue-800">C$ {(parseFloat(usdAmount) * exchangeRate).toFixed(2)}</span></div>
+                                            {parseFloat(usdAmount) * exchangeRate >= grandTotal && (
+                                                <>
+                                                    <div className="flex justify-between mt-1 pt-1 border-t border-blue-200"><span className="font-bold text-emerald-600">Cambio NIO:</span><span className="font-bold text-emerald-600">C$ {(parseFloat(usdAmount) * exchangeRate - grandTotal).toFixed(2)}</span></div>
+                                                    <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-emerald-500 text-xs">$ {(parseFloat(usdAmount) - grandTotal / exchangeRate).toFixed(2)}</span></div>
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="flex gap-2 flex-wrap">
+                                        <button onClick={() => setCashReceived(grandTotal.toFixed(2))} className="flex-shrink-0 px-3 py-1.5 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-bold rounded-lg text-xs border border-emerald-200 transition-colors">Monto Exacto</button>
+                                        {[100, 200, 500, 1000].map(amt => (
+                                            <button key={amt} onClick={() => setCashReceived(amt.toString())} className="flex-shrink-0 px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 font-bold rounded-lg text-xs border border-slate-200 transition-colors">C$ {amt}</button>
+                                        ))}
+                                    </div>
+                                    <div className="relative">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">C$</span>
+                                        <input
+                                            type="number"
+                                            autoFocus
+                                            className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-lg text-xl font-bold text-slate-800 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30"
+                                            placeholder={grandTotal.toFixed(2)}
+                                            value={cashReceived}
+                                            onChange={e => setCashReceived(e.target.value)}
+                                        />
+                                    </div>
+                                    {cashReceived && parseFloat(cashReceived) >= grandTotal && (
+                                        <div className="flex justify-between items-center bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
+                                            <span className="font-bold text-emerald-700 text-sm">CAMBIO</span>
+                                            <span className="text-2xl font-black text-emerald-600">C$ {(parseFloat(cashReceived) - grandTotal).toFixed(2)}</span>
+                                        </div>
+                                    )}
+                                    {cashReceived && parseFloat(cashReceived) < grandTotal && (
+                                        <div className="flex justify-between items-center bg-red-50 px-3 py-2 rounded-lg border border-red-200">
+                                            <span className="font-bold text-red-600 text-sm">FALTANTE</span>
+                                            <span className="text-xl font-bold text-red-600">C$ {(grandTotal - parseFloat(cashReceived)).toFixed(2)}</span>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+
+                            <div className="flex gap-3 pt-1">
+                                <button
+                                    onClick={() => setShowCashPreModal(false)}
+                                    className="flex-1 py-3 rounded-xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={() => { setShowCashPreModal(false); handleCheckout('CASH'); }}
+                                    disabled={processing}
+                                    className="flex-1 py-3 rounded-xl bg-gradient-to-b from-green-500 to-green-700 text-white font-black hover:from-green-600 hover:to-green-800 transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
+                                >
+                                    {processing ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
+                                    Confirmar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {completedSale && (
                 <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
@@ -2359,101 +2470,20 @@ const POS: React.FC = () => {
                                     </div>
                                 </div>
 
-                                {/* Cash change calculator - only for CASH */}
-                                {completedSale.paymentMethod === 'CASH' && (
-                                    <div className="mt-3 pt-3 border-t border-slate-200">
-                                        {/* 💱 USD Toggle */}
-                                        <div className="flex items-center justify-between mb-2">
-                                            <label className="text-xs font-mono text-slate-500 font-bold">EFECTIVO RECIBIDO</label>
-                                            <button
-                                                onClick={() => { setPayingInUSD(!payingInUSD); setUsdAmount(''); setCashReceived(''); }}
-                                                className={`text-[10px] font-bold px-2 py-1 rounded-full border transition-all ${payingInUSD ? 'bg-blue-500 text-white border-blue-500' : 'bg-slate-100 text-slate-500 border-slate-200 hover:border-blue-300'
-                                                    }`}
-                                            >
-                                                💱 {payingInUSD ? 'USD ✔' : 'Paga en USD?'}
-                                            </button>
+                                {/* Cash change summary - read-only, set before sale */}
+                                {completedSale.paymentMethod === 'CASH' && cashReceived && parseFloat(cashReceived) > 0 && (
+                                    <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-sm text-slate-500">Efectivo recibido</span>
+                                            <span className="font-bold text-slate-700">
+                                                {payingInUSD && usdAmount ? `$ ${usdAmount} (C$ ${cashReceived})` : `C$ ${parseFloat(cashReceived).toFixed(2)}`}
+                                            </span>
                                         </div>
-
-                                        {payingInUSD ? (
-                                            <div className="space-y-2">
-                                                <div className="relative">
-                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500 font-bold text-sm">$</span>
-                                                    <input
-                                                        type="number"
-                                                        autoFocus
-                                                        className="w-full pl-8 pr-4 py-2 border border-blue-300 rounded-lg text-lg font-bold text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 bg-blue-50"
-                                                        placeholder="0.00"
-                                                        value={usdAmount}
-                                                        onChange={e => {
-                                                            setUsdAmount(e.target.value);
-                                                            const usd = parseFloat(e.target.value);
-                                                            if (!isNaN(usd)) setCashReceived((usd * exchangeRate).toFixed(2));
-                                                        }}
-                                                    />
-                                                </div>
-                                                <div className="text-xs text-blue-600 text-center font-medium">
-                                                    Tasa: 1 USD = C${exchangeRate.toFixed(2)} NIO
-                                                </div>
-                                                {usdAmount && parseFloat(usdAmount) > 0 && (
-                                                    <div className="bg-blue-50 px-3 py-2 rounded-lg border border-blue-200 text-sm">
-                                                        <div className="flex justify-between"><span className="text-blue-600">Equivalente NIO:</span><span className="font-bold text-blue-800">C$ {(parseFloat(usdAmount) * exchangeRate).toFixed(2)}</span></div>
-                                                        {parseFloat(usdAmount) * exchangeRate >= completedSale.grandTotal && (
-                                                            <div className="flex justify-between mt-1 pt-1 border-t border-blue-200"><span className="font-bold text-emerald-600">Cambio NIO:</span><span className="font-bold text-emerald-600">C$ {(parseFloat(usdAmount) * exchangeRate - completedSale.grandTotal).toFixed(2)}</span></div>
-                                                        )}
-                                                        {parseFloat(usdAmount) * exchangeRate >= completedSale.grandTotal && (
-                                                            <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-emerald-500 text-xs">$ {(parseFloat(usdAmount) - completedSale.grandTotal / exchangeRate).toFixed(2)}</span></div>
-                                                        )}
-                                                    </div>
-                                                )}
+                                        {parseFloat(cashReceived) >= completedSale.grandTotal && (
+                                            <div className="flex justify-between items-center bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
+                                                <span className="font-bold text-emerald-700 text-sm">CAMBIO</span>
+                                                <span className="text-xl font-black text-emerald-600">C$ {(parseFloat(cashReceived) - completedSale.grandTotal).toFixed(2)}</span>
                                             </div>
-                                        ) : (
-                                            <>
-                                                {/* FAST CASH BUTTONS */}
-                                                <div className="flex gap-2 mb-3 mt-1 overflow-x-auto pb-1 pb-safe custom-scrollbar">
-                                                    <button
-                                                        onClick={() => setCashReceived(completedSale.grandTotal.toFixed(2))}
-                                                        className="flex-shrink-0 px-3 py-1.5 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-bold rounded-lg text-xs border border-emerald-200 transition-colors"
-                                                    >
-                                                        Monto Exacto
-                                                    </button>
-                                                    {[100, 200, 500, 1000].map(amt => (
-                                                        <button
-                                                            key={amt}
-                                                            onClick={() => setCashReceived(amt.toString())}
-                                                            className="flex-shrink-0 px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 font-bold rounded-lg text-xs border border-slate-200 transition-colors flex items-center gap-1"
-                                                        >
-                                                            C$ {amt}
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                                <div className="relative">
-                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">C$</span>
-                                                    <input
-                                                        type="number"
-                                                        autoFocus
-                                                        className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-lg font-bold text-slate-800 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30"
-                                                        placeholder={completedSale.grandTotal.toFixed(2)}
-                                                        value={cashReceived}
-                                                        onChange={e => setCashReceived(e.target.value)}
-                                                    />
-                                                </div>
-                                                {cashReceived && parseFloat(cashReceived) >= completedSale.grandTotal && (
-                                                    <div className="flex justify-between items-center mt-2 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
-                                                        <span className="font-bold text-emerald-700 text-sm">CAMBIO</span>
-                                                        <span className="text-xl font-bold text-emerald-600">
-                                                            C$ {(parseFloat(cashReceived) - completedSale.grandTotal).toFixed(2)}
-                                                        </span>
-                                                    </div>
-                                                )}
-                                                {cashReceived && parseFloat(cashReceived) < completedSale.grandTotal && (
-                                                    <div className="flex justify-between items-center mt-2 bg-red-50 px-3 py-2 rounded-lg border border-red-200">
-                                                        <span className="font-bold text-red-600 text-sm">FALTANTE</span>
-                                                        <span className="text-xl font-bold text-red-600">
-                                                            C$ {(completedSale.grandTotal - parseFloat(cashReceived)).toFixed(2)}
-                                                        </span>
-                                                    </div>
-                                                )}
-                                            </>
                                         )}
                                     </div>
                                 )}
