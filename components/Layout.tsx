@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell } from 'lucide-react';
 import { PinPadClock } from './PinPadClock';
 
 interface LayoutProps {
@@ -11,6 +11,79 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const [showClock, setShowClock] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+
+  // ── Toast de notificaciones ──────────────────────────────────────────────
+  interface AppToast { id: string; message: string; }
+  const [toasts, setToasts] = useState<AppToast[]>([]);
+  const knownOrderIds = useRef<Set<string>>(new Set());
+  const isFirstPoll = useRef(true);
+
+  const dismissToast = (id: string) =>
+    setToasts(prev => prev.filter(t => t.id !== id));
+
+  const pushToast = (message: string) => {
+    const id = Date.now().toString();
+    setToasts(prev => [...prev, { id, message }]);
+    setTimeout(() => dismissToast(id), 6000);
+  };
+
+  const playBeep = () => {
+    try {
+      const ctx = new AudioContext();
+      [0, 0.15].forEach(startOffset => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 1046; // C6
+        gain.gain.setValueAtTime(0.25, ctx.currentTime + startOffset);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startOffset + 0.18);
+        osc.start(ctx.currentTime + startOffset);
+        osc.stop(ctx.currentTime + startOffset + 0.18);
+      });
+    } catch { /* sin permiso de audio — silencio */ }
+  };
+
+  // Smart Polling: detecta nuevos pedidos web cada 30 s
+  useEffect(() => {
+    // Solo para roles de admin/dueño, no para motoristas
+    const storedToken = localStorage.getItem('nortex_token');
+    if (!storedToken) return;
+    let role = '';
+    try {
+      role = JSON.parse(atob(storedToken.split('.')[1])).role || '';
+    } catch { return; }
+    if (role === 'COLLECTOR') return;
+
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/public-orders', {
+          headers: { Authorization: `Bearer ${storedToken}` },
+        });
+        if (!res.ok) return;
+        const orders: Array<{ id: string; status: string; customerName: string }> = await res.json();
+        const pending = orders.filter(o => o.status === 'PENDING');
+
+        if (isFirstPoll.current) {
+          pending.forEach(o => knownOrderIds.current.add(o.id));
+          isFirstPoll.current = false;
+          return;
+        }
+
+        const newOrders = pending.filter(o => !knownOrderIds.current.has(o.id));
+        newOrders.forEach(o => {
+          knownOrderIds.current.add(o.id);
+          pushToast(`¡NUEVO PEDIDO WEB DE ${o.customerName.toUpperCase()}!`);
+          playBeep();
+        });
+      } catch { /* red caída — ignorar */ }
+    };
+
+    poll();
+    const interval = setInterval(poll, 30_000);
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('nortex_token');
@@ -235,6 +308,30 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       </main>
 
       {showClock && <PinPadClock onClose={() => setShowClock(false)} />}
+
+      {/* 🔔 Toast de pedidos web */}
+      <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 max-w-xs w-full pointer-events-none">
+        {toasts.map(toast => (
+          <div
+            key={toast.id}
+            className="pointer-events-auto flex items-start gap-3 bg-emerald-600 text-white px-4 py-3 rounded-2xl shadow-2xl shadow-emerald-900/40 animate-in slide-in-from-right-full duration-300"
+          >
+            <div className="w-8 h-8 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5">
+              <Bell size={16} className="animate-bounce" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-sm leading-tight">{toast.message}</p>
+              <p className="text-emerald-200 text-xs mt-0.5">Ve a Entregas para gestionarlo</p>
+            </div>
+            <button
+              onClick={() => dismissToast(toast.id)}
+              className="text-white/60 hover:text-white flex-shrink-0 mt-0.5"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };

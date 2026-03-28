@@ -51,6 +51,8 @@ const PublicCatalog: React.FC = () => {
     const [phoneError, setPhoneError] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [orderSuccess, setOrderSuccess] = useState(false);
+    const [lastOrderId, setLastOrderId] = useState('');
+    const [lastWhatsappUrl, setLastWhatsappUrl] = useState('');
 
     // 🔒 Persistir carrito en localStorage ante cada cambio
     useEffect(() => {
@@ -112,6 +114,23 @@ const PublicCatalog: React.FC = () => {
     const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
     const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
+    const generateWhatsAppLink = (
+        cartItems: CartItem[],
+        businessInfo: BusinessInfo,
+        orderId: string,
+        total: number
+    ): string => {
+        const orderNum = orderId.slice(-8).toUpperCase();
+        const itemLines = cartItems
+            .map(item => `- ${item.quantity}x ${item.name} (C$ ${(item.price * item.quantity).toFixed(2)})`)
+            .join('\n');
+        const message =
+            `Hola ${businessInfo.name}, quiero hacer el pedido #${orderNum} por un total de C$ ${total.toFixed(2)}.\n\n` +
+            `Detalles:\n${itemLines}\n\nPor favor, confírmenme mi pedido.`;
+        const phone = businessInfo.phone?.replace(/\D/g, '') || '';
+        return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+    };
+
     // 🔒 Validación teléfono Nicaragua (8 dígitos)
     const validatePhone = (phone: string): boolean => {
         if (!phone.trim()) return true; // Opcional
@@ -132,6 +151,10 @@ const PublicCatalog: React.FC = () => {
         if (!validatePhone(customerPhone)) return;
         setSubmitting(true);
 
+        // Snapshot cart + total before clearing
+        const cartSnapshot = [...cart];
+        const totalSnapshot = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
         try {
             const res = await fetch('/api/v1/pedidos', {
                 method: 'POST',
@@ -151,6 +174,17 @@ const PublicCatalog: React.FC = () => {
             });
 
             if (res.ok) {
+                const data = await res.json();
+                const orderId: string = data.pedido?.id || '';
+                setLastOrderId(orderId);
+
+                // 🚀 Abrir WhatsApp automáticamente con resumen del pedido
+                if (business?.phone && orderId) {
+                    const waUrl = generateWhatsAppLink(cartSnapshot, business, orderId, totalSnapshot);
+                    setLastWhatsappUrl(waUrl);
+                    window.open(waUrl, '_blank');
+                }
+
                 setOrderSuccess(true);
                 setCart([]); // Triggers localStorage cleanup via useEffect
                 setCustomerName('');
@@ -183,29 +217,47 @@ const PublicCatalog: React.FC = () => {
 
     // ---- ORDER SUCCESS SCREEN ----
     if (orderSuccess) {
+        const orderNum = lastOrderId ? lastOrderId.slice(-8).toUpperCase() : '';
         return (
             <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-blue-50 flex items-center justify-center p-4">
                 <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full text-center">
-                    <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
                         <CheckCircle className="text-emerald-600" size={40} />
                     </div>
-                    <h1 className="text-2xl font-bold text-slate-900 mb-2">¡Pedido Enviado!</h1>
+                    <h1 className="text-2xl font-bold text-slate-900 mb-1">¡Pedido Enviado!</h1>
+                    {orderNum && (
+                        <p className="text-sm font-mono text-slate-400 mb-3">Pedido #{orderNum}</p>
+                    )}
                     <p className="text-slate-500 mb-6">
-                        {business?.name} recibirá tu pedido y se pondrá en contacto contigo pronto.
+                        <strong>{business?.name}</strong> recibirá tu pedido y se pondrá en contacto contigo pronto.
                     </p>
-                    {business?.phone && (
+
+                    {lastWhatsappUrl && (
                         <a
-                            href={`https://wa.me/${business.phone.replace(/\D/g, '')}`}
+                            href={lastWhatsappUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-2 bg-green-500 text-white px-6 py-3 rounded-xl font-semibold hover:bg-green-600 transition-all mb-4"
+                            className="flex items-center justify-center gap-2 w-full bg-green-500 text-white px-6 py-4 rounded-2xl font-bold text-base hover:bg-green-600 active:scale-[0.98] transition-all shadow-lg shadow-green-200 mb-3"
                         >
-                            <Phone size={18} /> Contactar por WhatsApp
+                            <Phone size={20} /> Confirmar pedido por WhatsApp
                         </a>
                     )}
+
+                    <p className="text-xs text-slate-400 mb-4">
+                        {lastWhatsappUrl
+                            ? 'Si WhatsApp no se abrió automáticamente, toca el botón de arriba.'
+                            : `Contáctalos directamente para confirmar tu pedido.`}
+                    </p>
+
                     <button
-                        onClick={() => { setOrderSuccess(false); setShowCheckout(false); setShowCart(false); }}
-                        className="block w-full mt-3 text-blue-600 font-medium hover:underline"
+                        onClick={() => {
+                            setOrderSuccess(false);
+                            setShowCheckout(false);
+                            setShowCart(false);
+                            setLastOrderId('');
+                            setLastWhatsappUrl('');
+                        }}
+                        className="block w-full text-blue-600 font-medium hover:underline"
                     >
                         Volver al catálogo
                     </button>

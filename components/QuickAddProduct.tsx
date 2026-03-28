@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Zap, Check, AlertCircle, History, Volume2, VolumeX } from 'lucide-react';
+import ImageUploader from './ImageUploader';
 
 interface Product {
     id: string;
@@ -25,7 +26,8 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
         category: '',
         price: '',
         cost: '',
-        stock: ''
+        stock: '',
+        imageUrl: '',
     });
 
     // UI state
@@ -98,7 +100,8 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                     cost: parseFloat(formData.cost),
                     stock: parseInt(formData.stock) || 0,
                     minStock: 5,
-                    unit: 'unidad'
+                    unit: 'unidad',
+                    imageUrl: formData.imageUrl || undefined,
                 })
             });
 
@@ -136,7 +139,8 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                         category: lastCategory,
                         price: '',
                         cost: '',
-                        stock: ''
+                        stock: '',
+                        imageUrl: '',
                     });
                     // Refocus SKU
                     setTimeout(() => skuInputRef.current?.focus(), 100);
@@ -317,6 +321,18 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                                     onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
                                     className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 transition-all"
                                     placeholder="0"
+                                />
+                            </div>
+
+                            {/* Foto del Producto */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-1.5 font-medium">
+                                    Foto del Producto <span className="text-slate-500 font-normal">(opcional)</span>
+                                </label>
+                                <ImageUploader
+                                    value={formData.imageUrl}
+                                    onChange={(url) => setFormData({ ...formData, imageUrl: url })}
+                                    disabled={isSubmitting}
                                 />
                             </div>
 
