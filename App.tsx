@@ -14,6 +14,7 @@ import QuotationManager from './components/QuotationManager';
 import Clients from './components/Clients';
 import Suppliers from './components/Suppliers';
 import HRM from './components/HRM';
+import SuperAdmin from './components/SuperAdmin';
 
 // SEO Landing Pages & Blog
 import LandingFerreteria from './components/LandingFerreteria';
@@ -57,6 +58,7 @@ function App() {
         <Route path="/nicaragua" element={<LandingNicaragua />} />
         <Route path="/blog" element={<Blog />} />
         <Route path="/blog/:slug" element={<BlogPost />} />
+        <Route path="/admin" element={<SuperAdmin />} />
         <Route path="/app/*" element={<ProtectedApp />} />
       </Routes>
     </BrowserRouter>
