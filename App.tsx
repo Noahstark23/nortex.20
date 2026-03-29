@@ -15,6 +15,10 @@ import Clients from './components/Clients';
 import Suppliers from './components/Suppliers';
 import HRM from './components/HRM';
 import SuperAdmin from './components/SuperAdmin';
+import DeliveryManager from './components/DeliveryManager';
+import DriverView from './components/DriverView';
+import Inventory from './components/Inventory';
+import PublicCatalog from './components/PublicCatalog';
 
 // SEO Landing Pages & Blog
 import LandingFerreteria from './components/LandingFerreteria';
@@ -40,6 +44,8 @@ const ProtectedApp = () => {
         <Route path="reports" element={<Reports />} />
         <Route path="marketplace" element={<B2BMarketplace />} />
         <Route path="blueprint" element={<BlueprintViewer />} />
+        <Route path="delivery" element={<DeliveryManager />} />
+        <Route path="inventory" element={<Inventory />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
     </Layout>
@@ -59,6 +65,8 @@ function App() {
         <Route path="/blog" element={<Blog />} />
         <Route path="/blog/:slug" element={<BlogPost />} />
         <Route path="/admin" element={<SuperAdmin />} />
+        <Route path="/catalog/:slug" element={<PublicCatalog />} />
+        <Route path="/driver/:id" element={<DriverView />} />
         <Route path="/app/*" element={<ProtectedApp />} />
       </Routes>
     </BrowserRouter>
