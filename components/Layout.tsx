@@ -121,44 +121,58 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     );
   }
 
-  const navItems = [
+  type NavItem = {
+    path: string;
+    label: string;
+    shortLabel: string;
+    group: string;
+    icon: React.ComponentType<{ size?: number; className?: string }>;
+  };
+
+  const navItems: NavItem[] = [
     // --- LENDER TENANT MODO ---
     ...(userRole.startsWith('LENDER_')
       ? [
-        { path: '/app/dashboard', label: 'Dashboard Financiero', icon: Wallet },
-        { path: '/app/clients', label: 'Cartera de Clientes', icon: Users },
-        { path: '/app/reports', label: 'Reportes de Cobro', icon: PieChart },
-        { path: '/app/team', label: 'Cobradores', icon: UserPlus },
+        { path: '/app/dashboard', label: 'Dashboard Financiero', shortLabel: 'Finanzas', group: 'Finanzas',       icon: Wallet   },
+        { path: '/app/clients',   label: 'Cartera de Clientes',  shortLabel: 'Clientes', group: 'Clientes',       icon: Users    },
+        { path: '/app/reports',   label: 'Reportes de Cobro',    shortLabel: 'Reportes', group: 'Reportes',       icon: PieChart },
+        { path: '/app/team',      label: 'Cobradores',           shortLabel: 'Equipo',   group: 'Administración', icon: UserPlus },
       ]
       : [
-        // --- RETAIL / FERRETERÍA MODO ---
-        { path: '/app/pos', label: 'Punto de Venta', icon: ShoppingCart },
+        // ── VENTAS ──────────────────────────────────────
+        { path: '/app/pos',         label: 'Punto de Venta',  shortLabel: 'POS',      group: 'Ventas', icon: ShoppingCart },
         ...(['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(userRole)
-          ? [{ path: '/app/cash-registers', label: 'Cajas y Arqueos', icon: Monitor }]
+          ? [{ path: '/app/cash-registers', label: 'Cajas y Arqueos', shortLabel: 'Cajas', group: 'Ventas', icon: Monitor }]
           : []),
-        { path: '/app/inventory', label: 'Inventario', icon: Package },
+        { path: '/app/inventory',   label: 'Inventario',      shortLabel: 'Stock',    group: 'Ventas', icon: Package  },
+        { path: '/app/delivery',    label: 'Entregas',        shortLabel: 'Entregas', group: 'Ventas', icon: Truck    },
+        { path: '/app/quotations',  label: 'Cotizaciones',    shortLabel: 'Cotiz.',   group: 'Ventas', icon: FileText },
+        { path: '/app/clients',     label: 'Clientes (CRM)',  shortLabel: 'Clientes', group: 'Ventas', icon: Users    },
+
+        // ── COMPRAS ─────────────────────────────────────
+        { path: '/app/purchases',   label: 'Compras',                shortLabel: 'Compras',   group: 'Compras', icon: Truck        },
+        { path: '/app/suppliers',   label: 'Proveedores',            shortLabel: 'Proveed.',  group: 'Compras', icon: ClipboardList},
         ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
-          ? [{ path: '/app/smart-purchases', label: 'Compras Inteligentes', icon: Zap }]
+          ? [{ path: '/app/smart-purchases', label: 'Compras Inteligentes', shortLabel: 'Smart', group: 'Compras', icon: Zap }]
           : []),
-        { path: '/app/clients', label: 'Clientes (CRM)', icon: Users },
-        { path: '/app/purchases', label: 'Compras', icon: Truck },
-        { path: '/app/suppliers', label: 'Proveedores', icon: ClipboardList },
-        { path: '/app/hr', label: 'Recursos Humanos', icon: Briefcase },
-        { path: '/app/delivery', label: 'Entregas (Kanban)', icon: Code2 },
-        { path: '/app/quotations', label: 'Cotizaciones', icon: FileText },
-        { path: '/app/receivables', label: 'Cobranza', icon: Wallet },
-        { path: '/app/dashboard', label: 'Finanzas', icon: LayoutGrid },
-        { path: '/app/marketplace', label: 'Mercado B2B', icon: ShoppingBag },
-        { path: '/app/reports', label: 'Reportes', icon: PieChart },
+        { path: '/app/marketplace', label: 'Mercado B2B',           shortLabel: 'B2B',       group: 'Compras', icon: ShoppingBag  },
+
+        // ── FINANZAS ────────────────────────────────────
+        { path: '/app/dashboard',   label: 'Finanzas',       shortLabel: 'Finanzas', group: 'Finanzas', icon: LayoutGrid },
+        { path: '/app/receivables', label: 'Cobranza',       shortLabel: 'Cobros',   group: 'Finanzas', icon: Wallet     },
+        { path: '/app/billing',     label: 'Facturación',    shortLabel: 'Facturas', group: 'Finanzas', icon: CreditCard },
+        { path: '/app/reports',     label: 'Reportes',       shortLabel: 'Reportes', group: 'Finanzas', icon: PieChart   },
         ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
           ? [
-            { path: '/app/financial-health', label: 'Salud Financiera', icon: BarChart3 },
-            { path: '/app/audit', label: 'Auditoría', icon: Shield },
+            { path: '/app/financial-health', label: 'Salud Financiera', shortLabel: 'Salud',    group: 'Finanzas',       icon: BarChart3 },
+            { path: '/app/audit',            label: 'Auditoría',        shortLabel: 'Auditoría',group: 'Finanzas',       icon: Shield    },
           ]
           : []),
-        { path: '/app/billing', label: 'Facturación', icon: CreditCard },
-        { path: '/app/team', label: 'Mi Equipo', icon: UserPlus },
-        { path: '/app/blueprint', label: 'Modo Dios', icon: Code2 },
+
+        // ── ADMINISTRACIÓN ──────────────────────────────
+        { path: '/app/hr',        label: 'Recursos Humanos', shortLabel: 'RRHH',   group: 'Administración', icon: Briefcase },
+        { path: '/app/team',      label: 'Mi Equipo',        shortLabel: 'Equipo', group: 'Administración', icon: UserPlus  },
+        { path: '/app/blueprint', label: 'Panel Admin',      shortLabel: 'Admin',  group: 'Administración', icon: Code2     },
       ])
   ];
 
@@ -215,30 +229,34 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       </aside>
 
       {/* MOBILE BOTTOM NAV */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-slate-900 border-t border-slate-800 flex items-center justify-around z-40 px-2 pb-safe shadow-[0_-5px_15px_rgba(0,0,0,0.5)]">
-        {navItems.slice(0, 4).map((item) => { // Mostramos solo 4 y el 5to será el botón "Menú"
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-slate-900 border-t border-slate-800 flex items-center justify-around z-40 px-1 pb-safe shadow-[0_-5px_15px_rgba(0,0,0,0.5)]">
+        {navItems.slice(0, 4).map((item) => {
           const Icon = item.icon;
           return (
             <NavLink
               key={item.path}
               to={item.path}
-              onClick={() => setShowMobileMenu(false)} // Cerrar menú si estaba abierto
+              onClick={() => setShowMobileMenu(false)}
               className={({ isActive }) => `
-                 flex flex-col items-center justify-center w-12 h-12 rounded-xl transition-all
-                 ${isActive ? 'text-nortex-accent bg-slate-800' : 'text-slate-500 hover:text-slate-300'}
-               `}
+                flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-all min-w-0
+                ${isActive ? 'text-nortex-accent bg-slate-800' : 'text-slate-500 hover:text-slate-300'}
+              `}
             >
-              <Icon size={24} />
+              <Icon size={22} />
+              <span className="text-[9px] font-semibold leading-none truncate max-w-[44px] text-center">
+                {item.shortLabel}
+              </span>
             </NavLink>
           );
         })}
 
-        {/* BOTÓN MÁGICO DE MENÚ COMPLETO */}
+        {/* BOTÓN MENÚ COMPLETO */}
         <button
           onClick={() => setShowMobileMenu(true)}
-          className="flex flex-col items-center justify-center w-12 h-12 rounded-xl text-slate-500 hover:text-white"
+          className="flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl text-slate-500 hover:text-white transition-all"
         >
-          <Menu size={26} />
+          <Menu size={22} />
+          <span className="text-[9px] font-semibold leading-none">Menú</span>
         </button>
       </nav>
 
@@ -261,44 +279,59 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 custom-scrollbar pb-24">
-            <div className="grid grid-cols-2 gap-3">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <NavLink
-                    key={item.path}
-                    to={item.path}
-                    onClick={() => setShowMobileMenu(false)}
-                    className={({ isActive }) => `
-                      flex flex-col items-center justify-center gap-2 p-4 rounded-2xl border transition-all text-center
-                      ${isActive
-                        ? 'bg-nortex-500/10 border-nortex-500 text-nortex-accent shadow-[0_0_15px_rgba(16,185,129,0.1)]'
-                        : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}
-                    `}
-                  >
-                    <Icon size={28} className={item.path === '/app/pos' ? 'text-nortex-accent' : ''} />
-                    <span className="font-bold text-xs">{item.label}</span>
-                  </NavLink>
-                );
-              })}
-            </div>
+            {/* Agrupar items por grupo y renderizar con headers */}
+            {(() => {
+              const groups = navItems.reduce<Record<string, NavItem[]>>((acc, item) => {
+                if (!acc[item.group]) acc[item.group] = [];
+                acc[item.group].push(item);
+                return acc;
+              }, {});
+              return Object.entries(groups).map(([groupName, items]) => (
+                <div key={groupName} className="mb-5">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1 mb-2">
+                    {groupName}
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {items.map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <NavLink
+                          key={item.path}
+                          to={item.path}
+                          onClick={() => setShowMobileMenu(false)}
+                          className={({ isActive }) => `
+                            flex flex-col items-center justify-center gap-1.5 p-3 rounded-2xl border transition-all text-center
+                            ${isActive
+                              ? 'bg-nortex-500/10 border-nortex-500 text-nortex-accent shadow-[0_0_15px_rgba(16,185,129,0.1)]'
+                              : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-white'}
+                          `}
+                        >
+                          <Icon size={24} className={item.path === '/app/pos' ? 'text-nortex-accent' : ''} />
+                          <span className="font-bold text-[10px] leading-tight text-center">{item.label}</span>
+                        </NavLink>
+                      );
+                    })}
+                  </div>
+                </div>
+              ));
+            })()}
+          </div>
 
-            <div className="mt-8 space-y-3">
-              <button
-                onClick={() => { setShowMobileMenu(false); setShowClock(true); }}
-                className="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-indigo-500/10 text-indigo-400 font-bold border border-indigo-500/20"
-              >
-                <Clock size={20} />
-                MARCAR ENTRADA/SALIDA
-              </button>
-              <button
-                onClick={handleLogout}
-                className="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-red-500/10 text-red-500 font-bold border border-red-500/20"
-              >
-                <LogOut size={20} />
-                CERRAR SESIÓN
-              </button>
-            </div>
+          <div className="flex-none p-4 pt-2 border-t border-slate-800 space-y-2">
+            <button
+              onClick={() => { setShowMobileMenu(false); setShowClock(true); }}
+              className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-indigo-500/10 text-indigo-400 font-bold border border-indigo-500/20"
+            >
+              <Clock size={18} />
+              Marcar Entrada / Salida
+            </button>
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-red-500/10 text-red-500 font-bold border border-red-500/20"
+            >
+              <LogOut size={18} />
+              Cerrar Sesión
+            </button>
           </div>
         </div>
       )}

@@ -1080,7 +1080,7 @@ const POS: React.FC = () => {
                             title="Entrada de Efectivo"
                         >
                             <ArrowDownCircle size={14} />
-                            <span className="hidden lg:inline">Entrada</span>
+                            Entrada
                         </button>
                     )}
 
@@ -1092,7 +1092,7 @@ const POS: React.FC = () => {
                             title="Salida de Efectivo"
                         >
                             <ArrowUpCircle size={14} />
-                            <span className="hidden lg:inline">Salida</span>
+                            Salida
                         </button>
                     )}
 
@@ -1104,7 +1104,7 @@ const POS: React.FC = () => {
                             title="Devolución de Producto"
                         >
                             <RefreshCw size={14} />
-                            <span className="hidden lg:inline">Devolución</span>
+                            Dev.
                         </button>
                     )}
 
@@ -1761,21 +1761,25 @@ const POS: React.FC = () => {
                     <button
                         onClick={() => setShowQuickCreate(true)}
                         className="bg-gradient-to-r from-amber-500 to-orange-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-amber-600 hover:to-orange-600 shadow-md transition-all"
-                        title="Producto Rapido"
+                        title="Producto Rápido"
                     >
-                        <Zap size={18} /> <span className="hidden xl:inline">Rapido</span>
+                        <Zap size={18} /> Rápido
                     </button>
                     {/* Full Create */}
-                    <button onClick={() => setShowAddModal(true)} className="bg-nortex-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-medium text-sm">
-                        <Plus size={18} /> <span className="hidden xl:inline">Nuevo</span>
+                    <button
+                        onClick={() => setShowAddModal(true)}
+                        className="bg-nortex-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-medium text-sm hover:bg-nortex-600 transition-all"
+                        title="Crear producto completo"
+                    >
+                        <Plus size={18} /> Nuevo
                     </button>
                     {/* Import */}
                     <button
                         onClick={() => setShowImportModal(true)}
                         className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-blue-700 hover:to-indigo-700 shadow-md transition-all"
-                        title="Importar Excel"
+                        title="Importar desde Excel"
                     >
-                        <Upload size={18} /> <span className="hidden xl:inline">Excel</span>
+                        <Upload size={18} /> Excel
                     </button>
                 </div>
 
