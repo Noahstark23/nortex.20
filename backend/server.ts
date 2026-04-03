@@ -4944,14 +4944,20 @@ app.patch('/api/public/driver/:id/orders/:orderId/deliver', async (req: any, res
 // ==========================================
 const isProduction = process.env.NODE_ENV === 'production';
 if (isProduction) {
-    // Serve static files from the React app
-    const distPath = path.join(__dirname, '../dist'); // Go up one level from backend/
-    app.use(express.static(distPath));
+    const distPath = path.join(__dirname, '../dist');
 
-    // The "catchall" handler: for any request that doesn't
-    // match one above, send back React's index.html file.
-    // Usamos RegExp para evitar problemas con path-to-regexp en Express 5
+    // Assets con hash (JS/CSS) → cache agresivo 1 año
+    app.use('/assets', express.static(path.join(distPath, 'assets'), {
+        maxAge: '1y',
+        immutable: true,
+    }));
+
+    // Resto de archivos estáticos (favicon, logos, etc.)
+    app.use(express.static(distPath, { maxAge: 0 }));
+
+    // SPA catch-all: cualquier ruta que no sea /api → index.html sin cache
     app.get(/^(?!\/api).+/, (req: any, res: any) => {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.sendFile(path.join(distPath, 'index.html'));
     });
     console.log(`📂 Serving static files from: ${distPath}`);

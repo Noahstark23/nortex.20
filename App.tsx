@@ -18,6 +18,12 @@ import SuperAdmin from './components/SuperAdmin';
 import DeliveryManager from './components/DeliveryManager';
 import DriverView from './components/DriverView';
 import Inventory from './components/Inventory';
+import CashRegisters from './components/CashRegisters';
+import Purchases from './components/Purchases';
+import FinancialHealth from './components/FinancialHealth';
+import AuditDashboard from './components/AuditDashboard';
+import Billing from './components/Billing';
+import TeamManagement from './components/TeamManagement';
 import PublicCatalog from './components/PublicCatalog';
 
 // SEO Landing Pages & Blog
@@ -26,6 +32,8 @@ import LandingFarmacia from './components/LandingFarmacia';
 import LandingNicaragua from './components/LandingNicaragua';
 import Blog from './components/Blog';
 import BlogPost from './components/BlogPost';
+import ForgotPassword from './components/ForgotPassword';
+import ResetPassword from './components/ResetPassword';
 
 const ProtectedApp = () => {
   const token = localStorage.getItem('nortex_token');
@@ -46,6 +54,14 @@ const ProtectedApp = () => {
         <Route path="blueprint" element={<BlueprintViewer />} />
         <Route path="delivery" element={<DeliveryManager />} />
         <Route path="inventory" element={<Inventory />} />
+        {/* ── Rutas registradas para evitar redirección silenciosa ── */}
+        <Route path="cash-registers" element={<CashRegisters />} />
+        <Route path="smart-purchases" element={<div className="flex items-center justify-center h-full"><div className="text-center"><p className="text-4xl mb-4">🤖</p><h2 className="text-xl font-bold text-white">IA de Compras</h2><p className="text-slate-400 mt-2">Módulo en construcción — próximamente</p></div></div>} />
+        <Route path="purchases" element={<Purchases />} />
+        <Route path="financial-health" element={<FinancialHealth />} />
+        <Route path="audit" element={<AuditDashboard />} />
+        <Route path="billing" element={<Billing />} />
+        <Route path="team" element={<TeamManagement />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
     </Layout>
@@ -65,6 +81,8 @@ function App() {
         <Route path="/blog" element={<Blog />} />
         <Route path="/blog/:slug" element={<BlogPost />} />
         <Route path="/admin" element={<SuperAdmin />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password/:token" element={<ResetPassword />} />
         <Route path="/catalog/:slug" element={<PublicCatalog />} />
         <Route path="/driver/:id" element={<DriverView />} />
         <Route path="/app/*" element={<ProtectedApp />} />

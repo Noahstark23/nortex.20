@@ -31,6 +31,7 @@ services:
     ports:
       - '3000:3000'
     environment:
+      - NODE_ENV=production
       - PORT=3000
       - DATABASE_URL=mysql://root:${DB_ROOT_PASSWORD:-root}@db:3306/nortex_db
     depends_on:

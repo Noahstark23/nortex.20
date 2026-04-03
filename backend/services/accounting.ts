@@ -91,7 +91,7 @@ async function getAccount(tenantId: string, code: string) {
     return account;
 }
 
-async function createJournalEntry(
+export async function createJournalEntry(
     tx: any,
     tenantId: string,
     description: string,
