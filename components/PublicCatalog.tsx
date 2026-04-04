@@ -54,12 +54,17 @@ const PublicCatalog: React.FC = () => {
     const [lastOrderId, setLastOrderId] = useState('');
     const [lastWhatsappUrl, setLastWhatsappUrl] = useState('');
 
-    // 🔒 Persistir carrito en localStorage ante cada cambio
+    // 🔒 Persistir carrito en localStorage (sin imágenes para no reventar la cuota de 5MB)
     useEffect(() => {
-        if (cart.length > 0) {
-            localStorage.setItem(CART_KEY, JSON.stringify(cart));
-        } else {
-            localStorage.removeItem(CART_KEY);
+        try {
+            if (cart.length > 0) {
+                const leanCart = cart.map(({ imageUrl, description, ...rest }) => rest);
+                localStorage.setItem(CART_KEY, JSON.stringify(leanCart));
+            } else {
+                localStorage.removeItem(CART_KEY);
+            }
+        } catch {
+            // QuotaExceededError — el carrito vive solo en memoria esta sesión
         }
     }, [cart, CART_KEY]);
 
@@ -156,26 +161,25 @@ const PublicCatalog: React.FC = () => {
         const totalSnapshot = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
         try {
-            const res = await fetch('/api/v1/pedidos', {
+            const res = await fetch('/api/public/orders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    tenantId: business?.id,
-                    clienteNombre: customerName.trim(),
-                    clienteTelefono: customerPhone.trim(),
-                    direccionEntrega: direccionEntrega.trim(),
-                    referenciaDireccion: referenciaDireccion.trim(),
-                    notas: notas.trim(),
-                    items: cart.map(item => ({
-                        productoId: item.id,
-                        cantidad: item.quantity
+                    slug: slug,
+                    customerName: customerName.trim(),
+                    customerPhone: customerPhone.trim(),
+                    items: cartSnapshot.map(item => ({
+                        productId: item.id,
+                        name: item.name,
+                        quantity: item.quantity,
+                        price: item.price,
                     })),
                 }),
             });
 
             if (res.ok) {
                 const data = await res.json();
-                const orderId: string = data.pedido?.id || '';
+                const orderId: string = data.orderId || '';
                 setLastOrderId(orderId);
 
                 // 🚀 Abrir WhatsApp automáticamente con resumen del pedido
