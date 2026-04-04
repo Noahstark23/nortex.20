@@ -29,11 +29,21 @@ const PublicCatalog: React.FC = () => {
     const [business, setBusiness] = useState<BusinessInfo | null>(null);
     const [products, setProducts] = useState<CatalogProduct[]>([]);
     const [cart, setCart] = useState<CartItem[]>(() => {
-        // 🔒 Persistencia: restaurar carrito de localStorage para sobrevivir refrescos
         try {
             const saved = localStorage.getItem(CART_KEY);
-            return saved ? JSON.parse(saved) : [];
-        } catch { return []; }
+            if (!saved) return [];
+            
+            const parsed = JSON.parse(saved);
+            // 🛡️ BLINDAJE: Si la data se corrompió y no es un array, la destruimos.
+            if (!Array.isArray(parsed)) throw new Error("Data corrupta en carrito");
+            
+            return parsed;
+        } catch (error) { 
+            // Si explota el parseo, nukeamos el storage para evitar la pantalla blanca
+            console.warn("⚠️ Carrito corrupto detectado. Limpiando...");
+            localStorage.removeItem(CART_KEY);
+            return []; 
+        }
     });
     const [showCart, setShowCart] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -81,8 +91,12 @@ const PublicCatalog: React.FC = () => {
                 return;
             }
             const data = await res.json();
-            setBusiness(data.business);
-            setProducts(data.products);
+            
+            setBusiness(data.business || null);
+            // 🛡️ BLINDAJE: Si products viene null/undefined, forzamos un array vacío [] 
+            // Esto evita que .map() o .filter() crasheen la app más abajo.
+            setProducts(Array.isArray(data.products) ? data.products : []);
+            
         } catch (err) {
             setError('Error al cargar el catálogo');
         } finally {
