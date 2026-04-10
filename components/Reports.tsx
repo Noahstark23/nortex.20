@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { ShieldCheck, TrendingUp, TrendingDown, Package, DollarSign, Receipt, Warehouse, FileSpreadsheet, Loader2, Calendar, AlertTriangle, RefreshCw, Landmark, Scale, Copy, CheckCircle, Building2, Printer, Clock, Users, BookOpen, BarChart3, ArrowRight } from 'lucide-react';
+import { ShieldCheck, TrendingUp, TrendingDown, Package, DollarSign, Receipt, Warehouse, FileSpreadsheet, Loader2, Calendar, AlertTriangle, RefreshCw, Landmark, Scale, Copy, CheckCircle, Building2, Printer, Clock, Users, BookOpen, BarChart3, ArrowRight, Download } from 'lucide-react';
 import { ShiftReportTicket, type ShiftReportData } from './ShiftReportTicket';
 
 // Helpers
@@ -846,6 +846,37 @@ const Reports: React.FC = () => {
                                 <RefreshCw size={16} className={accountingLoading ? 'animate-spin text-indigo-500' : 'text-slate-500'} />
                             </button>
                         </div>
+                    </div>
+
+                    {/* ── EXPORTACIONES DGI ── */}
+                    <div className="mb-6 bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+                        <p className="text-xs font-black text-indigo-700 uppercase tracking-widest mb-3 flex items-center gap-2">
+                            <Download size={14} /> Exportaciones Fiscales DGI — {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][taxMonth-1]} {taxYear}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                            <a
+                                href={`/api/fiscal/libro-ventas/${taxMonth}/${taxYear}`}
+                                download
+                                className="flex items-center gap-2 px-4 py-2 bg-white border border-indigo-300 text-indigo-700 rounded-lg text-sm font-semibold hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all shadow-sm"
+                            >
+                                <FileSpreadsheet size={15} /> Libro de Ventas (.xlsx)
+                            </a>
+                            <a
+                                href={`/api/fiscal/libro-compras/${taxMonth}/${taxYear}`}
+                                download
+                                className="flex items-center gap-2 px-4 py-2 bg-white border border-indigo-300 text-indigo-700 rounded-lg text-sm font-semibold hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all shadow-sm"
+                            >
+                                <FileSpreadsheet size={15} /> Libro de Compras (.xlsx)
+                            </a>
+                            <a
+                                href={`/api/fiscal/vet-export/${taxMonth}/${taxYear}`}
+                                download
+                                className="flex items-center gap-2 px-4 py-2 bg-white border border-emerald-300 text-emerald-700 rounded-lg text-sm font-semibold hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all shadow-sm"
+                            >
+                                <Download size={15} /> Archivo VET (.txt)
+                            </a>
+                        </div>
+                        <p className="text-xs text-indigo-500 mt-2">Usa los selectores de mes/año de la sección Reporte Fiscal para cambiar el período.</p>
                     </div>
 
                     {accountingLoading ? (

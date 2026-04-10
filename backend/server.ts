@@ -5009,6 +5009,232 @@ app.patch('/api/public/driver/:id/orders/:orderId/deliver', async (req: any, res
 });
 
 // ==========================================
+// 📊 SPRINT A — EXPORTACIONES FISCALES DGI
+// ==========================================
+
+// Helper: rango de fechas para un mes/año
+function fiscalMonthRange(month: number, year: number) {
+    const start = new Date(year, month - 1, 1, 0, 0, 0);
+    const end   = new Date(year, month, 0, 23, 59, 59);
+    return { start, end };
+}
+
+// ── A1: LIBRO DE VENTAS (Excel) ─────────────────────────────────────────────
+// GET /api/fiscal/libro-ventas/:month/:year
+app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const month = parseInt(req.params.month);
+    const year  = parseInt(req.params.year);
+    if (isNaN(month) || isNaN(year) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Mes o año inválido.' });
+    }
+
+    try {
+        const { start, end } = fiscalMonthRange(month, year);
+        const XLSX = await import('xlsx');
+
+        const sales = await prisma.sale.findMany({
+            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lte: end }, status: { not: 'VOIDED' } },
+            include: { customer: true },
+            orderBy: { createdAt: 'asc' },
+        });
+
+        const IVA_RATE = 0.15;
+        const rows = sales.map((s, i) => {
+            const total    = Number(s.total);
+            const subtotal = parseFloat((total / (1 + IVA_RATE)).toFixed(2));
+            const iva      = parseFloat((total - subtotal).toFixed(2));
+            return {
+                'N°':            i + 1,
+                'Fecha':         new Date(s.createdAt).toLocaleDateString('es-NI'),
+                'N° Factura':    s.invoiceNumber ? `${s.invoiceSeries || 'A'}-${String(s.invoiceNumber).padStart(6, '0')}` : 'CF',
+                'Cliente':       s.customerName || s.customer?.name || 'Consumidor Final',
+                'RUC/Cédula':    '---',
+                'Método Pago':   s.paymentMethod,
+                'Subtotal C$':   subtotal,
+                'IVA 15% C$':    iva,
+                'Total C$':      total,
+            };
+        });
+
+        // Totales
+        const totals = {
+            'N°': '', 'Fecha': '', 'N° Factura': '', 'Cliente': 'TOTALES',
+            'RUC/Cédula': '', 'Método Pago': '',
+            'Subtotal C$': rows.reduce((s, r) => s + r['Subtotal C$'], 0),
+            'IVA 15% C$':  rows.reduce((s, r) => s + r['IVA 15% C$'], 0),
+            'Total C$':    rows.reduce((s, r) => s + r['Total C$'], 0),
+        };
+        rows.push(totals as any);
+
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws['!cols'] = [4, 12, 14, 28, 16, 12, 14, 14, 14].map(w => ({ wch: w }));
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, `Ventas ${month}-${year}`);
+
+        const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="libro-ventas-${year}-${String(month).padStart(2,'0')}.xlsx"`);
+        res.send(buf);
+
+    } catch (error) {
+        console.error('Libro ventas error:', error);
+        res.status(500).json({ error: 'Error generando Libro de Ventas.' });
+    }
+});
+
+// ── A2: LIBRO DE COMPRAS (Excel) ─────────────────────────────────────────────
+// GET /api/fiscal/libro-compras/:month/:year
+app.get('/api/fiscal/libro-compras/:month/:year', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const month = parseInt(req.params.month);
+    const year  = parseInt(req.params.year);
+    if (isNaN(month) || isNaN(year) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Mes o año inválido.' });
+    }
+
+    try {
+        const { start, end } = fiscalMonthRange(month, year);
+        const XLSX = await import('xlsx');
+
+        const purchases = await prisma.purchase.findMany({
+            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lte: end } },
+            include: { supplier: true },
+            orderBy: { createdAt: 'asc' },
+        });
+
+        // Retenciones del período para cruzar con compras
+        const retentions = await prisma.fiscalRetention.findMany({
+            where: { tenantId: authReq.tenantId!, period: `${year}-${String(month).padStart(2,'0')}` },
+        });
+        const irByPurchase = new Map<string, number>();
+        const imiByPurchase = new Map<string, number>();
+        retentions.forEach(r => {
+            if (!r.purchaseId) return;
+            if (r.type === 'IR_2PCT')  irByPurchase.set(r.purchaseId,  (irByPurchase.get(r.purchaseId)  || 0) + Number(r.amount));
+            if (r.type === 'IMI_1PCT') imiByPurchase.set(r.purchaseId, (imiByPurchase.get(r.purchaseId) || 0) + Number(r.amount));
+        });
+
+        const rows = purchases.map((p, i) => {
+            const subtotal = Number(p.subtotal);
+            const iva      = Number(p.tax);
+            const total    = Number(p.total);
+            const ir       = irByPurchase.get(p.id)  || 0;
+            const imi      = imiByPurchase.get(p.id) || 0;
+            return {
+                'N°':              i + 1,
+                'Fecha':           new Date(p.createdAt).toLocaleDateString('es-NI'),
+                'N° Factura Prov.': p.invoiceNumber,
+                'Proveedor':       p.supplier.name,
+                'RUC Proveedor':   '---',
+                'Subtotal C$':     subtotal,
+                'IVA Crédito C$':  iva,
+                'IR Ret. 2% C$':   ir,
+                'IMI Ret. 1% C$':  imi,
+                'Neto Pagado C$':  parseFloat((total - ir - imi).toFixed(2)),
+                'Total Factura C$': total,
+            };
+        });
+
+        const totals: any = {
+            'N°': '', 'Fecha': '', 'N° Factura Prov.': '', 'Proveedor': 'TOTALES', 'RUC Proveedor': '',
+            'Subtotal C$':     rows.reduce((s, r) => s + r['Subtotal C$'], 0),
+            'IVA Crédito C$':  rows.reduce((s, r) => s + r['IVA Crédito C$'], 0),
+            'IR Ret. 2% C$':   rows.reduce((s, r) => s + r['IR Ret. 2% C$'], 0),
+            'IMI Ret. 1% C$':  rows.reduce((s, r) => s + r['IMI Ret. 1% C$'], 0),
+            'Neto Pagado C$':  rows.reduce((s, r) => s + r['Neto Pagado C$'], 0),
+            'Total Factura C$': rows.reduce((s, r) => s + r['Total Factura C$'], 0),
+        };
+        rows.push(totals);
+
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws['!cols'] = [4, 12, 16, 28, 16, 14, 14, 14, 14, 14, 14].map(w => ({ wch: w }));
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, `Compras ${month}-${year}`);
+
+        const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="libro-compras-${year}-${String(month).padStart(2,'0')}.xlsx"`);
+        res.send(buf);
+
+    } catch (error) {
+        console.error('Libro compras error:', error);
+        res.status(500).json({ error: 'Error generando Libro de Compras.' });
+    }
+});
+
+// ── A3: ARCHIVO VET DGI (.TXT pipe-delimitado) ──────────────────────────────
+// GET /api/fiscal/vet-export/:month/:year
+// Formato: TIPO|FECHA|N_FACTURA|RUC_CLIENTE|NOMBRE|SUBTOTAL|IVA|TOTAL
+app.get('/api/fiscal/vet-export/:month/:year', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const month = parseInt(req.params.month);
+    const year  = parseInt(req.params.year);
+    if (isNaN(month) || isNaN(year) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Mes o año inválido.' });
+    }
+
+    try {
+        const { start, end } = fiscalMonthRange(month, year);
+        const IVA_RATE = 0.15;
+        const period = `${year}${String(month).padStart(2, '0')}`;
+
+        // Ventas
+        const sales = await prisma.sale.findMany({
+            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lte: end }, status: { not: 'VOIDED' } },
+            include: { customer: true },
+            orderBy: { createdAt: 'asc' },
+        });
+
+        // Compras
+        const purchases = await prisma.purchase.findMany({
+            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lte: end } },
+            include: { supplier: true },
+            orderBy: { createdAt: 'asc' },
+        });
+
+        const lines: string[] = [];
+        lines.push(`# ARCHIVO VET DGI | PERIODO: ${period} | GENERADO: ${new Date().toISOString()}`);
+        lines.push(`# FORMATO: TIPO|FECHA(YYYYMMDD)|N_FACTURA|RUC|NOMBRE|SUBTOTAL|IVA|TOTAL`);
+        lines.push('');
+        lines.push('## LIBRO DE VENTAS');
+
+        for (const s of sales) {
+            const total    = Number(s.total);
+            const subtotal = parseFloat((total / (1 + IVA_RATE)).toFixed(2));
+            const iva      = parseFloat((total - subtotal).toFixed(2));
+            const fecha    = new Date(s.createdAt).toISOString().slice(0,10).replace(/-/g,'');
+            const factura  = s.invoiceNumber
+                ? `${s.invoiceSeries || 'A'}${String(s.invoiceNumber).padStart(6,'0')}`
+                : 'CF';
+            const nombre   = (s.customerName || s.customer?.name || 'CONSUMIDOR FINAL').toUpperCase().substring(0, 60);
+            lines.push(`V|${fecha}|${factura}|000-000000-0000X|${nombre}|${subtotal.toFixed(2)}|${iva.toFixed(2)}|${total.toFixed(2)}`);
+        }
+
+        lines.push('');
+        lines.push('## LIBRO DE COMPRAS');
+
+        for (const p of purchases) {
+            const subtotal = Number(p.subtotal);
+            const iva      = Number(p.tax);
+            const total    = Number(p.total);
+            const fecha    = new Date(p.createdAt).toISOString().slice(0,10).replace(/-/g,'');
+            const nombre   = p.supplier.name.toUpperCase().substring(0, 60);
+            lines.push(`C|${fecha}|${p.invoiceNumber}|000-000000-0000X|${nombre}|${subtotal.toFixed(2)}|${iva.toFixed(2)}|${total.toFixed(2)}`);
+        }
+
+        const content = lines.join('\r\n'); // CRLF como exige la VET
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="VET-${period}.txt"`);
+        res.send(content);
+
+    } catch (error) {
+        console.error('VET export error:', error);
+        res.status(500).json({ error: 'Error generando archivo VET.' });
+    }
+});
+
+// ==========================================
 // 🚀 SERVE FRONTEND IN PRODUCTION
 // ==========================================
 const isProduction = process.env.NODE_ENV === 'production';
