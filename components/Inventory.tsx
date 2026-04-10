@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import ImageUploader from './ImageUploader';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
     RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
@@ -106,7 +107,7 @@ export default function Inventory() {
     // Create form
     const [formData, setFormData] = useState({
         name: '', sku: '', description: '', category: '',
-        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false
+        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: ''
     });
 
     const token = localStorage.getItem('nortex_token');
@@ -330,7 +331,7 @@ export default function Inventory() {
 
             if (res.ok) {
                 setShowCreateModal(false);
-                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false });
+                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '' });
                 fetchProducts();
                 alert('Producto creado exitosamente');
             } else {
@@ -1165,6 +1166,13 @@ export default function Inventory() {
                                         value={formData.minStock}
                                         onChange={(e) => setFormData({ ...formData, minStock: e.target.value })}
                                         className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div className="col-span-4 mt-2">
+                                    <label className="block text-sm text-slate-300 mb-2 font-medium">Foto del Producto</label>
+                                    <ImageUploader
+                                        value={formData.imageUrl}
+                                        onChange={(url) => setFormData({ ...formData, imageUrl: url })}
                                     />
                                 </div>
                                 <div className="col-span-4 mt-2">
