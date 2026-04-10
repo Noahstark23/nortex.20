@@ -83,6 +83,7 @@ function App() {
         <Route path="/admin" element={<SuperAdmin />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password/:token" element={<ResetPassword />} />
+        <Route path="/pedidos/:slug" element={<PublicCatalog />} />
         <Route path="/catalog/:slug" element={<PublicCatalog />} />
         <Route path="/driver/:id" element={<DriverView />} />
         <Route path="/app/*" element={<ProtectedApp />} />

@@ -4621,6 +4621,23 @@ const publicLimiter = rateLimit({
     message: { error: 'Demasiadas solicitudes. Intenta en unos minutos.' }
 });
 
+// GET /api/debug/catalog/:slug — Diagnóstico del catálogo (solo SUPER_ADMIN)
+app.get('/api/debug/catalog/:slug', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    if (authReq.role !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Solo SUPER_ADMIN' });
+    const { slug } = req.params;
+    try {
+        const tenant = await prisma.tenant.findUnique({
+            where: { slug },
+            select: { id: true, businessName: true, slug: true, phone: true }
+        });
+        if (!tenant) return res.json({ found: false, slug, message: 'No existe ningún tenant con este slug en la BD.' });
+        const totalProducts = await prisma.product.count({ where: { tenantId: tenant.id } });
+        const publishedProducts = await prisma.product.count({ where: { tenantId: tenant.id, isPublished: true } });
+        res.json({ found: true, tenant, totalProducts, publishedProducts });
+    } catch (e) { res.status(500).json({ error: 'Error de diagnóstico' }); }
+});
+
 // GET /api/public/catalog/:slug — Catálogo público (NO requiere JWT)
 // 🔒 AUDITORÍA: Solo expone name, price, description, imageUrl, category, unit
 // JAMÁS: cost, stock, tenantId, createdBy, sku, minStock
@@ -4638,23 +4655,27 @@ app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) =
         }
 
         // 🔒 BLINDAJE: select explícito — NUNCA usar findMany sin select en endpoint público
-        const products = await prisma.product.findMany({
-            where: {
-                tenantId: tenant.id,
-                isPublished: true,
-            },
+        let products = await prisma.product.findMany({
+            where: { tenantId: tenant.id, isPublished: true },
             select: {
-                id: true,
-                name: true,
-                price: true,
-                description: true,
-                imageUrl: true,
-                category: true,
-                unit: true,
-                // ❌ BLOQUEADOS: cost, stock, minStock, sku, tenantId, createdBy, createdAt, updatedAt
+                id: true, name: true, price: true, description: true,
+                imageUrl: true, category: true, unit: true,
             },
             orderBy: { name: 'asc' }
         });
+
+        // Si el tenant no ha publicado ningún producto aún, mostramos TODO el catálogo
+        // para que el cliente vea algo en lugar de una página vacía
+        if (products.length === 0) {
+            products = await prisma.product.findMany({
+                where: { tenantId: tenant.id },
+                select: {
+                    id: true, name: true, price: true, description: true,
+                    imageUrl: true, category: true, unit: true,
+                },
+                orderBy: { name: 'asc' }
+            });
+        }
 
         res.json({
             business: {
