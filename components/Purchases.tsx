@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
     Truck, Plus, Search, FileText, CreditCard, DollarSign, Package,
     Calendar, Hash, X, Check, AlertTriangle, Clock, ArrowRight, Trash2,
-    ShoppingCart, TrendingUp, Wallet, Printer, Eye
+    ShoppingCart, TrendingUp, Wallet, Printer, Eye, Stamp
 } from 'lucide-react';
 
 // ==========================================
@@ -716,6 +716,15 @@ export default function Purchases() {
                                                 >
                                                     <Eye size={15} /> Factura
                                                 </button>
+                                                <a
+                                                    href={`/api/fiscal/constancia-retencion/${p.id}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="flex items-center gap-1.5 bg-violet-900/40 hover:bg-violet-800/60 border border-violet-700 px-3 py-2 rounded-lg text-violet-300 text-sm transition-colors"
+                                                    title="Constancia de Retención"
+                                                >
+                                                    <Stamp size={15} /> Retención
+                                                </a>
                                                 <button
                                                     onClick={() => handlePay(p.id, p.invoiceNumber)}
                                                     className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-lg text-white font-semibold text-sm transition-colors"
@@ -782,13 +791,24 @@ export default function Purchases() {
                                                         {formatCurrency(parseFloat(p.total as any))}
                                                     </td>
                                                     <td className="px-4 py-3 text-center">
-                                                        <button
-                                                            onClick={() => viewInvoice(p)}
-                                                            className="p-2 hover:bg-blue-500/20 rounded-lg text-blue-400 transition-colors"
-                                                            title="Ver Factura"
-                                                        >
-                                                            <Eye size={17} />
-                                                        </button>
+                                                        <div className="flex items-center justify-center gap-1">
+                                                            <button
+                                                                onClick={() => viewInvoice(p)}
+                                                                className="p-2 hover:bg-blue-500/20 rounded-lg text-blue-400 transition-colors"
+                                                                title="Ver Factura"
+                                                            >
+                                                                <Eye size={17} />
+                                                            </button>
+                                                            <a
+                                                                href={`/api/fiscal/constancia-retencion/${p.id}`}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="p-2 hover:bg-violet-500/20 rounded-lg text-violet-400 transition-colors inline-flex"
+                                                                title="Constancia de Retención"
+                                                            >
+                                                                <Stamp size={17} />
+                                                            </a>
+                                                        </div>
                                                     </td>
                                                 </tr>
                                             ))}
@@ -932,6 +952,14 @@ export default function Purchases() {
                                 >
                                     <Printer size={16} /> Factura A4
                                 </button>
+                                <a
+                                    href={`/api/fiscal/constancia-retencion/${selectedPurchase.id}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-2 px-4 py-2.5 bg-violet-700 hover:bg-violet-600 rounded-lg text-white font-bold text-sm transition-colors"
+                                >
+                                    <Stamp size={16} /> Constancia DGI
+                                </a>
                             </div>
                         </div>
                     </div>
