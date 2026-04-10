@@ -100,6 +100,12 @@ const HRM: React.FC = () => {
         firstName: '', lastName: '', role: 'VENDEDOR', baseSalary: '', commissionRate: '', pin: '', cedula: '', inss: ''
     });
 
+    // PIN change state
+    const [pinModal, setPinModal] = useState<{ id: string; name: string } | null>(null);
+    const [newPin, setNewPin] = useState('');
+    const [pinSaving, setPinSaving] = useState(false);
+    const [pinError, setPinError] = useState('');
+
     const token = localStorage.getItem('nortex_token');
     const headers = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -111,6 +117,26 @@ const HRM: React.FC = () => {
             if (res.ok) setEmployees(data);
         } catch (e) { console.error(e); }
         finally { setLoading(false); }
+    };
+
+    const handleChangePin = async () => {
+        if (!pinModal) return;
+        if (!/^\d{4}$/.test(newPin)) { setPinError('PIN debe ser exactamente 4 dígitos.'); return; }
+        setPinSaving(true);
+        setPinError('');
+        try {
+            const res = await fetch(`/api/employees/${pinModal.id}/pin`, {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify({ pin: newPin }),
+            });
+            const data = await res.json();
+            if (!res.ok) { setPinError(data.error || 'Error al cambiar PIN.'); return; }
+            await fetchEmployees();
+            setPinModal(null);
+            setNewPin('');
+        } catch { setPinError('Error de conexión.'); }
+        finally { setPinSaving(false); }
     };
 
     const fetchPayrolls = useCallback(async () => {
@@ -292,6 +318,7 @@ const HRM: React.FC = () => {
     const pasivoSemaforo = totalPasivo > 50000 ? 'red' : totalPasivo > 20000 ? 'yellow' : 'green';
 
     return (
+        <>
         <div className="flex h-full bg-slate-100 overflow-hidden">
             {/* Sidebar Navigation */}
             <div className="w-64 bg-white border-r border-slate-200 flex flex-col text-slate-800">
@@ -376,7 +403,15 @@ const HRM: React.FC = () => {
                                     <div className="mt-4 space-y-2 text-sm text-slate-600">
                                         <div className="flex justify-between items-center">
                                             <span className="flex items-center gap-1"><KeyRound size={13} /> PIN:</span>
-                                            <span className="font-mono font-bold bg-slate-100 px-2 py-0.5 rounded tracking-widest">{emp.pin || '****'}</span>
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-mono font-bold bg-slate-100 px-2 py-0.5 rounded tracking-widest">{emp.pin || '****'}</span>
+                                                <button
+                                                    onClick={() => { setPinModal({ id: emp.id, name: `${emp.firstName} ${emp.lastName}` }); setNewPin(''); setPinError(''); }}
+                                                    className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline"
+                                                >
+                                                    Cambiar
+                                                </button>
+                                            </div>
                                         </div>
                                         {(emp as any).cedula && (
                                             <div className="flex justify-between">
@@ -873,6 +908,45 @@ const HRM: React.FC = () => {
                 </div>
             )}
         </div>
+
+            {/* Modal: Cambiar PIN */}
+            {pinModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm">
+                        <h3 className="text-lg font-bold text-slate-800 mb-1">Cambiar PIN</h3>
+                        <p className="text-sm text-slate-500 mb-5">
+                            Nuevo PIN para <strong>{pinModal.name}</strong>
+                        </p>
+                        <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={4}
+                            placeholder="4 dígitos"
+                            value={newPin}
+                            onChange={e => { setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4)); setPinError(''); }}
+                            className="w-full text-center text-3xl font-mono tracking-[0.5em] border-2 border-slate-200 rounded-xl py-4 focus:outline-none focus:border-indigo-500 mb-3"
+                            autoFocus
+                        />
+                        {pinError && <p className="text-sm text-red-500 text-center mb-3">{pinError}</p>}
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => { setPinModal(null); setNewPin(''); setPinError(''); }}
+                                className="flex-1 py-3 border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-slate-50"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleChangePin}
+                                disabled={pinSaving || newPin.length !== 4}
+                                className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-50"
+                            >
+                                {pinSaving ? 'Guardando...' : 'Guardar PIN'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </>
     );
 };
 

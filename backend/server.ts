@@ -181,15 +181,15 @@ app.post('/api/auth/register', async (req: any, res: any) => {
         // 2. Hash password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // 3. Create Tenant + User in transaction
+        // 3. Create Tenant + User + Employee in transaction
         const result = await prisma.$transaction(async (tx: any) => {
             // Create Tenant
             const tenant = await tx.tenant.create({
                 data: {
                     businessName: companyName,
-                    type: type || 'FERRETERIA', // GUARDA EL TIPO LENDER AQUI
-                    taxId: `TAX-${Date.now()}`, // Generate unique tax ID
-                    walletBalance: 10000, // Initial balance for testing
+                    type: type || 'FERRETERIA',
+                    taxId: `TAX-${Date.now()}`,
+                    walletBalance: 10000,
                     creditLimit: 5000,
                     creditScore: 750
                 }
@@ -206,7 +206,21 @@ app.post('/api/auth/register', async (req: any, res: any) => {
                 }
             });
 
-            return { tenant, user };
+            // Auto-crear empleado cajero por defecto (PIN 1234 para cero fricción)
+            const employee = await tx.employee.create({
+                data: {
+                    tenantId: tenant.id,
+                    userId: user.id,
+                    firstName: 'Admin',
+                    lastName: 'Principal',
+                    role: 'OWNER',
+                    pin: '1234',
+                    baseSalary: 0,
+                    commissionRate: 0,
+                }
+            });
+
+            return { tenant, user, employee };
         });
 
         // 4. Generate JWT (incluir email para Super Admin detection)
@@ -1245,6 +1259,40 @@ app.post('/api/employees', authenticate, async (req: any, res: any) => {
     } catch (error) { res.status(500).json({ error: 'Error creando empleado' }); }
 });
 
+// PATCH /api/employees/:id/pin — Cambiar PIN de empleado
+app.patch('/api/employees/:id/pin', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    const { pin } = req.body;
+
+    if (!pin || !/^\d{4}$/.test(String(pin))) {
+        return res.status(400).json({ error: 'El PIN debe ser exactamente 4 dígitos numéricos.' });
+    }
+
+    try {
+        // Verificar que el empleado pertenece al tenant
+        const employee = await prisma.employee.findFirst({
+            where: { id, tenantId: authReq.tenantId }
+        });
+        if (!employee) return res.status(404).json({ error: 'Empleado no encontrado.' });
+
+        // Verificar que el PIN no esté en uso por otro empleado del mismo tenant
+        const pinConflict = await prisma.employee.findFirst({
+            where: { tenantId: authReq.tenantId, pin: String(pin), id: { not: id } }
+        });
+        if (pinConflict) {
+            return res.status(400).json({
+                error: `PIN ${pin} ya está asignado a ${pinConflict.firstName} ${pinConflict.lastName}. Usa otro.`
+            });
+        }
+
+        const updated = await prisma.employee.update({
+            where: { id },
+            data: { pin: String(pin) }
+        });
+        res.json({ message: 'PIN actualizado correctamente.', employee: updated });
+    } catch (error) { res.status(500).json({ error: 'Error actualizando PIN.' }); }
+});
 
 // ==========================================
 // 🛒 MÓDULO DE VENTAS (CON MOTOR DE RIESGO)

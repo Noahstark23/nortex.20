@@ -60,6 +60,9 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
       localStorage.setItem('nortex_user', JSON.stringify({ ...data.user, tenant: data.tenant }));
       localStorage.setItem('nortex_tenant_id', data.tenant.id);
       localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
+      localStorage.setItem('nortex_onboarding_pin', '1234');
+
+      alert('¡Cuenta creada con éxito! 🚀\n\nTu PIN de apertura de caja es: 1234\n(Podrás cambiarlo en Recursos Humanos → Directorio de Personal).');
 
       if (initialCart && initialCart.length > 0) {
         const persistentCart = initialCart.map(i => ({
@@ -70,10 +73,8 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
           sku: 'MOCK-SKU'
         }));
         localStorage.setItem('nortex_pending_cart', JSON.stringify(persistentCart));
-        navigate('/app/pos');
-      } else {
-        navigate('/app/dashboard');
       }
+      navigate('/app/pos');
 
     } catch (err: any) {
       setError(err.message);
