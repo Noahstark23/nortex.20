@@ -161,9 +161,11 @@ model Supplier {
   id          String   @id @default(cuid())
   tenantId    String
   name        String
+  ruc         String?
   contactName String?
   phone       String?
   email       String?
+  address     String?  @db.Text
   category    String?
   createdAt   DateTime @default(now())
 

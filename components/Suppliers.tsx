@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Truck, Plus, Search, Phone, Mail, User, X, Save } from 'lucide-react';
+import { Truck, Plus, Search, Phone, Mail, User, X, Hash, MapPin } from 'lucide-react';
 
 interface Supplier {
   id: string;
   name: string;
+  ruc: string;
   contactName: string;
   phone: string;
   email: string;
+  address: string;
   category: string;
 }
 
@@ -15,7 +17,7 @@ const Suppliers: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [formData, setFormData] = useState({ name: '', contactName: '', phone: '', email: '', category: '' });
+  const [formData, setFormData] = useState({ name: '', ruc: '', contactName: '', phone: '', email: '', address: '', category: '' });
 
   const fetchSuppliers = async () => {
       try {
@@ -25,7 +27,7 @@ const Suppliers: React.FC = () => {
           });
           const data = await res.json();
           if(res.ok) setSuppliers(data);
-      } catch(e) { console.error(e); } 
+      } catch(e) { console.error(e); }
       finally { setLoading(false); }
   };
 
@@ -42,7 +44,7 @@ const Suppliers: React.FC = () => {
           });
           if(res.ok) {
               setShowModal(false);
-              setFormData({ name: '', contactName: '', phone: '', email: '', category: '' });
+              setFormData({ name: '', ruc: '', contactName: '', phone: '', email: '', address: '', category: '' });
               fetchSuppliers();
               alert("✅ Proveedor agregado.");
           }
@@ -68,9 +70,9 @@ const Suppliers: React.FC = () => {
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 text-slate-800">
             <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                <input 
-                    type="text" 
-                    placeholder="Buscar proveedor..." 
+                <input
+                    type="text"
+                    placeholder="Buscar proveedor..."
                     className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-nortex-500"
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
@@ -86,9 +88,11 @@ const Suppliers: React.FC = () => {
                         <span className="text-[10px] bg-slate-100 px-2 py-1 rounded font-bold uppercase text-slate-500">{s.category || 'General'}</span>
                     </div>
                     <div className="space-y-2 text-sm text-slate-600">
+                        {s.ruc && <div className="flex items-center gap-2"><Hash size={14} className="text-amber-500"/> <span className="font-mono font-semibold text-amber-700">{s.ruc}</span></div>}
                         <div className="flex items-center gap-2"><User size={14} className="text-slate-400"/> {s.contactName || 'Sin contacto'}</div>
                         <div className="flex items-center gap-2"><Phone size={14} className="text-slate-400"/> {s.phone || '-'}</div>
                         <div className="flex items-center gap-2"><Mail size={14} className="text-slate-400"/> {s.email || '-'}</div>
+                        {s.address && <div className="flex items-center gap-2"><MapPin size={14} className="text-slate-400"/> {s.address}</div>}
                     </div>
                 </div>
             ))}
@@ -102,15 +106,17 @@ const Suppliers: React.FC = () => {
                         <h3 className="font-bold text-lg">Nuevo Proveedor</h3>
                         <button onClick={() => setShowModal(false)}><X size={20}/></button>
                     </div>
-                    <form onSubmit={handleCreate} className="space-y-4">
-                        <input required className="w-full border p-2 rounded text-slate-800" placeholder="Nombre Empresa" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                    <form onSubmit={handleCreate} className="space-y-3">
+                        <input required className="w-full border p-2 rounded text-slate-800" placeholder="Nombre Empresa *" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                        <input className="w-full border p-2 rounded text-slate-800 font-mono" placeholder="RUC / Cédula Jurídica (DGI)" value={formData.ruc} onChange={e => setFormData({...formData, ruc: e.target.value})} />
                         <input className="w-full border p-2 rounded text-slate-800" placeholder="Persona de Contacto" value={formData.contactName} onChange={e => setFormData({...formData, contactName: e.target.value})} />
                         <input className="w-full border p-2 rounded text-slate-800" placeholder="Categoría (Ej. Cementos)" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} />
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-2 gap-3">
                             <input className="w-full border p-2 rounded text-slate-800" placeholder="Teléfono" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
                             <input className="w-full border p-2 rounded text-slate-800" placeholder="Email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
                         </div>
-                        <button type="submit" className="w-full bg-nortex-900 text-white py-3 rounded font-bold">Guardar</button>
+                        <input className="w-full border p-2 rounded text-slate-800" placeholder="Dirección" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
+                        <button type="submit" className="w-full bg-nortex-900 text-white py-3 rounded font-bold mt-1">Guardar</button>
                     </form>
                 </div>
             </div>

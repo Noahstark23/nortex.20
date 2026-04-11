@@ -1167,10 +1167,10 @@ app.get('/api/suppliers', authenticate, async (req: any, res: any) => {
 
 app.post('/api/suppliers', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, contactName, phone, email, category } = req.body;
+    const { name, ruc, contactName, phone, email, address, category } = req.body;
     try {
         const supplier = await prisma.supplier.create({
-            data: { tenantId: authReq.tenantId, name, contactName, phone, email, category }
+            data: { tenantId: authReq.tenantId, name, contactName, phone, email, category, ruc, address } as any
         });
         res.json(supplier);
     } catch (error) { res.status(500).json({ error: 'Error' }); }
@@ -5133,8 +5133,8 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, async (req
   <div class="section-title">Sujeto Retenido (Proveedor)</div>
   <div class="grid">
     <div class="field"><label>Razón Social / Nombre</label><span>${purchase.supplier.name}</span></div>
-    <div class="field"><label>RUC / Cédula</label><span>Por registrar</span></div>
-    <div class="field"><label>Teléfono</label><span>${purchase.supplier.phone || '---'}</span></div>
+    <div class="field"><label>RUC / Cédula</label><span>${(purchase.supplier as any).ruc || 'Por registrar'}</span></div>
+    <div class="field"><label>Teléfono</label><span>${(purchase.supplier as any).phone || '---'}</span></div>
     <div class="field"><label>N° Factura del Proveedor</label><span>${purchase.invoiceNumber}</span></div>
   </div>
 </div>
@@ -5239,7 +5239,7 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, async (req: any, 
                 'Fecha':         new Date(s.createdAt).toLocaleDateString('es-NI'),
                 'N° Factura':    s.invoiceNumber ? `${s.invoiceSeries || 'A'}-${String(s.invoiceNumber).padStart(6, '0')}` : 'CF',
                 'Cliente':       s.customerName || s.customer?.name || 'Consumidor Final',
-                'RUC/Cédula':    '---',
+                'RUC/Cédula':    s.customer?.taxId || '---',
                 'Método Pago':   s.paymentMethod,
                 'Subtotal C$':   subtotal,
                 'IVA 15% C$':    iva,
@@ -5316,7 +5316,7 @@ app.get('/api/fiscal/libro-compras/:month/:year', authenticate, async (req: any,
                 'Fecha':           new Date(p.createdAt).toLocaleDateString('es-NI'),
                 'N° Factura Prov.': p.invoiceNumber,
                 'Proveedor':       p.supplier.name,
-                'RUC Proveedor':   '---',
+                'RUC Proveedor':   (p.supplier as any).ruc || '---',
                 'Subtotal C$':     subtotal,
                 'IVA Crédito C$':  iva,
                 'IR Ret. 2% C$':   ir,
@@ -5398,7 +5398,8 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, async (req: any, re
                 ? `${s.invoiceSeries || 'A'}${String(s.invoiceNumber).padStart(6,'0')}`
                 : 'CF';
             const nombre   = (s.customerName || s.customer?.name || 'CONSUMIDOR FINAL').toUpperCase().substring(0, 60);
-            lines.push(`V|${fecha}|${factura}|000-000000-0000X|${nombre}|${subtotal.toFixed(2)}|${iva.toFixed(2)}|${total.toFixed(2)}`);
+            const rucV     = s.customer?.taxId || '000-000000-0000X';
+            lines.push(`V|${fecha}|${factura}|${rucV}|${nombre}|${subtotal.toFixed(2)}|${iva.toFixed(2)}|${total.toFixed(2)}`);
         }
 
         lines.push('');
@@ -5410,7 +5411,8 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, async (req: any, re
             const total    = Number(p.total);
             const fecha    = new Date(p.createdAt).toISOString().slice(0,10).replace(/-/g,'');
             const nombre   = p.supplier.name.toUpperCase().substring(0, 60);
-            lines.push(`C|${fecha}|${p.invoiceNumber}|000-000000-0000X|${nombre}|${subtotal.toFixed(2)}|${iva.toFixed(2)}|${total.toFixed(2)}`);
+            const rucC     = (p.supplier as any).ruc || '000-000000-0000X';
+            lines.push(`C|${fecha}|${p.invoiceNumber}|${rucC}|${nombre}|${subtotal.toFixed(2)}|${iva.toFixed(2)}|${total.toFixed(2)}`);
         }
 
         const content = lines.join('\r\n'); // CRLF como exige la VET
