@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     AlertTriangle, Shield, Package, XCircle, Percent, Clock, User, ChevronDown,
-    Loader2, RefreshCw, Filter, Eye
+    Loader2, RefreshCw, Filter, Eye, FileSpreadsheet, Download, Stamp
 } from 'lucide-react';
 
 // Types
@@ -48,10 +48,21 @@ interface DiscountAnalysis {
     riskLevel: string;
 }
 
-type Tab = 'feed' | 'kardex' | 'voids' | 'discounts';
+type Tab = 'feed' | 'kardex' | 'voids' | 'discounts' | 'fiscal';
 
 const AuditDashboard: React.FC = () => {
-    const [tab, setTab] = useState<Tab>('feed');
+    // ACCOUNTANT role defaults to fiscal tab
+    const getUserRole = () => {
+        try {
+            const t = localStorage.getItem('nortex_token');
+            if (!t) return '';
+            return JSON.parse(atob(t.split('.')[1])).role || '';
+        } catch { return ''; }
+    };
+    const userRole = getUserRole();
+    const defaultTab: Tab = userRole === 'ACCOUNTANT' ? 'fiscal' : 'feed';
+
+    const [tab, setTab] = useState<Tab>(defaultTab);
     const [feed, setFeed] = useState<AuditAlert[]>([]);
     const [kardex, setKardex] = useState<KardexSuspicion[]>([]);
     const [voids, setVoids] = useState<VoidAnalysis[]>([]);
@@ -59,19 +70,25 @@ const AuditDashboard: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [expandedVoid, setExpandedVoid] = useState<string | null>(null);
 
+    // Fiscal tab state
+    const now = new Date();
+    const [fiscalMonth, setFiscalMonth] = useState(now.getMonth() + 1);
+    const [fiscalYear, setFiscalYear] = useState(now.getFullYear());
+
     const token = localStorage.getItem('nortex_token');
     const headers = { Authorization: `Bearer ${token}` };
 
     const fetchTab = async (t: Tab) => {
+        if (t === 'fiscal') { setLoading(false); return; }
         setLoading(true);
         try {
-            const routes: Record<Tab, string> = {
+            const routes: Record<Exclude<Tab, 'fiscal'>, string> = {
                 feed: '/api/audit/feed',
                 kardex: '/api/audit/kardex-suspicious',
                 voids: '/api/audit/voided-movements',
                 discounts: '/api/audit/discounts',
             };
-            const res = await fetch(routes[t], { headers });
+            const res = await fetch(routes[t as Exclude<Tab, 'fiscal'>], { headers });
             if (res.ok) {
                 const data = await res.json();
                 if (t === 'feed') setFeed(data);
@@ -106,6 +123,7 @@ const AuditDashboard: React.FC = () => {
     };
 
     const tabs: { key: Tab; label: string; icon: React.ReactNode; count?: number }[] = [
+        { key: 'fiscal', label: 'Exportaciones DGI', icon: <FileSpreadsheet size={16} /> },
         { key: 'feed', label: 'Alertas', icon: <AlertTriangle size={16} />, count: feed.filter(f => f.severity === 'HIGH' || f.severity === 'CRITICAL').length },
         { key: 'kardex', label: 'Kardex Pro', icon: <Package size={16} />, count: kardex.filter(k => k.severity === 'HIGH' || k.severity === 'CRITICAL').length },
         { key: 'voids', label: 'Anulaciones', icon: <XCircle size={16} />, count: voids.filter(v => v.riskLevel === 'HIGH').length },
@@ -149,11 +167,95 @@ const AuditDashboard: React.FC = () => {
                 ))}
             </div>
 
-            {loading ? (
+            {/* ── FISCAL TAB ─────────────────────────────── */}
+            {tab === 'fiscal' && (
+                <div className="space-y-6">
+                    {/* Month / Year picker */}
+                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                        <h2 className="text-sm font-semibold text-slate-700 mb-4 flex items-center gap-2">
+                            <FileSpreadsheet size={16} className="text-indigo-500" />
+                            Período fiscal
+                        </h2>
+                        <div className="flex items-center gap-3">
+                            <select
+                                value={fiscalMonth}
+                                onChange={e => setFiscalMonth(Number(e.target.value))}
+                                className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                            >
+                                {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'].map((m, i) => (
+                                    <option key={i+1} value={i+1}>{m}</option>
+                                ))}
+                            </select>
+                            <input
+                                type="number"
+                                value={fiscalYear}
+                                onChange={e => setFiscalYear(Number(e.target.value))}
+                                min={2020} max={2099}
+                                className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 w-24 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                            />
+                        </div>
+                    </div>
+
+                    {/* Download cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <a
+                            href={`/api/fiscal/libro-ventas/${fiscalMonth}/${fiscalYear}`}
+                            download
+                            className="flex flex-col items-center gap-3 bg-white border border-emerald-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all group"
+                        >
+                            <FileSpreadsheet size={32} className="text-emerald-500 group-hover:scale-110 transition-transform" />
+                            <div className="text-center">
+                                <p className="font-semibold text-slate-800 text-sm">Libro de Ventas</p>
+                                <p className="text-xs text-slate-500 mt-0.5">Excel (.xlsx) — DGI Nicaragua</p>
+                            </div>
+                            <span className="text-xs bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full font-medium">Descargar</span>
+                        </a>
+
+                        <a
+                            href={`/api/fiscal/libro-compras/${fiscalMonth}/${fiscalYear}`}
+                            download
+                            className="flex flex-col items-center gap-3 bg-white border border-blue-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-blue-400 transition-all group"
+                        >
+                            <FileSpreadsheet size={32} className="text-blue-500 group-hover:scale-110 transition-transform" />
+                            <div className="text-center">
+                                <p className="font-semibold text-slate-800 text-sm">Libro de Compras</p>
+                                <p className="text-xs text-slate-500 mt-0.5">Excel (.xlsx) — DGI Nicaragua</p>
+                            </div>
+                            <span className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-medium">Descargar</span>
+                        </a>
+
+                        <a
+                            href={`/api/fiscal/vet-export/${fiscalMonth}/${fiscalYear}`}
+                            download
+                            className="flex flex-col items-center gap-3 bg-white border border-violet-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-violet-400 transition-all group"
+                        >
+                            <Download size={32} className="text-violet-500 group-hover:scale-110 transition-transform" />
+                            <div className="text-center">
+                                <p className="font-semibold text-slate-800 text-sm">Archivo VET</p>
+                                <p className="text-xs text-slate-500 mt-0.5">TXT pipe-delimited — DGI VET</p>
+                            </div>
+                            <span className="text-xs bg-violet-100 text-violet-700 px-3 py-1 rounded-full font-medium">Descargar</span>
+                        </a>
+                    </div>
+
+                    {/* Constancias note */}
+                    <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex items-start gap-3">
+                        <Stamp size={20} className="text-indigo-500 mt-0.5 flex-shrink-0" />
+                        <div>
+                            <p className="text-sm font-semibold text-indigo-800">Constancias de Retención</p>
+                            <p className="text-xs text-indigo-600 mt-1">
+                                Las constancias individuales se generan desde el módulo <strong>Compras</strong> — botón violeta <Stamp size={11} className="inline" /> junto a cada factura de proveedor.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {tab !== 'fiscal' && loading ? (
                 <div className="flex items-center justify-center py-20">
                     <Loader2 className="animate-spin text-nortex-500" size={28} />
                 </div>
-            ) : (
+            ) : tab !== 'fiscal' && (
                 <>
                     {/* Feed Tab */}
                     {tab === 'feed' && (

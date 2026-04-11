@@ -138,6 +138,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { path: '/app/reports',   label: 'Reportes de Cobro',    shortLabel: 'Reportes', group: 'Reportes',       icon: PieChart },
         { path: '/app/team',      label: 'Cobradores',           shortLabel: 'Equipo',   group: 'Administración', icon: UserPlus },
       ]
+      : userRole === 'ACCOUNTANT'
+      ? [
+        // ── CONTADOR — vista reducida ────────────────────
+        { path: '/app/reports',   label: 'Reportes / Fiscal', shortLabel: 'Fiscal',     group: 'Fiscal',    icon: PieChart },
+        { path: '/app/purchases', label: 'Compras',           shortLabel: 'Compras',    group: 'Fiscal',    icon: Truck    },
+        { path: '/app/audit',     label: 'Auditoría',         shortLabel: 'Auditoría',  group: 'Fiscal',    icon: Shield   },
+      ]
       : [
         // ── VENTAS ──────────────────────────────────────
         { path: '/app/pos',         label: 'Punto de Venta',  shortLabel: 'POS',      group: 'Ventas', icon: ShoppingCart },

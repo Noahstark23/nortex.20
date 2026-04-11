@@ -353,7 +353,7 @@ app.post('/api/team/invite', authenticate, async (req: any, res: any) => {
             return res.status(400).json({ error: 'Email y rol son requeridos.' });
         }
 
-        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE'];
+        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'];
         if (!validRoles.includes(role)) {
             return res.status(400).json({ error: `Rol inválido. Opciones: ${validRoles.join(', ')}` });
         }
@@ -480,7 +480,7 @@ app.patch('/api/team/:userId/role', authenticate, async (req: any, res: any) => 
             return res.status(400).json({ error: 'No puedes cambiar tu propio rol.' });
         }
 
-        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE'];
+        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'];
         if (!validRoles.includes(role)) {
             return res.status(400).json({ error: `Rol inválido. Opciones: ${validRoles.join(', ')}` });
         }

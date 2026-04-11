@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     Users, Plus, Shield, Eye, ShoppingCart, UserCog, Copy, Check,
-    Trash2, Clock, Mail, ChevronDown, AlertCircle, Loader2, UserPlus
+    Trash2, Clock, Mail, ChevronDown, AlertCircle, Loader2, UserPlus, Calculator
 } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -69,6 +69,13 @@ const ROLE_CONFIG: Record<string, { label: string; icon: React.ReactNode; color:
         color: 'text-slate-400',
         bg: 'bg-slate-500/10 border-slate-500/30',
         description: 'POS e inventario básico'
+    },
+    ACCOUNTANT: {
+        label: 'Contador',
+        icon: <Calculator size={14} />,
+        color: 'text-amber-400',
+        bg: 'bg-amber-500/10 border-amber-500/30',
+        description: 'Reportes fiscales DGI, constancias, auditoría'
     },
 };
 
@@ -293,6 +300,7 @@ const TeamManagement: React.FC = () => {
                                             <option value="CASHIER">Cajero</option>
                                             <option value="VIEWER">Visor</option>
                                             <option value="EMPLOYEE">Empleado</option>
+                                            <option value="ACCOUNTANT">Contador</option>
                                         </select>
                                         <button
                                             onClick={() => handleDisableUser(u.id, u.name)}
@@ -360,7 +368,7 @@ const TeamManagement: React.FC = () => {
             <div className="bg-nortex-800/50 border border-slate-700/50 rounded-xl p-5">
                 <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4">Permisos por Rol</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE'].map(role => {
+                    {['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'].map(role => {
                         const rc = ROLE_CONFIG[role];
                         return (
                             <div key={role} className={`p-3 rounded-lg border ${rc.bg}`}>
@@ -402,7 +410,7 @@ const TeamManagement: React.FC = () => {
                                     <div className="mb-6">
                                         <label className="text-sm font-medium text-slate-300 block mb-2">Rol</label>
                                         <div className="grid grid-cols-2 gap-2">
-                                            {['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE'].map(role => {
+                                            {['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'].map(role => {
                                                 const rc = ROLE_CONFIG[role];
                                                 const isSelected = inviteRole === role;
                                                 return (
