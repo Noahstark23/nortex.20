@@ -336,6 +336,8 @@ model Sale {
   // Facturación DGI
   invoiceNumber  Int? // Consecutivo controlado (1, 2, 3...)
   invoiceSeries  String? // Serie: "A", "B" (por sucursal)
+  // PWA Offline Sync — UUID generado en el cliente para idempotencia
+  offlineId      String?   @unique
 
   tenant         Tenant          @relation(fields: [tenantId], references: [id])
   customer       Customer?       @relation(fields: [customerId], references: [id])

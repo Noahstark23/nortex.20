@@ -27,6 +27,7 @@ import hrRouter from './routes/hr';
 import pedidosRouter from './routes/pedidos';
 import motorizadosRouter from './routes/motorizados';
 import loanRoutes from './routes/loans';
+import syncRoutes from './routes/sync';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -151,6 +152,7 @@ app.use('/api/hr', hrRouter);
 app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
 app.use('/api/loans', loanRoutes);
+app.use('/api/sales/sync', syncRoutes);
 
 // Response time header (para monitoreo)
 app.use((req: any, res: any, next: any) => {
@@ -2243,7 +2245,7 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
 // POST /api/products - Crear producto (OWNER o ADMIN)
 app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished } = req.body;
+    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl } = req.body;
 
     try {
         // Verificar que SKU no exista
@@ -2274,6 +2276,7 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (re
                 minStock: parseInt(minStock) || 0,
                 unit: unit || 'unidad',
                 isPublished: Boolean(isPublished),
+                imageUrl: imageUrl || null,
                 createdBy: authReq.userId!
             }
         });
@@ -2427,7 +2430,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
 app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { name, description, category, price, cost, stock, minStock, unit } = req.body;
+    const { name, description, category, price, cost, stock, minStock, unit, imageUrl } = req.body;
 
     try {
         const existing = await prisma.product.findFirst({
@@ -2446,6 +2449,7 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
         if (cost !== undefined) updates.cost = parseFloat(cost);
         if (minStock !== undefined) updates.minStock = parseInt(minStock);
         if (unit !== undefined) updates.unit = unit;
+        if (imageUrl !== undefined) updates.imageUrl = imageUrl;
 
         // Si se cambia el stock, crear registro en Kardex
         if (stock !== undefined) {

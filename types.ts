@@ -38,6 +38,20 @@ export interface Shift {
   status: 'OPEN' | 'CLOSED';
 }
 
+export interface CashMovement {
+  id: string;
+  tenantId: string;
+  shiftId: string;
+  userId: string;
+  type: 'IN' | 'OUT';
+  amount: number;
+  currency: string;
+  category: string;
+  description: string;
+  isVoided: boolean;
+  createdAt: string;
+}
+
 export interface AuditLog {
   id: string;
   action: 'DELETE_SALE' | 'ADJUST_STOCK' | 'CLOSE_SHIFT' | 'OPEN_SHIFT' | 'THEFT_ALERT' | 'SURPLUS_ALERT';

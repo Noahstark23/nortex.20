@@ -1,10 +1,12 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Shift, CashMovement } from '../types';
-import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff } from 'lucide-react';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { ReceiptTicket } from './ReceiptTicket';
+import { thermalPrinter } from '../utils/thermalPrinter';
 import * as XLSX from 'xlsx';
+import { db, generateOfflineId, saveSaleOffline, getPendingSales, markSalesSynced } from '../lib/db';
 
 interface Customer {
     id: string;
@@ -96,6 +98,9 @@ const POS: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [processing, setProcessing] = useState(false);
 
+    // 🖨️ THERMAL PRINTER STATE
+    const [thermalConnected, setThermalConnected] = useState(false);
+
     // CUSTOMER STATE (SMART SEARCH)
     const [customerList, setCustomerList] = useState<Customer[]>([]);
     const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -163,6 +168,13 @@ const POS: React.FC = () => {
     const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
     const [showMovementsList, setShowMovementsList] = useState(false);
 
+    // ==========================================
+    // OFFLINE / PWA STATE
+    // ==========================================
+    const [isOnline, setIsOnline] = useState(navigator.onLine);
+    const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
+    const [syncingOffline, setSyncingOffline] = useState(false);
+
     const token = localStorage.getItem('nortex_token');
     const headers = useMemo(() => ({
         'Content-Type': 'application/json',
@@ -194,6 +206,56 @@ const POS: React.FC = () => {
             console.error('Error fetching products:', e);
         }
     }, [headers]);
+
+    // ==========================================
+    // OFFLINE SYNC ENGINE
+    // ==========================================
+    const syncOfflineSales = useCallback(async () => {
+        const pending = await getPendingSales();
+        if (pending.length === 0) return;
+        setSyncingOffline(true);
+        try {
+            const token = localStorage.getItem('nortex_token');
+            const res = await fetch('/api/sales/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ sales: pending }),
+            });
+            if (res.ok) {
+                const result = await res.json();
+                const syncedIds = result.results
+                    .filter((r: any) => r.status === 'created' || r.status === 'skipped')
+                    .map((r: any) => r.offlineId);
+                await markSalesSynced(syncedIds);
+                setPendingOfflineCount(0);
+                fetchProducts();
+            }
+        } catch (e) {
+            // Se intentará de nuevo cuando vuelva internet
+        } finally {
+            setSyncingOffline(false);
+        }
+    }, []);
+
+    const refreshOfflineCount = useCallback(async () => {
+        const pending = await getPendingSales();
+        setPendingOfflineCount(pending.length);
+    }, []);
+
+    useEffect(() => {
+        refreshOfflineCount();
+        const handleOnline = () => {
+            setIsOnline(true);
+            syncOfflineSales();
+        };
+        const handleOffline = () => setIsOnline(false);
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, [syncOfflineSales, refreshOfflineCount]);
 
     // ==========================================
     // INIT POS
@@ -249,6 +311,9 @@ const POS: React.FC = () => {
                 console.error("Failed to parse ghost cart", e);
                 localStorage.removeItem('nortex_pending_cart');
             }
+
+            // 4. Autoconnect thermal printer
+            thermalPrinter.autoConnect().then(setThermalConnected);
         };
         initPOS();
         fetchProducts();
@@ -893,6 +958,54 @@ const POS: React.FC = () => {
         setProcessing(true);
         try {
             const token = localStorage.getItem('nortex_token');
+
+            // ── OFFLINE PATH ──────────────────────────────────────────
+            if (!navigator.onLine) {
+                const tenantRaw = localStorage.getItem('nortex_tenant_data');
+                const tenantId = tenantRaw ? JSON.parse(tenantRaw).id : '';
+                const userRaw = localStorage.getItem('nortex_user');
+                const userId = userRaw ? JSON.parse(userRaw).id : '';
+
+                const offlineId = generateOfflineId();
+                await saveSaleOffline({
+                    offlineId,
+                    tenantId,
+                    userId,
+                    shiftId: currentShift?.id ?? null,
+                    employeeId: (currentShift as any)?.employeeId ?? (currentShift as any)?.employee?.id ?? null,
+                    customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
+                    customerId: selectedCustomer?.id ?? null,
+                    paymentMethod: method,
+                    total: grandTotal,
+                    globalDiscount,
+                    items: cart.map(c => ({
+                        id: c.id,
+                        name: c.name,
+                        quantity: c.quantity,
+                        price: c.price,
+                        costPrice: c.costPrice,
+                        discount: (c as any).discount || 0,
+                    })),
+                    createdAt: new Date().toISOString(),
+                });
+                setPendingOfflineCount(p => p + 1);
+
+                setCompletedSale({
+                    items: [...cart],
+                    subtotal: total,
+                    tax,
+                    grandTotal,
+                    paymentMethod: method,
+                    customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
+                    customerPhone: selectedCustomer?.phone,
+                    saleId: offlineId,
+                    date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                });
+                setCashReceived('');
+                return;
+            }
+
+            // ── ONLINE PATH ───────────────────────────────────────────
             const res = await fetch('/api/sales', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -903,17 +1016,15 @@ const POS: React.FC = () => {
                     customerId: selectedCustomer?.id,
                     total: grandTotal,
                     globalDiscount: globalDiscount,
-                    employeeId: currentShift?.employeeId || currentShift?.employee?.id || null
+                    employeeId: currentShift?.employeeId || (currentShift as any)?.employee?.id || null
                 })
             });
 
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
 
-            // Refresh products to update stock in the grid
             fetchProducts();
 
-            // Show post-sale success modal instead of clearing immediately
             setCompletedSale({
                 items: [...cart],
                 subtotal: total,
@@ -972,10 +1083,20 @@ const POS: React.FC = () => {
         sendToWhatsApp(inv, completedSale?.customerPhone);
     };
 
-    const handlePrintTicket = () => {
-        // Use the in-DOM ReceiptTicket + @media print CSS
-        // Wait 150ms to ensure React has rendered the receipt data
-        setTimeout(() => window.print(), 150);
+    const handlePrintTicket = async () => {
+        if (thermalPrinter.isConnected()) {
+            const inv = buildInvoiceData();
+            if (inv) {
+                const success = await thermalPrinter.printReceipt(inv);
+                if (!success) {
+                    alert('Error comunicándose con la tiquetera. Verifica conexión de web serial.');
+                }
+            }
+        } else {
+            // Use the in-DOM ReceiptTicket + @media print CSS
+            // Wait 150ms to ensure React has rendered the receipt data
+            setTimeout(() => window.print(), 150);
+        }
     };
 
     const handlePrintA4 = () => {
@@ -1046,6 +1167,43 @@ const POS: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2 flex-1 min-w-0 justify-end overflow-x-auto custom-scrollbar whitespace-nowrap pl-4 pb-2 pt-2 lg:pb-0 lg:pt-0 lg:overflow-visible">
+                    {/* 🖨️ TIQUETERA BT/USB */}
+                    <button
+                        onClick={async () => {
+                            if (!thermalConnected) {
+                                const success = await thermalPrinter.connect();
+                                setThermalConnected(success);
+                            }
+                        }}
+                        className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg transition-all shadow-sm ${thermalConnected ? 'bg-indigo-500 text-white hover:bg-indigo-600' : 'bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200'}`}
+                        title={thermalConnected ? 'Tiquetera Conectada' : 'Vincular Tiquetera'}
+                    >
+                        <Printer size={14} />
+                        <span className="hidden lg:inline">{thermalConnected ? 'Tiquetera lista' : 'Vincular Tiquetera'}</span>
+                    </button>
+
+                    {/* 📶 OFFLINE INDICATOR */}
+                    {!isOnline && (
+                        <div className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-amber-500 text-white shadow-sm">
+                            <WifiOff size={14} />
+                            <span className="hidden lg:inline">Sin internet</span>
+                            {pendingOfflineCount > 0 && (
+                                <span className="bg-white text-amber-600 text-[10px] font-black w-4 h-4 rounded-full flex items-center justify-center">{pendingOfflineCount}</span>
+                            )}
+                        </div>
+                    )}
+                    {isOnline && pendingOfflineCount > 0 && (
+                        <button
+                            onClick={syncOfflineSales}
+                            disabled={syncingOffline}
+                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-green-500 text-white hover:bg-green-600 shadow-sm disabled:opacity-60"
+                            title="Sincronizar ventas offline"
+                        >
+                            <RefreshCw size={14} className={syncingOffline ? 'animate-spin' : ''} />
+                            <span className="hidden lg:inline">{syncingOffline ? 'Sincronizando...' : `Sync (${pendingOfflineCount})`}</span>
+                        </button>
+                    )}
+
                     {/* 🅿️ PARQUEO BADGE */}
                     {currentShift && (
                         <button
