@@ -17,10 +17,17 @@ const prisma = new PrismaClient();
 // CACHÉ EN MEMORIA (Redis Lite)
 // TTL: 5 minutos | Check cada 60s
 // ==========================================
+interface TenantCacheEntry {
+  status: string;
+  trialEndsAt: Date | null;
+}
 const tenantCache = new NodeCache({ stdTTL: 300, checkperiod: 60 });
 
 // Email autorizado como SUPER_ADMIN
 const SUPER_ADMIN_EMAILS = ['noelpinedaa96@gmail.com'];
+
+// Rutas que pasan siempre sin importar el estado de suscripción
+const ALWAYS_ALLOWED_PREFIXES = ['/api/billing', '/api/auth', '/api/admin'];
 
 export interface AuthRequest {
   userId?: string;
@@ -30,17 +37,20 @@ export interface AuthRequest {
   [key: string]: any;
 }
 
-/**
- * Invalida la caché de un tenant específico.
- * Llamar cuando: suspensión, reactivación, cambio de rol.
- */
 export function invalidateTenantCache(tenantId: string) {
   tenantCache.del(`tenant:${tenantId}`);
 }
 
-/** Invalida TODA la caché (emergencia). */
 export function flushAllCache() {
   tenantCache.flushAll();
+}
+
+function isSubscriptionBlocked(entry: TenantCacheEntry): boolean {
+  if (entry.status === 'PAST_DUE' || entry.status === 'CANCELLED') return true;
+  if (entry.status === 'TRIAL' && entry.trialEndsAt) {
+    return new Date(entry.trialEndsAt) < new Date();
+  }
+  return false;
 }
 
 export const authenticate = async (req: any, res: any, next: any) => {
@@ -66,27 +76,28 @@ export const authenticate = async (req: any, res: any, next: any) => {
     req.role = decoded.role;
     req.email = decoded.email;
 
-    // --- SUPER_ADMIN BYPASS: No aplica paywall ni caché ---
+    // SUPER_ADMIN bypass total
     if (decoded.role === 'SUPER_ADMIN' || SUPER_ADMIN_EMAILS.includes(decoded.email || '')) {
       next();
       return;
     }
 
-    // --- GET requests y rutas especiales: pasan sin check de paywall ---
-    if (req.method === 'GET' || req.originalUrl.startsWith('/api/billing') || req.originalUrl.startsWith('/api/admin')) {
+    // Rutas de billing, auth y admin siempre permitidas
+    const isExempt = ALWAYS_ALLOWED_PREFIXES.some(prefix => req.originalUrl.startsWith(prefix));
+    if (isExempt) {
       next();
       return;
     }
 
-    // --- PAYWALL CHECK con CACHÉ ---
+    // PAYWALL CHECK con CACHÉ
     const cacheKey = `tenant:${decoded.tenantId}`;
-    const cached = tenantCache.get<string>(cacheKey);
+    const cached = tenantCache.get<TenantCacheEntry>(cacheKey);
 
     if (cached !== undefined) {
-      // CACHE HIT: verificar estado sin tocar la DB
-      if (cached === 'PAST_DUE' || cached === 'CANCELLED') {
+      if (isSubscriptionBlocked(cached)) {
         res.status(402).json({
-          error: '⚠️ SERVICIO SUSPENDIDO: Su suscripción está vencida. Realice el pago para reactivar las operaciones.'
+          error: '⚠️ SERVICIO SUSPENDIDO: Su suscripción está vencida. Realice el pago para reactivar.',
+          subscriptionStatus: cached.status,
         });
         return;
       }
@@ -94,19 +105,23 @@ export const authenticate = async (req: any, res: any, next: any) => {
       return;
     }
 
-    // CACHE MISS: consultar DB y cachear
+    // CACHE MISS: consultar DB
     try {
       const tenant = await prisma.tenant.findUnique({
         where: { id: decoded.tenantId },
-        select: { subscriptionStatus: true }
+        select: { subscriptionStatus: true, trialEndsAt: true },
       });
 
-      const status = tenant?.subscriptionStatus || 'ACTIVE';
-      tenantCache.set(cacheKey, status);
+      const entry: TenantCacheEntry = {
+        status: tenant?.subscriptionStatus || 'TRIAL',
+        trialEndsAt: tenant?.trialEndsAt || null,
+      };
+      tenantCache.set(cacheKey, entry);
 
-      if (status === 'PAST_DUE' || status === 'CANCELLED') {
+      if (isSubscriptionBlocked(entry)) {
         res.status(402).json({
-          error: '⚠️ SERVICIO SUSPENDIDO: Su suscripción está vencida. Realice el pago para reactivar las operaciones.'
+          error: '⚠️ SERVICIO SUSPENDIDO: Su suscripción está vencida. Realice el pago para reactivar.',
+          subscriptionStatus: entry.status,
         });
         return;
       }
@@ -123,9 +138,6 @@ export const authenticate = async (req: any, res: any, next: any) => {
   }
 };
 
-/**
- * Middleware: Solo permite acceso a SUPER_ADMIN.
- */
 export const requireSuperAdmin = async (req: any, res: any, next: any) => {
   const authReq = req as AuthRequest;
 

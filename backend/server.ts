@@ -193,7 +193,9 @@ app.post('/api/auth/register', async (req: any, res: any) => {
                     taxId: `TAX-${Date.now()}`,
                     walletBalance: 10000,
                     creditLimit: 5000,
-                    creditScore: 750
+                    creditScore: 750,
+                    subscriptionStatus: 'TRIAL',
+                    trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 días
                 }
             });
 
@@ -5453,6 +5455,39 @@ if (isProduction) {
     });
     console.log(`📂 Serving static files from: ${distPath}`);
 }
+
+// ==========================================
+// ⏰ CRON: EXPIRACIÓN AUTOMÁTICA DE SUSCRIPCIONES
+// Corre cada hora — marca PAST_DUE a tenants con:
+//   1. status ACTIVE y subscriptionEndsAt vencido (webhook de Stripe perdido)
+//   2. status TRIAL y trialEndsAt vencido (14 días de prueba cumplidos)
+// ==========================================
+async function checkExpiredSubscriptions() {
+    try {
+        const now = new Date();
+
+        const expiredActive = await prisma.tenant.updateMany({
+            where: { subscriptionStatus: 'ACTIVE', subscriptionEndsAt: { lt: now } },
+            data: { subscriptionStatus: 'PAST_DUE' },
+        });
+
+        const expiredTrials = await prisma.tenant.updateMany({
+            where: { subscriptionStatus: 'TRIAL', trialEndsAt: { lt: now } },
+            data: { subscriptionStatus: 'PAST_DUE' },
+        });
+
+        const total = expiredActive.count + expiredTrials.count;
+        if (total > 0) {
+            console.log(`⏰ Suscripciones vencidas: ${expiredActive.count} activas, ${expiredTrials.count} trials → PAST_DUE`);
+            flushAllCache();
+        }
+    } catch (err) {
+        console.error('⚠️ Error en checkExpiredSubscriptions:', err);
+    }
+}
+
+checkExpiredSubscriptions();
+setInterval(checkExpiredSubscriptions, 60 * 60 * 1000); // cada hora
 
 // ==========================================
 // 🚀 START SERVER

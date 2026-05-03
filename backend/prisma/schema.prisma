@@ -27,7 +27,8 @@ model Tenant {
   subscriptionStatus   String    @default("TRIAL") // TRIAL | ACTIVE | PAST_DUE | CANCELLED
   stripeCustomerId     String? // Stripe Customer ID (cus_xxx)
   stripeSubscriptionId String? // Stripe Subscription ID (sub_xxx)
-  subscriptionEndsAt   DateTime? // Fecha de vencimiento de la suscripción
+  subscriptionEndsAt   DateTime? // Fecha de vencimiento de la suscripción activa
+  trialEndsAt          DateTime? // Fecha límite del trial gratuito (14 días desde registro)
   theftAlertThreshold  Decimal   @default(500) @db.Decimal(10, 2)
   // Campos Fiscales DGI
   address              String? // Dirección fiscal
