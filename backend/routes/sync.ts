@@ -134,20 +134,72 @@ router.post('/', authenticate, async (req: any, res: any) => {
                         data: { stock: { decrement: effectiveQty } },
                     });
 
-                    await tx.kardexMovement.create({
-                        data: {
-                            tenantId: callerTenantId,
-                            productId: item.id,
-                            type: 'SALE',
-                            quantity: -effectiveQty,
-                            stockBefore,
-                            stockAfter,
-                            referenceId: newSale.id,
-                            referenceType: 'SALE',
-                            reason: `Venta offline sync #${sale.offlineId.slice(0, 8)}`,
-                            userId: sale.userId,
-                        },
-                    });
+                    if (product.requiresBatchTracking) {
+                        let remainingQty = effectiveQty;
+                        const activeBatches = await tx.productBatch.findMany({
+                            where: { productId: item.id, stock: { gt: 0 } },
+                            orderBy: { expiryDate: 'asc' }
+                        });
+
+                        for (const batch of activeBatches) {
+                            if (remainingQty <= 0) break;
+                            const deductQty = Math.min(batch.stock, remainingQty);
+                            remainingQty -= deductQty;
+
+                            await tx.productBatch.update({
+                                where: { id: batch.id },
+                                data: { stock: { decrement: deductQty } }
+                            });
+
+                            await tx.kardexMovement.create({
+                                data: {
+                                    tenantId: callerTenantId,
+                                    productId: item.id,
+                                    type: 'SALE',
+                                    quantity: -deductQty,
+                                    stockBefore,
+                                    stockAfter: stockBefore - deductQty,
+                                    referenceId: newSale.id,
+                                    referenceType: 'SALE',
+                                    reason: `Venta offline sync #${sale.offlineId.slice(0, 8)} (Lote ${batch.batchNumber})`,
+                                    userId: sale.userId,
+                                    batchId: batch.id
+                                }
+                            });
+                        }
+                        
+                        if (remainingQty > 0) {
+                            await tx.kardexMovement.create({
+                                data: {
+                                    tenantId: callerTenantId,
+                                    productId: item.id,
+                                    type: 'SALE',
+                                    quantity: -remainingQty,
+                                    stockBefore,
+                                    stockAfter,
+                                    referenceId: newSale.id,
+                                    referenceType: 'SALE',
+                                    reason: `Venta offline sync #${sale.offlineId.slice(0, 8)} (Sin lote asignado)`,
+                                    userId: sale.userId,
+                                }
+                            });
+                        }
+                    } else {
+                        await tx.kardexMovement.create({
+                            data: {
+                                tenantId: callerTenantId,
+                                productId: item.id,
+                                type: 'SALE',
+                                quantity: -effectiveQty,
+                                stockBefore,
+                                stockAfter,
+                                referenceId: newSale.id,
+                                referenceType: 'SALE',
+                                reason: `Venta offline sync #${sale.offlineId.slice(0, 8)}`,
+                                userId: sale.userId,
+                            },
+                        });
+                    }
                 }
 
                 // 6. ACTUALIZAR CAJA DEL TURNO

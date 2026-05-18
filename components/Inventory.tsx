@@ -3,7 +3,7 @@ import ImageUploader from './ImageUploader';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
     RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
-    Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle
+    Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers
 } from 'lucide-react';
 import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
@@ -24,8 +24,17 @@ interface Product {
     minStock: number;
     unit: string;
     isPublished?: boolean;
+    imageUrl?: string;
     creator?: { name: string };
     updatedAt?: string;
+    requiresBatchTracking?: boolean;
+}
+
+interface ProductBatch {
+    id: string;
+    batchNumber: string;
+    expiryDate: string;
+    stock: number;
 }
 
 interface KardexEntry {
@@ -88,13 +97,19 @@ export default function Inventory() {
     const [quickAddSKU, setQuickAddSKU] = useState('');
     const [showKardexModal, setShowKardexModal] = useState(false);
     const [showAdjustModal, setShowAdjustModal] = useState(false);
+    const [showEditModal, setShowEditModal] = useState(false);
     const [showDropdown, setShowDropdown] = useState(false);
     const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+    const [showBatchesModal, setShowBatchesModal] = useState(false);
 
     // Kardex
     const [kardexData, setKardexData] = useState<KardexEntry[]>([]);
     const [kardexLoading, setKardexLoading] = useState(false);
     const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+
+    // Batches
+    const [batchesData, setBatchesData] = useState<ProductBatch[]>([]);
+    const [batchesLoading, setBatchesLoading] = useState(false);
 
     // Adjust form
     const [adjustForm, setAdjustForm] = useState({
@@ -104,10 +119,16 @@ export default function Inventory() {
     });
     const [adjustSubmitting, setAdjustSubmitting] = useState(false);
 
+    // Edit form (solo datos cosméticos/comerciales — sin stock para no disparar Kardex)
+    const [editForm, setEditForm] = useState({
+        name: '', description: '', category: '', price: '', imageUrl: ''
+    });
+    const [editSubmitting, setEditSubmitting] = useState(false);
+
     // Create form
     const [formData, setFormData] = useState({
         name: '', sku: '', description: '', category: '',
-        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: ''
+        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false
     });
 
     const token = localStorage.getItem('nortex_token');
@@ -178,7 +199,7 @@ export default function Inventory() {
 
         const handleKeyDown = (e: KeyboardEvent) => {
             const target = e.target as HTMLElement;
-            if (showCreateModal || showImportModal || showQuickAddModal || showKardexModal || showAdjustModal) return;
+            if (showCreateModal || showImportModal || showQuickAddModal || showKardexModal || showAdjustModal || showEditModal) return;
             if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
             const currentTime = Date.now();
@@ -211,7 +232,7 @@ export default function Inventory() {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [products, showCreateModal, showImportModal, showQuickAddModal, showKardexModal, showAdjustModal, playScanSound]);
+    }, [products, showCreateModal, showImportModal, showQuickAddModal, showKardexModal, showAdjustModal, showEditModal, playScanSound]);
 
     // ==========================================
     // INVENTORY TOTALS
@@ -256,6 +277,28 @@ export default function Inventory() {
     };
 
     // ==========================================
+    // BATCHES
+    // ==========================================
+
+    const openBatches = async (product: Product) => {
+        setSelectedProduct(product);
+        setShowBatchesModal(true);
+        setBatchesLoading(true);
+
+        try {
+            const res = await fetch(`/api/inventory/batches/${product.id}`, { headers });
+            if (res.ok) {
+                const data = await res.json();
+                setBatchesData(data);
+            }
+        } catch (e) {
+            console.error('Error fetching batches:', e);
+        } finally {
+            setBatchesLoading(false);
+        }
+    };
+
+    // ==========================================
     // ADJUST
     // ==========================================
 
@@ -263,6 +306,54 @@ export default function Inventory() {
         setSelectedProduct(product);
         setAdjustForm({ type: 'ADJUST_LOSS', quantity: '', reason: '' });
         setShowAdjustModal(true);
+    };
+
+    // ==========================================
+    // EDIT PRODUCT (solo datos comerciales — sin stock)
+    // ==========================================
+
+    const openEditModal = (product: Product) => {
+        setSelectedProduct(product);
+        setEditForm({
+            name: product.name,
+            description: product.description || '',
+            category: product.category || '',
+            price: String(product.price),
+            imageUrl: product.imageUrl || ''
+        });
+        setShowEditModal(true);
+    };
+
+    const handleEdit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedProduct) return;
+        setEditSubmitting(true);
+        try {
+            const res = await fetch(`/api/products/${selectedProduct.id}`, {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify({
+                    name: editForm.name,
+                    description: editForm.description,
+                    category: editForm.category,
+                    price: parseFloat(editForm.price),
+                    imageUrl: editForm.imageUrl
+                    // ⚠️ stock, cost, minStock y unit EXCLUIDOS intencionalmente
+                    //    para no disparar el Kardex ni el sistema antirobo
+                })
+            });
+            if (res.ok) {
+                setShowEditModal(false);
+                fetchProducts();
+            } else {
+                const err = await res.json();
+                alert(`Error: ${err.error}`);
+            }
+        } catch {
+            alert('Error actualizando producto');
+        } finally {
+            setEditSubmitting(false);
+        }
     };
 
     const handleAdjust = async (e: React.FormEvent) => {
@@ -325,13 +416,14 @@ export default function Inventory() {
                     price: parseFloat(formData.price),
                     cost: parseFloat(formData.cost),
                     stock: parseInt(formData.stock) || 0,
-                    minStock: parseInt(formData.minStock) || 5
+                    minStock: parseInt(formData.minStock) || 5,
+                    requiresBatchTracking: formData.requiresBatchTracking
                 })
             });
 
             if (res.ok) {
                 setShowCreateModal(false);
-                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '' });
+                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false });
                 fetchProducts();
                 alert('Producto creado exitosamente');
             } else {
@@ -790,11 +882,27 @@ export default function Inventory() {
                                                                 <Eye size={17} />
                                                             </button>
                                                             <button
-                                                                onClick={() => openAdjust(product)}
-                                                                className="p-2 hover:bg-amber-500/20 rounded-lg text-amber-400 transition-colors"
-                                                                title="Ajuste Manual"
+                                                                onClick={() => openEditModal(product)}
+                                                                className="p-2 hover:bg-slate-500/20 rounded-lg text-slate-300 transition-colors"
+                                                                title="Editar Producto"
                                                             >
                                                                 <Edit size={17} />
+                                                            </button>
+                                                            {product.requiresBatchTracking && (
+                                                                <button
+                                                                    onClick={() => openBatches(product)}
+                                                                    className="p-2 hover:bg-orange-500/20 rounded-lg text-orange-400 transition-colors"
+                                                                    title="Ver Lotes y Vencimientos"
+                                                                >
+                                                                    <Layers size={17} />
+                                                                </button>
+                                                            )}
+                                                            <button
+                                                                onClick={() => openAdjust(product)}
+                                                                className="p-2 hover:bg-amber-500/20 rounded-lg text-amber-400 transition-colors"
+                                                                title="Ajuste de Stock (Kardex)"
+                                                            >
+                                                                <Wrench size={17} />
                                                             </button>
                                                             <button
                                                                 onClick={() => handleDelete(product.id, product.name)}
@@ -1049,6 +1157,112 @@ export default function Inventory() {
             )}
 
             {/* ==========================================
+                MODAL: EDITAR PRODUCTO (solo datos comerciales)
+               ========================================== */}
+            {showEditModal && selectedProduct && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowEditModal(false)}>
+                    <div className="bg-slate-800 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
+                        {/* Header */}
+                        <div className="bg-gradient-to-r from-blue-900/40 to-cyan-900/20 px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+                            <div>
+                                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                    <Edit size={20} className="text-blue-400" />
+                                    Editar Producto
+                                </h2>
+                                <p className="text-xs text-slate-400 mt-0.5 font-mono">{selectedProduct.sku}</p>
+                            </div>
+                            <button onClick={() => setShowEditModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleEdit} className="p-6 space-y-4">
+                            {/* Nombre */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-1 font-medium">Nombre del Producto *</label>
+                                <input
+                                    required
+                                    value={editForm.name}
+                                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                                />
+                            </div>
+
+                            {/* Categoría */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-1 font-medium">Categoría</label>
+                                <input
+                                    value={editForm.category}
+                                    onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
+                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                                />
+                            </div>
+
+                            {/* Descripción */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-1 font-medium">Descripción</label>
+                                <textarea
+                                    value={editForm.description}
+                                    onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                                    rows={2}
+                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors resize-none"
+                                />
+                            </div>
+
+                            {/* Precio */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-1 font-medium">Precio de Venta *</label>
+                                <input
+                                    required
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={editForm.price}
+                                    onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
+                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                                />
+                            </div>
+
+                            {/* Imagen */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-2 font-medium">Foto del Producto</label>
+                                <ImageUploader
+                                    value={editForm.imageUrl}
+                                    onChange={(url) => setEditForm({ ...editForm, imageUrl: url })}
+                                />
+                            </div>
+
+                            {/* Aviso de seguridad */}
+                            <div className="bg-slate-900/60 border border-slate-700 rounded-lg p-3 flex items-start gap-2">
+                                <Shield size={14} className="text-blue-400 mt-0.5 shrink-0" />
+                                <p className="text-xs text-slate-400">
+                                    Stock, costo y unidad <span className="text-blue-300 font-semibold">no se modifican aquí</span> — para eso existe el Ajuste de Kardex (<Wrench size={11} className="inline" />).
+                                </p>
+                            </div>
+
+                            {/* Acciones */}
+                            <div className="flex gap-3 pt-2">
+                                <button
+                                    type="submit"
+                                    disabled={editSubmitting}
+                                    className="flex-1 bg-blue-600 py-3 rounded-lg hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white font-bold transition-colors"
+                                >
+                                    {editSubmitting ? 'Guardando...' : 'Guardar Cambios'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowEditModal(false)}
+                                    className="px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* ==========================================
                 MODAL: NUEVO PRODUCTO
                ========================================== */}
             {showCreateModal && (
@@ -1193,6 +1407,24 @@ export default function Inventory() {
                                         </div>
                                     </label>
                                 </div>
+                                <div className="col-span-4 mt-2">
+                                    <label className="flex items-center gap-3 p-3 bg-slate-900 border border-slate-700 rounded-lg cursor-pointer hover:border-blue-500/50 transition-colors">
+                                        <div className="relative flex items-center">
+                                            <input
+                                                type="checkbox"
+                                                checked={formData.requiresBatchTracking}
+                                                onChange={(e) => setFormData({ ...formData, requiresBatchTracking: e.target.checked })}
+                                                className="sr-only"
+                                            />
+                                            <div className={`w-10 h-5 bg-slate-700 rounded-full transition-colors ${formData.requiresBatchTracking ? 'bg-orange-600' : ''}`}></div>
+                                            <div className={`absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-transform ${formData.requiresBatchTracking ? 'translate-x-5' : ''}`}></div>
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-medium text-white">Requiere Control de Lote/Vencimiento</span>
+                                            <span className="text-xs text-slate-400">Activar para farmacias. Exigirá lote y fecha al comprar.</span>
+                                        </div>
+                                    </label>
+                                </div>
                             </div>
 
                             <div className="flex gap-3 pt-4">
@@ -1238,6 +1470,82 @@ export default function Inventory() {
                         fetchProducts();
                     }}
                 />
+            )}
+
+            {/* ==========================================
+                MODAL: BATCHES (LOTES)
+               ========================================== */}
+            {showBatchesModal && selectedProduct && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowBatchesModal(false)}>
+                    <div className="bg-slate-800 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden shadow-2xl border border-slate-700 flex flex-col" onClick={(e) => e.stopPropagation()}>
+                        <div className="bg-gradient-to-r from-orange-900/50 to-amber-900/30 px-6 py-4 flex items-center justify-between border-b border-slate-700">
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <Layers size={20} className="text-orange-400" />
+                                    <h2 className="text-xl font-bold text-white">Lotes Activos - {selectedProduct.name}</h2>
+                                </div>
+                                <p className="text-sm text-slate-400 mt-1">
+                                    SKU: <span className="font-mono text-slate-300">{selectedProduct.sku}</span>
+                                    {' '} | Stock Total: <span className="font-bold text-white">{selectedProduct.stock}</span>
+                                </p>
+                            </div>
+                            <button onClick={() => setShowBatchesModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
+                                <X size={24} />
+                            </button>
+                        </div>
+                        
+                        <div className="flex-1 overflow-y-auto p-0">
+                            <table className="w-full text-left border-collapse">
+                                <thead className="bg-slate-900/80 sticky top-0 z-10 shadow-md">
+                                    <tr>
+                                        <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700">Nº Lote</th>
+                                        <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700">Vencimiento</th>
+                                        <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700 text-right">Stock</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-700/50">
+                                    {batchesLoading ? (
+                                        <tr>
+                                            <td colSpan={3} className="px-6 py-12 text-center text-slate-400">
+                                                <div className="flex justify-center mb-2">
+                                                    <div className="w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                                                </div>
+                                                Cargando lotes...
+                                            </td>
+                                        </tr>
+                                    ) : batchesData.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={3} className="px-6 py-8 text-center text-slate-400">
+                                                No hay lotes con stock positivo para este producto.
+                                            </td>
+                                        </tr>
+                                    ) : (
+                                        batchesData.map((batch) => {
+                                            const isExpired = new Date(batch.expiryDate) < new Date();
+                                            const isExpiringSoon = new Date(batch.expiryDate) < new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+                                            
+                                            return (
+                                                <tr key={batch.id} className="hover:bg-slate-700/20 transition-colors">
+                                                    <td className="px-6 py-4 text-sm font-medium text-white font-mono">
+                                                        {batch.batchNumber}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-sm">
+                                                        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${isExpired ? 'bg-red-900/40 text-red-400' : isExpiringSoon ? 'bg-amber-900/40 text-amber-400' : 'bg-emerald-900/40 text-emerald-400'}`}>
+                                                            {new Date(batch.expiryDate).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-sm text-right font-bold text-white">
+                                                        {batch.stock}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

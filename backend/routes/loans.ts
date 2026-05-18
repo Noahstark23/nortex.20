@@ -1,7 +1,10 @@
 import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import Decimal from 'decimal.js';
 import { authenticate } from '../middleware/auth';
+
+Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -12,27 +15,27 @@ router.post('/', authenticate, async (req: any, res: any) => {
         const { clientName, clientPhone, clientAddress, principalAmount, interestRate, installments, frequency, type } = req.body;
         const lenderId = req.tenantId;
 
-        const amount = parseFloat(principalAmount);
-        const rate = parseFloat(interestRate) / 100; // Convertir 5% a 0.05
-        const n = parseInt(installments);
+        const amount = new Decimal(principalAmount);
+        const rate   = new Decimal(interestRate).dividedBy(100); // 5% → 0.05
+        const n      = parseInt(installments);
 
-        let totalToRepay = 0;
-        let installmentAmount = 0;
+        let totalToRepay:     Decimal;
+        let installmentAmount: Decimal;
 
         if (type === 'FORMAL_AMORTIZED') {
-            // Matemática de Financiera (Sistema Francés - Cuota Fija)
-            // Fórmula: Cuota = Capital * ( i * (1+i)^n ) / ( (1+i)^n - 1 )
-            if (rate === 0) {
-                installmentAmount = amount / n;
+            // Sistema Francés: Cuota = Capital * ( i*(1+i)^n ) / ( (1+i)^n - 1 )
+            if (rate.isZero()) {
+                installmentAmount = amount.dividedBy(n);
             } else {
-                installmentAmount = amount * (rate * Math.pow(1 + rate, n)) / (Math.pow(1 + rate, n) - 1);
+                const onePlusR = rate.plus(1);
+                const pow      = onePlusR.pow(n);
+                installmentAmount = amount.mul(rate.mul(pow)).dividedBy(pow.minus(1));
             }
-            totalToRepay = installmentAmount * n;
+            totalToRepay = installmentAmount.mul(n);
         } else {
-            // Matemática de Calle (Gota a Gota - Flat)
-            // El interés se cobra sobre el principal total desde el día 1
-            totalToRepay = amount + (amount * rate);
-            installmentAmount = totalToRepay / n;
+            // Gota a Gota (Flat): interés sobre capital total
+            totalToRepay     = amount.plus(amount.mul(rate));
+            installmentAmount = totalToRepay.dividedBy(n);
         }
 
         // Calcular fecha de vencimiento según frecuencia
@@ -65,12 +68,12 @@ router.post('/', authenticate, async (req: any, res: any) => {
                 clientName,
                 clientPhone: clientPhone || null,
                 clientAddress: clientAddress || null,
-                principalAmount: amount,
-                interestRate: parseFloat(interestRate),
-                totalToRepay: Math.round(totalToRepay * 100) / 100,
-                balanceRemaining: Math.round(totalToRepay * 100) / 100,
+                principalAmount: amount.toDecimalPlaces(4).toNumber(),
+                interestRate: new Decimal(interestRate).toNumber(),
+                totalToRepay: totalToRepay.toDecimalPlaces(4).toNumber(),
+                balanceRemaining: totalToRepay.toDecimalPlaces(4).toNumber(),
                 installments: n,
-                installmentAmount: Math.round(installmentAmount * 100) / 100,
+                installmentAmount: installmentAmount.toDecimalPlaces(4).toNumber(),
                 frequency: frequency || 'DAILY',
                 type: type || 'INFORMAL_FLAT',
                 dueDate,
@@ -291,25 +294,27 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
             });
 
             // 3. Calcular nuevo capital = saldo pendiente viejo + capital nuevo
-            const carryOver = Number(oldLoan.balanceRemaining);
-            const freshCapital = parseFloat(newPrincipal);
-            const totalNewPrincipal = carryOver + freshCapital;
-            const rate = parseFloat(interestRate) / 100;
-            const n = parseInt(installments);
+            const carryOver       = new Decimal(oldLoan.balanceRemaining.toString());
+            const freshCapital    = new Decimal(newPrincipal);
+            const totalNewPrincipal = carryOver.plus(freshCapital);
+            const rate = new Decimal(interestRate).dividedBy(100);
+            const n    = parseInt(installments);
 
-            let totalToRepay = 0;
-            let installmentAmount = 0;
+            let totalToRepay:     Decimal;
+            let installmentAmount: Decimal;
 
             if (type === 'FORMAL_AMORTIZED') {
-                if (rate === 0) {
-                    installmentAmount = totalNewPrincipal / n;
+                if (rate.isZero()) {
+                    installmentAmount = totalNewPrincipal.dividedBy(n);
                 } else {
-                    installmentAmount = totalNewPrincipal * (rate * Math.pow(1 + rate, n)) / (Math.pow(1 + rate, n) - 1);
+                    const onePlusR = rate.plus(1);
+                    const pow      = onePlusR.pow(n);
+                    installmentAmount = totalNewPrincipal.mul(rate.mul(pow)).dividedBy(pow.minus(1));
                 }
-                totalToRepay = installmentAmount * n;
+                totalToRepay = installmentAmount.mul(n);
             } else {
-                totalToRepay = totalNewPrincipal + (totalNewPrincipal * rate);
-                installmentAmount = totalToRepay / n;
+                totalToRepay      = totalNewPrincipal.plus(totalNewPrincipal.mul(rate));
+                installmentAmount = totalToRepay.dividedBy(n);
             }
 
             const dueDate = new Date();
@@ -323,12 +328,12 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
                     clientName: oldLoan.clientName,
                     clientPhone: oldLoan.clientPhone,
                     clientAddress: oldLoan.clientAddress,
-                    principalAmount: Math.round(totalNewPrincipal * 100) / 100,
-                    interestRate: parseFloat(interestRate),
-                    totalToRepay: Math.round(totalToRepay * 100) / 100,
-                    balanceRemaining: Math.round(totalToRepay * 100) / 100,
+                    principalAmount: totalNewPrincipal.toDecimalPlaces(4).toNumber(),
+                    interestRate: new Decimal(interestRate).toNumber(),
+                    totalToRepay: totalToRepay.toDecimalPlaces(4).toNumber(),
+                    balanceRemaining: totalToRepay.toDecimalPlaces(4).toNumber(),
                     installments: n,
-                    installmentAmount: Math.round(installmentAmount * 100) / 100,
+                    installmentAmount: installmentAmount.toDecimalPlaces(4).toNumber(),
                     frequency: frequency || oldLoan.frequency,
                     type: type || oldLoan.type,
                     dueDate,
@@ -336,7 +341,7 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
                 }
             });
 
-            return { oldLoan, newLoan, carryOver, freshCapital };
+            return { oldLoan, newLoan, carryOver: carryOver.toNumber(), freshCapital: freshCapital.toNumber() };
         });
 
         res.status(201).json({ success: true, data: result });

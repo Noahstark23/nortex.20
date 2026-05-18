@@ -24,6 +24,7 @@ interface Product {
     cost: number;
     stock: number;
     unit: string;
+    requiresBatchTracking?: boolean;
 }
 
 interface CartItem {
@@ -34,6 +35,9 @@ interface CartItem {
     unitCost: number;
     totalCost: number;
     currentStock: number;
+    requiresBatchTracking?: boolean;
+    batchNumber?: string;
+    expiryDate?: string;
 }
 
 interface Purchase {
@@ -149,13 +153,16 @@ export default function Purchases() {
                 quantity: 1,
                 unitCost: product.cost,
                 totalCost: product.cost,
-                currentStock: product.stock
+                currentStock: product.stock,
+                requiresBatchTracking: product.requiresBatchTracking,
+                batchNumber: '',
+                expiryDate: ''
             }]);
         }
         setProductSearch('');
     };
 
-    const updateCartItem = (productId: string, field: 'quantity' | 'unitCost', value: number) => {
+    const updateCartItem = (productId: string, field: 'quantity' | 'unitCost' | 'batchNumber' | 'expiryDate', value: any) => {
         setCart(cart.map(c => {
             if (c.productId !== productId) return c;
             const updated = { ...c, [field]: value };
@@ -196,11 +203,18 @@ export default function Purchases() {
                     paymentMethod,
                     dueDate: paymentMethod === 'CREDIT' ? dueDate : null,
                     notes: notes.trim() || null,
-                    items: cart.map(c => ({
-                        productId: c.productId,
-                        quantity: c.quantity,
-                        unitCost: c.unitCost
-                    }))
+                    items: cart.map(c => {
+                        if (c.requiresBatchTracking && (!c.batchNumber || !c.expiryDate)) {
+                            throw new Error(`Falta lote o fecha de vencimiento para ${c.productName}`);
+                        }
+                        return {
+                            productId: c.productId,
+                            quantity: c.quantity,
+                            unitCost: c.unitCost,
+                            batchNumber: c.batchNumber || undefined,
+                            expiryDate: c.expiryDate || undefined
+                        };
+                    })
                 })
             });
 
@@ -219,8 +233,8 @@ export default function Purchases() {
             } else {
                 alert(`Error: ${data.error}`);
             }
-        } catch (e) {
-            alert('Error de conexion al servidor.');
+        } catch (e: any) {
+            alert(e.message || 'Error de conexion al servidor.');
         } finally {
             setSubmitting(false);
         }
@@ -549,47 +563,75 @@ export default function Purchases() {
                                             </thead>
                                             <tbody>
                                                 {cart.map(item => (
-                                                    <tr key={item.productId} className="border-b border-slate-700/50">
-                                                        <td className="py-3 px-2">
-                                                            <div>
-                                                                <span className="text-white font-medium text-sm">{item.productName}</span>
-                                                                <div className="flex items-center gap-2 mt-0.5">
-                                                                    <span className="text-xs text-slate-500 font-mono">{item.sku}</span>
-                                                                    <span className="text-xs text-slate-600">Stock actual: {item.currentStock}</span>
+                                                    <React.Fragment key={item.productId}>
+                                                        <tr className="border-b border-slate-700/50">
+                                                            <td className="py-3 px-2">
+                                                                <div>
+                                                                    <span className="text-white font-medium text-sm">{item.productName}</span>
+                                                                    <div className="flex items-center gap-2 mt-0.5">
+                                                                        <span className="text-xs text-slate-500 font-mono">{item.sku}</span>
+                                                                        <span className="text-xs text-slate-600">Stock actual: {item.currentStock}</span>
+                                                                    </div>
                                                                 </div>
-                                                            </div>
-                                                        </td>
-                                                        <td className="py-3 px-2">
-                                                            <input
-                                                                type="number"
-                                                                min="1"
-                                                                value={item.quantity}
-                                                                onChange={(e) => updateCartItem(item.productId, 'quantity', parseInt(e.target.value) || 1)}
-                                                                className="w-full text-center bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-sm focus:border-orange-500"
-                                                            />
-                                                        </td>
-                                                        <td className="py-3 px-2">
-                                                            <input
-                                                                type="number"
-                                                                min="0.01"
-                                                                step="0.01"
-                                                                value={item.unitCost}
-                                                                onChange={(e) => updateCartItem(item.productId, 'unitCost', parseFloat(e.target.value) || 0)}
-                                                                className="w-full text-center bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-sm focus:border-orange-500"
-                                                            />
-                                                        </td>
-                                                        <td className="py-3 px-2 text-right">
-                                                            <span className="text-emerald-400 font-bold text-sm">{formatCurrency(item.totalCost)}</span>
-                                                        </td>
-                                                        <td className="py-3 px-1">
-                                                            <button
-                                                                onClick={() => removeFromCart(item.productId)}
-                                                                className="p-1.5 hover:bg-red-500/20 rounded text-red-400 transition-colors"
-                                                            >
-                                                                <Trash2 size={15} />
-                                                            </button>
-                                                        </td>
-                                                    </tr>
+                                                            </td>
+                                                            <td className="py-3 px-2">
+                                                                <input
+                                                                    type="number"
+                                                                    min="1"
+                                                                    value={item.quantity}
+                                                                    onChange={(e) => updateCartItem(item.productId, 'quantity', parseInt(e.target.value) || 1)}
+                                                                    className="w-full text-center bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-sm focus:border-orange-500"
+                                                                />
+                                                            </td>
+                                                            <td className="py-3 px-2">
+                                                                <input
+                                                                    type="number"
+                                                                    min="0.01"
+                                                                    step="0.01"
+                                                                    value={item.unitCost}
+                                                                    onChange={(e) => updateCartItem(item.productId, 'unitCost', parseFloat(e.target.value) || 0)}
+                                                                    className="w-full text-center bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-sm focus:border-orange-500"
+                                                                />
+                                                            </td>
+                                                            <td className="py-3 px-2 text-right">
+                                                                <span className="text-emerald-400 font-bold text-sm">{formatCurrency(item.totalCost)}</span>
+                                                            </td>
+                                                            <td className="py-3 px-1">
+                                                                <button
+                                                                    onClick={() => removeFromCart(item.productId)}
+                                                                    className="p-1.5 hover:bg-red-500/20 rounded text-red-400 transition-colors"
+                                                                >
+                                                                    <Trash2 size={15} />
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                        {item.requiresBatchTracking && (
+                                                            <tr className="bg-slate-900/30">
+                                                                <td colSpan={5} className="px-3 py-2 border-b border-slate-700/50">
+                                                                    <div className="flex gap-4 items-center">
+                                                                        <div className="flex items-center gap-2">
+                                                                            <span className="text-xs text-orange-400 font-semibold bg-orange-500/10 px-2 py-1 rounded">REQUIERE LOTE</span>
+                                                                        </div>
+                                                                        <div className="flex-1 flex gap-3">
+                                                                            <input
+                                                                                type="text"
+                                                                                placeholder="Nº Lote"
+                                                                                value={item.batchNumber || ''}
+                                                                                onChange={(e) => updateCartItem(item.productId, 'batchNumber', e.target.value)}
+                                                                                className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-xs focus:border-orange-500"
+                                                                            />
+                                                                            <input
+                                                                                type="date"
+                                                                                value={item.expiryDate || ''}
+                                                                                onChange={(e) => updateCartItem(item.productId, 'expiryDate', e.target.value)}
+                                                                                className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-xs focus:border-orange-500"
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        )}
+                                                    </React.Fragment>
                                                 ))}
                                             </tbody>
                                         </table>

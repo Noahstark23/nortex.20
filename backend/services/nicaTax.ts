@@ -1,20 +1,25 @@
 /**
  * NORTEX - Motor Fiscal Nicaragüense
  * Ley de Concertación Tributaria (LCT 822)
- * 
+ *
  * Impuestos calculados:
  * - IVA Neto (15%): IVA Ventas - IVA Compras (crédito fiscal)
  * - Anticipo IR (1%): Sobre ingresos brutos mensuales
  * - IMI Alcaldía (1%): Impuesto Municipal sobre Ingresos
+ *
+ * Precisión: Decimal.js con ROUND_HALF_UP (norma DGI Nicaragua)
  */
 
 import { PrismaClient } from '@prisma/client';
+import Decimal from 'decimal.js';
+
+Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
 const prisma = new PrismaClient();
 
-const IVA_RATE = 0.15;
-const ANTICIPO_IR_RATE = 0.01;  // 1% anticipo mensual
-const IMI_RATE = 0.01;          // 1% impuesto municipal (Alcaldía)
+const IVA_RATE = new Decimal('0.15');
+const ANTICIPO_IR_RATE = new Decimal('0.01');  // 1% anticipo mensual
+const IMI_RATE = new Decimal('0.01');           // 1% impuesto municipal (Alcaldía)
 
 export interface MonthlyTaxReport {
     month: number;
@@ -49,7 +54,7 @@ export async function generateMonthlyReport(
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0, 23, 59, 59);
 
-    // 1. Obtener ventas del mes (FIXED: createdAt, not date)
+    // 1. Obtener ventas del mes
     const salesResult = await prisma.sale.aggregate({
         where: {
             tenantId,
@@ -59,11 +64,11 @@ export async function generateMonthlyReport(
         _count: true,
     });
 
-    const totalSalesRaw = Number(salesResult._sum.total || 0);
+    const totalSalesRaw = new Decimal(salesResult._sum.total?.toString() ?? '0');
 
-    // Separar IVA de las ventas (total incluye IVA)
-    const salesNetasSinIVA = Math.round((totalSalesRaw / (1 + IVA_RATE)) * 100) / 100;
-    const totalIVACollected = Math.round((totalSalesRaw - salesNetasSinIVA) * 100) / 100;
+    // Separar IVA de las ventas: total incluye IVA → neto = total / (1 + 0.15)
+    const salesNetasSinIVA = totalSalesRaw.dividedBy(IVA_RATE.plus(1)).toDecimalPlaces(4);
+    const totalIVACollected = totalSalesRaw.minus(salesNetasSinIVA).toDecimalPlaces(4);
 
     // 2. Obtener compras del mes (IVA pagado = crédito fiscal)
     const purchasesResult = await prisma.purchase.aggregate({
@@ -75,22 +80,22 @@ export async function generateMonthlyReport(
         _sum: { total: true, tax: true },
     });
 
-    const totalPurchases = Number(purchasesResult._sum.total || 0);
-    const totalIVAPaid = Number(purchasesResult._sum.tax || 0);
+    const totalPurchases = new Decimal(purchasesResult._sum.total?.toString() ?? '0');
+    const totalIVAPaid = new Decimal(purchasesResult._sum.tax?.toString() ?? '0');
 
     // 3. Calcular IVA Neto
-    const ivaRaw = totalIVACollected - totalIVAPaid;
-    const ivaNeto = Math.max(0, Math.round(ivaRaw * 100) / 100);
-    const ivaCredito = ivaRaw < 0 ? Math.round(Math.abs(ivaRaw) * 100) / 100 : 0;
+    const ivaRaw = totalIVACollected.minus(totalIVAPaid);
+    const ivaNeto = Decimal.max(0, ivaRaw).toDecimalPlaces(4);
+    const ivaCredito = ivaRaw.lessThan(0) ? ivaRaw.abs().toDecimalPlaces(4) : new Decimal(0);
 
     // 4. Anticipo IR (1% sobre ventas netas sin IVA)
-    const anticipoIR = Math.round(salesNetasSinIVA * ANTICIPO_IR_RATE * 100) / 100;
+    const anticipoIR = salesNetasSinIVA.mul(ANTICIPO_IR_RATE).toDecimalPlaces(4);
 
     // 5. IMI Alcaldía (1% sobre ventas netas sin IVA)
-    const imiAlcaldia = Math.round(salesNetasSinIVA * IMI_RATE * 100) / 100;
+    const imiAlcaldia = salesNetasSinIVA.mul(IMI_RATE).toDecimalPlaces(4);
 
     // 6. Total a pagar
-    const totalToPay = Math.round((ivaNeto + anticipoIR + imiAlcaldia) * 100) / 100;
+    const totalToPay = ivaNeto.plus(anticipoIR).plus(imiAlcaldia).toDecimalPlaces(4);
 
     // 7. Generar resumen para VET
     const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
@@ -108,7 +113,7 @@ Preparado por: NORTEX ERP
    IVA Pagado (Crédito):     C$ ${totalIVAPaid.toFixed(2)}
 
 💰 IMPUESTOS A PAGAR
-   IVA Neto (Ventas - Compras): C$ ${ivaNeto.toFixed(2)}${ivaCredito > 0 ? `\n   ⚠️ Crédito Fiscal a Favor: C$ ${ivaCredito.toFixed(2)}` : ''}
+   IVA Neto (Ventas - Compras): C$ ${ivaNeto.toFixed(2)}${ivaCredito.greaterThan(0) ? `\n   ⚠️ Crédito Fiscal a Favor: C$ ${ivaCredito.toFixed(2)}` : ''}
    Anticipo IR (1%):            C$ ${anticipoIR.toFixed(2)}
    IMI Alcaldía (1%):           C$ ${imiAlcaldia.toFixed(2)}
    ────────────────────────────────
@@ -121,16 +126,16 @@ Preparado por: NORTEX ERP
     return {
         month,
         year,
-        totalSales: totalSalesRaw,
-        salesNetasSinIVA,
-        totalIVACollected,
-        totalPurchases,
-        totalIVAPaid,
-        ivaNeto,
-        ivaCredito,
-        anticipoIR,
-        imiAlcaldia,
-        totalToPay,
+        totalSales: totalSalesRaw.toNumber(),
+        salesNetasSinIVA: salesNetasSinIVA.toNumber(),
+        totalIVACollected: totalIVACollected.toNumber(),
+        totalPurchases: totalPurchases.toNumber(),
+        totalIVAPaid: totalIVAPaid.toNumber(),
+        ivaNeto: ivaNeto.toNumber(),
+        ivaCredito: ivaCredito.toNumber(),
+        anticipoIR: anticipoIR.toNumber(),
+        imiAlcaldia: imiAlcaldia.toNumber(),
+        totalToPay: totalToPay.toNumber(),
         vetSummary,
     };
 }
@@ -249,4 +254,3 @@ export async function saveMonthlyReport(tenantId: string, report: MonthlyTaxRepo
         },
     });
 }
-

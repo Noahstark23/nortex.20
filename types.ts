@@ -7,10 +7,21 @@ export interface Product {
   stock: number;
   sku: string;
   category: string;
+  requiresBatchTracking?: boolean; // Control de lotes
+}
+
+export interface ProductBatch {
+  id: string;
+  productId: string;
+  batchNumber: string;
+  expiryDate: string;
+  stock: number;
 }
 
 export interface CartItem extends Product {
   quantity: number;
+  batchNumber?: string;
+  expiryDate?: string;
 }
 
 export interface Tenant {

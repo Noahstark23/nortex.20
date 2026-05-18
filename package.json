@@ -16,6 +16,7 @@
     "browser-image-compression": "^2.0.2",
     "compression": "^1.8.0",
     "cors": "^2.8.6",
+    "decimal.js": "^10.6.0",
     "dexie": "^4.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^7.5.0",
@@ -30,7 +31,8 @@
     "resend": "^4.0.0",
     "stripe": "^17.0.0",
     "tsx": "^4.19.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

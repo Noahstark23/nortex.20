@@ -28,6 +28,23 @@ import pedidosRouter from './routes/pedidos';
 import motorizadosRouter from './routes/motorizados';
 import loanRoutes from './routes/loans';
 import syncRoutes from './routes/sync';
+import Decimal from 'decimal.js';
+import {
+    validate,
+    CreateSaleSchema,
+    CreateReturnSchema,
+    CreatePaymentSchema,
+    CreateCashMovementSchema,
+    CreatePurchaseSchema,
+    InventoryAdjustSchema,
+    OpenShiftSchema,
+    CloseShiftSchema,
+    CreateExpenseSchema,
+    PayrollCalculateSchema,
+    TaxReportSchema,
+} from './validation/schemas.js';
+
+Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1302,10 +1319,14 @@ app.patch('/api/employees/:id/pin', authenticate, async (req: any, res: any) => 
 // 🛒 MÓDULO DE VENTAS (CON MOTOR DE RIESGO)
 // ==========================================
 
-app.post('/api/sales', authenticate, async (req: any, res: any) => {
+app.post('/api/sales', authenticate, validate(CreateSaleSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { items, paymentMethod, customerId, customerName, total, employeeId, globalDiscount } = req.body;
-    const saleTotal = Number(total);
+    const { items, paymentMethod, customerId, customerName, employeeId, globalDiscount } = req.body;
+    // total viene del cliente pero se recalcula aquí para ser autoritativo
+    const saleTotal = new Decimal(
+        items.reduce((s: Decimal, i: { price: string; quantity: number }) =>
+            s.plus(new Decimal(i.price).mul(i.quantity)), new Decimal(0))
+    ).toNumber();
 
     try {
         // A. VALIDACIÓN DE CAJA
@@ -1392,25 +1413,82 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
                 // KARDEX BLINDADO: Registrar salida por venta
                 const product = await tx.product.findUnique({ where: { id: item.id } });
                 if (product) {
-                    const newStock = Number(product.stock) - Number(item.quantity);
+                    const totalQty = Number(item.quantity);
+                    const newStock = Number(product.stock) - totalQty;
+                    
                     await tx.product.update({
                         where: { id: item.id },
                         data: { stock: newStock }
                     });
-                    await tx.kardexMovement.create({
-                        data: {
-                            tenantId: authReq.tenantId,
-                            productId: item.id,
-                            type: 'OUT_SALE',
-                            quantity: -Number(item.quantity),
-                            stockBefore: Number(product.stock),
-                            stockAfter: newStock,
-                            referenceId: sale.id,
-                            referenceType: 'SALE',
-                            reason: `Venta #${sale.id.slice(0, 8)}`,
-                            userId: authReq.userId,
+
+                    if (product.requiresBatchTracking) {
+                        let remainingQty = totalQty;
+                        const activeBatches = await tx.productBatch.findMany({
+                            where: { productId: item.id, stock: { gt: 0 } },
+                            orderBy: { expiryDate: 'asc' }
+                        });
+
+                        for (const batch of activeBatches) {
+                            if (remainingQty <= 0) break;
+                            const deductQty = Math.min(batch.stock, remainingQty);
+                            remainingQty -= deductQty;
+
+                            await tx.productBatch.update({
+                                where: { id: batch.id },
+                                data: { stock: { decrement: deductQty } }
+                            });
+
+                            await tx.kardexMovement.create({
+                                data: {
+                                    tenantId: authReq.tenantId,
+                                    productId: item.id,
+                                    type: 'OUT_SALE',
+                                    quantity: -deductQty,
+                                    stockBefore: Number(product.stock),
+                                    stockAfter: Number(product.stock) - deductQty,
+                                    referenceId: sale.id,
+                                    referenceType: 'SALE',
+                                    reason: `Venta #${sale.id.slice(0, 8)} (Lote ${batch.batchNumber})`,
+                                    userId: authReq.userId,
+                                    batchId: batch.id
+                                }
+                            });
                         }
-                    });
+                        
+                        // Si sobró cantidad que no estaba en ningún lote, registrar el faltante
+                        if (remainingQty > 0) {
+                            await tx.kardexMovement.create({
+                                data: {
+                                    tenantId: authReq.tenantId,
+                                    productId: item.id,
+                                    type: 'OUT_SALE',
+                                    quantity: -remainingQty,
+                                    stockBefore: Number(product.stock),
+                                    stockAfter: newStock, // aproximado
+                                    referenceId: sale.id,
+                                    referenceType: 'SALE',
+                                    reason: `Venta #${sale.id.slice(0, 8)} (Sin lote asignado)`,
+                                    userId: authReq.userId,
+                                }
+                            });
+                        }
+
+                    } else {
+                        await tx.kardexMovement.create({
+                            data: {
+                                tenantId: authReq.tenantId,
+                                productId: item.id,
+                                type: 'OUT_SALE',
+                                quantity: -totalQty,
+                                stockBefore: Number(product.stock),
+                                stockAfter: newStock,
+                                referenceId: sale.id,
+                                referenceType: 'SALE',
+                                reason: `Venta #${sale.id.slice(0, 8)}`,
+                                userId: authReq.userId,
+                            }
+                        });
+                    }
                 }
             }
 
@@ -1421,7 +1499,11 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
                 });
             }
             // 📊 MOTOR CONTABLE: Registrar asiento contable de venta
-            const costTotal = items.reduce((sum: number, item: any) => sum + (Number(item.costPrice) || 0) * Number(item.quantity), 0);
+            const costTotal = items.reduce(
+                (sum: Decimal, item: { costPrice?: unknown; quantity?: unknown }) =>
+                    sum.plus(new Decimal(Number(item.costPrice) || 0).mul(Number(item.quantity) || 0)),
+                new Decimal(0)
+            ).toNumber();
             try {
                 await recordSale(tx, authReq.tenantId!, authReq.userId!, sale.id, saleTotal, costTotal, paymentMethod);
             } catch (accErr) { console.warn('⚠️ Accounting hook failed (sale continues):', accErr); }
@@ -1460,7 +1542,7 @@ app.get('/api/sales/search', authenticate, async (req: any, res: any) => {
 });
 
 // Process return
-app.post('/api/returns', authenticate, async (req: any, res: any) => {
+app.post('/api/returns', authenticate, validate(CreateReturnSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { saleId, items, reason } = req.body;
     // items: [{productId, name, quantity, price}]
@@ -1523,7 +1605,11 @@ app.post('/api/returns', authenticate, async (req: any, res: any) => {
             }
 
             // 📊 MOTOR CONTABLE: Registrar devolución
-            const costTotal = items.reduce((sum: number, item: any) => sum + (Number(item.price) * 0.7) * Number(item.quantity), 0); // Approx cost
+            const costTotal = items.reduce(
+                (sum: Decimal, item: { price?: unknown; quantity?: unknown }) =>
+                    sum.plus(new Decimal(Number(item.price) || 0).mul('0.7').mul(Number(item.quantity) || 0)),
+                new Decimal(0)
+            ).toNumber(); // Aprox. costo = 70% del precio de venta
             try {
                 await recordReturn(tx, authReq.tenantId!, authReq.userId!, productReturn.id, returnTotal, costTotal);
             } catch (accErr) { console.warn('⚠️ Accounting hook failed (return continues):', accErr); }
@@ -1542,30 +1628,33 @@ app.post('/api/returns', authenticate, async (req: any, res: any) => {
 // 💸 PAGOS
 // ==========================================
 
-app.post('/api/payments', authenticate, async (req: any, res: any) => {
-    // ... (Existing payment logic preserved)
+app.post('/api/payments', authenticate, validate(CreatePaymentSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { saleId, amount, method } = req.body;
-    const paymentAmount = Number(amount);
+    const paymentAmount = new Decimal(amount).toNumber();
     try {
-        const sale = await prisma.sale.findUnique({ where: { id: saleId }, include: { customer: true } });
-        if (!sale || sale.tenantId !== authReq.tenantId) return res.status(404).json({ error: 'Venta no encontrada' });
+        // Tenant isolation: buscar venta filtrando por tenantId directamente en la query
+        const sale = await prisma.sale.findFirst({
+            where: { id: saleId, tenantId: authReq.tenantId },
+            include: { customer: true }
+        });
+        if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
 
         const result = await prisma.$transaction(async (tx: any) => {
             const payment = await tx.payment.create({
                 data: { saleId: sale.id, amount: paymentAmount, method: method || 'CASH', collectedBy: authReq.userId }
             });
-            const newBalance = Number(sale.balance) - paymentAmount;
+            const newBalance = new Decimal(sale.balance.toString()).minus(paymentAmount).toNumber();
             const newStatus = newBalance <= 0.01 ? 'PAID' : 'CREDIT_PENDING';
 
             await tx.sale.update({
-                where: { id: saleId },
+                where: { id: saleId, tenantId: authReq.tenantId },  // tenant isolation en update
                 data: { balance: newBalance, status: newStatus }
             });
 
             if (sale.customerId) {
                 await tx.customer.update({
-                    where: { id: sale.customerId },
+                    where: { id: sale.customerId, tenantId: authReq.tenantId },  // tenant isolation
                     data: { currentDebt: { decrement: paymentAmount } }
                 });
             }
@@ -1591,16 +1680,12 @@ app.get('/api/shifts/current', authenticate, async (req: any, res: any) => {
         res.json(shift);
     } catch (error) { res.status(500).json({ error: 'Error' }); }
 });
-app.post('/api/shifts/open', authenticate, async (req: any, res: any) => {
+app.post('/api/shifts/open', authenticate, validate(OpenShiftSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { initialCash, employeePin } = req.body;
 
     try {
-        // Validar PIN del empleado
-        if (!employeePin || !/^\d{4}$/.test(String(employeePin))) {
-            return res.status(400).json({ error: 'Se requiere un PIN de 4 dígitos para abrir la caja.' });
-        }
-
+        // PIN ya validado por Zod (regex \d{4})
         const employee = await prisma.employee.findFirst({
             where: { tenantId: authReq.tenantId, pin: String(employeePin) }
         });
@@ -1637,19 +1722,20 @@ app.post('/api/shifts/open', authenticate, async (req: any, res: any) => {
         res.status(500).json({ error: e.message || 'Error abriendo caja' });
     }
 });
-app.post('/api/shifts/close', authenticate, async (req: any, res: any) => {
+app.post('/api/shifts/close', authenticate, validate(CloseShiftSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { declaredCash, shiftId, auditNotes } = req.body;
     try {
-        const shift = await prisma.shift.findUnique({
-            where: { id: shiftId },
+        // Tenant isolation: shift debe pertenecer al tenant del token
+        const shift = await prisma.shift.findFirst({
+            where: { id: shiftId, tenantId: authReq.tenantId },  // tenant isolation
             include: {
                 sales: true,
                 cashMovements: { where: { isVoided: false } },
                 employee: { select: { id: true, firstName: true, lastName: true, role: true } }
             }
         });
-        if (!shift) return res.status(404).json({ error: 'Turno no encontrado' });
+        if (!shift) return res.status(404).json({ error: 'Turno no encontrado o no pertenece a tu empresa' });
 
         // ARQUEO DINÁMICO: initialCash + cashSales + manualINs - manualOUTs = expectedCash
         const cashSales = shift.sales.filter((s: any) => s.paymentMethod === 'CASH').reduce((sum: number, s: any) => sum + Number(s.total), 0);
@@ -1942,30 +2028,12 @@ app.get('/api/audit-logs', authenticate, async (req: any, res: any) => {
 // ==========================================
 
 // POST /api/cash-movements — Registrar entrada o salida de caja
-app.post('/api/cash-movements', authenticate, async (req: any, res: any) => {
+app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { type, amount, currency, category, description } = req.body;
 
     try {
-        // VALIDACIÓN ESTRICTA — cero tolerancia
-        if (!type || !['IN', 'OUT'].includes(type)) {
-            return res.status(400).json({ error: 'Tipo inválido. Debe ser IN o OUT.' });
-        }
-        if (!amount || Number(amount) <= 0) {
-            return res.status(400).json({ error: 'El monto debe ser mayor a 0.' });
-        }
-        if (!category) {
-            return res.status(400).json({ error: 'Categoría es requerida.' });
-        }
-        if (!description || description.trim().length < 3) {
-            return res.status(400).json({ error: 'Descripción es requerida (mínimo 3 caracteres).' });
-        }
-
-        const validCategories = ['GASTO_OPERATIVO', 'PAGO_PROVEEDOR', 'RETIRO_PERSONAL', 'CAMBIO', 'INYECCION_CAPITAL', 'AJUSTE'];
-        if (!validCategories.includes(category)) {
-            return res.status(400).json({ error: `Categoría inválida. Opciones: ${validCategories.join(', ')}` });
-        }
-
+        // Validaciones de formato ya realizadas por Zod (type, amount, category).
         // A. VALIDAR CAJA ABIERTA
         const currentShift = await prisma.shift.findFirst({
             where: { userId: authReq.userId, status: 'OPEN' },
@@ -2009,7 +2077,7 @@ app.post('/api/cash-movements', authenticate, async (req: any, res: any) => {
                 const expense = await tx.expense.create({
                     data: {
                         tenantId: authReq.tenantId,
-                        amount: Number(amount),
+                        amount: new Decimal(amount).toNumber(),
                         description: `[CAJA] ${description}`,
                         category: category === 'PAGO_PROVEEDOR' ? 'SUPPLIER_PAYMENT' : 'OPERATIONAL',
                     }
@@ -2023,7 +2091,7 @@ app.post('/api/cash-movements', authenticate, async (req: any, res: any) => {
                     shiftId: currentShift.id,
                     userId: authReq.userId,
                     type,
-                    amount: Number(amount),
+                    amount: new Decimal(amount).toNumber(),
                     currency: currency || 'NIO',
                     category,
                     description: description.trim(),
@@ -2040,7 +2108,7 @@ app.post('/api/cash-movements', authenticate, async (req: any, res: any) => {
                     details: JSON.stringify({
                         movimientoId: movement.id,
                         tipo: type,
-                        monto: Number(amount),
+                        monto: new Decimal(amount).toNumber(),
                         moneda: currency || 'NIO',
                         categoria: category,
                         descripcion: description.trim(),
@@ -2247,7 +2315,7 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
 // POST /api/products - Crear producto (OWNER o ADMIN)
 app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl } = req.body;
+    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking } = req.body;
 
     try {
         // Verificar que SKU no exista
@@ -2279,6 +2347,7 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (re
                 unit: unit || 'unidad',
                 isPublished: Boolean(isPublished),
                 imageUrl: imageUrl || null,
+                requiresBatchTracking: Boolean(requiresBatchTracking),
                 createdBy: authReq.userId!
             }
         });
@@ -2599,7 +2668,7 @@ app.get('/api/kardex/:productId', authenticate, checkRole(['OWNER', 'ADMIN']), a
 // 🛡️ AJUSTE DE INVENTARIO BLINDADO (SOLO OWNER)
 // ==========================================
 
-app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN']), validate(InventoryAdjustSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { productId, quantity, reason, type } = req.body;
 
@@ -2698,6 +2767,46 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN']), a
         console.error('Error en ajuste de inventario:', error);
         res.status(error.message?.includes('no encontrado') || error.message?.includes('insuficiente') ? 400 : 500)
             .json({ error: error.message || 'Error procesando ajuste de inventario' });
+    }
+});
+
+// GET /api/inventory/batches/:productId - Lotes activos de un producto
+app.get('/api/inventory/batches/:productId', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { productId } = req.params;
+    try {
+        const batches = await prisma.productBatch.findMany({
+            where: { productId, tenantId: authReq.tenantId, stock: { gt: 0 } },
+            orderBy: { expiryDate: 'asc' }
+        });
+        res.json(batches);
+    } catch (error) {
+        console.error('Error fetching batches:', error);
+        res.status(500).json({ error: 'Error obteniendo lotes' });
+    }
+});
+
+// GET /api/inventory/expiring-soon - Lotes próximos a vencer (≤ 90 días)
+app.get('/api/inventory/expiring-soon', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const ninetyDaysFromNow = new Date();
+        ninetyDaysFromNow.setDate(ninetyDaysFromNow.getDate() + 90);
+
+        const batches = await prisma.productBatch.findMany({
+            where: { 
+                tenantId: authReq.tenantId, 
+                stock: { gt: 0 },
+                expiryDate: { lte: ninetyDaysFromNow }
+            },
+            include: { product: { select: { name: true, sku: true } } },
+            orderBy: { expiryDate: 'asc' },
+            take: 50
+        });
+        res.json(batches);
+    } catch (error) {
+        console.error('Error fetching expiring batches:', error);
+        res.status(500).json({ error: 'Error obteniendo lotes por vencer' });
     }
 });
 
@@ -2800,30 +2909,30 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
         });
 
         // 2. Calculate totals
-        let totalVentas = 0;   // Total con IVA
-        let totalCOGS = 0;     // Costo de Ventas
+        let totalVentas = new Decimal(0);   // Total con IVA
+        let totalCOGS   = new Decimal(0);   // Costo de Ventas
 
-        sales.forEach((sale: any) => {
-            totalVentas += Number(sale.total);
-            sale.items.forEach((item: any) => {
-                totalCOGS += Number(item.costAtSale) * item.quantity;
+        sales.forEach((sale: { total: unknown; items: { costAtSale: unknown; quantity: unknown }[] }) => {
+            totalVentas = totalVentas.plus(new Decimal(sale.total?.toString() ?? '0'));
+            sale.items.forEach((item) => {
+                totalCOGS = totalCOGS.plus(
+                    new Decimal(item.costAtSale?.toString() ?? '0').mul(Number(item.quantity) || 0)
+                );
             });
         });
 
         // IVA Nicaragua 15%: total = subtotal * 1.15, subtotal = total / 1.15
-        const ventasNetas = totalVentas / (1 + IVA_RATE);
-        const ivaRecaudado = totalVentas - ventasNetas;
-        const utilidadBruta = ventasNetas - totalCOGS;
+        const ventasNetas   = totalVentas.dividedBy('1.15').toDecimalPlaces(4);
+        const ivaRecaudado  = totalVentas.minus(ventasNetas).toDecimalPlaces(4);
+        const utilidadBruta = ventasNetas.minus(totalCOGS).toDecimalPlaces(4);
 
         // 3. Group sales by day for chart
         const dailyMap: Record<string, { ventas: number; gastos: number }> = {};
 
-        sales.forEach((sale: any) => {
-            const dateKey = new Date(sale.createdAt).toISOString().split('T')[0]; // YYYY-MM-DD
-            if (!dailyMap[dateKey]) {
-                dailyMap[dateKey] = { ventas: 0, gastos: 0 };
-            }
-            dailyMap[dateKey].ventas += Number(sale.total);
+        sales.forEach((sale: { createdAt: unknown; total: unknown }) => {
+            const dateKey = new Date(sale.createdAt as string).toISOString().split('T')[0];
+            if (!dailyMap[dateKey]) dailyMap[dateKey] = { ventas: 0, gastos: 0 };
+            dailyMap[dateKey].ventas = new Decimal(dailyMap[dateKey].ventas).plus(sale.total?.toString() ?? '0').toNumber();
         });
 
         // Also fetch expenses in the same period for the chart
@@ -2834,12 +2943,10 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
             }
         });
 
-        expenses.forEach((exp: any) => {
-            const dateKey = new Date(exp.createdAt).toISOString().split('T')[0];
-            if (!dailyMap[dateKey]) {
-                dailyMap[dateKey] = { ventas: 0, gastos: 0 };
-            }
-            dailyMap[dateKey].gastos += Number(exp.amount);
+        expenses.forEach((exp: { createdAt: unknown; amount: unknown }) => {
+            const dateKey = new Date(exp.createdAt as string).toISOString().split('T')[0];
+            if (!dailyMap[dateKey]) dailyMap[dateKey] = { ventas: 0, gastos: 0 };
+            dailyMap[dateKey].gastos = new Decimal(dailyMap[dateKey].gastos).plus(exp.amount?.toString() ?? '0').toNumber();
         });
 
         // Convert to sorted array
@@ -2856,11 +2963,11 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
             });
 
         res.json({
-            totalVentas: Math.round(totalVentas * 100) / 100,
-            ventasNetas: Math.round(ventasNetas * 100) / 100,
-            ivaRecaudado: Math.round(ivaRecaudado * 100) / 100,
-            totalCOGS: Math.round(totalCOGS * 100) / 100,
-            utilidadBruta: Math.round(utilidadBruta * 100) / 100,
+            totalVentas:        new Decimal(totalVentas.toNumber()).toDecimalPlaces(2).toNumber(),
+            ventasNetas:        ventasNetas.toDecimalPlaces(2).toNumber(),
+            ivaRecaudado:       ivaRecaudado.toDecimalPlaces(2).toNumber(),
+            totalCOGS:          totalCOGS.toDecimalPlaces(2).toNumber(),
+            utilidadBruta:      utilidadBruta.toDecimalPlaces(2).toNumber(),
             totalTransacciones: sales.length,
             chartData,
         });
@@ -2880,12 +2987,14 @@ app.get('/api/reports/inventory', authenticate, async (req: any, res: any) => {
             orderBy: { stock: 'asc' }
         });
 
-        let inventoryValue = 0;
-        const lowStock: any[] = [];
+        let inventoryValue = new Decimal(0);
+        const lowStock: { id: string; name: string; sku: string; stock: number; minStock: number; cost: number }[] = [];
 
-        products.forEach((p: any) => {
-            inventoryValue += p.stock * p.cost;
-            if (p.stock <= p.minStock) {
+        products.forEach((p) => {
+            inventoryValue = inventoryValue.plus(
+                new Decimal(p.stock.toString()).mul(p.cost.toString())
+            );
+            if (Number(p.stock) <= Number(p.minStock)) {
                 lowStock.push({
                     id: p.id,
                     name: p.name,
@@ -2898,7 +3007,7 @@ app.get('/api/reports/inventory', authenticate, async (req: any, res: any) => {
         });
 
         res.json({
-            inventoryValue: Math.round(inventoryValue * 100) / 100,
+            inventoryValue: inventoryValue.toDecimalPlaces(2).toNumber(),
             totalProducts: products.length,
             lowStock,
         });
@@ -2971,18 +3080,10 @@ app.get('/api/purchases', authenticate, async (req: any, res: any) => {
 });
 
 // POST /api/purchases - Registrar compra (Transacción ACID)
-app.post('/api/purchases', authenticate, async (req: any, res: any) => {
+app.post('/api/purchases', authenticate, validate(CreatePurchaseSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { supplierId, invoiceNumber, dueDate, paymentMethod, notes, items } = req.body;
-
-    // Validaciones
-    if (!supplierId || !invoiceNumber || !paymentMethod || !items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: 'Datos incompletos. Se requiere: proveedor, # factura, método de pago y al menos 1 producto.' });
-    }
-
-    if (!['CASH', 'CREDIT'].includes(paymentMethod)) {
-        return res.status(400).json({ error: 'Método de pago debe ser CASH o CREDIT.' });
-    }
+    // Validaciones de formato ya realizadas por Zod
 
     try {
         const result = await prisma.$transaction(async (tx: any) => {
@@ -3003,20 +3104,22 @@ app.post('/api/purchases', authenticate, async (req: any, res: any) => {
                     throw new Error(`Producto no encontrado: ${item.productId}`);
                 }
 
-                const totalCost = item.quantity * item.unitCost;
-                subtotal += totalCost;
+                const totalCost = new Decimal(item.quantity).mul(item.unitCost);
+                subtotal = new Decimal(subtotal).plus(totalCost).toNumber();
 
                 processedItems.push({
-                    productId: item.productId,
+                    productId:   item.productId,
                     productName: product.name,
-                    quantity: item.quantity,
-                    unitCost: item.unitCost,
-                    totalCost: totalCost
+                    quantity:    item.quantity,
+                    unitCost:    item.unitCost,
+                    totalCost:   totalCost.toNumber(),
+                    batchNumber: item.batchNumber || null,
+                    expiryDate:  item.expiryDate ? new Date(item.expiryDate) : null
                 });
             }
 
-            const tax = subtotal * 0.15; // IVA 15% Nicaragua
-            const total = subtotal + tax;
+            const tax   = new Decimal(subtotal).mul('0.15').toDecimalPlaces(4).toNumber(); // IVA 15% Nicaragua
+            const total = new Decimal(subtotal).plus(tax).toDecimalPlaces(4).toNumber();
 
             // 2. Crear cabecera de compra
             const purchase = await tx.purchase.create({
@@ -3047,18 +3150,39 @@ app.post('/api/purchases', authenticate, async (req: any, res: any) => {
                 const oldStock = product.stock;
                 const newStock = oldStock + item.quantity;
 
-                // Costo promedio ponderado: (stockViejo * costoViejo + cantidadNueva * costoNuevo) / stockTotal
-                const oldTotalCost = oldStock * product.cost;
-                const newTotalCost = item.quantity * parseFloat(item.unitCost.toString());
-                const newAvgCost = newStock > 0 ? (oldTotalCost + newTotalCost) / newStock : parseFloat(item.unitCost.toString());
+                // Costo promedio ponderado: (stockViejo*costoViejo + cantidadNueva*costoNuevo) / stockTotal
+                const oldTotalCost = new Decimal(oldStock).mul(product.cost.toString());
+                const newTotalCost = new Decimal(item.quantity).mul(item.unitCost.toString());
+                const newAvgCost   = newStock > 0
+                    ? oldTotalCost.plus(newTotalCost).dividedBy(newStock).toDecimalPlaces(4).toNumber()
+                    : new Decimal(item.unitCost.toString()).toNumber();
 
                 await tx.product.update({
                     where: { id: item.productId },
                     data: {
                         stock: newStock,
-                        cost: Math.round(newAvgCost * 100) / 100 // Redondear a 2 decimales
+                        cost: newAvgCost  // ya redondeado a 4 d.p. por Decimal
                     }
                 });
+
+                // Control de Lotes
+                let batchId = null;
+                if (product.requiresBatchTracking && item.batchNumber && item.expiryDate) {
+                    const batch = await tx.productBatch.upsert({
+                        where: {
+                            productId_batchNumber: { productId: item.productId, batchNumber: item.batchNumber }
+                        },
+                        update: { stock: { increment: item.quantity } },
+                        create: {
+                            tenantId: authReq.tenantId!,
+                            productId: item.productId,
+                            batchNumber: item.batchNumber,
+                            expiryDate: new Date(item.expiryDate),
+                            stock: item.quantity
+                        }
+                    });
+                    batchId = batch.id;
+                }
 
                 // Kardex: Registro de entrada por compra
                 await tx.kardexMovement.create({
@@ -3072,7 +3196,8 @@ app.post('/api/purchases', authenticate, async (req: any, res: any) => {
                         referenceId: purchase.id,
                         referenceType: 'PURCHASE',
                         reason: `Compra Factura #${invoiceNumber}`,
-                        userId: authReq.userId!
+                        userId: authReq.userId!,
+                        batchId: batchId
                     }
                 });
             }
@@ -3176,7 +3301,11 @@ app.get('/api/purchases/pending', authenticate, async (req: any, res: any) => {
             orderBy: { dueDate: 'asc' }
         });
 
-        const totalDebt = pending.reduce((sum: number, p: any) => sum + parseFloat(p.total.toString()), 0);
+        const totalDebt = pending.reduce(
+            (sum: Decimal, p: { total: unknown }) =>
+                sum.plus(new Decimal(p.total?.toString() ?? '0')),
+            new Decimal(0)
+        ).toDecimalPlaces(4).toNumber();
 
         res.json({ purchases: pending, totalDebt });
     } catch (error) {
@@ -3192,7 +3321,7 @@ import { calculatePayroll, calculateLaborLiability } from './services/nicaLabor'
 import { generateMonthlyReport, saveMonthlyReport } from './services/nicaTax';
 
 // POST /api/payroll/calculate - Calcular nómina de todos los empleados
-app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER']), async (req: any, res: any) => {
+app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER']), validate(PayrollCalculateSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { month, year } = req.body;
 
@@ -3365,13 +3494,9 @@ app.get('/api/labor-liabilities', authenticate, async (req: any, res: any) => {
 });
 
 // POST /api/tax-report/generate - Generar reporte fiscal mensual
-app.post('/api/tax-report/generate', authenticate, checkRole(['OWNER']), async (req: any, res: any) => {
+app.post('/api/tax-report/generate', authenticate, checkRole(['OWNER']), validate(TaxReportSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { month, year } = req.body;
-
-    if (!month || !year) {
-        return res.status(400).json({ error: 'Mes y año son requeridos' });
-    }
+    const { month, year } = req.body; // Validado por Zod (int, 1-12, 2020-2100)
 
     try {
         const report = await generateMonthlyReport(authReq.tenantId!, Number(month), Number(year));

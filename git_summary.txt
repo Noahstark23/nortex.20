@@ -1,0 +1,12 @@
+﻿5020f7b feat(fiscal): Sprint D ΓÇö RUC real en libros DGI y proveedores
+f8b941c feat(roles): Sprint C ΓÇö rol ACCOUNTANT con vista fiscal dedicada
+ec1fa8b feat(fiscal): Sprint B ΓÇö Constancia de Retenci├│n DGI
+abc85fa feat(fiscal): Sprint A ΓÇö exportaciones DGI Libro Ventas, Compras y VET
+37e40d7 feat(inventory): agregar subida de foto a productos via Cloudinary
+0b21fcc fix(catalog): corregir ruta /pedidos/:slug y cat├ílogo vac├¡o
+3d14e90 feat: onboarding zero-fricci├│n + cambio de PIN en RRHH
+* main
+  remotes/origin/HEAD -> origin/main
+  remotes/origin/main
+  remotes/origin/integrate-registration-dashboard-16410428850847985167
+  remotes/origin/nortex-api-setup-10723816493178935659

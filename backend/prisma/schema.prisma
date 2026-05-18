@@ -47,6 +47,7 @@ model Tenant {
   expenses         Expense[]
   b2bOrders        B2BOrder[]
   products         Product[]
+  productBatches   ProductBatch[]
   kardexMovements  KardexMovement[]
   purchases        Purchase[]
   manualPayments   ManualPayment[]
@@ -214,6 +215,8 @@ model PurchaseItem {
   quantity    Int
   unitCost    Decimal @db.Decimal(10, 2)
   totalCost   Decimal @db.Decimal(10, 2)
+  batchNumber String? // Número de lote ingresado en la compra
+  expiryDate  DateTime? // Fecha de vencimiento ingresada en la compra
 
   purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
 
@@ -512,6 +515,9 @@ model Product {
   isPublished Boolean @default(false) // Visible en catálogo público
   imageUrl    String? // URL de imagen del producto
 
+  // Control de Lotes
+  requiresBatchTracking Boolean @default(false)
+
   // Auditoría
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -522,6 +528,7 @@ model Product {
   creator         User             @relation(fields: [createdBy], references: [id])
   kardexMovements KardexMovement[]
   pedidoItems     PedidoItem[]
+  batches         ProductBatch[]
 
   @@unique([tenantId, sku])
   @@index([tenantId])
@@ -556,11 +563,37 @@ model KardexMovement {
   tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id])
+  batchId String?
+  batch   ProductBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
 
   @@index([productId])
   @@index([tenantId])
   @@index([date])
   @@index([type])
+  @@index([batchId])
+}
+
+// ==========================================
+// CONTROL DE LOTES Y VENCIMIENTOS
+// ==========================================
+
+model ProductBatch {
+  id          String   @id @default(cuid())
+  tenantId    String
+  productId   String
+  batchNumber String   // Número de lote
+  expiryDate  DateTime // Fecha de vencimiento
+  stock       Float    @default(0) // Stock restante del lote
+  createdAt   DateTime @default(now())
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  kardexMovements KardexMovement[]
+
+  @@unique([productId, batchNumber])
+  @@index([tenantId])
+  @@index([productId])
+  @@index([expiryDate])
 }
 
 // ==========================================

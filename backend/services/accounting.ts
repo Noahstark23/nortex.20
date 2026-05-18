@@ -1,14 +1,18 @@
 /**
  * NORTEX — Motor Contable de Partida Doble (NIIF PyMES)
- * 
+ *
  * Cada transacción del POS genera asientos contables automáticos.
  * El ferretero no ve nada; Nortex construye estados financieros en silencio.
- * 
+ *
  * Regla sagrada: SUM(Debe) === SUM(Haber) en cada asiento.
+ * Precisión numérica: Decimal.js — NIIF exige mínimo 4 d.p. internos, 2 al persistir.
  */
 
-// @ts-ignore
 import { PrismaClient } from '@prisma/client';
+import Decimal from 'decimal.js';
+
+// Configuración global: 20 dígitos significativos, redondeo HALF_UP (DGI)
+Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
 const prisma = new PrismaClient();
 
@@ -92,7 +96,7 @@ async function getAccount(tenantId: string, code: string) {
 }
 
 export async function createJournalEntry(
-    tx: any,
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
     tenantId: string,
     description: string,
     referenceId: string,
@@ -100,11 +104,11 @@ export async function createJournalEntry(
     userId: string,
     lines: { accountCode: string; debit: number; credit: number }[]
 ): Promise<void> {
-    // Validate: Sum of debits must equal sum of credits
-    const totalDebit = lines.reduce((sum, l) => sum + l.debit, 0);
-    const totalCredit = lines.reduce((sum, l) => sum + l.credit, 0);
-    if (Math.abs(totalDebit - totalCredit) > 0.01) {
-        throw new Error(`ASIENTO DESCUADRADO: Debe=${totalDebit.toFixed(2)} Haber=${totalCredit.toFixed(2)}`);
+    // Validate: Sum of debits must equal sum of credits (Decimal para evitar 0.1+0.2 != 0.3)
+    const totalDebit = lines.reduce((sum, l) => new Decimal(sum).plus(l.debit).toNumber(), 0);
+    const totalCredit = lines.reduce((sum, l) => new Decimal(sum).plus(l.credit).toNumber(), 0);
+    if (new Decimal(totalDebit).minus(totalCredit).abs().greaterThan('0.01')) {
+        throw new Error(`ASIENTO DESCUADRADO: Debe=${new Decimal(totalDebit).toFixed(2)} Haber=${new Decimal(totalCredit).toFixed(2)}`);
     }
 
     // Resolve account IDs
@@ -161,7 +165,7 @@ export async function createJournalEntry(
  *   Haber: Ventas (4.1.1) + Inventario (1.1.4) + IVA por Pagar (2.1.2)
  */
 export async function recordSale(
-    tx: any,
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
     tenantId: string,
     userId: string,
     saleId: string,
@@ -169,8 +173,10 @@ export async function recordSale(
     costTotal: number,
     paymentMethod: string
 ) {
-    const salesNeto = Math.round((saleTotal / 1.15) * 100) / 100;
-    const ivaAmount = Math.round((saleTotal - salesNeto) * 100) / 100;
+    // IVA Nicaragua 15%: total = neto * 1.15  →  neto = total / 1.15
+    const dTotal = new Decimal(saleTotal);
+    const salesNeto = dTotal.dividedBy('1.15').toDecimalPlaces(4);
+    const ivaAmount = dTotal.minus(salesNeto).toDecimalPlaces(4);
 
     const cashAccount = paymentMethod === 'CREDIT' ? '1.1.3' : '1.1.1'; // CxC vs Caja
     const description = paymentMethod === 'CREDIT'
@@ -178,11 +184,11 @@ export async function recordSale(
         : `Venta de contado #${saleId.slice(0, 8)}`;
 
     await createJournalEntry(tx, tenantId, description, saleId, 'SALE', userId, [
-        { accountCode: cashAccount, debit: saleTotal, credit: 0 },       // Caja o CxC ↑
-        { accountCode: '4.1.1', debit: 0, credit: salesNeto },           // Ventas ↑
-        { accountCode: '2.1.2', debit: 0, credit: ivaAmount },           // IVA por Pagar ↑
-        { accountCode: '5.1.1', debit: costTotal, credit: 0 },           // Costo de Ventas ↑
-        { accountCode: '1.1.4', debit: 0, credit: costTotal },           // Inventario ↓
+        { accountCode: cashAccount, debit: saleTotal, credit: 0 },
+        { accountCode: '4.1.1', debit: 0, credit: salesNeto.toNumber() },
+        { accountCode: '2.1.2', debit: 0, credit: ivaAmount.toNumber() },
+        { accountCode: '5.1.1', debit: costTotal, credit: 0 },
+        { accountCode: '1.1.4', debit: 0, credit: costTotal },
     ]);
 }
 
@@ -192,7 +198,7 @@ export async function recordSale(
  *   Haber: Cuentas por Cobrar (1.1.3)
  */
 export async function recordPayment(
-    tx: any,
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
     tenantId: string,
     userId: string,
     paymentId: string,
@@ -210,7 +216,7 @@ export async function recordPayment(
  *   Haber: Caja (1.1.1) o CxP (2.1.1)
  */
 export async function recordPurchase(
-    tx: any,
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
     tenantId: string,
     userId: string,
     purchaseId: string,
@@ -237,7 +243,7 @@ export async function recordPurchase(
  *   Haber: Caja (1.1.1)
  */
 export async function recordExpense(
-    tx: any,
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
     tenantId: string,
     userId: string,
     movementId: string,
@@ -256,7 +262,7 @@ export async function recordExpense(
  *   Haber: Capital Social (3.1.1)
  */
 export async function recordCashIn(
-    tx: any,
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
     tenantId: string,
     userId: string,
     movementId: string,
@@ -275,22 +281,23 @@ export async function recordCashIn(
  *   Haber: Caja (1.1.1) + Costo de Ventas (5.1.1)
  */
 export async function recordReturn(
-    tx: any,
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
     tenantId: string,
     userId: string,
     returnId: string,
     total: number,
     costTotal: number
 ) {
-    const salesNeto = Math.round((total / 1.15) * 100) / 100;
-    const ivaAmount = Math.round((total - salesNeto) * 100) / 100;
+    const dTotal = new Decimal(total);
+    const salesNeto = dTotal.dividedBy('1.15').toDecimalPlaces(4);
+    const ivaAmount = dTotal.minus(salesNeto).toDecimalPlaces(4);
 
     await createJournalEntry(tx, tenantId, `Devolución #${returnId.slice(0, 8)}`, returnId, 'RETURN', userId, [
-        { accountCode: '4.1.2', debit: salesNeto, credit: 0 },       // Dev/Ventas ↑ (contra-ingreso)
-        { accountCode: '2.1.2', debit: ivaAmount, credit: 0 },       // IVA por Pagar ↓
-        { accountCode: '1.1.4', debit: costTotal, credit: 0 },       // Inventario ↑
-        { accountCode: '1.1.1', debit: 0, credit: total },           // Caja ↓
-        { accountCode: '5.1.1', debit: 0, credit: costTotal },       // Costo Ventas ↓
+        { accountCode: '4.1.2', debit: salesNeto.toNumber(), credit: 0 },
+        { accountCode: '2.1.2', debit: ivaAmount.toNumber(), credit: 0 },
+        { accountCode: '1.1.4', debit: costTotal, credit: 0 },
+        { accountCode: '1.1.1', debit: 0, credit: total },
+        { accountCode: '5.1.1', debit: 0, credit: costTotal },
     ]);
 }
 
@@ -300,7 +307,7 @@ export async function recordReturn(
  *   Haber: Caja (1.1.1) + INSS por Pagar (2.1.5) + INATEC por Pagar (2.1.6)
  */
 export async function recordPayroll(
-    tx: any,
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
     tenantId: string,
     userId: string,
     payrollId: string,
@@ -366,7 +373,7 @@ export async function getEstadoResultados(tenantId: string, month?: number, year
     await seedChartOfAccounts(tenantId);
 
     // If month/year provided, aggregate from journal lines for that period
-    const whereClause: any = { tenantId };
+    const whereClause: { tenantId: string } = { tenantId };
     if (month && year) {
         const startDate = new Date(year, month - 1, 1);
         const endDate = new Date(year, month, 0, 23, 59, 59);
@@ -376,34 +383,34 @@ export async function getEstadoResultados(tenantId: string, month?: number, year
             include: { lines: { include: { account: true } } }
         });
 
-        let totalRevenue = 0;
-        let totalCOGS = 0;
-        let totalExpenses = 0;
-        const revenueLines: any[] = [];
-        const expenseLines: any[] = [];
+        let totalRevenue = new Decimal(0);
+        let totalCOGS = new Decimal(0);
+        let totalExpenses = new Decimal(0);
+        const revenueLines: { account: string; amount: number }[] = [];
+        const expenseLines: { account: string; amount: number }[] = [];
 
         for (const entry of entries) {
             for (const line of entry.lines) {
                 if (line.account.type === 'REVENUE') {
-                    const amount = Number(line.credit) - Number(line.debit);
-                    totalRevenue += amount;
-                    revenueLines.push({ account: line.account.name, amount });
+                    const amount = new Decimal(line.credit.toString()).minus(line.debit.toString());
+                    totalRevenue = totalRevenue.plus(amount);
+                    revenueLines.push({ account: line.account.name, amount: amount.toNumber() });
                 } else if (line.account.type === 'EXPENSE') {
-                    const amount = Number(line.debit) - Number(line.credit);
-                    if (line.account.code === '5.1.1') totalCOGS += amount;
-                    else totalExpenses += amount;
-                    expenseLines.push({ account: line.account.name, amount });
+                    const amount = new Decimal(line.debit.toString()).minus(line.credit.toString());
+                    if (line.account.code === '5.1.1') totalCOGS = totalCOGS.plus(amount);
+                    else totalExpenses = totalExpenses.plus(amount);
+                    expenseLines.push({ account: line.account.name, amount: amount.toNumber() });
                 }
             }
         }
 
         return {
             period: `${month}/${year}`,
-            revenue: { total: totalRevenue, lines: revenueLines },
-            costOfSales: totalCOGS,
-            grossProfit: totalRevenue - totalCOGS,
-            operatingExpenses: { total: totalExpenses, lines: expenseLines },
-            netIncome: totalRevenue - totalCOGS - totalExpenses,
+            revenue: { total: totalRevenue.toNumber(), lines: revenueLines },
+            costOfSales: totalCOGS.toNumber(),
+            grossProfit: totalRevenue.minus(totalCOGS).toNumber(),
+            operatingExpenses: { total: totalExpenses.toNumber(), lines: expenseLines },
+            netIncome: totalRevenue.minus(totalCOGS).minus(totalExpenses).toNumber(),
         };
     }
 
@@ -462,58 +469,62 @@ export async function generateRetentions(tenantId: string, month: number, year: 
         },
     });
 
-    const retentions: any[] = [];
-    let totalIR = 0, totalIMI = 0, totalIVA = 0;
+    interface RetentionInput {
+        tenantId: string; type: string; amount: number; baseAmount: number;
+        supplierId: string; purchaseId: string; description: string; period: string;
+    }
+    const retentions: RetentionInput[] = [];
+    let totalIR = new Decimal(0), totalIMI = new Decimal(0), totalIVA = new Decimal(0);
 
-    for (const purchase of purchases as any[]) {
-        const baseAmount = Number(purchase.subtotal || purchase.total);
-        const tax = Number(purchase.tax || 0);
+    for (const purchase of purchases) {
+        const baseAmount = new Decimal(purchase.subtotal?.toString() ?? purchase.total.toString());
+        const tax = new Decimal(purchase.tax?.toString() ?? '0');
 
         // IR 2% sobre base gravable
-        const irAmount = Math.round(baseAmount * IR_RETENTION_RATE * 100) / 100;
-        if (irAmount > 0) {
+        const irAmount = baseAmount.mul(IR_RETENTION_RATE.toString()).toDecimalPlaces(4);
+        if (irAmount.greaterThan(0)) {
             retentions.push({
                 tenantId,
                 type: 'IR_2PCT',
-                amount: irAmount,
-                baseAmount,
+                amount: irAmount.toNumber(),
+                baseAmount: baseAmount.toNumber(),
                 supplierId: purchase.supplierId,
                 purchaseId: purchase.id,
-                description: `Retención IR 2% - ${purchase.supplier?.name || 'Proveedor'} - Compra #${purchase.id.slice(0, 8)}`,
+                description: `Retención IR 2% - ${purchase.supplier?.name ?? 'Proveedor'} - Compra #${purchase.id.slice(0, 8)}`,
                 period,
             });
-            totalIR += irAmount;
+            totalIR = totalIR.plus(irAmount);
         }
 
         // IMI 1% municipal
-        const imiAmount = Math.round(baseAmount * IMI_RETENTION_RATE * 100) / 100;
-        if (imiAmount > 0) {
+        const imiAmount = baseAmount.mul(IMI_RETENTION_RATE.toString()).toDecimalPlaces(4);
+        if (imiAmount.greaterThan(0)) {
             retentions.push({
                 tenantId,
                 type: 'IMI_1PCT',
-                amount: imiAmount,
-                baseAmount,
+                amount: imiAmount.toNumber(),
+                baseAmount: baseAmount.toNumber(),
                 supplierId: purchase.supplierId,
                 purchaseId: purchase.id,
-                description: `Retención IMI 1% - ${purchase.supplier?.name || 'Proveedor'} - Compra #${purchase.id.slice(0, 8)}`,
+                description: `Retención IMI 1% - ${purchase.supplier?.name ?? 'Proveedor'} - Compra #${purchase.id.slice(0, 8)}`,
                 period,
             });
-            totalIMI += imiAmount;
+            totalIMI = totalIMI.plus(imiAmount);
         }
 
         // IVA Retenido (si aplica)
-        if (tax > 0) {
+        if (tax.greaterThan(0)) {
             retentions.push({
                 tenantId,
                 type: 'IVA_RETENIDO',
-                amount: tax,
-                baseAmount,
+                amount: tax.toNumber(),
+                baseAmount: baseAmount.toNumber(),
                 supplierId: purchase.supplierId,
                 purchaseId: purchase.id,
-                description: `IVA Retenido - ${purchase.supplier?.name || 'Proveedor'} - Compra #${purchase.id.slice(0, 8)}`,
+                description: `IVA Retenido - ${purchase.supplier?.name ?? 'Proveedor'} - Compra #${purchase.id.slice(0, 8)}`,
                 period,
             });
-            totalIVA += tax;
+            totalIVA = totalIVA.plus(tax);
         }
     }
 
@@ -527,11 +538,11 @@ export async function generateRetentions(tenantId: string, month: number, year: 
         existing: false,
         purchasesProcessed: purchases.length,
         retentions: {
-            ir2pct: { count: purchases.length, total: totalIR },
-            imi1pct: { count: purchases.length, total: totalIMI },
-            ivaRetenido: { count: retentions.filter(r => r.type === 'IVA_RETENIDO').length, total: totalIVA },
+            ir2pct: { count: purchases.length, total: totalIR.toNumber() },
+            imi1pct: { count: purchases.length, total: totalIMI.toNumber() },
+            ivaRetenido: { count: retentions.filter(r => r.type === 'IVA_RETENIDO').length, total: totalIVA.toNumber() },
         },
-        grandTotal: totalIR + totalIMI + totalIVA,
+        grandTotal: totalIR.plus(totalIMI).plus(totalIVA).toNumber(),
     };
 }
 
@@ -554,21 +565,26 @@ export async function fiscalClose(tenantId: string, month: number, year: number)
         where: { tenantId, month, year }
     });
 
+    const dRevenue = new Decimal(estado.revenue.total);
+    const ivaCollected = dRevenue.mul('0.15').dividedBy('1.15').toDecimalPlaces(4);
+    const anticipoIR = dRevenue.mul('0.01').toDecimalPlaces(4);
+    const imiAlcaldia = dRevenue.mul('0.01').toDecimalPlaces(4);
+
     const reportData = {
         tenantId,
         month,
         year,
         totalSales: estado.revenue.total,
-        totalIVACollected: Math.round(estado.revenue.total * 0.15 / 1.15 * 100) / 100,
+        totalIVACollected: ivaCollected.toNumber(),
         totalCompras: estado.costOfSales,
         totalIVAPaid: 0,
-        ivaNeto: 0, // Will be calculated
-        anticipoIR: Math.round(estado.revenue.total * 0.01 * 100) / 100,
-        imiAlcaldia: Math.round(estado.revenue.total * 0.01 * 100) / 100,
+        ivaNeto: 0,
+        anticipoIR: anticipoIR.toNumber(),
+        imiAlcaldia: imiAlcaldia.toNumber(),
         totalToPay: 0,
     };
 
-    reportData.ivaNeto = Math.max(0, reportData.totalIVACollected - reportData.totalIVAPaid);
+    reportData.ivaNeto = Decimal.max(0, new Decimal(reportData.totalIVACollected).minus(reportData.totalIVAPaid)).toNumber();
 
     if (existingReport) {
         await prisma.taxReport.update({

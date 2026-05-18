@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, Lock, RefreshCw, ShoppingCart, ArrowRight, ShieldAlert, FileText, Settings } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, Lock, RefreshCw, ShoppingCart, ArrowRight, ShieldAlert, FileText, Settings, Timer } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Loan, Tenant } from '../types';
 import { useNavigate } from 'react-router-dom';
@@ -34,6 +34,9 @@ const Dashboard: React.FC = () => {
 
   // 🛡️ Survival Data (NIIF PyMES)
   const [survivalData, setSurvivalData] = useState<any>(null);
+
+  // ⚠️ Expiring Batches
+  const [expiringBatches, setExpiringBatches] = useState<any[]>([]);
 
   // FETCH REAL DATA
   useEffect(() => {
@@ -72,6 +75,15 @@ const Dashboard: React.FC = () => {
         if (lowStockRes.ok) {
           const critical = await lowStockRes.json();
           setLowStockItems(critical);
+        }
+
+        // 4. Expiring Batches
+        const expiringRes = await fetch('/api/inventory/expiring-soon', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (expiringRes.ok) {
+          const expiring = await expiringRes.json();
+          setExpiringBatches(expiring);
         }
 
       } catch (e) {
@@ -362,6 +374,37 @@ const Dashboard: React.FC = () => {
                 <span className="font-bold">C${Math.abs(alert.details?.diferencia || 0).toFixed(2)}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ⚠️ EXPIRING BATCHES ALERT BANNER */}
+      {expiringBatches.length > 0 && (
+        <div className="mb-6 p-4 bg-orange-50 border border-orange-200 rounded-xl">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-orange-100 text-orange-600 rounded-lg">
+              <Timer size={20} />
+            </div>
+            <div>
+              <h3 className="font-bold text-orange-700">⚠️ Alerta de Vencimiento</h3>
+              <p className="text-xs text-orange-500">{expiringBatches.length} lote(s) próximo(s) a vencer (≤ 90 días)</p>
+            </div>
+          </div>
+          <div className="space-y-1">
+            {expiringBatches.slice(0, 3).map((batch: any) => {
+              const isExpired = new Date(batch.expiryDate) < new Date();
+              return (
+                <div key={batch.id} className={`text-xs px-3 py-1.5 rounded-lg flex justify-between ${isExpired ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'}`}>
+                  <span>{batch.productName} (Lote: {batch.batchNumber})</span>
+                  <span className="font-bold">{new Date(batch.expiryDate).toLocaleDateString()} • {batch.stock} uds</span>
+                </div>
+              );
+            })}
+            {expiringBatches.length > 3 && (
+              <div className="text-xs text-orange-600 font-semibold px-3 py-1">
+                + {expiringBatches.length - 3} lotes más... Ve al Inventario para más detalles.
+              </div>
+            )}
           </div>
         </div>
       )}
