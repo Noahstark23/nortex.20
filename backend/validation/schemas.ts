@@ -51,13 +51,15 @@ export const SaleItemSchema = z.object({
 });
 
 export const CreateSaleSchema = z.object({
-    items:         z.array(SaleItemSchema).min(1, 'Se requiere al menos 1 producto'),
+    items:          z.array(SaleItemSchema).min(1, 'Se requiere al menos 1 producto'),
     paymentMethod,
-    customerId:    z.string().optional(),
-    employeeId:    z.string().optional(),
-    discount:      moneyAmount.optional(),
-    notes:         z.string().max(500).optional(),
-    invoiceNumber: z.union([z.string(), z.number()]).optional(),
+    customerId:     z.string().optional(),
+    customerName:   z.string().optional(),
+    employeeId:     z.string().optional(),
+    globalDiscount: z.number().min(0).max(100).optional(),
+    discount:       moneyAmount.optional(),
+    notes:          z.string().max(500).optional(),
+    invoiceNumber:  z.union([z.string(), z.number()]).optional(),
 });
 
 // POST /api/returns

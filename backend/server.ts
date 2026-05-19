@@ -20,6 +20,7 @@ import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados } from './services/accounting';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
+import { executeSale, SaleValidationError, SaleNotFoundError, SaleForbiddenError, SaleCreditLimitError } from './services/salesService';
 import Stripe from 'stripe';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -1316,204 +1317,64 @@ app.patch('/api/employees/:id/pin', authenticate, async (req: any, res: any) => 
 });
 
 // ==========================================
-// 🛒 MÓDULO DE VENTAS (CON MOTOR DE RIESGO)
+// 🛒 MÓDULO DE VENTAS — delegado a salesService
 // ==========================================
 
 app.post('/api/sales', authenticate, validate(CreateSaleSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { items, paymentMethod, customerId, customerName, employeeId, globalDiscount } = req.body;
-    // total viene del cliente pero se recalcula aquí para ser autoritativo
-    const saleTotal = new Decimal(
-        items.reduce((s: Decimal, i: { price: string; quantity: number }) =>
-            s.plus(new Decimal(i.price).mul(i.quantity)), new Decimal(0))
-    ).toNumber();
+
+    // A. Verificar turno abierto (pre-condición del POS antes de llamar al servicio)
+    const currentShift = await prisma.shift.findFirst({
+        where: { userId: authReq.userId, status: 'OPEN' },
+    });
+    if (!currentShift) {
+        return res.status(400).json({ error: '🔒 CAJA CERRADA' });
+    }
+
+    // B. Mapear req.body (schema usa price/costPrice) → SaleInput (usa priceAtSale/costAtSale)
+    type ReqItem = { productId: string; quantity: number; price: string; costPrice?: string; discount?: string };
+    const body: {
+        items: ReqItem[];
+        paymentMethod: 'CASH' | 'CARD' | 'QR' | 'CREDIT' | 'TRANSFER';
+        customerId?: string;
+        customerName?: string;
+        employeeId?: string;
+        globalDiscount?: number;
+    } = req.body;
+
+    const saleInput = {
+        items: body.items.map((item: ReqItem) => ({
+            productId:   item.productId,
+            quantity:    item.quantity,
+            priceAtSale: item.price,
+            costAtSale:  item.costPrice ?? '0',
+            discount:    item.discount ? parseFloat(item.discount) : 0,
+        })),
+        paymentMethod:  body.paymentMethod,
+        customerId:     body.customerId ?? null,
+        customerName:   body.customerName ?? '',
+        employeeId:     body.employeeId ?? null,
+        globalDiscount: body.globalDiscount ?? 0,
+        source:         'POS' as const,
+    };
 
     try {
-        // A. VALIDACIÓN DE CAJA
-        const currentShift = await prisma.shift.findFirst({
-            where: { userId: authReq.userId, status: 'OPEN' }
-        });
-        if (!currentShift) {
-            return res.status(400).json({ error: '🔒 CAJA CERRADA' });
-        }
+        const { saleId } = await executeSale(
+            { tenantId: authReq.tenantId!, userId: authReq.userId!, shiftId: currentShift.id },
+            saleInput
+        );
 
-        // B. MOTOR DE RIESGO (Credit Risk Engine)
-        let finalStatus = 'COMPLETED';
-        let balance = 0;
-        let dueDate = null;
-
-        if (paymentMethod === 'CREDIT') {
-            if (!customerId) {
-                return res.status(400).json({ error: '⛔ RIESGO: Las ventas a crédito requieren Cliente.' });
-            }
-
-            const customer = await prisma.customer.findUnique({ where: { id: customerId } });
-            if (!customer) return res.status(404).json({ error: 'Cliente no encontrado' });
-
-            if (customer.isBlocked) {
-                return res.status(403).json({ error: '⛔ DENEGADO: Cliente bloqueado por morosidad.' });
-            }
-
-            const currentDebt = Number(customer.currentDebt);
-            const limit = Number(customer.creditLimit);
-
-            if ((currentDebt + saleTotal) > limit) {
-                return res.status(402).json({
-                    error: `⛔ DENEGADO: Excede límite. Disp: $${(limit - currentDebt).toFixed(2)}`
-                });
-            }
-
-            finalStatus = 'CREDIT_PENDING';
-            balance = saleTotal;
-            dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-        }
-
-        // C. EJECUCIÓN TRANSACCIONAL
-        const result = await prisma.$transaction(async (tx: any) => {
-            // 🧾 CONSECUTIVO FISCAL: Atómico dentro de transacción
-            const counter = await tx.invoiceSeries.upsert({
-                where: { tenantId_series: { tenantId: authReq.tenantId!, series: 'A' } },
-                update: { lastNumber: { increment: 1 } },
-                create: { tenantId: authReq.tenantId!, series: 'A', lastNumber: 1 },
-            });
-            if (counter.lastNumber > counter.rangeEnd) {
-                throw new Error('Rango de facturación DGI agotado. Solicite nuevo rango.');
-            }
-
-            const sale = await tx.sale.create({
-                data: {
-                    tenantId: authReq.tenantId,
-                    total: saleTotal,
-                    status: finalStatus,
-                    paymentMethod: paymentMethod,
-                    customerName: customerName,
-                    customerId: customerId || null,
-                    employeeId: employeeId || null,
-                    balance: balance,
-                    dueDate: dueDate,
-                    shiftId: currentShift.id,
-                    globalDiscount: Number(globalDiscount) || 0,
-                    invoiceNumber: counter.lastNumber,
-                    invoiceSeries: 'A',
-                }
-            });
-
-            for (const item of items) {
-                await tx.saleItem.create({
-                    data: {
-                        saleId: sale.id,
-                        productId: item.id,
-                        quantity: Number(item.quantity),
-                        priceAtSale: item.price,
-                        costAtSale: item.costPrice || 0,
-                        discount: Number(item.discount) || 0
-                    }
-                });
-
-                // KARDEX BLINDADO: Registrar salida por venta
-                const product = await tx.product.findUnique({ where: { id: item.id } });
-                if (product) {
-                    const totalQty = Number(item.quantity);
-                    const newStock = Number(product.stock) - totalQty;
-                    
-                    await tx.product.update({
-                        where: { id: item.id },
-                        data: { stock: newStock }
-                    });
-
-                    if (product.requiresBatchTracking) {
-                        let remainingQty = totalQty;
-                        const activeBatches = await tx.productBatch.findMany({
-                            where: { productId: item.id, stock: { gt: 0 } },
-                            orderBy: { expiryDate: 'asc' }
-                        });
-
-                        for (const batch of activeBatches) {
-                            if (remainingQty <= 0) break;
-                            const deductQty = Math.min(batch.stock, remainingQty);
-                            remainingQty -= deductQty;
-
-                            await tx.productBatch.update({
-                                where: { id: batch.id },
-                                data: { stock: { decrement: deductQty } }
-                            });
-
-                            await tx.kardexMovement.create({
-                                data: {
-                                    tenantId: authReq.tenantId,
-                                    productId: item.id,
-                                    type: 'OUT_SALE',
-                                    quantity: -deductQty,
-                                    stockBefore: Number(product.stock),
-                                    stockAfter: Number(product.stock) - deductQty,
-                                    referenceId: sale.id,
-                                    referenceType: 'SALE',
-                                    reason: `Venta #${sale.id.slice(0, 8)} (Lote ${batch.batchNumber})`,
-                                    userId: authReq.userId,
-                                    batchId: batch.id
-                                }
-                            });
-                        }
-                        
-                        // Si sobró cantidad que no estaba en ningún lote, registrar el faltante
-                        if (remainingQty > 0) {
-                            await tx.kardexMovement.create({
-                                data: {
-                                    tenantId: authReq.tenantId,
-                                    productId: item.id,
-                                    type: 'OUT_SALE',
-                                    quantity: -remainingQty,
-                                    stockBefore: Number(product.stock),
-                                    stockAfter: newStock, // aproximado
-                                    referenceId: sale.id,
-                                    referenceType: 'SALE',
-                                    reason: `Venta #${sale.id.slice(0, 8)} (Sin lote asignado)`,
-                                    userId: authReq.userId,
-                                }
-                            });
-                        }
-
-                    } else {
-                        await tx.kardexMovement.create({
-                            data: {
-                                tenantId: authReq.tenantId,
-                                productId: item.id,
-                                type: 'OUT_SALE',
-                                quantity: -totalQty,
-                                stockBefore: Number(product.stock),
-                                stockAfter: newStock,
-                                referenceId: sale.id,
-                                referenceType: 'SALE',
-                                reason: `Venta #${sale.id.slice(0, 8)}`,
-                                userId: authReq.userId,
-                            }
-                        });
-                    }
-                }
-            }
-
-            if (paymentMethod === 'CREDIT' && customerId) {
-                await tx.customer.update({
-                    where: { id: customerId },
-                    data: { currentDebt: { increment: saleTotal } }
-                });
-            }
-            // 📊 MOTOR CONTABLE: Registrar asiento contable de venta
-            const costTotal = items.reduce(
-                (sum: Decimal, item: { costPrice?: unknown; quantity?: unknown }) =>
-                    sum.plus(new Decimal(Number(item.costPrice) || 0).mul(Number(item.quantity) || 0)),
-                new Decimal(0)
-            ).toNumber();
-            try {
-                await recordSale(tx, authReq.tenantId!, authReq.userId!, sale.id, saleTotal, costTotal, paymentMethod);
-            } catch (accErr) { console.warn('⚠️ Accounting hook failed (sale continues):', accErr); }
-
-            return sale;
-        });
-        res.json(result);
-    } catch (error: any) {
-        console.error(error);
-        res.status(500).json({ error: error.message || 'Error procesando venta' });
+        // Devolver el registro completo para mantener la forma de respuesta anterior
+        const sale = await prisma.sale.findUnique({ where: { id: saleId } });
+        return res.json(sale);
+    } catch (err: unknown) {
+        if (err instanceof SaleValidationError)  return res.status(400).json({ error: err.message });
+        if (err instanceof SaleNotFoundError)    return res.status(404).json({ error: err.message });
+        if (err instanceof SaleForbiddenError)   return res.status(403).json({ error: err.message });
+        if (err instanceof SaleCreditLimitError) return res.status(402).json({ error: err.message });
+        const message = err instanceof Error ? err.message : 'Error procesando venta';
+        console.error('[POST /api/sales]', err);
+        return res.status(500).json({ error: message });
     }
 });
 
