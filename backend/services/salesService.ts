@@ -1,216 +1,201 @@
 /**
  * NORTEX — Sales Service
  *
- * Encapsula toda la lógica transaccional de una venta:
- * InvoiceSeries → Sale → SaleItems → Kardex → Customer debt → Accounting → AuditLog.
+ * Motor de ventas reutilizable llamado desde múltiples canales:
+ *  - POST /api/sales   (source='POS',       shiftId requerido)
+ *  - Agente WhatsApp   (source='WHATSAPP',  shiftId=null)   — PR3
+ *  - Portal público    (source='PUBLIC_ORDER', shiftId=null) — futuro
+ *
+ * La firma acepta rawInput: unknown y valida con Zod internamente,
+ * así cada caller puede pasar el body sin pre-procesar.
  *
  * Reglas:
- *  - Totales 100% en Decimal.js. El caller NO provee un total: se recalcula aquí.
- *  - Zod valida la entrada antes de tocar la DB.
- *  - Lógica de lotes (ProductBatch) queda fuera de alcance de este módulo.
- *  - Los errores tipados permiten al controller mapear a HTTP status sin inspeccionar mensajes.
+ *  - Totales 100% en Decimal.js. El caller NO provee un total.
+ *  - Todo query filtrado por tenantId (aislamiento multi-tenant).
+ *  - Errores tipados: SaleError(code, httpStatus, message).
  */
 
 import { z } from 'zod';
 import Decimal from 'decimal.js';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Sale } from '@prisma/client';
 import { recordSale } from './accounting.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
 const prisma = new PrismaClient();
 
-/** Tipo del cliente de transacción de Prisma (inferido del $transaction callback). */
 type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
-// ── Typed error classes ─────────────────────────────────────────────────────
-// El controller usa instanceof para mapear a HTTP status sin inspeccionar mensajes.
+// ── Error class ──────────────────────────────────────────────────────────────
+// httpStatus viaja con el error; el controller no inspecciona mensajes.
 
-export class SaleValidationError extends Error {
-    readonly code = 'VALIDATION' as const;
-    constructor(message: string) {
+export class SaleError extends Error {
+    constructor(
+        public readonly code:
+            | 'INVALID_INPUT'
+            | 'NO_SHIFT'
+            | 'CUSTOMER_REQUIRED'
+            | 'CUSTOMER_NOT_FOUND'
+            | 'CUSTOMER_BLOCKED'
+            | 'CREDIT_LIMIT_EXCEEDED'
+            | 'INVOICE_RANGE_EXHAUSTED'
+            | 'PRODUCT_NOT_FOUND'
+            | 'INSUFFICIENT_STOCK',
+        public readonly httpStatus: number,
+        message: string
+    ) {
         super(message);
-        this.name = 'SaleValidationError';
+        this.name = 'SaleError';
     }
 }
 
-export class SaleNotFoundError extends Error {
-    readonly code = 'NOT_FOUND' as const;
-    constructor(message: string) {
-        super(message);
-        this.name = 'SaleNotFoundError';
-    }
-}
+// ── Zod schema (exportado — sirve como contrato de API del canal) ────────────
 
-export class SaleForbiddenError extends Error {
-    readonly code = 'FORBIDDEN' as const;
-    constructor(message: string) {
-        super(message);
-        this.name = 'SaleForbiddenError';
-    }
-}
+const moneyString = z
+    .union([z.string(), z.number()])
+    .transform(String)
+    .refine((v) => !isNaN(parseFloat(v)) && parseFloat(v) >= 0, 'Debe ser un número >= 0');
 
-export class SaleCreditLimitError extends Error {
-    readonly code = 'CREDIT_LIMIT' as const;
-    constructor(message: string) {
-        super(message);
-        this.name = 'SaleCreditLimitError';
-    }
-}
+const moneyStringPositive = moneyString.refine(
+    (v) => parseFloat(v) > 0,
+    'Debe ser un número > 0'
+);
 
-// ── Public interfaces ───────────────────────────────────────────────────────
-
-export interface SaleInputItem {
-    productId: string;
-    quantity: number;
-    priceAtSale: string;   // Decimal como string para evitar pérdida de precisión
-    costAtSale: string;    // Decimal como string
-    discount: number;      // Porcentaje de descuento por ítem (0–100)
-}
-
-export interface SaleInput {
-    items: SaleInputItem[];
-    paymentMethod: 'CASH' | 'CARD' | 'QR' | 'CREDIT' | 'TRANSFER';
-    customerId: string | null;
-    customerName: string;
-    employeeId: string | null;
-    globalDiscount: number;   // Porcentaje de descuento global (0–100)
-    source: 'POS' | 'WHATSAPP' | 'PUBLIC_ORDER';
-}
-
-export interface SaleContext {
-    tenantId: string;
-    userId: string;
-    shiftId: string | null;   // Obligatorio cuando source === 'POS'
-}
-
-// ── Zod schema interno ──────────────────────────────────────────────────────
-
-const numericString = (fieldName: string) =>
-    z
-        .string()
-        .refine(
-            (v) => !isNaN(parseFloat(v)) && parseFloat(v) >= 0,
-            `${fieldName} debe ser un número >= 0`
-        );
-
-const SaleInputItemSchema = z.object({
-    productId:   z.string().min(1, 'productId requerido'),
-    quantity:    z.number().positive('quantity debe ser > 0'),
-    priceAtSale: numericString('priceAtSale').refine((v) => parseFloat(v) > 0, 'priceAtSale debe ser > 0'),
-    costAtSale:  numericString('costAtSale'),
-    discount:    z.number().min(0).max(100),
-});
-
-const SaleInputSchema = z.object({
-    items:          z.array(SaleInputItemSchema).min(1, 'Se requiere al menos 1 producto'),
+export const CreateSaleSchema = z.object({
+    items: z
+        .array(
+            z.object({
+                id:        z.string().min(1, 'id requerido'),  // frontend sends product id as 'id'
+                quantity:  z.number().positive('quantity debe ser > 0'),
+                price:     moneyStringPositive,
+                costPrice: moneyString.optional(),
+                discount:  moneyString.optional(),
+            })
+        )
+        .min(1, 'Se requiere al menos 1 producto'),
     paymentMethod:  z.enum(['CASH', 'CARD', 'QR', 'CREDIT', 'TRANSFER']),
-    customerId:     z.string().nullable(),
-    customerName:   z.string().min(1, 'customerName requerido'),
-    employeeId:     z.string().nullable(),
-    globalDiscount: z.number().min(0).max(100),
-    source:         z.enum(['POS', 'WHATSAPP', 'PUBLIC_ORDER']),
+    customerId:     z.string().optional(),
+    customerName:   z.string().optional(),
+    employeeId:     z.string().optional(),
+    globalDiscount: z.number().min(0).max(100).optional().default(0),
+    source:         z.enum(['POS', 'WHATSAPP', 'PUBLIC_ORDER']).default('POS'),
 });
 
-// ── executeSale ─────────────────────────────────────────────────────────────
+type CreateSaleInput = z.output<typeof CreateSaleSchema>;
+
+// ── executeSale ──────────────────────────────────────────────────────────────
 
 export async function executeSale(
-    ctx: SaleContext,
-    input: SaleInput
-): Promise<{ saleId: string; total: string; invoiceNumber: number }> {
+    tenantId: string,
+    userId: string,
+    shiftId: string | null,
+    rawInput: unknown
+): Promise<Sale> {
 
-    // 1. Validación Zod
-    const parsed = SaleInputSchema.safeParse(input);
+    // 1. Validación Zod — primer firewall antes de tocar la DB
+    const parsed = CreateSaleSchema.safeParse(rawInput);
     if (!parsed.success) {
-        const issues = parsed.error.issues ?? (parsed.error as { errors?: typeof parsed.error.issues }).errors ?? [];
+        const issues = parsed.error.issues ?? [];
         const msg = issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(' | ');
-        throw new SaleValidationError(msg || 'Datos de entrada inválidos');
+        throw new SaleError('INVALID_INPUT', 400, msg || 'Datos de entrada inválidos');
     }
-    const { items, paymentMethod, customerId, customerName, employeeId, globalDiscount, source } =
-        parsed.data;
+    const {
+        items,
+        paymentMethod,
+        customerId,
+        customerName,
+        employeeId,
+        globalDiscount,
+        source,
+    } = parsed.data as CreateSaleInput;
 
     // 2. Validación de turno (solo POS)
     if (source === 'POS') {
-        if (!ctx.shiftId) {
-            throw new SaleValidationError('shiftId es obligatorio para ventas de POS');
+        if (!shiftId) {
+            throw new SaleError('NO_SHIFT', 400, '🔒 CAJA CERRADA: No hay turno abierto');
         }
         const shift = await prisma.shift.findFirst({
-            where: { id: ctx.shiftId, tenantId: ctx.tenantId, status: 'OPEN' },
+            where: { id: shiftId, tenantId, status: 'OPEN' },
         });
         if (!shift) {
-            throw new SaleValidationError('🔒 CAJA CERRADA: No hay turno abierto con ese ID');
+            throw new SaleError('NO_SHIFT', 400, '🔒 CAJA CERRADA: No hay turno abierto con ese ID');
         }
     }
 
-    // 3. Cálculo autoritativo del total (Decimal.js — el caller no provee un total)
-    //    Fórmula: sum(priceAtSale * qty * (1 - itemDiscount%)) * (1 - globalDiscount%)
+    // 3. Cálculo autoritativo del total (Decimal.js — el caller nunca provee el total)
+    //    Fórmula: sum(price * qty * (1 - itemDiscount%)) * (1 - globalDiscount%)
     const itemsSubtotal = items.reduce((acc, item) => {
-        const line = new Decimal(item.priceAtSale).mul(item.quantity);
-        const factor = new Decimal(1).minus(new Decimal(item.discount).div(100));
+        const line       = new Decimal(item.price).mul(item.quantity);
+        const discountPct = item.discount ? parseFloat(item.discount) : 0;
+        const factor     = new Decimal(1).minus(new Decimal(discountPct).div(100));
         return acc.plus(line.mul(factor));
     }, new Decimal(0));
 
     const globalFactor = new Decimal(1).minus(new Decimal(globalDiscount).div(100));
-    const finalTotal = itemsSubtotal.mul(globalFactor).toDecimalPlaces(2);
+    const finalTotal   = itemsSubtotal.mul(globalFactor).toDecimalPlaces(2);
 
     // 4. Motor de riesgo crediticio
-    let finalStatus = 'COMPLETED';
+    let finalStatus  = 'COMPLETED';
     let creditBalance = new Decimal(0);
     let dueDate: Date | null = null;
 
     if (paymentMethod === 'CREDIT') {
         if (!customerId) {
-            throw new SaleValidationError('⛔ RIESGO: Las ventas a crédito requieren Cliente.');
+            throw new SaleError('CUSTOMER_REQUIRED', 400, '⛔ RIESGO: Las ventas a crédito requieren Cliente.');
         }
         const customer = await prisma.customer.findFirst({
-            where: { id: customerId, tenantId: ctx.tenantId },
+            where: { id: customerId, tenantId },
         });
-        if (!customer) throw new SaleNotFoundError('Cliente no encontrado');
+        if (!customer) {
+            throw new SaleError('CUSTOMER_NOT_FOUND', 404, 'Cliente no encontrado');
+        }
         if (customer.isBlocked) {
-            throw new SaleForbiddenError('⛔ DENEGADO: Cliente bloqueado por morosidad.');
+            throw new SaleError('CUSTOMER_BLOCKED', 403, '⛔ DENEGADO: Cliente bloqueado por morosidad.');
         }
 
         const currentDebt = new Decimal(customer.currentDebt.toString());
-        const limit = new Decimal(customer.creditLimit.toString());
+        const limit       = new Decimal(customer.creditLimit.toString());
 
         if (currentDebt.plus(finalTotal).greaterThan(limit)) {
             const available = limit.minus(currentDebt).toDecimalPlaces(2);
-            throw new SaleCreditLimitError(
+            throw new SaleError(
+                'CREDIT_LIMIT_EXCEEDED',
+                402,
                 `⛔ DENEGADO: Excede límite de crédito. Disponible: $${available.toString()}`
             );
         }
 
-        finalStatus = 'CREDIT_PENDING';
+        finalStatus   = 'CREDIT_PENDING';
         creditBalance = finalTotal;
-        dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        dueDate       = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     }
 
     // 5. Transacción atómica
-    const { saleId, invoiceNumber } = await prisma.$transaction(async (tx: PrismaTx) => {
+    const sale = await prisma.$transaction(async (tx: PrismaTx) => {
 
         // 5a. Consecutivo DGI — upsert atómico dentro de la transacción
         const counter = await tx.invoiceSeries.upsert({
-            where:  { tenantId_series: { tenantId: ctx.tenantId, series: 'A' } },
+            where:  { tenantId_series: { tenantId, series: 'A' } },
             update: { lastNumber: { increment: 1 } },
-            create: { tenantId: ctx.tenantId, series: 'A', lastNumber: 1 },
+            create: { tenantId, series: 'A', lastNumber: 1 },
         });
         if (counter.lastNumber > counter.rangeEnd) {
-            throw new Error('Rango de facturación DGI agotado. Solicite nuevo rango.');
+            throw new SaleError('INVOICE_RANGE_EXHAUSTED', 422, 'Rango de facturación DGI agotado. Solicite nuevo rango.');
         }
 
         // 5b. Crear venta
-        const sale = await tx.sale.create({
+        const created = await tx.sale.create({
             data: {
-                tenantId:      ctx.tenantId,
+                tenantId,
                 total:         finalTotal.toNumber(),
                 status:        finalStatus,
                 paymentMethod,
-                customerName,
+                customerName:  customerName ?? '',
                 customerId:    customerId ?? null,
                 employeeId:    employeeId ?? null,
                 balance:       creditBalance.toNumber(),
                 dueDate,
-                shiftId:       ctx.shiftId ?? null,
+                shiftId:       shiftId ?? null,
                 globalDiscount,
                 invoiceNumber: counter.lastNumber,
                 invoiceSeries: 'A',
@@ -220,49 +205,57 @@ export async function executeSale(
         // 5c. Items + stock decrement + Kardex
         let costTotal = new Decimal(0);
         for (const item of items) {
-            const priceD = new Decimal(item.priceAtSale);
-            const costD  = new Decimal(item.costAtSale);
+            const priceD = new Decimal(item.price);
+            const costD  = new Decimal(item.costPrice ?? '0');
 
             await tx.saleItem.create({
                 data: {
-                    saleId:      sale.id,
-                    productId:   item.productId,
+                    saleId:      created.id,
+                    productId:   item.id,
                     quantity:    item.quantity,
                     priceAtSale: priceD.toNumber(),
                     costAtSale:  costD.toNumber(),
-                    discount:    item.discount,
+                    discount:    item.discount ? parseFloat(item.discount) : 0,
                 },
             });
 
             costTotal = costTotal.plus(costD.mul(item.quantity));
 
-            // Filtro tenantId para aislar al tenant
             const product = await tx.product.findFirst({
-                where:  { id: item.productId, tenantId: ctx.tenantId },
+                where:  { id: item.id, tenantId },
                 select: { id: true, stock: true },
             });
-            if (!product) continue;
+            if (!product) {
+                throw new SaleError('PRODUCT_NOT_FOUND', 404, `Producto ${item.id} no encontrado`);
+            }
 
             const stockBefore = Number(product.stock);
-            const stockAfter  = stockBefore - item.quantity;
+            if (stockBefore < item.quantity) {
+                throw new SaleError(
+                    'INSUFFICIENT_STOCK',
+                    422,
+                    `Stock insuficiente para producto ${item.id}. Disponible: ${stockBefore}`
+                );
+            }
+            const stockAfter = stockBefore - item.quantity;
 
             await tx.product.update({
-                where: { id: item.productId },
+                where: { id: item.id },
                 data:  { stock: stockAfter },
             });
 
             await tx.kardexMovement.create({
                 data: {
-                    tenantId:      ctx.tenantId,
-                    productId:     item.productId,
+                    tenantId,
+                    productId:     item.id,
                     type:          'OUT_SALE',
                     quantity:      -item.quantity,
                     stockBefore,
                     stockAfter,
-                    referenceId:   sale.id,
+                    referenceId:   created.id,
                     referenceType: 'SALE',
-                    reason:        `Venta #${sale.id.slice(0, 8)} (${source})`,
-                    userId:        ctx.userId,
+                    reason:        `Venta #${created.id.slice(0, 8)} (${source})`,
+                    userId,
                 },
             });
         }
@@ -279,9 +272,9 @@ export async function executeSale(
         try {
             await recordSale(
                 tx as Parameters<typeof recordSale>[0],
-                ctx.tenantId,
-                ctx.userId,
-                sale.id,
+                tenantId,
+                userId,
+                created.id,
                 finalTotal.toNumber(),
                 costTotal.toDecimalPlaces(2).toNumber(),
                 paymentMethod
@@ -290,14 +283,14 @@ export async function executeSale(
             console.warn('⚠️ Accounting hook failed (sale continues):', accErr);
         }
 
-        // 5f. AuditLog dentro de la transacción (inmutable, atomicidad garantizada)
+        // 5f. AuditLog dentro de la transacción (atomicidad garantizada)
         await tx.auditLog.create({
             data: {
-                tenantId: ctx.tenantId,
-                userId:   ctx.userId,
-                action:   'SALE_CREATED',
-                details:  JSON.stringify({
-                    saleId:        sale.id,
+                tenantId,
+                userId,
+                action:  'SALE_CREATED',
+                details: JSON.stringify({
+                    saleId:        created.id,
                     total:         finalTotal.toString(),
                     source,
                     itemCount:     items.length,
@@ -306,8 +299,8 @@ export async function executeSale(
             },
         });
 
-        return { saleId: sale.id, invoiceNumber: counter.lastNumber as number };
+        return created;
     });
 
-    return { saleId, total: finalTotal.toString(), invoiceNumber };
+    return sale;
 }

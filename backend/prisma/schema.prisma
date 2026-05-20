@@ -72,6 +72,10 @@ model Tenant {
   // Delivery module
   motorizados Motorizado[]
   pedidos     Pedido[]
+
+  // WhatsApp channel
+  whatsappSessions        WhatsappSession[]
+  whatsappInboundMessages WhatsappInboundMessage[]
 }
 
 model User {
@@ -96,6 +100,8 @@ model User {
   cashMovements   CashMovement[]
   employeeProfile Employee?
   loansAssigned   Loan[]           @relation("LoanCollector")
+  whatsappNumber  String?          @unique @db.VarChar(20)
+  whatsappSession WhatsappSession?
 
   @@index([tenantId])
 }
@@ -208,13 +214,13 @@ model Purchase {
 }
 
 model PurchaseItem {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   purchaseId  String
   productId   String
   productName String // Snapshot del nombre al momento de compra
   quantity    Int
-  unitCost    Decimal @db.Decimal(10, 2)
-  totalCost   Decimal @db.Decimal(10, 2)
+  unitCost    Decimal   @db.Decimal(10, 2)
+  totalCost   Decimal   @db.Decimal(10, 2)
   batchNumber String? // Número de lote ingresado en la compra
   expiryDate  DateTime? // Fecha de vencimiento ingresada en la compra
 
@@ -560,9 +566,9 @@ model KardexMovement {
   userId String
 
   // Relaciones
-  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  user    User    @relation(fields: [userId], references: [id])
+  tenant  Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id])
   batchId String?
   batch   ProductBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
 
@@ -581,13 +587,13 @@ model ProductBatch {
   id          String   @id @default(cuid())
   tenantId    String
   productId   String
-  batchNumber String   // Número de lote
+  batchNumber String // Número de lote
   expiryDate  DateTime // Fecha de vencimiento
   stock       Float    @default(0) // Stock restante del lote
   createdAt   DateTime @default(now())
 
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product         Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
   kardexMovements KardexMovement[]
 
   @@unique([productId, batchNumber])
@@ -1069,4 +1075,42 @@ model RouteExpense {
   createdAt   DateTime @default(now())
 
   shift Shift? @relation(fields: [shiftId], references: [id])
+}
+
+// ==========================================
+// 📱 CANAL WHATSAPP
+// ==========================================
+
+model WhatsappSession {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  tenantId    String
+  threadId    String? // ID del hilo conversacional del LLM
+  state       String   @default("CHAT")
+  // Estados: CHAT, PENDING_CONFIRMATION, PROCESSING, ERROR
+  pendingData Json? // Draft de venta antes de confirmar
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+}
+
+model WhatsappInboundMessage {
+  id        String   @id @default(cuid())
+  messageId String   @unique
+  // ID de Meta (wamid.xxx). Sirve como dedup key.
+  tenantId  String
+  status    String   @default("PROCESSING")
+  // Estados: PROCESSING, PROCESSED, FAILED.
+  // Default PROCESSING para que retries puedan recuperar
+  // mensajes que quedaron a medio procesar por crash.
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([createdAt]) // Para job de cleanup mensual
 }

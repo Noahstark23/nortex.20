@@ -11,6 +11,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.97.1",
+    "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^6.4.1",
     "bcryptjs": "^3.0.3",
     "browser-image-compression": "^2.0.2",

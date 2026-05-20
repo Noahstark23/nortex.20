@@ -20,7 +20,7 @@ import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados } from './services/accounting';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
-import { executeSale, SaleValidationError, SaleNotFoundError, SaleForbiddenError, SaleCreditLimitError } from './services/salesService';
+import { executeSale, SaleError } from './services/salesService';
 import Stripe from 'stripe';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -32,7 +32,6 @@ import syncRoutes from './routes/sync';
 import Decimal from 'decimal.js';
 import {
     validate,
-    CreateSaleSchema,
     CreateReturnSchema,
     CreatePaymentSchema,
     CreateCashMovementSchema,
@@ -1320,61 +1319,25 @@ app.patch('/api/employees/:id/pin', authenticate, async (req: any, res: any) => 
 // 🛒 MÓDULO DE VENTAS — delegado a salesService
 // ==========================================
 
-app.post('/api/sales', authenticate, validate(CreateSaleSchema), async (req: any, res: any) => {
+app.post('/api/sales', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-
-    // A. Verificar turno abierto (pre-condición del POS antes de llamar al servicio)
-    const currentShift = await prisma.shift.findFirst({
-        where: { userId: authReq.userId, status: 'OPEN' },
-    });
-    if (!currentShift) {
-        return res.status(400).json({ error: '🔒 CAJA CERRADA' });
-    }
-
-    // B. Mapear req.body (schema usa price/costPrice) → SaleInput (usa priceAtSale/costAtSale)
-    type ReqItem = { productId: string; quantity: number; price: string; costPrice?: string; discount?: string };
-    const body: {
-        items: ReqItem[];
-        paymentMethod: 'CASH' | 'CARD' | 'QR' | 'CREDIT' | 'TRANSFER';
-        customerId?: string;
-        customerName?: string;
-        employeeId?: string;
-        globalDiscount?: number;
-    } = req.body;
-
-    const saleInput = {
-        items: body.items.map((item: ReqItem) => ({
-            productId:   item.productId,
-            quantity:    item.quantity,
-            priceAtSale: item.price,
-            costAtSale:  item.costPrice ?? '0',
-            discount:    item.discount ? parseFloat(item.discount) : 0,
-        })),
-        paymentMethod:  body.paymentMethod,
-        customerId:     body.customerId ?? null,
-        customerName:   body.customerName ?? '',
-        employeeId:     body.employeeId ?? null,
-        globalDiscount: body.globalDiscount ?? 0,
-        source:         'POS' as const,
-    };
-
     try {
-        const { saleId } = await executeSale(
-            { tenantId: authReq.tenantId!, userId: authReq.userId!, shiftId: currentShift.id },
-            saleInput
+        const currentShift = await prisma.shift.findFirst({
+            where: { userId: authReq.userId, status: 'OPEN' },
+        });
+        const result = await executeSale(
+            authReq.tenantId!,
+            authReq.userId!,
+            currentShift?.id ?? null,
+            req.body
         );
-
-        // Devolver el registro completo para mantener la forma de respuesta anterior
-        const sale = await prisma.sale.findUnique({ where: { id: saleId } });
-        return res.json(sale);
-    } catch (err: unknown) {
-        if (err instanceof SaleValidationError)  return res.status(400).json({ error: err.message });
-        if (err instanceof SaleNotFoundError)    return res.status(404).json({ error: err.message });
-        if (err instanceof SaleForbiddenError)   return res.status(403).json({ error: err.message });
-        if (err instanceof SaleCreditLimitError) return res.status(402).json({ error: err.message });
-        const message = err instanceof Error ? err.message : 'Error procesando venta';
-        console.error('[POST /api/sales]', err);
-        return res.status(500).json({ error: message });
+        res.json(result);
+    } catch (error) {
+        if (error instanceof SaleError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
+        console.error('Error procesando venta:', error);
+        res.status(500).json({ error: 'Error procesando venta' });
     }
 });
 
