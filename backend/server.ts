@@ -3508,9 +3508,17 @@ app.post('/api/admin/tenants/:id/suspend', authenticate, requireSuperAdmin, asyn
 // POST /api/admin/tenants/:id/reactivate - Reactivar empresa
 app.post('/api/admin/tenants/:id/reactivate', authenticate, requireSuperAdmin, async (req: any, res: any) => {
     try {
+        // Extend by 30 days from now so the hourly cron doesn't immediately
+        // revert ACTIVE→PAST_DUE because subscriptionEndsAt is still in the past.
+        const newEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
         const tenant = await prisma.tenant.update({
             where: { id: req.params.id },
-            data: { subscriptionStatus: 'ACTIVE' }
+            data: {
+                subscriptionStatus:  'ACTIVE',
+                subscriptionEndsAt:  newEndsAt,
+                trialEndsAt:         null,   // clear expired trial so it doesn't re-trigger
+            }
         });
 
         // Invalidar caché (efecto inmediato)
@@ -3521,11 +3529,11 @@ app.post('/api/admin/tenants/:id/reactivate', authenticate, requireSuperAdmin, a
                 tenantId: tenant.id,
                 userId: (req as AuthRequest).userId!,
                 action: 'ADMIN_REACTIVATE',
-                details: `Empresa ${tenant.businessName} reactivada por SUPER_ADMIN`
+                details: `Empresa ${tenant.businessName} reactivada por SUPER_ADMIN. Vence: ${newEndsAt.toISOString().slice(0, 10)}`
             }
         });
 
-        res.json({ message: `${tenant.businessName} REACTIVADA.`, tenant });
+        res.json({ message: `${tenant.businessName} REACTIVADA hasta ${newEndsAt.toISOString().slice(0, 10)}.`, tenant });
     } catch (error) {
         res.status(500).json({ error: 'Error al reactivar empresa' });
     }
