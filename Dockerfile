@@ -20,7 +20,7 @@ RUN DATABASE_URL="mysql://dummy:dummy@localhost:3306/dummy" npx prisma generate 
 COPY . .
 
 # 7. Construir la aplicación (React + Backend) con límite de memoria para servidores pequeños
-RUN NODE_OPTIONS="--max-old-space-size=1536" npm run build
+RUN NODE_OPTIONS="--max-old-space-size=3072" npm run build
 
 # 8. Puerto en el que corre la app
 EXPOSE 3000
