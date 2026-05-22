@@ -1,0 +1,887 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nortex | Sistema de facturación DGI, inventario y planilla para PyMES de Nicaragua</title>
+<meta name="description" content="Software de gestión para ferreterías, farmacias y pulperías en Nicaragua. POS, inventario, facturación DGI Serie A/B y planilla Ley 185. 30 días gratis. Hecho en Managua." />
+<meta name="keywords" content="sistema facturación nicaragua, POS nicaragua, software inventario ferretería, sistema farmacia nicaragua, planilla ley 185, facturación DGI nicaragua" />
+<link rel="canonical" href="https://somosnortex.com/" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://somosnortex.com/" />
+<meta property="og:title" content="Nortex | Sistema POS y Facturación DGI para Nicaragua" />
+<meta property="og:description" content="POS, inventario, planilla y facturación DGI para PyMES de Nicaragua. 30 días gratis sin tarjeta." />
+<meta property="og:image" content="/og-image.svg" />
+<link rel="icon" type="image/svg+xml" href="/icon-192.svg" />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/landing.css" />
+<script src="/image-slot.js"></script>
+</head>
+<body>
+
+<!-- ===================== NAV ===================== -->
+<nav class="nav" data-screen-label="00 Nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top">nortex<span class="dot">.</span></a>
+    <div class="nav-links">
+      <a href="#producto">Producto</a>
+      <a href="#para">Para tu negocio</a>
+      <a href="#comparar">Comparar</a>
+      <a href="#precio">Precio</a>
+      <a href="#faq">Preguntas</a>
+      <a class="nav-whats" href="https://wa.me/50588888888?text=Hola%20Nortex%2C%20me%20gustar%C3%ADa%20ver%20una%20demo" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 14.4c-.3-.1-1.7-.8-2-.9-.3-.1-.5-.2-.7.2s-.8.9-.9 1.1c-.2.2-.3.2-.6.1s-1.3-.5-2.4-1.5c-.9-.8-1.5-1.8-1.7-2.1s0-.4.1-.6c.1-.1.3-.3.4-.5.1-.2.2-.3.3-.5.1-.2 0-.4 0-.5s-.7-1.6-.9-2.2c-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5.1 4.5.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.7-.7 2-1.4.2-.7.2-1.2.2-1.3-.1-.2-.3-.2-.6-.4zM12 2C6.5 2 2 6.5 2 12c0 1.8.5 3.5 1.3 5L2 22l5.2-1.4c1.4.8 3.1 1.2 4.8 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2z"/></svg>
+        <span>WhatsApp</span>
+      </a>
+      <a href="/register" class="nav-cta">Empezar gratis</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ===================== HERO ===================== -->
+<section class="hero" id="top" data-screen-label="01 Hero">
+  <div class="wrap">
+    <div class="hero-inner">
+
+      <div class="hero-text">
+        <div class="hero-meta">
+          <div class="eyebrow">Managua, Nicaragua</div>
+          <div class="hero-meta-line"></div>
+          <div class="eyebrow dim">Establecido MMXXIV</div>
+        </div>
+
+        <h1 class="display h-hero">
+          Tu negocio ya vende.<br/>
+          Solo le faltaba un <em>sistema serio</em>.
+        </h1>
+
+        <p class="subhead">
+          Nortex es el software de gestión para pulperías, ferreterías y farmacias en Nicaragua. Facturación DGI, inventario, planilla y cobranza — en una sola pantalla.
+        </p>
+
+        <div class="hero-ctas">
+          <a href="#producto" class="btn btn-primary">Ver el sistema</a>
+          <a href="https://wa.me/50588888888?text=Hola%20Nortex%2C%20me%20gustar%C3%ADa%20agendar%20una%20demo%20de%2015%20minutos" target="_blank" rel="noopener" class="btn btn-whatsapp">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 14.4c-.3-.1-1.7-.8-2-.9-.3-.1-.5-.2-.7.2s-.8.9-.9 1.1c-.2.2-.3.2-.6.1s-1.3-.5-2.4-1.5c-.9-.8-1.5-1.8-1.7-2.1s0-.4.1-.6c.1-.1.3-.3.4-.5.1-.2.2-.3.3-.5.1-.2 0-.4 0-.5s-.7-1.6-.9-2.2c-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5.1 4.5.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.7-.7 2-1.4.2-.7.2-1.2.2-1.3-.1-.2-.3-.2-.6-.4zM12 2C6.5 2 2 6.5 2 12c0 1.8.5 3.5 1.3 5L2 22l5.2-1.4c1.4.8 3.1 1.2 4.8 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2z"/></svg>
+            Demo por WhatsApp · 15 min
+          </a>
+        </div>
+
+        <div class="hero-foot">SIN TARJETA · INSTALACIÓN EN 2 MIN · TE ACOMPAÑAMOS EL PRIMER DÍA</div>
+      </div>
+
+      <div class="hero-product">
+        <div class="hero-product-card">
+          <div class="dash">
+            <aside class="dash-sidebar">
+              <div class="dash-brand-mini">N</div>
+              <div class="dash-nav-mini">
+                <div class="dash-icon-btn active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></div>
+                <div class="dash-icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/></svg></div>
+                <div class="dash-icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></div>
+                <div class="dash-icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-6 0v4"/><rect x="2" y="9" width="20" height="12" rx="2"/></svg></div>
+                <div class="dash-icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></div>
+              </div>
+            </aside>
+            <div class="dash-main">
+              <div class="dash-head">
+                <div>
+                  <div class="dash-title">Panel financiero</div>
+                  <div class="dash-date">VIERNES · 22 MAYO · 09:42</div>
+                </div>
+              </div>
+              <div class="kpis">
+                <div class="kpi">
+                  <div class="kpi-label">Ventas hoy</div>
+                  <div class="kpi-val">C$ 4,820</div>
+                  <div class="kpi-meta">+11.8% vs ayer</div>
+                </div>
+                <div class="kpi">
+                  <div class="kpi-label">Nortex Score</div>
+                  <div class="kpi-val blue">785</div>
+                  <div class="kpi-bar"><div style="width:92%"></div></div>
+                </div>
+                <div class="kpi dark">
+                  <div class="kpi-label">Línea disponible</div>
+                  <div class="kpi-val">$50,000</div>
+                  <div class="kpi-meta">Pre-aprobada</div>
+                </div>
+              </div>
+              <div class="chart-box">
+                <div class="chart-head">
+                  <div class="chart-title">Flujo de caja</div>
+                  <div class="chart-legend">7 DÍAS</div>
+                </div>
+                <div class="chart-svg">
+                  <svg viewBox="0 0 320 100" preserveAspectRatio="none">
+                    <line x1="0" y1="80" x2="320" y2="80" stroke="#f1f5f9" stroke-width="1"/>
+                    <line x1="0" y1="50" x2="320" y2="50" stroke="#f1f5f9" stroke-width="1"/>
+                    <rect x="10"  y="50" width="26" height="40" rx="3" fill="#3b82f6"/>
+                    <rect x="50"  y="32" width="26" height="58" rx="3" fill="#3b82f6"/>
+                    <rect x="90"  y="42" width="26" height="48" rx="3" fill="#3b82f6"/>
+                    <rect x="130" y="22" width="26" height="68" rx="3" fill="#3b82f6"/>
+                    <rect x="170" y="38" width="26" height="52" rx="3" fill="#3b82f6"/>
+                    <rect x="210" y="14" width="26" height="76" rx="3" fill="#3b82f6"/>
+                    <rect x="250" y="26" width="26" height="64" rx="3" fill="#10b981"/>
+                    <rect x="290" y="44" width="26" height="46" rx="3" fill="#cbd5e1"/>
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="hero-annotation">Aquí estás vos.</div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ===================== TRUST STRIP ===================== -->
+<section class="trust" data-screen-label="02 Trust" style="padding-top: 28px; padding-bottom: 28px;">
+  <div class="trust-inner">
+    <div class="trust-item">
+      <div class="trust-num">+15</div>
+      <div class="trust-label">Negocios facturando<br/>desde Managua, León, Granada y Estelí</div>
+    </div>
+    <div class="trust-item">
+      <div class="trust-num">C$ 2.3M</div>
+      <div class="trust-label">Procesados en el<br/>primer trimestre 2026</div>
+    </div>
+    <div class="trust-item">
+      <div class="trust-num"><span class="star">★</span> 4.8</div>
+      <div class="trust-label">Promedio de los primeros<br/>15 socios fundadores</div>
+    </div>
+    <div class="trust-item">
+      <div class="trust-num">DGI</div>
+      <div class="trust-label">Facturación computarizada<br/>autorizada por la DGI Nicaragua</div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== HOW IT WORKS ===================== -->
+<section class="how" data-screen-label="03 Cómo funciona">
+  <div class="wrap">
+    <div class="how-head">
+      <div class="eyebrow">Cómo funciona</div>
+      <h2 class="display h-section">De cero a primera factura, <em>el mismo día</em>.</h2>
+      <p class="subhead">Sin instalación. Sin esperar a que llegue un técnico. Sin tener que traerle la USB al contador.</p>
+    </div>
+
+    <div class="how-grid">
+      <div class="how-step">
+        <div class="how-step-num">i.</div>
+        <h3>Creás tu cuenta</h3>
+        <p class="body">Nombre del negocio, correo y tipo (ferretería, farmacia, pulpería, boutique o financiera). Sin tarjeta de crédito.</p>
+        <div class="how-time">90 segundos</div>
+      </div>
+      <div class="how-step">
+        <div class="how-step-num">ii.</div>
+        <h3>Cargás tus productos</h3>
+        <p class="body">Subís un Excel, sacás foto del catálogo o usás nuestra plantilla por rubro. Nosotros importamos por vos si querés.</p>
+        <div class="how-time">10 a 20 minutos</div>
+      </div>
+      <div class="how-step">
+        <div class="how-step-num">iii.</div>
+        <h3>Vendés tu primer ticket</h3>
+        <p class="body">Con factura DGI Serie A, retención correcta, ticket impreso o por WhatsApp. Mismo día.</p>
+        <div class="how-time">Antes del cierre</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PULL QUOTE ===================== -->
+<section class="quote" data-screen-label="04 Pull quote">
+  <div class="quote-inner">
+    <div class="quote-mark">“</div>
+    <p class="quote-text">Antes apuntaba todo en una libreta. Hoy la libreta sigue ahí, pero ya no la abro.</p>
+    <div class="quote-attr">
+      <image-slot id="quote-marta" shape="circle" placeholder="Foto cliente"></image-slot>
+      <div class="quote-attr-text">
+        <strong>Doña Marta Hernández</strong>
+        Pulpería La Esperanza · Masaya
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== VERTICALES ===================== -->
+<section class="verticales" id="para" data-screen-label="05 Verticales">
+  <div class="wrap">
+    <div class="verticales-head">
+      <h2 class="display h-section">Cada rubro tiene su <em>ritmo</em>.</h2>
+      <p class="subhead">Cinco rubros, un solo sistema. Mismo motor de facturación e inventario, módulos distintos según lo que vendés.</p>
+    </div>
+
+    <div class="v-grid">
+      <article class="v-card v-big">
+        <image-slot id="v-ferreteria" shape="rounded" radius="12" placeholder="Foto de una ferretería real"></image-slot>
+        <div class="v-text">
+          <div class="v-num">№ 01 · FERRETERÍA</div>
+          <h3 class="v-name">Cemento, varillas y miles de SKUs sin perder el control.</h3>
+          <p class="v-cap">Kardex inteligente, alertas antes de quedar sin stock, ventas a crédito a maestros de obra y compras automatizadas a tu mayorista.</p>
+        </div>
+      </article>
+
+      <article class="v-card v-tall">
+        <image-slot id="v-farmacia" shape="rounded" radius="12" placeholder="Foto de una farmacia real"></image-slot>
+        <div class="v-text">
+          <div class="v-num">№ 02 · FARMACIA</div>
+          <h3 class="v-name">Lotes, vencimientos y cédula del cliente.</h3>
+          <p class="v-cap">Control sanitario de cada medicamento, alertas por fecha de vencimiento y factura con cédula incorporada para tus pacientes.</p>
+        </div>
+      </article>
+
+      <article class="v-card v-med-a">
+        <image-slot id="v-pulperia" shape="rounded" radius="12" placeholder="Foto de pulpería"></image-slot>
+        <div class="v-text">
+          <div class="v-num">№ 03 · PULPERÍA</div>
+          <h3 class="v-name">Cobrá rápido. Cerrá mejor.</h3>
+          <p class="v-cap">POS optimizado para el ritmo del mostrador. Cierre de turno a prueba de robo hormiga.</p>
+        </div>
+      </article>
+
+      <article class="v-card v-med-b">
+        <image-slot id="v-boutique" shape="rounded" radius="12" placeholder="Foto de boutique"></image-slot>
+        <div class="v-text">
+          <div class="v-num">№ 04 · BOUTIQUE</div>
+          <h3 class="v-name">Variantes, tallas y catálogo en WhatsApp.</h3>
+          <p class="v-cap">Vendé en tienda y por chat con un catálogo público que se actualiza solo cuando moves stock.</p>
+        </div>
+      </article>
+
+      <article class="v-card v-med-c">
+        <image-slot id="v-financiera" shape="rounded" radius="12" placeholder="Foto cobrador en ruta"></image-slot>
+        <div class="v-text">
+          <div class="v-num">№ 05 · FINANCIERA</div>
+          <h3 class="v-name">Cartera, scoring y cobradores en ruta.</h3>
+          <p class="v-cap">App para motorizados con geolocalización de cobros, recibo digital y depósito a fin de jornada.</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== SHOWCASE TABS ===================== -->
+<section class="showcase" id="producto" data-screen-label="06 Showcase">
+  <div class="wrap">
+    <div class="showcase-head">
+      <div class="eyebrow on-shell">El producto, por dentro</div>
+      <h2 class="display h-section">Mirá <em>lo que estás comprando</em>.</h2>
+      <p class="subhead">Tres pantallas del sistema real que usan tus colegas todos los días. No screenshots editados.</p>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab-btn active" data-tab="pos" role="tab">Punto de venta</button>
+      <button class="tab-btn" data-tab="inv" role="tab">Inventario Kardex</button>
+      <button class="tab-btn" data-tab="pay" role="tab">Planilla Ley 185</button>
+    </div>
+
+    <!-- TAB 1: POS -->
+    <div class="tab-panel active" id="tab-pos">
+      <div class="tp-frame">
+        <div class="pos-screen">
+          <div class="pos-left">
+            <div class="pos-search">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input placeholder="Buscar producto, código o categoría…" value=""/>
+              <span style="font-family:var(--mono);font-size:9px;color:#94a3b8;letter-spacing:0.1em;">F2</span>
+            </div>
+            <div class="pos-cats">
+              <div class="pos-cat active">Todo</div>
+              <div class="pos-cat">Construcción</div>
+              <div class="pos-cat">Albañilería</div>
+              <div class="pos-cat">Acabados</div>
+              <div class="pos-cat">Gasfitería</div>
+              <div class="pos-cat">Herramientas</div>
+            </div>
+            <div class="pos-grid">
+              <div class="pos-prod"><div class="pos-prod-img cem"></div><div class="pos-prod-name">Cemento Sol 50kg</div><div class="pos-prod-price">C$ 28.50</div><div class="pos-prod-stock">150 EN STOCK</div></div>
+              <div class="pos-prod"><div class="pos-prod-img fie"></div><div class="pos-prod-name">Fierro 1/2" x 9m</div><div class="pos-prod-price">C$ 45.00</div><div class="pos-prod-stock">300 EN STOCK</div></div>
+              <div class="pos-prod"><div class="pos-prod-img lad"></div><div class="pos-prod-name">Ladrillo King Kong</div><div class="pos-prod-price">C$ 1.20</div><div class="pos-prod-stock">5000 EN STOCK</div></div>
+              <div class="pos-prod"><div class="pos-prod-img pin"></div><div class="pos-prod-name">Pintura Latek 1GL</div><div class="pos-prod-price">C$ 35.00</div><div class="pos-prod-stock low">8 UND · BAJO</div></div>
+              <div class="pos-prod"><div class="pos-prod-img tub"></div><div class="pos-prod-name">Tubo PVC 4"</div><div class="pos-prod-price">C$ 18.90</div><div class="pos-prod-stock">120 EN STOCK</div></div>
+              <div class="pos-prod"><div class="pos-prod-img her"></div><div class="pos-prod-name">Martillo carpintero</div><div class="pos-prod-price">C$ 25.00</div><div class="pos-prod-stock low">5 UND · BAJO</div></div>
+              <div class="pos-prod"><div class="pos-prod-img qui"></div><div class="pos-prod-name">Thinner Acrílico</div><div class="pos-prod-price">C$ 12.00</div><div class="pos-prod-stock">40 EN STOCK</div></div>
+              <div class="pos-prod"><div class="pos-prod-img var"></div><div class="pos-prod-name">Varilla 3/8"</div><div class="pos-prod-price">C$ 210.00</div><div class="pos-prod-stock">85 EN STOCK</div></div>
+            </div>
+          </div>
+          <div class="pos-right">
+            <div class="pos-cart-head">
+              <h4>Carrito</h4>
+              <span class="tk">TICKET 00482</span>
+            </div>
+            <div class="pos-cart-items">
+              <div class="pos-cart-row"><div class="pos-qty">2</div><div><div class="pos-row-name">Cemento Sol 50kg</div><div class="pos-row-sku">CEM-001</div></div><div class="pos-row-price">C$ 57.00</div></div>
+              <div class="pos-cart-row"><div class="pos-qty">1</div><div><div class="pos-row-name">Pintura Latek 1GL</div><div class="pos-row-sku">PIN-004</div></div><div class="pos-row-price">C$ 35.00</div></div>
+              <div class="pos-cart-row"><div class="pos-qty">3</div><div><div class="pos-row-name">Tubo PVC 4"</div><div class="pos-row-sku">TUB-005</div></div><div class="pos-row-price">C$ 56.70</div></div>
+              <div class="pos-cart-row"><div class="pos-qty">1</div><div><div class="pos-row-name">Martillo carpintero</div><div class="pos-row-sku">HER-006</div></div><div class="pos-row-price">C$ 25.00</div></div>
+            </div>
+            <div class="pos-totals">
+              <div class="pos-total-row"><span>Subtotal</span><span>C$ 151.91</span></div>
+              <div class="pos-total-row"><span>IVA 15%</span><span>C$ 22.79</span></div>
+              <div class="pos-total-row total"><span>Total</span><span>C$ 174.70</span></div>
+            </div>
+            <div class="pos-pay">COBRAR Y FACTURAR · F12</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: INVENTORY -->
+    <div class="tab-panel" id="tab-inv">
+      <div class="tp-frame">
+        <div class="inv-screen">
+          <div class="inv-head">
+            <div>
+              <h4>Inventario · Kardex</h4>
+              <div style="font-family:var(--mono);font-size:10px;color:#94a3b8;letter-spacing:0.1em;margin-top:4px;text-transform:uppercase;">Ferretería El Tornillo · Granada</div>
+            </div>
+            <div class="meta">214 SKUS · ACTUALIZADO 09:42</div>
+          </div>
+
+          <div class="inv-stat-row">
+            <div class="inv-stat"><div class="inv-stat-label">SKUs activos</div><div class="inv-stat-val">214</div></div>
+            <div class="inv-stat"><div class="inv-stat-label">Valor del stock</div><div class="inv-stat-val">C$ 184,520</div></div>
+            <div class="inv-stat warn"><div class="inv-stat-label">Stock bajo</div><div class="inv-stat-val">12</div></div>
+            <div class="inv-stat danger"><div class="inv-stat-label">Quebrados</div><div class="inv-stat-val">3</div></div>
+          </div>
+
+          <div class="inv-table">
+            <div class="inv-table-head">
+              <div>Producto</div>
+              <div>SKU</div>
+              <div>Stock</div>
+              <div class="h-cost">Costo</div>
+              <div class="h-status">Estado</div>
+            </div>
+            <div class="inv-table-row">
+              <div class="inv-prod"><div class="inv-prod-img" style="background:linear-gradient(135deg,#cbd5e1,#94a3b8);"></div><div><div class="inv-prod-name">Cemento Sol 50kg</div><div class="inv-prod-sku">Construcción</div></div></div>
+              <div style="font-family:var(--mono);font-size:11px;">CEM-001</div>
+              <div><div style="font-weight:600;">150</div><div class="inv-stock-bar" style="margin-top:4px;"><div style="width:75%"></div></div></div>
+              <div class="c-cost" style="font-variant-numeric:tabular-nums;">C$ 24.00</div>
+              <div class="c-status"><span class="inv-badge ok">OK</span></div>
+            </div>
+            <div class="inv-table-row">
+              <div class="inv-prod"><div class="inv-prod-img" style="background:linear-gradient(135deg,#fcd34d,#f59e0b);"></div><div><div class="inv-prod-name">Fierro 1/2" x 9m</div><div class="inv-prod-sku">Construcción</div></div></div>
+              <div style="font-family:var(--mono);font-size:11px;">FIE-002</div>
+              <div><div style="font-weight:600;">300</div><div class="inv-stock-bar" style="margin-top:4px;"><div style="width:90%"></div></div></div>
+              <div class="c-cost" style="font-variant-numeric:tabular-nums;">C$ 38.50</div>
+              <div class="c-status"><span class="inv-badge ok">OK</span></div>
+            </div>
+            <div class="inv-table-row">
+              <div class="inv-prod"><div class="inv-prod-img" style="background:linear-gradient(135deg,#fca5a5,#ef4444);"></div><div><div class="inv-prod-name">Ladrillo King Kong</div><div class="inv-prod-sku">Albañilería</div></div></div>
+              <div style="font-family:var(--mono);font-size:11px;">LAD-003</div>
+              <div><div style="font-weight:600;">5,000</div><div class="inv-stock-bar" style="margin-top:4px;"><div style="width:100%"></div></div></div>
+              <div class="c-cost" style="font-variant-numeric:tabular-nums;">C$ 0.80</div>
+              <div class="c-status"><span class="inv-badge ok">OK</span></div>
+            </div>
+            <div class="inv-table-row">
+              <div class="inv-prod"><div class="inv-prod-img" style="background:linear-gradient(135deg,#fed7aa,#fb923c);"></div><div><div class="inv-prod-name">Pintura Latek 1GL</div><div class="inv-prod-sku">Acabados</div></div></div>
+              <div style="font-family:var(--mono);font-size:11px;">PIN-004</div>
+              <div><div style="font-weight:600;color:#d97706;">8</div><div class="inv-stock-bar warn" style="margin-top:4px;"><div style="width:16%"></div></div></div>
+              <div class="c-cost" style="font-variant-numeric:tabular-nums;">C$ 22.00</div>
+              <div class="c-status"><span class="inv-badge low">BAJO</span></div>
+            </div>
+            <div class="inv-table-row">
+              <div class="inv-prod"><div class="inv-prod-img" style="background:linear-gradient(135deg,#c7d2fe,#818cf8);"></div><div><div class="inv-prod-name">Tubo PVC 4"</div><div class="inv-prod-sku">Gasfitería</div></div></div>
+              <div style="font-family:var(--mono);font-size:11px;">TUB-005</div>
+              <div><div style="font-weight:600;">120</div><div class="inv-stock-bar" style="margin-top:4px;"><div style="width:60%"></div></div></div>
+              <div class="c-cost" style="font-variant-numeric:tabular-nums;">C$ 12.50</div>
+              <div class="c-status"><span class="inv-badge ok">OK</span></div>
+            </div>
+            <div class="inv-table-row">
+              <div class="inv-prod"><div class="inv-prod-img" style="background:linear-gradient(135deg,#d6d3d1,#78716c);"></div><div><div class="inv-prod-name">Martillo carpintero</div><div class="inv-prod-sku">Herramientas</div></div></div>
+              <div style="font-family:var(--mono);font-size:11px;">HER-006</div>
+              <div><div style="font-weight:600;color:#dc2626;">0</div><div class="inv-stock-bar danger" style="margin-top:4px;"><div style="width:0%"></div></div></div>
+              <div class="c-cost" style="font-variant-numeric:tabular-nums;">C$ 15.00</div>
+              <div class="c-status"><span class="inv-badge out">QUEBRADO</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: PLANILLA -->
+    <div class="tab-panel" id="tab-pay">
+      <div class="tp-frame">
+        <div class="pay-screen">
+          <div class="pay-head">
+            <div>
+              <h4>Planilla · Quincena 16-31 Mayo</h4>
+              <div style="font-family:var(--mono);font-size:10px;color:#94a3b8;letter-spacing:0.1em;margin-top:4px;text-transform:uppercase;">Ferretería El Tornillo · Ley 185 · INSS Patronal</div>
+            </div>
+            <div class="meta">7 EMPLEADOS · GENERADO 22 MAY</div>
+          </div>
+
+          <div class="pay-summary">
+            <div><div class="pay-summary-l">Total bruto</div><div class="pay-summary-v">C$ 84,500 <small>· quincena</small></div></div>
+            <div><div class="pay-summary-l">INSS 7% empleados</div><div class="pay-summary-v">C$ 5,915 <small>· retenido</small></div></div>
+            <div><div class="pay-summary-l">INSS patronal 22%</div><div class="pay-summary-v">C$ 18,590 <small>· a pagar</small></div></div>
+          </div>
+
+          <div class="pay-rows">
+            <div class="pay-row head">
+              <div></div>
+              <div>Empleado</div>
+              <div>Base</div>
+              <div class="h-comm">Comisión</div>
+              <div class="h-inss">INSS</div>
+              <div>Neto</div>
+              <div class="h-check"></div>
+            </div>
+            <div class="pay-row">
+              <div class="pay-avatar">CS</div>
+              <div><div class="pay-name">Carlos Salinas</div><div class="pay-role">MANAGER</div></div>
+              <div class="pay-amt">C$ 18,000</div>
+              <div class="pay-amt c-comm green">+ C$ 2,400</div>
+              <div class="pay-amt c-inss red">− C$ 1,260</div>
+              <div class="pay-amt total">C$ 19,140</div>
+              <div class="c-check"><div class="pay-check">✓</div></div>
+            </div>
+            <div class="pay-row">
+              <div class="pay-avatar" style="background:linear-gradient(135deg,#fb923c,#ea580c);">RM</div>
+              <div><div class="pay-name">Rosa Mendoza</div><div class="pay-role">VENDEDORA</div></div>
+              <div class="pay-amt">C$ 12,500</div>
+              <div class="pay-amt c-comm green">+ C$ 1,850</div>
+              <div class="pay-amt c-inss red">− C$ 875</div>
+              <div class="pay-amt total">C$ 13,475</div>
+              <div class="c-check"><div class="pay-check">✓</div></div>
+            </div>
+            <div class="pay-row">
+              <div class="pay-avatar" style="background:linear-gradient(135deg,#60a5fa,#2563eb);">JP</div>
+              <div><div class="pay-name">Jorge Pineda</div><div class="pay-role">VENDEDOR</div></div>
+              <div class="pay-amt">C$ 11,000</div>
+              <div class="pay-amt c-comm green">+ C$ 1,420</div>
+              <div class="pay-amt c-inss red">− C$ 770</div>
+              <div class="pay-amt total">C$ 11,650</div>
+              <div class="c-check"><div class="pay-check">✓</div></div>
+            </div>
+            <div class="pay-row">
+              <div class="pay-avatar" style="background:linear-gradient(135deg,#34d399,#059669);">AM</div>
+              <div><div class="pay-name">Alma Martínez</div><div class="pay-role">BODEGA</div></div>
+              <div class="pay-amt">C$ 9,500</div>
+              <div class="pay-amt c-comm green">— —</div>
+              <div class="pay-amt c-inss red">− C$ 665</div>
+              <div class="pay-amt total">C$ 8,835</div>
+              <div class="c-check"><div class="pay-check">✓</div></div>
+            </div>
+            <div class="pay-row">
+              <div class="pay-avatar" style="background:linear-gradient(135deg,#f472b6,#db2777);">LH</div>
+              <div><div class="pay-name">Lucía Hernández</div><div class="pay-role">CAJERA</div></div>
+              <div class="pay-amt">C$ 10,000</div>
+              <div class="pay-amt c-comm green">+ C$ 950</div>
+              <div class="pay-amt c-inss red">− C$ 700</div>
+              <div class="pay-amt total">C$ 10,250</div>
+              <div class="c-check"><div class="pay-check">✓</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== COMPARISON ===================== -->
+<section class="compare" id="comparar" data-screen-label="07 Comparación">
+  <div class="wrap">
+    <div class="compare-head">
+      <div class="eyebrow">Comparación honesta</div>
+      <h2 class="display h-section">Nortex vs <em>cómo lo hacés hoy</em>.</h2>
+      <p class="subhead">La libreta funciona. Mónica funciona. Excel funciona. Hasta que tu negocio crece y dejan de funcionar.</p>
+    </div>
+
+    <div class="compare-table">
+      <div class="compare-row head">
+        <div></div>
+        <div class="col-nortex">Nortex</div>
+        <div class="col-monica">Mónica</div>
+        <div class="col-excel">Excel / Libreta</div>
+        <div class="col-pirata">Sistema pirata</div>
+      </div>
+
+      <div class="compare-row">
+        <div class="compare-feat">Facturación DGI Serie A/B<span>Autorización integrada al ticket</span></div>
+        <div class="compare-cell"><span class="compare-yes"><span class="compare-mark yes">✓</span> Sí</span></div>
+        <div class="compare-cell col-monica"><span class="compare-partial"><span class="compare-mark partial">~</span> Parcial</span></div>
+        <div class="compare-cell col-excel"><span class="compare-no"><span class="compare-mark no">✕</span> No</span></div>
+        <div class="compare-cell col-pirata"><span class="compare-partial"><span class="compare-mark partial">~</span> Sin auth.</span></div>
+      </div>
+
+      <div class="compare-row">
+        <div class="compare-feat">Planilla Ley 185 + INSS<span>Aguinaldo, vacaciones e INSS patronal</span></div>
+        <div class="compare-cell"><span class="compare-yes"><span class="compare-mark yes">✓</span> Sí</span></div>
+        <div class="compare-cell col-monica"><span class="compare-partial"><span class="compare-mark partial">~</span> Módulo extra</span></div>
+        <div class="compare-cell col-excel"><span class="compare-no"><span class="compare-mark no">✕</span> Manual</span></div>
+        <div class="compare-cell col-pirata"><span class="compare-no"><span class="compare-mark no">✕</span> No</span></div>
+      </div>
+
+      <div class="compare-row">
+        <div class="compare-feat">Cierre de caja a prueba de robo<span>Cierre ciego antes de ver el esperado</span></div>
+        <div class="compare-cell"><span class="compare-yes"><span class="compare-mark yes">✓</span> Sí</span></div>
+        <div class="compare-cell col-monica"><span class="compare-no"><span class="compare-mark no">✕</span> No</span></div>
+        <div class="compare-cell col-excel"><span class="compare-no"><span class="compare-mark no">✕</span> No</span></div>
+        <div class="compare-cell col-pirata"><span class="compare-no"><span class="compare-mark no">✕</span> No</span></div>
+      </div>
+
+      <div class="compare-row">
+        <div class="compare-feat">Catálogo público + WhatsApp<span>Para vender por chat sin moverte</span></div>
+        <div class="compare-cell"><span class="compare-yes"><span class="compare-mark yes">✓</span> Sí</span></div>
+        <div class="compare-cell col-monica"><span class="compare-no"><span class="compare-mark no">✕</span> No</span></div>
+        <div class="compare-cell col-excel"><span class="compare-no"><span class="compare-mark no">✕</span> No</span></div>
+        <div class="compare-cell col-pirata"><span class="compare-no"><span class="compare-mark no">✕</span> No</span></div>
+      </div>
+
+      <div class="compare-row">
+        <div class="compare-feat">Línea de crédito de capital<span>Pre-aprobada según tu facturación</span></div>
+        <div class="compare-cell"><span class="compare-yes"><span class="compare-mark yes">✓</span> Sí</span></div>
+        <div class="compare-cell col-monica"><span class="compare-no"><span class="compare-mark no">✕</span> No</span></div>
+        <div class="compare-cell col-excel"><span class="compare-no"><span class="compare-mark no">✕</span> No</span></div>
+        <div class="compare-cell col-pirata"><span class="compare-no"><span class="compare-mark no">✕</span> No</span></div>
+      </div>
+
+      <div class="compare-row">
+        <div class="compare-feat">Soporte por WhatsApp en español<span>Desde Managua, no desde un call center en Filipinas</span></div>
+        <div class="compare-cell"><span class="compare-yes"><span class="compare-mark yes">✓</span> Sí</span></div>
+        <div class="compare-cell col-monica"><span class="compare-partial"><span class="compare-mark partial">~</span> Por correo</span></div>
+        <div class="compare-cell col-excel"><span class="compare-no"><span class="compare-mark no">✕</span> N/A</span></div>
+        <div class="compare-cell col-pirata"><span class="compare-no"><span class="compare-mark no">✕</span> Ninguno</span></div>
+      </div>
+
+      <div class="compare-row">
+        <div class="compare-feat">Costo mensual<span>Lo que pagás al final del mes</span></div>
+        <div class="compare-cell"><strong style="color:var(--accent);">$20 USD</strong></div>
+        <div class="compare-cell col-monica">~$45 USD</div>
+        <div class="compare-cell col-excel">Gratis*</div>
+        <div class="compare-cell col-pirata">Multas DGI</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FOUNDERS BANNER ===================== -->
+<section class="founders-banner" data-screen-label="08 Founders banner">
+  <div class="founders-inner">
+    <div class="founders-text">
+      <div class="eyebrow">Oferta de lanzamiento</div>
+      <h2>Socios <em>fundadores</em>. Tres meses gratis.</h2>
+      <p class="subhead">Buscamos a los próximos 10 negocios que quieran ser nuestros socios fundadores. A cambio de un testimonio en video, tres meses sin pagar y atención directa de nuestro equipo.</p>
+      <a href="https://wa.me/50588888888?text=Hola%20Nortex%2C%20me%20interesa%20ser%20socio%20fundador" target="_blank" rel="noopener" class="founders-cta">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 14.4c-.3-.1-1.7-.8-2-.9-.3-.1-.5-.2-.7.2s-.8.9-.9 1.1c-.2.2-.3.2-.6.1s-1.3-.5-2.4-1.5c-.9-.8-1.5-1.8-1.7-2.1s0-.4.1-.6c.1-.1.3-.3.4-.5.1-.2.2-.3.3-.5.1-.2 0-.4 0-.5s-.7-1.6-.9-2.2c-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5.1 4.5.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.7-.7 2-1.4.2-.7.2-1.2.2-1.3-.1-.2-.3-.2-.6-.4zM12 2C6.5 2 2 6.5 2 12c0 1.8.5 3.5 1.3 5L2 22l5.2-1.4c1.4.8 3.1 1.2 4.8 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2z"/></svg>
+        Hablemos por WhatsApp
+      </a>
+      <div class="founders-counter">QUEDAN <strong>4 LUGARES</strong> · ACTUALIZADO HOY</div>
+    </div>
+
+    <div class="founders-card">
+      <div class="founders-stat"><em>10</em> negocios</div>
+      <div class="founders-label">Los primeros que firmen entran al programa</div>
+      <ul class="founders-list">
+        <li>Tres meses sin pagar (después $20/mes regular).</li>
+        <li>Carga de productos hecha por nuestro equipo.</li>
+        <li>Onboarding presencial si estás en Managua, Granada, León o Estelí.</li>
+        <li>Línea directa con el fundador para reportar problemas.</li>
+        <li>Logo en nuestra página de socios.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== TESTIMONIALS ===================== -->
+<section class="testimonials" data-screen-label="09 Testimonials">
+  <div class="wrap">
+    <div class="testimonials-head">
+      <h2 class="display h-section">No nos creas a nosotros.</h2>
+      <p class="subhead">Tres negocios entre Managua, Granada y Estelí. Tres historias distintas. El mismo cierre de caja al fin del día.</p>
+    </div>
+    <div class="t-grid">
+      <article class="t-card">
+        <p class="t-quote">“Mi contador me llamó el primer mes para preguntarme cómo le hice. Le dije: ‘ya no te necesito tanto’.”</p>
+        <div class="t-attr">
+          <image-slot id="t-carlos" shape="circle" placeholder="Foto cliente"></image-slot>
+          <div class="t-attr-text">
+            <strong>Carlos Salinas</strong>
+            Ferretería El Tornillo · Granada
+          </div>
+        </div>
+      </article>
+      <article class="t-card">
+        <p class="t-quote">“Mi caja cuadraba o no cuadraba. Hoy cuadra. Eso vale los $20 por sí solo.”</p>
+        <div class="t-attr">
+          <image-slot id="t-rosa" shape="circle" placeholder="Foto cliente"></image-slot>
+          <div class="t-attr-text">
+            <strong>Rosa Mendoza</strong>
+            Farmacia La Salud · Managua
+          </div>
+        </div>
+      </article>
+      <article class="t-card">
+        <p class="t-quote">“Pedí mi primer desembolso un viernes. El lunes ya tenía el pedido de Holcim en la bodega.”</p>
+        <div class="t-attr">
+          <image-slot id="t-jorge" shape="circle" placeholder="Foto cliente"></image-slot>
+          <div class="t-attr-text">
+            <strong>Jorge Pineda</strong>
+            Materiales del Norte · Estelí
+          </div>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== COMPLIANCE ===================== -->
+<section class="compliance" data-screen-label="10 Compliance">
+  <div class="wrap">
+    <div class="comp-inner">
+      <div class="comp-text">
+        <div class="eyebrow warm">Cumplimiento</div>
+        <h2 class="display h-section">Hecho para la ley nicaragüense.</h2>
+        <p class="subhead">No para Silicon Valley, no para San José, no para Miami. Pensado en Managua, con normativas locales metidas en cada cálculo.</p>
+      </div>
+      <div class="comp-list">
+        <div class="comp-row">
+          <div class="comp-num">i.</div>
+          <div>
+            <strong>Facturación DGI</strong>
+            <div class="body">Series A y B, computarizada, con autorización integrada al pie del ticket.</div>
+          </div>
+          <div class="comp-tag">DGI · NI</div>
+        </div>
+        <div class="comp-row">
+          <div class="comp-num">ii.</div>
+          <div>
+            <strong>IVA 15% y retenciones IR</strong>
+            <div class="body">Cálculo automático en cada venta y cada compra. Sin tablas paralelas.</div>
+          </div>
+          <div class="comp-tag">IVA 15%</div>
+        </div>
+        <div class="comp-row">
+          <div class="comp-num">iii.</div>
+          <div>
+            <strong>Ley 185 e INSS patronal</strong>
+            <div class="body">Planilla, aguinaldo y vacaciones según el Código del Trabajo nicaragüense.</div>
+          </div>
+          <div class="comp-tag">LEY 185</div>
+        </div>
+        <div class="comp-row">
+          <div class="comp-num">iv.</div>
+          <div>
+            <strong>NIIF para PyMES</strong>
+            <div class="body">Reportes financieros que tu contador puede entregar tal cual.</div>
+          </div>
+          <div class="comp-tag">NIIF</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PRICING ===================== -->
+<section class="pricing" id="precio" data-screen-label="11 Precio">
+  <div class="wrap">
+    <div class="pricing-inner">
+      <div class="pricing-text">
+        <div class="eyebrow">Precio</div>
+        <h2 class="display h-section" style="margin-top:14px;">Un solo plan. Todo dentro.</h2>
+        <p class="subhead">Sin tiers, sin módulos premium, sin cobros por usuario. Lo que ves abajo, eso pagás. Lo que no ves, ya está incluido.</p>
+        <p class="small" style="margin-top:24px;">¿Tu negocio es muy grande para un plan único? <a href="https://wa.me/50588888888?text=Hola%20Nortex%2C%20mi%20negocio%20necesita%20plan%20enterprise" style="color:var(--accent);">Hablemos por WhatsApp →</a></p>
+      </div>
+
+      <div class="price-card">
+        <div class="eyebrow">Plan Pro · mensual</div>
+        <span class="price-trial">30 DÍAS GRATIS</span>
+        <div class="price-value">
+          <span class="amt">$20</span>
+          <span class="per">/ mes USD</span>
+        </div>
+        <ul class="price-bullets">
+          <li>POS, inventario, facturación DGI y cobranza.</li>
+          <li>Planilla, RRHH e INSS según Ley 185.</li>
+          <li>Catálogo público y entregas en ruta.</li>
+          <li>Acceso a Nortex Capital con tu Score.</li>
+          <li>Usuarios y sucursales sin límite.</li>
+          <li>Soporte WhatsApp en español, hora Nicaragua.</li>
+        </ul>
+        <a href="/register" class="price-cta">Empezar prueba gratis</a>
+        <div class="price-note">NO SE COBRA HASTA EL DÍA 31 · CANCELÁS CUANDO QUERÁS</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FAQ ===================== -->
+<section class="faq" id="faq" data-screen-label="12 FAQ">
+  <div class="wrap">
+    <div class="faq-inner">
+      <div class="faq-head">
+        <div class="eyebrow">Preguntas frecuentes</div>
+        <h2 class="display h-section">Lo que <em>siempre</em> nos preguntan.</h2>
+        <p class="subhead">Si tu pregunta no está acá, escribínos por WhatsApp y te respondemos el mismo día.</p>
+        <div class="small">
+          <strong style="color:var(--ink);display:block;margin-bottom:4px;">¿Querés hablar con alguien?</strong>
+          <a href="https://wa.me/50588888888" style="color:var(--whatsapp-2);font-weight:600;">+505 8888-8888 ·  WhatsApp</a>
+        </div>
+      </div>
+
+      <div class="faq-list">
+        <details class="faq-item" open>
+          <summary class="faq-q">¿Mi negocio es muy pequeño para Nortex?</summary>
+          <div class="faq-a">No existe negocio "muy pequeño" para Nortex. Lo usan desde pulperías de una persona hasta ferreterías con 4 sucursales. Si vendés más de 5 productos al día, Nortex te paga solo en tiempo ahorrado.</div>
+        </details>
+        <details class="faq-item">
+          <summary class="faq-q">¿La facturación DGI ya está aprobada o me toca tramitarla?</summary>
+          <div class="faq-a">Nortex emite facturación computarizada. Vos tramitás tu propia resolución DGI (te ayudamos a hacerlo si querés) y nosotros la metemos al pie de cada ticket. Una vez configurado, no volvés a tocarlo.</div>
+        </details>
+        <details class="faq-item">
+          <summary class="faq-q">Funciona si se me cae el internet?</summary>
+          <div class="faq-a">Sí. El POS guarda las ventas localmente y las sincroniza cuando vuelve el internet. Podés seguir cobrando, facturando e imprimiendo tickets sin conexión.</div>
+        </details>
+        <details class="faq-item">
+          <summary class="faq-q">¿Tengo que comprar computadora o impresora especial?</summary>
+          <div class="faq-a">No. Funciona en cualquier laptop, tablet o celular con un navegador. Soporta impresoras térmicas de 80mm comunes y también A4 si imprimís en papel oficio.</div>
+        </details>
+        <details class="faq-item">
+          <summary class="faq-q">¿Cómo migro mi data desde Excel, Mónica o mi cuaderno?</summary>
+          <div class="faq-a">Si sos socio fundador (los primeros 10), nuestro equipo importa tu catálogo y clientes por vos. Si no, te damos una plantilla Excel para que subas todo en un solo archivo. Toma 10-20 minutos.</div>
+        </details>
+        <details class="faq-item">
+          <summary class="faq-q">¿Qué pasa si decido cancelar?</summary>
+          <div class="faq-a">Cancelás desde tu panel, sin llamarnos ni firmar nada. Te exportamos todo tu inventario, ventas y clientes en Excel. No hay penalidades ni "carry-over fees".</div>
+        </details>
+        <details class="faq-item">
+          <summary class="faq-q">¿Quién está atrás de Nortex?</summary>
+          <div class="faq-a">Nortex es construido en Managua por un equipo nicaragüense. No somos un sistema importado y traducido — somos dueños de negocios que se cansaron de no encontrar software diseñado para Nicaragua.</div>
+        </details>
+        <details class="faq-item">
+          <summary class="faq-q">¿Cobran por usuario o por sucursal?</summary>
+          <div class="faq-a">No. $20/mes, todos los usuarios que quieras, todas las sucursales que tengas. Si necesitás más de 5 sucursales hablémoslo directamente.</div>
+        </details>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FOUNDER NOTE ===================== -->
+<section class="founder" data-screen-label="13 Founder note">
+  <div class="founder-inner">
+    <image-slot id="founder-photo" shape="rounded" radius="12" placeholder="Foto del fundador"></image-slot>
+    <div class="founder-letter">
+      <div class="eyebrow">Una nota del fundador</div>
+      <h3>Crecí entre las pulperías y ferreterías de mi familia. <em>Sé cómo se siente</em> cerrar caja a las nueve de la noche con un cuaderno y una calculadora.</h3>
+      <p>Nortex no es un sistema importado y traducido. Lo construimos en Managua, mirando cómo trabajan los negocios de aquí — el crédito al maestro de obra, el cliente que llega faltando diez minutos para cerrar, la planilla que hay que pagar el jueves haya o no haya cuadrado la caja.</p>
+      <p>Si te animás a probarlo, te prometo dos cosas: nadie te va a llamar para venderte un upgrade, y si algo no funciona como esperás, vas a poder escribirme directo.</p>
+      <div class="founder-sig">— Noel Pineda</div>
+      <div class="founder-name">
+        <strong>Noel Pineda</strong>
+        Fundador · Nortex Inc.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FINAL CTA ===================== -->
+<section class="final" data-screen-label="14 CTA final">
+  <div class="final-inner">
+    <div>
+      <div class="eyebrow on-shell">Empezá hoy</div>
+      <h2 class="display h-section" style="margin-top:16px;">El próximo ticket que cobrés, <em>que sea con Nortex</em>.</h2>
+    </div>
+    <div class="final-side">
+      <p class="body" style="color:var(--on-shell-2);">Empezá la prueba en 2 minutos. O hablemos primero por WhatsApp y agendemos una demo en vivo de 15 minutos.</p>
+      <div class="final-ctas">
+        <a href="https://wa.me/50588888888?text=Hola%20Nortex%2C%20me%20gustar%C3%ADa%20una%20demo" target="_blank" rel="noopener" class="btn btn-whatsapp">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 14.4c-.3-.1-1.7-.8-2-.9-.3-.1-.5-.2-.7.2s-.8.9-.9 1.1c-.2.2-.3.2-.6.1s-1.3-.5-2.4-1.5c-.9-.8-1.5-1.8-1.7-2.1s0-.4.1-.6c.1-.1.3-.3.4-.5.1-.2.2-.3.3-.5.1-.2 0-.4 0-.5s-.7-1.6-.9-2.2c-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5.1 4.5.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.7-.7 2-1.4.2-.7.2-1.2.2-1.3-.1-.2-.3-.2-.6-.4zM12 2C6.5 2 2 6.5 2 12c0 1.8.5 3.5 1.3 5L2 22l5.2-1.4c1.4.8 3.1 1.2 4.8 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2z"/></svg>
+          Hablar por WhatsApp
+        </a>
+        <a href="/register" class="btn-link">Empezar prueba <span class="arrow">→</span></a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FOOTER ===================== -->
+<footer class="footer" data-screen-label="15 Footer">
+  <div class="footer-grid">
+    <div class="footer-brand-block">
+      <a class="brand" href="#top">nortex<span class="dot">.</span></a>
+      <p class="footer-tag">El sistema operativo financiero para PyMES centroamericanas. Construido en Managua.</p>
+      <div class="footer-contact">
+        <a href="https://wa.me/50588888888" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 14.4c-.3-.1-1.7-.8-2-.9-.3-.1-.5-.2-.7.2s-.8.9-.9 1.1c-.2.2-.3.2-.6.1s-1.3-.5-2.4-1.5c-.9-.8-1.5-1.8-1.7-2.1s0-.4.1-.6c.1-.1.3-.3.4-.5.1-.2.2-.3.3-.5.1-.2 0-.4 0-.5s-.7-1.6-.9-2.2c-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5.1 4.5.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.7-.7 2-1.4.2-.7.2-1.2.2-1.3-.1-.2-.3-.2-.6-.4zM12 2C6.5 2 2 6.5 2 12c0 1.8.5 3.5 1.3 5L2 22l5.2-1.4c1.4.8 3.1 1.2 4.8 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2z"/></svg>
+          +505 8888-8888
+        </a>
+        <a href="mailto:hola@somosnortex.com">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          hola@somosnortex.com
+        </a>
+      </div>
+    </div>
+    <div class="footer-col">
+      <h4>Producto</h4>
+      <ul>
+        <li><a href="#producto">Ver el sistema</a></li>
+        <li><a href="#para">Para tu rubro</a></li>
+        <li><a href="#comparar">Comparar</a></li>
+        <li><a href="#precio">Precio</a></li>
+      </ul>
+    </div>
+    <div class="footer-col">
+      <h4>Verticales</h4>
+      <ul>
+        <li><a href="/ferreterias">Ferreterías</a></li>
+        <li><a href="/farmacias">Farmacias</a></li>
+        <li><a href="/pulperias">Pulperías</a></li>
+        <li><a href="/boutiques">Boutiques</a></li>
+      </ul>
+    </div>
+    <div class="footer-col">
+      <h4>Recursos</h4>
+      <ul>
+        <li><a href="/blog">Blog</a></li>
+        <li><a href="/blog/facturacion-dgi-nicaragua">Guía DGI 2026</a></li>
+        <li><a href="/blog/planilla-ley-185">Guía Ley 185</a></li>
+        <li><a href="/privacy">Privacidad</a></li>
+        <li><a href="/terms">Términos</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="footer-legal">
+    <span>© MMXXVI · NORTEX INC. · MANAGUA, NI</span>
+    <span>SOMOSNORTEX.COM</span>
+  </div>
+</footer>
+
+<!-- ===================== WHATSAPP FLOATING ===================== -->
+<a class="wa-float" href="https://wa.me/50588888888?text=Hola%20Nortex%2C%20tengo%20una%20pregunta" target="_blank" rel="noopener" aria-label="Hablar por WhatsApp">
+  <span class="wa-pulse"></span>
+  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.5 14.4c-.3-.1-1.7-.8-2-.9-.3-.1-.5-.2-.7.2s-.8.9-.9 1.1c-.2.2-.3.2-.6.1s-1.3-.5-2.4-1.5c-.9-.8-1.5-1.8-1.7-2.1s0-.4.1-.6c.1-.1.3-.3.4-.5.1-.2.2-.3.3-.5.1-.2 0-.4 0-.5s-.7-1.6-.9-2.2c-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5.1 4.5.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.7-.7 2-1.4.2-.7.2-1.2.2-1.3-.1-.2-.3-.2-.6-.4zM12 2C6.5 2 2 6.5 2 12c0 1.8.5 3.5 1.3 5L2 22l5.2-1.4c1.4.8 3.1 1.2 4.8 1.2 5.5 0 10-4.5 10-10S17.5 2 12 2z"/></svg>
+  <span class="wa-label">¿Hablamos?</span>
+</a>
+
+<!-- ===================== TABS JS ===================== -->
+<script>
+(function() {
+  const tabs = document.querySelectorAll('.tab-btn');
+  const panels = document.querySelectorAll('.tab-panel');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const target = tab.getAttribute('data-tab');
+      tabs.forEach(t => t.classList.toggle('active', t === tab));
+      panels.forEach(p => p.classList.toggle('active', p.id === 'tab-' + target));
+    });
+  });
+})();
+</script>
+
+<!-- ===================== SCROLL REVEAL JS ===================== -->
+<script>
+(function() {
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); } });
+  }, { threshold: 0.1 });
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+})();
+</script>
+</body>
+</html>

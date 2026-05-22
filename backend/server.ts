@@ -5396,6 +5396,12 @@ const isProduction = process.env.NODE_ENV === 'production';
 if (isProduction) {
     const distPath = path.join(__dirname, '../dist');
 
+    // Landing page en la raíz — tiene prioridad sobre el SPA
+    app.get('/', (req: any, res: any) => {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.sendFile(path.join(distPath, 'landing.html'));
+    });
+
     // Assets con hash (JS/CSS) → cache agresivo 1 año
     app.use('/assets', express.static(path.join(distPath, 'assets'), {
         maxAge: '1y',
