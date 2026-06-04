@@ -35,6 +35,10 @@ import BlogPost from './components/BlogPost';
 import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
 
+// Legal pages
+import PrivacyPolicy from './components/PrivacyPolicy';
+import TermsOfService from './components/TermsOfService';
+
 const ProtectedApp = () => {
   const token = localStorage.getItem('nortex_token');
   if (!token) return <Navigate to="/login" replace />;
@@ -75,6 +79,8 @@ function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/register" element={<RegisterTenant />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/terms" element={<TermsOfService />} />
         <Route path="/ferreterias" element={<LandingFerreteria />} />
         <Route path="/farmacias" element={<LandingFarmacia />} />
         <Route path="/nicaragua" element={<LandingNicaragua />} />
