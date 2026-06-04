@@ -68,13 +68,10 @@ const prisma = new PrismaClient({
 });
 
 const app = express();
-const JWT_SECRET = process.env.JWT_SECRET || (() => {
-    if (process.env.NODE_ENV === 'production') {
-        console.error('🚨 CRITICAL: JWT_SECRET not set in production!');
-        process.exit(1);
-    }
-    return 'nortex_dev_secret_key_2026';
-})();
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    throw new Error('🚨 CRITICAL: JWT_SECRET no está definido. El servicio no puede iniciar sin un secreto JWT.');
+}
 
 // ==========================================
 // 🛡️ MIDDLEWARE DE RENDIMIENTO
@@ -1394,11 +1391,11 @@ app.post('/api/returns', authenticate, validate(CreateReturnSchema), async (req:
 
             // 2. Restore stock for each returned item
             for (const item of items) {
-                const product = await tx.product.findUnique({ where: { id: item.productId } });
+                const product = await tx.product.findFirst({ where: { id: item.productId, tenantId: authReq.tenantId } });
                 if (product) {
                     const newStock = Number(product.stock) + Number(item.quantity);
                     await tx.product.update({
-                        where: { id: item.productId },
+                        where: { id: item.productId, tenantId: authReq.tenantId },
                         data: { stock: newStock }
                     });
 
@@ -3270,8 +3267,17 @@ app.get('/api/payroll/:month/:year', authenticate, async (req: any, res: any) =>
 app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
+        // Anti-IDOR: verificar que la nómina pertenece al tenant antes de tocarla.
+        const owned = await prisma.payroll.findFirst({
+            where: { id: req.params.id, tenantId: authReq.tenantId },
+            select: { id: true },
+        });
+        if (!owned) {
+            return res.status(404).json({ error: 'Nómina no encontrada' });
+        }
+
         const payroll = await prisma.payroll.update({
-            where: { id: req.params.id },
+            where: { id: owned.id, tenantId: authReq.tenantId },
             data: { status: 'PAGADO', paidAt: new Date() },
         });
 
