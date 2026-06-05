@@ -34,6 +34,12 @@ export default defineConfig(({ mode }) => {
           },
           workbox: {
             globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+            // La raíz "/" la sirve Express con landing.html (marketing/SEO).
+            // Sin este denylist, el SW intercepta la navegación a "/" y devuelve
+            // el index.html cacheado (el SPA), ocultando la landing profesional.
+            // El resto de rutas (/login, /app/*, etc.) siguen usando el fallback al SPA.
+            navigateFallback: '/index.html',
+            navigateFallbackDenylist: [/^\/$/, /^\/landing\.html$/],
             runtimeCaching: [
               {
                 // API calls: network-first, fallback a cache 10 min

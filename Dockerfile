@@ -26,4 +26,4 @@ RUN NODE_OPTIONS="--max-old-space-size=3072" npm run build
 EXPOSE 3000
 
 # 9. Comando para arrancar en producción (con migración automática)
-CMD ["sh", "-c", "npx prisma db push --schema=backend/prisma/schema.prisma --accept-data-loss && npm run start"]
+CMD ["sh", "-c", "npx prisma db push --schema=backend/prisma/schema.prisma --accept-data-loss && NODE_ENV=production npm run start"]
