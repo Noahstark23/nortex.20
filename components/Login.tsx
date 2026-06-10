@@ -51,13 +51,13 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-nortex-900 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-surface-950 p-4">
       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-nortex-500/10 rounded-full blur-[120px]"></div>
-        <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[120px]"></div>
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-brand/10 rounded-full blur-[120px]"></div>
+        <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-emerald-500/[0.07] rounded-full blur-[120px]"></div>
       </div>
 
-      <div className="w-full max-w-sm bg-nortex-800/50 backdrop-blur-md border border-nortex-700 p-8 rounded-2xl shadow-2xl relative z-10">
+      <div className="w-full max-w-sm panel-premium bg-surface-900/70 backdrop-blur-xl p-8 relative z-10 animate-fade-in-up">
 
         <div className="text-center mb-8">
           <div className="w-10 h-10 bg-nortex-accent rounded flex items-center justify-center mx-auto mb-4 shadow-[0_0_15px_rgba(16,185,129,0.4)]">
@@ -81,7 +81,7 @@ const Login: React.FC = () => {
               <input
                 type="email"
                 required
-                className="w-full bg-nortex-900/50 border border-nortex-700 text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:border-nortex-accent focus:ring-1 focus:ring-nortex-accent/50 transition-all"
+                className="w-full bg-white/[0.03] border border-white/[0.08] text-white pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40 transition-all placeholder:text-slate-600"
                 placeholder="usuario@empresa.com"
                 value={formData.email}
                 onChange={e => setFormData({ ...formData, email: e.target.value })}
@@ -96,7 +96,7 @@ const Login: React.FC = () => {
               <input
                 type="password"
                 required
-                className="w-full bg-nortex-900/50 border border-nortex-700 text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:border-nortex-accent focus:ring-1 focus:ring-nortex-accent/50 transition-all"
+                className="w-full bg-white/[0.03] border border-white/[0.08] text-white pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40 transition-all placeholder:text-slate-600"
                 placeholder="••••••••"
                 value={formData.password}
                 onChange={e => setFormData({ ...formData, password: e.target.value })}
@@ -113,7 +113,7 @@ const Login: React.FC = () => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full mt-2 bg-white text-nortex-900 font-bold py-3.5 rounded-lg hover:bg-slate-200 transition-all flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-white/5"
+            className="btn-primary w-full mt-2 py-3.5 flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
           >
             {loading ? <Loader2 className="animate-spin" size={20} /> : (
               <>
@@ -123,7 +123,7 @@ const Login: React.FC = () => {
           </button>
         </form>
 
-        <div className="mt-8 pt-6 border-t border-nortex-700 text-center">
+        <div className="mt-8 pt-6 border-t border-white/[0.06] text-center">
           <p className="text-slate-500 text-sm mb-3">¿Aún no tienes cuenta?</p>
           <Link to="/register" className="inline-flex items-center gap-1 text-nortex-accent hover:text-emerald-400 font-medium text-sm transition-colors">
             Registrar Empresa <ArrowRight size={14} />
