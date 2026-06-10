@@ -22,6 +22,9 @@ import { executeSale, SaleError } from './services/salesService';
 import { applyStockDelta, StockError } from './services/stockService';
 import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger } from './services/ledger';
 import { signAuthToken } from './services/secrets';
+import { isWhatsAppEnabled } from './services/whatsapp/config';
+import { verifyHandler as whatsappVerify, webhookHandler as whatsappWebhook } from './services/whatsapp/webhook';
+import { encryptField } from './services/crypto';
 import Stripe from 'stripe';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -138,6 +141,14 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }) as an
         res.status(400).json({ error: `Webhook Error: ${error.message}` });
     }
 });
+
+// ⚠️ WhatsApp Webhook — también ANTES de express.json (firma sobre body crudo).
+// Inerte salvo WHATSAPP_ENABLED=true (no afecta la app si no está configurado).
+if (isWhatsAppEnabled()) {
+    app.get('/api/whatsapp/webhook', whatsappVerify as any);
+    app.post('/api/whatsapp/webhook', express.raw({ type: 'application/json' }) as any, whatsappWebhook as any);
+    console.log('🟢 WhatsApp webhook montado en /api/whatsapp/webhook');
+}
 
 // JSON Parser con límite de body (anti-abuse)
 app.use(express.json({ limit: '2mb' }) as any);
@@ -3376,6 +3387,44 @@ app.get('/api/admin/ledger/verify/:tenantId', authenticate, requireSuperAdmin, a
         res.status(report.ok ? 200 : 409).json(report);
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Error verificando libro';
+        res.status(500).json({ error: message });
+    }
+});
+
+// POST /api/admin/whatsapp/channels — registra/actualiza el número WhatsApp de
+// un tenant. El access token se guarda CIFRADO (crypto.encryptField). Requiere
+// NORTEX_DATA_KEYS configurado. SUPER_ADMIN (manejo de credenciales).
+app.post('/api/admin/whatsapp/channels', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+    try {
+        const { tenantId, phoneNumberId, wabaId, displayPhone, accessToken, botScope, defaultMode } = req.body ?? {};
+        if (!tenantId || !phoneNumberId || !accessToken) {
+            return res.status(400).json({ error: 'tenantId, phoneNumberId y accessToken son requeridos' });
+        }
+        const accessTokenEnc = encryptField(String(accessToken));
+        const channel = await prisma.whatsAppChannel.upsert({
+            where: { phoneNumberId: String(phoneNumberId) },
+            create: {
+                tenantId: String(tenantId),
+                phoneNumberId: String(phoneNumberId),
+                wabaId: wabaId ? String(wabaId) : null,
+                displayPhone: displayPhone ? String(displayPhone) : null,
+                accessTokenEnc,
+                botScope: botScope ? String(botScope) : 'B2C',
+                defaultMode: defaultMode ? String(defaultMode) : 'BOT',
+            },
+            update: {
+                tenantId: String(tenantId),
+                wabaId: wabaId ? String(wabaId) : null,
+                displayPhone: displayPhone ? String(displayPhone) : null,
+                accessTokenEnc,
+                botScope: botScope ? String(botScope) : 'B2C',
+                defaultMode: defaultMode ? String(defaultMode) : 'BOT',
+                active: true,
+            },
+        });
+        res.json({ id: channel.id, tenantId: channel.tenantId, phoneNumberId: channel.phoneNumberId, botScope: channel.botScope });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Error registrando canal';
         res.status(500).json({ error: message });
     }
 });
