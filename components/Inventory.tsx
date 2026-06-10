@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import ImageUploader from './ImageUploader';
+import { sanitizeDecimalInput } from '../utils/money';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
     RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
@@ -565,7 +566,7 @@ export default function Inventory() {
                     <div className="relative">
                         <button
                             onClick={() => setShowDropdown(!showDropdown)}
-                            className="flex items-center gap-2 bg-blue-600 px-4 py-2.5 rounded-lg hover:bg-blue-700 text-white font-semibold transition-colors shadow-lg shadow-blue-900/30"
+                            className="btn-primary flex items-center gap-2"
                         >
                             <Plus size={20} />
                             Nuevo Producto
@@ -704,7 +705,7 @@ export default function Inventory() {
             {/* PRODUCTS TABLE */}
             <div className="bg-slate-800/60 rounded-xl border border-slate-700 overflow-hidden">
                 <div className="overflow-x-auto">
-                    <table className="w-full">
+                    <table className="table-premium w-full">
                         <thead>
                             <tr className="bg-slate-900/80">
                                 {isOwner && (
@@ -731,7 +732,7 @@ export default function Inventory() {
                                 <th className="text-center px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Acciones</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-700/50">
+                        <tbody>
                             {loading ? (
                                 <tr>
                                     <td colSpan={isOwner ? 8 : 6} className="text-center py-12 text-slate-400">
@@ -838,27 +839,30 @@ export default function Inventory() {
                                             </td>
                                             <td className="px-4 py-3 text-right">
                                                 <div className="flex items-center justify-end gap-2">
-                                                    {(isLow || isOut) && (
-                                                        <AlertTriangle size={14} className={isOut ? 'text-red-400' : 'text-amber-400'} />
-                                                    )}
-                                                    <span className={`font-bold ${isOut ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-white'}`}>
+                                                    <span className={`font-mono tabular-nums font-bold ${isOut ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-white'}`}>
                                                         {product.stock}
                                                     </span>
                                                     <span className="text-xs text-slate-500">{product.unit}</span>
                                                 </div>
-                                                {isLow && (
-                                                    <span className="text-[10px] text-amber-500">Mín: {product.minStock}</span>
-                                                )}
+                                                <div className="mt-1 flex justify-end">
+                                                    {isOut ? (
+                                                        <span className="badge-soft-danger"><AlertTriangle size={11} /> Agotado</span>
+                                                    ) : isLow ? (
+                                                        <span className="badge-soft-warning"><AlertTriangle size={11} /> Reorden · mín {product.minStock}</span>
+                                                    ) : (
+                                                        <span className="badge-soft-success">OK</span>
+                                                    )}
+                                                </div>
                                             </td>
-                                            <td className="px-4 py-3 text-right text-emerald-400 font-semibold">
+                                            <td className="px-4 py-3 text-right text-emerald-400 font-semibold font-mono tabular-nums">
                                                 {formatCurrency(product.price)}
                                             </td>
                                             {isOwner && (
                                                 <>
-                                                    <td className="px-4 py-3 text-right text-slate-400">
+                                                    <td className="px-4 py-3 text-right text-slate-400 font-mono tabular-nums">
                                                         {formatCurrency(product.cost)}
                                                     </td>
-                                                    <td className="px-4 py-3 text-right font-semibold text-cyan-400">
+                                                    <td className="px-4 py-3 text-right font-semibold text-cyan-400 font-mono tabular-nums">
                                                         {formatCurrency(product.stock * product.cost)}
                                                     </td>
                                                 </>
@@ -876,14 +880,14 @@ export default function Inventory() {
                                                             </button>
                                                             <button
                                                                 onClick={() => openKardex(product)}
-                                                                className="p-2 hover:bg-blue-500/20 rounded-lg text-blue-400 transition-colors"
+                                                                className="btn-ghost p-2 rounded-lg"
                                                                 title="Auditar Kardex"
                                                             >
                                                                 <Eye size={17} />
                                                             </button>
                                                             <button
                                                                 onClick={() => openEditModal(product)}
-                                                                className="p-2 hover:bg-slate-500/20 rounded-lg text-slate-300 transition-colors"
+                                                                className="btn-ghost p-2 rounded-lg"
                                                                 title="Editar Producto"
                                                             >
                                                                 <Edit size={17} />
@@ -899,7 +903,7 @@ export default function Inventory() {
                                                             )}
                                                             <button
                                                                 onClick={() => openAdjust(product)}
-                                                                className="p-2 hover:bg-amber-500/20 rounded-lg text-amber-400 transition-colors"
+                                                                className="btn-ghost p-2 rounded-lg"
                                                                 title="Ajuste de Stock (Kardex)"
                                                             >
                                                                 <Wrench size={17} />
@@ -1091,12 +1095,12 @@ export default function Inventory() {
                                 </label>
                                 <input
                                     required
-                                    type="number"
-                                    min="1"
+                                    type="text"
+                                    inputMode="decimal"
                                     value={adjustForm.quantity}
-                                    onChange={(e) => setAdjustForm({ ...adjustForm, quantity: e.target.value })}
+                                    onChange={(e) => setAdjustForm({ ...adjustForm, quantity: sanitizeDecimalInput(e.target.value) })}
                                     placeholder="Ej: 5"
-                                    className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg font-bold focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                                    className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg font-bold font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
                                 />
                                 {adjustForm.quantity && (
                                     <p className="text-xs mt-1.5 text-slate-400">
@@ -1214,12 +1218,11 @@ export default function Inventory() {
                                 <label className="block text-sm text-slate-300 mb-1 font-medium">Precio de Venta *</label>
                                 <input
                                     required
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
+                                    type="text"
+                                    inputMode="decimal"
                                     value={editForm.price}
-                                    onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
-                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                                    onChange={(e) => setEditForm({ ...editForm, price: sanitizeDecimalInput(e.target.value) })}
+                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
                                 />
                             </div>
 
@@ -1342,44 +1345,42 @@ export default function Inventory() {
                                     <label className="block text-sm text-slate-300 mb-1 font-medium">Precio de Venta *</label>
                                     <input
                                         required
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
+                                        type="text"
+                                        inputMode="decimal"
                                         value={formData.price}
-                                        onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        onChange={(e) => setFormData({ ...formData, price: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
                                     />
                                 </div>
                                 <div className="col-span-2">
                                     <label className="block text-sm text-slate-300 mb-1 font-medium">Costo de Compra *</label>
                                     <input
                                         required
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
+                                        type="text"
+                                        inputMode="decimal"
                                         value={formData.cost}
-                                        onChange={(e) => setFormData({ ...formData, cost: e.target.value })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        onChange={(e) => setFormData({ ...formData, cost: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
                                     />
                                 </div>
                                 <div className="col-span-2">
                                     <label className="block text-sm text-slate-300 mb-1 font-medium">Stock Inicial</label>
                                     <input
-                                        type="number"
-                                        min="0"
+                                        type="text"
+                                        inputMode="decimal"
                                         value={formData.stock}
-                                        onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        onChange={(e) => setFormData({ ...formData, stock: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
                                     />
                                 </div>
                                 <div className="col-span-2">
                                     <label className="block text-sm text-slate-300 mb-1 font-medium">Stock Mínimo</label>
                                     <input
-                                        type="number"
-                                        min="0"
+                                        type="text"
+                                        inputMode="decimal"
                                         value={formData.minStock}
-                                        onChange={(e) => setFormData({ ...formData, minStock: e.target.value })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        onChange={(e) => setFormData({ ...formData, minStock: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
                                     />
                                 </div>
                                 <div className="col-span-4 mt-2">
