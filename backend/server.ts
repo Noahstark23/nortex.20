@@ -9,8 +9,6 @@ import rateLimit from 'express-rate-limit';
 import { PrismaClient } from '@prisma/client';
 // @ts-ignore
 import bcrypt from 'bcryptjs';
-// @ts-ignore
-import jwt from 'jsonwebtoken';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
 import { sendPasswordResetEmail } from './services/email';
@@ -21,6 +19,9 @@ import { calculateTenantScore } from './services/scoring';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados } from './services/accounting';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
+import { applyStockDelta, StockError } from './services/stockService';
+import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger } from './services/ledger';
+import { signAuthToken } from './services/secrets';
 import Stripe from 'stripe';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -68,13 +69,8 @@ const prisma = new PrismaClient({
 });
 
 const app = express();
-const JWT_SECRET = process.env.JWT_SECRET || (() => {
-    if (process.env.NODE_ENV === 'production') {
-        console.error('🚨 CRITICAL: JWT_SECRET not set in production!');
-        process.exit(1);
-    }
-    return 'nortex_dev_secret_key_2026';
-})();
+// JWT: firma/verificación centralizada en services/secrets.ts (keyring con
+// rotación). El fail-closed de arranque vive ahí.
 
 // ==========================================
 // 🛡️ MIDDLEWARE DE RENDIMIENTO
@@ -245,10 +241,8 @@ app.post('/api/auth/register', async (req: any, res: any) => {
         });
 
         // 4. Generate JWT (incluir email para Super Admin detection)
-        const token = jwt.sign(
-            { userId: result.user.id, tenantId: result.tenant.id, role: result.user.role, email: email },
-            JWT_SECRET,
-            { expiresIn: '7d' }
+        const token = signAuthToken(
+            { userId: result.user.id, tenantId: result.tenant.id, role: result.user.role, email: email }
         );
 
         res.json({
@@ -292,10 +286,8 @@ app.post('/api/auth/login', async (req: any, res: any) => {
         });
 
         // 4. Generate JWT (incluir email para Super Admin detection)
-        const token = jwt.sign(
-            { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email },
-            JWT_SECRET,
-            { expiresIn: '7d' }
+        const token = signAuthToken(
+            { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email }
         );
 
         res.json({
@@ -654,10 +646,8 @@ app.post('/api/invite/:token/accept', async (req: any, res: any) => {
         });
 
         // Generar JWT para auto-login
-        const jwtToken = jwt.sign(
-            { userId: result.id, tenantId: result.tenantId, role: result.role, email: result.email },
-            JWT_SECRET,
-            { expiresIn: '7d' }
+        const jwtToken = signAuthToken(
+            { userId: result.id, tenantId: result.tenantId, role: result.role, email: result.email }
         );
 
         res.json({
@@ -857,16 +847,12 @@ app.post('/api/auth/reset-password/:token', async (req: any, res: any) => {
         });
 
         // Auto-login
-        const jwtToken = jwt.sign(
-            {
-                userId: resetRecord.user.id,
-                tenantId: resetRecord.user.tenantId,
-                role: resetRecord.user.role,
-                email: resetRecord.user.email
-            },
-            JWT_SECRET,
-            { expiresIn: '7d' }
-        );
+        const jwtToken = signAuthToken({
+            userId: resetRecord.user.id,
+            tenantId: resetRecord.user.tenantId,
+            role: resetRecord.user.role,
+            email: resetRecord.user.email ?? undefined
+        });
 
         res.json({
             message: 'Contraseña actualizada exitosamente.',
@@ -1392,32 +1378,37 @@ app.post('/api/returns', authenticate, validate(CreateReturnSchema), async (req:
                 }
             });
 
-            // 2. Restore stock for each returned item
+            // 2. Restore stock for each returned item (incremento atómico —
+            //    stockBefore/After salen del row-lock, no de una lectura previa)
             for (const item of items) {
-                const product = await tx.product.findUnique({ where: { id: item.productId } });
-                if (product) {
-                    const newStock = Number(product.stock) + Number(item.quantity);
-                    await tx.product.update({
-                        where: { id: item.productId },
-                        data: { stock: newStock }
+                let stockResult;
+                try {
+                    stockResult = await applyStockDelta(tx, {
+                        tenantId: authReq.tenantId,
+                        productId: item.productId,
+                        delta: Number(item.quantity),
+                        enforceSufficient: false,
                     });
-
-                    // Kardex: register stock return
-                    await tx.kardexMovement.create({
-                        data: {
-                            tenantId: authReq.tenantId,
-                            productId: item.productId,
-                            type: 'RETURN',
-                            quantity: Number(item.quantity),
-                            stockBefore: Number(product.stock),
-                            stockAfter: newStock,
-                            referenceId: productReturn.id,
-                            referenceType: 'RETURN',
-                            reason: `Devolución: ${reason || 'Sin motivo'}`,
-                            userId: authReq.userId,
-                        }
-                    });
+                } catch (err) {
+                    if (err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') continue;
+                    throw err;
                 }
+
+                // Kardex: register stock return
+                await tx.kardexMovement.create({
+                    data: {
+                        tenantId: authReq.tenantId,
+                        productId: item.productId,
+                        type: 'RETURN',
+                        quantity: Number(item.quantity),
+                        stockBefore: stockResult.stockBefore,
+                        stockAfter: stockResult.stockAfter,
+                        referenceId: productReturn.id,
+                        referenceType: 'RETURN',
+                        reason: `Devolución: ${reason || 'Sin motivo'}`,
+                        userId: authReq.userId,
+                    }
+                });
             }
 
             // 3. Update customer debt if credit sale
@@ -1909,18 +1900,18 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
                 expenseId = expense.id;
             }
 
-            const movement = await tx.cashMovement.create({
-                data: {
-                    tenantId: authReq.tenantId,
-                    shiftId: currentShift.id,
-                    userId: authReq.userId,
-                    type,
-                    amount: new Decimal(amount).toNumber(),
-                    currency: currency || 'NIO',
-                    category,
-                    description: description.trim(),
-                    expenseId,
-                }
+            // Append firmado al libro de caja: cadena seq/prevHash por tenant +
+            // HMAC de los campos inmutables (tamper-evidence). Ver services/ledger.ts.
+            const movement = await appendSignedCashMovement(tx, {
+                tenantId: authReq.tenantId,
+                shiftId: currentShift.id,
+                userId: authReq.userId,
+                type,
+                amount: new Decimal(amount).toNumber(),
+                currency: currency || 'NIO',
+                category,
+                description: description.trim(),
+                expenseId,
             });
 
             // AUDIT LOG inmutable
@@ -3270,8 +3261,17 @@ app.get('/api/payroll/:month/:year', authenticate, async (req: any, res: any) =>
 app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
+        // Anti-IDOR: verificar que la nómina pertenece al tenant antes de tocarla.
+        const owned = await prisma.payroll.findFirst({
+            where: { id: req.params.id, tenantId: authReq.tenantId },
+            select: { id: true },
+        });
+        if (!owned) {
+            return res.status(404).json({ error: 'Nómina no encontrada' });
+        }
+
         const payroll = await prisma.payroll.update({
-            where: { id: req.params.id },
+            where: { id: owned.id, tenantId: authReq.tenantId },
             data: { status: 'PAGADO', paidAt: new Date() },
         });
 
@@ -3366,6 +3366,19 @@ app.get('/api/tax-report/:month/:year', authenticate, async (req: any, res: any)
 // ==========================================
 // 🦈 SUPER ADMIN - CENTRO DE COMANDO
 // ==========================================
+
+// GET /api/admin/ledger/verify/:tenantId — Verificación de integridad del
+// libro de caja (cadena seq/prevHash + firmas HMAC). Detecta UPDATE/DELETE
+// manuales en la DB. Ver services/ledger.ts.
+app.get('/api/admin/ledger/verify/:tenantId', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+    try {
+        const report = await verifyTenantLedger(prisma, req.params.tenantId);
+        res.status(report.ok ? 200 : 409).json(report);
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Error verificando libro';
+        res.status(500).json({ error: message });
+    }
+});
 
 // GET /api/admin/stats - KPIs globales de la plataforma
 app.get('/api/admin/stats', authenticate, requireSuperAdmin, async (req: any, res: any) => {
@@ -4251,6 +4264,8 @@ app.post('/api/capital/finance-purchase', authenticate, async (req: any, res: an
                     linkedPurchaseId: purchase.id
                 }
             });
+            // Tamper-evidence: firma de los términos de origen del préstamo
+            await signCapitalLoan(tx, loan);
 
             // c) Asiento contable (Partida Doble)
             // Debe: Inventario de Mercancías (1.1.4) — aumenta activo

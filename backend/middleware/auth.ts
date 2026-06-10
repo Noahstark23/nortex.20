@@ -1,16 +1,8 @@
-import jwt from 'jsonwebtoken';
-// @ts-ignore
 import { PrismaClient } from '@prisma/client';
 // @ts-ignore
 import NodeCache from 'node-cache';
+import { verifyAuthToken } from '../services/secrets';
 
-const JWT_SECRET = process.env.JWT_SECRET || (() => {
-  if (process.env.NODE_ENV === 'production') {
-    console.error('🚨 CRITICAL: JWT_SECRET not set in production!');
-    process.exit(1);
-  }
-  return 'nortex_dev_secret_key_2026';
-})();
 const prisma = new PrismaClient();
 
 // ==========================================
@@ -69,7 +61,8 @@ export const authenticate = async (req: any, res: any, next: any) => {
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; tenantId: string; role: string; email?: string };
+    // Verifica contra el keyring completo (rotación sin downtime). Ver services/secrets.ts.
+    const decoded = verifyAuthToken(token);
 
     req.userId = decoded.userId;
     req.tenantId = decoded.tenantId;
@@ -128,9 +121,10 @@ export const authenticate = async (req: any, res: any, next: any) => {
 
       next();
     } catch (dbError) {
-      // Fail-open: si DB falla, permitir acceso
-      console.warn('⚠️ DB check failed, allowing access (fail-open)');
-      next();
+      // Fail-closed: si la verificación contra la DB falla, denegamos y abortamos.
+      console.error('🚨 Verificación de suscripción falló (fail-closed):', dbError);
+      res.status(500).json({ error: 'No se pudo verificar el estado de la suscripción. Intente de nuevo.' });
+      return;
     }
   } catch (error) {
     res.status(403).json({ error: 'Acceso Denegado: Token inválido o expirado.' });

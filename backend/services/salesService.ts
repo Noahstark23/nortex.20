@@ -17,8 +17,9 @@
 
 import { z } from 'zod';
 import Decimal from 'decimal.js';
-import { PrismaClient, Sale } from '@prisma/client';
+import { PrismaClient, Sale, Prisma } from '@prisma/client';
 import { recordSale } from './accounting.js';
+import { applyStockDelta, StockError } from './stockService.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -79,6 +80,7 @@ export const CreateSaleSchema = z.object({
     employeeId:     z.string().optional(),
     globalDiscount: z.number().min(0).max(100).optional().default(0),
     source:         z.enum(['POS', 'WHATSAPP', 'PUBLIC_ORDER']).default('POS'),
+    offlineId:      z.string().min(1).optional(),  // clave de idempotencia (UUID del cliente)
 });
 
 type CreateSaleInput = z.output<typeof CreateSaleSchema>;
@@ -107,7 +109,17 @@ export async function executeSale(
         employeeId,
         globalDiscount,
         source,
+        offlineId,
     } = parsed.data as CreateSaleInput;
+
+    // 1b. Idempotencia: si este offlineId ya fue procesado para el tenant,
+    //     devolvemos la venta existente en lugar de volver a cobrar.
+    if (offlineId) {
+        const existing = await prisma.sale.findFirst({ where: { offlineId, tenantId } });
+        if (existing) {
+            return existing;
+        }
+    }
 
     // 2. Validación de turno (solo POS)
     if (source === 'POS') {
@@ -170,8 +182,10 @@ export async function executeSale(
         dueDate       = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     }
 
-    // 5. Transacción atómica
-    const sale = await prisma.$transaction(async (tx: PrismaTx) => {
+    // 5. Transacción atómica (idempotente ante carrera vía offlineId @unique)
+    let sale: Sale;
+    try {
+        sale = await prisma.$transaction(async (tx: PrismaTx) => {
 
         // 5a. Consecutivo DGI — upsert atómico dentro de la transacción
         const counter = await tx.invoiceSeries.upsert({
@@ -199,6 +213,7 @@ export async function executeSale(
                 globalDiscount,
                 invoiceNumber: counter.lastNumber,
                 invoiceSeries: 'A',
+                offlineId:     offlineId ?? null,
             },
         });
 
@@ -221,28 +236,28 @@ export async function executeSale(
 
             costTotal = costTotal.plus(costD.mul(item.quantity));
 
-            const product = await tx.product.findFirst({
-                where:  { id: item.id, tenantId },
-                select: { id: true, stock: true },
-            });
-            if (!product) {
-                throw new SaleError('PRODUCT_NOT_FOUND', 404, `Producto ${item.id} no encontrado`);
+            // Decremento ATÓMICO: validación de suficiencia y escritura en el
+            // mismo UPDATE (WHERE stock >= qty) — inmune a dirty reads bajo
+            // concurrencia. Ver stockService.ts.
+            let stockBefore: number;
+            let stockAfter: number;
+            try {
+                const result = await applyStockDelta(tx, {
+                    tenantId,
+                    productId: item.id,
+                    delta: -item.quantity,
+                    enforceSufficient: true,
+                });
+                stockBefore = result.stockBefore;
+                stockAfter  = result.stockAfter;
+            } catch (err) {
+                if (err instanceof StockError) {
+                    throw err.code === 'PRODUCT_NOT_FOUND'
+                        ? new SaleError('PRODUCT_NOT_FOUND', 404, err.message)
+                        : new SaleError('INSUFFICIENT_STOCK', 422, err.message);
+                }
+                throw err;
             }
-
-            const stockBefore = Number(product.stock);
-            if (stockBefore < item.quantity) {
-                throw new SaleError(
-                    'INSUFFICIENT_STOCK',
-                    422,
-                    `Stock insuficiente para producto ${item.id}. Disponible: ${stockBefore}`
-                );
-            }
-            const stockAfter = stockBefore - item.quantity;
-
-            await tx.product.update({
-                where: { id: item.id },
-                data:  { stock: stockAfter },
-            });
 
             await tx.kardexMovement.create({
                 data: {
@@ -301,6 +316,19 @@ export async function executeSale(
 
         return created;
     });
+    } catch (err: unknown) {
+        // Si dos requests con el mismo offlineId corren a la vez, la restricción
+        // @unique aborta la segunda (código P2002): devolvemos la venta ya creada.
+        if (
+            offlineId &&
+            err instanceof Prisma.PrismaClientKnownRequestError &&
+            err.code === 'P2002'
+        ) {
+            const existing = await prisma.sale.findFirst({ where: { offlineId, tenantId } });
+            if (existing) return existing;
+        }
+        throw err;
+    }
 
     return sale;
 }
