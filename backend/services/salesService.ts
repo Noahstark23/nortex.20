@@ -19,6 +19,7 @@ import { z } from 'zod';
 import Decimal from 'decimal.js';
 import { PrismaClient, Sale, Prisma } from '@prisma/client';
 import { recordSale } from './accounting.js';
+import { applyStockDelta, StockError } from './stockService.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -235,28 +236,28 @@ export async function executeSale(
 
             costTotal = costTotal.plus(costD.mul(item.quantity));
 
-            const product = await tx.product.findFirst({
-                where:  { id: item.id, tenantId },
-                select: { id: true, stock: true },
-            });
-            if (!product) {
-                throw new SaleError('PRODUCT_NOT_FOUND', 404, `Producto ${item.id} no encontrado`);
+            // Decremento ATÓMICO: validación de suficiencia y escritura en el
+            // mismo UPDATE (WHERE stock >= qty) — inmune a dirty reads bajo
+            // concurrencia. Ver stockService.ts.
+            let stockBefore: number;
+            let stockAfter: number;
+            try {
+                const result = await applyStockDelta(tx, {
+                    tenantId,
+                    productId: item.id,
+                    delta: -item.quantity,
+                    enforceSufficient: true,
+                });
+                stockBefore = result.stockBefore;
+                stockAfter  = result.stockAfter;
+            } catch (err) {
+                if (err instanceof StockError) {
+                    throw err.code === 'PRODUCT_NOT_FOUND'
+                        ? new SaleError('PRODUCT_NOT_FOUND', 404, err.message)
+                        : new SaleError('INSUFFICIENT_STOCK', 422, err.message);
+                }
+                throw err;
             }
-
-            const stockBefore = Number(product.stock);
-            if (stockBefore < item.quantity) {
-                throw new SaleError(
-                    'INSUFFICIENT_STOCK',
-                    422,
-                    `Stock insuficiente para producto ${item.id}. Disponible: ${stockBefore}`
-                );
-            }
-            const stockAfter = stockBefore - item.quantity;
-
-            await tx.product.update({
-                where: { id: item.id },
-                data:  { stock: stockAfter },
-            });
 
             await tx.kardexMovement.create({
                 data: {

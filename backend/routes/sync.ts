@@ -1,8 +1,8 @@
 import express from 'express';
-// @ts-ignore
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { authenticate } from '../middleware/auth';
 import { recordSale } from '../services/accounting';
+import { applyStockDelta, StockError } from '../services/stockService';
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -34,7 +34,12 @@ interface OfflineSalePayload {
 /**
  * POST /api/sales/sync
  * Recibe un array de ventas guardadas offline.
- * Idempotente: ignora ventas cuyo offlineId ya existe en BD.
+ * Idempotente: ignora ventas cuyo offlineId ya existe en BD (scoped al tenant).
+ *
+ * Política de stock OFFLINE: la venta física YA ocurrió en el mostrador —
+ * no se rechaza por stock insuficiente. El decremento es atómico
+ * (applyStockDelta) y puede dejar stock negativo, visible en Kardex para
+ * auditoría. Misma atomicidad que el POS online (salesService.ts).
  */
 router.post('/', authenticate, async (req: any, res: any) => {
     const { sales } = req.body as { sales: OfflineSalePayload[] };
@@ -53,16 +58,20 @@ router.post('/', authenticate, async (req: any, res: any) => {
             continue;
         }
 
-        // IDEMPOTENCIA: ya existe este offlineId?
-        const existing = await (prisma.sale as any).findUnique({ where: { offlineId: sale.offlineId } });
+        // IDEMPOTENCIA: ¿ya existe este offlineId PARA ESTE TENANT?
+        // (scoped: un offlineId ajeno no debe filtrar el saleId de otro tenant)
+        const existing = await prisma.sale.findFirst({
+            where: { offlineId: sale.offlineId, tenantId: callerTenantId },
+            select: { id: true },
+        });
         if (existing) {
             results.push({ offlineId: sale.offlineId, saleId: existing.id, status: 'skipped' });
             continue;
         }
 
         try {
-            const createdSale = await prisma.$transaction(async (tx: any) => {
-                // 1. INVOICE NUMBER
+            const createdSale = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+                // 1. INVOICE NUMBER (increment atómico: el row-lock serializa)
                 const series = await tx.invoiceSeries.findFirst({
                     where: { tenantId: callerTenantId, isActive: true },
                 });
@@ -77,8 +86,9 @@ router.post('/', authenticate, async (req: any, res: any) => {
                     invoiceSeries = updated.series;
                 }
 
-                // 2. CREAR VENTA
-                const newSale = await (tx.sale as any).create({
+                // 2. CREAR VENTA (la restricción @unique de offlineId corta la
+                //    carrera si dos syncs del mismo lote llegan a la vez: P2002)
+                const newSale = await tx.sale.create({
                     data: {
                         tenantId: callerTenantId,
                         offlineId: sale.offlineId,
@@ -118,38 +128,59 @@ router.post('/', authenticate, async (req: any, res: any) => {
                     },
                 });
 
-                // 5. KARDEX + STOCK
+                // 5. KARDEX + STOCK (atómico, tenant-scoped)
                 let costTotal = 0;
                 for (const item of sale.items) {
-                    const product = await tx.product.findUnique({ where: { id: item.id } });
+                    const effectiveQty = item.quantity;
+
+                    // Lookup tenant-scoped (antes: findUnique sin tenantId → IDOR)
+                    const product = await tx.product.findFirst({
+                        where: { id: item.id, tenantId: callerTenantId },
+                        select: { requiresBatchTracking: true },
+                    });
                     if (!product) continue;
 
-                    const effectiveQty = item.quantity;
-                    const stockBefore = product.stock;
-                    const stockAfter = stockBefore - effectiveQty;
                     costTotal += item.costPrice * effectiveQty;
 
-                    await tx.product.update({
-                        where: { id: item.id },
-                        data: { stock: { decrement: effectiveQty } },
-                    });
+                    let stockBefore: number;
+                    let stockAfter: number;
+                    try {
+                        const result = await applyStockDelta(tx, {
+                            tenantId: callerTenantId,
+                            productId: item.id,
+                            delta: -effectiveQty,
+                            enforceSufficient: false, // venta offline ya ocurrida
+                        });
+                        stockBefore = result.stockBefore;
+                        stockAfter = result.stockAfter;
+                    } catch (err) {
+                        if (err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') continue;
+                        throw err;
+                    }
 
                     if (product.requiresBatchTracking) {
+                        // FEFO best-effort: cada decremento de lote es CONDICIONAL
+                        // (stock >= deduct) — nunca sobre-descuenta un lote bajo
+                        // concurrencia; el remanente cae al siguiente lote o al
+                        // asiento "sin lote asignado".
                         let remainingQty = effectiveQty;
+                        let kardexCursor = stockBefore;
                         const activeBatches = await tx.productBatch.findMany({
-                            where: { productId: item.id, stock: { gt: 0 } },
-                            orderBy: { expiryDate: 'asc' }
+                            where: { productId: item.id, tenantId: callerTenantId, stock: { gt: 0 } },
+                            orderBy: { expiryDate: 'asc' },
                         });
 
                         for (const batch of activeBatches) {
                             if (remainingQty <= 0) break;
-                            const deductQty = Math.min(batch.stock, remainingQty);
-                            remainingQty -= deductQty;
+                            const deductQty = Math.min(Number(batch.stock), remainingQty);
 
-                            await tx.productBatch.update({
-                                where: { id: batch.id },
-                                data: { stock: { decrement: deductQty } }
+                            const deducted = await tx.productBatch.updateMany({
+                                where: { id: batch.id, tenantId: callerTenantId, stock: { gte: deductQty } },
+                                data: { stock: { decrement: deductQty } },
                             });
+                            if (deducted.count === 0) continue; // otro proceso drenó el lote
+
+                            remainingQty -= deductQty;
 
                             await tx.kardexMovement.create({
                                 data: {
@@ -157,17 +188,18 @@ router.post('/', authenticate, async (req: any, res: any) => {
                                     productId: item.id,
                                     type: 'SALE',
                                     quantity: -deductQty,
-                                    stockBefore,
-                                    stockAfter: stockBefore - deductQty,
+                                    stockBefore: kardexCursor,
+                                    stockAfter: kardexCursor - deductQty,
                                     referenceId: newSale.id,
                                     referenceType: 'SALE',
                                     reason: `Venta offline sync #${sale.offlineId.slice(0, 8)} (Lote ${batch.batchNumber})`,
                                     userId: sale.userId,
-                                    batchId: batch.id
-                                }
+                                    batchId: batch.id,
+                                },
                             });
+                            kardexCursor -= deductQty;
                         }
-                        
+
                         if (remainingQty > 0) {
                             await tx.kardexMovement.create({
                                 data: {
@@ -175,13 +207,13 @@ router.post('/', authenticate, async (req: any, res: any) => {
                                     productId: item.id,
                                     type: 'SALE',
                                     quantity: -remainingQty,
-                                    stockBefore,
+                                    stockBefore: kardexCursor,
                                     stockAfter,
                                     referenceId: newSale.id,
                                     referenceType: 'SALE',
                                     reason: `Venta offline sync #${sale.offlineId.slice(0, 8)} (Sin lote asignado)`,
                                     userId: sale.userId,
-                                }
+                                },
                             });
                         }
                     } else {
@@ -202,23 +234,43 @@ router.post('/', authenticate, async (req: any, res: any) => {
                     }
                 }
 
-                // 6. ACTUALIZAR CAJA DEL TURNO
+                // 6. ACTUALIZAR CAJA DEL TURNO (tenant-scoped: antes un shiftId
+                //    ajeno permitía inflar la caja de otro tenant)
                 if (sale.shiftId && sale.paymentMethod === 'CASH') {
-                    await tx.shift.update({
-                        where: { id: sale.shiftId },
+                    await tx.shift.updateMany({
+                        where: { id: sale.shiftId, tenantId: callerTenantId },
                         data: { systemExpectedCash: { increment: sale.total } },
                     });
                 }
 
                 // 7. ASIENTO CONTABLE
-                await recordSale(tx, callerTenantId, sale.userId, newSale.id, sale.total, costTotal, sale.paymentMethod);
+                await recordSale(
+                    tx as Parameters<typeof recordSale>[0],
+                    callerTenantId,
+                    sale.userId,
+                    newSale.id,
+                    sale.total,
+                    costTotal,
+                    sale.paymentMethod
+                );
 
                 return newSale;
             });
 
             results.push({ offlineId: sale.offlineId, saleId: createdSale.id, status: 'created' });
-        } catch (err: any) {
-            results.push({ offlineId: sale.offlineId, status: 'failed', error: err.message });
+        } catch (err: unknown) {
+            // Carrera del mismo offlineId (dos requests simultáneos): P2002 →
+            // tratar como skipped idempotente, no como fallo.
+            if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+                const winner = await prisma.sale.findFirst({
+                    where: { offlineId: sale.offlineId, tenantId: callerTenantId },
+                    select: { id: true },
+                });
+                results.push({ offlineId: sale.offlineId, saleId: winner?.id, status: 'skipped' });
+                continue;
+            }
+            const message = err instanceof Error ? err.message : 'unknown error';
+            results.push({ offlineId: sale.offlineId, status: 'failed', error: message });
         }
     }
 

@@ -456,14 +456,32 @@ model CashMovement {
   voidedBy    String?
   createdAt   DateTime  @default(now())
 
+  // Integridad del libro (tamper-evidence) — cadena de hash por tenant.
+  // Nullable: filas legacy quedan sin firmar hasta el backfill.
+  // La anulación (isVoided/voidReason/...) NO entra en la firma: el registro
+  // económico es inmutable; el void es una anotación posterior.
+  seq       Int? // Posición monotónica en la cadena del tenant
+  prevHash  String? // Firma del movimiento anterior (encadenamiento)
+  signature String? // HMAC-SHA256 de los campos inmutables (versionado "vN:...")
+
   tenant  Tenant   @relation(fields: [tenantId], references: [id])
   shift   Shift    @relation(fields: [shiftId], references: [id])
   user    User     @relation(fields: [userId], references: [id])
   expense Expense? @relation(fields: [expenseId], references: [id])
 
+  @@unique([tenantId, seq])
   @@index([tenantId])
   @@index([shiftId])
   @@index([createdAt])
+}
+
+// Cabeza de la cadena del libro por tenant. El UPDATE con increment toma
+// row-lock de InnoDB → serializa los appends del tenant (sin carreras de seq).
+model LedgerHead {
+  tenantId  String   @id
+  lastSeq   Int      @default(0)
+  lastHash  String   @default("GENESIS")
+  updatedAt DateTime @updatedAt
 }
 
 model B2BOrder {
@@ -901,6 +919,9 @@ model CapitalLoan {
   status           String   @default("ACTIVE") // ACTIVE | PAID | DEFAULTED
   linkedPurchaseId String?  @unique // Compra financiada (1:1)
   createdAt        DateTime @default(now())
+
+  // Tamper-evidence: HMAC de los términos inmutables del préstamo al originarse
+  signature String?
 
   tenant   Tenant    @relation(fields: [tenantId], references: [id])
   purchase Purchase? @relation(fields: [linkedPurchaseId], references: [id])

@@ -1,13 +1,8 @@
-import jwt from 'jsonwebtoken';
-// @ts-ignore
 import { PrismaClient } from '@prisma/client';
 // @ts-ignore
 import NodeCache from 'node-cache';
+import { verifyAuthToken } from '../services/secrets';
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error('🚨 CRITICAL: JWT_SECRET no está definido. El servicio no puede iniciar sin un secreto JWT.');
-}
 const prisma = new PrismaClient();
 
 // ==========================================
@@ -66,7 +61,8 @@ export const authenticate = async (req: any, res: any, next: any) => {
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; tenantId: string; role: string; email?: string };
+    // Verifica contra el keyring completo (rotación sin downtime). Ver services/secrets.ts.
+    const decoded = verifyAuthToken(token);
 
     req.userId = decoded.userId;
     req.tenantId = decoded.tenantId;
