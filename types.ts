@@ -47,6 +47,15 @@ export interface Shift {
   systemExpectedCash?: number;
   difference?: number; // declared - expected
   status: 'OPEN' | 'CLOSED';
+  // Empleado/cajero asignado al abrir turno (via PIN). Opcional: turnos
+  // legacy o abiertos por el dueño pueden no tenerlo.
+  employeeId?: string;
+  employee?: {
+    id?: string;
+    firstName: string;
+    lastName: string;
+    role: string;
+  };
 }
 
 export interface CashMovement {

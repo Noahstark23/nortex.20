@@ -16,7 +16,19 @@
     visibility: visible;
     height: auto;
     overflow: visible;
+    /* 🖨️ ANULAR EL TEMA OBSIDIAN: papel térmico = tinta negra sobre blanco.
+       Sin fondos oscuros, sin sombras ni glows (no imprimen / arruinan el ticket). */
+    background: transparent !important;
+    color: #000 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+    border-color: #000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
+  /* El contenedor SÍ lleva fondo blanco absoluto (los hijos van transparentes). */
   #receipt-area, #shift-report-area {
     position: fixed;
     left: 0;
@@ -24,6 +36,9 @@
     width: 100%;
     margin: 0;
     padding: 0;
+    background: #fff !important;
+    color: #000 !important;
+    box-shadow: none !important;
   }
   @page {
     size: 80mm auto;
