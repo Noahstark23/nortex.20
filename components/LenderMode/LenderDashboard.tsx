@@ -415,7 +415,7 @@ const LenderDashboard: React.FC = () => {
                                                             <td className="p-4 font-medium text-white flex items-center gap-2">
                                                                 <span className="text-slate-500 group-hover:text-nortex-accent transition-colors">{expandedLoan === loan.id ? '▼' : '▶'}</span>
                                                                 {loan.clientName}
-                                                                {isOverdue && <AlertTriangle size={14} className="text-red-500 ml-2 animate-pulse" title="Cliente en Mora" />}
+                                                                {isOverdue && <span title="Cliente en Mora" className="inline-flex ml-2"><AlertTriangle size={14} className="text-red-500 animate-pulse" /></span>}
                                                             </td>
                                                             <td className="p-4">
                                                                 <span className={`px-2 py-1 rounded text-xs font-bold ${loan.type === 'FORMAL_AMORTIZED' ? 'bg-blue-500/20 text-blue-400' : 'bg-amber-500/20 text-amber-400'}`}>

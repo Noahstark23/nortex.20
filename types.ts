@@ -156,6 +156,16 @@ export interface Quotation {
   status: 'DRAFT' | 'SENT' | 'CONVERTED' | 'EXPIRED';
 }
 
+// Pedido entrante del catálogo público / portal web, convertible a cotización.
+export interface PublicOrder {
+  id: string;
+  customerName: string;
+  customerPhone?: string;
+  status: string; // 'PENDING' | 'CONVERTED'
+  items?: unknown[];
+  createdAt: string;
+}
+
 export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS' | 'MARKETPLACE' | 'REPORTS' | 'QUOTATIONS';
 
 export interface BlueprintFile {
