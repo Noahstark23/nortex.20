@@ -484,6 +484,66 @@ model LedgerHead {
   updatedAt DateTime @updatedAt
 }
 
+// ==========================================
+// WHATSAPP — Agente IA (RAG) · infraestructura Fase 1
+// tenantId como escalar (sin relación) para no tocar el bloque de
+// relaciones de Tenant; el aislamiento se aplica en la capa de servicio.
+// ==========================================
+
+// Mapea un número de WhatsApp (phone_number_id de Meta) → tenant.
+// Un solo Meta App de plataforma (WHATSAPP_APP_SECRET global verifica la
+// firma de TODO webhook); cada tenant trae su número/WABA y su access token
+// de envío (cifrado con crypto.encryptField).
+model WhatsAppChannel {
+  id             String   @id @default(cuid())
+  tenantId       String
+  phoneNumberId  String   @unique // ID del número en Meta — routing de entrada
+  wabaId         String? // WhatsApp Business Account
+  displayPhone   String? // +505… legible
+  accessTokenEnc String   @db.Text // token de envío, CIFRADO (enc:v1:…)
+  botScope       String   @default("B2C") // B2C | B2B | BOTH
+  defaultMode    String   @default("BOT") // BOT | HUMAN
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+// Una conversación por (tenant, waId). Mantiene el estado de handoff.
+model WhatsAppConversation {
+  id             String    @id @default(cuid())
+  tenantId       String
+  waId           String // número del cliente final (E.164 sin +)
+  customerId     String? // resuelto contra Customer (null = onboarding pendiente)
+  status         String    @default("BOT") // BOT | HUMAN | CLOSED
+  lastInboundAt  DateTime?
+  lastOutboundAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  messages WhatsAppMessage[]
+
+  @@unique([tenantId, waId])
+  @@index([tenantId, status])
+}
+
+model WhatsAppMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  tenantId       String
+  direction      String // IN | OUT
+  waMessageId    String?  @unique // id de Meta — idempotencia de entrada
+  type           String   @default("text")
+  body           String   @db.Text
+  status         String? // sent | delivered | read | failed (salientes)
+  createdAt      DateTime @default(now())
+
+  conversation WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([conversationId])
+}
+
 model B2BOrder {
   id        String   @id @default(cuid())
   tenantId  String
