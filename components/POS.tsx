@@ -1050,7 +1050,7 @@ const POS: React.FC = () => {
                     tenantId,
                     userId,
                     shiftId: currentShift?.id ?? null,
-                    employeeId: (currentShift as any)?.employeeId ?? (currentShift as any)?.employee?.id ?? null,
+                    employeeId: currentShift?.employeeId ?? currentShift?.employee?.id ?? null,
                     customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
                     customerId: selectedCustomer?.id ?? null,
                     paymentMethod: method,
@@ -1094,7 +1094,7 @@ const POS: React.FC = () => {
                     customerId: selectedCustomer?.id,
                     total: grandTotal,
                     globalDiscount: globalDiscountNum,
-                    employeeId: currentShift?.employeeId || (currentShift as any)?.employee?.id || null
+                    employeeId: currentShift?.employeeId || currentShift?.employee?.id || null
                 })
             });
 
