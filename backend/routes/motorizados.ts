@@ -1,6 +1,8 @@
 import express from 'express';
 // @ts-ignore
 import { PrismaClient } from '@prisma/client';
+// @ts-ignore
+import bcrypt from 'bcryptjs';
 import { authenticate, AuthRequest } from '../middleware/auth';
 
 const prisma = new PrismaClient();
@@ -15,7 +17,9 @@ router.get('/', authenticate, async (req: any, res: any) => {
             where: {
                 OR: [
                     { tenantId: authReq.tenantId },
-                    { tipoFlota: 'NORTEX' }
+                    // Red NORTEX: solo repartidores con KYC aprobado y activos —
+                    // nadie sin revisión aparece como asignable a los negocios.
+                    { tipoFlota: 'NORTEX', kycStatus: 'APROBADO', activo: true }
                 ]
             },
             orderBy: {
@@ -33,21 +37,32 @@ router.get('/', authenticate, async (req: any, res: any) => {
 // Registrar nuevo motorizado (por defecto es de la ferretería: PROPIA)
 router.post('/', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { nombre, telefono, zonaCobertura } = req.body;
+    const { nombre, telefono, zonaCobertura, pin } = req.body;
 
     if (!nombre || !telefono || !zonaCobertura) {
         return res.status(400).json({ error: 'Faltan datos requeridos.' });
     }
+    if (pin !== undefined && !/^\d{4,6}$/.test(String(pin))) {
+        return res.status(400).json({ error: 'El PIN debe ser de 4 a 6 dígitos.' });
+    }
 
     try {
+        // PIN opcional al crear flota propia: necesario para que el repartidor
+        // entre a su app con teléfono+PIN (el magic-link ya no existe).
+        const pinHash = pin !== undefined ? await bcrypt.hash(String(pin), 10) : null;
+
         const motorizado = await prisma.motorizado.create({
             data: {
                 tenantId: authReq.tenantId,
                 nombre,
-                telefono,
+                telefono: String(telefono).replace(/\D/g, ''),
                 zonaCobertura,
                 tipoFlota: 'PROPIA',
-                activo: true
+                activo: true,
+                pinHash,
+                // Flota propia: la confianza la pone el dueño que lo contrata —
+                // no pasa por el KYC de la Red NORTEX.
+                kycStatus: 'APROBADO'
             }
         });
         res.status(201).json({ message: 'Motorizado registrado con éxito.', motorizado });
@@ -62,7 +77,7 @@ router.post('/', authenticate, async (req: any, res: any) => {
 router.patch('/:id', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { activo, zonaCobertura } = req.body;
+    const { activo, zonaCobertura, pin } = req.body;
 
     try {
         // Solo un dueño de ferretería puede editar SU propia flota
@@ -77,6 +92,13 @@ router.patch('/:id', authenticate, async (req: any, res: any) => {
         const dataUpdate: any = {};
         if (typeof activo === 'boolean') dataUpdate.activo = activo;
         if (zonaCobertura) dataUpdate.zonaCobertura = zonaCobertura;
+        // Asignar / resetear el PIN de login del repartidor propio
+        if (pin !== undefined) {
+            if (!/^\d{4,6}$/.test(String(pin))) {
+                return res.status(400).json({ error: 'El PIN debe ser de 4 a 6 dígitos.' });
+            }
+            dataUpdate.pinHash = await bcrypt.hash(String(pin), 10);
+        }
 
         const motorizado = await prisma.motorizado.update({
             where: { id },

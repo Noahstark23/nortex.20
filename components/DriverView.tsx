@@ -1,9 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import {
     Truck, MapPin, Phone, CheckCircle, Package, Clock,
-    Loader2, Navigation, MessageCircle, X, Wallet, AlertTriangle
+    Loader2, Navigation, MessageCircle, X, Wallet, AlertTriangle, Lock, LogOut
 } from 'lucide-react';
+
+// Sesión del repartidor: token firmado (teléfono+PIN). Reemplaza el
+// magic-link /driver/:id — cualquiera que reenviara ese link podía entrar.
+const DRIVER_TOKEN_KEY = 'nortex_driver_token';
 
 // ─── Interfaces ────────────────────────────────────────────────────────────
 
@@ -127,39 +131,88 @@ const ConfirmDeliveryModal: React.FC<ConfirmDeliveryModalProps> = ({
 // ─── Main Component ────────────────────────────────────────────────────────
 
 const DriverView: React.FC = () => {
-    const { id: driverId } = useParams<{ id: string }>();
+    const [token, setToken] = useState<string | null>(() => localStorage.getItem(DRIVER_TOKEN_KEY));
 
     const [driver, setDriver]         = useState<Driver | null>(null);
     const [orders, setOrders]         = useState<Order[]>([]);
     const [liquidacion, setLiquidacion] = useState<Liquidacion | null>(null);
-    const [loading, setLoading]       = useState(true);
+    const [loading, setLoading]       = useState(!!localStorage.getItem(DRIVER_TOKEN_KEY));
     const [error, setError]           = useState('');
+
+    // Login state (teléfono + PIN)
+    const [loginPhone, setLoginPhone] = useState('');
+    const [loginPin, setLoginPin]     = useState('');
+    const [loginError, setLoginError] = useState('');
+    const [loggingIn, setLoggingIn]   = useState(false);
 
     // Modal state
     const [confirmOrder, setConfirmOrder] = useState<Order | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
 
-    useEffect(() => {
-        fetchOrders();
-        const intv = setInterval(fetchOrders, 10_000);
-        return () => clearInterval(intv);
-    }, [driverId]);
+    const logout = useCallback(() => {
+        localStorage.removeItem(DRIVER_TOKEN_KEY);
+        setToken(null);
+        setDriver(null);
+        setOrders([]);
+        setLiquidacion(null);
+        setError('');
+        setLoading(false);
+    }, []);
 
-    const fetchOrders = async () => {
+    const fetchOrders = useCallback(async () => {
+        const t = localStorage.getItem(DRIVER_TOKEN_KEY);
+        if (!t) return;
         try {
-            const res = await fetch(`/api/public/driver/${driverId}/orders`);
+            const res = await fetch('/api/driver/me/orders', {
+                headers: { Authorization: `Bearer ${t}` },
+            });
             if (res.ok) {
                 const data = await res.json();
                 setDriver(data.driver);
                 setOrders(data.orders ?? []);
                 if (data.liquidacionDiaria) setLiquidacion(data.liquidacionDiaria);
+                setError('');
+            } else if (res.status === 401 || res.status === 403) {
+                logout(); // sesión expirada/cuenta inactiva → volver al login
             } else {
-                setError('Enlace inválido o motorizado inactivo.');
+                setError('Error al cargar tus entregas.');
             }
         } catch {
             setError('Error de conexión. Verifica tu internet.');
         } finally {
             setLoading(false);
+        }
+    }, [logout]);
+
+    useEffect(() => {
+        if (!token) return;
+        fetchOrders();
+        const intv = setInterval(fetchOrders, 10_000);
+        return () => clearInterval(intv);
+    }, [token, fetchOrders]);
+
+    const handleLogin = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setLoginError('');
+        setLoggingIn(true);
+        try {
+            const res = await fetch('/api/driver/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ telefono: loginPhone, pin: loginPin }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                setLoginError(data.error || 'No se pudo iniciar sesión.');
+                return;
+            }
+            localStorage.setItem(DRIVER_TOKEN_KEY, data.token);
+            setToken(data.token);
+            setLoading(true);
+        } catch {
+            setLoginError('Error de conexión. Intenta de nuevo.');
+        } finally {
+            setLoggingIn(false);
         }
     };
 
@@ -192,9 +245,10 @@ const DriverView: React.FC = () => {
         }
 
         try {
-            const res = await fetch(`/api/public/driver/${driverId}/orders/${orderId}/deliver`, {
+            const t = localStorage.getItem(DRIVER_TOKEN_KEY);
+            const res = await fetch(`/api/driver/me/orders/${orderId}/deliver`, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
                 body: JSON.stringify({ lat, lng }),
             });
 
@@ -220,6 +274,70 @@ const DriverView: React.FC = () => {
     const mapsUrl  = (dir: string) => `https://maps.google.com/?q=${encodeURIComponent(dir)}`;
     const waLink   = (phone: string) => `https://wa.me/505${phone.replace(/\D/g, '')}`;
 
+    // ── Login (sin sesión) ──
+    if (!token) {
+        return (
+            <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+                <div className="w-full max-w-sm">
+                    <div className="text-center mb-8">
+                        <div className="w-16 h-16 bg-emerald-500/10 rounded-2xl border border-emerald-500/20 flex items-center justify-center mx-auto mb-4">
+                            <Truck size={28} className="text-emerald-400" />
+                        </div>
+                        <h1 className="text-2xl font-black text-white">App de Repartidores</h1>
+                        <p className="text-slate-400 text-sm mt-1">Entrá con tu teléfono y PIN</p>
+                    </div>
+
+                    <form onSubmit={handleLogin} className="bg-slate-800 border border-slate-700 rounded-3xl p-6 space-y-4">
+                        <div className="relative">
+                            <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                            <input
+                                required
+                                type="tel"
+                                inputMode="numeric"
+                                placeholder="Teléfono (8888-0000)"
+                                value={loginPhone}
+                                onChange={e => setLoginPhone(e.target.value)}
+                                className="w-full bg-slate-900 border border-slate-700 text-white pl-10 pr-4 py-3.5 rounded-2xl text-lg font-mono focus:outline-none focus:border-emerald-500 placeholder:text-slate-600 placeholder:font-sans placeholder:text-base"
+                            />
+                        </div>
+                        <div className="relative">
+                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                            <input
+                                required
+                                type="password"
+                                inputMode="numeric"
+                                placeholder="PIN"
+                                value={loginPin}
+                                onChange={e => setLoginPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                className="w-full bg-slate-900 border border-slate-700 text-white pl-10 pr-4 py-3.5 rounded-2xl text-2xl font-mono tracking-[0.5em] focus:outline-none focus:border-emerald-500 placeholder:text-slate-600 placeholder:tracking-normal placeholder:text-base"
+                            />
+                        </div>
+
+                        {loginError && (
+                            <div className="bg-red-500/10 border border-red-500/20 rounded-2xl px-4 py-3 text-red-400 text-sm text-center">
+                                {loginError}
+                            </div>
+                        )}
+
+                        <button
+                            type="submit"
+                            disabled={loggingIn || loginPin.length < 4}
+                            className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-black text-lg uppercase tracking-wide hover:bg-emerald-400 active:scale-[0.97] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                            {loggingIn ? <Loader2 className="animate-spin" size={22} /> : <CheckCircle size={22} />}
+                            {loggingIn ? 'Entrando...' : 'Entrar'}
+                        </button>
+                    </form>
+
+                    <p className="text-center text-sm text-slate-500 mt-6">
+                        ¿Querés repartir con Nortex?{' '}
+                        <Link to="/repartidor/registro" className="text-emerald-400 font-bold hover:text-emerald-300">Registrate aquí</Link>
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
     // ── Loading ──
     if (loading) {
         return (
@@ -241,8 +359,16 @@ const DriverView: React.FC = () => {
                     <div className="w-16 h-16 bg-red-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
                         <AlertTriangle className="text-red-400" size={28} />
                     </div>
-                    <h2 className="text-xl font-bold text-white mb-2">Acceso Inválido</h2>
-                    <p className="text-slate-400 text-sm">{error || 'Link expirado o motorizado inactivo.'}</p>
+                    <h2 className="text-xl font-bold text-white mb-2">No pudimos cargar tus entregas</h2>
+                    <p className="text-slate-400 text-sm mb-6">{error || 'Intenta de nuevo en unos segundos.'}</p>
+                    <div className="flex gap-3">
+                        <button onClick={() => { setLoading(true); fetchOrders(); }} className="flex-1 py-3 bg-emerald-500 text-white rounded-2xl font-bold hover:bg-emerald-400 transition-colors">
+                            Reintentar
+                        </button>
+                        <button onClick={logout} className="flex-1 py-3 border border-slate-600 text-slate-400 rounded-2xl font-semibold hover:bg-slate-700 transition-colors">
+                            Salir
+                        </button>
+                    </div>
                 </div>
             </div>
         );
@@ -269,6 +395,13 @@ const DriverView: React.FC = () => {
                             }
                         </p>
                     </div>
+                    <button
+                        onClick={logout}
+                        title="Cerrar sesión"
+                        className="p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-slate-400 hover:text-red-400 hover:border-red-500/30 transition-colors flex-shrink-0"
+                    >
+                        <LogOut size={18} />
+                    </button>
                 </div>
             </div>
 
