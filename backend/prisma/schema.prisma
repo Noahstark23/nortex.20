@@ -1028,6 +1028,29 @@ model Motorizado {
   @@index([kycStatus])
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// FASE A — Períodos fiscales (bloqueo del cierre)
+// Una fila existe SOLO cuando el período fue cerrado (o reabierto). Sin fila →
+// el período se trata como ABIERTO (no rompe los flujos existentes). El guard
+// assertPeriodOpen bloquea cualquier asiento cuya fecha caiga en CLOSED.
+// ══════════════════════════════════════════════════════════════════════════
+model FiscalPeriod {
+  id           String    @id @default(cuid())
+  tenantId     String
+  year         Int
+  month        Int // 1-12
+  status       String    @default("CLOSED") // CLOSED | OPEN (reabierto)
+  closedBy     String?
+  closedAt     DateTime?
+  reopenedBy   String?
+  reopenedAt   DateTime?
+  reopenReason String?   @db.Text
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([tenantId, year, month])
+  @@index([tenantId])
+}
+
 // Cabeza de la cadena del wallet por repartidor (mismo patrón que LedgerHead:
 // el UPDATE con increment toma row-lock → serializa los appends del driver).
 model DriverLedgerHead {

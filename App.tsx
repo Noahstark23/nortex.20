@@ -23,6 +23,7 @@ import CashRegisters from './components/CashRegisters';
 import Purchases from './components/Purchases';
 import FinancialHealth from './components/FinancialHealth';
 import AuditDashboard from './components/AuditDashboard';
+import Contabilidad from './components/Contabilidad';
 import Billing from './components/Billing';
 import TeamManagement from './components/TeamManagement';
 import PublicCatalog from './components/PublicCatalog';
@@ -66,6 +67,7 @@ const ProtectedApp = () => {
         <Route path="purchases" element={<Purchases />} />
         <Route path="financial-health" element={<FinancialHealth />} />
         <Route path="audit" element={<AuditDashboard />} />
+        <Route path="accounting" element={<Contabilidad />} />
         <Route path="billing" element={<Billing />} />
         <Route path="team" element={<TeamManagement />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
