@@ -16,7 +16,7 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados } from './services/accounting';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
 import { applyStockDelta, StockError } from './services/stockService';
@@ -4306,6 +4306,255 @@ app.get('/api/accounting/journal', authenticate, async (req: any, res: any) => {
     } catch (error) { res.status(500).json({ error: 'Error fetching journal' }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// 📒 FASE A — CONTABILIDAD DEL CONTADOR (asiento manual, libros, períodos)
+// ══════════════════════════════════════════════════════════════════════════
+
+// POST /api/accounting/journal — Asiento de diario MANUAL (A1) / apertura (A2)
+// Body: { date, description, type?: 'MANUAL'|'OPENING', lines: [{accountCode, debit, credit}] }
+app.post('/api/accounting/journal', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { date, description, type, lines } = req.body ?? {};
+        if (!description || typeof description !== 'string' || !description.trim()) {
+            return res.status(400).json({ error: 'La descripción del asiento es requerida.' });
+        }
+        if (!Array.isArray(lines) || lines.length < 2) {
+            return res.status(400).json({ error: 'Un asiento requiere al menos 2 líneas (debe y haber).' });
+        }
+        const entryDate = date ? new Date(date) : new Date();
+        if (isNaN(entryDate.getTime())) {
+            return res.status(400).json({ error: 'Fecha inválida.' });
+        }
+
+        // Normalizar + validar líneas: cada línea tiene SOLO debe o SOLO haber > 0.
+        const normLines = lines.map((l: any) => ({
+            accountCode: String(l.accountCode ?? '').trim(),
+            debit: new Decimal(Number(l.debit) || 0).toDecimalPlaces(2).toNumber(),
+            credit: new Decimal(Number(l.credit) || 0).toDecimalPlaces(2).toNumber(),
+        }));
+        for (const l of normLines) {
+            if (!l.accountCode) return res.status(400).json({ error: 'Cada línea debe indicar una cuenta.' });
+            if (l.debit < 0 || l.credit < 0) return res.status(400).json({ error: 'Los montos no pueden ser negativos.' });
+            if ((l.debit > 0) === (l.credit > 0)) {
+                return res.status(400).json({ error: `La cuenta ${l.accountCode} debe llevar monto en debe O en haber, no ambos ni cero.` });
+            }
+        }
+
+        // Las cuentas deben EXISTIR (evita que createJournalEntry descarte una
+        // línea con código inválido y deje el asiento descuadrado).
+        await seedChartOfAccounts(authReq.tenantId!);
+        const codes = [...new Set(normLines.map((l: { accountCode: string }) => l.accountCode))];
+        const found = await prisma.account.findMany({
+            where: { tenantId: authReq.tenantId!, code: { in: codes } },
+            select: { code: true },
+        });
+        const missing = codes.filter(c => !found.some(f => f.code === c));
+        if (missing.length > 0) {
+            return res.status(400).json({ error: `Cuentas inexistentes en tu catálogo: ${missing.join(', ')}` });
+        }
+
+        const refType = type === 'OPENING' ? 'OPENING' : 'MANUAL';
+        await prisma.$transaction(async (tx: any) => {
+            await createJournalEntry(
+                tx, authReq.tenantId!, description.trim(), '', refType, authReq.userId!, normLines,
+                { isAutomatic: false, date: entryDate }
+            );
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: refType === 'OPENING' ? 'OPENING_BALANCE' : 'MANUAL_JOURNAL_ENTRY',
+                    details: JSON.stringify({ date: entryDate.toISOString(), description: description.trim(), lines: normLines }),
+                },
+            });
+        });
+
+        res.status(201).json({ message: refType === 'OPENING' ? 'Saldos de apertura registrados.' : 'Asiento manual registrado.' });
+    } catch (error: unknown) {
+        if (error instanceof PeriodLockedError) return res.status(409).json({ error: error.message });
+        const msg = error instanceof Error ? error.message : 'Error al registrar el asiento';
+        if (msg.includes('DESCUADRADO')) return res.status(400).json({ error: msg });
+        console.error('Manual journal error:', error);
+        res.status(500).json({ error: msg });
+    }
+});
+
+// GET /api/accounting/libro-diario/:year/:month — Libro Diario (A4)
+app.get('/api/accounting/libro-diario/:year/:month', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Año o mes inválido.' });
+    }
+    try {
+        const start = new Date(year, month - 1, 1);
+        const end = new Date(year, month, 0, 23, 59, 59);
+        const entries = await prisma.journalEntry.findMany({
+            where: { tenantId: authReq.tenantId!, date: { gte: start, lte: end } },
+            include: { lines: { include: { account: { select: { code: true, name: true } } } } },
+            orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
+        });
+        const period = await prisma.fiscalPeriod.findUnique({
+            where: { tenantId_year_month: { tenantId: authReq.tenantId!, year, month } },
+        });
+        let totalDebe = new Decimal(0);
+        let totalHaber = new Decimal(0);
+        const asientos = entries.map((e, i) => {
+            const lineas = e.lines.map(l => ({
+                cuenta: l.account.code, nombre: l.account.name,
+                debe: Number(l.debit), haber: Number(l.credit),
+            }));
+            for (const l of lineas) { totalDebe = totalDebe.plus(l.debe); totalHaber = totalHaber.plus(l.haber); }
+            return {
+                numero: i + 1, id: e.id, fecha: e.date, descripcion: e.description,
+                tipo: e.referenceType, esManual: !e.isAutomatic, lineas,
+            };
+        });
+        res.json({
+            period: `${year}-${String(month).padStart(2, '0')}`,
+            locked: period?.status === 'CLOSED',
+            totalDebe: totalDebe.toNumber(), totalHaber: totalHaber.toNumber(),
+            asientos,
+        });
+    } catch (error) {
+        console.error('Libro diario error:', error);
+        res.status(500).json({ error: 'Error al generar el libro diario.' });
+    }
+});
+
+// GET /api/accounting/libro-mayor/:year/:month?accountCode= — Mayor / Balanza (A4)
+// Sin accountCode → balanza de comprobación (saldo inicial + debe + haber + final
+// por cuenta). Con accountCode → detalle de movimientos de esa cuenta.
+app.get('/api/accounting/libro-mayor/:year/:month', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    const accountCode = typeof req.query.accountCode === 'string' ? req.query.accountCode : null;
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Año o mes inválido.' });
+    }
+    try {
+        const start = new Date(year, month - 1, 1);
+        const end = new Date(year, month, 0, 23, 59, 59);
+        const accounts = await prisma.account.findMany({
+            where: { tenantId }, select: { id: true, code: true, name: true, type: true },
+        });
+        const byId = new Map(accounts.map(a => [a.id, a]));
+        const normalDebit = (type: string) => type === 'ASSET' || type === 'EXPENSE';
+
+        if (accountCode) {
+            const acc = accounts.find(a => a.code === accountCode);
+            if (!acc) return res.status(404).json({ error: 'Cuenta no encontrada.' });
+            // Saldo inicial: líneas de esta cuenta antes del período.
+            const prev = await prisma.journalLine.aggregate({
+                where: { accountId: acc.id, entry: { tenantId, date: { lt: start } } },
+                _sum: { debit: true, credit: true },
+            });
+            const prevDebe = new Decimal(prev._sum.debit?.toString() ?? '0');
+            const prevHaber = new Decimal(prev._sum.credit?.toString() ?? '0');
+            let saldo = normalDebit(acc.type) ? prevDebe.minus(prevHaber) : prevHaber.minus(prevDebe);
+            const saldoInicial = saldo.toNumber();
+
+            const lines = await prisma.journalLine.findMany({
+                where: { accountId: acc.id, entry: { tenantId, date: { gte: start, lte: end } } },
+                include: { entry: { select: { date: true, description: true } } },
+                orderBy: { entry: { date: 'asc' } },
+            });
+            const movimientos = lines.map(l => {
+                const debe = Number(l.debit), haber = Number(l.credit);
+                saldo = normalDebit(acc.type) ? saldo.plus(debe).minus(haber) : saldo.plus(haber).minus(debe);
+                return { fecha: l.entry.date, descripcion: l.entry.description, debe, haber, saldo: saldo.toNumber() };
+            });
+            return res.json({ cuenta: acc.code, nombre: acc.name, saldoInicial, movimientos, saldoFinal: saldo.toNumber() });
+        }
+
+        // Balanza de comprobación: agregados por cuenta.
+        const [prevAgg, periodAgg] = await Promise.all([
+            prisma.journalLine.groupBy({ by: ['accountId'], where: { entry: { tenantId, date: { lt: start } } }, _sum: { debit: true, credit: true } }),
+            prisma.journalLine.groupBy({ by: ['accountId'], where: { entry: { tenantId, date: { gte: start, lte: end } } }, _sum: { debit: true, credit: true } }),
+        ]);
+        const prevMap = new Map(prevAgg.map(p => [p.accountId, p]));
+        const periodMap = new Map(periodAgg.map(p => [p.accountId, p]));
+        const ids = new Set([...prevMap.keys(), ...periodMap.keys()]);
+
+        const balanza = [...ids].map(id => {
+            const acc = byId.get(id)!;
+            const pd = new Decimal(prevMap.get(id)?._sum.debit?.toString() ?? '0');
+            const ph = new Decimal(prevMap.get(id)?._sum.credit?.toString() ?? '0');
+            const debe = new Decimal(periodMap.get(id)?._sum.debit?.toString() ?? '0');
+            const haber = new Decimal(periodMap.get(id)?._sum.credit?.toString() ?? '0');
+            const saldoInicial = normalDebit(acc.type) ? pd.minus(ph) : ph.minus(pd);
+            const movimiento = normalDebit(acc.type) ? debe.minus(haber) : haber.minus(debe);
+            return {
+                cuenta: acc.code, nombre: acc.name, tipo: acc.type,
+                saldoInicial: saldoInicial.toNumber(),
+                debe: debe.toNumber(), haber: haber.toNumber(),
+                saldoFinal: saldoInicial.plus(movimiento).toNumber(),
+            };
+        }).sort((a, b) => a.cuenta.localeCompare(b.cuenta));
+
+        const totDebe = balanza.reduce((s, b) => s.plus(b.debe), new Decimal(0)).toNumber();
+        const totHaber = balanza.reduce((s, b) => s.plus(b.haber), new Decimal(0)).toNumber();
+        res.json({ period: `${year}-${String(month).padStart(2, '0')}`, balanza, totales: { debe: totDebe, haber: totHaber } });
+    } catch (error) {
+        console.error('Libro mayor error:', error);
+        res.status(500).json({ error: 'Error al generar el libro mayor.' });
+    }
+});
+
+// GET /api/accounting/periods — estado de los períodos cerrados/reabiertos (A3)
+app.get('/api/accounting/periods', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const periods = await prisma.fiscalPeriod.findMany({
+            where: { tenantId: authReq.tenantId! },
+            orderBy: [{ year: 'desc' }, { month: 'desc' }],
+        });
+        res.json({ periods });
+    } catch (error) {
+        res.status(500).json({ error: 'Error al listar los períodos.' });
+    }
+});
+
+// POST /api/accounting/periods/:year/:month/reopen — Reabrir período (solo OWNER)
+app.post('/api/accounting/periods/:year/:month/reopen', authenticate, checkRole(['OWNER']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    const { reason } = req.body ?? {};
+    if (isNaN(year) || isNaN(month)) return res.status(400).json({ error: 'Año o mes inválido.' });
+    if (!reason || typeof reason !== 'string' || !reason.trim()) {
+        return res.status(400).json({ error: 'Reabrir un período exige un motivo (queda auditado).' });
+    }
+    try {
+        const period = await prisma.fiscalPeriod.findUnique({
+            where: { tenantId_year_month: { tenantId: authReq.tenantId!, year, month } },
+        });
+        if (!period || period.status !== 'CLOSED') {
+            return res.status(404).json({ error: 'El período no está cerrado.' });
+        }
+        await prisma.$transaction([
+            prisma.fiscalPeriod.update({
+                where: { id: period.id },
+                data: { status: 'OPEN', reopenedBy: authReq.userId!, reopenedAt: new Date(), reopenReason: reason.trim() },
+            }),
+            prisma.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!, userId: authReq.userId!, action: 'PERIOD_REOPENED',
+                    details: JSON.stringify({ year, month, reason: reason.trim() }),
+                },
+            }),
+        ]);
+        res.json({ message: `Período ${year}-${String(month).padStart(2, '0')} reabierto.` });
+    } catch (error) {
+        console.error('Reopen period error:', error);
+        res.status(500).json({ error: 'Error al reabrir el período.' });
+    }
+});
+
 // ==========================================
 // 🔮 ORÁCULO DE INVENTARIO (COMPRAS INTELIGENTES)
 // ==========================================
@@ -4651,8 +4900,8 @@ app.post('/api/accounting/fiscal-close', authenticate, async (req: any, res: any
 
     try {
         const { fiscalClose } = await import('./services/accounting');
-        const result = await fiscalClose(authReq.tenantId!, month, year);
-        res.json({ message: `Cierre fiscal ${month}/${year} completado`, ...result });
+        const result = await fiscalClose(authReq.tenantId!, month, year, authReq.userId!);
+        res.json({ message: `Cierre fiscal ${month}/${year} completado y período BLOQUEADO`, ...result });
     } catch (error) {
         console.error('Fiscal close error:', error);
         res.status(500).json({ error: 'Error al realizar cierre fiscal' });

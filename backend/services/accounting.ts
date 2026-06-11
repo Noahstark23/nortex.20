@@ -95,6 +95,35 @@ async function getAccount(tenantId: string, code: string) {
     return account;
 }
 
+// ── FASE A — Bloqueo de períodos fiscales ───────────────────────────────────
+
+type AnyTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/** Error tipado: el período de la fecha del asiento está cerrado. → HTTP 409. */
+export class PeriodLockedError extends Error {
+    constructor(public readonly period: string) {
+        super(`PERÍODO CERRADO: el período ${period} ya fue cerrado fiscalmente. Reábrelo para registrar movimientos con esa fecha.`);
+        this.name = 'PeriodLockedError';
+    }
+}
+
+/**
+ * Verifica que el período (año/mes) de `date` no esté cerrado. Sin fila de
+ * FiscalPeriod = abierto (no rompe los flujos previos). Es el guard único:
+ * lo llama createJournalEntry, así que protege ventas, compras, gastos,
+ * nómina, devoluciones y asientos manuales por igual.
+ */
+export async function assertPeriodOpen(tx: AnyTx, tenantId: string, date: Date): Promise<void> {
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    const period = await tx.fiscalPeriod.findUnique({
+        where: { tenantId_year_month: { tenantId, year, month } },
+    });
+    if (period && period.status === 'CLOSED') {
+        throw new PeriodLockedError(`${year}-${String(month).padStart(2, '0')}`);
+    }
+}
+
 export async function createJournalEntry(
     tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
     tenantId: string,
@@ -102,8 +131,15 @@ export async function createJournalEntry(
     referenceId: string,
     referenceType: string,
     userId: string,
-    lines: { accountCode: string; debit: number; credit: number }[]
+    lines: { accountCode: string; debit: number; credit: number }[],
+    opts?: { isAutomatic?: boolean; date?: Date }
 ): Promise<void> {
+    const date = opts?.date ?? new Date();
+    const isAutomatic = opts?.isAutomatic ?? true;
+
+    // A3: ningún asiento entra en un período cerrado (cubre TODO el motor).
+    await assertPeriodOpen(tx, tenantId, date);
+
     // Validate: Sum of debits must equal sum of credits (Decimal para evitar 0.1+0.2 != 0.3)
     const totalDebit = lines.reduce((sum, l) => new Decimal(sum).plus(l.debit).toNumber(), 0);
     const totalCredit = lines.reduce((sum, l) => new Decimal(sum).plus(l.credit).toNumber(), 0);
@@ -119,10 +155,11 @@ export async function createJournalEntry(
     const entry = await tx.journalEntry.create({
         data: {
             tenantId,
+            date,
             description,
             referenceId,
             referenceType,
-            isAutomatic: true,
+            isAutomatic,
             createdBy: userId,
         }
     });
@@ -550,7 +587,7 @@ export async function generateRetentions(tenantId: string, month: number, year: 
  * Cierre fiscal mensual: genera snapshot del Balance General + P&L
  * y guarda en TaxReport.
  */
-export async function fiscalClose(tenantId: string, month: number, year: number) {
+export async function fiscalClose(tenantId: string, month: number, year: number, closedBy: string = 'SYSTEM') {
     const period = `${year}-${String(month).padStart(2, '0')}`;
 
     // Generar estados financieros del periodo
@@ -595,8 +632,16 @@ export async function fiscalClose(tenantId: string, month: number, year: number)
         await prisma.taxReport.create({ data: reportData });
     }
 
+    // A3: CERRAR el período → ningún asiento futuro puede caer en este mes.
+    await prisma.fiscalPeriod.upsert({
+        where: { tenantId_year_month: { tenantId, year, month } },
+        create: { tenantId, year, month, status: 'CLOSED', closedBy, closedAt: new Date() },
+        update: { status: 'CLOSED', closedBy, closedAt: new Date(), reopenedBy: null, reopenedAt: null, reopenReason: null },
+    });
+
     return {
         period,
+        locked: true,
         balance: balance.totals,
         estadoResultados: {
             revenue: estado.revenue.total,

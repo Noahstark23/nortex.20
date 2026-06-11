@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen } from 'lucide-react';
 import { PinPadClock } from './PinPadClock';
 
 interface LayoutProps {
@@ -141,6 +141,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       : userRole === 'ACCOUNTANT'
       ? [
         // ── CONTADOR — vista reducida ────────────────────
+        { path: '/app/accounting', label: 'Contabilidad',      shortLabel: 'Contab.',    group: 'Fiscal',    icon: BookOpen },
         { path: '/app/reports',   label: 'Reportes / Fiscal', shortLabel: 'Fiscal',     group: 'Fiscal',    icon: PieChart },
         { path: '/app/purchases', label: 'Compras',           shortLabel: 'Compras',    group: 'Fiscal',    icon: Truck    },
         { path: '/app/audit',     label: 'Auditoría',         shortLabel: 'Auditoría',  group: 'Fiscal',    icon: Shield   },
@@ -168,6 +169,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { path: '/app/dashboard',   label: 'Finanzas',       shortLabel: 'Finanzas', group: 'Finanzas', icon: LayoutGrid },
         { path: '/app/receivables', label: 'Cobranza',       shortLabel: 'Cobros',   group: 'Finanzas', icon: Wallet     },
         { path: '/app/billing',     label: 'Facturación',    shortLabel: 'Facturas', group: 'Finanzas', icon: CreditCard },
+        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
+          ? [{ path: '/app/accounting', label: 'Contabilidad', shortLabel: 'Contab.', group: 'Finanzas', icon: BookOpen }]
+          : []),
         { path: '/app/reports',     label: 'Reportes',       shortLabel: 'Reportes', group: 'Finanzas', icon: PieChart   },
         ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
           ? [
