@@ -24,6 +24,7 @@ import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { signDriverToken, verifyDriverToken } from '../services/secrets';
 import { recordSale } from '../services/accounting';
+import { appendDriverWalletMovement } from '../services/ledger';
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -251,10 +252,17 @@ router.patch('/me/orders/:orderId/deliver', authenticateDriver, async (req: any,
         }
 
         const updated = await prisma.$transaction(async (tx: any) => {
-            const p = await tx.pedido.update({
-                where: { id: orderId },
+            // Guard de concurrencia: la transición a 'entregado' es CONDICIONAL
+            // (mismo patrón que stockService). Dos taps simultáneos → el segundo
+            // no afecta filas y aborta: sin doble factura ni doble comisión.
+            const transition = await tx.pedido.updateMany({
+                where: { id: orderId, motorizadoId, estado: { notIn: ['entregado', 'cancelado'] } },
                 data: { estado: 'entregado', entregadoAt: new Date() }
             });
+            if (transition.count === 0) {
+                throw new Error('PEDIDO_YA_PROCESADO');
+            }
+            const p = await tx.pedido.findUniqueOrThrow({ where: { id: orderId } });
 
             await tx.trackingEvento.create({
                 data: {
@@ -328,13 +336,65 @@ router.patch('/me/orders/:orderId/deliver', authenticateDriver, async (req: any,
                     data: { facturaId: sale.id }
                 });
             }
+
+            // 💰 FASE 3 — Wallet del Real Money Protocol (solo Red NORTEX):
+            // la comisión de la entrega (costoEntrega) se acredita como
+            // movimiento FIRMADO en la cadena del repartidor. pedidoId @unique
+            // garantiza 1 entrega = 1 comisión incluso ante carreras.
+            // (Flota PROPIA liquida en efectivo con su negocio: sin wallet.)
+            const comision = Number(pedido.costoEntrega);
+            if (req.driver.tipoFlota === 'NORTEX' && comision > 0) {
+                await appendDriverWalletMovement(tx, {
+                    motorizadoId,
+                    tenantId: pedido.tenantId,
+                    pedidoId: orderId,
+                    type: 'COMISION_ENTREGA',
+                    amount: comision,
+                    descripcion: `Comisión por entrega #${orderId.slice(0, 8)} (${pedido.clienteNombre})`,
+                });
+            }
+
             return p;
         });
 
         res.json({ message: 'Entregado exitosamente', pedido: updated });
     } catch (error) {
+        if (error instanceof Error && error.message === 'PEDIDO_YA_PROCESADO') {
+            return res.status(400).json({ error: 'El pedido ya fue procesado.' });
+        }
         console.error('Driver deliver error:', error);
         res.status(500).json({ error: 'Error al procesar la entrega.' });
+    }
+});
+
+// ── GET /api/driver/me/wallet — saldo + movimientos del repartidor ──────────
+// El saldo es la proyección (Motorizado.walletBalance); la verdad es la
+// cadena firmada. El driver solo LEE — los writes pasan por el helper.
+
+router.get('/me/wallet', authenticateDriver, async (req: any, res: any) => {
+    const motorizadoId: string = req.driver.id;
+    try {
+        const movimientos = await prisma.driverWalletMovement.findMany({
+            where: { motorizadoId },
+            orderBy: { createdAt: 'desc' },
+            take: 50,
+            select: {
+                id: true, type: true, amount: true, descripcion: true,
+                createdAt: true, pedidoId: true, signature: true,
+            },
+        });
+        res.json({
+            walletBalance: Number(req.driver.walletBalance),
+            movimientos: movimientos.map((m: typeof movimientos[number]) => ({
+                ...m,
+                amount: Number(m.amount),
+                firmado: !!m.signature,
+                signature: undefined,
+            })),
+        });
+    } catch (error) {
+        console.error('Driver wallet error:', error);
+        res.status(500).json({ error: 'Error al obtener tu billetera.' });
     }
 });
 

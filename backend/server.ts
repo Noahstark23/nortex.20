@@ -20,7 +20,7 @@ import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn,
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
 import { applyStockDelta, StockError } from './services/stockService';
-import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger } from './services/ledger';
+import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger, appendDriverWalletMovement, verifyDriverLedger } from './services/ledger';
 import { signAuthToken } from './services/secrets';
 import { isWhatsAppEnabled } from './services/whatsapp/config';
 import { verifyHandler as whatsappVerify, webhookHandler as whatsappWebhook } from './services/whatsapp/webhook';
@@ -3449,6 +3449,7 @@ app.get('/api/admin/motorizados', authenticate, requireSuperAdmin, async (req: a
                 zonaCobertura: true, vehiculoPlaca: true, fotoCedulaUrl: true,
                 fotoVehiculoUrl: true, kycStatus: true, kycNota: true,
                 activo: true, calificacionPromedio: true, createdAt: true,
+                walletBalance: true,
             },
             orderBy: { createdAt: 'desc' },
         });
@@ -3485,6 +3486,82 @@ app.patch('/api/admin/motorizados/:id/kyc', authenticate, requireSuperAdmin, asy
         res.json({ message: `Motorizado ${decision === 'APROBADO' ? 'aprobado' : 'rechazado'}.`, motorizado });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Error procesando KYC';
+        res.status(500).json({ error: message });
+    }
+});
+
+// GET /api/admin/motorizados/:id/wallet — saldo + libro + verificación de la
+// cadena firmada (FASE 3): detecta UPDATE/DELETE manual y proyección alterada.
+app.get('/api/admin/motorizados/:id/wallet', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+    try {
+        const motorizado = await prisma.motorizado.findUnique({
+            where: { id: req.params.id },
+            select: { id: true, nombre: true, tipoFlota: true, walletBalance: true },
+        });
+        if (!motorizado) return res.status(404).json({ error: 'Motorizado no encontrado' });
+
+        const [movimientos, verification] = await Promise.all([
+            prisma.driverWalletMovement.findMany({
+                where: { motorizadoId: motorizado.id },
+                orderBy: { createdAt: 'desc' },
+                take: 100,
+            }),
+            verifyDriverLedger(prisma, motorizado.id),
+        ]);
+
+        res.status(verification.ok ? 200 : 409).json({
+            motorizado: { ...motorizado, walletBalance: Number(motorizado.walletBalance) },
+            verification,
+            movimientos: movimientos.map((m: typeof movimientos[number]) => ({ ...m, amount: Number(m.amount) })),
+        });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Error consultando wallet';
+        res.status(500).json({ error: message });
+    }
+});
+
+// POST /api/admin/motorizados/:id/wallet/payout — registrar el pago de Nortex
+// al repartidor (debita el wallet con un movimiento FIRMADO; no permite
+// sobregiro). El dinero físico se mueve fuera; aquí queda el rastro inmutable.
+app.post('/api/admin/motorizados/:id/wallet/payout', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+    try {
+        const { amount, nota } = req.body ?? {};
+        const monto = Number(amount);
+        if (!Number.isFinite(monto) || monto <= 0) {
+            return res.status(400).json({ error: 'amount debe ser un número > 0' });
+        }
+
+        const movement = await prisma.$transaction(async (tx) => {
+            // Lectura DENTRO de la tx: el saldo no puede cambiar entre chequeo y débito
+            // (el row-lock del update de proyección serializa con las comisiones).
+            const driver = await tx.motorizado.findUnique({
+                where: { id: req.params.id },
+                select: { id: true, nombre: true, walletBalance: true },
+            });
+            if (!driver) throw new Error('DRIVER_NOT_FOUND');
+            if (Number(driver.walletBalance) < monto) throw new Error('SALDO_INSUFICIENTE');
+
+            return appendDriverWalletMovement(tx, {
+                motorizadoId: driver.id,
+                tenantId: null,
+                pedidoId: null,
+                type: 'PAGO_NORTEX',
+                amount: -monto,
+                descripcion: typeof nota === 'string' && nota.trim()
+                    ? `Pago Nortex: ${nota.trim()}`
+                    : 'Pago de comisiones Nortex al repartidor',
+            });
+        });
+
+        res.json({ message: 'Pago registrado en el libro del repartidor.', movementId: movement.id, amount: -monto });
+    } catch (error: unknown) {
+        if (error instanceof Error && error.message === 'DRIVER_NOT_FOUND') {
+            return res.status(404).json({ error: 'Motorizado no encontrado' });
+        }
+        if (error instanceof Error && error.message === 'SALDO_INSUFICIENTE') {
+            return res.status(400).json({ error: 'El monto excede el saldo del wallet del repartidor.' });
+        }
+        const message = error instanceof Error ? error.message : 'Error registrando pago';
         res.status(500).json({ error: message });
     }
 });

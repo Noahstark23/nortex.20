@@ -177,3 +177,192 @@ export async function verifyTenantLedger(
 
     return { ok: true, checked: movements.length, unsigned, headSeq: head?.lastSeq ?? null, brokenAtSeq: null, reason: null };
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// FASE 3 — Wallet del repartidor (Red Nortex / Real Money Protocol)
+//
+// Mismo principio que el libro de caja: el saldo (Motorizado.walletBalance)
+// es una PROYECCIÓN; la verdad es la cadena firmada de DriverWalletMovement.
+// Cada entrega acredita la comisión con un movimiento inmutable; el pago de
+// Nortex al repartidor la debita. verifyDriverLedger recomputa el saldo y
+// detecta cualquier manipulación directa en la DB.
+// ════════════════════════════════════════════════════════════════════════════
+
+import type { DriverWalletMovement } from '@prisma/client';
+
+export interface DriverMovementInput {
+    motorizadoId: string;
+    tenantId: string | null;
+    pedidoId: string | null;
+    type: 'COMISION_ENTREGA' | 'PAGO_NORTEX' | 'AJUSTE';
+    /** + acredita (comisión), − debita (pago al driver) */
+    amount: number;
+    descripcion: string;
+}
+
+/** Campos inmutables que entran en la firma de un movimiento de wallet. */
+function driverMovementSignedFields(
+    m: Pick<DriverWalletMovement, 'id' | 'motorizadoId' | 'type' | 'createdAt'> & {
+        tenantId: string | null;
+        pedidoId: string | null;
+        amount: { toFixed(n: number): string };
+        seq: number;
+        prevHash: string;
+    }
+): LedgerFields {
+    return {
+        id: m.id,
+        motorizadoId: m.motorizadoId,
+        tenantId: m.tenantId,
+        pedidoId: m.pedidoId,
+        type: m.type,
+        amount: m.amount.toFixed(2),
+        createdAt: m.createdAt.toISOString(),
+        seq: m.seq,
+        prevHash: m.prevHash,
+    };
+}
+
+/**
+ * Acredita/debita el wallet del repartidor con un movimiento encadenado y
+ * firmado, y actualiza la proyección (walletBalance) de forma atómica.
+ * DEBE llamarse dentro de una transacción interactiva.
+ *
+ * Idempotencia: pedidoId @unique — si dos entregas concurrentes intentan
+ * acreditar el mismo pedido, la segunda recibe P2002 y su tx aborta entera.
+ */
+export async function appendDriverWalletMovement(
+    tx: Prisma.TransactionClient,
+    input: DriverMovementInput
+): Promise<DriverWalletMovement> {
+    const baseData = {
+        motorizadoId: input.motorizadoId,
+        tenantId: input.tenantId,
+        pedidoId: input.pedidoId,
+        type: input.type,
+        amount: input.amount,
+        descripcion: input.descripcion,
+    };
+
+    let created: DriverWalletMovement;
+
+    if (!isLedgerSigningEnabled()) {
+        created = await tx.driverWalletMovement.create({ data: baseData });
+    } else {
+        // Asegurar la cabeza (primera vez del driver); P2002 en carrera se traga.
+        try {
+            await tx.driverLedgerHead.upsert({
+                where: { motorizadoId: input.motorizadoId },
+                create: { motorizadoId: input.motorizadoId },
+                update: {},
+            });
+        } catch (err) {
+            if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) throw err;
+        }
+
+        // Row-lock: serializa los appends del driver y entrega el seq sin carrera.
+        const head = await tx.driverLedgerHead.update({
+            where: { motorizadoId: input.motorizadoId },
+            data: { lastSeq: { increment: 1 } },
+        });
+        const seq = head.lastSeq;
+        const prevHash = head.lastHash;
+
+        created = await tx.driverWalletMovement.create({ data: { ...baseData, seq, prevHash } });
+
+        const signature = signLedgerRecord(
+            driverMovementSignedFields({ ...created, amount: created.amount, seq, prevHash })
+        );
+
+        const [signed] = await Promise.all([
+            tx.driverWalletMovement.update({ where: { id: created.id }, data: { signature } }),
+            tx.driverLedgerHead.update({ where: { motorizadoId: input.motorizadoId }, data: { lastHash: signature } }),
+        ]);
+        created = signed;
+    }
+
+    // Proyección del saldo — atómica, en la misma transacción que el movimiento.
+    await tx.motorizado.update({
+        where: { id: input.motorizadoId },
+        data: { walletBalance: { increment: input.amount } },
+    });
+
+    return created;
+}
+
+export interface DriverLedgerVerification extends LedgerVerification {
+    /** Saldo recomputado desde el libro vs proyección almacenada. */
+    computedBalance: string;
+    storedBalance: string;
+    balanceMatches: boolean;
+}
+
+/**
+ * Verifica la cadena del wallet del repartidor Y recomputa el saldo desde el
+ * libro completo (firmados + legacy) contra la proyección walletBalance.
+ */
+export async function verifyDriverLedger(
+    prisma: PrismaClient | Prisma.TransactionClient,
+    motorizadoId: string
+): Promise<DriverLedgerVerification> {
+    const all = await prisma.driverWalletMovement.findMany({
+        where: { motorizadoId },
+        orderBy: { createdAt: 'asc' },
+    });
+    const head = await prisma.driverLedgerHead.findUnique({ where: { motorizadoId } });
+    const motorizado = await prisma.motorizado.findUnique({
+        where: { id: motorizadoId },
+        select: { walletBalance: true },
+    });
+
+    // Recomputo del saldo: suma de TODO el libro (la proyección debe coincidir).
+    let computed = 0;
+    for (const m of all) computed += Number(m.amount);
+    const computedBalance = computed.toFixed(2);
+    const storedBalance = Number(motorizado?.walletBalance ?? 0).toFixed(2);
+    const balanceMatches = computedBalance === storedBalance;
+
+    const chained = all.filter((m): m is typeof m & { seq: number } => m.seq !== null)
+        .sort((a, b) => a.seq - b.seq);
+    const unsigned = all.length - chained.length;
+
+    const fail = (brokenAtSeq: number, reason: string): DriverLedgerVerification => ({
+        ok: false, checked: chained.length, unsigned, headSeq: head?.lastSeq ?? null,
+        brokenAtSeq, reason, computedBalance, storedBalance, balanceMatches,
+    });
+
+    let prevHash = 'GENESIS';
+    let expectedSeq = 1;
+    for (const m of chained) {
+        if (m.seq !== expectedSeq) {
+            return fail(expectedSeq, `Hueco en la cadena: se esperaba seq=${expectedSeq}, se encontró seq=${m.seq} (¿fila borrada?)`);
+        }
+        if (m.prevHash !== prevHash) {
+            return fail(m.seq, `prevHash no coincide en seq=${m.seq} (cadena re-escrita)`);
+        }
+        if (!m.signature || !verifyLedgerRecord(
+            driverMovementSignedFields({ ...m, amount: m.amount, seq: m.seq, prevHash: m.prevHash ?? 'GENESIS' }),
+            m.signature
+        )) {
+            return fail(m.seq, `Firma inválida en seq=${m.seq} (campos alterados en DB)`);
+        }
+        prevHash = m.signature;
+        expectedSeq += 1;
+    }
+
+    if (head && chained.length > 0 && head.lastHash !== prevHash) {
+        return fail(chained[chained.length - 1].seq, 'La cabeza (DriverLedgerHead.lastHash) no coincide con el último movimiento (¿truncado de cola?)');
+    }
+
+    return {
+        ok: balanceMatches,
+        checked: chained.length,
+        unsigned,
+        headSeq: head?.lastSeq ?? null,
+        brokenAtSeq: null,
+        reason: balanceMatches ? null : `Saldo proyectado (${storedBalance}) no coincide con el libro (${computedBalance}) — proyección manipulada o write fuera del helper`,
+        computedBalance,
+        storedBalance,
+        balanceMatches,
+    };
+}

@@ -42,6 +42,20 @@ interface Liquidacion {
     netoADepositarA_Tienda: number;
 }
 
+interface WalletMovimiento {
+    id: string;
+    type: string; // COMISION_ENTREGA | PAGO_NORTEX | AJUSTE
+    amount: number;
+    descripcion: string;
+    createdAt: string;
+    firmado: boolean;
+}
+
+interface WalletData {
+    walletBalance: number;
+    movimientos: WalletMovimiento[];
+}
+
 // ─── Confirm Modal ─────────────────────────────────────────────────────────
 
 interface ConfirmDeliveryModalProps {
@@ -148,6 +162,29 @@ const DriverView: React.FC = () => {
     // Modal state
     const [confirmOrder, setConfirmOrder] = useState<Order | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
+
+    // 💰 Wallet (solo Red NORTEX)
+    const [wallet, setWallet] = useState<WalletData | null>(null);
+    const [showWallet, setShowWallet] = useState(false);
+    const [walletLoading, setWalletLoading] = useState(false);
+
+    const fetchWallet = useCallback(async () => {
+        const t = localStorage.getItem(DRIVER_TOKEN_KEY);
+        if (!t) return;
+        setWalletLoading(true);
+        try {
+            const res = await fetch('/api/driver/me/wallet', {
+                headers: { Authorization: `Bearer ${t}` },
+            });
+            if (res.ok) setWallet(await res.json());
+        } catch { /* sin red — se reintenta al reabrir */ }
+        finally { setWalletLoading(false); }
+    }, []);
+
+    const openWallet = () => {
+        setShowWallet(true);
+        fetchWallet();
+    };
 
     const logout = useCallback(() => {
         localStorage.removeItem(DRIVER_TOKEN_KEY);
@@ -395,6 +432,15 @@ const DriverView: React.FC = () => {
                             }
                         </p>
                     </div>
+                    {driver.tipoFlota === 'NORTEX' && (
+                        <button
+                            onClick={openWallet}
+                            title="Mi billetera"
+                            className="p-2.5 bg-amber-500/15 border border-amber-500/25 rounded-xl text-amber-400 hover:bg-amber-500/25 transition-colors flex-shrink-0"
+                        >
+                            <Wallet size={18} />
+                        </button>
+                    )}
                     <button
                         onClick={logout}
                         title="Cerrar sesión"
@@ -607,6 +653,58 @@ const DriverView: React.FC = () => {
                                     </div>
                                 </>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── 💰 Wallet Sheet (Red NORTEX) ───────────────────────── */}
+            {showWallet && (
+                <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
+                    <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowWallet(false)} />
+                    <div className="relative w-full sm:max-w-sm bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-700 overflow-hidden max-h-[85vh] flex flex-col">
+                        <div className="bg-amber-500 px-6 py-3 flex items-center justify-between">
+                            <span className="font-black text-amber-950 text-sm uppercase tracking-widest flex items-center gap-2">
+                                <Wallet size={16} /> Mi Billetera Nortex
+                            </span>
+                            <button onClick={() => setShowWallet(false)} className="text-amber-900 hover:text-amber-950">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="px-6 py-5 text-center border-b border-slate-800">
+                            <p className="text-slate-400 text-xs uppercase tracking-widest mb-1">Comisiones por cobrar</p>
+                            {walletLoading && !wallet ? (
+                                <Loader2 className="animate-spin text-amber-400 mx-auto my-3" size={28} />
+                            ) : (
+                                <p className="text-5xl font-black text-amber-400 tracking-tight leading-none">
+                                    C${(wallet?.walletBalance ?? 0).toFixed(2)}
+                                </p>
+                            )}
+                            <p className="text-[11px] text-slate-500 mt-2">
+                                🔐 Cada movimiento queda firmado en tu libro — nadie puede alterarlo.
+                            </p>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+                            {wallet && wallet.movimientos.length === 0 && (
+                                <p className="text-center text-slate-500 text-sm py-6">
+                                    Aún no tenés movimientos.<br />¡Tu primera entrega acredita tu comisión aquí!
+                                </p>
+                            )}
+                            {wallet?.movimientos.map(m => (
+                                <div key={m.id} className="bg-slate-800 border border-slate-700 rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <p className="text-sm text-slate-200 font-semibold truncate">{m.descripcion}</p>
+                                        <p className="text-[10px] text-slate-500 mt-0.5">
+                                            {new Date(m.createdAt).toLocaleString()} {m.firmado && '· 🔏 firmado'}
+                                        </p>
+                                    </div>
+                                    <span className={`font-black text-lg flex-shrink-0 ${m.amount >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                        {m.amount >= 0 ? '+' : ''}C${m.amount.toFixed(2)}
+                                    </span>
+                                </div>
+                            ))}
                         </div>
                     </div>
                 </div>

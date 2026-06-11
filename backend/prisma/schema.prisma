@@ -1014,12 +1014,51 @@ model Motorizado {
   fotoCedulaUrl   String? // KYC: foto de la cédula (Cloudinary)
   fotoVehiculoUrl String? // KYC: foto de la moto con placa visible (Cloudinary)
 
-  tenant  Tenant?  @relation(fields: [tenantId], references: [id])
-  pedidos Pedido[]
+  // ── FASE 3: Wallet del Real Money Protocol ──
+  // PROYECCIÓN del saldo — la verdad es el libro firmado (DriverWalletMovement).
+  // Se verifica recomputando contra la cadena; jamás se firma el saldo mutable.
+  walletBalance Decimal @default(0) @db.Decimal(12, 2)
+
+  tenant      Tenant?                @relation(fields: [tenantId], references: [id])
+  pedidos     Pedido[]
+  movimientos DriverWalletMovement[]
 
   @@index([tenantId])
   @@index([telefono])
   @@index([kycStatus])
+}
+
+// Cabeza de la cadena del wallet por repartidor (mismo patrón que LedgerHead:
+// el UPDATE con increment toma row-lock → serializa los appends del driver).
+model DriverLedgerHead {
+  motorizadoId String   @id
+  lastSeq      Int      @default(0)
+  lastHash     String   @default("GENESIS")
+  updatedAt    DateTime @updatedAt
+}
+
+// Libro inmutable del wallet del repartidor (tamper-evidence).
+// amount: + acredita (comisión por entrega), − debita (pago de Nortex al driver).
+model DriverWalletMovement {
+  id           String   @id @default(cuid())
+  motorizadoId String
+  tenantId     String? // Negocio para el que se repartió (null en pagos/ajustes de plataforma)
+  pedidoId     String?  @unique // 1 entrega = 1 comisión (idempotencia a nivel de DB)
+  type         String // COMISION_ENTREGA | PAGO_NORTEX | AJUSTE
+  amount       Decimal  @db.Decimal(12, 2)
+  descripcion  String   @db.Text
+  createdAt    DateTime @default(now())
+
+  // Cadena firmada (mismo esquema que CashMovement): null = legacy/sin claves.
+  seq       Int?
+  prevHash  String?
+  signature String?
+
+  motorizado Motorizado @relation(fields: [motorizadoId], references: [id])
+
+  @@unique([motorizadoId, seq])
+  @@index([motorizadoId])
+  @@index([type])
 }
 
 model Pedido {
