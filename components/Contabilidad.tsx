@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     BookOpen, Plus, Trash2, Lock, Unlock, Loader2, Scale, FileText,
-    CalendarDays, CheckCircle2, AlertTriangle, ArrowLeft, ListTree
+    CalendarDays, CheckCircle2, AlertTriangle, ArrowLeft, ListTree, Percent, Coins, Receipt
 } from 'lucide-react';
 import { sanitizeDecimalInput, toDecimal } from '../utils/money';
 
@@ -20,7 +20,9 @@ interface BalanzaRow { cuenta: string; nombre: string; tipo: string; saldoInicia
 interface MayorMov { fecha: string; descripcion: string; debe: number; haber: number; saldo: number; }
 interface FiscalPeriodRow { id: string; year: number; month: number; status: string; closedAt?: string | null; reopenReason?: string | null; }
 
-type Tab = 'asiento' | 'diario' | 'balanza' | 'periodos';
+type Tab = 'asiento' | 'diario' | 'balanza' | 'periodos' | 'fiscal' | 'retenciones';
+
+interface RetencionRow { id: string; fecha: string; clienteRetenedor: string; tipo: string; baseAmount: number; amount: number; numeroConstancia?: string | null; }
 
 const C = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -154,6 +156,91 @@ const Contabilidad: React.FC = () => {
         if (res.ok) loadPeriods();
     };
 
+    // ── Config fiscal + tipo de cambio (B4/B6) ──────────────────────────────
+    const [cfg, setCfg] = useState({ inssPatronalRate: '', anticipoIrRate: '', imiRate: '', salarioMinimo: '' });
+    const [cfgMsg, setCfgMsg] = useState('');
+    const [exLatest, setExLatest] = useState<{ rate: number | null; fecha?: string }>({ rate: null });
+    const [exDate, setExDate] = useState(today.toISOString().slice(0, 10));
+    const [exRate, setExRate] = useState('');
+
+    const loadFiscal = useCallback(async () => {
+        const [c, e] = await Promise.all([
+            fetch('/api/accounting/tax-config', { headers: auth }).then(r => r.ok ? r.json() : null),
+            fetch('/api/accounting/exchange-rate/latest', { headers: auth }).then(r => r.ok ? r.json() : null),
+        ]);
+        if (c) setCfg({
+            inssPatronalRate: String((Number(c.inssPatronalRate) * 100).toFixed(2)),
+            anticipoIrRate: String((Number(c.anticipoIrRate) * 100).toFixed(2)),
+            imiRate: String((Number(c.imiRate) * 100).toFixed(2)),
+            salarioMinimo: c.salarioMinimo ? String(Number(c.salarioMinimo)) : '',
+        });
+        if (e) setExLatest(e);
+    }, [auth]);
+    useEffect(() => { if (tab === 'fiscal') loadFiscal(); }, [tab, loadFiscal]);
+
+    const saveCfg = async () => {
+        setCfgMsg('');
+        const pct = (s: string) => toDecimal(s).div(100).toNumber();
+        const res = await fetch('/api/accounting/tax-config', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json', ...auth },
+            body: JSON.stringify({
+                inssPatronalRate: pct(cfg.inssPatronalRate), anticipoIrRate: pct(cfg.anticipoIrRate),
+                imiRate: pct(cfg.imiRate), salarioMinimo: toDecimal(cfg.salarioMinimo).toNumber(),
+            }),
+        });
+        const d = await res.json();
+        setCfgMsg(res.ok ? '✅ Configuración guardada.' : (d.error || 'Error'));
+    };
+
+    const saveRate = async () => {
+        if (toDecimal(exRate).lessThanOrEqualTo(0)) return;
+        const res = await fetch('/api/accounting/exchange-rate', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
+            body: JSON.stringify({ fecha: exDate, rate: toDecimal(exRate).toNumber() }),
+        });
+        if (res.ok) { setExRate(''); loadFiscal(); }
+        else alert((await res.json()).error || 'Error');
+    };
+
+    // ── Retenciones sufridas (B1) ────────────────────────────────────────────
+    const [retList, setRetList] = useState<RetencionRow[]>([]);
+    const [ret, setRet] = useState({ fecha: today.toISOString().slice(0, 10), clienteRetenedor: '', tipo: 'IR_2', baseAmount: '', amount: '', numeroConstancia: '' });
+    const [retMsg, setRetMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+    const loadRet = useCallback(async () => {
+        const res = await fetch('/api/accounting/retenciones-sufridas', { headers: auth });
+        if (res.ok) { const d = await res.json(); setRetList(d.retenciones ?? []); }
+    }, [auth]);
+    useEffect(() => { if (tab === 'retenciones') loadRet(); }, [tab, loadRet]);
+
+    // Auto-calcular el monto retenido según el tipo y la base.
+    const retAmountAuto = useMemo(() => {
+        const base = toDecimal(ret.baseAmount);
+        const rate = ret.tipo === 'IR_2' ? 0.02 : 0.01;
+        return base.mul(rate).toDecimalPlaces(2).toNumber();
+    }, [ret.baseAmount, ret.tipo]);
+
+    const submitRet = async () => {
+        setRetMsg(null);
+        if (!ret.clienteRetenedor.trim()) return setRetMsg({ ok: false, text: 'Indica quién te retuvo.' });
+        const amount = toDecimal(ret.amount).greaterThan(0) ? toDecimal(ret.amount).toNumber() : retAmountAuto;
+        if (amount <= 0) return setRetMsg({ ok: false, text: 'El monto retenido debe ser mayor a cero.' });
+        const res = await fetch('/api/accounting/retenciones-sufridas', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
+            body: JSON.stringify({
+                fecha: ret.fecha, clienteRetenedor: ret.clienteRetenedor.trim(), tipo: ret.tipo,
+                baseAmount: toDecimal(ret.baseAmount).toNumber(), amount, numeroConstancia: ret.numeroConstancia.trim() || undefined,
+            }),
+        });
+        const d = await res.json();
+        if (!res.ok) return setRetMsg({ ok: false, text: d.error || 'Error' });
+        setRetMsg({ ok: true, text: d.message });
+        setRet(r => ({ ...r, clienteRetenedor: '', baseAmount: '', amount: '', numeroConstancia: '' }));
+        loadRet();
+    };
+
+    const inputCls = 'w-full bg-white/[0.03] border border-white/[0.08] text-white px-3 py-2.5 rounded-xl focus:outline-none focus:border-brand placeholder:text-slate-600';
+
     const tabBtn = (t: Tab, label: string, Icon: React.ComponentType<{ size?: number }>) => (
         <button onClick={() => setTab(t)}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === t ? 'bg-brand text-white shadow-glow shadow-brand/25' : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'}`}>
@@ -178,6 +265,8 @@ const Contabilidad: React.FC = () => {
                     {tabBtn('diario', 'Libro Diario', FileText)}
                     {tabBtn('balanza', 'Balanza / Mayor', Scale)}
                     {tabBtn('periodos', 'Períodos', CalendarDays)}
+                    {tabBtn('retenciones', 'Retenciones', Receipt)}
+                    {tabBtn('fiscal', 'Config Fiscal', Percent)}
                 </div>
 
                 {/* ── ASIENTO MANUAL ── */}
@@ -389,6 +478,101 @@ const Contabilidad: React.FC = () => {
                                 ))}
                             </div>
                         )}
+                    </div>
+                )}
+
+                {/* ── RETENCIONES SUFRIDAS (B1) ── */}
+                {tab === 'retenciones' && (
+                    <div className="space-y-6">
+                        <div className="panel-premium p-6">
+                            <h3 className="text-white font-bold mb-1 flex items-center gap-2"><Receipt size={18} className="text-brand-300" /> Registrar retención sufrida</h3>
+                            <p className="text-slate-400 text-xs mb-4">Cuando una empresa o el Estado te retiene IR 2% / IMI 1% al pagarte, es <strong className="text-emerald-400">crédito contra tu anticipo del mes</strong>. Regístralo aquí para no pagar de más.</p>
+                            <div className="grid sm:grid-cols-2 gap-3">
+                                <input type="date" value={ret.fecha} onChange={e => setRet({ ...ret, fecha: e.target.value })} className={`${inputCls} font-mono`} />
+                                <select value={ret.tipo} onChange={e => setRet({ ...ret, tipo: e.target.value })} className={inputCls}>
+                                    <option value="IR_2">IR 2% (renta)</option>
+                                    <option value="IMI_1">IMI 1% (alcaldía)</option>
+                                </select>
+                                <input value={ret.clienteRetenedor} onChange={e => setRet({ ...ret, clienteRetenedor: e.target.value })} placeholder="Cliente que retuvo (ej: SINSA S.A.)" className={`${inputCls} sm:col-span-2`} />
+                                <div>
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5">Base (monto facturado)</label>
+                                    <input inputMode="decimal" value={ret.baseAmount} onChange={e => setRet({ ...ret, baseAmount: sanitizeDecimalInput(e.target.value) })} placeholder="0.00" className={`${inputCls} text-right font-mono tabular-nums`} />
+                                </div>
+                                <div>
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5">Retenido {ret.amount ? '' : <span className="text-slate-600">(auto {C(retAmountAuto)})</span>}</label>
+                                    <input inputMode="decimal" value={ret.amount} onChange={e => setRet({ ...ret, amount: sanitizeDecimalInput(e.target.value) })} placeholder={retAmountAuto.toFixed(2)} className={`${inputCls} text-right font-mono tabular-nums`} />
+                                </div>
+                                <input value={ret.numeroConstancia} onChange={e => setRet({ ...ret, numeroConstancia: e.target.value })} placeholder="N° de constancia (opcional)" className={`${inputCls} sm:col-span-2 font-mono`} />
+                            </div>
+                            {retMsg && <div className={`mt-3 px-4 py-2.5 rounded-xl text-sm ${retMsg.ok ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>{retMsg.text}</div>}
+                            <button onClick={submitRet} className="btn-primary mt-4 inline-flex items-center gap-2"><Plus size={16} /> Registrar retención</button>
+                        </div>
+
+                        <div className="panel-premium p-6">
+                            <h3 className="text-white font-bold mb-3 text-sm uppercase tracking-wider">Retenciones registradas</h3>
+                            {retList.length === 0 ? <p className="text-slate-500 text-sm text-center py-4">Aún no hay retenciones registradas.</p> : (
+                                <table className="w-full table-premium">
+                                    <thead><tr><th>Fecha</th><th>Cliente</th><th>Tipo</th><th className="text-right">Base</th><th className="text-right">Retenido</th></tr></thead>
+                                    <tbody>
+                                        {retList.map(r => (
+                                            <tr key={r.id}>
+                                                <td className="num text-slate-400">{new Date(r.fecha).toLocaleDateString('es-NI')}</td>
+                                                <td className="text-slate-300">{r.clienteRetenedor}{r.numeroConstancia ? <span className="text-slate-600 font-mono"> · {r.numeroConstancia}</span> : ''}</td>
+                                                <td><span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${r.tipo === 'IR_2' ? 'bg-brand/15 text-brand-300' : 'bg-amber-500/15 text-amber-400'}`}>{r.tipo === 'IR_2' ? 'IR 2%' : 'IMI 1%'}</span></td>
+                                                <td className="text-right num text-slate-400">{C(r.baseAmount)}</td>
+                                                <td className="text-right num text-emerald-400 font-bold">{C(r.amount)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* ── CONFIG FISCAL + TIPO DE CAMBIO (B4/B6) ── */}
+                {tab === 'fiscal' && (
+                    <div className="space-y-6">
+                        <div className="panel-premium p-6">
+                            <h3 className="text-white font-bold mb-1 flex items-center gap-2"><Percent size={18} className="text-brand-300" /> Tasas fiscales del negocio</h3>
+                            <p className="text-slate-400 text-xs mb-4">Ajusta según tu contribuyente. Reemplazan los valores por defecto en la declaración mensual y la planilla.</p>
+                            <div className="grid sm:grid-cols-2 gap-4">
+                                {([
+                                    ['inssPatronalRate', 'INSS Patronal %', '21.5 (<50 emp) · 22.5 (≥50)'],
+                                    ['anticipoIrRate', 'Anticipo IR / PMD %', '1 a 3 según escala'],
+                                    ['imiRate', 'IMI Alcaldía %', 'usualmente 1'],
+                                    ['salarioMinimo', 'Salario mínimo C$', 'vigente del sector'],
+                                ] as const).map(([key, label, hint]) => (
+                                    <div key={key}>
+                                        <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5">{label}</label>
+                                        <input inputMode="decimal" value={cfg[key]} onChange={e => setCfg({ ...cfg, [key]: sanitizeDecimalInput(e.target.value) })}
+                                            className={`${inputCls} text-right font-mono tabular-nums`} />
+                                        <p className="text-[10px] text-slate-600 mt-1">{hint}</p>
+                                    </div>
+                                ))}
+                            </div>
+                            {cfgMsg && <p className="mt-3 text-sm text-emerald-400">{cfgMsg}</p>}
+                            <button onClick={saveCfg} className="btn-primary mt-4 inline-flex items-center gap-2"><CheckCircle2 size={16} /> Guardar tasas</button>
+                        </div>
+
+                        <div className="panel-premium p-6">
+                            <h3 className="text-white font-bold mb-1 flex items-center gap-2"><Coins size={18} className="text-emerald-400" /> Tipo de cambio (C$/US$)</h3>
+                            <p className="text-slate-400 text-xs mb-4">
+                                Vigente: <span className="font-mono text-white font-bold">{exLatest.rate ? `C$ ${exLatest.rate.toFixed(4)}` : '— sin registrar —'}</span>
+                                {exLatest.fecha ? <span className="text-slate-500"> (del {new Date(exLatest.fecha).toLocaleDateString('es-NI')})</span> : ''}. El POS lo usa para pagos en dólares.
+                            </p>
+                            <div className="flex flex-wrap items-end gap-3">
+                                <div>
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5">Fecha</label>
+                                    <input type="date" value={exDate} onChange={e => setExDate(e.target.value)} className={`${inputCls} font-mono`} />
+                                </div>
+                                <div>
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5">Tasa</label>
+                                    <input inputMode="decimal" value={exRate} onChange={e => setExRate(sanitizeDecimalInput(e.target.value))} placeholder="36.6234" className={`${inputCls} text-right font-mono tabular-nums w-36`} />
+                                </div>
+                                <button onClick={saveRate} className="btn-primary inline-flex items-center gap-2"><Plus size={16} /> Registrar</button>
+                            </div>
+                        </div>
                     </div>
                 )}
             </div>

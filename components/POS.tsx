@@ -158,8 +158,9 @@ const POS: React.FC = () => {
     // 💸 DESCUENTOS STATE
     const [globalDiscount, setGlobalDiscount] = useState('');
 
-    // 💱 NIO/USD STATE
-    const [exchangeRate] = useState(36.56);
+    // 💱 NIO/USD STATE — tipo de cambio del tenant (B6); 36.56 solo es fallback
+    // hasta que carga el vigente desde /exchange-rate/latest.
+    const [exchangeRate, setExchangeRate] = useState(36.56);
     const [payingInUSD, setPayingInUSD] = useState(false);
     const [usdAmount, setUsdAmount] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
@@ -307,6 +308,16 @@ const POS: React.FC = () => {
     const refreshOfflineCount = useCallback(async () => {
         const pending = await getPendingSales();
         setPendingOfflineCount(pending.length);
+    }, []);
+
+    // B6 — cargar el tipo de cambio vigente del tenant (BCN/manual).
+    useEffect(() => {
+        const t = localStorage.getItem('nortex_token');
+        if (!t) return;
+        fetch('/api/accounting/exchange-rate/latest', { headers: { Authorization: `Bearer ${t}` } })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d && typeof d.rate === 'number' && d.rate > 0) setExchangeRate(d.rate); })
+            .catch(() => { /* mantiene el fallback */ });
     }, []);
 
     useEffect(() => {

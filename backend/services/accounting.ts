@@ -27,6 +27,7 @@ const CHART_OF_ACCOUNTS = [
     { code: '1.1.3', name: 'Cuentas por Cobrar', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.1.4', name: 'Inventario de Mercancías', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.1.5', name: 'IVA Crédito Fiscal', type: 'ASSET', subtype: 'CURRENT_ASSET' },
+    { code: '1.1.6', name: 'Anticipo IR (Retenciones Sufridas)', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.2.1', name: 'Mobiliario y Equipo', type: 'ASSET', subtype: 'FIXED_ASSET' },
     { code: '1.2.2', name: 'Depreciación Acumulada', type: 'ASSET', subtype: 'FIXED_ASSET' },
     // PASIVOS (2.x.x)
@@ -59,10 +60,10 @@ const CHART_OF_ACCOUNTS = [
 // ==========================================
 
 export async function seedChartOfAccounts(tenantId: string): Promise<void> {
-    const existing = await prisma.account.count({ where: { tenantId } });
-    if (existing > 0) return; // Already seeded
-
-    await prisma.account.createMany({
+    // Idempotente y AUTO-SANABLE: createMany skipDuplicates agrega solo las
+    // cuentas faltantes (el @@unique(tenantId,code) las dedupe). Así un tenant
+    // ya sembrado recibe cuentas NUEVAS del catálogo (ej. 1.1.6) sin migración.
+    const result = await prisma.account.createMany({
         data: CHART_OF_ACCOUNTS.map(a => ({
             tenantId,
             code: a.code,
@@ -74,7 +75,9 @@ export async function seedChartOfAccounts(tenantId: string): Promise<void> {
         })),
         skipDuplicates: true,
     });
-    console.log(`📊 Chart of Accounts seeded for tenant ${tenantId} (${CHART_OF_ACCOUNTS.length} accounts)`);
+    if (result.count > 0) {
+        console.log(`📊 Chart of Accounts: +${result.count} cuentas para tenant ${tenantId}`);
+    }
 }
 
 // ==========================================

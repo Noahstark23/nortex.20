@@ -37,9 +37,21 @@ export interface MonthlyTaxReport {
     // Impuestos a pagar
     ivaNeto: number;              // IVA Ventas - IVA Compras (min 0)
     ivaCredito: number;           // Crédito fiscal a favor (si IVA Compras > IVA Ventas)
-    anticipoIR: number;           // 1% sobre ventas netas
-    imiAlcaldia: number;          // 1% sobre ventas netas (Alcaldía)
-    totalToPay: number;           // Total a pagar al fisco
+    anticipoIR: number;           // tasa * ventas netas (bruto del período)
+    imiAlcaldia: number;          // tasa * ventas netas (Alcaldía)
+
+    // B1 — Retenciones SUFRIDAS (crédito que reduce lo que se paga)
+    retencionIRSufrida: number;   // IR 2% que clientes le retuvieron al negocio
+    retencionIMISufrida: number;  // IMI 1% retenido
+    anticipoIRaPagar: number;     // max(0, anticipoIR - retencionIRSufrida)
+    imiAPagar: number;            // max(0, imiAlcaldia - retencionIMISufrida)
+    saldoIRaFavor: number;        // exceso de retenciones IR sobre el anticipo
+
+    totalToPay: number;           // Total a pagar al fisco (neto de retenciones)
+
+    // Tasas efectivas usadas (de TaxConfig)
+    anticipoIrRate: number;
+    imiRate: number;
 
     // Desglose para VET (Ventanilla Electrónica Tributaria)
     vetSummary: string;
@@ -88,14 +100,37 @@ export async function generateMonthlyReport(
     const ivaNeto = Decimal.max(0, ivaRaw).toDecimalPlaces(4);
     const ivaCredito = ivaRaw.lessThan(0) ? ivaRaw.abs().toDecimalPlaces(4) : new Decimal(0);
 
-    // 4. Anticipo IR (1% sobre ventas netas sin IVA)
-    const anticipoIR = salesNetasSinIVA.mul(ANTICIPO_IR_RATE).toDecimalPlaces(4);
+    // B4 — Tasas desde TaxConfig del tenant (fallback a las constantes legales).
+    const cfg = await prisma.taxConfig.findUnique({ where: { tenantId } });
+    const anticipoRate = cfg ? new Decimal(cfg.anticipoIrRate.toString()) : ANTICIPO_IR_RATE;
+    const imiRateCfg = cfg ? new Decimal(cfg.imiRate.toString()) : IMI_RATE;
 
-    // 5. IMI Alcaldía (1% sobre ventas netas sin IVA)
-    const imiAlcaldia = salesNetasSinIVA.mul(IMI_RATE).toDecimalPlaces(4);
+    // 4. Anticipo IR (tasa * ventas netas sin IVA)
+    const anticipoIR = salesNetasSinIVA.mul(anticipoRate).toDecimalPlaces(4);
 
-    // 6. Total a pagar
-    const totalToPay = ivaNeto.plus(anticipoIR).plus(imiAlcaldia).toDecimalPlaces(4);
+    // 5. IMI Alcaldía (tasa * ventas netas sin IVA)
+    const imiAlcaldia = salesNetasSinIVA.mul(imiRateCfg).toDecimalPlaces(4);
+
+    // B1 — Retenciones SUFRIDAS del mes (crédito contra anticipo IR / IMI).
+    const retenciones = await prisma.retencionSufrida.findMany({
+        where: { tenantId, fecha: { gte: startDate, lte: endDate } },
+        select: { tipo: true, amount: true },
+    });
+    let retIR = new Decimal(0);
+    let retIMI = new Decimal(0);
+    for (const r of retenciones) {
+        if (r.tipo === 'IR_2') retIR = retIR.plus(r.amount.toString());
+        else if (r.tipo === 'IMI_1') retIMI = retIMI.plus(r.amount.toString());
+    }
+    retIR = retIR.toDecimalPlaces(4);
+    retIMI = retIMI.toDecimalPlaces(4);
+
+    const anticipoIRaPagar = Decimal.max(0, anticipoIR.minus(retIR)).toDecimalPlaces(4);
+    const saldoIRaFavor = Decimal.max(0, retIR.minus(anticipoIR)).toDecimalPlaces(4);
+    const imiAPagar = Decimal.max(0, imiAlcaldia.minus(retIMI)).toDecimalPlaces(4);
+
+    // 6. Total a pagar (IVA neto + anticipo NETO de retenciones + IMI neto)
+    const totalToPay = ivaNeto.plus(anticipoIRaPagar).plus(imiAPagar).toDecimalPlaces(4);
 
     // 7. Generar resumen para VET
     const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
@@ -114,8 +149,8 @@ Preparado por: NORTEX ERP
 
 💰 IMPUESTOS A PAGAR
    IVA Neto (Ventas - Compras): C$ ${ivaNeto.toFixed(2)}${ivaCredito.greaterThan(0) ? `\n   ⚠️ Crédito Fiscal a Favor: C$ ${ivaCredito.toFixed(2)}` : ''}
-   Anticipo IR (1%):            C$ ${anticipoIR.toFixed(2)}
-   IMI Alcaldía (1%):           C$ ${imiAlcaldia.toFixed(2)}
+   Anticipo IR (${anticipoRate.mul(100).toFixed(2)}%):          C$ ${anticipoIR.toFixed(2)}${retIR.greaterThan(0) ? `\n   (−) Retenciones IR sufridas:  C$ ${retIR.toFixed(2)}\n   = Anticipo IR a pagar:        C$ ${anticipoIRaPagar.toFixed(2)}${saldoIRaFavor.greaterThan(0) ? `\n   ⚠️ Saldo IR a favor:          C$ ${saldoIRaFavor.toFixed(2)}` : ''}` : ''}
+   IMI Alcaldía (${imiRateCfg.mul(100).toFixed(2)}%):         C$ ${imiAlcaldia.toFixed(2)}${retIMI.greaterThan(0) ? `\n   (−) Retenciones IMI sufridas: C$ ${retIMI.toFixed(2)}\n   = IMI a pagar:                C$ ${imiAPagar.toFixed(2)}` : ''}
    ────────────────────────────────
    TOTAL A PAGAR:               C$ ${totalToPay.toFixed(2)}
 
@@ -135,7 +170,14 @@ Preparado por: NORTEX ERP
         ivaCredito: ivaCredito.toNumber(),
         anticipoIR: anticipoIR.toNumber(),
         imiAlcaldia: imiAlcaldia.toNumber(),
+        retencionIRSufrida: retIR.toNumber(),
+        retencionIMISufrida: retIMI.toNumber(),
+        anticipoIRaPagar: anticipoIRaPagar.toNumber(),
+        imiAPagar: imiAPagar.toNumber(),
+        saldoIRaFavor: saldoIRaFavor.toNumber(),
         totalToPay: totalToPay.toNumber(),
+        anticipoIrRate: anticipoRate.toNumber(),
+        imiRate: imiRateCfg.toNumber(),
         vetSummary,
     };
 }

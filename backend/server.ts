@@ -3180,6 +3180,10 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER']), validate(
             salesByEmployee.map((s: any) => [s.employeeId, Number(s._sum.total || 0)])
         );
 
+        // B4: INSS patronal según la config del tenant (21.5/22.5). Default legal.
+        const taxCfg = await prisma.taxConfig.findUnique({ where: { tenantId: authReq.tenantId! } });
+        const inssPatronalRate = taxCfg ? Number(taxCfg.inssPatronalRate) : undefined;
+
         const payrolls = [];
 
         for (const emp of employees) {
@@ -3187,7 +3191,7 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER']), validate(
             const ventasMes = salesMap.get(emp.id) || 0;
             const comisiones = ventasMes * Number(emp.commissionRate);
 
-            const calc = calculatePayroll(baseSalary, comisiones);
+            const calc = calculatePayroll(baseSalary, comisiones, { inssPatronalRate });
 
             // Upsert en DB
             const payroll = await prisma.payroll.upsert({
@@ -4553,6 +4557,147 @@ app.post('/api/accounting/periods/:year/:month/reopen', authenticate, checkRole(
         console.error('Reopen period error:', error);
         res.status(500).json({ error: 'Error al reabrir el período.' });
     }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🧾 FASE B — Parametrización fiscal + tipo de cambio + retenciones sufridas
+// ══════════════════════════════════════════════════════════════════════════
+
+// B4 — GET/PUT configuración fiscal del tenant
+app.get('/api/accounting/tax-config', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const cfg = await prisma.taxConfig.findUnique({ where: { tenantId: authReq.tenantId! } });
+        res.json(cfg ?? { tenantId: authReq.tenantId, inssPatronalRate: 0.225, anticipoIrRate: 0.01, imiRate: 0.01, salarioMinimo: 0, isDefault: true });
+    } catch { res.status(500).json({ error: 'Error al obtener la configuración fiscal.' }); }
+});
+
+app.put('/api/accounting/tax-config', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { inssPatronalRate, anticipoIrRate, imiRate, salarioMinimo } = req.body ?? {};
+        const rate = (v: unknown, name: string) => {
+            const n = new Decimal(Number(v) || 0);
+            if (n.lessThan(0) || n.greaterThan(1)) throw new Error(`${name} debe ser una fracción entre 0 y 1 (ej. 0.225 = 22.5%).`);
+            return n.toDecimalPlaces(4).toNumber();
+        };
+        const data = {
+            inssPatronalRate: rate(inssPatronalRate, 'INSS patronal'),
+            anticipoIrRate: rate(anticipoIrRate, 'Anticipo IR'),
+            imiRate: rate(imiRate, 'IMI'),
+            salarioMinimo: new Decimal(Number(salarioMinimo) || 0).toDecimalPlaces(2).toNumber(),
+        };
+        const cfg = await prisma.taxConfig.upsert({
+            where: { tenantId: authReq.tenantId! },
+            create: { tenantId: authReq.tenantId!, ...data },
+            update: data,
+        });
+        res.json({ message: 'Configuración fiscal actualizada.', config: cfg });
+    } catch (error: unknown) {
+        res.status(400).json({ error: error instanceof Error ? error.message : 'Error al guardar.' });
+    }
+});
+
+// B6 — Tipo de cambio: último vigente, listado, y registrar
+app.get('/api/accounting/exchange-rate/latest', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const today = new Date(); today.setHours(23, 59, 59, 999);
+        const latest = await prisma.exchangeRate.findFirst({
+            where: { tenantId: authReq.tenantId!, fecha: { lte: today } },
+            orderBy: { fecha: 'desc' },
+        });
+        res.json(latest ? { rate: Number(latest.rate), fecha: latest.fecha, source: latest.source } : { rate: null });
+    } catch { res.status(500).json({ error: 'Error al obtener el tipo de cambio.' }); }
+});
+
+app.get('/api/accounting/exchange-rate', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const rates = await prisma.exchangeRate.findMany({
+            where: { tenantId: authReq.tenantId! }, orderBy: { fecha: 'desc' }, take: 60,
+        });
+        res.json({ rates: rates.map(r => ({ id: r.id, fecha: r.fecha, rate: Number(r.rate), source: r.source })) });
+    } catch { res.status(500).json({ error: 'Error al listar tipos de cambio.' }); }
+});
+
+app.post('/api/accounting/exchange-rate', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { fecha, rate } = req.body ?? {};
+        const r = new Decimal(Number(rate) || 0);
+        if (r.lessThanOrEqualTo(0) || r.greaterThan(10000)) return res.status(400).json({ error: 'Tipo de cambio inválido.' });
+        const day = fecha ? new Date(fecha) : new Date();
+        if (isNaN(day.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
+        day.setHours(0, 0, 0, 0);
+        const saved = await prisma.exchangeRate.upsert({
+            where: { tenantId_fecha: { tenantId: authReq.tenantId!, fecha: day } },
+            create: { tenantId: authReq.tenantId!, fecha: day, rate: r.toDecimalPlaces(4).toNumber(), source: 'MANUAL' },
+            update: { rate: r.toDecimalPlaces(4).toNumber() },
+        });
+        res.status(201).json({ message: 'Tipo de cambio registrado.', rate: Number(saved.rate), fecha: saved.fecha });
+    } catch (error) {
+        console.error('Exchange rate error:', error);
+        res.status(500).json({ error: 'Error al registrar el tipo de cambio.' });
+    }
+});
+
+// B1 — Retenciones SUFRIDAS (crédito contra el anticipo IR / IMI)
+app.post('/api/accounting/retenciones-sufridas', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { fecha, clienteRetenedor, tipo, baseAmount, amount, numeroConstancia, saleId } = req.body ?? {};
+        if (!clienteRetenedor || typeof clienteRetenedor !== 'string') return res.status(400).json({ error: 'El cliente retenedor es requerido.' });
+        if (tipo !== 'IR_2' && tipo !== 'IMI_1') return res.status(400).json({ error: 'Tipo inválido (IR_2 | IMI_1).' });
+        const amt = new Decimal(Number(amount) || 0).toDecimalPlaces(2);
+        const base = new Decimal(Number(baseAmount) || 0).toDecimalPlaces(2);
+        if (amt.lessThanOrEqualTo(0)) return res.status(400).json({ error: 'El monto retenido debe ser mayor a cero.' });
+        const day = fecha ? new Date(fecha) : new Date();
+        if (isNaN(day.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
+
+        await prisma.$transaction(async (tx: any) => {
+            await tx.retencionSufrida.create({
+                data: {
+                    tenantId: authReq.tenantId!, fecha: day, clienteRetenedor: clienteRetenedor.trim(),
+                    tipo, baseAmount: base.toNumber(), amount: amt.toNumber(),
+                    numeroConstancia: numeroConstancia ? String(numeroConstancia).trim() : null,
+                    saleId: saleId ? String(saleId) : null, createdBy: authReq.userId!,
+                },
+            });
+            // Asiento: el crédito fiscal (activo) sube; la CxC del cliente baja
+            // (el cliente liquidó parte del saldo vía retención).
+            await createJournalEntry(
+                tx, authReq.tenantId!,
+                `Retención ${tipo === 'IR_2' ? 'IR 2%' : 'IMI 1%'} sufrida — ${clienteRetenedor.trim()}`,
+                '', 'RETENCION_SUFRIDA', authReq.userId!,
+                [
+                    { accountCode: '1.1.6', debit: amt.toNumber(), credit: 0 },
+                    { accountCode: '1.1.3', debit: 0, credit: amt.toNumber() },
+                ],
+                { isAutomatic: true, date: day }
+            );
+        });
+        res.status(201).json({ message: 'Retención sufrida registrada — se acreditará contra tu anticipo IR del mes.' });
+    } catch (error: unknown) {
+        if (error instanceof PeriodLockedError) return res.status(409).json({ error: error.message });
+        console.error('Retención sufrida error:', error);
+        res.status(500).json({ error: error instanceof Error ? error.message : 'Error al registrar la retención.' });
+    }
+});
+
+app.get('/api/accounting/retenciones-sufridas', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const where: any = { tenantId: authReq.tenantId! };
+        const { month, year } = req.query;
+        if (month && year) {
+            const s = new Date(parseInt(year), parseInt(month) - 1, 1);
+            const e = new Date(parseInt(year), parseInt(month), 0, 23, 59, 59);
+            where.fecha = { gte: s, lte: e };
+        }
+        const items = await prisma.retencionSufrida.findMany({ where, orderBy: { fecha: 'desc' }, take: 200 });
+        res.json({ retenciones: items.map(r => ({ ...r, baseAmount: Number(r.baseAmount), amount: Number(r.amount) })) });
+    } catch { res.status(500).json({ error: 'Error al listar las retenciones.' }); }
 });
 
 // ==========================================
