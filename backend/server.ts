@@ -1373,11 +1373,15 @@ app.post('/api/returns', authenticate, validate(CreateReturnSchema), async (req:
 
     try {
         const sale = await prisma.sale.findFirst({
-            where: { id: saleId, tenantId: authReq.tenantId }
+            where: { id: saleId, tenantId: authReq.tenantId },
+            include: { items: { select: { productId: true, costAtSale: true } } },
         });
         if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
 
         const returnTotal = items.reduce((sum: number, item: any) => sum + Number(item.price) * Number(item.quantity), 0);
+        // Costo de lo devuelto: reversa el costo REAL que la venta registró
+        // (SaleItem.costAtSale, fijado por el servidor), no una aproximación.
+        const costByProduct = new Map(sale.items.map(it => [it.productId, new Decimal(it.costAtSale.toString())]));
 
         const result = await prisma.$transaction(async (tx: any) => {
             // 1. Create return record
@@ -1435,10 +1439,10 @@ app.post('/api/returns', authenticate, validate(CreateReturnSchema), async (req:
 
             // 📊 MOTOR CONTABLE: Registrar devolución
             const costTotal = items.reduce(
-                (sum: Decimal, item: { price?: unknown; quantity?: unknown }) =>
-                    sum.plus(new Decimal(Number(item.price) || 0).mul('0.7').mul(Number(item.quantity) || 0)),
+                (sum: Decimal, item: { productId?: unknown; quantity?: unknown }) =>
+                    sum.plus((costByProduct.get(String(item.productId)) ?? new Decimal(0)).mul(Number(item.quantity) || 0)),
                 new Decimal(0)
-            ).toNumber(); // Aprox. costo = 70% del precio de venta
+            ).toNumber();
             try {
                 await recordReturn(tx, authReq.tenantId!, authReq.userId!, productReturn.id, returnTotal, costTotal);
             } catch (accErr) { console.warn('⚠️ Accounting hook failed (return continues):', accErr); }
