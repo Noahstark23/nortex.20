@@ -1,6 +1,10 @@
 import express from 'express';
 // @ts-ignore
 import { PrismaClient } from '@prisma/client';
+// @ts-ignore
+import rateLimit from 'express-rate-limit';
+import { z } from 'zod';
+import Decimal from 'decimal.js';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { recordSale } from '../services/accounting';
 
@@ -13,54 +17,85 @@ const router = express.Router();
  * ==========================================
  */
 
+// Rate limit del checkout público: el endpoint no exige JWT, así que la
+// única defensa anti-spam es por IP (mismo perfil que /api/public/orders).
+const createPedidoLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    message: { error: 'Demasiados pedidos desde esta conexión. Intenta en unos minutos.' },
+});
+
+// Contrato del checkout del catálogo. El tenant se deriva del SLUG público
+// (nunca del body) y costoEntrega lo fija el servidor (Tenant.deliveryFee):
+// un cliente malicioso no puede pedirle a otro tenant ni alterar el flete.
+const CreatePedidoSchema = z.object({
+    slug: z.string().min(1, 'slug requerido'),
+    clienteNombre: z.string().trim().min(1, 'Nombre requerido').max(100),
+    clienteTelefono: z.string().trim().min(8, 'Teléfono requerido').max(20),
+    direccionEntrega: z.string().trim().min(5, 'Dirección de entrega requerida').max(2000),
+    referenciaDireccion: z.string().trim().max(2000).optional(),
+    notas: z.string().trim().max(2000).optional(),
+    items: z
+        .array(
+            z.object({
+                productoId: z.string().min(1),
+                cantidad: z.number().int().positive().max(999),
+            })
+        )
+        .min(1, 'Se requiere al menos 1 producto')
+        .max(50),
+});
+
 // POST /api/v1/pedidos -> (Público) Crear pedido desde el catálogo
-router.post('/', async (req: any, res: any) => {
-    const {
-        tenantId,
-        clienteNombre,
-        clienteTelefono,
-        direccionEntrega,
-        referenciaDireccion,
-        notas,
-        items // Array: [{ productoId, cantidad }]
-    } = req.body;
+router.post('/', createPedidoLimiter, async (req: any, res: any) => {
+    const parsed = CreatePedidoSchema.safeParse(req.body);
+    if (!parsed.success) {
+        const msg = parsed.error.issues.map(i => i.message).join(' | ');
+        return res.status(400).json({ error: msg || 'Datos del pedido inválidos.' });
+    }
+    const { slug, clienteNombre, clienteTelefono, direccionEntrega, referenciaDireccion, notas, items } = parsed.data;
 
     try {
-        if (!tenantId || !clienteNombre || !clienteTelefono || !direccionEntrega || !items || !items.length) {
-            return res.status(400).json({ error: 'Faltan datos requeridos para crear el pedido.' });
+        // Tenant derivado del slug del catálogo público
+        const tenant = await prisma.tenant.findUnique({
+            where: { slug },
+            select: { id: true, deliveryFee: true },
+        });
+        if (!tenant) {
+            return res.status(404).json({ error: 'Catálogo no encontrado.' });
         }
+        const tenantId = tenant.id;
 
-        // Obtener los productos actuales en la BD para este tenant
-        const productIds = items.map((i: any) => i.productoId);
+        // Solo productos del tenant Y publicados en el catálogo: el precio
+        // SIEMPRE sale de la BD (el cliente no manda precios).
+        const productIds = items.map(i => i.productoId);
         const productsDB = await prisma.product.findMany({
-            where: {
-                tenantId: tenantId,
-                id: { in: productIds }
-            }
+            where: { tenantId, id: { in: productIds }, isPublished: true },
         });
 
         if (productsDB.length !== items.length) {
-            return res.status(400).json({ error: 'Algunos productos no fueron encontrados o no pertenecen al negocio.' });
+            return res.status(400).json({ error: 'Algunos productos no fueron encontrados o no están disponibles.' });
         }
 
-        let totalSuma = 0;
-        const pedidoItemsData = items.map((item: any) => {
-            const prod = productsDB.find((p: any) => p.id === item.productoId);
-            const precioUnitario = Number(prod.price);
-            const subtotal = precioUnitario * item.cantidad;
-            totalSuma += subtotal;
+        // Totales en Decimal.js (cero aritmética float con dinero)
+        let totalSuma = new Decimal(0);
+        const pedidoItemsData = items.map(item => {
+            const prod = productsDB.find(p => p.id === item.productoId)!;
+            const precioUnitario = new Decimal(prod.price.toString());
+            const subtotal = precioUnitario.mul(item.cantidad);
+            totalSuma = totalSuma.plus(subtotal);
 
             return {
                 productoId: prod.id,
                 cantidad: item.cantidad,
-                precioUnitario: precioUnitario,
-                subtotal: subtotal
+                precioUnitario: precioUnitario.toDecimalPlaces(2).toNumber(),
+                subtotal: subtotal.toDecimalPlaces(2).toNumber(),
             };
         });
 
-        // NOTA: Configurar costo de entrega predeterminado o leerlo de la config/request. (Asignamos 0 por default)
-        const costoEntrega = req.body.costoEntrega ? Number(req.body.costoEntrega) : 0;
-        const granTotal = totalSuma + costoEntrega;
+        // Flete: SERVER-SIDE desde la config del negocio (jamás del body)
+        const costoEntrega = new Decimal(tenant.deliveryFee.toString());
+        const granTotal = totalSuma.plus(costoEntrega).toDecimalPlaces(2);
 
         // $transaction para atomicidad total
         const pedidoCreated = await prisma.$transaction(async (tx: any) => {
@@ -70,11 +105,11 @@ router.post('/', async (req: any, res: any) => {
                     clienteNombre,
                     clienteTelefono,
                     direccionEntrega,
-                    referenciaDireccion,
-                    notas,
+                    referenciaDireccion: referenciaDireccion ?? null,
+                    notas: notas ?? null,
                     estado: 'pendiente',
-                    costoEntrega,
-                    total: granTotal,
+                    costoEntrega: costoEntrega.toNumber(),
+                    total: granTotal.toNumber(),
                     items: {
                         create: pedidoItemsData
                     },
@@ -96,6 +131,11 @@ router.post('/', async (req: any, res: any) => {
 
         res.status(201).json({
             message: 'Pedido creado exitosamente',
+            pedidoId: pedidoCreated.id,
+            estado: pedidoCreated.estado,
+            total: granTotal.toNumber(),
+            costoEntrega: costoEntrega.toNumber(),
+            trackingPath: `/track/${pedidoCreated.id}`,
             pedido: pedidoCreated
         });
 

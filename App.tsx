@@ -25,6 +25,7 @@ import AuditDashboard from './components/AuditDashboard';
 import Billing from './components/Billing';
 import TeamManagement from './components/TeamManagement';
 import PublicCatalog from './components/PublicCatalog';
+import TrackPedido from './components/TrackPedido';
 
 // SEO Landing Pages & Blog
 import LandingFerreteria from './components/LandingFerreteria';
@@ -91,6 +92,7 @@ function App() {
         <Route path="/reset-password/:token" element={<ResetPassword />} />
         <Route path="/pedidos/:slug" element={<PublicCatalog />} />
         <Route path="/catalog/:slug" element={<PublicCatalog />} />
+        <Route path="/track/:pedidoId" element={<TrackPedido />} />
         <Route path="/driver/:id" element={<DriverView />} />
         <Route path="/app/*" element={<ProtectedApp />} />
       </Routes>
