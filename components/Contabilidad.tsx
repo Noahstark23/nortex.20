@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     BookOpen, Plus, Trash2, Lock, Unlock, Loader2, Scale, FileText,
     CalendarDays, CheckCircle2, AlertTriangle, ArrowLeft, ListTree, Percent, Coins, Receipt,
-    Landmark, FileBarChart, Play, ListChecks, Clock, ShieldCheck, ChevronLeft, ChevronRight
+    Landmark, FileBarChart, Play, ListChecks, Clock, ShieldCheck, ChevronLeft, ChevronRight,
+    Hourglass, Phone, ChevronDown
 } from 'lucide-react';
 import { sanitizeDecimalInput, toDecimal } from '../utils/money';
 
@@ -21,13 +22,24 @@ interface BalanzaRow { cuenta: string; nombre: string; tipo: string; saldoInicia
 interface MayorMov { fecha: string; descripcion: string; debe: number; haber: number; saldo: number; }
 interface FiscalPeriodRow { id: string; year: number; month: number; status: string; closedAt?: string | null; reopenReason?: string | null; }
 
-type Tab = 'cierre' | 'asiento' | 'diario' | 'balanza' | 'periodos' | 'fiscal' | 'retenciones' | 'activos' | 'renta';
+type Tab = 'cierre' | 'aging' | 'asiento' | 'diario' | 'balanza' | 'periodos' | 'fiscal' | 'retenciones' | 'activos' | 'renta';
 
 interface RetencionRow { id: string; fecha: string; clienteRetenedor: string; tipo: string; baseAmount: number; amount: number; numeroConstancia?: string | null; }
 interface AssetRow { id: string; nombre: string; categoria: string; costo: number; fechaAdquisicion: string; vidaUtilMeses: number; depreciacionAcumulada: number; mesesDepreciados: number; valorEnLibros: number; estado: string; }
 interface AnnualIR { year: number; ingresosNetos: number; costoVentas: number; gastos: number; utilidadFiscal: number; irSobreRenta: number; pmdRate: number; pagoMinimoDefinitivo: number; impuestoDelEjercicio: number; anticiposEnterados: number; retencionesSufridasIR: number; creditosTotales: number; saldoAPagar: number; saldoAFavor: number; resumen: string; }
 interface ObligacionRow { key: string; label: string; entidad: string; monto: number; vence: string; dataLista: boolean; declarado: boolean; nota?: string; }
 interface CierreData { period: string; obligaciones: ObligacionRow[]; totalDeclarar: number; pendientes: number; periodoCerrado: boolean; planillaCalculada: boolean; vetSummary: string; }
+interface AgingFactura { id: string; numero: string | null; fecha: string; vence: string | null; monto: number; saldo: number; dias: number; bucket: string; }
+interface AgingEntidad { id: string; nombre: string; telefono: string | null; total: number; vencido: number; corriente: number; b1_30: number; b31_60: number; b61_90: number; b90: number; facturas: AgingFactura[]; }
+interface AgingSide { total: number; vencido: number; buckets: { corriente: number; b1_30: number; b31_60: number; b61_90: number; b90: number }; entidades: AgingEntidad[]; }
+interface AgingData { asOf: string; cxc: AgingSide; cxp: AgingSide; }
+const BUCKET_META: { key: 'corriente' | 'b1_30' | 'b31_60' | 'b61_90' | 'b90'; label: string; cls: string }[] = [
+    { key: 'corriente', label: 'Corriente', cls: 'text-slate-300' },
+    { key: 'b1_30', label: '1–30 d', cls: 'text-amber-300' },
+    { key: 'b31_60', label: '31–60 d', cls: 'text-amber-400' },
+    { key: 'b61_90', label: '61–90 d', cls: 'text-orange-400' },
+    { key: 'b90', label: '+90 d', cls: 'text-rose-400' },
+];
 
 const C = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -169,6 +181,25 @@ const Contabilidad: React.FC = () => {
     };
     const fmtVence = (iso: string) => new Date(iso).toLocaleDateString('es-NI', { day: '2-digit', month: 'short' });
     const isVencido = (o: ObligacionRow) => !o.declarado && o.monto > 0 && new Date(o.vence) < today;
+
+    // ── Antigüedad de saldos / Aging CxC-CxP (Fase C3) ──────────────────────
+    const [aging, setAging] = useState<AgingData | null>(null);
+    const [agingBusy, setAgingBusy] = useState(false);
+    const [agingSide, setAgingSide] = useState<'cxc' | 'cxp'>('cxc');
+    const [agingOpen, setAgingOpen] = useState<string | null>(null);
+
+    const loadAging = useCallback(async () => {
+        setAgingBusy(true); setAgingOpen(null);
+        try {
+            const res = await fetch('/api/accounting/aging', { headers: auth });
+            setAging(res.ok ? await res.json() : null);
+        } catch { setAging(null); }
+        finally { setAgingBusy(false); }
+    }, [auth]);
+
+    useEffect(() => { if (tab === 'aging') loadAging(); }, [tab, loadAging]);
+
+    const fmtFecha = (iso: string) => new Date(iso).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: '2-digit' });
 
     // ── Períodos (A3) ───────────────────────────────────────────────────────
     const [periods, setPeriods] = useState<FiscalPeriodRow[]>([]);
@@ -351,6 +382,7 @@ const Contabilidad: React.FC = () => {
 
                 <div className="flex flex-wrap gap-2 mb-6">
                     {tabBtn('cierre', 'Cierre Mensual', ListChecks)}
+                    {tabBtn('aging', 'Antigüedad', Hourglass)}
                     {tabBtn('asiento', 'Asiento Manual', Plus)}
                     {tabBtn('diario', 'Libro Diario', FileText)}
                     {tabBtn('balanza', 'Balanza / Mayor', Scale)}
@@ -451,6 +483,116 @@ const Contabilidad: React.FC = () => {
                         )}
                     </div>
                 )}
+
+                {/* ── ANTIGÜEDAD DE SALDOS (Aging CxC/CxP, Fase C3) ── */}
+                {tab === 'aging' && (() => {
+                    const s = aging ? aging[agingSide] : null;
+                    return (
+                        <div className="space-y-5">
+                            <div className="panel-premium p-6">
+                                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                                    <div className="inline-flex rounded-xl bg-white/[0.03] border border-white/[0.08] p-1">
+                                        {(['cxc', 'cxp'] as const).map(sd => (
+                                            <button key={sd} onClick={() => { setAgingSide(sd); setAgingOpen(null); }}
+                                                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${agingSide === sd ? 'bg-brand text-white shadow-glow shadow-brand/25' : 'text-slate-400 hover:text-white'}`}>
+                                                {sd === 'cxc' ? 'Por Cobrar' : 'Por Pagar'}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    {aging && <p className="text-xs text-slate-500 flex items-center gap-1.5"><CalendarDays size={13} /> Saldos al {fmtFecha(aging.asOf)}</p>}
+                                </div>
+
+                                {s && (
+                                    <>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
+                                                <p className="text-[11px] uppercase tracking-wider text-slate-400">{agingSide === 'cxc' ? 'Total por cobrar' : 'Total por pagar'}</p>
+                                                <p className="text-2xl font-bold font-mono tabular-nums text-white mt-0.5">{C(s.total)}</p>
+                                            </div>
+                                            <div className={`rounded-xl p-4 border ${s.vencido > 0 ? 'bg-rose-500/10 border-rose-500/20' : 'bg-white/[0.02] border-white/[0.06]'}`}>
+                                                <p className="text-[11px] uppercase tracking-wider text-slate-400">Vencido</p>
+                                                <p className={`text-2xl font-bold font-mono tabular-nums mt-0.5 ${s.vencido > 0 ? 'text-rose-300' : 'text-white'}`}>{C(s.vencido)}</p>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-3">
+                                            {BUCKET_META.map(b => (
+                                                <div key={b.key} className="bg-white/[0.02] border border-white/[0.06] rounded-xl px-3 py-2.5 text-center">
+                                                    <p className="text-[10px] uppercase tracking-wider text-slate-500">{b.label}</p>
+                                                    <p className={`text-sm font-mono tabular-nums mt-0.5 ${s.buckets[b.key] > 0 ? b.cls : 'text-slate-600'}`}>{C(s.buckets[b.key])}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+
+                            {agingBusy && !aging ? (
+                                <div className="panel-premium p-12 flex items-center justify-center"><Loader2 className="animate-spin text-brand-300" /></div>
+                            ) : !s ? (
+                                <div className="panel-premium p-10 text-center text-slate-500 text-sm">No se pudo cargar la antigüedad de saldos.</div>
+                            ) : s.entidades.length === 0 ? (
+                                <div className="panel-premium p-10 text-center text-slate-400 text-sm">
+                                    {agingSide === 'cxc' ? 'Nadie te debe — las ventas a crédito están al día. 🎉' : 'No tenés cuentas por pagar pendientes. 🎉'}
+                                </div>
+                            ) : (
+                                <div className="panel-premium p-0 overflow-hidden">
+                                    <div className="overflow-x-auto custom-scrollbar">
+                                        <table className="w-full text-sm">
+                                            <thead>
+                                                <tr className="text-[10px] uppercase tracking-wider text-slate-500 border-b border-white/[0.06]">
+                                                    <th className="text-left font-semibold px-4 py-3">{agingSide === 'cxc' ? 'Cliente' : 'Proveedor'}</th>
+                                                    {BUCKET_META.map(b => <th key={b.key} className="text-right font-semibold px-3 py-3 whitespace-nowrap">{b.label}</th>)}
+                                                    <th className="text-right font-semibold px-4 py-3">Total</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {s.entidades.map(e => {
+                                                    const open = agingOpen === e.id;
+                                                    return (
+                                                        <React.Fragment key={e.id}>
+                                                            <tr onClick={() => setAgingOpen(open ? null : e.id)} className="border-b border-white/[0.04] hover:bg-white/[0.02] cursor-pointer transition-colors">
+                                                                <td className="px-4 py-3">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <ChevronDown size={14} className={`text-slate-500 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
+                                                                        <div>
+                                                                            <p className="text-white font-semibold leading-tight">{e.nombre}</p>
+                                                                            {e.telefono && <p className="text-[11px] text-slate-500 flex items-center gap-1"><Phone size={10} /> {e.telefono}</p>}
+                                                                        </div>
+                                                                    </div>
+                                                                </td>
+                                                                {BUCKET_META.map(b => (
+                                                                    <td key={b.key} className={`text-right px-3 py-3 font-mono tabular-nums whitespace-nowrap ${e[b.key] > 0 ? b.cls : 'text-slate-700'}`}>
+                                                                        {e[b.key] > 0 ? C(e[b.key]) : '—'}
+                                                                    </td>
+                                                                ))}
+                                                                <td className="text-right px-4 py-3 font-mono tabular-nums font-bold text-white whitespace-nowrap">{C(e.total)}</td>
+                                                            </tr>
+                                                            {open && e.facturas.map(f => (
+                                                                <tr key={f.id} className="bg-black/20 text-xs border-b border-white/[0.03]">
+                                                                    <td className="px-4 py-2 pl-10 text-slate-400 whitespace-nowrap">
+                                                                        {f.numero ? `#${f.numero} · ` : ''}{fmtFecha(f.fecha)}
+                                                                        {f.vence && <span className="text-slate-500"> · vence {fmtFecha(f.vence)}</span>}
+                                                                        {f.dias > 0 && <span className="text-rose-400/80"> · {f.dias}d vencido</span>}
+                                                                    </td>
+                                                                    {BUCKET_META.map(b => (
+                                                                        <td key={b.key} className="text-right px-3 py-2 font-mono tabular-nums text-slate-400">
+                                                                            {f.bucket === b.key ? C(f.saldo) : ''}
+                                                                        </td>
+                                                                    ))}
+                                                                    <td className="text-right px-4 py-2 font-mono tabular-nums text-slate-300">{C(f.saldo)}</td>
+                                                                </tr>
+                                                            ))}
+                                                        </React.Fragment>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })()}
 
                 {/* ── ASIENTO MANUAL ── */}
                 {tab === 'asiento' && (
