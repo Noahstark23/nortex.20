@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Bike, CheckCircle, XCircle, Phone, MapPin, CreditCard, Hash, ExternalLink, Loader2, ShieldCheck } from 'lucide-react';
+import { Bike, CheckCircle, XCircle, Phone, MapPin, CreditCard, Hash, ExternalLink, Loader2, ShieldCheck, Wallet, Banknote, Link2 } from 'lucide-react';
 
 /**
  * Cola de revisión KYC de la Red NORTEX (panel SUPER_ADMIN).
@@ -20,6 +20,7 @@ interface MotorizadoKYC {
     kycNota?: string | null;
     activo: boolean;
     createdAt: string;
+    walletBalance?: number;
 }
 
 const AdminMotorizadosKYC: React.FC = () => {
@@ -66,8 +67,52 @@ const AdminMotorizadosKYC: React.FC = () => {
         finally { setActionId(null); }
     };
 
+    // 💰 FASE 3 — acciones de wallet (pago firmado + verificación de cadena)
+    const [walletActionId, setWalletActionId] = useState<string | null>(null);
+
+    const payDriver = async (m: MotorizadoKYC) => {
+        const raw = prompt(`Pagar comisiones a ${m.nombre}\nSaldo: C$${(m.walletBalance ?? 0).toFixed(2)}\n\nMonto a pagar:`);
+        if (raw === null) return;
+        const monto = Number(raw.replace(/[^\d.]/g, ''));
+        if (!Number.isFinite(monto) || monto <= 0) return alert('Monto inválido');
+        const nota = prompt('Nota del pago (opcional, queda en el libro):') ?? '';
+
+        setWalletActionId(m.id);
+        try {
+            const res = await fetch(`/api/admin/motorizados/${m.id}/wallet/payout`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ amount: monto, nota }),
+            });
+            const d = await res.json();
+            if (!res.ok) return alert(d.error || 'Error registrando el pago');
+            alert(`✅ Pago de C$${monto.toFixed(2)} registrado y firmado en el libro.`);
+            await fetchMotorizados();
+        } catch { alert('Error de conexión'); }
+        finally { setWalletActionId(null); }
+    };
+
+    const verifyChain = async (m: MotorizadoKYC) => {
+        setWalletActionId(m.id);
+        try {
+            const res = await fetch(`/api/admin/motorizados/${m.id}/wallet`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const d = await res.json();
+            if (res.status === 404) return alert(d.error || 'No encontrado');
+            const v = d.verification;
+            if (v?.ok) {
+                alert(`🔐 Cadena ÍNTEGRA\n\nMovimientos verificados: ${v.checked}\nSin firmar (legacy): ${v.unsigned}\nSaldo libro: C$${v.computedBalance}\nSaldo proyección: C$${v.storedBalance} ✓`);
+            } else {
+                alert(`🚨 CADENA COMPROMETIDA\n\n${v?.reason ?? 'desconocido'}\nRoto en seq: ${v?.brokenAtSeq ?? '—'}\nSaldo libro: C$${v?.computedBalance} vs proyección: C$${v?.storedBalance}`);
+            }
+        } catch { alert('Error de conexión'); }
+        finally { setWalletActionId(null); }
+    };
+
     const pendientes = motorizados.filter(m => m.kycStatus === 'PENDIENTE');
     const procesados = motorizados.filter(m => m.kycStatus !== 'PENDIENTE');
+    const aprobados = motorizados.filter(m => m.kycStatus === 'APROBADO');
 
     return (
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
@@ -156,6 +201,46 @@ const AdminMotorizadosKYC: React.FC = () => {
                             )}
                         </div>
                     ))}
+                </div>
+            )}
+
+            {/* 💰 Billeteras de la Red (aprobados) — FASE 3 */}
+            {aprobados.length > 0 && (
+                <div className="mt-5 pt-4 border-t border-gray-800">
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <Wallet size={13} className="text-amber-400" /> Billeteras de la Red (comisiones por pagar)
+                    </h3>
+                    <div className="space-y-2">
+                        {aprobados.map(m => (
+                            <div key={`w-${m.id}`} className="bg-gray-800/40 border border-gray-700/60 rounded-lg px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                    <p className="text-sm font-bold text-white truncate">{m.nombre}</p>
+                                    <p className="text-[11px] text-gray-500">{m.zonaCobertura} · <span className="font-mono">{m.telefono}</span></p>
+                                </div>
+                                <div className="flex items-center gap-3 flex-shrink-0">
+                                    <span className={`font-mono font-black text-lg ${(m.walletBalance ?? 0) > 0 ? 'text-amber-400' : 'text-gray-500'}`}>
+                                        C${(m.walletBalance ?? 0).toFixed(2)}
+                                    </span>
+                                    <button
+                                        onClick={() => payDriver(m)}
+                                        disabled={walletActionId === m.id || (m.walletBalance ?? 0) <= 0}
+                                        title="Registrar pago al repartidor (firmado)"
+                                        className="px-3 py-1.5 bg-amber-500/15 text-amber-400 border border-amber-500/25 rounded-lg font-bold text-xs hover:bg-amber-500/25 disabled:opacity-40 flex items-center gap-1.5"
+                                    >
+                                        {walletActionId === m.id ? <Loader2 className="animate-spin" size={12} /> : <Banknote size={12} />} Pagar
+                                    </button>
+                                    <button
+                                        onClick={() => verifyChain(m)}
+                                        disabled={walletActionId === m.id}
+                                        title="Verificar integridad de la cadena firmada"
+                                        className="px-3 py-1.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg font-bold text-xs hover:bg-blue-500/20 disabled:opacity-40 flex items-center gap-1.5"
+                                    >
+                                        <Link2 size={12} /> Verificar
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
         </div>
