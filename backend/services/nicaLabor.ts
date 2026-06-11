@@ -85,10 +85,16 @@ export interface LaborLiability {
  * @param commissions Comisiones del periodo
  * @returns Desglose completo de nómina
  */
-export function calculatePayroll(baseSalary: number, commissions: number = 0): PayrollCalculation {
+export function calculatePayroll(
+    baseSalary: number,
+    commissions: number = 0,
+    opts?: { inssPatronalRate?: number }
+): PayrollCalculation {
     const dBase = new Decimal(baseSalary);
     const dComm = new Decimal(commissions);
     const totalIncome = dBase.plus(dComm);
+    // B4: INSS patronal parametrizable (21.5% <50 emp · 22.5% ≥50). Default legal.
+    const inssPatronalRate = opts?.inssPatronalRate != null ? new Decimal(opts.inssPatronalRate) : INSS_PATRONAL_RATE;
 
     // 1. INSS Laboral (7%) - con techo
     const baseINSS = Decimal.min(totalIncome, TECHO_INSS_MENSUAL);
@@ -119,7 +125,7 @@ export function calculatePayroll(baseSalary: number, commissions: number = 0): P
     const netSalary = totalIncome.minus(totalDeductions).toDecimalPlaces(4);
 
     // 5. Aportes Patronales (costo para el empleador)
-    const inssPatronal = baseINSS.mul(INSS_PATRONAL_RATE).toDecimalPlaces(4);
+    const inssPatronal = baseINSS.mul(inssPatronalRate).toDecimalPlaces(4);
     const inatec       = totalIncome.mul(INATEC_RATE).toDecimalPlaces(4);
     const totalCostoEmpresa = totalIncome.plus(inssPatronal).plus(inatec).toDecimalPlaces(4);
 
