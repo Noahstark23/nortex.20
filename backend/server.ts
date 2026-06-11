@@ -31,6 +31,7 @@ import { fileURLToPath } from 'url';
 import hrRouter from './routes/hr';
 import pedidosRouter from './routes/pedidos';
 import motorizadosRouter from './routes/motorizados';
+import driverRouter from './routes/driver';
 import loanRoutes from './routes/loans';
 import syncRoutes from './routes/sync';
 import Decimal from 'decimal.js';
@@ -175,6 +176,7 @@ app.use('/api/auth/login', loginLimiter as any);
 app.use('/api/hr', hrRouter);
 app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
+app.use('/api/driver', driverRouter); // Red NORTEX: registro, login PIN, entregas
 app.use('/api/loans', loanRoutes);
 app.use('/api/sales/sync', syncRoutes);
 
@@ -3429,6 +3431,64 @@ app.post('/api/admin/whatsapp/channels', authenticate, requireSuperAdmin, async 
     }
 });
 
+// ==========================================
+// 🛵 KYC RED NORTEX — revisión manual de motorizados (SUPER_ADMIN)
+// ==========================================
+
+// GET /api/admin/motorizados?status=PENDIENTE — cola de revisión KYC
+app.get('/api/admin/motorizados', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+    try {
+        const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+        const motorizados = await prisma.motorizado.findMany({
+            where: {
+                tipoFlota: 'NORTEX',
+                ...(status ? { kycStatus: status } : {}),
+            },
+            select: {
+                id: true, nombre: true, telefono: true, cedula: true,
+                zonaCobertura: true, vehiculoPlaca: true, fotoCedulaUrl: true,
+                fotoVehiculoUrl: true, kycStatus: true, kycNota: true,
+                activo: true, calificacionPromedio: true, createdAt: true,
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+        res.json({ motorizados });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Error listando motorizados';
+        res.status(500).json({ error: message });
+    }
+});
+
+// PATCH /api/admin/motorizados/:id/kyc — aprobar / rechazar (KYC manual)
+app.patch('/api/admin/motorizados/:id/kyc', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+    try {
+        const { decision, nota } = req.body ?? {};
+        if (decision !== 'APROBADO' && decision !== 'RECHAZADO') {
+            return res.status(400).json({ error: 'decision debe ser APROBADO o RECHAZADO' });
+        }
+        const existing = await prisma.motorizado.findFirst({
+            where: { id: req.params.id, tipoFlota: 'NORTEX' },
+            select: { id: true },
+        });
+        if (!existing) return res.status(404).json({ error: 'Motorizado no encontrado' });
+
+        const motorizado = await prisma.motorizado.update({
+            where: { id: existing.id },
+            data: {
+                kycStatus: decision,
+                // La aprobación ACTIVA al repartidor; el rechazo lo desactiva.
+                activo: decision === 'APROBADO',
+                kycNota: typeof nota === 'string' && nota.trim() ? nota.trim() : null,
+            },
+            select: { id: true, nombre: true, kycStatus: true, activo: true },
+        });
+        res.json({ message: `Motorizado ${decision === 'APROBADO' ? 'aprobado' : 'rechazado'}.`, motorizado });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Error procesando KYC';
+        res.status(500).json({ error: message });
+    }
+});
+
 // GET /api/admin/stats - KPIs globales de la plataforma
 app.get('/api/admin/stats', authenticate, requireSuperAdmin, async (req: any, res: any) => {
     try {
@@ -4868,172 +4928,11 @@ app.patch('/api/public-orders/:id/convert', authenticate, async (req: any, res: 
 });
 
 // ==========================================
-// DRIVER APP (Rutas Públicas para Motorizados)
+// DRIVER APP — movida a routes/driver.ts (/api/driver/*)
+// El magic-link /api/public/driver/:id fue REEMPLAZADO por login
+// teléfono+PIN con token firmado (FASE 2): cualquiera que reenviara el
+// link podía entrar y marcar entregas/cobros de otro repartidor.
 // ==========================================
-
-// GET /api/public/driver/:id/orders
-// Retorna pedidos activos ('preparando', 'en_camino') asignados a este motorizado
-app.get('/api/public/driver/:id/orders', publicLimiter, async (req: any, res: any) => {
-    const motorizadoId = req.params.id;
-    try {
-        const motorizado = await prisma.motorizado.findUnique({ where: { id: motorizadoId } });
-        if (!motorizado || !motorizado.activo) {
-            return res.status(404).json({ error: 'Motorizado no encontrado o inactivo' });
-        }
-
-        const orders = await prisma.pedido.findMany({
-            where: {
-                motorizadoId,
-                estado: { in: ['asignado', 'preparando', 'en_tienda', 'en_ruta', 'en_camino', 'en_punto'] }
-            },
-            include: {
-                items: {
-                    include: { producto: { select: { name: true } } }
-                }
-            },
-            orderBy: { createdAt: 'asc' }
-        });
-
-        // 💰 Liquidación en tiempo real para el Uber View
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-
-        const hoyPedidos = await prisma.pedido.findMany({
-            where: { motorizadoId, estado: 'entregado', entregadoAt: { gte: todayStart } }
-        });
-
-        let totalCobradoEfectivo = 0;
-        let totalComisiones = 0;
-
-        for (const p of hoyPedidos) {
-            totalCobradoEfectivo += Number(p.total);
-            totalComisiones += Number(p.costoEntrega);
-        }
-
-        const liquidacionDiaria = {
-            pedidosEntregados: hoyPedidos.length,
-            totalCobrado: totalCobradoEfectivo,
-            comisionesGanadas: totalComisiones,
-            netoADepositarA_Tienda: totalCobradoEfectivo - totalComisiones > 0 ? totalCobradoEfectivo - totalComisiones : 0
-        };
-
-        res.json({ driver: motorizado, orders, liquidacionDiaria });
-    } catch (error) {
-        console.error('Get driver orders error:', error);
-        res.status(500).json({ error: 'Error al obtener pedidos del motorizado' });
-    }
-});
-
-// PATCH /api/public/driver/:id/orders/:orderId/deliver
-// Permite al motorizado marcar un pedido como 'entregado' (dispara contabilidad)
-app.patch('/api/public/driver/:id/orders/:orderId/deliver', async (req: any, res: any) => {
-    const motorizadoId = req.params.id;
-    const orderId = req.params.orderId;
-    const { lat, lng } = req.body || {}; // Extraemos GPS tracking
-
-    try {
-        const pedido = await prisma.pedido.findFirst({
-            where: { id: orderId, motorizadoId },
-            include: { items: true }
-        });
-
-        if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado o no asignado a ti.' });
-        if (pedido.estado === 'entregado' || pedido.estado === 'cancelado') {
-            return res.status(400).json({ error: 'El pedido ya fue procesado.' });
-        }
-
-        // Mismo flujo contable que en routes/pedidos.ts pero sin `authReq.userId` (usa system/motorizado logic)
-        // Usando el recordSale del top-level import
-
-        const updated = await prisma.$transaction(async (tx: any) => {
-            const entregadoAtCalculated = new Date();
-            const p = await tx.pedido.update({
-                where: { id: orderId },
-                data: { estado: 'entregado', entregadoAt: entregadoAtCalculated }
-            });
-
-            await tx.trackingEvento.create({
-                data: {
-                    pedidoId: orderId,
-                    estado: 'entregado',
-                    nota: 'Entregado vía App del Motorizado',
-                    lat: lat ? Number(lat) : null,
-                    lng: lng ? Number(lng) : null
-                }
-            });
-
-            // Alerta de proximidad GPS si aplican coordenadas
-            if (lat && lng) {
-                await tx.auditLog.create({
-                    data: {
-                        tenantId: pedido.tenantId,
-                        userId: 'SYSTEM',
-                        action: 'GPS_AUDIT_ALERT',
-                        details: JSON.stringify({
-                            mensaje: 'Pedido entregado por motorizado desde la Driver App.',
-                            lat: Number(lat),
-                            lng: Number(lng),
-                            pedidoId: orderId,
-                            motorizadoId: motorizadoId
-                        })
-                    }
-                });
-            }
-
-            if (!pedido.facturaId) {
-                let costTotal = 0;
-                const saleItemsData = [];
-                for (const item of pedido.items) {
-                    const prod = await tx.product.findUnique({ where: { id: item.productoId } });
-                    if (prod) {
-                        const unitCost = Number(prod.cost || 0);
-                        costTotal += (unitCost * item.cantidad);
-                        saleItemsData.push({
-                            productId: item.productoId,
-                            quantity: item.cantidad,
-                            priceAtSale: item.precioUnitario,
-                            costAtSale: unitCost,
-                            discount: 0
-                        });
-                    }
-                }
-
-                const sale = await tx.sale.create({
-                    data: {
-                        tenantId: pedido.tenantId,
-                        total: pedido.total,
-                        status: 'COMPLETED',
-                        paymentMethod: 'CASH',
-                        customerName: pedido.clienteNombre,
-                        items: { create: saleItemsData }
-                    }
-                });
-
-                await tx.payment.create({
-                    data: {
-                        saleId: sale.id,
-                        amount: pedido.total,
-                        method: 'CASH',
-                        collectedBy: motorizadoId ?? null // Motorizado lo cobró
-                    }
-                });
-
-                await recordSale(tx, pedido.tenantId, motorizadoId ?? null, sale.id, Number(pedido.total), costTotal, 'CASH');
-
-                await tx.pedido.update({
-                    where: { id: orderId },
-                    data: { facturaId: sale.id }
-                });
-            }
-            return p;
-        });
-
-        res.json({ message: 'Entregado exitosamente', pedido: updated });
-    } catch (error) {
-        console.error('Driver deliver error:', error);
-        res.status(500).json({ error: 'Error al procesar la entrega.' });
-    }
-});
 
 // ==========================================
 // 🧾 SPRINT B — CONSTANCIA DE RETENCIÓN DGI

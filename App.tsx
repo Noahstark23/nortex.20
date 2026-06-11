@@ -17,6 +17,7 @@ import HRM from './components/HRM';
 import SuperAdmin from './components/SuperAdmin';
 import DeliveryManager from './components/DeliveryManager';
 import DriverView from './components/DriverView';
+import RegistroRepartidor from './components/RegistroRepartidor';
 import Inventory from './components/Inventory';
 import CashRegisters from './components/CashRegisters';
 import Purchases from './components/Purchases';
@@ -91,7 +92,11 @@ function App() {
         <Route path="/reset-password/:token" element={<ResetPassword />} />
         <Route path="/pedidos/:slug" element={<PublicCatalog />} />
         <Route path="/catalog/:slug" element={<PublicCatalog />} />
+        {/* App del repartidor: login teléfono+PIN. /driver/:id queda por
+            compatibilidad con links viejos — ahora solo muestra el login. */}
+        <Route path="/driver" element={<DriverView />} />
         <Route path="/driver/:id" element={<DriverView />} />
+        <Route path="/repartidor/registro" element={<RegistroRepartidor />} />
         <Route path="/app/*" element={<ProtectedApp />} />
       </Routes>
     </BrowserRouter>

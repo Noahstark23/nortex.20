@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Shield, Zap, Users, Building2, DollarSign, TrendingUp, AlertTriangle, Ban, CheckCircle, Eye, RefreshCw, Skull, Activity, CreditCard, ArrowRight, Clock, BarChart3, Wallet, Target, XCircle, Banknote, FileCheck, X } from 'lucide-react';
+import AdminMotorizadosKYC from './AdminMotorizadosKYC';
 
 interface TenantInfo {
     id: string;
@@ -275,6 +276,9 @@ const SuperAdmin: React.FC = () => {
                         <div className="text-xl font-bold text-green-400">{formatMoney(stats?.totalWallet || 0)}</div>
                     </div>
                 </div>
+
+                {/* 🛵 Cola de revisión KYC — Red Nortex de repartidores */}
+                <AdminMotorizadosKYC />
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     {/* TENANT TABLE - 2 cols */}

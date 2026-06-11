@@ -378,14 +378,15 @@ router.patch('/:id/motorizado', authenticate, async (req: any, res: any) => {
         if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado.' });
 
         if (motorizadoId) {
-            // Verificar que el motorizado es del tenant o es un freelancer global activo
+            // Verificar que el motorizado es del tenant o es un freelancer global
+            // activo CON KYC aprobado (Red NORTEX: nadie reparte sin revisión).
             const mot = await prisma.motorizado.findFirst({
                 where: {
                     id: motorizadoId,
                     activo: true,
                     OR: [
                         { tenantId: authReq.tenantId },
-                        { tipoFlota: 'NORTEX' }
+                        { tipoFlota: 'NORTEX', kycStatus: 'APROBADO' }
                     ]
                 }
             });

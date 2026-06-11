@@ -1003,10 +1003,20 @@ model Motorizado {
   vehiculoPlaca        String?  @db.VarChar(20)
   createdAt            DateTime @default(now())
 
+  // ── Red NORTEX: registro público + KYC + login teléfono+PIN ──
+  cedula          String? @db.VarChar(25) // Cédula de identidad (KYC)
+  pinHash         String? // bcrypt del PIN — login del driver (reemplaza el magic-link)
+  kycStatus       String  @default("PENDIENTE") // PENDIENTE | APROBADO | RECHAZADO
+  kycNota         String? @db.Text // Motivo de rechazo / notas del revisor
+  fotoCedulaUrl   String? // KYC: foto de la cédula (Cloudinary)
+  fotoVehiculoUrl String? // KYC: foto de la moto con placa visible (Cloudinary)
+
   tenant  Tenant?  @relation(fields: [tenantId], references: [id])
   pedidos Pedido[]
 
   @@index([tenantId])
+  @@index([telefono])
+  @@index([kycStatus])
 }
 
 model Pedido {
