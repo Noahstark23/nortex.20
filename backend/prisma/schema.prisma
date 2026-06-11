@@ -30,6 +30,9 @@ model Tenant {
   subscriptionEndsAt   DateTime? // Fecha de vencimiento de la suscripción activa
   trialEndsAt          DateTime? // Fecha límite del trial gratuito (14 días desde registro)
   theftAlertThreshold  Decimal   @default(500) @db.Decimal(10, 2)
+  // Costo de entrega plano del catálogo público (lo fija el negocio; el
+  // cliente NUNCA lo manda — se calcula server-side al crear el Pedido).
+  deliveryFee          Decimal   @default(0) @db.Decimal(10, 2)
   // Campos Fiscales DGI
   address              String? // Dirección fiscal
   phone                String? // Teléfono del negocio

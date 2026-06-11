@@ -63,6 +63,10 @@ const PublicCatalog: React.FC = () => {
     const [orderSuccess, setOrderSuccess] = useState(false);
     const [lastOrderId, setLastOrderId] = useState('');
     const [lastWhatsappUrl, setLastWhatsappUrl] = useState('');
+    // Checkout híbrido: DELIVERY crea un Pedido (módulo motorizados+tracking);
+    // QUOTE crea un PublicOrder → Cotización mayorista (flujo B2B).
+    const [orderMode, setOrderMode] = useState<'DELIVERY' | 'QUOTE'>('DELIVERY');
+    const [lastTrackingPath, setLastTrackingPath] = useState('');
 
     // 🔒 Persistir carrito en localStorage (sin imágenes para no reventar la cuota de 5MB)
     useEffect(() => {
@@ -137,7 +141,8 @@ const PublicCatalog: React.FC = () => {
         cartItems: CartItem[],
         businessInfo: BusinessInfo,
         orderId: string,
-        total: number
+        total: number,
+        trackingUrl?: string
     ): string => {
         const orderNum = orderId.slice(-8).toUpperCase();
         const itemLines = cartItems
@@ -145,7 +150,9 @@ const PublicCatalog: React.FC = () => {
             .join('\n');
         const message =
             `Hola ${businessInfo.name}, quiero hacer el pedido #${orderNum} por un total de C$ ${total.toFixed(2)}.\n\n` +
-            `Detalles:\n${itemLines}\n\nPor favor, confírmenme mi pedido.`;
+            `Detalles:\n${itemLines}\n\n` +
+            (trackingUrl ? `📍 Seguimiento en vivo: ${trackingUrl}\n\n` : '') +
+            `Por favor, confírmenme mi pedido.`;
         const phone = businessInfo.phone?.replace(/\D/g, '') || '';
         return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
     };
@@ -166,7 +173,7 @@ const PublicCatalog: React.FC = () => {
     const handleSubmitOrder = async () => {
         if (!customerName.trim()) return alert('Ingresa tu nombre');
         if (!customerPhone.trim()) return alert('Ingresa tu teléfono');
-        if (!direccionEntrega.trim()) return alert('Ingresa tu dirección de entrega');
+        if (orderMode === 'DELIVERY' && !direccionEntrega.trim()) return alert('Ingresa tu dirección de entrega');
         if (!validatePhone(customerPhone)) return;
         setSubmitting(true);
 
@@ -175,26 +182,67 @@ const PublicCatalog: React.FC = () => {
         const totalSnapshot = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
         try {
-            const res = await fetch('/api/public/orders', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    slug: slug,
-                    customerName: customerName.trim(),
-                    customerPhone: customerPhone.trim(),
-                    items: cartSnapshot.map(item => ({
-                        productId: item.id,
-                        name: item.name,
-                        quantity: item.quantity,
-                        price: item.price,
-                    })),
-                }),
-            });
-
-            if (res.ok) {
+            if (orderMode === 'DELIVERY') {
+                // 🛵 Entrega a domicilio → módulo de delivery (Pedido + motorizado +
+                // tracking). El servidor deriva el tenant del slug y recalcula
+                // precios/flete desde la BD — aquí solo van ids y cantidades.
+                const res = await fetch('/api/v1/pedidos', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        slug,
+                        clienteNombre: customerName.trim(),
+                        clienteTelefono: customerPhone.trim(),
+                        direccionEntrega: direccionEntrega.trim(),
+                        referenciaDireccion: referenciaDireccion.trim() || undefined,
+                        notas: notas.trim() || undefined,
+                        items: cartSnapshot.map(item => ({ productoId: item.id, cantidad: item.quantity })),
+                    }),
+                });
                 const data = await res.json();
+                if (!res.ok) {
+                    alert(data.error || 'Error al enviar pedido');
+                    return;
+                }
+
+                const pedidoId: string = data.pedidoId || '';
+                const trackingPath: string = data.trackingPath || (pedidoId ? `/track/${pedidoId}` : '');
+                const trackingUrl = trackingPath ? `${window.location.origin}${trackingPath}` : '';
+                setLastOrderId(pedidoId);
+                setLastTrackingPath(trackingPath);
+
+                // 🚀 WhatsApp con resumen + link de seguimiento en vivo
+                if (business?.phone && pedidoId) {
+                    const waUrl = generateWhatsAppLink(cartSnapshot, business, pedidoId, Number(data.total ?? totalSnapshot), trackingUrl);
+                    setLastWhatsappUrl(waUrl);
+                    window.open(waUrl, '_blank');
+                }
+            } else {
+                // 🧾 Cotización mayorista → PublicOrder (se convierte en Quotation)
+                const res = await fetch('/api/public/orders', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        slug: slug,
+                        customerName: customerName.trim(),
+                        customerPhone: customerPhone.trim(),
+                        items: cartSnapshot.map(item => ({
+                            productId: item.id,
+                            name: item.name,
+                            quantity: item.quantity,
+                            price: item.price,
+                        })),
+                    }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(data.error || 'Error al enviar pedido');
+                    return;
+                }
+
                 const orderId: string = data.orderId || '';
                 setLastOrderId(orderId);
+                setLastTrackingPath('');
 
                 // 🚀 Abrir WhatsApp automáticamente con resumen del pedido
                 if (business?.phone && orderId) {
@@ -202,19 +250,16 @@ const PublicCatalog: React.FC = () => {
                     setLastWhatsappUrl(waUrl);
                     window.open(waUrl, '_blank');
                 }
-
-                setOrderSuccess(true);
-                setCart([]); // Triggers localStorage cleanup via useEffect
-                setCustomerName('');
-                setCustomerPhone('');
-                setDireccionEntrega('');
-                setReferenciaDireccion('');
-                setNotas('');
-                setPhoneError('');
-            } else {
-                const data = await res.json();
-                alert(data.error || 'Error al enviar pedido');
             }
+
+            setOrderSuccess(true);
+            setCart([]); // Triggers localStorage cleanup via useEffect
+            setCustomerName('');
+            setCustomerPhone('');
+            setDireccionEntrega('');
+            setReferenciaDireccion('');
+            setNotas('');
+            setPhoneError('');
         } catch {
             alert('Error de conexión');
         } finally {
@@ -261,6 +306,15 @@ const PublicCatalog: React.FC = () => {
                         </a>
                     )}
 
+                    {lastTrackingPath && (
+                        <a
+                            href={lastTrackingPath}
+                            className="flex items-center justify-center gap-2 w-full bg-slate-900 text-white px-6 py-4 rounded-2xl font-bold text-base hover:bg-slate-800 active:scale-[0.98] transition-all shadow-lg mb-3"
+                        >
+                            📍 Seguir mi pedido en vivo
+                        </a>
+                    )}
+
                     <p className="text-xs text-slate-400 mb-4">
                         {lastWhatsappUrl
                             ? 'Si WhatsApp no se abrió automáticamente, toca el botón de arriba.'
@@ -274,6 +328,7 @@ const PublicCatalog: React.FC = () => {
                             setShowCart(false);
                             setLastOrderId('');
                             setLastWhatsappUrl('');
+                            setLastTrackingPath('');
                         }}
                         className="block w-full text-blue-600 font-medium hover:underline"
                     >
@@ -552,8 +607,27 @@ const PublicCatalog: React.FC = () => {
                         ) : (
                             /* Checkout Form */
                             <div className="p-5 space-y-4">
+                                {/* 🔀 Modo híbrido: domicilio (B2C) vs cotización mayorista (B2B) */}
+                                <div className="grid grid-cols-2 gap-1.5 p-1.5 bg-slate-100 rounded-2xl">
+                                    <button
+                                        type="button"
+                                        onClick={() => setOrderMode('DELIVERY')}
+                                        className={`py-2.5 px-2 rounded-xl text-sm font-bold transition-all ${orderMode === 'DELIVERY' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                    >
+                                        🛵 Pedir a Domicilio
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setOrderMode('QUOTE')}
+                                        className={`py-2.5 px-2 rounded-xl text-sm font-bold transition-all ${orderMode === 'QUOTE' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                    >
+                                        🧾 Cotización Mayorista
+                                    </button>
+                                </div>
                                 <p className="text-sm text-slate-500 mb-2">
-                                    Ingresa tus datos para que <strong>{business?.name}</strong> reciba tu pedido.
+                                    {orderMode === 'DELIVERY'
+                                        ? <>Ingresa tus datos y <strong>{business?.name}</strong> te lo lleva a domicilio.</>
+                                        : <>Ingresa tus datos y <strong>{business?.name}</strong> te enviará una cotización formal.</>}
                                 </p>
                                 <div>
                                     <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
@@ -590,6 +664,7 @@ const PublicCatalog: React.FC = () => {
                                         <p className="text-xs text-red-500 mt-1">{phoneError}</p>
                                     )}
                                 </div>
+                                {orderMode === 'DELIVERY' && (
                                 <div>
                                     <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
                                         Dirección de Entrega *
@@ -602,7 +677,9 @@ const PublicCatalog: React.FC = () => {
                                         className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 text-slate-800 resize-none"
                                     />
                                 </div>
+                                )}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    {orderMode === 'DELIVERY' && (
                                     <div>
                                         <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
                                             Referencia (Opcional)
@@ -615,6 +692,7 @@ const PublicCatalog: React.FC = () => {
                                             className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 text-slate-800"
                                         />
                                     </div>
+                                    )}
                                     <div>
                                         <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
                                             Notas al comercio
@@ -652,11 +730,11 @@ const PublicCatalog: React.FC = () => {
                                     </button>
                                     <button
                                         onClick={handleSubmitOrder}
-                                        disabled={submitting || !customerName.trim() || !customerPhone.trim() || !direccionEntrega.trim()}
-                                        className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 shadow-lg shadow-emerald-200 transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        disabled={submitting || !customerName.trim() || !customerPhone.trim() || (orderMode === 'DELIVERY' && !direccionEntrega.trim())}
+                                        className={`flex-1 py-3 text-white rounded-xl font-bold shadow-lg transition-all active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${orderMode === 'DELIVERY' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'}`}
                                     >
                                         {submitting ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
-                                        {submitting ? 'Enviando...' : 'Enviar Pedido'}
+                                        {submitting ? 'Enviando...' : orderMode === 'DELIVERY' ? 'Pedir a Domicilio' : 'Solicitar Cotización'}
                                     </button>
                                 </div>
                             </div>
