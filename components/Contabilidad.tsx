@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     BookOpen, Plus, Trash2, Lock, Unlock, Loader2, Scale, FileText,
     CalendarDays, CheckCircle2, AlertTriangle, ArrowLeft, ListTree, Percent, Coins, Receipt,
-    Landmark, FileBarChart, Play
+    Landmark, FileBarChart, Play, ListChecks, Clock, ShieldCheck, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { sanitizeDecimalInput, toDecimal } from '../utils/money';
 
@@ -21,11 +21,13 @@ interface BalanzaRow { cuenta: string; nombre: string; tipo: string; saldoInicia
 interface MayorMov { fecha: string; descripcion: string; debe: number; haber: number; saldo: number; }
 interface FiscalPeriodRow { id: string; year: number; month: number; status: string; closedAt?: string | null; reopenReason?: string | null; }
 
-type Tab = 'asiento' | 'diario' | 'balanza' | 'periodos' | 'fiscal' | 'retenciones' | 'activos' | 'renta';
+type Tab = 'cierre' | 'asiento' | 'diario' | 'balanza' | 'periodos' | 'fiscal' | 'retenciones' | 'activos' | 'renta';
 
 interface RetencionRow { id: string; fecha: string; clienteRetenedor: string; tipo: string; baseAmount: number; amount: number; numeroConstancia?: string | null; }
 interface AssetRow { id: string; nombre: string; categoria: string; costo: number; fechaAdquisicion: string; vidaUtilMeses: number; depreciacionAcumulada: number; mesesDepreciados: number; valorEnLibros: number; estado: string; }
 interface AnnualIR { year: number; ingresosNetos: number; costoVentas: number; gastos: number; utilidadFiscal: number; irSobreRenta: number; pmdRate: number; pagoMinimoDefinitivo: number; impuestoDelEjercicio: number; anticiposEnterados: number; retencionesSufridasIR: number; creditosTotales: number; saldoAPagar: number; saldoAFavor: number; resumen: string; }
+interface ObligacionRow { key: string; label: string; entidad: string; monto: number; vence: string; dataLista: boolean; declarado: boolean; nota?: string; }
+interface CierreData { period: string; obligaciones: ObligacionRow[]; totalDeclarar: number; pendientes: number; periodoCerrado: boolean; planillaCalculada: boolean; vetSummary: string; }
 
 const C = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -40,7 +42,7 @@ const Contabilidad: React.FC = () => {
     const auth = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
     const today = new Date();
 
-    const [tab, setTab] = useState<Tab>('asiento');
+    const [tab, setTab] = useState<Tab>('cierre');
     const [accounts, setAccounts] = useState<Account[]>([]);
 
     useEffect(() => {
@@ -127,6 +129,46 @@ const Contabilidad: React.FC = () => {
 
     useEffect(() => { if (tab === 'diario') loadDiario(); }, [tab, loadDiario]);
     useEffect(() => { if (tab === 'balanza') loadBalanza(); }, [tab, loadBalanza]);
+
+    // ── Cierre mensual / Panel del contador (Fase C) ────────────────────────
+    const [cierre, setCierre] = useState<CierreData | null>(null);
+    const [cierreBusy, setCierreBusy] = useState(false);
+    const [marking, setMarking] = useState<string | null>(null);
+
+    const loadCierre = useCallback(async () => {
+        setCierreBusy(true);
+        try {
+            const res = await fetch(`/api/accounting/cierre-mensual/${y}/${m}`, { headers: auth });
+            setCierre(res.ok ? await res.json() : null);
+        } catch { setCierre(null); }
+        finally { setCierreBusy(false); }
+    }, [y, m, auth]);
+
+    useEffect(() => { if (tab === 'cierre') loadCierre(); }, [tab, loadCierre]);
+
+    const toggleObligacion = async (key: string, declarado: boolean) => {
+        setMarking(key);
+        // Optimista: refleja el cambio al instante y confirma con el servidor.
+        setCierre(prev => prev ? { ...prev, obligaciones: prev.obligaciones.map(o => o.key === key ? { ...o, declarado } : o) } : prev);
+        try {
+            const res = await fetch(`/api/accounting/cierre-mensual/${y}/${m}/${key}`, {
+                method: 'PUT', headers: { ...auth, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ declarado }),
+            });
+            if (!res.ok) throw new Error();
+            await loadCierre();
+        } catch { await loadCierre(); }
+        finally { setMarking(null); }
+    };
+
+    const stepMonth = (delta: number) => {
+        let nm = m + delta, ny = y;
+        if (nm < 1) { nm = 12; ny -= 1; }
+        if (nm > 12) { nm = 1; ny += 1; }
+        setM(nm); setY(ny);
+    };
+    const fmtVence = (iso: string) => new Date(iso).toLocaleDateString('es-NI', { day: '2-digit', month: 'short' });
+    const isVencido = (o: ObligacionRow) => !o.declarado && o.monto > 0 && new Date(o.vence) < today;
 
     // ── Períodos (A3) ───────────────────────────────────────────────────────
     const [periods, setPeriods] = useState<FiscalPeriodRow[]>([]);
@@ -308,6 +350,7 @@ const Contabilidad: React.FC = () => {
                 </header>
 
                 <div className="flex flex-wrap gap-2 mb-6">
+                    {tabBtn('cierre', 'Cierre Mensual', ListChecks)}
                     {tabBtn('asiento', 'Asiento Manual', Plus)}
                     {tabBtn('diario', 'Libro Diario', FileText)}
                     {tabBtn('balanza', 'Balanza / Mayor', Scale)}
@@ -317,6 +360,97 @@ const Contabilidad: React.FC = () => {
                     {tabBtn('renta', 'Renta Anual', FileBarChart)}
                     {tabBtn('fiscal', 'Config Fiscal', Percent)}
                 </div>
+
+                {/* ── CIERRE MENSUAL (Panel del contador, Fase C) ── */}
+                {tab === 'cierre' && (
+                    <div className="space-y-5">
+                        {/* Cabecera: selector de mes + total a declarar */}
+                        <div className="panel-premium p-6">
+                            <div className="flex flex-wrap items-start justify-between gap-4">
+                                <div>
+                                    <div className="flex items-center gap-1.5 mb-2">
+                                        <button onClick={() => stepMonth(-1)} aria-label="Mes anterior"
+                                            className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.08] text-slate-300 hover:text-white hover:bg-white/[0.08] flex items-center justify-center transition-colors"><ChevronLeft size={16} /></button>
+                                        <span className="text-white font-bold text-lg font-mono px-2 min-w-[120px] text-center">{MESES[m - 1]} {y}</span>
+                                        <button onClick={() => stepMonth(1)} aria-label="Mes siguiente"
+                                            className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.08] text-slate-300 hover:text-white hover:bg-white/[0.08] flex items-center justify-center transition-colors"><ChevronRight size={16} /></button>
+                                    </div>
+                                    <p className="text-slate-400 text-sm flex items-center gap-1.5"><ShieldCheck size={14} className="text-brand-300" /> ¿Qué me falta declarar este mes?</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-[11px] uppercase tracking-wider text-slate-400">Total a declarar</p>
+                                    <p className="text-3xl font-bold font-mono tabular-nums text-white leading-tight">{cierre ? C(cierre.totalDeclarar) : '—'}</p>
+                                    {cierre && (cierre.pendientes > 0
+                                        ? <span className="inline-flex items-center gap-1.5 mt-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/25"><Clock size={12} /> {cierre.pendientes} pendiente{cierre.pendientes > 1 ? 's' : ''}</span>
+                                        : <span className="inline-flex items-center gap-1.5 mt-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"><CheckCircle2 size={12} /> Todo declarado</span>)}
+                                </div>
+                            </div>
+                            {cierre?.periodoCerrado && (
+                                <div className="mt-4 flex items-center gap-2 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                                    <Lock size={13} /> Período cerrado — las cifras de la DGI están congeladas.
+                                </div>
+                            )}
+                            {cierre && !cierre.planillaCalculada && (
+                                <div className="mt-3 flex items-center gap-2 text-xs text-slate-400 bg-white/[0.02] border border-white/[0.06] rounded-xl px-3 py-2">
+                                    <AlertTriangle size={13} className="text-amber-400" /> La nómina de {MESES[m - 1]} aún no se ha calculado: el INSS e INATEC aparecerán al cerrar la planilla.
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Lista de obligaciones */}
+                        {cierreBusy && !cierre ? (
+                            <div className="panel-premium p-12 flex items-center justify-center"><Loader2 className="animate-spin text-brand-300" /></div>
+                        ) : !cierre ? (
+                            <div className="panel-premium p-10 text-center text-slate-500 text-sm">No se pudo cargar el panel de cierre.</div>
+                        ) : (
+                            <div className="space-y-3">
+                                {cierre.obligaciones.map(o => {
+                                    const vencido = isVencido(o);
+                                    const sinMonto = o.monto <= 0;
+                                    const iconWrap = 'w-10 h-10 rounded-lg border flex items-center justify-center shrink-0';
+                                    return (
+                                        <div key={o.key} className={`panel-premium p-4 sm:px-5 flex flex-wrap items-center gap-x-4 gap-y-3 ${o.declarado ? 'opacity-60' : ''}`}>
+                                            <span className={`${iconWrap} ${o.declarado ? 'bg-emerald-500/15 border-emerald-500/25' : !o.dataLista ? 'bg-amber-500/10 border-amber-500/20' : vencido ? 'bg-rose-500/15 border-rose-500/25' : 'bg-white/[0.04] border-white/[0.08]'}`}>
+                                                {o.declarado ? <CheckCircle2 size={18} className="text-emerald-400" />
+                                                    : !o.dataLista ? <AlertTriangle size={18} className="text-amber-400" />
+                                                        : vencido ? <AlertTriangle size={18} className="text-rose-400" />
+                                                            : <Clock size={18} className="text-slate-400" />}
+                                            </span>
+                                            <div className="flex-1 min-w-[170px]">
+                                                <p className="text-white font-semibold leading-tight">{o.label}</p>
+                                                <p className="text-xs text-slate-500 mt-0.5">{o.entidad}</p>
+                                                {o.nota && <p className="text-xs text-amber-300/80 mt-0.5">{o.nota}</p>}
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-[10px] uppercase tracking-wider text-slate-500">Vence</p>
+                                                <p className={`text-sm font-mono ${vencido ? 'text-rose-400 font-bold' : 'text-slate-300'}`}>{fmtVence(o.vence)}</p>
+                                            </div>
+                                            <div className="text-right min-w-[120px]">
+                                                <p className={`text-lg font-bold font-mono tabular-nums ${sinMonto ? 'text-slate-600' : 'text-white'}`}>{C(o.monto)}</p>
+                                            </div>
+                                            <button onClick={() => toggleObligacion(o.key, !o.declarado)} disabled={marking === o.key}
+                                                className={`text-xs font-semibold inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl min-w-[150px] transition-all disabled:opacity-50 ${o.declarado
+                                                    ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 hover:bg-emerald-500/25'
+                                                    : 'btn-primary'}`}>
+                                                {marking === o.key ? <Loader2 size={14} className="animate-spin" />
+                                                    : o.declarado ? <><CheckCircle2 size={14} /> Declarado</>
+                                                        : <><ListChecks size={14} /> Marcar declarado</>}
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+
+                        {/* Resumen VET (DGI) */}
+                        {cierre?.vetSummary && (
+                            <div className="panel-premium p-5">
+                                <p className="text-[11px] uppercase tracking-wider text-slate-400 flex items-center gap-1.5 mb-2"><FileText size={13} /> Resumen VET — DGI</p>
+                                <pre className="text-xs text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">{cierre.vetSummary}</pre>
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* ── ASIENTO MANUAL ── */}
                 {tab === 'asiento' && (

@@ -1142,6 +1142,24 @@ model DepreciationEntry {
   @@index([tenantId])
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// FASE C — Panel del contador: estado de obligaciones del mes (checklist)
+// ══════════════════════════════════════════════════════════════════════════
+model ObligationStatus {
+  id        String    @id @default(cuid())
+  tenantId  String
+  year      Int
+  month     Int
+  key       String // IVA | ANTICIPO_IR | IMI | INSS | INATEC
+  declarado Boolean   @default(false)
+  markedBy  String?
+  markedAt  DateTime?
+  updatedAt DateTime  @updatedAt
+
+  @@unique([tenantId, year, month, key])
+  @@index([tenantId])
+}
+
 // el UPDATE con increment toma row-lock → serializa los appends del driver).
 model DriverLedgerHead {
   motorizadoId String   @id
