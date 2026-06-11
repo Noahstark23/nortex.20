@@ -3275,6 +3275,59 @@ app.get('/api/payroll/:month/:year', authenticate, async (req: any, res: any) =>
     }
 });
 
+// GET /api/payroll/sie/:month/:year — Reporte INSS/SIE consolidado del mes (B5)
+// Datos por empleado listos para declarar al SIE del INSS (+ INATEC aparte).
+app.get('/api/payroll/sie/:month/:year', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const month = Number(req.params.month);
+    const year = Number(req.params.year);
+    if (isNaN(month) || isNaN(year) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Mes o año inválido.' });
+    }
+    try {
+        const payrolls = await prisma.payroll.findMany({
+            where: { tenantId: authReq.tenantId!, month, year },
+            include: { employee: { select: { firstName: true, lastName: true, cedula: true, inss: true } } },
+            orderBy: { employee: { firstName: 'asc' } },
+        });
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: authReq.tenantId! }, select: { businessName: true, taxId: true },
+        });
+
+        const empleados = payrolls.map(p => {
+            const inssLaboral = new Decimal(p.inssLaboral.toString());
+            const inssPatronal = new Decimal(p.inssPatronal.toString());
+            return {
+                inss: p.employee.inss || '',
+                cedula: p.employee.cedula || '',
+                nombre: `${p.employee.firstName} ${p.employee.lastName}`.trim(),
+                salario: Number(p.totalIncome),
+                inssLaboral: inssLaboral.toNumber(),
+                inssPatronal: inssPatronal.toNumber(),
+                inatec: Number(p.inatec),
+                totalInss: inssLaboral.plus(inssPatronal).toDecimalPlaces(2).toNumber(),
+                sinNumeroInss: !p.employee.inss,
+            };
+        });
+
+        const sum = (k: 'salario' | 'inssLaboral' | 'inssPatronal' | 'inatec' | 'totalInss') =>
+            empleados.reduce((acc, e) => acc.plus(e[k]), new Decimal(0)).toDecimalPlaces(2).toNumber();
+
+        res.json({
+            empresa: tenant?.businessName ?? '', ruc: tenant?.taxId ?? '',
+            month, year, empleados,
+            totals: {
+                salario: sum('salario'), inssLaboral: sum('inssLaboral'),
+                inssPatronal: sum('inssPatronal'), inatec: sum('inatec'), totalInss: sum('totalInss'),
+            },
+            empleadosSinINSS: empleados.filter(e => e.sinNumeroInss).length,
+        });
+    } catch (error) {
+        console.error('SIE report error:', error);
+        res.status(500).json({ error: 'Error al generar el reporte INSS.' });
+    }
+});
+
 // POST /api/payroll/:id/pay - Marcar nómina como pagada
 app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
