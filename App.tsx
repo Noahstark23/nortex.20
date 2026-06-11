@@ -26,6 +26,7 @@ import AuditDashboard from './components/AuditDashboard';
 import Billing from './components/Billing';
 import TeamManagement from './components/TeamManagement';
 import PublicCatalog from './components/PublicCatalog';
+import TrackPedido from './components/TrackPedido';
 
 // SEO Landing Pages & Blog
 import LandingFerreteria from './components/LandingFerreteria';
@@ -95,6 +96,7 @@ function App() {
         {/* App del repartidor: login teléfono+PIN. /driver/:id queda por
             compatibilidad con links viejos — ahora solo muestra el login. */}
         <Route path="/driver" element={<DriverView />} />
+        <Route path="/track/:pedidoId" element={<TrackPedido />} />
         <Route path="/driver/:id" element={<DriverView />} />
         <Route path="/repartidor/registro" element={<RegistroRepartidor />} />
         <Route path="/app/*" element={<ProtectedApp />} />
