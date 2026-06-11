@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Users, Briefcase, DollarSign, Plus, UserPlus, CheckCircle, Clock, KeyRound, FileText, AlertTriangle, Calculator, CreditCard, Printer, X, Shield, Calendar, TrendingDown, Wallet } from 'lucide-react';
+import { Users, Briefcase, DollarSign, Plus, UserPlus, CheckCircle, Clock, KeyRound, FileText, AlertTriangle, Calculator, CreditCard, Printer, X, Shield, Calendar, TrendingDown, Wallet, FileSpreadsheet } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 interface Employee {
     id: string;
@@ -222,6 +223,51 @@ const HRM: React.FC = () => {
                 alert('Nómina pagada exitosamente.');
             }
         } catch (e) { alert('Error al pagar'); }
+    };
+
+    // B5 — Exportar la planilla INSS/SIE del mes a Excel (para declarar al INSS).
+    const [exportingSIE, setExportingSIE] = useState(false);
+    const exportPlanillaINSS = async () => {
+        setExportingSIE(true);
+        try {
+            const res = await fetch(`/api/payroll/sie/${payrollMonth}/${payrollYear}`, { headers });
+            if (!res.ok) { alert('No se pudo generar el reporte INSS.'); return; }
+            const data = await res.json();
+            const meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+            const rows: Record<string, string | number>[] = data.empleados.map((e: any, i: number) => ({
+                '#': i + 1,
+                'N° INSS': e.inss || '— FALTA —',
+                'Cédula': e.cedula || '',
+                'Nombre': e.nombre,
+                'Salario (C$)': e.salario,
+                'INSS Laboral 7%': e.inssLaboral,
+                'INSS Patronal': e.inssPatronal,
+                'Total INSS': e.totalInss,
+                'INATEC 2%': e.inatec,
+            }));
+            rows.push({
+                '#': '', 'N° INSS': '', 'Cédula': '', 'Nombre': 'TOTALES',
+                'Salario (C$)': data.totals.salario, 'INSS Laboral 7%': data.totals.inssLaboral,
+                'INSS Patronal': data.totals.inssPatronal, 'Total INSS': data.totals.totalInss, 'INATEC 2%': data.totals.inatec,
+            });
+            const ws = XLSX.utils.aoa_to_sheet([
+                [`PLANILLA INSS — ${data.empresa}`],
+                [`RUC: ${data.ruc}   |   Período: ${meses[data.month - 1]} ${data.year}`],
+                [],
+            ]);
+            XLSX.utils.sheet_add_json(ws, rows, { origin: 'A4' });
+            ws['!cols'] = [{ wch: 4 }, { wch: 16 }, { wch: 16 }, { wch: 28 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Planilla INSS');
+            XLSX.writeFile(wb, `Planilla_INSS_${data.year}_${String(data.month).padStart(2, '0')}.xlsx`);
+            if (data.empleadosSinINSS > 0) {
+                alert(`⚠️ ${data.empleadosSinINSS} empleado(s) sin número INSS. Complétalo en su ficha para una declaración válida.`);
+            }
+        } catch {
+            alert('Error de conexión al generar el Excel.');
+        } finally {
+            setExportingSIE(false);
+        }
     };
 
     const printColilla = (p: PayrollRecord) => {
@@ -464,6 +510,16 @@ const HRM: React.FC = () => {
                                     onChange={e => setPayrollYear(Number(e.target.value))}
                                     className="border p-2 rounded-lg w-24 text-slate-800"
                                 />
+                                {payrolls.length > 0 && (
+                                    <button
+                                        onClick={exportPlanillaINSS}
+                                        disabled={exportingSIE}
+                                        className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-emerald-700 disabled:opacity-50"
+                                        title="Descargar planilla para declarar al INSS/SIE"
+                                    >
+                                        <FileSpreadsheet size={18} /> {exportingSIE ? 'Generando...' : 'Planilla INSS'}
+                                    </button>
+                                )}
                                 <button
                                     onClick={handleCalculatePayroll}
                                     disabled={calculatingPayroll}
