@@ -4848,6 +4848,88 @@ app.get('/api/fiscal/renta-anual/:year', authenticate, async (req: any, res: any
     }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// FASE C — Panel del contador: checklist de obligaciones del mes
+// ══════════════════════════════════════════════════════════════════════════
+const OBLIGATION_KEYS = ['IVA', 'ANTICIPO_IR', 'IMI', 'INSS', 'INATEC'];
+
+app.get('/api/accounting/cierre-mensual/:year/:month', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Año o mes inválido.' });
+    }
+    try {
+        const { generateMonthlyReport } = await import('./services/nicaTax');
+        const vet = await generateMonthlyReport(tenantId, month, year);
+
+        // INSS / INATEC desde la nómina del período
+        const payrolls = await prisma.payroll.findMany({
+            where: { tenantId, month, year },
+            select: { inssLaboral: true, inssPatronal: true, inatec: true },
+        });
+        const inssTotal = payrolls.reduce((a, p) => a.plus(p.inssLaboral.toString()).plus(p.inssPatronal.toString()), new Decimal(0)).toDecimalPlaces(2).toNumber();
+        const inatecTotal = payrolls.reduce((a, p) => a.plus(p.inatec.toString()), new Decimal(0)).toDecimalPlaces(2).toNumber();
+        const planillaCalculada = payrolls.length > 0;
+
+        const period = await prisma.fiscalPeriod.findUnique({ where: { tenantId_year_month: { tenantId, year, month } } });
+        const statuses = await prisma.obligationStatus.findMany({ where: { tenantId, year, month } });
+        const declared = (k: string) => statuses.find(s => s.key === k)?.declarado ?? false;
+
+        // Vencimientos: DGI al 15 del mes siguiente, INSS/INATEC al 17.
+        const nm = month === 12 ? 1 : month + 1;
+        const ny = month === 12 ? year + 1 : year;
+        const dgiDue = new Date(ny, nm - 1, 15);
+        const inssDue = new Date(ny, nm - 1, 17);
+
+        const obligaciones = [
+            { key: 'IVA', label: 'IVA Neto', entidad: 'DGI (VET)', monto: vet.ivaNeto, vence: dgiDue, dataLista: true, declarado: declared('IVA'), nota: vet.ivaCredito > 0 ? `Crédito a favor C$ ${vet.ivaCredito.toFixed(2)}` : undefined },
+            { key: 'ANTICIPO_IR', label: 'Anticipo IR', entidad: 'DGI (VET)', monto: vet.anticipoIRaPagar, vence: dgiDue, dataLista: true, declarado: declared('ANTICIPO_IR'), nota: vet.retencionIRSufrida > 0 ? `Neto de C$ ${vet.retencionIRSufrida.toFixed(2)} retenido` : undefined },
+            { key: 'IMI', label: 'IMI Alcaldía', entidad: 'Alcaldía', monto: vet.imiAPagar, vence: dgiDue, dataLista: true, declarado: declared('IMI') },
+            { key: 'INSS', label: 'INSS (obrero-patronal)', entidad: 'INSS / SIE', monto: inssTotal, vence: inssDue, dataLista: planillaCalculada, declarado: declared('INSS'), nota: planillaCalculada ? undefined : 'Falta calcular la nómina del mes' },
+            { key: 'INATEC', label: 'INATEC 2%', entidad: 'INATEC', monto: inatecTotal, vence: inssDue, dataLista: planillaCalculada, declarado: declared('INATEC'), nota: planillaCalculada ? undefined : 'Falta calcular la nómina del mes' },
+        ];
+
+        const totalDeclarar = new Decimal(vet.ivaNeto).plus(vet.anticipoIRaPagar).plus(vet.imiAPagar).plus(inssTotal).plus(inatecTotal).toDecimalPlaces(2).toNumber();
+        const pendientes = obligaciones.filter(o => o.monto > 0 && !o.declarado).length;
+
+        res.json({
+            period: `${year}-${String(month).padStart(2, '0')}`,
+            obligaciones, totalDeclarar, pendientes,
+            periodoCerrado: period?.status === 'CLOSED',
+            planillaCalculada,
+            vetSummary: vet.vetSummary,
+        });
+    } catch (error) {
+        console.error('Cierre mensual error:', error);
+        res.status(500).json({ error: 'Error al generar el panel de cierre.' });
+    }
+});
+
+app.put('/api/accounting/cierre-mensual/:year/:month/:key', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    const key = String(req.params.key);
+    if (isNaN(year) || isNaN(month) || !OBLIGATION_KEYS.includes(key)) {
+        return res.status(400).json({ error: 'Parámetros inválidos.' });
+    }
+    const declarado = Boolean(req.body?.declarado);
+    try {
+        await prisma.obligationStatus.upsert({
+            where: { tenantId_year_month_key: { tenantId: authReq.tenantId!, year, month, key } },
+            create: { tenantId: authReq.tenantId!, year, month, key, declarado, markedBy: authReq.userId!, markedAt: declarado ? new Date() : null },
+            update: { declarado, markedBy: authReq.userId!, markedAt: declarado ? new Date() : null },
+        });
+        res.json({ message: declarado ? 'Marcado como declarado.' : 'Desmarcado.', key, declarado });
+    } catch (error) {
+        console.error('Toggle obligation error:', error);
+        res.status(500).json({ error: 'Error al actualizar el estado.' });
+    }
+});
+
 // ==========================================
 // 🔮 ORÁCULO DE INVENTARIO (COMPRAS INTELIGENTES)
 // ==========================================
