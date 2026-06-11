@@ -4931,6 +4931,106 @@ app.put('/api/accounting/cierre-mensual/:year/:month/:key', authenticate, checkR
 });
 
 // ==========================================
+// 📅 ANTIGÜEDAD DE SALDOS — Aging CxC / CxP (Fase C3)
+// ==========================================
+
+// GET /api/accounting/aging — ¿quién me debe y a quién le debo, por antigüedad?
+app.get('/api/accounting/aging', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    try {
+        type BucketKey = 'corriente' | 'b1_30' | 'b31_60' | 'b61_90' | 'b90';
+        interface Factura { id: string; numero: string | null; fecha: Date; vence: Date | null; monto: number; saldo: number; dias: number; bucket: BucketKey; }
+        interface EntAcc { id: string; nombre: string; telefono: string | null; buckets: Record<BucketKey, Decimal>; total: Decimal; vencido: Decimal; facturas: Factura[]; }
+        interface RawItem { id: string; entidadId: string; entidadNombre: string; telefono: string | null; numero: string | null; fecha: Date; vence: Date | null; monto: number; saldo: Decimal; }
+
+        const now = new Date();
+        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const MS_DAY = 86400000;
+
+        // Días vencidos desde la fecha de referencia (vence ?? fecha de emisión).
+        const diasVencido = (ref: Date) => {
+            const r = new Date(ref);
+            const refMid = new Date(r.getFullYear(), r.getMonth(), r.getDate()).getTime();
+            return Math.floor((hoy.getTime() - refMid) / MS_DAY);
+        };
+        const bucketDe = (d: number): BucketKey => d <= 0 ? 'corriente' : d <= 30 ? 'b1_30' : d <= 60 ? 'b31_60' : d <= 90 ? 'b61_90' : 'b90';
+        const zero = (): Record<BucketKey, Decimal> => ({ corriente: new Decimal(0), b1_30: new Decimal(0), b31_60: new Decimal(0), b61_90: new Decimal(0), b90: new Decimal(0) });
+        const numBuckets = (b: Record<BucketKey, Decimal>) => ({
+            corriente: b.corriente.toDecimalPlaces(2).toNumber(),
+            b1_30: b.b1_30.toDecimalPlaces(2).toNumber(),
+            b31_60: b.b31_60.toDecimalPlaces(2).toNumber(),
+            b61_90: b.b61_90.toDecimalPlaces(2).toNumber(),
+            b90: b.b90.toDecimalPlaces(2).toNumber(),
+        });
+
+        // Agrupa las facturas por entidad y las reparte en los cinco tramos de antigüedad.
+        const buildAging = (items: RawItem[]) => {
+            const map = new Map<string, EntAcc>();
+            const totals = zero();
+            for (const it of items) {
+                const dias = diasVencido(it.vence ?? it.fecha);
+                const bk = bucketDe(dias);
+                let e = map.get(it.entidadId);
+                if (!e) { e = { id: it.entidadId, nombre: it.entidadNombre, telefono: it.telefono, buckets: zero(), total: new Decimal(0), vencido: new Decimal(0), facturas: [] }; map.set(it.entidadId, e); }
+                e.buckets[bk] = e.buckets[bk].plus(it.saldo);
+                e.total = e.total.plus(it.saldo);
+                if (bk !== 'corriente') e.vencido = e.vencido.plus(it.saldo);
+                totals[bk] = totals[bk].plus(it.saldo);
+                e.facturas.push({ id: it.id, numero: it.numero, fecha: it.fecha, vence: it.vence, monto: it.monto, saldo: it.saldo.toDecimalPlaces(2).toNumber(), dias, bucket: bk });
+            }
+            const entidades = [...map.values()]
+                .map(e => ({ id: e.id, nombre: e.nombre, telefono: e.telefono, total: e.total.toDecimalPlaces(2).toNumber(), vencido: e.vencido.toDecimalPlaces(2).toNumber(), ...numBuckets(e.buckets), facturas: e.facturas }))
+                .sort((a, b) => b.vencido - a.vencido || b.total - a.total);
+            const total = totals.corriente.plus(totals.b1_30).plus(totals.b31_60).plus(totals.b61_90).plus(totals.b90).toDecimalPlaces(2).toNumber();
+            const vencido = totals.b1_30.plus(totals.b31_60).plus(totals.b61_90).plus(totals.b90).toDecimalPlaces(2).toNumber();
+            return { total, vencido, buckets: numBuckets(totals), entidades };
+        };
+
+        // CxC: ventas a crédito con saldo pendiente (mismo filtro que /api/credits/debtors).
+        const sales = await prisma.sale.findMany({
+            where: { tenantId, paymentMethod: 'CREDIT', balance: { gt: 0 } },
+            include: { customer: { select: { name: true, phone: true } } },
+            orderBy: { dueDate: 'asc' },
+        });
+        // CxP: compras a crédito pendientes (mismo filtro que /api/purchases/pending).
+        const purchases = await prisma.purchase.findMany({
+            where: { tenantId, status: 'PENDING_PAYMENT' },
+            include: { supplier: { select: { name: true } } },
+            orderBy: { dueDate: 'asc' },
+        });
+
+        const cxc = buildAging(sales.map((s): RawItem => ({
+            id: s.id,
+            entidadId: s.customerId ?? `name:${s.customerName ?? 'general'}`,
+            entidadNombre: s.customer?.name ?? s.customerName ?? 'Cliente General',
+            telefono: s.customer?.phone ?? null,
+            numero: s.invoiceNumber != null ? String(s.invoiceNumber) : null,
+            fecha: s.createdAt,
+            vence: s.dueDate,
+            monto: new Decimal(s.total.toString()).toDecimalPlaces(2).toNumber(),
+            saldo: new Decimal(s.balance.toString()),
+        })));
+        const cxp = buildAging(purchases.map((p): RawItem => ({
+            id: p.id,
+            entidadId: p.supplierId,
+            entidadNombre: p.supplier?.name ?? 'Proveedor',
+            telefono: null,
+            numero: p.invoiceNumber,
+            fecha: p.date,
+            vence: p.dueDate,
+            monto: new Decimal(p.total.toString()).toDecimalPlaces(2).toNumber(),
+            saldo: new Decimal(p.total.toString()),
+        })));
+
+        res.json({ asOf: hoy, cxc, cxp });
+    } catch (error) {
+        console.error('Aging error:', error);
+        res.status(500).json({ error: 'Error al generar la antigüedad de saldos.' });
+    }
+});
+
+// ==========================================
 // 🔮 ORÁCULO DE INVENTARIO (COMPRAS INTELIGENTES)
 // ==========================================
 
