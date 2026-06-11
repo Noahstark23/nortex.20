@@ -1099,7 +1099,49 @@ model RetencionSufrida {
   @@index([tenantId, fecha])
 }
 
-// Cabeza de la cadena del wallet por repartidor (mismo patrón que LedgerHead:
+// ══════════════════════════════════════════════════════════════════════════
+// FASE B parte 2 — Activos fijos + depreciación (Ley 822)
+// ══════════════════════════════════════════════════════════════════════════
+model FixedAsset {
+  id               String   @id @default(cuid())
+  tenantId         String
+  nombre           String   @db.VarChar(160)
+  categoria        String // EDIFICIO | VEHICULO | MAQUINARIA | MOBILIARIO | COMPUTO | OTRO
+  costo            Decimal  @db.Decimal(14, 2)
+  fechaAdquisicion DateTime @db.Date
+  vidaUtilMeses    Int // método de línea recta (cuota = costo / vidaUtilMeses)
+
+  depreciacionAcumulada Decimal @default(0) @db.Decimal(14, 2)
+  mesesDepreciados      Int     @default(0)
+  // "YYYY-MM" de la última cuota posteada → idempotencia del corrido mensual.
+  ultimoPeriodoDep      String?
+  estado                String  @default("ACTIVO") // ACTIVO | BAJA
+
+  createdBy String
+  createdAt DateTime @default(now())
+
+  movimientos DepreciationEntry[]
+
+  @@index([tenantId])
+  @@index([estado])
+}
+
+// Cuota mensual posteada (auditoría + idempotencia dura por @@unique).
+model DepreciationEntry {
+  id        String   @id @default(cuid())
+  assetId   String
+  tenantId  String
+  year      Int
+  month     Int
+  amount    Decimal  @db.Decimal(14, 2)
+  createdAt DateTime @default(now())
+
+  asset FixedAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, year, month])
+  @@index([tenantId])
+}
+
 // el UPDATE con increment toma row-lock → serializa los appends del driver).
 model DriverLedgerHead {
   motorizadoId String   @id
