@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     BookOpen, Plus, Trash2, Lock, Unlock, Loader2, Scale, FileText,
-    CalendarDays, CheckCircle2, AlertTriangle, ArrowLeft, ListTree, Percent, Coins, Receipt
+    CalendarDays, CheckCircle2, AlertTriangle, ArrowLeft, ListTree, Percent, Coins, Receipt,
+    Landmark, FileBarChart, Play
 } from 'lucide-react';
 import { sanitizeDecimalInput, toDecimal } from '../utils/money';
 
@@ -20,9 +21,11 @@ interface BalanzaRow { cuenta: string; nombre: string; tipo: string; saldoInicia
 interface MayorMov { fecha: string; descripcion: string; debe: number; haber: number; saldo: number; }
 interface FiscalPeriodRow { id: string; year: number; month: number; status: string; closedAt?: string | null; reopenReason?: string | null; }
 
-type Tab = 'asiento' | 'diario' | 'balanza' | 'periodos' | 'fiscal' | 'retenciones';
+type Tab = 'asiento' | 'diario' | 'balanza' | 'periodos' | 'fiscal' | 'retenciones' | 'activos' | 'renta';
 
 interface RetencionRow { id: string; fecha: string; clienteRetenedor: string; tipo: string; baseAmount: number; amount: number; numeroConstancia?: string | null; }
+interface AssetRow { id: string; nombre: string; categoria: string; costo: number; fechaAdquisicion: string; vidaUtilMeses: number; depreciacionAcumulada: number; mesesDepreciados: number; valorEnLibros: number; estado: string; }
+interface AnnualIR { year: number; ingresosNetos: number; costoVentas: number; gastos: number; utilidadFiscal: number; irSobreRenta: number; pmdRate: number; pagoMinimoDefinitivo: number; impuestoDelEjercicio: number; anticiposEnterados: number; retencionesSufridasIR: number; creditosTotales: number; saldoAPagar: number; saldoAFavor: number; resumen: string; }
 
 const C = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -239,6 +242,50 @@ const Contabilidad: React.FC = () => {
         loadRet();
     };
 
+    // ── Activos fijos + depreciación (B2) ───────────────────────────────────
+    const [assets, setAssets] = useState<AssetRow[]>([]);
+    const [newAsset, setNewAsset] = useState({ nombre: '', categoria: 'COMPUTO', costo: '', fechaAdquisicion: today.toISOString().slice(0, 10) });
+    const [depMsg, setDepMsg] = useState('');
+    const loadAssets = useCallback(async () => {
+        const res = await fetch('/api/accounting/fixed-assets', { headers: auth });
+        if (res.ok) { const d = await res.json(); setAssets(d.assets ?? []); }
+    }, [auth]);
+    useEffect(() => { if (tab === 'activos') loadAssets(); }, [tab, loadAssets]);
+
+    const addAsset = async () => {
+        if (!newAsset.nombre.trim() || toDecimal(newAsset.costo).lessThanOrEqualTo(0)) return;
+        const res = await fetch('/api/accounting/fixed-assets', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
+            body: JSON.stringify({ ...newAsset, costo: toDecimal(newAsset.costo).toNumber() }),
+        });
+        if (res.ok) { setNewAsset(a => ({ ...a, nombre: '', costo: '' })); loadAssets(); }
+        else alert((await res.json()).error || 'Error');
+    };
+    const bajaAsset = async (id: string) => {
+        if (!confirm('¿Dar de baja este activo? Dejará de depreciarse.')) return;
+        const res = await fetch(`/api/accounting/fixed-assets/${id}/baja`, { method: 'PATCH', headers: auth });
+        if (res.ok) loadAssets();
+    };
+    const runDep = async () => {
+        setDepMsg('Corriendo...');
+        const res = await fetch('/api/accounting/depreciacion/run', { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth }, body: JSON.stringify({}) });
+        const d = await res.json();
+        setDepMsg(res.ok ? `✅ ${d.message}` : (d.error || 'Error'));
+        loadAssets();
+    };
+
+    // ── Renta anual (B3) ─────────────────────────────────────────────────────
+    const [rentaYear, setRentaYear] = useState(today.getFullYear());
+    const [renta, setRenta] = useState<AnnualIR | null>(null);
+    const loadRenta = useCallback(async () => {
+        setBusy(true);
+        try {
+            const res = await fetch(`/api/fiscal/renta-anual/${rentaYear}`, { headers: auth });
+            setRenta(res.ok ? await res.json() : null);
+        } finally { setBusy(false); }
+    }, [rentaYear, auth]);
+    useEffect(() => { if (tab === 'renta') loadRenta(); }, [tab, loadRenta]);
+
     const inputCls = 'w-full bg-white/[0.03] border border-white/[0.08] text-white px-3 py-2.5 rounded-xl focus:outline-none focus:border-brand placeholder:text-slate-600';
 
     const tabBtn = (t: Tab, label: string, Icon: React.ComponentType<{ size?: number }>) => (
@@ -266,6 +313,8 @@ const Contabilidad: React.FC = () => {
                     {tabBtn('balanza', 'Balanza / Mayor', Scale)}
                     {tabBtn('periodos', 'Períodos', CalendarDays)}
                     {tabBtn('retenciones', 'Retenciones', Receipt)}
+                    {tabBtn('activos', 'Activos Fijos', Landmark)}
+                    {tabBtn('renta', 'Renta Anual', FileBarChart)}
                     {tabBtn('fiscal', 'Config Fiscal', Percent)}
                 </div>
 
@@ -573,6 +622,84 @@ const Contabilidad: React.FC = () => {
                                 <button onClick={saveRate} className="btn-primary inline-flex items-center gap-2"><Plus size={16} /> Registrar</button>
                             </div>
                         </div>
+                    </div>
+                )}
+                {/* ── ACTIVOS FIJOS (B2) ── */}
+                {tab === 'activos' && (
+                    <div className="space-y-6">
+                        <div className="panel-premium p-6">
+                            <h3 className="text-white font-bold mb-1 flex items-center gap-2"><Landmark size={18} className="text-brand-300" /> Registrar activo fijo</h3>
+                            <p className="text-slate-400 text-xs mb-4">Se deprecia solo cada mes (línea recta, Ley 822). La cuota baja la utilidad → menos IR.</p>
+                            <div className="grid sm:grid-cols-4 gap-3">
+                                <input value={newAsset.nombre} onChange={e => setNewAsset({ ...newAsset, nombre: e.target.value })} placeholder="Nombre (ej: Camioneta Hilux)" className={`${inputCls} sm:col-span-2`} />
+                                <select value={newAsset.categoria} onChange={e => setNewAsset({ ...newAsset, categoria: e.target.value })} className={inputCls}>
+                                    {['EDIFICIO', 'VEHICULO', 'MAQUINARIA', 'MOBILIARIO', 'COMPUTO', 'OTRO'].map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                                <input type="date" value={newAsset.fechaAdquisicion} onChange={e => setNewAsset({ ...newAsset, fechaAdquisicion: e.target.value })} className={`${inputCls} font-mono`} />
+                                <input inputMode="decimal" value={newAsset.costo} onChange={e => setNewAsset({ ...newAsset, costo: sanitizeDecimalInput(e.target.value) })} placeholder="Costo C$" className={`${inputCls} text-right font-mono tabular-nums`} />
+                                <button onClick={addAsset} className="btn-primary sm:col-span-3 inline-flex items-center justify-center gap-2"><Plus size={16} /> Agregar activo</button>
+                            </div>
+                        </div>
+
+                        <div className="panel-premium p-6">
+                            <div className="flex items-center justify-between mb-3">
+                                <h3 className="text-white font-bold text-sm uppercase tracking-wider">Activos registrados</h3>
+                                <button onClick={runDep} className="btn-ghost text-xs py-1.5 inline-flex items-center gap-1.5"><Play size={13} /> Correr depreciación del mes</button>
+                            </div>
+                            {depMsg && <p className="text-xs text-emerald-400 mb-2">{depMsg}</p>}
+                            {assets.length === 0 ? <p className="text-slate-500 text-sm text-center py-4">Sin activos registrados.</p> : (
+                                <table className="w-full table-premium">
+                                    <thead><tr><th>Activo</th><th>Categoría</th><th className="text-right">Costo</th><th className="text-right">Deprec. acum.</th><th className="text-right">Valor libros</th><th /></tr></thead>
+                                    <tbody>
+                                        {assets.map(a => (
+                                            <tr key={a.id} className={a.estado === 'BAJA' ? 'opacity-40' : ''}>
+                                                <td className="text-slate-200">{a.nombre}</td>
+                                                <td className="text-slate-400 text-xs">{a.categoria} · {a.mesesDepreciados}/{a.vidaUtilMeses}m</td>
+                                                <td className="text-right num text-slate-300">{C(a.costo)}</td>
+                                                <td className="text-right num text-amber-400">{C(a.depreciacionAcumulada)}</td>
+                                                <td className="text-right num text-white font-bold">{C(a.valorEnLibros)}</td>
+                                                <td className="text-right">{a.estado === 'ACTIVO' && <button onClick={() => bajaAsset(a.id)} className="text-slate-500 hover:text-red-400" title="Dar de baja"><Trash2 size={14} /></button>}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* ── RENTA ANUAL (B3) ── */}
+                {tab === 'renta' && (
+                    <div className="space-y-4">
+                        <div className="flex items-center gap-2">
+                            <select value={rentaYear} onChange={e => setRentaYear(Number(e.target.value))} className="bg-surface-900 border border-white/[0.08] text-white px-3 py-2 rounded-xl text-sm font-mono">
+                                {[0, 1, 2, 3].map(d => { const yr = today.getFullYear() - d; return <option key={yr} value={yr}>{yr}</option>; })}
+                            </select>
+                            {busy && <Loader2 className="animate-spin text-brand-300" size={18} />}
+                        </div>
+                        {renta && (
+                            <div className="panel-premium p-6">
+                                <h3 className="text-white font-bold mb-4 flex items-center gap-2"><FileBarChart size={18} className="text-brand-300" /> Declaración anual de IR · {renta.year}</h3>
+                                <div className="space-y-1.5 font-mono tabular-nums text-sm">
+                                    <div className="flex justify-between text-slate-300"><span>Ingresos netos (sin IVA)</span><span>{C(renta.ingresosNetos)}</span></div>
+                                    <div className="flex justify-between text-slate-400"><span>(−) Costo de ventas</span><span>{C(renta.costoVentas)}</span></div>
+                                    <div className="flex justify-between text-slate-400"><span>(−) Gastos del período</span><span>{C(renta.gastos)}</span></div>
+                                    <div className="flex justify-between text-white font-bold border-t border-white/10 pt-1.5"><span>= Utilidad fiscal</span><span>{C(renta.utilidadFiscal)}</span></div>
+                                    <div className="h-2" />
+                                    <div className="flex justify-between text-slate-300"><span>IR sobre renta (30%)</span><span>{C(renta.irSobreRenta)}</span></div>
+                                    <div className="flex justify-between text-slate-300"><span>Pago Mínimo Definitivo ({(renta.pmdRate * 100).toFixed(1)}%)</span><span>{C(renta.pagoMinimoDefinitivo)}</span></div>
+                                    <div className="flex justify-between text-white font-bold"><span>= Impuesto del ejercicio (el mayor)</span><span>{C(renta.impuestoDelEjercicio)}</span></div>
+                                    <div className="h-2" />
+                                    <div className="flex justify-between text-emerald-400"><span>(−) Anticipos IR enterados</span><span>{C(renta.anticiposEnterados)}</span></div>
+                                    <div className="flex justify-between text-emerald-400"><span>(−) Retenciones IR sufridas</span><span>{C(renta.retencionesSufridasIR)}</span></div>
+                                    <div className={`flex justify-between text-lg font-black border-t border-white/15 pt-2 mt-1 ${renta.saldoAPagar > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                                        <span>{renta.saldoAPagar > 0 ? 'SALDO A PAGAR' : 'SALDO A FAVOR'}</span>
+                                        <span>{C(renta.saldoAPagar > 0 ? renta.saldoAPagar : renta.saldoAFavor)}</span>
+                                    </div>
+                                </div>
+                                <p className="text-[11px] text-slate-500 mt-4">📋 IR-1 — vence el 31 de marzo de {renta.year + 1}. Revisar con el contador antes de presentar.</p>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

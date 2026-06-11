@@ -17,6 +17,7 @@ import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
+import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
 import { applyStockDelta, StockError } from './services/stockService';
@@ -4700,6 +4701,100 @@ app.get('/api/accounting/retenciones-sufridas', authenticate, async (req: any, r
     } catch { res.status(500).json({ error: 'Error al listar las retenciones.' }); }
 });
 
+// ── B2 — Activos fijos + depreciación ───────────────────────────────────────
+
+// GET lista (con valor en libros)
+app.get('/api/accounting/fixed-assets', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const assets = await prisma.fixedAsset.findMany({
+            where: { tenantId: authReq.tenantId! }, orderBy: { createdAt: 'desc' },
+        });
+        res.json({
+            assets: assets.map(a => {
+                const costo = Number(a.costo);
+                const acum = Number(a.depreciacionAcumulada);
+                return {
+                    id: a.id, nombre: a.nombre, categoria: a.categoria, costo,
+                    fechaAdquisicion: a.fechaAdquisicion, vidaUtilMeses: a.vidaUtilMeses,
+                    depreciacionAcumulada: acum, mesesDepreciados: a.mesesDepreciados,
+                    valorEnLibros: Number((costo - acum).toFixed(2)), estado: a.estado,
+                    ultimoPeriodoDep: a.ultimoPeriodoDep,
+                };
+            }),
+        });
+    } catch { res.status(500).json({ error: 'Error al listar activos.' }); }
+});
+
+// POST registrar activo
+app.post('/api/accounting/fixed-assets', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { nombre, categoria, costo, fechaAdquisicion, vidaUtilMeses } = req.body ?? {};
+        if (!nombre || typeof nombre !== 'string') return res.status(400).json({ error: 'Nombre requerido.' });
+        const cat = String(categoria || 'OTRO').toUpperCase();
+        if (!(cat in VIDA_UTIL_DEFAULT)) return res.status(400).json({ error: 'Categoría inválida.' });
+        const costoD = new Decimal(Number(costo) || 0);
+        if (costoD.lessThanOrEqualTo(0)) return res.status(400).json({ error: 'El costo debe ser mayor a cero.' });
+        const fecha = fechaAdquisicion ? new Date(fechaAdquisicion) : new Date();
+        if (isNaN(fecha.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
+        const vida = Number(vidaUtilMeses) > 0 ? Math.floor(Number(vidaUtilMeses)) : VIDA_UTIL_DEFAULT[cat];
+
+        const asset = await prisma.fixedAsset.create({
+            data: {
+                tenantId: authReq.tenantId!, nombre: nombre.trim(), categoria: cat,
+                costo: costoD.toDecimalPlaces(2).toNumber(), fechaAdquisicion: fecha,
+                vidaUtilMeses: vida, createdBy: authReq.userId!,
+            },
+        });
+        res.status(201).json({ message: 'Activo registrado.', asset });
+    } catch (error) {
+        console.error('Create fixed asset error:', error);
+        res.status(500).json({ error: 'Error al registrar el activo.' });
+    }
+});
+
+// PATCH dar de baja
+app.patch('/api/accounting/fixed-assets/:id/baja', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const owned = await prisma.fixedAsset.findFirst({ where: { id: req.params.id, tenantId: authReq.tenantId! }, select: { id: true } });
+        if (!owned) return res.status(404).json({ error: 'Activo no encontrado.' });
+        await prisma.fixedAsset.update({ where: { id: owned.id }, data: { estado: 'BAJA' } });
+        res.json({ message: 'Activo dado de baja.' });
+    } catch { res.status(500).json({ error: 'Error al dar de baja.' }); }
+});
+
+// POST correr depreciación (manual; el cron hace lo mismo mensual)
+app.post('/api/accounting/depreciacion/run', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const now = new Date();
+        const year = Number(req.body?.year) || now.getFullYear();
+        const month = Number(req.body?.month) || (now.getMonth() + 1);
+        const result = await runDepreciationForTenant(authReq.tenantId!, year, month, authReq.userId!);
+        res.json({ message: `Depreciación ${result.period}: ${result.depreciados} cuotas posteadas.`, ...result });
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : 'Error al correr la depreciación';
+        res.status(500).json({ error: msg });
+    }
+});
+
+// ── B3 — Declaración anual de IR ────────────────────────────────────────────
+app.get('/api/fiscal/renta-anual/:year', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const year = parseInt(req.params.year);
+    if (isNaN(year) || year < 2000 || year > 2100) return res.status(400).json({ error: 'Año inválido.' });
+    try {
+        const { generateAnnualIR } = await import('./services/nicaTax');
+        const report = await generateAnnualIR(authReq.tenantId!, year);
+        res.json(report);
+    } catch (error) {
+        console.error('Annual IR error:', error);
+        res.status(500).json({ error: 'Error al generar la declaración anual.' });
+    }
+});
+
 // ==========================================
 // 🔮 ORÁCULO DE INVENTARIO (COMPRAS INTELIGENTES)
 // ==========================================
@@ -5885,6 +5980,11 @@ async function checkExpiredSubscriptions() {
 
 checkExpiredSubscriptions();
 setInterval(checkExpiredSubscriptions, 60 * 60 * 1000); // cada hora
+
+// ⏰ CRON: depreciación mensual automática (Ley 822). Idempotente por
+// período/activo → correr a diario es seguro; solo postea la cuota una vez.
+runMonthlyDepreciationAllTenants();
+setInterval(runMonthlyDepreciationAllTenants, 24 * 60 * 60 * 1000); // cada 24h
 
 // ==========================================
 // 🚀 START SERVER
