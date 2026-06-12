@@ -23,10 +23,13 @@ interface PayrollRecord {
     year: number;
     grossSalary: number;
     commissions: number;
+    overtimePay?: number;
+    horasExtra?: number;
     totalIncome: number;
     inssLaboral: number;
     irLaboral: number;
     totalDeductions: number;
+    advanceDeduction?: number;
     netSalary: number;
     inssPatronal: number;
     inatec: number;
@@ -313,6 +316,7 @@ const HRM: React.FC = () => {
           <tbody>
             <tr><td>Salario Base</td><td class="amount">C$ ${Number(p.grossSalary).toFixed(2)}</td></tr>
             <tr><td>Comisiones del Periodo</td><td class="amount">C$ ${Number(p.commissions).toFixed(2)}</td></tr>
+            ${Number(p.overtimePay || 0) > 0 ? `<tr><td>Horas Extra (${Number(p.horasExtra || 0)} h al doble · Art. 62)</td><td class="amount">C$ ${Number(p.overtimePay).toFixed(2)}</td></tr>` : ''}
             <tr class="total-row"><td>TOTAL DEVENGADO</td><td class="amount">C$ ${Number(p.totalIncome).toFixed(2)}</td></tr>
           </tbody>
         </table>
@@ -325,6 +329,13 @@ const HRM: React.FC = () => {
             <tr class="total-row"><td>TOTAL DEDUCCIONES</td><td class="amount">- C$ ${Number(p.totalDeductions).toFixed(2)}</td></tr>
           </tbody>
         </table>
+
+        ${Number(p.advanceDeduction || 0) > 0 ? `<table>
+          <thead><tr><th colspan="2">OTROS DESCUENTOS</th></tr></thead>
+          <tbody>
+            <tr><td>Adelanto de salario</td><td class="amount">- C$ ${Number(p.advanceDeduction).toFixed(2)}</td></tr>
+          </tbody>
+        </table>` : ''}
 
         <table>
           <tbody>
@@ -579,6 +590,10 @@ const HRM: React.FC = () => {
                                                 <td className="p-4">
                                                     <div className="font-bold text-slate-700">{name}</div>
                                                     {p.employee?.cedula && <div className="text-[10px] text-slate-400">Céd: {p.employee.cedula}</div>}
+                                                    <div className="flex gap-2 mt-0.5">
+                                                        {Number(p.horasExtra || 0) > 0 && <span className="text-[10px] text-amber-600 font-bold">+{Number(p.horasExtra)}h extra</span>}
+                                                        {Number(p.advanceDeduction || 0) > 0 && <span className="text-[10px] text-red-500 font-bold">Adelanto -{formatC(Number(p.advanceDeduction))}</span>}
+                                                    </div>
                                                 </td>
                                                 <td className="p-4 text-right font-mono">{formatC(Number(p.totalIncome))}</td>
                                                 <td className="p-4 text-right font-mono text-red-500">-{formatC(Number(p.inssLaboral))}</td>

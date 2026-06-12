@@ -42,12 +42,17 @@ export interface PayrollCalculation {
     // Ingresos
     grossSalary: number;
     commissions: number;
+    overtimePay: number;   // Horas extra al doble (Art. 62 Ley 185)
+    horasExtra: number;    // Cantidad de horas extra del período (informativo)
     totalIncome: number;
 
     // Deducciones de Ley
     inssLaboral: number;
     irLaboral: number;
     totalDeductions: number;
+
+    // Otros descuentos (no de ley)
+    advanceDeduction: number; // Adelantos de salario a recuperar
 
     // Neto
     netSalary: number;
@@ -88,11 +93,18 @@ export interface LaborLiability {
 export function calculatePayroll(
     baseSalary: number,
     commissions: number = 0,
-    opts?: { inssPatronalRate?: number }
+    opts?: { inssPatronalRate?: number; overtimeHours?: number; advanceDeduction?: number }
 ): PayrollCalculation {
     const dBase = new Decimal(baseSalary);
     const dComm = new Decimal(commissions);
-    const totalIncome = dBase.plus(dComm);
+
+    // Horas extra: se pagan al DOBLE de la hora ordinaria (Art. 62 Ley 185).
+    // Hora ordinaria = salario mensual / (30 días · 8 h) = base / 240.
+    const horasExtra   = new Decimal(opts?.overtimeHours ?? 0);
+    const horaOrdinaria = dBase.dividedBy(240);
+    const overtimePay  = horasExtra.mul(horaOrdinaria).mul(2).toDecimalPlaces(4);
+
+    const totalIncome = dBase.plus(dComm).plus(overtimePay);
     // B4: INSS patronal parametrizable (21.5% <50 emp · 22.5% ≥50). Default legal.
     const inssPatronalRate = opts?.inssPatronalRate != null ? new Decimal(opts.inssPatronalRate) : INSS_PATRONAL_RATE;
 
@@ -121,8 +133,9 @@ export function calculatePayroll(
     // 3. Total Deducciones
     const totalDeductions = inssLaboral.plus(irLaboral).toDecimalPlaces(4);
 
-    // 4. Neto a Recibir
-    const netSalary = totalIncome.minus(totalDeductions).toDecimalPlaces(4);
+    // 4. Neto a Recibir — descontando además los adelantos de salario recuperados.
+    const advanceDeduction = new Decimal(opts?.advanceDeduction ?? 0);
+    const netSalary = totalIncome.minus(totalDeductions).minus(advanceDeduction).toDecimalPlaces(4);
 
     // 5. Aportes Patronales (costo para el empleador)
     const inssPatronal = baseINSS.mul(inssPatronalRate).toDecimalPlaces(4);
@@ -132,10 +145,13 @@ export function calculatePayroll(
     return {
         grossSalary:            dBase.toNumber(),
         commissions:            dComm.toNumber(),
+        overtimePay:            overtimePay.toNumber(),
+        horasExtra:             horasExtra.toNumber(),
         totalIncome:            totalIncome.toNumber(),
         inssLaboral:            inssLaboral.toNumber(),
         irLaboral:              irLaboral.toNumber(),
         totalDeductions:        totalDeductions.toNumber(),
+        advanceDeduction:       advanceDeduction.toNumber(),
         netSalary:              netSalary.toNumber(),
         inssPatronal:           inssPatronal.toNumber(),
         inatec:                 inatec.toNumber(),
