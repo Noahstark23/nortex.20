@@ -3,7 +3,7 @@ import {
     BookOpen, Plus, Trash2, Lock, Unlock, Loader2, Scale, FileText,
     CalendarDays, CheckCircle2, AlertTriangle, ArrowLeft, ListTree, Percent, Coins, Receipt,
     Landmark, FileBarChart, Play, ListChecks, Clock, ShieldCheck, ChevronLeft, ChevronRight,
-    Hourglass, Phone, ChevronDown
+    Hourglass, Phone, ChevronDown, Wallet, TrendingUp, TrendingDown
 } from 'lucide-react';
 import { sanitizeDecimalInput, toDecimal } from '../utils/money';
 
@@ -22,7 +22,7 @@ interface BalanzaRow { cuenta: string; nombre: string; tipo: string; saldoInicia
 interface MayorMov { fecha: string; descripcion: string; debe: number; haber: number; saldo: number; }
 interface FiscalPeriodRow { id: string; year: number; month: number; status: string; closedAt?: string | null; reopenReason?: string | null; }
 
-type Tab = 'cierre' | 'aging' | 'asiento' | 'diario' | 'balanza' | 'periodos' | 'fiscal' | 'retenciones' | 'activos' | 'renta';
+type Tab = 'cierre' | 'aging' | 'flujo' | 'asiento' | 'diario' | 'balanza' | 'periodos' | 'fiscal' | 'retenciones' | 'activos' | 'renta';
 
 interface RetencionRow { id: string; fecha: string; clienteRetenedor: string; tipo: string; baseAmount: number; amount: number; numeroConstancia?: string | null; }
 interface AssetRow { id: string; nombre: string; categoria: string; costo: number; fechaAdquisicion: string; vidaUtilMeses: number; depreciacionAcumulada: number; mesesDepreciados: number; valorEnLibros: number; estado: string; }
@@ -33,6 +33,14 @@ interface AgingFactura { id: string; numero: string | null; fecha: string; vence
 interface AgingEntidad { id: string; nombre: string; telefono: string | null; total: number; vencido: number; corriente: number; b1_30: number; b31_60: number; b61_90: number; b90: number; facturas: AgingFactura[]; }
 interface AgingSide { total: number; vencido: number; buckets: { corriente: number; b1_30: number; b31_60: number; b61_90: number; b90: number }; entidades: AgingEntidad[]; }
 interface AgingData { asOf: string; cxc: AgingSide; cxp: AgingSide; }
+interface FlujoConcepto { label: string; entrada: number; salida: number; neto: number; }
+interface FlujoSeccion { entradas: number; salidas: number; neto: number; conceptos: FlujoConcepto[]; }
+interface FlujoData { period: string; saldoInicial: number; saldoFinal: number; flujoNeto: number; entradasTotal: number; salidasTotal: number; secciones: { operacion: FlujoSeccion; inversion: FlujoSeccion; financiamiento: FlujoSeccion }; }
+const FLUJO_SECCIONES: { key: 'operacion' | 'inversion' | 'financiamiento'; label: string }[] = [
+    { key: 'operacion', label: 'Actividades de operación' },
+    { key: 'inversion', label: 'Actividades de inversión' },
+    { key: 'financiamiento', label: 'Actividades de financiamiento' },
+];
 const BUCKET_META: { key: 'corriente' | 'b1_30' | 'b31_60' | 'b61_90' | 'b90'; label: string; cls: string }[] = [
     { key: 'corriente', label: 'Corriente', cls: 'text-slate-300' },
     { key: 'b1_30', label: '1–30 d', cls: 'text-amber-300' },
@@ -200,6 +208,24 @@ const Contabilidad: React.FC = () => {
     useEffect(() => { if (tab === 'aging') loadAging(); }, [tab, loadAging]);
 
     const fmtFecha = (iso: string) => new Date(iso).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: '2-digit' });
+
+    // ── Flujo de efectivo / Cash flow (Fase C2) ─────────────────────────────
+    const [flujo, setFlujo] = useState<FlujoData | null>(null);
+    const [flujoBusy, setFlujoBusy] = useState(false);
+
+    const loadFlujo = useCallback(async () => {
+        setFlujoBusy(true);
+        try {
+            const res = await fetch(`/api/accounting/flujo-efectivo/${y}/${m}`, { headers: auth });
+            setFlujo(res.ok ? await res.json() : null);
+        } catch { setFlujo(null); }
+        finally { setFlujoBusy(false); }
+    }, [y, m, auth]);
+
+    useEffect(() => { if (tab === 'flujo') loadFlujo(); }, [tab, loadFlujo]);
+
+    const signedC = (n: number) => `${n < 0 ? '−' : '+'}${C(Math.abs(n))}`;
+    const netoCls = (n: number) => n > 0 ? 'text-emerald-300' : n < 0 ? 'text-rose-300' : 'text-slate-400';
 
     // ── Períodos (A3) ───────────────────────────────────────────────────────
     const [periods, setPeriods] = useState<FiscalPeriodRow[]>([]);
@@ -383,6 +409,7 @@ const Contabilidad: React.FC = () => {
                 <div className="flex flex-wrap gap-2 mb-6">
                     {tabBtn('cierre', 'Cierre Mensual', ListChecks)}
                     {tabBtn('aging', 'Antigüedad', Hourglass)}
+                    {tabBtn('flujo', 'Flujo de Caja', Wallet)}
                     {tabBtn('asiento', 'Asiento Manual', Plus)}
                     {tabBtn('diario', 'Libro Diario', FileText)}
                     {tabBtn('balanza', 'Balanza / Mayor', Scale)}
@@ -593,6 +620,95 @@ const Contabilidad: React.FC = () => {
                         </div>
                     );
                 })()}
+
+                {/* ── FLUJO DE EFECTIVO (Cash flow, Fase C2) ── */}
+                {tab === 'flujo' && (
+                    <div className="space-y-5">
+                        <div className="panel-premium p-6">
+                            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                                <div className="flex items-center gap-1.5">
+                                    <button onClick={() => stepMonth(-1)} aria-label="Mes anterior"
+                                        className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.08] text-slate-300 hover:text-white hover:bg-white/[0.08] flex items-center justify-center transition-colors"><ChevronLeft size={16} /></button>
+                                    <span className="text-white font-bold text-lg font-mono px-2 min-w-[120px] text-center">{MESES[m - 1]} {y}</span>
+                                    <button onClick={() => stepMonth(1)} aria-label="Mes siguiente"
+                                        className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.08] text-slate-300 hover:text-white hover:bg-white/[0.08] flex items-center justify-center transition-colors"><ChevronRight size={16} /></button>
+                                </div>
+                                <p className="text-xs text-slate-500 flex items-center gap-1.5"><Wallet size={13} className="text-brand-300" /> Plata real que entra y sale</p>
+                            </div>
+                            {flujo && (
+                                <div className="grid grid-cols-3 gap-3">
+                                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
+                                        <p className="text-[11px] uppercase tracking-wider text-slate-400 flex items-center gap-1"><TrendingUp size={12} className="text-emerald-400" /> Entró</p>
+                                        <p className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-emerald-300 mt-0.5">{C(flujo.entradasTotal)}</p>
+                                    </div>
+                                    <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4">
+                                        <p className="text-[11px] uppercase tracking-wider text-slate-400 flex items-center gap-1"><TrendingDown size={12} className="text-rose-400" /> Salió</p>
+                                        <p className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-rose-300 mt-0.5">{C(flujo.salidasTotal)}</p>
+                                    </div>
+                                    <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
+                                        <p className="text-[11px] uppercase tracking-wider text-slate-400">Flujo neto</p>
+                                        <p className={`text-xl sm:text-2xl font-bold font-mono tabular-nums mt-0.5 ${netoCls(flujo.flujoNeto)}`}>{signedC(flujo.flujoNeto)}</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {flujoBusy && !flujo ? (
+                            <div className="panel-premium p-12 flex items-center justify-center"><Loader2 className="animate-spin text-brand-300" /></div>
+                        ) : !flujo ? (
+                            <div className="panel-premium p-10 text-center text-slate-500 text-sm">No se pudo cargar el flujo de efectivo.</div>
+                        ) : (
+                            <>
+                                {/* Estado resumido: saldo inicial → secciones → saldo final */}
+                                <div className="panel-premium p-5">
+                                    <div className="flex items-center justify-between py-2">
+                                        <span className="text-slate-300 text-sm">Saldo inicial de efectivo</span>
+                                        <span className="font-mono tabular-nums text-white">{C(flujo.saldoInicial)}</span>
+                                    </div>
+                                    {FLUJO_SECCIONES.map(({ key, label }) => (
+                                        <div key={key} className="flex items-center justify-between py-2 border-t border-white/[0.05]">
+                                            <span className="text-slate-400 text-sm">{label}</span>
+                                            <span className={`font-mono tabular-nums ${netoCls(flujo.secciones[key].neto)}`}>{signedC(flujo.secciones[key].neto)}</span>
+                                        </div>
+                                    ))}
+                                    <div className="flex items-center justify-between py-2.5 border-t-2 border-white/[0.1] mt-1">
+                                        <span className="text-white font-semibold">Saldo final de efectivo</span>
+                                        <span className="font-mono tabular-nums font-bold text-white text-lg">{C(flujo.saldoFinal)}</span>
+                                    </div>
+                                </div>
+
+                                {/* Detalle por sección */}
+                                {FLUJO_SECCIONES.map(({ key, label }) => {
+                                    const sec = flujo.secciones[key];
+                                    if (!sec.conceptos.length) return null;
+                                    return (
+                                        <div key={key} className="panel-premium p-5">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <h3 className="text-white font-semibold text-sm">{label}</h3>
+                                                <span className={`font-mono text-sm tabular-nums ${netoCls(sec.neto)}`}>{signedC(sec.neto)}</span>
+                                            </div>
+                                            <div className="space-y-1">
+                                                {sec.conceptos.map((c, i) => (
+                                                    <div key={i} className="flex items-center justify-between py-1.5 px-3 rounded-lg hover:bg-white/[0.02]">
+                                                        <span className="text-slate-300 text-sm flex items-center gap-2">
+                                                            {c.neto >= 0 ? <TrendingUp size={13} className="text-emerald-400/70 shrink-0" /> : <TrendingDown size={13} className="text-rose-400/70 shrink-0" />}
+                                                            {c.label}
+                                                        </span>
+                                                        <span className={`font-mono text-sm tabular-nums ${netoCls(c.neto)}`}>{signedC(c.neto)}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+
+                                {flujo.entradasTotal === 0 && flujo.salidasTotal === 0 && (
+                                    <div className="panel-premium p-10 text-center text-slate-500 text-sm">Sin movimientos de efectivo en {MESES[m - 1]} {y}.</div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                )}
 
                 {/* ── ASIENTO MANUAL ── */}
                 {tab === 'asiento' && (
