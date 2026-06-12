@@ -5035,6 +5035,116 @@ app.get('/api/accounting/aging', authenticate, async (req: any, res: any) => {
 });
 
 // ==========================================
+// 💵 FLUJO DE EFECTIVO — Estado de flujo de caja (Fase C2)
+// ==========================================
+
+// GET /api/accounting/flujo-efectivo/:year/:month — ¿cuánta plata real entró y salió?
+// Método directo, derivado del mayor de las cuentas de efectivo (Caja 1.1.1 + Bancos
+// 1.1.2). Un débito a efectivo es entrada; un crédito, salida. Reconcilia con el
+// balance: saldoInicial + flujoNeto = saldoFinal.
+app.get('/api/accounting/flujo-efectivo/:year/:month', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Año o mes inválido.' });
+    }
+    try {
+        const CASH_CODES = ['1.1.1', '1.1.2'];
+        const periodStart = new Date(year, month - 1, 1);
+        const periodEnd = new Date(year, month, 1); // exclusivo (primer día del mes siguiente)
+
+        type Section = 'operacion' | 'inversion' | 'financiamiento';
+        interface ContraLine { account: { code: string; name: string; type: string; subtype: string | null }; debit: unknown; credit: unknown; }
+
+        // Saldo de efectivo al inicio del período = Σ(débito − crédito) de todo lo anterior.
+        const before = await prisma.journalLine.aggregate({
+            where: { account: { tenantId, code: { in: CASH_CODES } }, entry: { date: { lt: periodStart } } },
+            _sum: { debit: true, credit: true },
+        });
+        const saldoInicial = new Decimal(before._sum.debit?.toString() ?? '0').minus(before._sum.credit?.toString() ?? '0');
+
+        // Asientos del período que tocan efectivo, con todas sus líneas y cuentas.
+        const entries = await prisma.journalEntry.findMany({
+            where: { tenantId, date: { gte: periodStart, lt: periodEnd }, lines: { some: { account: { code: { in: CASH_CODES } } } } },
+            include: { lines: { include: { account: { select: { code: true, name: true, type: true, subtype: true } } } } },
+            orderBy: { date: 'asc' },
+        });
+
+        const CONCEPTO: Record<string, string> = {
+            SALE: 'Ventas de contado',
+            PAYMENT: 'Cobros a clientes (créditos)',
+            PURCHASE: 'Compras a proveedores',
+            EXPENSE: 'Gastos',
+            PAYROLL: 'Planilla (sueldos netos)',
+            RETURN: 'Devoluciones a clientes',
+        };
+        const absAmt = (l: ContraLine) => new Decimal(l.debit?.toString() ?? '0').minus(l.credit?.toString() ?? '0').abs();
+
+        const clasificar = (contra: ContraLine[]): Section => {
+            if (contra.some(l => l.account.subtype === 'FIXED_ASSET')) return 'inversion';
+            if (contra.some(l => l.account.type === 'EQUITY' || l.account.code === '2.1.8')) return 'financiamiento';
+            return 'operacion';
+        };
+        const concepto = (refType: string | null, contra: ContraLine[]): string => {
+            if (refType && CONCEPTO[refType]) return CONCEPTO[refType];
+            const dom = contra.slice().sort((a, b) => absAmt(b).minus(absAmt(a)).toNumber())[0];
+            return dom ? dom.account.name : 'Otros movimientos';
+        };
+
+        // sección → concepto → { entrada, salida }
+        const acc: Record<Section, Map<string, { entrada: Decimal; salida: Decimal }>> = {
+            operacion: new Map(), inversion: new Map(), financiamiento: new Map(),
+        };
+        for (const e of entries) {
+            const cashDelta = e.lines
+                .filter(l => CASH_CODES.includes(l.account.code))
+                .reduce((s, l) => s.plus(l.debit.toString()).minus(l.credit.toString()), new Decimal(0));
+            if (cashDelta.isZero()) continue; // transferencia interna Caja↔Bancos: no es flujo
+            const contra = e.lines.filter(l => !CASH_CODES.includes(l.account.code));
+            const sec = clasificar(contra);
+            const label = concepto(e.referenceType, contra);
+            const m = acc[sec];
+            const cur = m.get(label) ?? { entrada: new Decimal(0), salida: new Decimal(0) };
+            if (cashDelta.greaterThan(0)) cur.entrada = cur.entrada.plus(cashDelta);
+            else cur.salida = cur.salida.plus(cashDelta.abs());
+            m.set(label, cur);
+        }
+
+        const buildSection = (m: Map<string, { entrada: Decimal; salida: Decimal }>) => {
+            const conceptos = [...m.entries()]
+                .map(([label, v]) => ({ label, entrada: v.entrada.toDecimalPlaces(2).toNumber(), salida: v.salida.toDecimalPlaces(2).toNumber(), neto: v.entrada.minus(v.salida).toDecimalPlaces(2).toNumber() }))
+                .sort((a, b) => Math.abs(b.neto) - Math.abs(a.neto));
+            const entradas = conceptos.reduce((s, c) => s + c.entrada, 0);
+            const salidas = conceptos.reduce((s, c) => s + c.salida, 0);
+            return { entradas: Number(entradas.toFixed(2)), salidas: Number(salidas.toFixed(2)), neto: Number((entradas - salidas).toFixed(2)), conceptos };
+        };
+
+        const operacion = buildSection(acc.operacion);
+        const inversion = buildSection(acc.inversion);
+        const financiamiento = buildSection(acc.financiamiento);
+        const flujoNeto = new Decimal(operacion.neto).plus(inversion.neto).plus(financiamiento.neto).toDecimalPlaces(2).toNumber();
+        const saldoFinal = saldoInicial.plus(flujoNeto).toDecimalPlaces(2).toNumber();
+        const entradasTotal = Number((operacion.entradas + inversion.entradas + financiamiento.entradas).toFixed(2));
+        const salidasTotal = Number((operacion.salidas + inversion.salidas + financiamiento.salidas).toFixed(2));
+
+        res.json({
+            period: `${year}-${String(month).padStart(2, '0')}`,
+            saldoInicial: saldoInicial.toDecimalPlaces(2).toNumber(),
+            saldoFinal,
+            flujoNeto,
+            entradasTotal,
+            salidasTotal,
+            secciones: { operacion, inversion, financiamiento },
+        });
+    } catch (error) {
+        console.error('Flujo de efectivo error:', error);
+        res.status(500).json({ error: 'Error al generar el flujo de efectivo.' });
+    }
+});
+
+// ==========================================
 // 🔮 ORÁCULO DE INVENTARIO (COMPRAS INTELIGENTES)
 // ==========================================
 
