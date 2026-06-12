@@ -299,6 +299,10 @@ model Payroll {
   horasExtra       Float   @default(0)
   advanceDeduction Decimal @default(0) @db.Decimal(10, 2)
 
+  // Fase A p2: ausencias sin goce de salario (descuentan días trabajados)
+  absenceDeduction Decimal @default(0) @db.Decimal(10, 2)
+  diasAusencia     Float   @default(0)
+
   status    String    @default("PENDIENTE") // PENDIENTE | PAGADO
   paidAt    DateTime?
   createdAt DateTime  @default(now())
@@ -874,6 +878,8 @@ model LeaveRequest {
   startDate  DateTime
   endDate    DateTime
   status     String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  reason     String?  @db.Text
+  createdAt  DateTime @default(now())
 
   tenant   Tenant   @relation(fields: [tenantId], references: [id])
   employee Employee @relation(fields: [employeeId], references: [id])

@@ -172,9 +172,23 @@ router.post('/advance/approve', authenticate, requireHRAdmin, async (req: any, r
 
 router.post('/leave/request', authenticate, requireHRAdmin, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { employeeId, type, startDate, endDate } = req.body;
+    const { employeeId, type, startDate, endDate, reason } = req.body;
+
+    if (!employeeId || !type || !startDate || !endDate) {
+        return res.status(400).json({ error: 'Empleado, tipo y fechas son requeridos.' });
+    }
+    if (new Date(endDate) < new Date(startDate)) {
+        return res.status(400).json({ error: 'La fecha final no puede ser anterior a la inicial.' });
+    }
 
     try {
+        // Anti-IDOR: el empleado debe pertenecer al tenant del token.
+        const emp = await prisma.employee.findFirst({
+            where: { id: employeeId, tenantId: authReq.tenantId! },
+            select: { id: true },
+        });
+        if (!emp) return res.status(404).json({ error: 'Empleado no encontrado.' });
+
         const leave = await prisma.leaveRequest.create({
             data: {
                 tenantId: authReq.tenantId!,
@@ -182,7 +196,8 @@ router.post('/leave/request', authenticate, requireHRAdmin, async (req: any, res
                 type,
                 startDate: new Date(startDate),
                 endDate: new Date(endDate),
-                status: 'APPROVED' // Asumimos que el admin lo creé y lo aprueba de una
+                reason: reason || null,
+                status: 'APPROVED' // El admin lo registra y aprueba de una
             }
         });
 
@@ -190,6 +205,22 @@ router.post('/leave/request', authenticate, requireHRAdmin, async (req: any, res
     } catch (error) {
         console.error('Leave Error:', error);
         res.status(500).json({ error: 'Error al registrar la ausencia' });
+    }
+});
+
+// GET /api/hr/leaves — Lista de ausencias del tenant (para la pestaña RRHH).
+router.get('/leaves', authenticate, requireHRAdmin, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const leaves = await prisma.leaveRequest.findMany({
+            where: { tenantId: authReq.tenantId! },
+            include: { employee: { select: { firstName: true, lastName: true } } },
+            orderBy: { startDate: 'desc' },
+        });
+        res.json(leaves);
+    } catch (error) {
+        console.error('Leaves list error:', error);
+        res.status(500).json({ error: 'Error al obtener las ausencias' });
     }
 });
 
