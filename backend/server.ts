@@ -3224,6 +3224,20 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             absenceDaysByEmployee.set(lv.employeeId, (absenceDaysByEmployee.get(lv.employeeId) || 0) + days);
         }
 
+        // Fase A p2b: IR acumulado (método DGI). Renta neta gravable e IR ya
+        // retenido de los meses ANTERIORES del mismo año, por empleado.
+        const prevPayrolls = await prisma.payroll.findMany({
+            where: { tenantId: authReq.tenantId!, year: Number(year), month: { lt: Number(month) } },
+            select: { employeeId: true, totalIncome: true, inssLaboral: true, irLaboral: true },
+        });
+        const netoPrevioByEmp = new Map<string, number>();
+        const irPrevioByEmp = new Map<string, number>();
+        for (const pp of prevPayrolls) {
+            const neto = Number(pp.totalIncome) - Number(pp.inssLaboral);
+            netoPrevioByEmp.set(pp.employeeId, (netoPrevioByEmp.get(pp.employeeId) || 0) + neto);
+            irPrevioByEmp.set(pp.employeeId, (irPrevioByEmp.get(pp.employeeId) || 0) + Number(pp.irLaboral));
+        }
+
         const payrolls = [];
 
         for (const emp of employees) {
@@ -3254,7 +3268,14 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             });
             const advanceDeduction = advances.reduce((s, a) => s + Number(a.amount) + Number(a.fee), 0);
 
-            const calc = calculatePayroll(baseSalary, comisiones, { inssPatronalRate, overtimeHours, advanceDeduction, absenceDeduction });
+            const calc = calculatePayroll(baseSalary, comisiones, {
+                inssPatronalRate, overtimeHours, advanceDeduction, absenceDeduction,
+                irAcumulado: {
+                    mes: Number(month),
+                    netoGravablePrevio: netoPrevioByEmp.get(emp.id) || 0,
+                    irRetenidoPrevio: irPrevioByEmp.get(emp.id) || 0,
+                },
+            });
 
             const data = {
                 grossSalary: calc.grossSalary,
@@ -4910,7 +4931,7 @@ app.get('/api/fiscal/renta-anual/:year', authenticate, async (req: any, res: any
 // ══════════════════════════════════════════════════════════════════════════
 // FASE C — Panel del contador: checklist de obligaciones del mes
 // ══════════════════════════════════════════════════════════════════════════
-const OBLIGATION_KEYS = ['IVA', 'ANTICIPO_IR', 'IMI', 'INSS', 'INATEC'];
+const OBLIGATION_KEYS = ['IVA', 'ANTICIPO_IR', 'IMI', 'INSS', 'INATEC', 'IR_LABORAL'];
 
 app.get('/api/accounting/cierre-mensual/:year/:month', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
@@ -4924,13 +4945,14 @@ app.get('/api/accounting/cierre-mensual/:year/:month', authenticate, async (req:
         const { generateMonthlyReport } = await import('./services/nicaTax');
         const vet = await generateMonthlyReport(tenantId, month, year);
 
-        // INSS / INATEC desde la nómina del período
+        // INSS / INATEC / IR laboral retenido desde la nómina del período
         const payrolls = await prisma.payroll.findMany({
             where: { tenantId, month, year },
-            select: { inssLaboral: true, inssPatronal: true, inatec: true },
+            select: { inssLaboral: true, inssPatronal: true, inatec: true, irLaboral: true },
         });
         const inssTotal = payrolls.reduce((a, p) => a.plus(p.inssLaboral.toString()).plus(p.inssPatronal.toString()), new Decimal(0)).toDecimalPlaces(2).toNumber();
         const inatecTotal = payrolls.reduce((a, p) => a.plus(p.inatec.toString()), new Decimal(0)).toDecimalPlaces(2).toNumber();
+        const irLaboralTotal = payrolls.reduce((a, p) => a.plus(p.irLaboral.toString()), new Decimal(0)).toDecimalPlaces(2).toNumber();
         const planillaCalculada = payrolls.length > 0;
 
         const period = await prisma.fiscalPeriod.findUnique({ where: { tenantId_year_month: { tenantId, year, month } } });
@@ -4942,6 +4964,13 @@ app.get('/api/accounting/cierre-mensual/:year/:month', authenticate, async (req:
         const ny = month === 12 ? year + 1 : year;
         const dgiDue = new Date(ny, nm - 1, 15);
         const inssDue = new Date(ny, nm - 1, 17);
+        // IR rentas del trabajo: primeros 5 días hábiles del mes siguiente.
+        const irLaboralDue = new Date(ny, nm - 1, 1);
+        for (let habiles = 0; ;) {
+            const dow = irLaboralDue.getDay();
+            if (dow !== 0 && dow !== 6 && ++habiles === 5) break;
+            irLaboralDue.setDate(irLaboralDue.getDate() + 1);
+        }
 
         const obligaciones = [
             { key: 'IVA', label: 'IVA Neto', entidad: 'DGI (VET)', monto: vet.ivaNeto, vence: dgiDue, dataLista: true, declarado: declared('IVA'), nota: vet.ivaCredito > 0 ? `Crédito a favor C$ ${vet.ivaCredito.toFixed(2)}` : undefined },
@@ -4949,9 +4978,10 @@ app.get('/api/accounting/cierre-mensual/:year/:month', authenticate, async (req:
             { key: 'IMI', label: 'IMI Alcaldía', entidad: 'Alcaldía', monto: vet.imiAPagar, vence: dgiDue, dataLista: true, declarado: declared('IMI') },
             { key: 'INSS', label: 'INSS (obrero-patronal)', entidad: 'INSS / SIE', monto: inssTotal, vence: inssDue, dataLista: planillaCalculada, declarado: declared('INSS'), nota: planillaCalculada ? undefined : 'Falta calcular la nómina del mes' },
             { key: 'INATEC', label: 'INATEC 2%', entidad: 'INATEC', monto: inatecTotal, vence: inssDue, dataLista: planillaCalculada, declarado: declared('INATEC'), nota: planillaCalculada ? undefined : 'Falta calcular la nómina del mes' },
+            { key: 'IR_LABORAL', label: 'IR Rentas del Trabajo (retenido)', entidad: 'DGI', monto: irLaboralTotal, vence: irLaboralDue, dataLista: planillaCalculada, declarado: declared('IR_LABORAL'), nota: planillaCalculada ? undefined : 'Falta calcular la nómina del mes' },
         ];
 
-        const totalDeclarar = new Decimal(vet.ivaNeto).plus(vet.anticipoIRaPagar).plus(vet.imiAPagar).plus(inssTotal).plus(inatecTotal).toDecimalPlaces(2).toNumber();
+        const totalDeclarar = new Decimal(vet.ivaNeto).plus(vet.anticipoIRaPagar).plus(vet.imiAPagar).plus(inssTotal).plus(inatecTotal).plus(irLaboralTotal).toDecimalPlaces(2).toNumber();
         const pendientes = obligaciones.filter(o => o.monto > 0 && !o.declarado).length;
 
         res.json({

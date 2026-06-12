@@ -34,6 +34,20 @@ const IR_TABLE = [
     { from: new Decimal('500000.01'), to: new Decimal('Infinity'), rate: new Decimal('0.30'), base: new Decimal('82500') },
 ];
 
+/**
+ * IR anual de la tabla progresiva DGI (rentas del trabajo) sobre una renta neta
+ * anual (ya neta de INSS laboral).
+ */
+function irAnualDeTabla(rentaAnual: Decimal): Decimal {
+    for (const tramo of IR_TABLE) {
+        if (rentaAnual.greaterThanOrEqualTo(tramo.from) && rentaAnual.lessThanOrEqualTo(tramo.to)) {
+            const fromAdj = tramo.from.greaterThan(0) ? tramo.from.minus('0.01') : new Decimal(0);
+            return tramo.base.plus(rentaAnual.minus(fromAdj).mul(tramo.rate));
+        }
+    }
+    return new Decimal(0);
+}
+
 // ==========================================
 // INTERFACES
 // ==========================================
@@ -94,7 +108,13 @@ export interface LaborLiability {
 export function calculatePayroll(
     baseSalary: number,
     commissions: number = 0,
-    opts?: { inssPatronalRate?: number; overtimeHours?: number; advanceDeduction?: number; absenceDeduction?: number }
+    opts?: {
+        inssPatronalRate?: number;
+        overtimeHours?: number;
+        advanceDeduction?: number;
+        absenceDeduction?: number;
+        irAcumulado?: { mes: number; netoGravablePrevio: number; irRetenidoPrevio: number };
+    }
 ): PayrollCalculation {
     const dBase = new Decimal(baseSalary);
     const dComm = new Decimal(commissions);
@@ -118,23 +138,35 @@ export function calculatePayroll(
     const baseINSS = Decimal.min(totalIncome, TECHO_INSS_MENSUAL);
     const inssLaboral = baseINSS.mul(INSS_LABORAL_RATE).toDecimalPlaces(4);
 
-    // 2. IR Laboral (tabla progresiva)
-    // Proyectar ingreso anual neto de INSS
+    // 2. IR Laboral (tabla progresiva DGI sobre la renta neta de INSS)
     const ingresoMensualNetoINSS = totalIncome.minus(inssLaboral);
-    const salarioAnualProyectado = ingresoMensualNetoINSS.mul(12);
 
-    let irAnual = new Decimal(0);
-    for (const tramo of IR_TABLE) {
-        if (salarioAnualProyectado.greaterThanOrEqualTo(tramo.from)) {
-            if (salarioAnualProyectado.lessThanOrEqualTo(tramo.to)) {
-                const fromAdj = tramo.from.greaterThan(0) ? tramo.from.minus('0.01') : new Decimal(0);
-                irAnual = tramo.base.plus(salarioAnualProyectado.minus(fromAdj).mul(tramo.rate));
-                break;
-            }
-        }
+    let salarioAnualProyectado: Decimal;
+    let irAnual: Decimal;
+    let irLaboral: Decimal;
+    const acc = opts?.irAcumulado;
+    if (acc) {
+        // Método ACUMULADO DGI: la expectativa anual = renta neta real de los
+        // meses ya transcurridos + proyección de los que faltan con el neto del
+        // mes actual; la retención del mes salda la diferencia contra lo ya
+        // retenido en el año, repartida en los meses que restan. En el último
+        // mes cuadra el IR del año sobre la renta real, eliminando el desfase
+        // que produce el método ×12 cuando hay comisiones variables.
+        const mesesPorVenir = Math.max(0, 12 - acc.mes); // meses después del actual
+        salarioAnualProyectado = new Decimal(acc.netoGravablePrevio)
+            .plus(ingresoMensualNetoINSS.mul(1 + mesesPorVenir));
+        irAnual = irAnualDeTabla(salarioAnualProyectado);
+        irLaboral = Decimal.max(
+            0,
+            irAnual.minus(acc.irRetenidoPrevio).dividedBy(mesesPorVenir + 1)
+        ).toDecimalPlaces(4);
+    } else {
+        // Proyección simple (×12): sin contexto anual (p. ej. previsualización
+        // de liquidación). Conserva el comportamiento previo.
+        salarioAnualProyectado = ingresoMensualNetoINSS.mul(12);
+        irAnual = irAnualDeTabla(salarioAnualProyectado);
+        irLaboral = irAnual.dividedBy(12).toDecimalPlaces(4);
     }
-
-    const irLaboral = irAnual.dividedBy(12).toDecimalPlaces(4);
 
     // 3. Total Deducciones
     const totalDeductions = inssLaboral.plus(irLaboral).toDecimalPlaces(4);
