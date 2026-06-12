@@ -53,6 +53,7 @@ export interface PayrollCalculation {
 
     // Otros descuentos (no de ley)
     advanceDeduction: number; // Adelantos de salario a recuperar
+    absenceDeduction: number; // Días de ausencia sin goce de salario
 
     // Neto
     netSalary: number;
@@ -93,10 +94,15 @@ export interface LaborLiability {
 export function calculatePayroll(
     baseSalary: number,
     commissions: number = 0,
-    opts?: { inssPatronalRate?: number; overtimeHours?: number; advanceDeduction?: number }
+    opts?: { inssPatronalRate?: number; overtimeHours?: number; advanceDeduction?: number; absenceDeduction?: number }
 ): PayrollCalculation {
     const dBase = new Decimal(baseSalary);
     const dComm = new Decimal(commissions);
+
+    // Ausencias sin goce: reducen el salario realmente devengado (y con él la
+    // base de INSS/IR). Acotado a [0, base].
+    const absenceDeduction = Decimal.max(0, Decimal.min(dBase, new Decimal(opts?.absenceDeduction ?? 0)));
+    const earnedBase = dBase.minus(absenceDeduction);
 
     // Horas extra: se pagan al DOBLE de la hora ordinaria (Art. 62 Ley 185).
     // Hora ordinaria = salario mensual / (30 días · 8 h) = base / 240.
@@ -104,7 +110,7 @@ export function calculatePayroll(
     const horaOrdinaria = dBase.dividedBy(240);
     const overtimePay  = horasExtra.mul(horaOrdinaria).mul(2).toDecimalPlaces(4);
 
-    const totalIncome = dBase.plus(dComm).plus(overtimePay);
+    const totalIncome = earnedBase.plus(dComm).plus(overtimePay);
     // B4: INSS patronal parametrizable (21.5% <50 emp · 22.5% ≥50). Default legal.
     const inssPatronalRate = opts?.inssPatronalRate != null ? new Decimal(opts.inssPatronalRate) : INSS_PATRONAL_RATE;
 
@@ -152,6 +158,7 @@ export function calculatePayroll(
         irLaboral:              irLaboral.toNumber(),
         totalDeductions:        totalDeductions.toNumber(),
         advanceDeduction:       advanceDeduction.toNumber(),
+        absenceDeduction:       absenceDeduction.toNumber(),
         netSalary:              netSalary.toNumber(),
         inssPatronal:           inssPatronal.toNumber(),
         inatec:                 inatec.toNumber(),

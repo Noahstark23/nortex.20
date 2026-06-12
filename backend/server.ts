@@ -3204,6 +3204,26 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             overtimeByEmployee.map((s: any) => [s.employeeId, Number(s._sum.overtimeHours || 0)])
         );
 
+        // Fase A p2: ausencias sin goce (UNPAID) aprobadas que solapan el mes →
+        // días no trabajados por empleado.
+        const unpaidLeaves = await prisma.leaveRequest.findMany({
+            where: {
+                tenantId: authReq.tenantId!,
+                type: 'UNPAID',
+                status: 'APPROVED',
+                startDate: { lte: endOfMonth },
+                endDate: { gte: startOfMonth },
+            },
+            select: { employeeId: true, startDate: true, endDate: true },
+        });
+        const absenceDaysByEmployee = new Map<string, number>();
+        for (const lv of unpaidLeaves) {
+            const from = lv.startDate > startOfMonth ? lv.startDate : startOfMonth;
+            const to = lv.endDate < endOfMonth ? lv.endDate : endOfMonth;
+            const days = Math.max(0, Math.floor((to.getTime() - from.getTime()) / 86400000) + 1);
+            absenceDaysByEmployee.set(lv.employeeId, (absenceDaysByEmployee.get(lv.employeeId) || 0) + days);
+        }
+
         const payrolls = [];
 
         for (const emp of employees) {
@@ -3211,6 +3231,8 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             const ventasMes = salesMap.get(emp.id) || 0;
             const comisiones = ventasMes * Number(emp.commissionRate);
             const overtimeHours = overtimeMap.get(emp.id) || 0;
+            const diasAusencia = Math.min(30, absenceDaysByEmployee.get(emp.id) || 0);
+            const absenceDeduction = (baseSalary / 30) * diasAusencia;
 
             // Adelantos a recuperar: los APPROVED aún sin nómina + los ya enlazados
             // a la nómina de este período. Así recalcular el mes no los duplica ni
@@ -3232,7 +3254,7 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             });
             const advanceDeduction = advances.reduce((s, a) => s + Number(a.amount) + Number(a.fee), 0);
 
-            const calc = calculatePayroll(baseSalary, comisiones, { inssPatronalRate, overtimeHours, advanceDeduction });
+            const calc = calculatePayroll(baseSalary, comisiones, { inssPatronalRate, overtimeHours, advanceDeduction, absenceDeduction });
 
             const data = {
                 grossSalary: calc.grossSalary,
@@ -3244,6 +3266,8 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
                 irLaboral: calc.irLaboral,
                 totalDeductions: calc.totalDeductions,
                 advanceDeduction: calc.advanceDeduction,
+                absenceDeduction: calc.absenceDeduction,
+                diasAusencia,
                 netSalary: calc.netSalary,
                 inssPatronal: calc.inssPatronal,
                 inatec: calc.inatec,

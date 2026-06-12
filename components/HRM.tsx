@@ -30,6 +30,8 @@ interface PayrollRecord {
     irLaboral: number;
     totalDeductions: number;
     advanceDeduction?: number;
+    absenceDeduction?: number;
+    diasAusencia?: number;
     netSalary: number;
     inssPatronal: number;
     inatec: number;
@@ -81,6 +83,9 @@ interface Shift {
 }
 
 const formatC = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtDate = (s: string) => new Date(s).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: '2-digit' });
+const LEAVE_LABELS: Record<string, string> = { UNPAID: 'Permiso sin goce', VACATION: 'Vacaciones', SICK: 'Incapacidad (INSS)', MATERNITY: 'Maternidad' };
+const LEAVE_BADGE: Record<string, string> = { UNPAID: 'bg-amber-100 text-amber-700', VACATION: 'bg-emerald-100 text-emerald-700', SICK: 'bg-orange-100 text-orange-700', MATERNITY: 'bg-pink-100 text-pink-700' };
 
 const HRM: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'TEAM' | 'PAYROLL' | 'LIABILITIES' | 'ADVANCES' | 'LEAVES' | 'TIME'>('TEAM');
@@ -98,6 +103,11 @@ const HRM: React.FC = () => {
     // Liabilities state
     const [liabilities, setLiabilities] = useState<LaborLiability[]>([]);
     const [totalPasivo, setTotalPasivo] = useState(0);
+
+    // Leaves (ausencias) state
+    const [leaves, setLeaves] = useState<Leave[]>([]);
+    const [leaveForm, setLeaveForm] = useState({ employeeId: '', type: 'UNPAID', startDate: '', endDate: '', reason: '' });
+    const [savingLeave, setSavingLeave] = useState(false);
 
     // New Employee Form
     const [formData, setFormData] = useState({
@@ -164,9 +174,33 @@ const HRM: React.FC = () => {
         } catch (e) { console.error(e); }
     };
 
+    const fetchLeaves = async () => {
+        try {
+            const res = await fetch('/api/hr/leaves', { headers });
+            if (res.ok) setLeaves(await res.json());
+        } catch (e) { console.error(e); }
+    };
+
+    const handleCreateLeave = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!leaveForm.employeeId || !leaveForm.startDate || !leaveForm.endDate) return;
+        setSavingLeave(true);
+        try {
+            const res = await fetch('/api/hr/leave/request', {
+                method: 'POST', headers, body: JSON.stringify(leaveForm),
+            });
+            const data = await res.json();
+            if (!res.ok) { alert(data.error || 'Error al registrar la ausencia'); return; }
+            setLeaveForm({ employeeId: '', type: 'UNPAID', startDate: '', endDate: '', reason: '' });
+            await fetchLeaves();
+        } catch { alert('Error de conexión'); }
+        finally { setSavingLeave(false); }
+    };
+
     useEffect(() => { fetchEmployees(); }, []);
     useEffect(() => { if (activeTab === 'PAYROLL') fetchPayrolls(); }, [activeTab, fetchPayrolls]);
     useEffect(() => { if (activeTab === 'LIABILITIES') fetchLiabilities(); }, [activeTab]);
+    useEffect(() => { if (activeTab === 'LEAVES') fetchLeaves(); }, [activeTab]);
 
     const handleCreateEmployee = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -317,6 +351,7 @@ const HRM: React.FC = () => {
             <tr><td>Salario Base</td><td class="amount">C$ ${Number(p.grossSalary).toFixed(2)}</td></tr>
             <tr><td>Comisiones del Periodo</td><td class="amount">C$ ${Number(p.commissions).toFixed(2)}</td></tr>
             ${Number(p.overtimePay || 0) > 0 ? `<tr><td>Horas Extra (${Number(p.horasExtra || 0)} h al doble · Art. 62)</td><td class="amount">C$ ${Number(p.overtimePay).toFixed(2)}</td></tr>` : ''}
+            ${Number(p.absenceDeduction || 0) > 0 ? `<tr><td>Ausencias sin goce (${Number(p.diasAusencia || 0)} día${Number(p.diasAusencia || 0) === 1 ? '' : 's'})</td><td class="amount">- C$ ${Number(p.absenceDeduction).toFixed(2)}</td></tr>` : ''}
             <tr class="total-row"><td>TOTAL DEVENGADO</td><td class="amount">C$ ${Number(p.totalIncome).toFixed(2)}</td></tr>
           </tbody>
         </table>
@@ -590,8 +625,9 @@ const HRM: React.FC = () => {
                                                 <td className="p-4">
                                                     <div className="font-bold text-slate-700">{name}</div>
                                                     {p.employee?.cedula && <div className="text-[10px] text-slate-400">Céd: {p.employee.cedula}</div>}
-                                                    <div className="flex gap-2 mt-0.5">
+                                                    <div className="flex flex-wrap gap-2 mt-0.5">
                                                         {Number(p.horasExtra || 0) > 0 && <span className="text-[10px] text-amber-600 font-bold">+{Number(p.horasExtra)}h extra</span>}
+                                                        {Number(p.diasAusencia || 0) > 0 && <span className="text-[10px] text-orange-600 font-bold">{Number(p.diasAusencia)}d ausencia</span>}
                                                         {Number(p.advanceDeduction || 0) > 0 && <span className="text-[10px] text-red-500 font-bold">Adelanto -{formatC(Number(p.advanceDeduction))}</span>}
                                                     </div>
                                                 </td>
@@ -784,9 +820,43 @@ const HRM: React.FC = () => {
                         <div className="flex justify-between items-center mb-6">
                             <div>
                                 <h3 className="text-2xl font-bold text-slate-800">Gestión de Ausencias</h3>
-                                <p className="text-slate-500 text-sm">Vacaciones, Incapacidades INSS y Permisos</p>
+                                <p className="text-slate-500 text-sm">Vacaciones, Incapacidades INSS y Permisos. Los <strong>permisos sin goce</strong> descuentan días de la nómina del mes.</p>
                             </div>
                         </div>
+
+                        {/* Registrar ausencia */}
+                        <form onSubmit={handleCreateLeave} className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6 grid sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+                            <div>
+                                <label className="text-xs font-bold text-slate-500">Colaborador</label>
+                                <select required value={leaveForm.employeeId} onChange={e => setLeaveForm({ ...leaveForm, employeeId: e.target.value })} className="w-full border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                    <option value="">Seleccionar…</option>
+                                    {employees.map(e => <option key={e.id} value={e.id}>{e.firstName} {e.lastName}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-slate-500">Tipo</label>
+                                <select value={leaveForm.type} onChange={e => setLeaveForm({ ...leaveForm, type: e.target.value })} className="w-full border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                    <option value="UNPAID">Permiso sin goce</option>
+                                    <option value="VACATION">Vacaciones</option>
+                                    <option value="SICK">Incapacidad (INSS)</option>
+                                    <option value="MATERNITY">Maternidad</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-slate-500">Desde</label>
+                                <input type="date" required value={leaveForm.startDate} onChange={e => setLeaveForm({ ...leaveForm, startDate: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-slate-500">Hasta</label>
+                                <input type="date" required value={leaveForm.endDate} onChange={e => setLeaveForm({ ...leaveForm, endDate: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                            </div>
+                            <button type="submit" disabled={savingLeave} className="bg-amber-600 text-white font-bold py-2 rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50">
+                                {savingLeave ? 'Guardando…' : 'Registrar'}
+                            </button>
+                            <div className="sm:col-span-2 lg:col-span-5">
+                                <input value={leaveForm.reason} onChange={e => setLeaveForm({ ...leaveForm, reason: e.target.value })} placeholder="Justificación (opcional)" className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm" />
+                            </div>
+                        </form>
 
                         <div className="bg-white rounded-xl shadow-sm border border-slate-200 text-slate-800 overflow-hidden">
                             <table className="w-full text-left">
@@ -800,11 +870,25 @@ const HRM: React.FC = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
-                                    <tr>
-                                        <td colSpan={5} className="p-8 text-center text-slate-400">
-                                            No hay solicitudes de ausencia registradas.
-                                        </td>
-                                    </tr>
+                                    {leaves.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={5} className="p-8 text-center text-slate-400">
+                                                No hay solicitudes de ausencia registradas.
+                                            </td>
+                                        </tr>
+                                    ) : leaves.map(l => (
+                                        <tr key={l.id} className="hover:bg-slate-50">
+                                            <td className="p-4 font-bold text-slate-700">{l.employee ? `${l.employee.firstName} ${l.employee.lastName}` : '—'}</td>
+                                            <td className="p-4 text-center">
+                                                <span className={`px-2 py-1 rounded text-xs font-bold ${LEAVE_BADGE[l.type] || 'bg-slate-100 text-slate-600'}`}>{LEAVE_LABELS[l.type] || l.type}</span>
+                                            </td>
+                                            <td className="p-4 text-center font-mono text-xs text-slate-600">{fmtDate(l.startDate)} → {fmtDate(l.endDate)}</td>
+                                            <td className="p-4 text-sm text-slate-500">{l.reason || '—'}</td>
+                                            <td className="p-4 text-center">
+                                                <span className="px-2 py-1 rounded text-xs font-bold bg-green-100 text-green-700">{l.status === 'APPROVED' ? '✅ Aprobada' : l.status}</span>
+                                            </td>
+                                        </tr>
+                                    ))}
                                 </tbody>
                             </table>
                         </div>
