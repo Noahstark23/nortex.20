@@ -294,11 +294,17 @@ model Payroll {
   inssPatronal Decimal @db.Decimal(10, 2) // 22.5% (INSS Patronal)
   inatec       Decimal @db.Decimal(10, 2) // 2% (INATEC)
 
+  // Fase A RRHH: horas extra (Art. 62 Ley 185, al doble) y descuento de adelantos
+  overtimePay      Decimal @default(0) @db.Decimal(10, 2)
+  horasExtra       Float   @default(0)
+  advanceDeduction Decimal @default(0) @db.Decimal(10, 2)
+
   status    String    @default("PENDIENTE") // PENDIENTE | PAGADO
   paidAt    DateTime?
   createdAt DateTime  @default(now())
 
-  employee Employee @relation(fields: [employeeId], references: [id])
+  employee         Employee        @relation(fields: [employeeId], references: [id])
+  advancesDeducted SalaryAdvance[]
 
   @@unique([employeeId, month, year])
   @@index([tenantId])
@@ -922,14 +928,18 @@ model SalaryAdvance {
   fee                Decimal @default(0) @db.Decimal(10, 2)
   status             String  @default("PENDING") // PENDING, APPROVED, REJECTED, DEDUCTED
   repaymentPayrollId String?
+  // Fase A RRHH: enlaza el adelanto a la nómina (Payroll) donde se descontó.
+  payrollId          String?
 
   tenant           Tenant       @relation(fields: [tenantId], references: [id])
   employee         Employee     @relation(fields: [employeeId], references: [id])
   repaymentPayroll PayrollLine? @relation(fields: [repaymentPayrollId], references: [id])
+  payroll          Payroll?     @relation(fields: [payrollId], references: [id])
 
   @@index([tenantId])
   @@index([employeeId])
   @@index([repaymentPayrollId])
+  @@index([payrollId])
 }
 
 model TerminationSettlement {

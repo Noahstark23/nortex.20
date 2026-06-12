@@ -3154,7 +3154,7 @@ import { calculatePayroll, calculateLaborLiability } from './services/nicaLabor'
 import { generateMonthlyReport, saveMonthlyReport } from './services/nicaTax';
 
 // POST /api/payroll/calculate - Calcular nómina de todos los empleados
-app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER']), validate(PayrollCalculateSchema), async (req: any, res: any) => {
+app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), validate(PayrollCalculateSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { month, year } = req.body;
 
@@ -3189,51 +3189,82 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER']), validate(
         const taxCfg = await prisma.taxConfig.findUnique({ where: { tenantId: authReq.tenantId! } });
         const inssPatronalRate = taxCfg ? Number(taxCfg.inssPatronalRate) : undefined;
 
+        // Fase A: horas extra del mes por empleado (turnos de asistencia cerrados).
+        const overtimeByEmployee = await prisma.shift.groupBy({
+            by: ['employeeId'],
+            where: {
+                tenantId: authReq.tenantId,
+                status: 'COMPLETED',
+                employeeId: { not: null },
+                startTime: { gte: startOfMonth, lte: endOfMonth },
+            },
+            _sum: { overtimeHours: true },
+        });
+        const overtimeMap = new Map(
+            overtimeByEmployee.map((s: any) => [s.employeeId, Number(s._sum.overtimeHours || 0)])
+        );
+
         const payrolls = [];
 
         for (const emp of employees) {
             const baseSalary = Number(emp.baseSalary);
             const ventasMes = salesMap.get(emp.id) || 0;
             const comisiones = ventasMes * Number(emp.commissionRate);
+            const overtimeHours = overtimeMap.get(emp.id) || 0;
 
-            const calc = calculatePayroll(baseSalary, comisiones, { inssPatronalRate });
-
-            // Upsert en DB
-            const payroll = await prisma.payroll.upsert({
+            // Adelantos a recuperar: los APPROVED aún sin nómina + los ya enlazados
+            // a la nómina de este período. Así recalcular el mes no los duplica ni
+            // los pierde (idempotente).
+            const existing = await prisma.payroll.findUnique({
+                where: { employeeId_month_year: { employeeId: emp.id, month: Number(month), year: Number(year) } },
+                select: { id: true },
+            });
+            const advances = await prisma.salaryAdvance.findMany({
                 where: {
-                    employeeId_month_year: {
-                        employeeId: emp.id,
-                        month: Number(month),
-                        year: Number(year),
-                    }
-                },
-                update: {
-                    grossSalary: calc.grossSalary,
-                    commissions: calc.commissions,
-                    totalIncome: calc.totalIncome,
-                    inssLaboral: calc.inssLaboral,
-                    irLaboral: calc.irLaboral,
-                    totalDeductions: calc.totalDeductions,
-                    netSalary: calc.netSalary,
-                    inssPatronal: calc.inssPatronal,
-                    inatec: calc.inatec,
-                },
-                create: {
                     tenantId: authReq.tenantId!,
                     employeeId: emp.id,
-                    month: Number(month),
-                    year: Number(year),
-                    grossSalary: calc.grossSalary,
-                    commissions: calc.commissions,
-                    totalIncome: calc.totalIncome,
-                    inssLaboral: calc.inssLaboral,
-                    irLaboral: calc.irLaboral,
-                    totalDeductions: calc.totalDeductions,
-                    netSalary: calc.netSalary,
-                    inssPatronal: calc.inssPatronal,
-                    inatec: calc.inatec,
+                    OR: [
+                        { status: 'APPROVED', payrollId: null },
+                        ...(existing ? [{ payrollId: existing.id }] : []),
+                    ],
                 },
+                select: { id: true, amount: true, fee: true },
             });
+            const advanceDeduction = advances.reduce((s, a) => s + Number(a.amount) + Number(a.fee), 0);
+
+            const calc = calculatePayroll(baseSalary, comisiones, { inssPatronalRate, overtimeHours, advanceDeduction });
+
+            const data = {
+                grossSalary: calc.grossSalary,
+                commissions: calc.commissions,
+                overtimePay: calc.overtimePay,
+                horasExtra: calc.horasExtra,
+                totalIncome: calc.totalIncome,
+                inssLaboral: calc.inssLaboral,
+                irLaboral: calc.irLaboral,
+                totalDeductions: calc.totalDeductions,
+                advanceDeduction: calc.advanceDeduction,
+                netSalary: calc.netSalary,
+                inssPatronal: calc.inssPatronal,
+                inatec: calc.inatec,
+            };
+
+            const payroll = await prisma.payroll.upsert({
+                where: {
+                    employeeId_month_year: { employeeId: emp.id, month: Number(month), year: Number(year) },
+                },
+                update: data,
+                create: { tenantId: authReq.tenantId!, employeeId: emp.id, month: Number(month), year: Number(year), ...data },
+            });
+
+            // Enlazar y marcar los adelantos descontados (idempotente: vuelven a
+            // recuperarse en un recálculo del mismo mes por el payrollId).
+            if (advances.length > 0) {
+                await prisma.salaryAdvance.updateMany({
+                    where: { id: { in: advances.map(a => a.id) } },
+                    data: { status: 'DEDUCTED', payrollId: payroll.id },
+                });
+            }
 
             payrolls.push({
                 ...payroll,
@@ -3333,7 +3364,7 @@ app.get('/api/payroll/sie/:month/:year', authenticate, async (req: any, res: any
 });
 
 // POST /api/payroll/:id/pay - Marcar nómina como pagada
-app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER']), async (req: any, res: any) => {
+app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         // Anti-IDOR: verificar que la nómina pertenece al tenant antes de tocarla.
