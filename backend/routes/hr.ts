@@ -189,16 +189,29 @@ router.post('/leave/request', authenticate, requireHRAdmin, async (req: any, res
         });
         if (!emp) return res.status(404).json({ error: 'Empleado no encontrado.' });
 
-        const leave = await prisma.leaveRequest.create({
-            data: {
-                tenantId: authReq.tenantId!,
-                employeeId,
-                type,
-                startDate: new Date(startDate),
-                endDate: new Date(endDate),
-                reason: reason || null,
-                status: 'APPROVED' // El admin lo registra y aprueba de una
+        // Días calendario de la ausencia (inclusivo).
+        const dias = Math.max(1, Math.floor((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) + 1);
+
+        const leave = await prisma.$transaction(async (tx) => {
+            const created = await tx.leaveRequest.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    employeeId,
+                    type,
+                    startDate: new Date(startDate),
+                    endDate: new Date(endDate),
+                    reason: reason || null,
+                    status: 'APPROVED' // El admin lo registra y aprueba de una
+                }
+            });
+            // Goce de vacaciones: descuenta del saldo acumulado (Art. 76).
+            if (type === 'VACATION') {
+                await tx.employee.update({
+                    where: { id: employeeId },
+                    data: { vacationDays: { decrement: dias } },
+                });
             }
+            return created;
         });
 
         res.json({ message: 'Ausencia registrada correctamente.', leave });

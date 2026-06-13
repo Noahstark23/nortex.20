@@ -16,7 +16,7 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordLaborProvision, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
@@ -3412,32 +3412,62 @@ app.get('/api/payroll/sie/:month/:year', authenticate, async (req: any, res: any
 app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        // Anti-IDOR: verificar que la nómina pertenece al tenant antes de tocarla.
+        // Anti-IDOR: la nómina debe pertenecer al tenant del token.
         const owned = await prisma.payroll.findFirst({
             where: { id: req.params.id, tenantId: authReq.tenantId },
-            select: { id: true },
         });
         if (!owned) {
             return res.status(404).json({ error: 'Nómina no encontrada' });
         }
+        // Idempotente: no re-pagar (evita doble gasto, doble provisión y doble
+        // acumulación de vacaciones).
+        if (owned.status === 'PAGADO') {
+            return res.status(400).json({ error: 'Esta nómina ya fue pagada.' });
+        }
 
-        const payroll = await prisma.payroll.update({
-            where: { id: owned.id, tenantId: authReq.tenantId },
-            data: { status: 'PAGADO', paidAt: new Date() },
-        });
+        // Asegura que el catálogo tenga las cuentas de prestaciones (auto-sanable).
+        await seedChartOfAccounts(authReq.tenantId!);
 
-        // Registrar gasto
-        await prisma.expense.create({
-            data: {
-                tenantId: authReq.tenantId!,
-                amount: payroll.netSalary,
-                description: `Nómina ${payroll.month}/${payroll.year} - Empleado`,
-                category: 'NOMINA',
-            },
+        const payroll = await prisma.$transaction(async (tx: any) => {
+            const updated = await tx.payroll.update({
+                where: { id: owned.id },
+                data: { status: 'PAGADO', paidAt: new Date() },
+            });
+
+            // Gasto operativo de la nómina (neto pagado).
+            await tx.expense.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    amount: updated.netSalary,
+                    description: `Nómina ${updated.month}/${updated.year} - Empleado`,
+                    category: 'NOMINA',
+                },
+            });
+
+            // Devengo mensual del pasivo laboral: aguinaldo + vacaciones +
+            // indemnización ≈ 1/12 del salario ordinario cada uno (~25% total).
+            // El cálculo fino se hace al pagar el aguinaldo (B2) y en la
+            // liquidación (B3); esto es la provisión contable del mes. Fail-soft:
+            // la nómina se paga aunque el período esté cerrado.
+            const cuota = Number(owned.grossSalary) / 12;
+            try {
+                await recordLaborProvision(tx, authReq.tenantId!, authReq.userId!, owned.id, cuota, cuota, cuota);
+            } catch (provErr) {
+                console.warn('⚠️ Provisión de prestaciones omitida (la nómina se paga igual):', provErr);
+            }
+
+            // Acumular las vacaciones devengadas del mes (2.5 días, Art. 76).
+            await tx.employee.update({
+                where: { id: owned.employeeId },
+                data: { vacationDays: { increment: 2.5 } },
+            });
+
+            return updated;
         });
 
         res.json(payroll);
     } catch (error) {
+        console.error('Error al pagar nómina:', error);
         res.status(500).json({ error: 'Error al pagar nómina' });
     }
 });

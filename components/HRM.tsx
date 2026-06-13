@@ -14,6 +14,7 @@ interface Employee {
     commissionRate: number;
     salesMonthToDate: number;
     hireDate: string;
+    vacationDays?: number;
 }
 
 interface PayrollRecord {
@@ -525,6 +526,10 @@ const HRM: React.FC = () => {
                                             <span>Comision:</span>
                                             <span className="font-mono font-bold">{(emp.commissionRate * 100).toFixed(1)}%</span>
                                         </div>
+                                        <div className="flex justify-between border-t border-slate-100 pt-2">
+                                            <span className="flex items-center gap-1"><Calendar size={13} /> Vacaciones:</span>
+                                            <span className="font-mono font-bold text-emerald-700">{Number(emp.vacationDays || 0).toFixed(1)} días</span>
+                                        </div>
                                     </div>
                                 </div>
                             ))}
@@ -856,6 +861,11 @@ const HRM: React.FC = () => {
                             <div className="sm:col-span-2 lg:col-span-5">
                                 <input value={leaveForm.reason} onChange={e => setLeaveForm({ ...leaveForm, reason: e.target.value })} placeholder="Justificación (opcional)" className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm" />
                             </div>
+                            {leaveForm.type === 'VACATION' && leaveForm.employeeId && (
+                                <div className="sm:col-span-2 lg:col-span-5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                                    Saldo de vacaciones disponible: <strong>{Number(employees.find(e => e.id === leaveForm.employeeId)?.vacationDays || 0).toFixed(1)} días</strong> · se descontará al registrar.
+                                </div>
+                            )}
                         </form>
 
                         <div className="bg-white rounded-xl shadow-sm border border-slate-200 text-slate-800 overflow-hidden">

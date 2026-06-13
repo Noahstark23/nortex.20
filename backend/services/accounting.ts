@@ -39,6 +39,9 @@ const CHART_OF_ACCOUNTS = [
     { code: '2.1.6', name: 'INATEC por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     { code: '2.1.7', name: 'Retenciones por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     { code: '2.1.8', name: 'Préstamos Nortex Capital por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    { code: '2.1.9', name: 'Aguinaldo por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    { code: '2.1.10', name: 'Vacaciones por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    { code: '2.1.11', name: 'Indemnización por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     // CAPITAL (3.x.x)
     { code: '3.1.1', name: 'Capital Social', type: 'EQUITY', subtype: null },
     { code: '3.1.2', name: 'Utilidades Retenidas', type: 'EQUITY', subtype: null },
@@ -53,6 +56,7 @@ const CHART_OF_ACCOUNTS = [
     { code: '5.2.3', name: 'INSS Patronal (Gasto)', type: 'EXPENSE', subtype: null },
     { code: '5.2.4', name: 'INATEC (Gasto)', type: 'EXPENSE', subtype: null },
     { code: '5.2.5', name: 'Depreciación', type: 'EXPENSE', subtype: null },
+    { code: '5.2.6', name: 'Prestaciones Sociales', type: 'EXPENSE', subtype: null },
 ];
 
 // ==========================================
@@ -364,6 +368,38 @@ export async function recordPayroll(
         { accountCode: '1.1.1', debit: 0, credit: netSalary },       // Caja ↓
         { accountCode: '2.1.5', debit: 0, credit: inssPatronal },    // INSS por Pagar ↑
         { accountCode: '2.1.6', debit: 0, credit: inatec },          // INATEC por Pagar ↑
+    ]);
+}
+
+/**
+ * PROVISIÓN DE PRESTACIONES SOCIALES (devengo mensual del pasivo laboral):
+ *   Debe: Prestaciones Sociales (5.2.6, gasto)
+ *   Haber: Aguinaldo (2.1.9) + Vacaciones (2.1.10) + Indemnización (2.1.11) por Pagar
+ * Reconoce cada mes el costo que se acumula para el treceavo mes, las vacaciones
+ * y la antigüedad — así el P&L deja de subestimar ~25% el costo laboral.
+ */
+export async function recordLaborProvision(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    payrollId: string,
+    aguinaldo: number,
+    vacaciones: number,
+    indemnizacion: number
+) {
+    // Redondear cada componente a 2 decimales y derivar el total de la suma
+    // redondeada → garantiza Σdebe == Σhaber en createJournalEntry.
+    const ag = Number(aguinaldo.toFixed(2));
+    const vac = Number(vacaciones.toFixed(2));
+    const ind = Number(indemnizacion.toFixed(2));
+    const total = Number((ag + vac + ind).toFixed(2));
+    if (total <= 0) return;
+
+    await createJournalEntry(tx, tenantId, `Provisión prestaciones #${payrollId.slice(0, 8)}`, payrollId, 'PAYROLL_PROVISION', userId, [
+        { accountCode: '5.2.6', debit: total, credit: 0 },     // Prestaciones Sociales ↑
+        { accountCode: '2.1.9', debit: 0, credit: ag },        // Aguinaldo por Pagar ↑
+        { accountCode: '2.1.10', debit: 0, credit: vac },      // Vacaciones por Pagar ↑
+        { accountCode: '2.1.11', debit: 0, credit: ind },      // Indemnización por Pagar ↑
     ]);
 }
 
