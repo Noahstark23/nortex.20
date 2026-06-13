@@ -16,7 +16,7 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordLaborProvision, recordAguinaldoPayment, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordLaborProvision, recordAguinaldoPayment, recordSettlement, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
@@ -5720,42 +5720,124 @@ app.post('/api/accounting/fiscal-close', authenticate, async (req: any, res: any
     }
 });
 
-// GET /api/hrm/settlement-preview/:employeeId — Calcular aguinaldo + liquidación
+// Salario mensual base de la liquidación: promedio de los últimos 6 meses de
+// nómina (Art. 78, salario variable) o el salario base si no hay historial.
+async function salarioBaseLiquidacion(tenantId: string, employeeId: string, baseSalary: number): Promise<number> {
+    const recientes = await prisma.payroll.findMany({
+        where: { tenantId, employeeId },
+        orderBy: [{ year: 'desc' }, { month: 'desc' }],
+        take: 6,
+        select: { totalIncome: true },
+    });
+    if (recientes.length === 0) return baseSalary;
+    const suma = recientes.reduce((s, p) => s.plus(p.totalIncome.toString()), new Decimal(0));
+    return suma.dividedBy(recientes.length).toDecimalPlaces(2).toNumber();
+}
+
+const SETTLEMENT_REASONS = ['DISMISSAL', 'RESIGNATION', 'MUTUAL'];
+
+// GET /api/hrm/settlement-preview/:employeeId?reason=&date= — Previsualizar finiquito
 app.get('/api/hrm/settlement-preview/:employeeId', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { employeeId } = req.params;
+    const reason = SETTLEMENT_REASONS.includes(String(req.query.reason)) ? String(req.query.reason) : 'DISMISSAL';
+    const terminationDate = req.query.date ? new Date(String(req.query.date)) : new Date();
 
     try {
         const employee = await prisma.employee.findFirst({
             where: { id: employeeId, tenantId: authReq.tenantId! },
         });
-
         if (!employee) return res.status(404).json({ error: 'Empleado no encontrado' });
 
-        const { calculateLaborLiability, calculatePayroll } = await import('./services/nicaLabor');
+        const { calculateSettlement } = await import('./services/nicaLabor');
+        const salarioMensual = await salarioBaseLiquidacion(authReq.tenantId!, employee.id, Number(employee.baseSalary || 0));
 
-        const liability = calculateLaborLiability(
-            employee.id,
-            (employee as any).firstName + ' ' + (employee as any).lastName,
-            (employee as any).hireDate,
-            Number((employee as any).baseSalary || 0)
-        );
+        const settlement = calculateSettlement({
+            hireDate: employee.hireDate,
+            terminationDate,
+            reason: reason as 'DISMISSAL' | 'RESIGNATION' | 'MUTUAL',
+            salarioMensual,
+            vacationDaysBalance: Number(employee.vacationDays || 0),
+        });
 
-        const payroll = calculatePayroll(Number((employee as any).baseSalary || 0));
+        const existing = await prisma.terminationSettlement.findUnique({ where: { employeeId: employee.id } });
 
         res.json({
             employee: {
                 id: employee.id,
-                name: (employee as any).firstName + ' ' + (employee as any).lastName,
-                hireDate: (employee as any).hireDate,
-                baseSalary: Number((employee as any).baseSalary || 0),
+                name: `${employee.firstName} ${employee.lastName}`,
+                cedula: employee.cedula,
+                hireDate: employee.hireDate,
+                baseSalary: Number(employee.baseSalary || 0),
+                status: employee.status,
             },
-            liability,
-            payroll,
+            settlement,
+            yaLiquidado: !!existing,
         });
     } catch (error) {
         console.error('Settlement preview error:', error);
         res.status(500).json({ error: 'Error al calcular liquidación' });
+    }
+});
+
+// POST /api/hrm/settlement/:employeeId — Ejecuta la liquidación (paga + contabiliza)
+app.post('/api/hrm/settlement/:employeeId', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const { employeeId } = req.params;
+    const reason = SETTLEMENT_REASONS.includes(String(req.body?.reason)) ? String(req.body.reason) : 'DISMISSAL';
+    const terminationDate = req.body?.terminationDate ? new Date(String(req.body.terminationDate)) : new Date();
+
+    try {
+        const employee = await prisma.employee.findFirst({ where: { id: employeeId, tenantId } });
+        if (!employee) return res.status(404).json({ error: 'Empleado no encontrado' });
+
+        const existing = await prisma.terminationSettlement.findUnique({ where: { employeeId: employee.id } });
+        if (existing) return res.status(400).json({ error: 'Este colaborador ya fue liquidado.' });
+
+        const { calculateSettlement } = await import('./services/nicaLabor');
+        const salarioMensual = await salarioBaseLiquidacion(tenantId, employee.id, Number(employee.baseSalary || 0));
+        const s = calculateSettlement({
+            hireDate: employee.hireDate,
+            terminationDate,
+            reason: reason as 'DISMISSAL' | 'RESIGNATION' | 'MUTUAL',
+            salarioMensual,
+            vacationDaysBalance: Number(employee.vacationDays || 0),
+        });
+
+        await seedChartOfAccounts(tenantId);
+
+        const settlement = await prisma.$transaction(async (tx: any) => {
+            const created = await tx.terminationSettlement.create({
+                data: {
+                    tenantId,
+                    employeeId: employee.id,
+                    terminationDate,
+                    reason,
+                    aguinaldoAmount: s.aguinaldo,
+                    vacationAmount: s.vacaciones,
+                    severanceAmount: s.indemnizacion,
+                    totalAmount: s.total,
+                },
+            });
+            // Cancela las provisiones y paga; fail-soft con el lock de períodos.
+            try {
+                await recordSettlement(tx, tenantId, authReq.userId!, created.id, s.aguinaldo, s.vacaciones, s.indemnizacion);
+            } catch (accErr) {
+                console.warn('⚠️ Asiento de liquidación omitido:', accErr);
+            }
+            // Empleado liquidado: TERMINATED y saldo de vacaciones en cero.
+            await tx.employee.update({
+                where: { id: employee.id },
+                data: { status: 'TERMINATED', vacationDays: 0 },
+            });
+            return created;
+        });
+
+        res.json({ message: 'Liquidación procesada.', settlement, detalle: s });
+    } catch (error) {
+        console.error('Settlement run error:', error);
+        res.status(500).json({ error: 'Error al procesar la liquidación' });
     }
 });
 

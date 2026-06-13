@@ -102,11 +102,32 @@ interface AguinaldoData {
     diasParaVencer: number;
     pendientes: number;
 }
+interface SettlementCalc {
+    antiguedadAnios: number;
+    antiguedadTexto: string;
+    salarioMensual: number;
+    salarioDiario: number;
+    reason: string;
+    aplicaIndemnizacion: boolean;
+    indemnizacionDias: number;
+    indemnizacion: number;
+    diasVacaciones: number;
+    vacaciones: number;
+    diasAguinaldo: number;
+    aguinaldo: number;
+    total: number;
+}
+interface SettlementData {
+    employee: { id: string; name: string; cedula?: string; hireDate: string; baseSalary: number; status: string };
+    settlement: SettlementCalc;
+    yaLiquidado: boolean;
+}
 
 const formatC = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (s: string) => new Date(s).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: '2-digit' });
 const LEAVE_LABELS: Record<string, string> = { UNPAID: 'Permiso sin goce', VACATION: 'Vacaciones', SICK: 'Incapacidad (INSS)', MATERNITY: 'Maternidad' };
 const LEAVE_BADGE: Record<string, string> = { UNPAID: 'bg-amber-100 text-amber-700', VACATION: 'bg-emerald-100 text-emerald-700', SICK: 'bg-orange-100 text-orange-700', MATERNITY: 'bg-pink-100 text-pink-700' };
+const REASON_LABELS: Record<string, string> = { DISMISSAL: 'Despido', RESIGNATION: 'Renuncia', MUTUAL: 'Mutuo acuerdo' };
 
 const HRM: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'TEAM' | 'PAYROLL' | 'LIABILITIES' | 'AGUINALDO' | 'ADVANCES' | 'LEAVES' | 'TIME'>('TEAM');
@@ -134,6 +155,14 @@ const HRM: React.FC = () => {
     const [aguinaldoYear, setAguinaldoYear] = useState(new Date().getFullYear());
     const [aguinaldo, setAguinaldo] = useState<AguinaldoData | null>(null);
     const [runningAg, setRunningAg] = useState(false);
+
+    // Liquidación (finiquito) state
+    const [settlementEmp, setSettlementEmp] = useState<Employee | null>(null);
+    const [settlementReason, setSettlementReason] = useState('DISMISSAL');
+    const [settlementDate, setSettlementDate] = useState(new Date().toISOString().slice(0, 10));
+    const [settlementData, setSettlementData] = useState<SettlementData | null>(null);
+    const [settlementLoading, setSettlementLoading] = useState(false);
+    const [settlementPaying, setSettlementPaying] = useState(false);
 
     // New Employee Form
     const [formData, setFormData] = useState({
@@ -243,11 +272,91 @@ const HRM: React.FC = () => {
         finally { setRunningAg(false); }
     };
 
+    const fetchSettlement = useCallback(async () => {
+        if (!settlementEmp) return;
+        setSettlementLoading(true);
+        try {
+            const res = await fetch(`/api/hrm/settlement-preview/${settlementEmp.id}?reason=${settlementReason}&date=${settlementDate}`, { headers });
+            if (res.ok) setSettlementData(await res.json());
+        } catch (e) { console.error(e); }
+        finally { setSettlementLoading(false); }
+    }, [settlementEmp, settlementReason, settlementDate]);
+
+    const paySettlement = async () => {
+        if (!settlementEmp || !settlementData) return;
+        if (!confirm(`¿Liquidar a ${settlementEmp.firstName} ${settlementEmp.lastName} por ${formatC(settlementData.settlement.total)}? El colaborador quedará dado de baja.`)) return;
+        setSettlementPaying(true);
+        try {
+            const res = await fetch(`/api/hrm/settlement/${settlementEmp.id}`, {
+                method: 'POST', headers,
+                body: JSON.stringify({ reason: settlementReason, terminationDate: settlementDate }),
+            });
+            const data = await res.json();
+            if (!res.ok) { alert(data.error || 'Error al liquidar'); return; }
+            printFiniquito(settlementData);
+            setSettlementEmp(null);
+            await fetchEmployees();
+        } catch { alert('Error de conexión'); }
+        finally { setSettlementPaying(false); }
+    };
+
+    const printFiniquito = (data: SettlementData) => {
+        const s = data.settlement;
+        const html = `<!DOCTYPE html><html><head><title>Finiquito - ${data.employee.name}</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #1e293b; max-width: 720px; margin: 0 auto; }
+        .header { text-align: center; border-bottom: 3px solid #0f172a; padding-bottom: 20px; margin-bottom: 20px; }
+        .header h1 { font-size: 22px; color: #0f172a; }
+        .header p { font-size: 12px; color: #64748b; }
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 20px; font-size: 13px; }
+        .info-grid .label { color: #64748b; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+        th { background: #0f172a; color: white; padding: 8px 12px; text-align: left; font-size: 12px; text-transform: uppercase; }
+        td { padding: 9px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
+        .amount { text-align: right; font-family: monospace; font-weight: bold; }
+        .net-row { background: #dcfce7; font-size: 18px; }
+        .footer { text-align: center; margin-top: 40px; font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 15px; }
+        .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 60px; text-align: center; font-size: 12px; }
+        .sig-line { border-top: 1px solid #333; padding-top: 5px; margin-top: 40px; }
+      </style></head><body>
+        <div class="header">
+          <h1>FINIQUITO LABORAL</h1>
+          <p>Liquidación final — Ley 185, Arts. 42-45</p>
+        </div>
+        <div class="info-grid">
+          <div><span class="label">Empleado:</span> <strong>${data.employee.name}</strong></div>
+          <div><span class="label">Cédula:</span> <strong>${data.employee.cedula || 'N/A'}</strong></div>
+          <div><span class="label">Ingreso:</span> <strong>${new Date(data.employee.hireDate).toLocaleDateString('es-NI')}</strong></div>
+          <div><span class="label">Antigüedad:</span> <strong>${s.antiguedadTexto}</strong></div>
+          <div><span class="label">Causa:</span> <strong>${REASON_LABELS[s.reason] || s.reason}</strong></div>
+          <div><span class="label">Salario base (prom. 6m):</span> <strong>C$ ${s.salarioMensual.toFixed(2)}</strong></div>
+        </div>
+        <table>
+          <thead><tr><th>Concepto</th><th style="text-align:right">Monto</th></tr></thead>
+          <tbody>
+            <tr><td>Indemnización por antigüedad (Art. 45)${s.aplicaIndemnizacion ? ` — ${s.indemnizacionDias.toFixed(0)} días` : ' — no aplica'}</td><td class="amount">C$ ${s.indemnizacion.toFixed(2)}</td></tr>
+            <tr><td>Vacaciones pendientes (${s.diasVacaciones.toFixed(1)} días)</td><td class="amount">C$ ${s.vacaciones.toFixed(2)}</td></tr>
+            <tr><td>Aguinaldo proporcional (${s.diasAguinaldo} días)</td><td class="amount">C$ ${s.aguinaldo.toFixed(2)}</td></tr>
+            <tr class="net-row"><td><strong>TOTAL A PAGAR</strong></td><td class="amount"><strong>C$ ${s.total.toFixed(2)}</strong></td></tr>
+          </tbody>
+        </table>
+        <div class="signatures">
+          <div><div class="sig-line">Firma del Empleado</div></div>
+          <div><div class="sig-line">Firma del Empleador</div></div>
+        </div>
+        <div class="footer">Generado por NORTEX ERP | Ley 185 Código del Trabajo de Nicaragua</div>
+      </body></html>`;
+        const w = window.open('', '_blank');
+        if (w) { w.document.write(html); w.document.close(); setTimeout(() => w.print(), 500); }
+    };
+
     useEffect(() => { fetchEmployees(); }, []);
     useEffect(() => { if (activeTab === 'PAYROLL') fetchPayrolls(); }, [activeTab, fetchPayrolls]);
     useEffect(() => { if (activeTab === 'LIABILITIES') fetchLiabilities(); }, [activeTab]);
     useEffect(() => { if (activeTab === 'LEAVES') fetchLeaves(); }, [activeTab]);
     useEffect(() => { if (activeTab === 'AGUINALDO') fetchAguinaldo(); }, [activeTab, fetchAguinaldo]);
+    useEffect(() => { if (settlementEmp) fetchSettlement(); }, [settlementEmp, fetchSettlement]);
 
     const handleCreateEmployee = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -628,6 +737,12 @@ const HRM: React.FC = () => {
                                             <span className="font-mono font-bold text-emerald-700">{Number(emp.vacationDays || 0).toFixed(1)} días</span>
                                         </div>
                                     </div>
+                                    <button
+                                        onClick={() => setSettlementEmp(emp)}
+                                        className="mt-4 w-full text-xs font-bold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 rounded-lg py-2 transition-colors inline-flex items-center justify-center gap-1.5"
+                                    >
+                                        <FileText size={13} /> Liquidar / Finiquito
+                                    </button>
                                 </div>
                             ))}
                         </div>
@@ -1285,6 +1400,61 @@ const HRM: React.FC = () => {
                                 {pinSaving ? 'Guardando...' : 'Guardar PIN'}
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ==================== MODAL: LIQUIDACIÓN / FINIQUITO ==================== */}
+            {settlementEmp && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><FileText size={18} className="text-rose-600" /> Liquidación — {settlementEmp.firstName} {settlementEmp.lastName}</h3>
+                            <button onClick={() => setSettlementEmp(null)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 mb-4">
+                            <div>
+                                <label className="text-xs font-bold text-slate-500">Causa de salida</label>
+                                <select value={settlementReason} onChange={e => setSettlementReason(e.target.value)} className="w-full border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                    <option value="DISMISSAL">Despido</option>
+                                    <option value="MUTUAL">Mutuo acuerdo</option>
+                                    <option value="RESIGNATION">Renuncia</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-slate-500">Fecha de salida</label>
+                                <input type="date" value={settlementDate} onChange={e => setSettlementDate(e.target.value)} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                            </div>
+                        </div>
+
+                        {settlementLoading || !settlementData ? (
+                            <div className="py-10 text-center text-slate-400 text-sm">Calculando…</div>
+                        ) : (
+                            <>
+                                {settlementData.yaLiquidado && (
+                                    <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Este colaborador ya tiene una liquidación registrada.</div>
+                                )}
+                                {settlementReason === 'RESIGNATION' && (
+                                    <div className="mb-3 text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">En renuncia no corresponde indemnización por antigüedad (Art. 45); sí vacaciones y aguinaldo proporcional.</div>
+                                )}
+                                <div className="bg-slate-50 rounded-xl p-4 text-sm space-y-2">
+                                    <div className="flex justify-between text-slate-500"><span>Antigüedad</span><span className="font-mono">{settlementData.settlement.antiguedadTexto}</span></div>
+                                    <div className="flex justify-between text-slate-500"><span>Salario base (prom. 6m)</span><span className="font-mono">{formatC(settlementData.settlement.salarioMensual)}</span></div>
+                                    <div className="border-t border-slate-200 pt-2 flex justify-between"><span>Indemnización {settlementData.settlement.aplicaIndemnizacion ? `(${settlementData.settlement.indemnizacionDias.toFixed(0)} días)` : '(no aplica)'}</span><span className="font-mono font-bold">{formatC(settlementData.settlement.indemnizacion)}</span></div>
+                                    <div className="flex justify-between"><span>Vacaciones ({settlementData.settlement.diasVacaciones.toFixed(1)} días)</span><span className="font-mono font-bold">{formatC(settlementData.settlement.vacaciones)}</span></div>
+                                    <div className="flex justify-between"><span>Aguinaldo ({settlementData.settlement.diasAguinaldo} días)</span><span className="font-mono font-bold">{formatC(settlementData.settlement.aguinaldo)}</span></div>
+                                    <div className="border-t-2 border-slate-300 pt-2 flex justify-between text-lg"><span className="font-bold text-slate-800">Total a pagar</span><span className="font-mono font-bold text-rose-700">{formatC(settlementData.settlement.total)}</span></div>
+                                </div>
+
+                                <div className="flex gap-3 mt-5">
+                                    <button onClick={() => printFiniquito(settlementData)} className="flex-1 border border-slate-300 text-slate-600 font-bold py-2.5 rounded-lg hover:bg-slate-50 inline-flex items-center justify-center gap-2"><Printer size={16} /> Imprimir</button>
+                                    <button onClick={paySettlement} disabled={settlementPaying || settlementData.yaLiquidado} className="flex-1 bg-rose-600 text-white font-bold py-2.5 rounded-lg hover:bg-rose-700 disabled:opacity-50 inline-flex items-center justify-center gap-2">
+                                        {settlementPaying ? 'Procesando…' : 'Pagar liquidación'}
+                                    </button>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
             )}
