@@ -403,6 +403,26 @@ export async function recordLaborProvision(
     ]);
 }
 
+/**
+ * PAGO DE AGUINALDO (treceavo mes, exento de INSS/IR):
+ *   Debe: Aguinaldo por Pagar (2.1.9) — cancela la provisión acumulada
+ *   Haber: Caja (1.1.1)
+ */
+export async function recordAguinaldoPayment(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    aguinaldoId: string,
+    monto: number
+) {
+    const m = Number(monto.toFixed(2));
+    if (m <= 0) return;
+    await createJournalEntry(tx, tenantId, `Aguinaldo #${aguinaldoId.slice(0, 8)}`, aguinaldoId, 'AGUINALDO', userId, [
+        { accountCode: '2.1.9', debit: m, credit: 0 },  // Aguinaldo por Pagar ↓
+        { accountCode: '1.1.1', debit: 0, credit: m },  // Caja ↓
+    ]);
+}
+
 // ==========================================
 // FINANCIAL STATEMENTS
 // ==========================================

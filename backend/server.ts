@@ -16,7 +16,7 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordLaborProvision, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordLaborProvision, recordAguinaldoPayment, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
@@ -3469,6 +3469,114 @@ app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'ACC
     } catch (error) {
         console.error('Error al pagar nómina:', error);
         res.status(500).json({ error: 'Error al pagar nómina' });
+    }
+});
+
+// ==========================================
+// 🎄 AGUINALDO (TRECEAVO MES) — Art. 93-95 Ley 185
+// ==========================================
+
+// Aguinaldo proporcional = salario × min(1, díasLaborados / 360) en el período
+// dic[year-1] → nov[year], desde la fecha de ingreso si es posterior, y solo
+// hasta hoy si el período aún no termina.
+function computeAguinaldo(baseSalary: number, hireDate: Date, year: number, today: Date) {
+    const periodStart = new Date(year - 1, 11, 1); // 1 dic año anterior
+    const periodEnd = new Date(year, 10, 30);      // 30 nov del año
+    const effectiveEnd = today < periodEnd ? today : periodEnd;
+    const start = hireDate > periodStart ? hireDate : periodStart;
+    let dias = 0;
+    if (effectiveEnd >= start) {
+        dias = Math.min(360, Math.floor((effectiveEnd.getTime() - start.getTime()) / 86400000) + 1);
+    }
+    const monto = Number((baseSalary * Math.min(1, dias / 360)).toFixed(2));
+    return { dias, monto };
+}
+
+// GET /api/payroll/aguinaldo/:year — previsualización + estado de la corrida.
+app.get('/api/payroll/aguinaldo/:year', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    if (isNaN(year)) return res.status(400).json({ error: 'Año inválido.' });
+    try {
+        const today = new Date();
+        const employees = await prisma.employee.findMany({ where: { tenantId, status: 'ACTIVE' }, orderBy: { firstName: 'asc' } });
+        const existing = await prisma.aguinaldo.findMany({ where: { tenantId, year } });
+        const paidMap = new Map(existing.map(a => [a.employeeId, a]));
+
+        const items = employees.map(emp => {
+            const paid = paidMap.get(emp.id);
+            const base = Number(emp.baseSalary);
+            const calc = computeAguinaldo(base, new Date(emp.hireDate), year, today);
+            return {
+                employeeId: emp.id,
+                name: `${emp.firstName} ${emp.lastName}`,
+                cedula: emp.cedula,
+                baseSalary: base,
+                diasLaborados: paid ? paid.diasLaborados : calc.dias,
+                monto: paid ? Number(paid.monto) : calc.monto,
+                pagado: !!paid,
+                paidAt: paid?.paidAt ?? null,
+            };
+        });
+
+        const totalMonto = Number(items.reduce((s, i) => s + i.monto, 0).toFixed(2));
+        const dueDate = new Date(year, 11, 10); // 10 de diciembre (fecha límite legal)
+        const diasParaVencer = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
+        const pendientes = items.filter(i => !i.pagado && i.monto > 0).length;
+
+        res.json({ year, periodo: `Dic ${year - 1} – Nov ${year}`, items, totalMonto, dueDate, diasParaVencer, pendientes });
+    } catch (error) {
+        console.error('Aguinaldo preview error:', error);
+        res.status(500).json({ error: 'Error al calcular el aguinaldo.' });
+    }
+});
+
+// POST /api/payroll/aguinaldo/:year/run — corre y paga el aguinaldo (idempotente).
+app.post('/api/payroll/aguinaldo/:year/run', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    if (isNaN(year)) return res.status(400).json({ error: 'Año inválido.' });
+    try {
+        await seedChartOfAccounts(tenantId);
+        const today = new Date();
+        const employees = await prisma.employee.findMany({ where: { tenantId, status: 'ACTIVE' } });
+        const existing = await prisma.aguinaldo.findMany({ where: { tenantId, year }, select: { employeeId: true } });
+        const alreadyPaid = new Set(existing.map(a => a.employeeId));
+
+        let pagados = 0;
+        let total = 0;
+        for (const emp of employees) {
+            if (alreadyPaid.has(emp.id)) continue; // ya tiene aguinaldo este año
+            const base = Number(emp.baseSalary);
+            const { dias, monto } = computeAguinaldo(base, new Date(emp.hireDate), year, today);
+            if (monto <= 0) continue;
+            try {
+                await prisma.$transaction(async (tx: any) => {
+                    const ag = await tx.aguinaldo.create({
+                        data: { tenantId, employeeId: emp.id, year, diasLaborados: dias, baseSalary: base, monto, status: 'PAGADO' },
+                    });
+                    // Exento de INSS/IR: Debe Aguinaldo por Pagar / Haber Caja.
+                    // Fail-soft: el aguinaldo se paga aunque el período esté cerrado.
+                    try {
+                        await recordAguinaldoPayment(tx, tenantId, authReq.userId!, ag.id, monto);
+                    } catch (accErr) {
+                        console.warn('⚠️ Asiento de aguinaldo omitido:', accErr);
+                    }
+                });
+                pagados++;
+                total += monto;
+            } catch (e: any) {
+                if (e?.code === 'P2002') continue; // carrera: ya pagado
+                console.error('Aguinaldo empleado error:', e);
+            }
+        }
+
+        res.json({ message: `Aguinaldo procesado para ${pagados} colaborador(es).`, pagados, total: Number(total.toFixed(2)), year });
+    } catch (error) {
+        console.error('Aguinaldo run error:', error);
+        res.status(500).json({ error: 'Error al correr el aguinaldo.' });
     }
 });
 
