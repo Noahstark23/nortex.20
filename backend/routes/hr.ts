@@ -225,105 +225,12 @@ router.get('/leaves', authenticate, requireHRAdmin, async (req: any, res: any) =
 });
 
 // ==========================================
-// 💼 PAYROLL ENGINE (NICALABOR)
+// 💼 NÓMINA Y LIQUIDACIÓN — motor único (nicaLabor.ts)
 // ==========================================
-
-router.post('/payroll/preview', authenticate, requireHRAdmin, async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { periodStart, periodEnd } = req.body;
-
-    try {
-        const start = new Date(periodStart);
-        const end = new Date(periodEnd);
-
-        const employees = await prisma.employee.findMany({
-            where: { tenantId: authReq.tenantId, status: 'ACTIVE' },
-            include: {
-                salaryAdvances: { where: { status: 'APPROVED' } },
-                sales: {
-                    where: {
-                        createdAt: { gte: start, lte: end },
-                        status: 'COMPLETED'
-                    }
-                }
-            }
-        });
-
-        const lines = employees.map(emp => {
-            const baseSalary = Number(emp.baseSalary); // Simplificado: base completo
-
-            // Comisiones dinámicas
-            const totalSales = emp.sales.reduce((acc: number, sale: any) => acc + Number(sale.total), 0);
-            const commissions = totalSales * (Number(emp.commissionRate) / 100);
-
-            const grossPay = baseSalary + commissions;
-            const inss = grossPay * 0.07; // 7% INSS Laboral sobre el bruto (salario + comisión)
-            // IR Progressivo ignorado para simplificar la demo
-
-            const advances = emp.salaryAdvances.reduce((acc: number, adv: any) => acc + Number(adv.amount) + Number(adv.fee), 0);
-
-            const netPay = grossPay - inss - advances;
-
-            return {
-                employeeId: emp.id,
-                name: `${emp.firstName} ${emp.lastName}`,
-                basePay: baseSalary,
-                commissions,
-                totalSales,
-                grossPay,
-                inssDeduction: inss,
-                advancesDeduction: advances,
-                netPay
-            };
-        });
-
-        res.json({ lines });
-    } catch (error) {
-        console.error('Payroll Preview Error:', error);
-        res.status(500).json({ error: 'Error pre-visualizando la nómina' });
-    }
-});
-
-// ==========================================
-// ⚖️ LIQUIDACIÓN LABORAL (TERMINATION)
-// ==========================================
-
-router.post('/termination/calculate', authenticate, requireHRAdmin, async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { employeeId, reason, terminationDate } = req.body;
-
-    try {
-        const emp = await prisma.employee.findFirst({
-            where: { id: employeeId, tenantId: authReq.tenantId }
-        });
-
-        if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
-
-        const terminateDt = new Date(terminationDate);
-        const hireDt = new Date(emp.hireDate);
-        const monthsWorked = (terminateDt.getTime() - hireDt.getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-
-        const baseMonthly = Number(emp.baseSalary);
-
-        let aguinaldo = (baseMonthly / 12) * (monthsWorked % 12);
-        let vacaciones = (baseMonthly / 12) * (monthsWorked % 12);
-        let antiguedad = reason === 'DISMISSAL' ? (baseMonthly * Math.floor(monthsWorked / 12)) : 0; // Solo en despido (Art. 45)
-
-        const total = aguinaldo + vacaciones + antiguedad;
-
-        res.json({
-            detail: {
-                monthsWorked: Math.floor(monthsWorked),
-                aguinaldo: aguinaldo.toFixed(2),
-                vacaciones: vacaciones.toFixed(2),
-                antiguedad: antiguedad.toFixed(2),
-                total: total.toFixed(2)
-            }
-        });
-    } catch (error) {
-        console.error('Termination Error:', error);
-        res.status(500).json({ error: 'Error calculando finiquito' });
-    }
-});
+// Los endpoints demo `/payroll/preview` (ignoraba el IR) y `/termination/calculate`
+// (indemnización sin tope, ilegal) se eliminaron (Fase A): producían cifras que
+// contradecían al motor real. Fuentes únicas de verdad:
+//   · Nómina:      POST /api/payroll/calculate           (server.ts → calculatePayroll)
+//   · Liquidación: GET  /api/hrm/settlement-preview/:id   (server.ts → calculateLaborLiability)
 
 export default router;
