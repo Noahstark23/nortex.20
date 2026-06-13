@@ -245,3 +245,96 @@ export function calculateLaborLiability(
         totalPasivo:          totalPasivo.toNumber(),
     };
 }
+
+export interface SettlementCalc {
+    antiguedadAnios: number;
+    antiguedadTexto: string;
+    salarioMensual: number;
+    salarioDiario: number;
+    reason: string;
+    aplicaIndemnizacion: boolean;
+    indemnizacionDias: number;
+    indemnizacion: number;
+    diasVacaciones: number;
+    vacaciones: number;
+    diasAguinaldo: number;
+    aguinaldo: number;
+    total: number;
+}
+
+/**
+ * Liquidación final (finiquito) — Art. 42-45 y 78 Ley 185.
+ *  - Indemnización por antigüedad (Art. 45): 1 mes (30 días) por cada uno de los
+ *    PRIMEROS 3 años; 20 días por cada año a partir del 4º. Mínimo 1 mes, máximo
+ *    5 meses; las fracciones se liquidan proporcionalmente. Solo en despido o
+ *    mutuo acuerdo (no en renuncia).
+ *  - Vacaciones: el saldo REAL acumulado (Art. 76) × salario diario.
+ *  - Aguinaldo: proporcional desde el inicio del período en curso (Art. 93).
+ *  - Base: salario mensual (el caller pasa el promedio de los últimos 6 meses
+ *    cuando el salario es variable, Art. 78).
+ */
+export function calculateSettlement(params: {
+    hireDate: Date;
+    terminationDate: Date;
+    reason: 'DISMISSAL' | 'RESIGNATION' | 'MUTUAL';
+    salarioMensual: number;
+    vacationDaysBalance: number;
+}): SettlementCalc {
+    const hire = new Date(params.hireDate);
+    const term = new Date(params.terminationDate);
+    const salarioMensual = new Decimal(params.salarioMensual);
+    const salarioDiario = salarioMensual.dividedBy(30);
+
+    const anios = Math.max(0, (term.getTime() - hire.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
+
+    // ── Indemnización por antigüedad (Art. 45) ──
+    const aplicaIndemnizacion = params.reason === 'DISMISSAL' || params.reason === 'MUTUAL';
+    let indemnizacionDias = 0;
+    if (aplicaIndemnizacion && anios > 0) {
+        const completos = Math.floor(anios);
+        for (let i = 1; i <= completos; i++) indemnizacionDias += i <= 3 ? 30 : 20;
+        const fraccion = anios - completos;
+        indemnizacionDias += fraccion * ((completos + 1) <= 3 ? 30 : 20);
+    }
+    let indemnizacion = salarioDiario.mul(indemnizacionDias);
+    if (aplicaIndemnizacion && anios > 0) {
+        // Piso 1 mes, techo 5 meses.
+        if (indemnizacion.lessThan(salarioMensual)) indemnizacion = salarioMensual;
+        if (indemnizacion.greaterThan(salarioMensual.mul(5))) indemnizacion = salarioMensual.mul(5);
+    }
+
+    // ── Vacaciones pendientes (saldo real) ──
+    const diasVacaciones = Math.max(0, params.vacationDaysBalance);
+    const vacaciones = salarioDiario.mul(diasVacaciones);
+
+    // ── Aguinaldo proporcional (desde el último 1-dic) ──
+    const lastDec1 = term.getMonth() >= 11
+        ? new Date(term.getFullYear(), 11, 1)
+        : new Date(term.getFullYear() - 1, 11, 1);
+    const aguinaldoStart = hire > lastDec1 ? hire : lastDec1;
+    let diasAguinaldo = 0;
+    if (term >= aguinaldoStart) {
+        diasAguinaldo = Math.min(360, Math.floor((term.getTime() - aguinaldoStart.getTime()) / 86400000) + 1);
+    }
+    const aguinaldo = salarioMensual.mul(Math.min(1, diasAguinaldo / 360));
+
+    const total = indemnizacion.plus(vacaciones).plus(aguinaldo).toDecimalPlaces(2);
+    const aniosInt = Math.floor(anios);
+    const mesesInt = Math.floor((anios - aniosInt) * 12);
+
+    return {
+        antiguedadAnios: Number(anios.toFixed(2)),
+        antiguedadTexto: `${aniosInt} año(s) ${mesesInt} mes(es)`,
+        salarioMensual: salarioMensual.toDecimalPlaces(2).toNumber(),
+        salarioDiario: salarioDiario.toDecimalPlaces(2).toNumber(),
+        reason: params.reason,
+        aplicaIndemnizacion,
+        indemnizacionDias: Number(indemnizacionDias.toFixed(1)),
+        indemnizacion: indemnizacion.toDecimalPlaces(2).toNumber(),
+        diasVacaciones: Number(diasVacaciones.toFixed(1)),
+        vacaciones: vacaciones.toDecimalPlaces(2).toNumber(),
+        diasAguinaldo,
+        aguinaldo: aguinaldo.toDecimalPlaces(2).toNumber(),
+        total: total.toNumber(),
+    };
+}

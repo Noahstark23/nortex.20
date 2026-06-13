@@ -423,6 +423,35 @@ export async function recordAguinaldoPayment(
     ]);
 }
 
+/**
+ * LIQUIDACIÓN FINAL (finiquito): cancela las provisiones acumuladas y paga.
+ *   Debe: Aguinaldo (2.1.9) + Vacaciones (2.1.10) + Indemnización (2.1.11) por Pagar
+ *   Haber: Caja (1.1.1)
+ */
+export async function recordSettlement(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    settlementId: string,
+    aguinaldo: number,
+    vacaciones: number,
+    indemnizacion: number
+) {
+    const ag = Number(aguinaldo.toFixed(2));
+    const vac = Number(vacaciones.toFixed(2));
+    const ind = Number(indemnizacion.toFixed(2));
+    const total = Number((ag + vac + ind).toFixed(2));
+    if (total <= 0) return;
+
+    const lines: { accountCode: string; debit: number; credit: number }[] = [];
+    if (ag > 0) lines.push({ accountCode: '2.1.9', debit: ag, credit: 0 });
+    if (vac > 0) lines.push({ accountCode: '2.1.10', debit: vac, credit: 0 });
+    if (ind > 0) lines.push({ accountCode: '2.1.11', debit: ind, credit: 0 });
+    lines.push({ accountCode: '1.1.1', debit: 0, credit: total }); // Caja ↓
+
+    await createJournalEntry(tx, tenantId, `Liquidación #${settlementId.slice(0, 8)}`, settlementId, 'SETTLEMENT', userId, lines);
+}
+
 // ==========================================
 // FINANCIAL STATEMENTS
 // ==========================================
