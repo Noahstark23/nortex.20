@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Users, Briefcase, DollarSign, Plus, UserPlus, CheckCircle, Clock, KeyRound, FileText, AlertTriangle, Calculator, CreditCard, Printer, X, Shield, Calendar, TrendingDown, Wallet, FileSpreadsheet } from 'lucide-react';
+import { Users, Briefcase, DollarSign, Plus, UserPlus, CheckCircle, Clock, KeyRound, FileText, AlertTriangle, Calculator, CreditCard, Printer, X, Shield, Calendar, TrendingDown, Wallet, FileSpreadsheet, Gift } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface Employee {
@@ -83,13 +83,33 @@ interface Shift {
     employeeName?: string;
 }
 
+interface AguinaldoItem {
+    employeeId: string;
+    name: string;
+    cedula?: string;
+    baseSalary: number;
+    diasLaborados: number;
+    monto: number;
+    pagado: boolean;
+    paidAt: string | null;
+}
+interface AguinaldoData {
+    year: number;
+    periodo: string;
+    items: AguinaldoItem[];
+    totalMonto: number;
+    dueDate: string;
+    diasParaVencer: number;
+    pendientes: number;
+}
+
 const formatC = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (s: string) => new Date(s).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: '2-digit' });
 const LEAVE_LABELS: Record<string, string> = { UNPAID: 'Permiso sin goce', VACATION: 'Vacaciones', SICK: 'Incapacidad (INSS)', MATERNITY: 'Maternidad' };
 const LEAVE_BADGE: Record<string, string> = { UNPAID: 'bg-amber-100 text-amber-700', VACATION: 'bg-emerald-100 text-emerald-700', SICK: 'bg-orange-100 text-orange-700', MATERNITY: 'bg-pink-100 text-pink-700' };
 
 const HRM: React.FC = () => {
-    const [activeTab, setActiveTab] = useState<'TEAM' | 'PAYROLL' | 'LIABILITIES' | 'ADVANCES' | 'LEAVES' | 'TIME'>('TEAM');
+    const [activeTab, setActiveTab] = useState<'TEAM' | 'PAYROLL' | 'LIABILITIES' | 'AGUINALDO' | 'ADVANCES' | 'LEAVES' | 'TIME'>('TEAM');
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [showModal, setShowModal] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -109,6 +129,11 @@ const HRM: React.FC = () => {
     const [leaves, setLeaves] = useState<Leave[]>([]);
     const [leaveForm, setLeaveForm] = useState({ employeeId: '', type: 'UNPAID', startDate: '', endDate: '', reason: '' });
     const [savingLeave, setSavingLeave] = useState(false);
+
+    // Aguinaldo state
+    const [aguinaldoYear, setAguinaldoYear] = useState(new Date().getFullYear());
+    const [aguinaldo, setAguinaldo] = useState<AguinaldoData | null>(null);
+    const [runningAg, setRunningAg] = useState(false);
 
     // New Employee Form
     const [formData, setFormData] = useState({
@@ -198,10 +223,31 @@ const HRM: React.FC = () => {
         finally { setSavingLeave(false); }
     };
 
+    const fetchAguinaldo = useCallback(async () => {
+        try {
+            const res = await fetch(`/api/payroll/aguinaldo/${aguinaldoYear}`, { headers });
+            if (res.ok) setAguinaldo(await res.json());
+        } catch (e) { console.error(e); }
+    }, [aguinaldoYear]);
+
+    const handleRunAguinaldo = async () => {
+        if (!confirm(`¿Correr el aguinaldo ${aguinaldoYear}? Se pagará a los colaboradores pendientes y quedará registrado contablemente.`)) return;
+        setRunningAg(true);
+        try {
+            const res = await fetch(`/api/payroll/aguinaldo/${aguinaldoYear}/run`, { method: 'POST', headers });
+            const data = await res.json();
+            if (!res.ok) { alert(data.error || 'Error al correr el aguinaldo'); return; }
+            alert(data.message);
+            await fetchAguinaldo();
+        } catch { alert('Error de conexión'); }
+        finally { setRunningAg(false); }
+    };
+
     useEffect(() => { fetchEmployees(); }, []);
     useEffect(() => { if (activeTab === 'PAYROLL') fetchPayrolls(); }, [activeTab, fetchPayrolls]);
     useEffect(() => { if (activeTab === 'LIABILITIES') fetchLiabilities(); }, [activeTab]);
     useEffect(() => { if (activeTab === 'LEAVES') fetchLeaves(); }, [activeTab]);
+    useEffect(() => { if (activeTab === 'AGUINALDO') fetchAguinaldo(); }, [activeTab, fetchAguinaldo]);
 
     const handleCreateEmployee = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -405,6 +451,51 @@ const HRM: React.FC = () => {
         }
     };
 
+    const printAguinaldo = (item: AguinaldoItem) => {
+        const html = `<!DOCTYPE html><html><head><title>Comprobante de Aguinaldo - ${item.name}</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #1e293b; max-width: 700px; margin: 0 auto; }
+        .header { text-align: center; border-bottom: 3px solid #0f172a; padding-bottom: 20px; margin-bottom: 20px; }
+        .header h1 { font-size: 22px; color: #0f172a; }
+        .header p { font-size: 12px; color: #64748b; }
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; font-size: 13px; }
+        .info-grid .label { color: #64748b; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+        td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
+        .amount { text-align: right; font-family: monospace; font-weight: bold; }
+        .net-row { background: #dcfce7; font-size: 18px; }
+        .footer { text-align: center; margin-top: 40px; font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 15px; }
+        .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 60px; text-align: center; font-size: 12px; }
+        .sig-line { border-top: 1px solid #333; padding-top: 5px; margin-top: 40px; }
+      </style></head><body>
+        <div class="header">
+          <h1>COMPROBANTE DE AGUINALDO</h1>
+          <p>Treceavo Mes — Período ${aguinaldo?.periodo || ''}</p>
+        </div>
+        <div class="info-grid">
+          <div><span class="label">Empleado:</span> <strong>${item.name}</strong></div>
+          <div><span class="label">Cédula:</span> <strong>${item.cedula || 'N/A'}</strong></div>
+          <div><span class="label">Salario Base:</span> <strong>C$ ${Number(item.baseSalary).toFixed(2)}</strong></div>
+          <div><span class="label">Días laborados:</span> <strong>${item.diasLaborados} días</strong></div>
+        </div>
+        <table>
+          <tbody>
+            <tr><td>Aguinaldo proporcional (Art. 93)</td><td class="amount">C$ ${Number(item.monto).toFixed(2)}</td></tr>
+            <tr><td>Deducciones (exento de INSS e IR)</td><td class="amount">C$ 0.00</td></tr>
+            <tr class="net-row"><td><strong>NETO A RECIBIR</strong></td><td class="amount"><strong>C$ ${Number(item.monto).toFixed(2)}</strong></td></tr>
+          </tbody>
+        </table>
+        <div class="signatures">
+          <div><div class="sig-line">Firma del Empleado</div></div>
+          <div><div class="sig-line">Firma del Empleador</div></div>
+        </div>
+        <div class="footer">Generado por NORTEX ERP | Ley 185 Código del Trabajo, Arts. 93-95</div>
+      </body></html>`;
+        const w = window.open('', '_blank');
+        if (w) { w.document.write(html); w.document.close(); setTimeout(() => w.print(), 500); }
+    };
+
     const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
     // Pasivo laboral semáforo
@@ -445,6 +536,12 @@ const HRM: React.FC = () => {
                                     'bg-green-100 text-green-700'
                                 }`}>!</span>
                         )}
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('AGUINALDO')}
+                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'AGUINALDO' ? 'bg-rose-50 text-rose-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                    >
+                        <Gift size={18} /> Aguinaldo
                     </button>
                     <div className="pt-4 pb-2">
                         <p className="text-xs font-bold text-slate-400 uppercase tracking-wider px-4">Operaciones</p>
@@ -896,6 +993,86 @@ const HRM: React.FC = () => {
                                             <td className="p-4 text-sm text-slate-500">{l.reason || '—'}</td>
                                             <td className="p-4 text-center">
                                                 <span className="px-2 py-1 rounded text-xs font-bold bg-green-100 text-green-700">{l.status === 'APPROVED' ? '✅ Aprobada' : l.status}</span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
+                {/* ==================== TAB: AGUINALDO ==================== */}
+                {activeTab === 'AGUINALDO' && (
+                    <div>
+                        <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
+                            <div>
+                                <h3 className="text-2xl font-bold text-slate-800">Aguinaldo (Treceavo Mes)</h3>
+                                <p className="text-slate-500 text-sm">{aguinaldo?.periodo ? `${aguinaldo.periodo} · ` : ''}Exento de INSS e IR (Arts. 93-95)</p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <select value={aguinaldoYear} onChange={e => setAguinaldoYear(Number(e.target.value))} className="border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm font-mono">
+                                    {[0, 1, 2].map(d => { const yr = new Date().getFullYear() - d; return <option key={yr} value={yr}>{yr}</option>; })}
+                                </select>
+                                <button onClick={handleRunAguinaldo} disabled={runningAg || !aguinaldo || aguinaldo.pendientes === 0}
+                                    className="bg-rose-600 text-white font-bold px-4 py-2 rounded-lg hover:bg-rose-700 transition-colors disabled:opacity-50 inline-flex items-center gap-2">
+                                    <Gift size={16} /> {runningAg ? 'Procesando…' : `Correr aguinaldo ${aguinaldoYear}`}
+                                </button>
+                            </div>
+                        </div>
+
+                        {aguinaldo && (() => {
+                            const vencidoSinPagar = aguinaldo.diasParaVencer < 0 && aguinaldo.pendientes > 0;
+                            const todoPagado = aguinaldo.pendientes === 0;
+                            const cardCls = vencidoSinPagar ? 'bg-red-50 border-red-300' : todoPagado ? 'bg-green-50 border-green-300' : 'bg-blue-50 border-blue-300';
+                            return (
+                                <div className={`p-5 rounded-xl border-2 mb-6 flex flex-wrap items-center justify-between gap-3 ${cardCls}`}>
+                                    <div>
+                                        {vencidoSinPagar ? (
+                                            <p className="font-bold text-red-700 flex items-center gap-2"><AlertTriangle size={18} /> Vencido hace {Math.abs(aguinaldo.diasParaVencer)} días — multa de un día de salario por día de retraso (Art. 95)</p>
+                                        ) : todoPagado ? (
+                                            <p className="font-bold text-green-700 flex items-center gap-2"><CheckCircle size={18} /> Aguinaldo {aguinaldoYear} pagado a todos los colaboradores</p>
+                                        ) : (
+                                            <p className="font-bold text-blue-700 flex items-center gap-2"><Clock size={18} /> Faltan {aguinaldo.diasParaVencer} días para la fecha límite</p>
+                                        )}
+                                        <p className="text-sm text-slate-500 mt-1">Fecha límite legal: 10 de diciembre {aguinaldoYear} · {aguinaldo.pendientes} pendiente(s)</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-xs uppercase tracking-wider text-slate-500">Total aguinaldo</p>
+                                        <p className="text-2xl font-bold font-mono text-slate-800">{formatC(aguinaldo.totalMonto)}</p>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
+                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 text-slate-800 overflow-hidden">
+                            <table className="w-full text-left">
+                                <thead className="bg-slate-50 text-slate-500 font-mono text-xs uppercase">
+                                    <tr>
+                                        <th className="p-4">Colaborador</th>
+                                        <th className="p-4 text-center">Días</th>
+                                        <th className="p-4 text-right">Salario Base</th>
+                                        <th className="p-4 text-right">Aguinaldo</th>
+                                        <th className="p-4 text-center">Estado</th>
+                                        <th className="p-4 text-center">Comprobante</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {!aguinaldo || aguinaldo.items.length === 0 ? (
+                                        <tr><td colSpan={6} className="p-8 text-center text-slate-400">Sin colaboradores activos para el período.</td></tr>
+                                    ) : aguinaldo.items.map(item => (
+                                        <tr key={item.employeeId} className="hover:bg-slate-50">
+                                            <td className="p-4 font-bold text-slate-700">{item.name}{item.cedula && <div className="text-[10px] text-slate-400 font-normal">Céd: {item.cedula}</div>}</td>
+                                            <td className="p-4 text-center font-mono text-slate-600">{item.diasLaborados}</td>
+                                            <td className="p-4 text-right font-mono text-slate-600">{formatC(item.baseSalary)}</td>
+                                            <td className="p-4 text-right font-mono font-bold text-rose-700 text-lg">{formatC(item.monto)}</td>
+                                            <td className="p-4 text-center">
+                                                <span className={`px-2 py-1 rounded text-xs font-bold ${item.pagado ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{item.pagado ? '✅ Pagado' : '⏳ Pendiente'}</span>
+                                            </td>
+                                            <td className="p-4 text-center">
+                                                {item.pagado && (
+                                                    <button onClick={() => printAguinaldo(item)} className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors" title="Imprimir comprobante"><Printer size={16} /></button>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}
