@@ -262,7 +262,28 @@ model Employee {
   salaryAdvances        SalaryAdvance[]
   terminationSettlement TerminationSettlement?
   payrollLines          PayrollLine[]
+  aguinaldos            Aguinaldo[]
 
+  @@index([tenantId])
+}
+
+// Corrida de aguinaldo (treceavo mes) — Art. 93-95 Ley 185.
+// Una fila por empleado y año de corrida (período dic[year-1] → nov[year]).
+model Aguinaldo {
+  id            String   @id @default(cuid())
+  tenantId      String
+  employeeId    String
+  year          Int
+  diasLaborados Int
+  baseSalary    Decimal  @db.Decimal(10, 2)
+  monto         Decimal  @db.Decimal(10, 2)
+  status        String   @default("PAGADO")
+  paidAt        DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, year])
   @@index([tenantId])
 }
 
