@@ -256,7 +256,10 @@ router.get('/employees/:id/file', authenticate, requireHRAdmin, async (req: any,
     try {
         const emp = await prisma.employee.findFirst({
             where: { id: req.params.id, tenantId: authReq.tenantId! },
-            include: { contracts: { orderBy: { startDate: 'desc' } } },
+            include: {
+                contracts: { orderBy: { startDate: 'desc' } },
+                judicialDeductions: { where: { status: 'ACTIVE' }, orderBy: { priority: 'asc' } },
+            },
         });
         if (!emp) return res.status(404).json({ error: 'Empleado no encontrado.' });
 
@@ -298,6 +301,10 @@ router.get('/employees/:id/file', authenticate, requireHRAdmin, async (req: any,
                 id: c.id, type: c.type, startDate: c.startDate, endDate: c.endDate,
                 probationEnd: c.probationEnd, salary: Number(c.salary), position: c.position,
                 status: c.status, createdAt: c.createdAt,
+            })),
+            judicialDeductions: emp.judicialDeductions.map((j: any) => ({
+                id: j.id, type: j.type, amount: j.amount != null ? Number(j.amount) : null,
+                percentage: j.percentage, beneficiary: j.beneficiary, priority: j.priority, startDate: j.startDate,
             })),
             alertas,
         });
@@ -350,6 +357,69 @@ router.post('/employees/:id/contract', authenticate, requireHRAdmin, async (req:
     } catch (error) {
         console.error('Contract create error:', error);
         res.status(500).json({ error: 'Error al registrar el contrato.' });
+    }
+});
+
+// ==========================================
+// ⚖️ DEDUCCIONES JUDICIALES — pensión alimenticia / embargos (Art. 88 Ley 185)
+// ==========================================
+
+// POST /api/hr/employees/:id/judicial — registrar una deducción judicial recurrente
+router.post('/employees/:id/judicial', authenticate, requireHRAdmin, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { type, amount, percentage, beneficiary, priority } = req.body;
+    if (!['PENSION_ALIMENTICIA', 'EMBARGO', 'OTRO'].includes(type)) {
+        return res.status(400).json({ error: 'Tipo de deducción inválido.' });
+    }
+    const montoNum = amount != null && amount !== '' ? Number(amount) : null;
+    const pctNum = percentage != null && percentage !== '' ? Number(percentage) : null;
+    if ((montoNum == null || montoNum <= 0) && (pctNum == null || pctNum <= 0)) {
+        return res.status(400).json({ error: 'Indique un monto fijo o un porcentaje mayor a cero.' });
+    }
+    if (pctNum != null && pctNum > 100) {
+        return res.status(400).json({ error: 'El porcentaje no puede superar 100%.' });
+    }
+    try {
+        const emp = await prisma.employee.findFirst({
+            where: { id: req.params.id, tenantId: authReq.tenantId! },
+            select: { id: true },
+        });
+        if (!emp) return res.status(404).json({ error: 'Empleado no encontrado.' });
+
+        const deduction = await prisma.judicialDeduction.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                employeeId: emp.id,
+                type,
+                amount: montoNum,
+                percentage: pctNum,
+                beneficiary: beneficiary || null,
+                // La pensión alimenticia tiene prioridad legal sobre el embargo.
+                priority: priority != null ? Number(priority) : (type === 'PENSION_ALIMENTICIA' ? 1 : 2),
+                createdBy: authReq.userId!,
+            },
+        });
+        res.json({ message: 'Deducción judicial registrada.', deduction });
+    } catch (error) {
+        console.error('Judicial create error:', error);
+        res.status(500).json({ error: 'Error al registrar la deducción.' });
+    }
+});
+
+// PATCH /api/hr/judicial/:id/end — finalizar una deducción judicial
+router.patch('/judicial/:id/end', authenticate, requireHRAdmin, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        // Anti-IDOR: solo deducciones del tenant del token.
+        const result = await prisma.judicialDeduction.updateMany({
+            where: { id: req.params.id, tenantId: authReq.tenantId!, status: 'ACTIVE' },
+            data: { status: 'ENDED', endDate: new Date() },
+        });
+        if (result.count === 0) return res.status(404).json({ error: 'Deducción no encontrada o ya finalizada.' });
+        res.json({ message: 'Deducción finalizada.' });
+    } catch (error) {
+        console.error('Judicial end error:', error);
+        res.status(500).json({ error: 'Error al finalizar la deducción.' });
     }
 });
 
