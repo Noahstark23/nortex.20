@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Users, Briefcase, DollarSign, Plus, UserPlus, CheckCircle, Clock, KeyRound, FileText, AlertTriangle, Calculator, CreditCard, Printer, X, Shield, Calendar, TrendingDown, Wallet, FileSpreadsheet, Gift } from 'lucide-react';
+import { Users, Briefcase, DollarSign, Plus, UserPlus, CheckCircle, Clock, KeyRound, FileText, AlertTriangle, Calculator, CreditCard, Printer, X, Shield, Calendar, TrendingDown, Wallet, FileSpreadsheet, Gift, BarChart3 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface Employee {
@@ -131,6 +131,20 @@ interface JudicialRow {
     id: string; type: string; amount: number | null; percentage: number | null;
     beneficiary: string | null; priority: number; startDate: string;
 }
+interface HRDashboard {
+    period: string;
+    headcount: number;
+    planillaCalculada: boolean;
+    costoLaboralReal: number;
+    totalDevengado: number;
+    nominaNeta: number;
+    aportesPatronales: number;
+    provisionMensual: number;
+    ausentismo: { diasAusencia: number; empleadosConAusencia: number };
+    rotacion: { bajasAnio: number; tasaRotacion: number };
+    salarioMinimo: number;
+    bajoMinimo: { id: string; name: string; baseSalary: number }[];
+}
 interface ExpedienteData {
     employee: { id: string; name: string; cedula?: string; inss?: string; phone?: string; role: string; baseSalary: number; hireDate: string; status: string; vacationDays: number; bankAccount?: string; antiguedadTexto: string };
     contracts: ContractRow[];
@@ -147,7 +161,7 @@ const CONTRACT_LABELS: Record<string, string> = { INDETERMINADO: 'Indeterminado'
 const JUDICIAL_LABELS: Record<string, string> = { PENSION_ALIMENTICIA: 'Pensión alimenticia', EMBARGO: 'Embargo', OTRO: 'Otro' };
 
 const HRM: React.FC = () => {
-    const [activeTab, setActiveTab] = useState<'TEAM' | 'PAYROLL' | 'LIABILITIES' | 'AGUINALDO' | 'ADVANCES' | 'LEAVES' | 'TIME'>('TEAM');
+    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'TEAM' | 'PAYROLL' | 'LIABILITIES' | 'AGUINALDO' | 'ADVANCES' | 'LEAVES' | 'TIME'>('TEAM');
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [showModal, setShowModal] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -172,6 +186,11 @@ const HRM: React.FC = () => {
     const [aguinaldoYear, setAguinaldoYear] = useState(new Date().getFullYear());
     const [aguinaldo, setAguinaldo] = useState<AguinaldoData | null>(null);
     const [runningAg, setRunningAg] = useState(false);
+
+    // Tablero gerencial state
+    const [dashMonth, setDashMonth] = useState(new Date().getMonth() + 1);
+    const [dashYear, setDashYear] = useState(new Date().getFullYear());
+    const [dashboard, setDashboard] = useState<HRDashboard | null>(null);
 
     // Liquidación (finiquito) state
     const [settlementEmp, setSettlementEmp] = useState<Employee | null>(null);
@@ -384,6 +403,14 @@ const HRM: React.FC = () => {
     useEffect(() => { if (activeTab === 'LIABILITIES') fetchLiabilities(); }, [activeTab]);
     useEffect(() => { if (activeTab === 'LEAVES') fetchLeaves(); }, [activeTab]);
     useEffect(() => { if (activeTab === 'AGUINALDO') fetchAguinaldo(); }, [activeTab, fetchAguinaldo]);
+
+    const fetchDashboard = useCallback(async () => {
+        try {
+            const res = await fetch(`/api/hrm/dashboard/${dashYear}/${dashMonth}`, { headers });
+            if (res.ok) setDashboard(await res.json());
+        } catch (e) { console.error(e); }
+    }, [dashMonth, dashYear]);
+    useEffect(() => { if (activeTab === 'DASHBOARD') fetchDashboard(); }, [activeTab, fetchDashboard]);
     useEffect(() => { if (settlementEmp) fetchSettlement(); }, [settlementEmp, fetchSettlement]);
 
     const fetchExpediente = useCallback(async () => {
@@ -719,6 +746,12 @@ const HRM: React.FC = () => {
                 </div>
                 <nav className="p-4 space-y-2">
                     <button
+                        onClick={() => setActiveTab('DASHBOARD')}
+                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'DASHBOARD' ? 'bg-nortex-50 text-nortex-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                    >
+                        <BarChart3 size={18} /> Tablero
+                    </button>
+                    <button
                         onClick={() => setActiveTab('TEAM')}
                         className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'TEAM' ? 'bg-nortex-50 text-nortex-700' : 'text-slate-500 hover:bg-slate-50'}`}
                     >
@@ -774,6 +807,75 @@ const HRM: React.FC = () => {
 
             {/* Main Content */}
             <div className="flex-1 p-8 overflow-y-auto">
+
+                {/* ==================== TAB: TABLERO ==================== */}
+                {activeTab === 'DASHBOARD' && (
+                    <div>
+                        <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
+                            <div>
+                                <h3 className="text-2xl font-bold text-slate-800">Tablero de RRHH</h3>
+                                <p className="text-slate-500 text-sm">Costo laboral real, ausentismo y rotación.</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <select value={dashMonth} onChange={e => setDashMonth(Number(e.target.value))} className="border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                    {monthNames.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+                                </select>
+                                <select value={dashYear} onChange={e => setDashYear(Number(e.target.value))} className="border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm font-mono">
+                                    {[0, 1, 2].map(d => { const yr = new Date().getFullYear() - d; return <option key={yr} value={yr}>{yr}</option>; })}
+                                </select>
+                            </div>
+                        </div>
+
+                        {!dashboard ? (
+                            <div className="py-12 text-center text-slate-400">Cargando…</div>
+                        ) : (
+                            <>
+                                {!dashboard.planillaCalculada && (
+                                    <div className="mb-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-2"><AlertTriangle size={15} /> La nómina de este mes aún no se calculó — los montos aparecerán al correrla.</div>
+                                )}
+                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                                    {([
+                                        { label: 'Costo laboral real', value: formatC(dashboard.costoLaboralReal), sub: 'incluye aportes + provisiones', dark: true },
+                                        { label: 'Nómina neta', value: formatC(dashboard.nominaNeta), sub: 'a pagar' },
+                                        { label: 'Aportes patronales', value: formatC(dashboard.aportesPatronales), sub: 'INSS + INATEC' },
+                                        { label: 'Provisión del mes', value: formatC(dashboard.provisionMensual), sub: 'aguinaldo + vac. + indem.' },
+                                        { label: 'Colaboradores', value: String(dashboard.headcount), sub: 'activos' },
+                                        { label: 'Devengado total', value: formatC(dashboard.totalDevengado), sub: 'bruto del mes' },
+                                        { label: 'Ausentismo', value: `${dashboard.ausentismo.diasAusencia} días`, sub: `${dashboard.ausentismo.empleadosConAusencia} colaborador(es)` },
+                                        { label: 'Rotación (año)', value: `${dashboard.rotacion.tasaRotacion}%`, sub: `${dashboard.rotacion.bajasAnio} baja(s)` },
+                                    ] as { label: string; value: string; sub: string; dark?: boolean }[]).map((m, i) => (
+                                        <div key={i} className={`rounded-xl p-4 border ${m.dark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200'}`}>
+                                            <p className={`text-[11px] uppercase tracking-wider ${m.dark ? 'text-slate-300' : 'text-slate-400'}`}>{m.label}</p>
+                                            <p className="text-xl font-bold font-mono mt-1">{m.value}</p>
+                                            <p className={`text-[11px] mt-0.5 ${m.dark ? 'text-slate-400' : 'text-slate-400'}`}>{m.sub}</p>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {dashboard.salarioMinimo > 0 && (
+                                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+                                        <div className="flex items-center justify-between mb-3">
+                                            <h4 className="font-bold text-slate-700">Alerta de salario mínimo</h4>
+                                            <span className="text-xs text-slate-500">Mínimo vigente: {formatC(dashboard.salarioMinimo)}</span>
+                                        </div>
+                                        {dashboard.bajoMinimo.length === 0 ? (
+                                            <p className="text-sm text-emerald-600 flex items-center gap-2"><CheckCircle size={15} /> Ningún colaborador por debajo del salario mínimo.</p>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {dashboard.bajoMinimo.map(e => (
+                                                    <div key={e.id} className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-4 py-2">
+                                                        <span className="font-semibold text-slate-700">{e.name}</span>
+                                                        <span className="font-mono text-red-600 font-bold">{formatC(e.baseSalary)}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+                )}
 
                 {/* ==================== TAB: EQUIPO ==================== */}
                 {activeTab === 'TEAM' && (
