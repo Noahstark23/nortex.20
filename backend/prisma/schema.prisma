@@ -263,8 +263,32 @@ model Employee {
   terminationSettlement TerminationSettlement?
   payrollLines          PayrollLine[]
   aguinaldos            Aguinaldo[]
+  contracts             EmploymentContract[]
 
   @@index([tenantId])
+}
+
+// Expediente digital — contrato de trabajo (Art. 19-28 Ley 185; el MITRAB
+// exige contrato escrito). Un empleado puede tener varios (renovaciones).
+model EmploymentContract {
+  id           String    @id @default(cuid())
+  tenantId     String
+  employeeId   String
+  type         String // INDETERMINADO | DETERMINADO | POR_OBRA
+  startDate    DateTime
+  endDate      DateTime? // para DETERMINADO / POR_OBRA
+  probationEnd DateTime? // fin del período de prueba (hasta 30 días, Art. 28)
+  salary       Decimal   @db.Decimal(10, 2)
+  position     String? // cargo
+  notes        String?   @db.Text
+  status       String    @default("ACTIVE") // ACTIVE | ENDED
+  createdBy    String
+  createdAt    DateTime  @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
 }
 
 // Corrida de aguinaldo (treceavo mes) — Art. 93-95 Ley 185.

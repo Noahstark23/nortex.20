@@ -122,12 +122,22 @@ interface SettlementData {
     settlement: SettlementCalc;
     yaLiquidado: boolean;
 }
+interface ContractRow {
+    id: string; type: string; startDate: string; endDate: string | null; probationEnd: string | null;
+    salary: number; position: string | null; status: string; createdAt: string;
+}
+interface ExpedienteData {
+    employee: { id: string; name: string; cedula?: string; inss?: string; phone?: string; role: string; baseSalary: number; hireDate: string; status: string; vacationDays: number; bankAccount?: string; antiguedadTexto: string };
+    contracts: ContractRow[];
+    alertas: string[];
+}
 
 const formatC = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (s: string) => new Date(s).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: '2-digit' });
 const LEAVE_LABELS: Record<string, string> = { UNPAID: 'Permiso sin goce', VACATION: 'Vacaciones', SICK: 'Incapacidad (INSS)', MATERNITY: 'Maternidad' };
 const LEAVE_BADGE: Record<string, string> = { UNPAID: 'bg-amber-100 text-amber-700', VACATION: 'bg-emerald-100 text-emerald-700', SICK: 'bg-orange-100 text-orange-700', MATERNITY: 'bg-pink-100 text-pink-700' };
 const REASON_LABELS: Record<string, string> = { DISMISSAL: 'Despido', RESIGNATION: 'Renuncia', MUTUAL: 'Mutuo acuerdo' };
+const CONTRACT_LABELS: Record<string, string> = { INDETERMINADO: 'Indeterminado', DETERMINADO: 'Determinado', POR_OBRA: 'Por obra' };
 
 const HRM: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'TEAM' | 'PAYROLL' | 'LIABILITIES' | 'AGUINALDO' | 'ADVANCES' | 'LEAVES' | 'TIME'>('TEAM');
@@ -163,6 +173,14 @@ const HRM: React.FC = () => {
     const [settlementData, setSettlementData] = useState<SettlementData | null>(null);
     const [settlementLoading, setSettlementLoading] = useState(false);
     const [settlementPaying, setSettlementPaying] = useState(false);
+
+    // Expediente digital state
+    const [expedienteEmp, setExpedienteEmp] = useState<Employee | null>(null);
+    const [expediente, setExpediente] = useState<ExpedienteData | null>(null);
+    const [expedienteLoading, setExpedienteLoading] = useState(false);
+    const [showContractForm, setShowContractForm] = useState(false);
+    const [savingContract, setSavingContract] = useState(false);
+    const [contractForm, setContractForm] = useState({ type: 'INDETERMINADO', startDate: '', endDate: '', probationEnd: '', salary: '', position: '' });
 
     // New Employee Form
     const [formData, setFormData] = useState({
@@ -357,6 +375,46 @@ const HRM: React.FC = () => {
     useEffect(() => { if (activeTab === 'LEAVES') fetchLeaves(); }, [activeTab]);
     useEffect(() => { if (activeTab === 'AGUINALDO') fetchAguinaldo(); }, [activeTab, fetchAguinaldo]);
     useEffect(() => { if (settlementEmp) fetchSettlement(); }, [settlementEmp, fetchSettlement]);
+
+    const fetchExpediente = useCallback(async () => {
+        if (!expedienteEmp) return;
+        setExpedienteLoading(true);
+        try {
+            const res = await fetch(`/api/hr/employees/${expedienteEmp.id}/file`, { headers });
+            if (res.ok) setExpediente(await res.json());
+        } catch (e) { console.error(e); }
+        finally { setExpedienteLoading(false); }
+    }, [expedienteEmp]);
+
+    useEffect(() => { if (expedienteEmp) { setShowContractForm(false); fetchExpediente(); } }, [expedienteEmp, fetchExpediente]);
+
+    const openContractForm = () => {
+        if (!expedienteEmp) return;
+        setContractForm({
+            type: 'INDETERMINADO',
+            startDate: new Date(expedienteEmp.hireDate).toISOString().slice(0, 10),
+            endDate: '', probationEnd: '',
+            salary: String(expedienteEmp.baseSalary || ''),
+            position: expedienteEmp.role || '',
+        });
+        setShowContractForm(true);
+    };
+
+    const handleAddContract = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!expedienteEmp || !contractForm.startDate || !contractForm.salary) return;
+        setSavingContract(true);
+        try {
+            const res = await fetch(`/api/hr/employees/${expedienteEmp.id}/contract`, {
+                method: 'POST', headers, body: JSON.stringify(contractForm),
+            });
+            const data = await res.json();
+            if (!res.ok) { alert(data.error || 'Error al registrar el contrato'); return; }
+            setShowContractForm(false);
+            await fetchExpediente();
+        } catch { alert('Error de conexión'); }
+        finally { setSavingContract(false); }
+    };
 
     const handleCreateEmployee = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -737,12 +795,20 @@ const HRM: React.FC = () => {
                                             <span className="font-mono font-bold text-emerald-700">{Number(emp.vacationDays || 0).toFixed(1)} días</span>
                                         </div>
                                     </div>
-                                    <button
-                                        onClick={() => setSettlementEmp(emp)}
-                                        className="mt-4 w-full text-xs font-bold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 rounded-lg py-2 transition-colors inline-flex items-center justify-center gap-1.5"
-                                    >
-                                        <FileText size={13} /> Liquidar / Finiquito
-                                    </button>
+                                    <div className="mt-4 flex gap-2">
+                                        <button
+                                            onClick={() => setExpedienteEmp(emp)}
+                                            className="flex-1 text-xs font-bold text-slate-600 hover:text-white hover:bg-slate-700 border border-slate-200 rounded-lg py-2 transition-colors inline-flex items-center justify-center gap-1.5"
+                                        >
+                                            <Briefcase size={13} /> Expediente
+                                        </button>
+                                        <button
+                                            onClick={() => setSettlementEmp(emp)}
+                                            className="flex-1 text-xs font-bold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 rounded-lg py-2 transition-colors inline-flex items-center justify-center gap-1.5"
+                                        >
+                                            <FileText size={13} /> Liquidar
+                                        </button>
+                                    </div>
                                 </div>
                             ))}
                         </div>
@@ -1453,6 +1519,112 @@ const HRM: React.FC = () => {
                                         {settlementPaying ? 'Procesando…' : 'Pagar liquidación'}
                                     </button>
                                 </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* ==================== MODAL: EXPEDIENTE DIGITAL ==================== */}
+            {expedienteEmp && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><Briefcase size={18} className="text-slate-700" /> Expediente — {expedienteEmp.firstName} {expedienteEmp.lastName}</h3>
+                            <button onClick={() => setExpedienteEmp(null)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+                        </div>
+
+                        {expedienteLoading || !expediente ? (
+                            <div className="py-10 text-center text-slate-400 text-sm">Cargando…</div>
+                        ) : (
+                            <>
+                                {expediente.alertas.length > 0 && (
+                                    <div className="mb-4 space-y-1.5">
+                                        {expediente.alertas.map((a, i) => (
+                                            <div key={i} className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex items-center gap-2"><AlertTriangle size={13} /> {a}</div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5 text-sm">
+                                    {([
+                                        ['Cédula', expediente.employee.cedula || 'N/A'],
+                                        ['N° INSS', expediente.employee.inss || 'N/A'],
+                                        ['Teléfono', expediente.employee.phone || 'N/A'],
+                                        ['Cargo', expediente.employee.role || 'N/A'],
+                                        ['Ingreso', fmtDate(expediente.employee.hireDate)],
+                                        ['Antigüedad', expediente.employee.antiguedadTexto],
+                                        ['Salario base', formatC(expediente.employee.baseSalary)],
+                                        ['Vacaciones', `${Number(expediente.employee.vacationDays).toFixed(1)} días`],
+                                        ['Estado', expediente.employee.status],
+                                    ] as [string, string][]).map(([label, val]) => (
+                                        <div key={label} className="bg-slate-50 rounded-lg p-3">
+                                            <p className="text-[10px] uppercase tracking-wider text-slate-400">{label}</p>
+                                            <p className="font-semibold text-slate-700">{val}</p>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="flex items-center justify-between mb-2">
+                                    <h4 className="font-bold text-slate-700">Contratos</h4>
+                                    {!showContractForm && <button onClick={openContractForm} className="text-xs font-bold text-nortex-600 hover:text-nortex-800 inline-flex items-center gap-1"><Plus size={13} /> Agregar contrato</button>}
+                                </div>
+
+                                {showContractForm && (
+                                    <form onSubmit={handleAddContract} className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 grid sm:grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">Tipo</label>
+                                            <select value={contractForm.type} onChange={e => setContractForm({ ...contractForm, type: e.target.value })} className="w-full border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                                <option value="INDETERMINADO">Indeterminado</option>
+                                                <option value="DETERMINADO">Determinado</option>
+                                                <option value="POR_OBRA">Por obra</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">Cargo</label>
+                                            <input value={contractForm.position} onChange={e => setContractForm({ ...contractForm, position: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm" />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">Inicio</label>
+                                            <input type="date" required value={contractForm.startDate} onChange={e => setContractForm({ ...contractForm, startDate: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">Fin (si aplica)</label>
+                                            <input type="date" value={contractForm.endDate} onChange={e => setContractForm({ ...contractForm, endDate: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">Fin período de prueba</label>
+                                            <input type="date" value={contractForm.probationEnd} onChange={e => setContractForm({ ...contractForm, probationEnd: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">Salario</label>
+                                            <input type="number" required value={contractForm.salary} onChange={e => setContractForm({ ...contractForm, salary: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                        </div>
+                                        <div className="sm:col-span-2 flex gap-2">
+                                            <button type="submit" disabled={savingContract} className="bg-nortex-600 text-white font-bold px-4 py-2 rounded-lg hover:bg-nortex-700 disabled:opacity-50 text-sm">{savingContract ? 'Guardando…' : 'Guardar contrato'}</button>
+                                            <button type="button" onClick={() => setShowContractForm(false)} className="text-slate-500 px-4 py-2 text-sm">Cancelar</button>
+                                        </div>
+                                    </form>
+                                )}
+
+                                {expediente.contracts.length === 0 ? (
+                                    <p className="text-sm text-slate-400 text-center py-6 bg-slate-50 rounded-xl">Sin contratos registrados.</p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {expediente.contracts.map(c => (
+                                            <div key={c.id} className="border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between">
+                                                <div>
+                                                    <p className="font-semibold text-slate-700">{CONTRACT_LABELS[c.type] || c.type}{c.position ? ` · ${c.position}` : ''}</p>
+                                                    <p className="text-xs text-slate-500 font-mono">{fmtDate(c.startDate)}{c.endDate ? ` → ${fmtDate(c.endDate)}` : ' → indefinido'}{c.probationEnd ? ` · prueba hasta ${fmtDate(c.probationEnd)}` : ''}</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="font-mono font-bold text-slate-700">{formatC(c.salary)}</p>
+                                                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${c.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>{c.status === 'ACTIVE' ? 'Vigente' : 'Finalizado'}</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </>
                         )}
                     </div>
