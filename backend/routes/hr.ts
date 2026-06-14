@@ -246,4 +246,111 @@ router.get('/leaves', authenticate, requireHRAdmin, async (req: any, res: any) =
 //   · Nómina:      POST /api/payroll/calculate           (server.ts → calculatePayroll)
 //   · Liquidación: GET  /api/hrm/settlement-preview/:id   (server.ts → calculateLaborLiability)
 
+// ==========================================
+// 📁 EXPEDIENTE DIGITAL — Contratos (Art. 19-28 Ley 185)
+// ==========================================
+
+// GET /api/hr/employees/:id/file — expediente del colaborador (datos + contratos + alertas)
+router.get('/employees/:id/file', authenticate, requireHRAdmin, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const emp = await prisma.employee.findFirst({
+            where: { id: req.params.id, tenantId: authReq.tenantId! },
+            include: { contracts: { orderBy: { startDate: 'desc' } } },
+        });
+        if (!emp) return res.status(404).json({ error: 'Empleado no encontrado.' });
+
+        const now = new Date();
+        const DAY = 86400000;
+        const alertas: string[] = [];
+        const activo = emp.contracts.find((c: any) => c.status === 'ACTIVE') || emp.contracts[0];
+        if (!activo) {
+            alertas.push('Sin contrato registrado — el MITRAB exige contrato escrito.');
+        } else {
+            if (activo.endDate) {
+                const dias = Math.ceil((new Date(activo.endDate).getTime() - now.getTime()) / DAY);
+                if (dias < 0) alertas.push(`El contrato venció hace ${Math.abs(dias)} día(s).`);
+                else if (dias <= 30) alertas.push(`El contrato vence en ${dias} día(s).`);
+            }
+            if (activo.probationEnd) {
+                const dias = Math.ceil((new Date(activo.probationEnd).getTime() - now.getTime()) / DAY);
+                if (dias >= 0 && dias <= 7) alertas.push(`El período de prueba termina en ${dias} día(s).`);
+            }
+        }
+        const meses = Math.max(0, Math.floor((now.getTime() - new Date(emp.hireDate).getTime()) / (DAY * 30.44)));
+
+        res.json({
+            employee: {
+                id: emp.id,
+                name: `${emp.firstName} ${emp.lastName}`,
+                cedula: emp.cedula,
+                inss: emp.inss,
+                phone: emp.phone,
+                role: emp.role,
+                baseSalary: Number(emp.baseSalary),
+                hireDate: emp.hireDate,
+                status: emp.status,
+                vacationDays: emp.vacationDays,
+                bankAccount: emp.bankAccount,
+                antiguedadTexto: `${Math.floor(meses / 12)} año(s) ${meses % 12} mes(es)`,
+            },
+            contracts: emp.contracts.map((c: any) => ({
+                id: c.id, type: c.type, startDate: c.startDate, endDate: c.endDate,
+                probationEnd: c.probationEnd, salary: Number(c.salary), position: c.position,
+                status: c.status, createdAt: c.createdAt,
+            })),
+            alertas,
+        });
+    } catch (error) {
+        console.error('Expediente error:', error);
+        res.status(500).json({ error: 'Error al obtener el expediente.' });
+    }
+});
+
+// POST /api/hr/employees/:id/contract — registrar un contrato (cierra el anterior)
+router.post('/employees/:id/contract', authenticate, requireHRAdmin, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { type, startDate, endDate, probationEnd, salary, position, notes } = req.body;
+    if (!type || !startDate || salary == null) {
+        return res.status(400).json({ error: 'Tipo, fecha de inicio y salario son requeridos.' });
+    }
+    if (!['INDETERMINADO', 'DETERMINADO', 'POR_OBRA'].includes(type)) {
+        return res.status(400).json({ error: 'Tipo de contrato inválido.' });
+    }
+    try {
+        const emp = await prisma.employee.findFirst({
+            where: { id: req.params.id, tenantId: authReq.tenantId! },
+            select: { id: true },
+        });
+        if (!emp) return res.status(404).json({ error: 'Empleado no encontrado.' });
+
+        const contract = await prisma.$transaction(async (tx) => {
+            // El contrato nuevo pasa a ser el vigente; los anteriores se cierran.
+            await tx.employmentContract.updateMany({
+                where: { employeeId: emp.id, tenantId: authReq.tenantId!, status: 'ACTIVE' },
+                data: { status: 'ENDED' },
+            });
+            return tx.employmentContract.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    employeeId: emp.id,
+                    type,
+                    startDate: new Date(startDate),
+                    endDate: endDate ? new Date(endDate) : null,
+                    probationEnd: probationEnd ? new Date(probationEnd) : null,
+                    salary: Number(salary),
+                    position: position || null,
+                    notes: notes || null,
+                    status: 'ACTIVE',
+                    createdBy: authReq.userId!,
+                },
+            });
+        });
+        res.json({ message: 'Contrato registrado.', contract });
+    } catch (error) {
+        console.error('Contract create error:', error);
+        res.status(500).json({ error: 'Error al registrar el contrato.' });
+    }
+});
+
 export default router;
