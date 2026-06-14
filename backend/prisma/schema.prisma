@@ -264,8 +264,33 @@ model Employee {
   payrollLines          PayrollLine[]
   aguinaldos            Aguinaldo[]
   contracts             EmploymentContract[]
+  judicialDeductions    JudicialDeduction[]
 
   @@index([tenantId])
+}
+
+// Deducción judicial recurrente — pensión alimenticia / embargo (Art. 88 Ley
+// 185; tienen prioridad legal sobre otras deducciones). Monto fijo o % del
+// salario disponible (neto de deducciones de ley).
+model JudicialDeduction {
+  id          String    @id @default(cuid())
+  tenantId    String
+  employeeId  String
+  type        String // PENSION_ALIMENTICIA | EMBARGO | OTRO
+  amount      Decimal?  @db.Decimal(10, 2) // monto fijo (alternativa a percentage)
+  percentage  Float? // % del salario disponible (alternativa a amount)
+  beneficiary String? // a quién se paga / N° de expediente judicial
+  priority    Int       @default(1) // menor = mayor prioridad (pensión = 1)
+  status      String    @default("ACTIVE") // ACTIVE | ENDED
+  startDate   DateTime  @default(now())
+  endDate     DateTime?
+  createdBy   String
+  createdAt   DateTime  @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
 }
 
 // Expediente digital — contrato de trabajo (Art. 19-28 Ley 185; el MITRAB
@@ -347,6 +372,9 @@ model Payroll {
   // Fase A p2: ausencias sin goce de salario (descuentan días trabajados)
   absenceDeduction Decimal @default(0) @db.Decimal(10, 2)
   diasAusencia     Float   @default(0)
+
+  // Fase C4: deducciones judiciales (pensión alimenticia / embargos)
+  judicialDeduction Decimal @default(0) @db.Decimal(10, 2)
 
   status    String    @default("PENDIENTE") // PENDIENTE | PAGADO
   paidAt    DateTime?

@@ -66,8 +66,9 @@ export interface PayrollCalculation {
     totalDeductions: number;
 
     // Otros descuentos (no de ley)
-    advanceDeduction: number; // Adelantos de salario a recuperar
-    absenceDeduction: number; // Días de ausencia sin goce de salario
+    advanceDeduction: number;  // Adelantos de salario a recuperar
+    absenceDeduction: number;  // Días de ausencia sin goce de salario
+    judicialDeduction: number; // Pensión alimenticia / embargos (Art. 88)
 
     // Neto
     netSalary: number;
@@ -114,6 +115,7 @@ export function calculatePayroll(
         advanceDeduction?: number;
         absenceDeduction?: number;
         irAcumulado?: { mes: number; netoGravablePrevio: number; irRetenidoPrevio: number };
+        judicialDeductions?: { amount?: number | null; percentage?: number | null }[];
     }
 ): PayrollCalculation {
     const dBase = new Decimal(baseSalary);
@@ -171,9 +173,26 @@ export function calculatePayroll(
     // 3. Total Deducciones
     const totalDeductions = inssLaboral.plus(irLaboral).toDecimalPlaces(4);
 
-    // 4. Neto a Recibir — descontando además los adelantos de salario recuperados.
+    // 3b. Deducciones judiciales (Art. 88): pensión alimenticia / embargos, con
+    // prioridad legal. Monto fijo o % del salario disponible (totalIncome − INSS
+    // − IR). Acotadas al disponible para no dejar el neto negativo; se aplican en
+    // el orden recibido (el caller las ordena por prioridad).
+    const baseJudicial = totalIncome.minus(totalDeductions);
+    let judicialDeduction = new Decimal(0);
+    let remanente = baseJudicial;
+    for (const d of (opts?.judicialDeductions ?? [])) {
+        const monto = d.amount != null
+            ? new Decimal(d.amount)
+            : baseJudicial.mul(new Decimal(d.percentage ?? 0).div(100));
+        const aplicado = Decimal.min(monto, Decimal.max(0, remanente));
+        judicialDeduction = judicialDeduction.plus(aplicado);
+        remanente = remanente.minus(aplicado);
+    }
+    judicialDeduction = judicialDeduction.toDecimalPlaces(4);
+
+    // 4. Neto a Recibir — descontando deducciones judiciales y luego adelantos.
     const advanceDeduction = new Decimal(opts?.advanceDeduction ?? 0);
-    const netSalary = totalIncome.minus(totalDeductions).minus(advanceDeduction).toDecimalPlaces(4);
+    const netSalary = totalIncome.minus(totalDeductions).minus(judicialDeduction).minus(advanceDeduction).toDecimalPlaces(4);
 
     // 5. Aportes Patronales (costo para el empleador)
     const inssPatronal = baseINSS.mul(inssPatronalRate).toDecimalPlaces(4);
@@ -191,6 +210,7 @@ export function calculatePayroll(
         totalDeductions:        totalDeductions.toNumber(),
         advanceDeduction:       advanceDeduction.toNumber(),
         absenceDeduction:       absenceDeduction.toNumber(),
+        judicialDeduction:      judicialDeduction.toNumber(),
         netSalary:              netSalary.toNumber(),
         inssPatronal:           inssPatronal.toNumber(),
         inatec:                 inatec.toNumber(),

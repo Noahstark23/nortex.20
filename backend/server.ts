@@ -3238,6 +3238,19 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             irPrevioByEmp.set(pp.employeeId, (irPrevioByEmp.get(pp.employeeId) || 0) + Number(pp.irLaboral));
         }
 
+        // Fase C4: deducciones judiciales activas por empleado (orden de prioridad).
+        const judiciales = await prisma.judicialDeduction.findMany({
+            where: { tenantId: authReq.tenantId!, status: 'ACTIVE' },
+            orderBy: { priority: 'asc' },
+            select: { employeeId: true, amount: true, percentage: true },
+        });
+        const judicialByEmp = new Map<string, { amount?: number | null; percentage?: number | null }[]>();
+        for (const j of judiciales) {
+            const arr = judicialByEmp.get(j.employeeId) ?? [];
+            arr.push({ amount: j.amount != null ? Number(j.amount) : null, percentage: j.percentage });
+            judicialByEmp.set(j.employeeId, arr);
+        }
+
         const payrolls = [];
 
         for (const emp of employees) {
@@ -3275,6 +3288,7 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
                     netoGravablePrevio: netoPrevioByEmp.get(emp.id) || 0,
                     irRetenidoPrevio: irPrevioByEmp.get(emp.id) || 0,
                 },
+                judicialDeductions: judicialByEmp.get(emp.id) ?? [],
             });
 
             const data = {
@@ -3289,6 +3303,7 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
                 advanceDeduction: calc.advanceDeduction,
                 absenceDeduction: calc.absenceDeduction,
                 diasAusencia,
+                judicialDeduction: calc.judicialDeduction,
                 netSalary: calc.netSalary,
                 inssPatronal: calc.inssPatronal,
                 inatec: calc.inatec,

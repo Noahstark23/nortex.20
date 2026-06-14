@@ -33,6 +33,7 @@ interface PayrollRecord {
     advanceDeduction?: number;
     absenceDeduction?: number;
     diasAusencia?: number;
+    judicialDeduction?: number;
     netSalary: number;
     inssPatronal: number;
     inatec: number;
@@ -126,9 +127,14 @@ interface ContractRow {
     id: string; type: string; startDate: string; endDate: string | null; probationEnd: string | null;
     salary: number; position: string | null; status: string; createdAt: string;
 }
+interface JudicialRow {
+    id: string; type: string; amount: number | null; percentage: number | null;
+    beneficiary: string | null; priority: number; startDate: string;
+}
 interface ExpedienteData {
     employee: { id: string; name: string; cedula?: string; inss?: string; phone?: string; role: string; baseSalary: number; hireDate: string; status: string; vacationDays: number; bankAccount?: string; antiguedadTexto: string };
     contracts: ContractRow[];
+    judicialDeductions: JudicialRow[];
     alertas: string[];
 }
 
@@ -138,6 +144,7 @@ const LEAVE_LABELS: Record<string, string> = { UNPAID: 'Permiso sin goce', VACAT
 const LEAVE_BADGE: Record<string, string> = { UNPAID: 'bg-amber-100 text-amber-700', VACATION: 'bg-emerald-100 text-emerald-700', SICK: 'bg-orange-100 text-orange-700', MATERNITY: 'bg-pink-100 text-pink-700' };
 const REASON_LABELS: Record<string, string> = { DISMISSAL: 'Despido', RESIGNATION: 'Renuncia', MUTUAL: 'Mutuo acuerdo' };
 const CONTRACT_LABELS: Record<string, string> = { INDETERMINADO: 'Indeterminado', DETERMINADO: 'Determinado', POR_OBRA: 'Por obra' };
+const JUDICIAL_LABELS: Record<string, string> = { PENSION_ALIMENTICIA: 'Pensión alimenticia', EMBARGO: 'Embargo', OTRO: 'Otro' };
 
 const HRM: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'TEAM' | 'PAYROLL' | 'LIABILITIES' | 'AGUINALDO' | 'ADVANCES' | 'LEAVES' | 'TIME'>('TEAM');
@@ -181,6 +188,9 @@ const HRM: React.FC = () => {
     const [showContractForm, setShowContractForm] = useState(false);
     const [savingContract, setSavingContract] = useState(false);
     const [contractForm, setContractForm] = useState({ type: 'INDETERMINADO', startDate: '', endDate: '', probationEnd: '', salary: '', position: '' });
+    const [showJudicialForm, setShowJudicialForm] = useState(false);
+    const [savingJudicial, setSavingJudicial] = useState(false);
+    const [judicialForm, setJudicialForm] = useState({ type: 'PENSION_ALIMENTICIA', amount: '', percentage: '', beneficiary: '' });
 
     // New Employee Form
     const [formData, setFormData] = useState({
@@ -386,7 +396,7 @@ const HRM: React.FC = () => {
         finally { setExpedienteLoading(false); }
     }, [expedienteEmp]);
 
-    useEffect(() => { if (expedienteEmp) { setShowContractForm(false); fetchExpediente(); } }, [expedienteEmp, fetchExpediente]);
+    useEffect(() => { if (expedienteEmp) { setShowContractForm(false); setShowJudicialForm(false); fetchExpediente(); } }, [expedienteEmp, fetchExpediente]);
 
     const openContractForm = () => {
         if (!expedienteEmp) return;
@@ -414,6 +424,33 @@ const HRM: React.FC = () => {
             await fetchExpediente();
         } catch { alert('Error de conexión'); }
         finally { setSavingContract(false); }
+    };
+
+    const handleAddJudicial = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!expedienteEmp) return;
+        if (!judicialForm.amount && !judicialForm.percentage) { alert('Indique un monto fijo o un porcentaje.'); return; }
+        setSavingJudicial(true);
+        try {
+            const res = await fetch(`/api/hr/employees/${expedienteEmp.id}/judicial`, {
+                method: 'POST', headers, body: JSON.stringify(judicialForm),
+            });
+            const data = await res.json();
+            if (!res.ok) { alert(data.error || 'Error al registrar la deducción'); return; }
+            setJudicialForm({ type: 'PENSION_ALIMENTICIA', amount: '', percentage: '', beneficiary: '' });
+            setShowJudicialForm(false);
+            await fetchExpediente();
+        } catch { alert('Error de conexión'); }
+        finally { setSavingJudicial(false); }
+    };
+
+    const endJudicial = async (id: string) => {
+        if (!confirm('¿Finalizar esta deducción judicial? Dejará de descontarse de la nómina.')) return;
+        try {
+            const res = await fetch(`/api/hr/judicial/${id}/end`, { method: 'PATCH', headers });
+            if (res.ok) await fetchExpediente();
+            else { const d = await res.json(); alert(d.error || 'Error'); }
+        } catch { alert('Error de conexión'); }
     };
 
     const handleCreateEmployee = async (e: React.FormEvent) => {
@@ -579,10 +616,11 @@ const HRM: React.FC = () => {
           </tbody>
         </table>
 
-        ${Number(p.advanceDeduction || 0) > 0 ? `<table>
+        ${(Number(p.advanceDeduction || 0) > 0 || Number(p.judicialDeduction || 0) > 0) ? `<table>
           <thead><tr><th colspan="2">OTROS DESCUENTOS</th></tr></thead>
           <tbody>
-            <tr><td>Adelanto de salario</td><td class="amount">- C$ ${Number(p.advanceDeduction).toFixed(2)}</td></tr>
+            ${Number(p.judicialDeduction || 0) > 0 ? `<tr><td>Deducción judicial (pensión / embargo)</td><td class="amount">- C$ ${Number(p.judicialDeduction).toFixed(2)}</td></tr>` : ''}
+            ${Number(p.advanceDeduction || 0) > 0 ? `<tr><td>Adelanto de salario</td><td class="amount">- C$ ${Number(p.advanceDeduction).toFixed(2)}</td></tr>` : ''}
           </tbody>
         </table>` : ''}
 
@@ -911,6 +949,7 @@ const HRM: React.FC = () => {
                                                     <div className="flex flex-wrap gap-2 mt-0.5">
                                                         {Number(p.horasExtra || 0) > 0 && <span className="text-[10px] text-amber-600 font-bold">+{Number(p.horasExtra)}h extra</span>}
                                                         {Number(p.diasAusencia || 0) > 0 && <span className="text-[10px] text-orange-600 font-bold">{Number(p.diasAusencia)}d ausencia</span>}
+                                                        {Number(p.judicialDeduction || 0) > 0 && <span className="text-[10px] text-purple-600 font-bold">Judicial -{formatC(Number(p.judicialDeduction))}</span>}
                                                         {Number(p.advanceDeduction || 0) > 0 && <span className="text-[10px] text-red-500 font-bold">Adelanto -{formatC(Number(p.advanceDeduction))}</span>}
                                                     </div>
                                                 </td>
@@ -1620,6 +1659,60 @@ const HRM: React.FC = () => {
                                                 <div className="text-right">
                                                     <p className="font-mono font-bold text-slate-700">{formatC(c.salary)}</p>
                                                     <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${c.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>{c.status === 'ACTIVE' ? 'Vigente' : 'Finalizado'}</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* Deducciones judiciales */}
+                                <div className="flex items-center justify-between mt-6 mb-2">
+                                    <h4 className="font-bold text-slate-700">Deducciones judiciales</h4>
+                                    {!showJudicialForm && <button onClick={() => setShowJudicialForm(true)} className="text-xs font-bold text-purple-600 hover:text-purple-800 inline-flex items-center gap-1"><Plus size={13} /> Agregar</button>}
+                                </div>
+
+                                {showJudicialForm && (
+                                    <form onSubmit={handleAddJudicial} className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 grid sm:grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">Tipo</label>
+                                            <select value={judicialForm.type} onChange={e => setJudicialForm({ ...judicialForm, type: e.target.value })} className="w-full border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                                <option value="PENSION_ALIMENTICIA">Pensión alimenticia</option>
+                                                <option value="EMBARGO">Embargo</option>
+                                                <option value="OTRO">Otro</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">Beneficiario / N° expediente</label>
+                                            <input value={judicialForm.beneficiary} onChange={e => setJudicialForm({ ...judicialForm, beneficiary: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm" />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">Monto fijo (C$)</label>
+                                            <input type="number" value={judicialForm.amount} onChange={e => setJudicialForm({ ...judicialForm, amount: e.target.value, percentage: '' })} placeholder="0.00" className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500">o % del salario disponible</label>
+                                            <input type="number" value={judicialForm.percentage} onChange={e => setJudicialForm({ ...judicialForm, percentage: e.target.value, amount: '' })} placeholder="0" className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                        </div>
+                                        <div className="sm:col-span-2 flex gap-2">
+                                            <button type="submit" disabled={savingJudicial} className="bg-purple-600 text-white font-bold px-4 py-2 rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm">{savingJudicial ? 'Guardando…' : 'Guardar deducción'}</button>
+                                            <button type="button" onClick={() => setShowJudicialForm(false)} className="text-slate-500 px-4 py-2 text-sm">Cancelar</button>
+                                        </div>
+                                    </form>
+                                )}
+
+                                {expediente.judicialDeductions.length === 0 ? (
+                                    <p className="text-sm text-slate-400 text-center py-4 bg-slate-50 rounded-xl">Sin deducciones judiciales activas.</p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {expediente.judicialDeductions.map(j => (
+                                            <div key={j.id} className="border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between">
+                                                <div>
+                                                    <p className="font-semibold text-slate-700">{JUDICIAL_LABELS[j.type] || j.type}{j.beneficiary ? ` · ${j.beneficiary}` : ''}</p>
+                                                    <p className="text-xs text-slate-500">Prioridad {j.priority} · desde {fmtDate(j.startDate)}</p>
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                    <span className="font-mono font-bold text-purple-700">{j.amount != null ? formatC(j.amount) : `${j.percentage}%`}</span>
+                                                    <button onClick={() => endJudicial(j.id)} className="text-xs text-rose-500 hover:text-rose-700 font-semibold underline">Finalizar</button>
                                                 </div>
                                             </div>
                                         ))}
