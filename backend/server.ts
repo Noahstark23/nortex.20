@@ -5856,6 +5856,75 @@ app.post('/api/hrm/settlement/:employeeId', authenticate, checkRole(['OWNER', 'A
     }
 });
 
+// GET /api/hrm/dashboard/:year/:month — Tablero gerencial de RRHH (solo lectura)
+app.get('/api/hrm/dashboard/:year/:month', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Año o mes inválido.' });
+    }
+    try {
+        const [employees, payrolls, taxCfg, bajasAnio] = await Promise.all([
+            prisma.employee.findMany({
+                where: { tenantId, status: 'ACTIVE' },
+                select: { id: true, firstName: true, lastName: true, baseSalary: true, role: true },
+            }),
+            prisma.payroll.findMany({
+                where: { tenantId, year, month },
+                select: { grossSalary: true, totalIncome: true, netSalary: true, inssPatronal: true, inatec: true, diasAusencia: true },
+            }),
+            prisma.taxConfig.findUnique({ where: { tenantId } }),
+            prisma.terminationSettlement.count({
+                where: { tenantId, terminationDate: { gte: new Date(year, 0, 1), lte: new Date(year, 11, 31, 23, 59, 59) } },
+            }),
+        ]);
+
+        const r2 = (n: number) => Number(n.toFixed(2));
+        const sum = (fn: (p: typeof payrolls[number]) => number) => payrolls.reduce((s, p) => s + fn(p), 0);
+
+        const headcount = employees.length;
+        const planillaCalculada = payrolls.length > 0;
+        const totalDevengado = sum(p => Number(p.totalIncome));
+        const nominaNeta = sum(p => Number(p.netSalary));
+        const aportesPatronales = sum(p => Number(p.inssPatronal) + Number(p.inatec));
+        // Provisión mensual del pasivo laboral ≈ 25% del salario ordinario (B1).
+        const provisionMensual = sum(p => Number(p.grossSalary)) / 4;
+        const costoLaboralReal = totalDevengado + aportesPatronales + provisionMensual;
+
+        const diasAusencia = sum(p => Number(p.diasAusencia || 0));
+        const empleadosConAusencia = payrolls.filter(p => Number(p.diasAusencia || 0) > 0).length;
+
+        const salarioMinimo = taxCfg ? Number(taxCfg.salarioMinimo) : 0;
+        const bajoMinimo = salarioMinimo > 0
+            ? employees
+                .filter(e => Number(e.baseSalary) < salarioMinimo)
+                .map(e => ({ id: e.id, name: `${e.firstName} ${e.lastName}`, baseSalary: Number(e.baseSalary) }))
+            : [];
+
+        const tasaRotacion = (headcount + bajasAnio) > 0 ? (bajasAnio / (headcount + bajasAnio)) * 100 : 0;
+
+        res.json({
+            period: `${year}-${String(month).padStart(2, '0')}`,
+            headcount,
+            planillaCalculada,
+            costoLaboralReal: r2(costoLaboralReal),
+            totalDevengado: r2(totalDevengado),
+            nominaNeta: r2(nominaNeta),
+            aportesPatronales: r2(aportesPatronales),
+            provisionMensual: r2(provisionMensual),
+            ausentismo: { diasAusencia: r2(diasAusencia), empleadosConAusencia },
+            rotacion: { bajasAnio, tasaRotacion: r2(tasaRotacion) },
+            salarioMinimo,
+            bajoMinimo,
+        });
+    } catch (error) {
+        console.error('HR dashboard error:', error);
+        res.status(500).json({ error: 'Error al generar el tablero.' });
+    }
+});
+
 // ==========================================
 // 🌐 PORTAL DE PEDIDOS PÚBLICOS (NO AUTH)
 // ==========================================
