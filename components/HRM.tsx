@@ -26,6 +26,8 @@ interface PayrollRecord {
     commissions: number;
     overtimePay?: number;
     horasExtra?: number;
+    holidayPay?: number;
+    diasFeriados?: number;
     totalIncome: number;
     inssLaboral: number;
     irLaboral: number;
@@ -131,6 +133,7 @@ interface JudicialRow {
     id: string; type: string; amount: number | null; percentage: number | null;
     beneficiary: string | null; priority: number; startDate: string;
 }
+interface HolidayRow { id: string; date: string; name: string; national: boolean; }
 interface HRDashboard {
     period: string;
     headcount: number;
@@ -191,6 +194,12 @@ const HRM: React.FC = () => {
     const [dashMonth, setDashMonth] = useState(new Date().getMonth() + 1);
     const [dashYear, setDashYear] = useState(new Date().getFullYear());
     const [dashboard, setDashboard] = useState<HRDashboard | null>(null);
+
+    // Feriados state
+    const [holidayYear, setHolidayYear] = useState(new Date().getFullYear());
+    const [holidays, setHolidays] = useState<HolidayRow[]>([]);
+    const [holidayForm, setHolidayForm] = useState({ date: '', name: '' });
+    const [savingHoliday, setSavingHoliday] = useState(false);
 
     // Liquidación (finiquito) state
     const [settlementEmp, setSettlementEmp] = useState<Employee | null>(null);
@@ -411,6 +420,42 @@ const HRM: React.FC = () => {
         } catch (e) { console.error(e); }
     }, [dashMonth, dashYear]);
     useEffect(() => { if (activeTab === 'DASHBOARD') fetchDashboard(); }, [activeTab, fetchDashboard]);
+
+    const fetchHolidays = useCallback(async () => {
+        try {
+            const res = await fetch(`/api/hr/holidays/${holidayYear}`, { headers });
+            if (res.ok) setHolidays(await res.json());
+        } catch (e) { console.error(e); }
+    }, [holidayYear]);
+    useEffect(() => { if (activeTab === 'TIME') fetchHolidays(); }, [activeTab, fetchHolidays]);
+
+    const fmtHoliday = (iso: string) => {
+        const [y, m, d] = iso.slice(0, 10).split('-');
+        return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString('es-NI', { weekday: 'short', day: '2-digit', month: 'short' });
+    };
+
+    const addHoliday = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!holidayForm.date || !holidayForm.name) return;
+        setSavingHoliday(true);
+        try {
+            const res = await fetch('/api/hr/holidays', { method: 'POST', headers, body: JSON.stringify(holidayForm) });
+            const data = await res.json();
+            if (!res.ok) { alert(data.error || 'Error al agregar el feriado'); return; }
+            setHolidayForm({ date: '', name: '' });
+            await fetchHolidays();
+        } catch { alert('Error de conexión'); }
+        finally { setSavingHoliday(false); }
+    };
+
+    const deleteHoliday = async (id: string) => {
+        if (!confirm('¿Eliminar este feriado?')) return;
+        try {
+            const res = await fetch(`/api/hr/holidays/${id}`, { method: 'DELETE', headers });
+            if (res.ok) await fetchHolidays();
+            else { const d = await res.json(); alert(d.error || 'Error'); }
+        } catch { alert('Error de conexión'); }
+    };
     useEffect(() => { if (settlementEmp) fetchSettlement(); }, [settlementEmp, fetchSettlement]);
 
     const fetchExpediente = useCallback(async () => {
@@ -629,6 +674,7 @@ const HRM: React.FC = () => {
             <tr><td>Salario Base</td><td class="amount">C$ ${Number(p.grossSalary).toFixed(2)}</td></tr>
             <tr><td>Comisiones del Periodo</td><td class="amount">C$ ${Number(p.commissions).toFixed(2)}</td></tr>
             ${Number(p.overtimePay || 0) > 0 ? `<tr><td>Horas Extra (${Number(p.horasExtra || 0)} h al doble · Art. 62)</td><td class="amount">C$ ${Number(p.overtimePay).toFixed(2)}</td></tr>` : ''}
+            ${Number(p.holidayPay || 0) > 0 ? `<tr><td>Feriado trabajado (${Number(p.diasFeriados || 0)} día${Number(p.diasFeriados || 0) === 1 ? '' : 's'} · recargo Art. 68)</td><td class="amount">C$ ${Number(p.holidayPay).toFixed(2)}</td></tr>` : ''}
             ${Number(p.absenceDeduction || 0) > 0 ? `<tr><td>Ausencias sin goce (${Number(p.diasAusencia || 0)} día${Number(p.diasAusencia || 0) === 1 ? '' : 's'})</td><td class="amount">- C$ ${Number(p.absenceDeduction).toFixed(2)}</td></tr>` : ''}
             <tr class="total-row"><td>TOTAL DEVENGADO</td><td class="amount">C$ ${Number(p.totalIncome).toFixed(2)}</td></tr>
           </tbody>
@@ -1050,6 +1096,7 @@ const HRM: React.FC = () => {
                                                     {p.employee?.cedula && <div className="text-[10px] text-slate-400">Céd: {p.employee.cedula}</div>}
                                                     <div className="flex flex-wrap gap-2 mt-0.5">
                                                         {Number(p.horasExtra || 0) > 0 && <span className="text-[10px] text-amber-600 font-bold">+{Number(p.horasExtra)}h extra</span>}
+                                                        {Number(p.diasFeriados || 0) > 0 && <span className="text-[10px] text-indigo-600 font-bold">{Number(p.diasFeriados)}d feriado</span>}
                                                         {Number(p.diasAusencia || 0) > 0 && <span className="text-[10px] text-orange-600 font-bold">{Number(p.diasAusencia)}d ausencia</span>}
                                                         {Number(p.judicialDeduction || 0) > 0 && <span className="text-[10px] text-purple-600 font-bold">Judicial -{formatC(Number(p.judicialDeduction))}</span>}
                                                         {Number(p.advanceDeduction || 0) > 0 && <span className="text-[10px] text-red-500 font-bold">Adelanto -{formatC(Number(p.advanceDeduction))}</span>}
@@ -1175,17 +1222,53 @@ const HRM: React.FC = () => {
                     <div>
                         <div className="flex justify-between items-center mb-6">
                             <div>
-                                <h3 className="text-2xl font-bold text-slate-800">Control de Asistencia</h3>
-                                <p className="text-slate-500 text-sm">Registro de Turnos de Hoy via PIN Pad</p>
+                                <h3 className="text-2xl font-bold text-slate-800">Asistencia y Feriados</h3>
+                                <p className="text-slate-500 text-sm">Marcaje por PIN y calendario de feriados (los trabajados se pagan al doble, Art. 68).</p>
                             </div>
                         </div>
+
+                        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 mb-6 flex items-center gap-3">
+                            <Clock className="w-8 h-8 text-indigo-400 shrink-0" />
+                            <p className="text-sm text-indigo-700">Usa el botón <strong>"CLOCK IN/OUT"</strong> del menú principal para marcar asistencia con el PIN. Las horas extra y los feriados trabajados se suman a la nómina del mes automáticamente.</p>
+                        </div>
+
                         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                            <div className="p-12 text-center">
-                                <Clock className="w-16 h-16 text-indigo-200 mx-auto mb-4" />
-                                <h4 className="text-lg font-bold text-slate-700">Integración Activa</h4>
-                                <p className="text-slate-500 max-w-md mx-auto mt-2">
-                                    Usa el botón <strong className="text-indigo-600">"CLOCK IN/OUT"</strong> del menú principal para marcar asistencia con tu PIN desde cualquier dispositivo de la ferretería.
-                                </p>
+                            <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-slate-100">
+                                <h4 className="font-bold text-slate-700">Calendario de feriados</h4>
+                                <select value={holidayYear} onChange={e => setHolidayYear(Number(e.target.value))} className="border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm font-mono">
+                                    {[0, 1, 2].map(d => { const yr = new Date().getFullYear() - d + 1; return <option key={yr} value={yr}>{yr}</option>; })}
+                                </select>
+                            </div>
+
+                            <form onSubmit={addHoliday} className="flex flex-wrap items-end gap-3 p-4 bg-slate-50 border-b border-slate-100">
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500">Fecha</label>
+                                    <input type="date" required value={holidayForm.date} onChange={e => setHolidayForm({ ...holidayForm, date: e.target.value })} className="block border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                </div>
+                                <div className="flex-1 min-w-[160px]">
+                                    <label className="text-xs font-bold text-slate-500">Nombre (fiesta local)</label>
+                                    <input required value={holidayForm.name} onChange={e => setHolidayForm({ ...holidayForm, name: e.target.value })} placeholder="Ej: Fiestas patronales" className="block w-full border border-slate-300 p-2 rounded text-slate-800 text-sm" />
+                                </div>
+                                <button type="submit" disabled={savingHoliday} className="bg-indigo-600 text-white font-bold px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm inline-flex items-center gap-1.5"><Plus size={15} /> {savingHoliday ? 'Guardando…' : 'Agregar'}</button>
+                            </form>
+
+                            <div className="divide-y divide-slate-100">
+                                {holidays.length === 0 ? (
+                                    <p className="p-8 text-center text-slate-400 text-sm">Cargando feriados…</p>
+                                ) : holidays.map(h => (
+                                    <div key={h.id} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50">
+                                        <div className="flex items-center gap-3">
+                                            <span className="font-mono text-xs text-slate-500 w-28">{fmtHoliday(h.date)}</span>
+                                            <span className="font-semibold text-slate-700">{h.name}</span>
+                                            {h.national
+                                                ? <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-500 font-bold">Nacional</span>
+                                                : <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">Local</span>}
+                                        </div>
+                                        {!h.national && (
+                                            <button onClick={() => deleteHoliday(h.id)} className="text-rose-500 hover:text-rose-700" title="Eliminar"><X size={16} /></button>
+                                        )}
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     </div>

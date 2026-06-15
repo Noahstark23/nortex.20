@@ -3251,6 +3251,30 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             judicialByEmp.set(j.employeeId, arr);
         }
 
+        // Fase C2: feriados del mes trabajados por empleado (recargo Art. 68).
+        const holidaysMonth = await prisma.holiday.findMany({
+            where: { tenantId: authReq.tenantId!, date: { gte: startOfMonth, lte: endOfMonth } },
+            select: { date: true },
+        });
+        const holidaySet = new Set(holidaysMonth.map(h => h.date.toISOString().slice(0, 10)));
+        const holidayDaysByEmp = new Map<string, number>();
+        if (holidaySet.size > 0) {
+            const shiftsMes = await prisma.shift.findMany({
+                where: { tenantId: authReq.tenantId!, status: 'COMPLETED', employeeId: { not: null }, startTime: { gte: startOfMonth, lte: endOfMonth } },
+                select: { employeeId: true, startTime: true },
+            });
+            const workedByEmp = new Map<string, Set<string>>();
+            for (const s of shiftsMes) {
+                if (!s.employeeId) continue;
+                const ds = s.startTime.toISOString().slice(0, 10);
+                if (!holidaySet.has(ds)) continue;
+                const set = workedByEmp.get(s.employeeId) ?? new Set<string>();
+                set.add(ds);
+                workedByEmp.set(s.employeeId, set);
+            }
+            for (const [empId, set] of workedByEmp) holidayDaysByEmp.set(empId, set.size);
+        }
+
         const payrolls = [];
 
         for (const emp of employees) {
@@ -3258,6 +3282,7 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             const ventasMes = salesMap.get(emp.id) || 0;
             const comisiones = ventasMes * Number(emp.commissionRate);
             const overtimeHours = overtimeMap.get(emp.id) || 0;
+            const holidayDays = holidayDaysByEmp.get(emp.id) || 0;
             const diasAusencia = Math.min(30, absenceDaysByEmployee.get(emp.id) || 0);
             const absenceDeduction = (baseSalary / 30) * diasAusencia;
 
@@ -3282,7 +3307,7 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             const advanceDeduction = advances.reduce((s, a) => s + Number(a.amount) + Number(a.fee), 0);
 
             const calc = calculatePayroll(baseSalary, comisiones, {
-                inssPatronalRate, overtimeHours, advanceDeduction, absenceDeduction,
+                inssPatronalRate, overtimeHours, advanceDeduction, absenceDeduction, holidayDays,
                 irAcumulado: {
                     mes: Number(month),
                     netoGravablePrevio: netoPrevioByEmp.get(emp.id) || 0,
@@ -3296,6 +3321,8 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
                 commissions: calc.commissions,
                 overtimePay: calc.overtimePay,
                 horasExtra: calc.horasExtra,
+                holidayPay: calc.holidayPay,
+                diasFeriados: calc.diasFeriados,
                 totalIncome: calc.totalIncome,
                 inssLaboral: calc.inssLaboral,
                 irLaboral: calc.irLaboral,
