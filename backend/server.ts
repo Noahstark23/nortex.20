@@ -1245,7 +1245,7 @@ app.get('/api/employees', authenticate, async (req: any, res: any) => {
 
 app.post('/api/employees', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { firstName, lastName, role, baseSalary, commissionRate, phone, pin, cedula, inss } = req.body;
+    const { firstName, lastName, role, baseSalary, commissionRate, phone, pin, cedula, inss, jornada } = req.body;
 
     // Validar PIN de 4 dígitos
     const employeePin = pin ? String(pin).trim() : '0000';
@@ -1274,6 +1274,7 @@ app.post('/api/employees', authenticate, async (req: any, res: any) => {
                 pin: employeePin,
                 cedula: cedula || null,
                 inss: inss || null,
+                jornada: ['DIURNA', 'NOCTURNA', 'MIXTA'].includes(jornada) ? jornada : 'DIURNA',
             }
         });
         res.json(employee);
