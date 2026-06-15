@@ -3333,13 +3333,16 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             const aplicados: string[] = [];
             for (const adv of advances) {
                 const monto = Number(adv.amount) + Number(adv.fee);
-                if (monto <= restante + 0.005) {
+                // Epsilon mínimo (< medio centavo) solo para evitar falsos negativos
+                // por la representación binaria; no permite sobre-aplicar un centavo.
+                if (monto <= restante + 0.001) {
                     advanceApplied = Number((advanceApplied + monto).toFixed(2));
                     restante = Number((restante - monto).toFixed(2));
                     aplicados.push(adv.id);
                 }
             }
-            const netFinal = Number((disponible - advanceApplied).toFixed(2));
+            // Clamp de seguridad: el neto nunca queda negativo.
+            const netFinal = Math.max(0, Number((disponible - advanceApplied).toFixed(2)));
 
             const data = {
                 grossSalary: calc.grossSalary,
@@ -3516,7 +3519,7 @@ app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'ACC
             // INSS Patronal / INATEC, Haber Caja + pasivos. Así la nómina aparece
             // en el Flujo de Caja, el Balance y el Estado de Resultados. Fail-soft.
             try {
-                await recordPayroll(tx, authReq.tenantId!, authReq.userId!, updated.id, Number(updated.netSalary), Number(updated.inssPatronal), Number(updated.inatec));
+                await recordPayroll(tx, authReq.tenantId!, authReq.userId!, updated.id, Number(updated.netSalary), Number(updated.inssLaboral), Number(updated.irLaboral), Number(updated.inssPatronal), Number(updated.inatec));
             } catch (payErr) {
                 console.warn('⚠️ Asiento de nómina omitido (la nómina se paga igual):', payErr);
             }

@@ -347,8 +347,13 @@ export async function recordReturn(
 
 /**
  * NÓMINA:
- *   Debe: Gastos de Nómina (5.2.2) + INSS Patronal (5.2.3) + INATEC (5.2.4)
- *   Haber: Caja (1.1.1) + INSS por Pagar (2.1.5) + INATEC por Pagar (2.1.6)
+ *   Debe: Gastos de Nómina (5.2.2, = neto + INSS laboral + IR laboral) +
+ *         INSS Patronal (5.2.3) + INATEC (5.2.4)
+ *   Haber: Caja (1.1.1, neto al trabajador) + Retenciones por Pagar (2.1.7, INSS
+ *         laboral retenido) + IR por Pagar (2.1.3, IR retenido) + INSS Patronal
+ *         por Pagar (2.1.5) + INATEC por Pagar (2.1.6)
+ * Así el gasto de nómina refleja el salario devengado (no solo el neto) y las
+ * retenciones del trabajador quedan como pasivo (ligado al cierre IR_LABORAL/INSS).
  */
 export async function recordPayroll(
     tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
@@ -356,17 +361,22 @@ export async function recordPayroll(
     userId: string,
     payrollId: string,
     netSalary: number,
+    inssLaboral: number,
+    irLaboral: number,
     inssPatronal: number,
     inatec: number
 ) {
-    const totalCost = netSalary + inssPatronal + inatec;
+    // El gasto de nómina = lo que recibe el trabajador + lo retenido a su nombre.
+    const gastoNomina = Number((netSalary + inssLaboral + irLaboral).toFixed(2));
 
     await createJournalEntry(tx, tenantId, `Nómina #${payrollId.slice(0, 8)}`, payrollId, 'PAYROLL', userId, [
-        { accountCode: '5.2.2', debit: netSalary, credit: 0 },       // Gasto Nómina ↑
+        { accountCode: '5.2.2', debit: gastoNomina, credit: 0 },     // Gasto Nómina ↑ (devengado)
         { accountCode: '5.2.3', debit: inssPatronal, credit: 0 },    // INSS Patronal ↑
         { accountCode: '5.2.4', debit: inatec, credit: 0 },          // INATEC ↑
-        { accountCode: '1.1.1', debit: 0, credit: netSalary },       // Caja ↓
-        { accountCode: '2.1.5', debit: 0, credit: inssPatronal },    // INSS por Pagar ↑
+        { accountCode: '1.1.1', debit: 0, credit: netSalary },       // Caja ↓ (neto)
+        { accountCode: '2.1.7', debit: 0, credit: inssLaboral },     // Retenciones por Pagar (INSS laboral) ↑
+        { accountCode: '2.1.3', debit: 0, credit: irLaboral },       // IR por Pagar ↑
+        { accountCode: '2.1.5', debit: 0, credit: inssPatronal },    // INSS Patronal por Pagar ↑
         { accountCode: '2.1.6', debit: 0, credit: inatec },          // INATEC por Pagar ↑
     ]);
 }

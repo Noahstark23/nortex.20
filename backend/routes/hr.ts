@@ -22,10 +22,14 @@ const requireHRAdmin = (req: any, res: any, next: any) => {
     next();
 };
 
-// Valida una ausencia de VACACIONES: sin solapamiento con otra vigente y con
-// saldo suficiente. Devuelve un mensaje de error o null si está OK.
-async function validarVacacion(tenantId: string, employeeId: string, startDate: Date, endDate: Date, dias: number, excludeLeaveId?: string): Promise<string | null> {
-    const solapada = await prisma.leaveRequest.findFirst({
+// Error de validación de vacaciones (se mapea a HTTP 400 en el catch).
+class VacacionError extends Error {}
+
+// Valida una ausencia de VACACIONES contra el cliente `client` (idealmente el
+// `tx` de la transacción, para minimizar la ventana de carrera): sin solapamiento
+// con otra vigente y con saldo suficiente. Lanza VacacionError si no es válida.
+async function validarVacacion(client: any, tenantId: string, employeeId: string, startDate: Date, endDate: Date, dias: number, excludeLeaveId?: string): Promise<void> {
+    const solapada = await client.leaveRequest.findFirst({
         where: {
             tenantId, employeeId, type: 'VACATION',
             status: { in: ['PENDING', 'APPROVED'] },
@@ -34,10 +38,9 @@ async function validarVacacion(tenantId: string, employeeId: string, startDate: 
         },
         select: { id: true },
     });
-    if (solapada) return 'Ya hay una solicitud de vacaciones que se solapa con esas fechas.';
-    const emp = await prisma.employee.findUnique({ where: { id: employeeId }, select: { vacationDays: true } });
-    if (emp && emp.vacationDays < dias) return `Saldo de vacaciones insuficiente: ${emp.vacationDays.toFixed(1)} día(s) disponibles, se solicitan ${dias}.`;
-    return null;
+    if (solapada) throw new VacacionError('Ya hay una solicitud de vacaciones que se solapa con esas fechas.');
+    const emp = await client.employee.findUnique({ where: { id: employeeId }, select: { vacationDays: true } });
+    if (emp && emp.vacationDays < dias) throw new VacacionError(`Saldo de vacaciones insuficiente: ${emp.vacationDays.toFixed(1)} día(s) disponibles, se solicitan ${dias}.`);
 }
 
 // Domingo de Pascua (algoritmo gregoriano) — para Jueves/Viernes Santo.
@@ -271,12 +274,10 @@ router.post('/leave/request', authenticate, requireHRAdmin, async (req: any, res
         // Días calendario de la ausencia (inclusivo).
         const dias = Math.max(1, Math.floor((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) + 1);
 
-        if (type === 'VACATION') {
-            const err = await validarVacacion(authReq.tenantId!, employeeId, new Date(startDate), new Date(endDate), dias);
-            if (err) return res.status(400).json({ error: err });
-        }
-
         const leave = await prisma.$transaction(async (tx) => {
+            if (type === 'VACATION') {
+                await validarVacacion(tx, authReq.tenantId!, employeeId, new Date(startDate), new Date(endDate), dias);
+            }
             const created = await tx.leaveRequest.create({
                 data: {
                     tenantId: authReq.tenantId!,
@@ -300,6 +301,7 @@ router.post('/leave/request', authenticate, requireHRAdmin, async (req: any, res
 
         res.json({ message: 'Ausencia registrada correctamente.', leave });
     } catch (error) {
+        if (error instanceof VacacionError) return res.status(400).json({ error: error.message });
         console.error('Leave Error:', error);
         res.status(500).json({ error: 'Error al registrar la ausencia' });
     }
@@ -341,11 +343,10 @@ router.patch('/leave/:id/decision', authenticate, requireHRAdmin, async (req: an
 
         // Aprobación: si es VACATION, se descuenta del saldo al aprobar (Art. 76).
         const dias = Math.max(1, Math.floor((leave.endDate.getTime() - leave.startDate.getTime()) / 86400000) + 1);
-        if (leave.type === 'VACATION') {
-            const err = await validarVacacion(authReq.tenantId!, leave.employeeId, leave.startDate, leave.endDate, dias, leave.id);
-            if (err) return res.status(400).json({ error: err });
-        }
         await prisma.$transaction(async (tx) => {
+            if (leave.type === 'VACATION') {
+                await validarVacacion(tx, authReq.tenantId!, leave.employeeId, leave.startDate, leave.endDate, dias, leave.id);
+            }
             await tx.leaveRequest.update({ where: { id: leave.id }, data: { status: 'APPROVED' } });
             if (leave.type === 'VACATION') {
                 await tx.employee.update({ where: { id: leave.employeeId }, data: { vacationDays: { decrement: dias } } });
@@ -353,6 +354,7 @@ router.patch('/leave/:id/decision', authenticate, requireHRAdmin, async (req: an
         });
         res.json({ message: 'Solicitud aprobada.' });
     } catch (error) {
+        if (error instanceof VacacionError) return res.status(400).json({ error: error.message });
         console.error('Leave decision error:', error);
         res.status(500).json({ error: 'Error al procesar la solicitud.' });
     }
