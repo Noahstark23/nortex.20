@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle } from 'lucide-react';
 import { PinPadClock } from './PinPadClock';
 
 interface LayoutProps {
@@ -179,6 +179,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             { path: '/app/audit',            label: 'Auditoría',        shortLabel: 'Auditoría',group: 'Finanzas',       icon: Shield    },
           ]
           : []),
+
+        // ── PERSONAL ────────────────────────────────────
+        { path: '/app/mi-espacio', label: 'Mi Espacio',       shortLabel: 'Mi Espacio', group: 'Personal', icon: UserCircle },
 
         // ── ADMINISTRACIÓN ──────────────────────────────
         { path: '/app/hr',        label: 'Recursos Humanos', shortLabel: 'RRHH',   group: 'Administración', icon: Briefcase },

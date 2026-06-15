@@ -5954,6 +5954,59 @@ app.get('/api/hrm/dashboard/:year/:month', authenticate, async (req: any, res: a
 });
 
 // ==========================================
+// 👤 MI ESPACIO — Autoservicio del colaborador (Fase C3)
+// ==========================================
+
+// Encuentra el expediente del usuario autenticado (vínculo Employee.userId).
+async function findMyEmployee(authReq: AuthRequest) {
+    return prisma.employee.findFirst({ where: { tenantId: authReq.tenantId!, userId: authReq.userId! } });
+}
+
+// GET /api/me/profile — datos del propio colaborador
+app.get('/api/me/profile', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const emp = await findMyEmployee(authReq);
+        if (!emp) return res.status(404).json({ error: 'Tu usuario no está vinculado a un expediente. Pídele a Recursos Humanos que lo vincule.' });
+        const now = new Date();
+        const meses = Math.max(0, Math.floor((now.getTime() - new Date(emp.hireDate).getTime()) / (86400000 * 30.44)));
+        res.json({
+            id: emp.id,
+            name: `${emp.firstName} ${emp.lastName}`,
+            role: emp.role,
+            cedula: emp.cedula,
+            inss: emp.inss,
+            baseSalary: Number(emp.baseSalary),
+            vacationDays: emp.vacationDays,
+            jornada: emp.jornada,
+            hireDate: emp.hireDate,
+            antiguedadTexto: `${Math.floor(meses / 12)} año(s) ${meses % 12} mes(es)`,
+        });
+    } catch (error) {
+        console.error('Mi perfil error:', error);
+        res.status(500).json({ error: 'Error al obtener tu perfil.' });
+    }
+});
+
+// GET /api/me/payrolls — historial de colillas del propio colaborador
+app.get('/api/me/payrolls', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const emp = await findMyEmployee(authReq);
+        if (!emp) return res.json([]);
+        const payrolls = await prisma.payroll.findMany({
+            where: { tenantId: authReq.tenantId!, employeeId: emp.id },
+            orderBy: [{ year: 'desc' }, { month: 'desc' }],
+            take: 24,
+        });
+        res.json(payrolls);
+    } catch (error) {
+        console.error('Mis colillas error:', error);
+        res.status(500).json({ error: 'Error al obtener tus colillas.' });
+    }
+});
+
+// ==========================================
 // 🌐 PORTAL DE PEDIDOS PÚBLICOS (NO AUTH)
 // ==========================================
 

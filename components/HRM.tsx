@@ -152,6 +152,7 @@ interface ExpedienteData {
     employee: { id: string; name: string; cedula?: string; inss?: string; phone?: string; role: string; baseSalary: number; hireDate: string; status: string; vacationDays: number; bankAccount?: string; jornada?: string; antiguedadTexto: string };
     contracts: ContractRow[];
     judicialDeductions: JudicialRow[];
+    linkedUser?: { id: string; name: string; email?: string | null } | null;
     alertas: string[];
 }
 interface AttendanceRow { employeeId: string; name: string; jornada: string; diasTrabajados: number; horasRegulares: number; horasExtra: number; diasFeriados: number; diasAusencia: number; }
@@ -222,6 +223,9 @@ const HRM: React.FC = () => {
     const [showJudicialForm, setShowJudicialForm] = useState(false);
     const [savingJudicial, setSavingJudicial] = useState(false);
     const [judicialForm, setJudicialForm] = useState({ type: 'PENSION_ALIMENTICIA', amount: '', percentage: '', beneficiary: '' });
+    const [linkableUsers, setLinkableUsers] = useState<{ id: string; name: string; email?: string | null; role: string }[]>([]);
+    const [linkUserId, setLinkUserId] = useState('');
+    const [savingLink, setSavingLink] = useState(false);
 
     // New Employee Form
     const [formData, setFormData] = useState({
@@ -483,7 +487,36 @@ const HRM: React.FC = () => {
         finally { setExpedienteLoading(false); }
     }, [expedienteEmp]);
 
-    useEffect(() => { if (expedienteEmp) { setShowContractForm(false); setShowJudicialForm(false); fetchExpediente(); } }, [expedienteEmp, fetchExpediente]);
+    const fetchLinkable = async () => {
+        try { const res = await fetch('/api/hr/linkable-users', { headers }); if (res.ok) setLinkableUsers(await res.json()); } catch (e) { console.error(e); }
+    };
+
+    useEffect(() => { if (expedienteEmp) { setShowContractForm(false); setShowJudicialForm(false); setLinkUserId(''); fetchExpediente(); fetchLinkable(); } }, [expedienteEmp, fetchExpediente]);
+
+    const linkUser = async () => {
+        if (!expedienteEmp || !linkUserId) return;
+        setSavingLink(true);
+        try {
+            const res = await fetch(`/api/hr/employees/${expedienteEmp.id}/link-user`, { method: 'PATCH', headers, body: JSON.stringify({ userId: linkUserId }) });
+            const d = await res.json();
+            if (!res.ok) { alert(d.error || 'Error al vincular'); return; }
+            setLinkUserId('');
+            await fetchExpediente();
+            await fetchLinkable();
+        } catch { alert('Error de conexión'); }
+        finally { setSavingLink(false); }
+    };
+
+    const unlinkUser = async () => {
+        if (!expedienteEmp || !confirm('¿Desvincular la cuenta de acceso? El colaborador dejará de ver su Mi Espacio.')) return;
+        setSavingLink(true);
+        try {
+            const res = await fetch(`/api/hr/employees/${expedienteEmp.id}/link-user`, { method: 'PATCH', headers, body: JSON.stringify({ userId: null }) });
+            if (res.ok) { await fetchExpediente(); await fetchLinkable(); }
+            else { const d = await res.json(); alert(d.error || 'Error'); }
+        } catch { alert('Error de conexión'); }
+        finally { setSavingLink(false); }
+    };
 
     const openContractForm = () => {
         if (!expedienteEmp) return;
@@ -1963,6 +1996,27 @@ const HRM: React.FC = () => {
                                                 </div>
                                             </div>
                                         ))}
+                                    </div>
+                                )}
+
+                                {/* Cuenta de acceso (Mi Espacio) */}
+                                <h4 className="font-bold text-slate-700 mt-6 mb-2">Cuenta de acceso (Mi Espacio)</h4>
+                                {expediente.linkedUser ? (
+                                    <div className="flex items-center justify-between border border-slate-200 rounded-xl px-4 py-3">
+                                        <div>
+                                            <p className="font-semibold text-slate-700">{expediente.linkedUser.name}</p>
+                                            {expediente.linkedUser.email && <p className="text-xs text-slate-500">{expediente.linkedUser.email}</p>}
+                                        </div>
+                                        <button onClick={unlinkUser} disabled={savingLink} className="text-xs text-rose-500 hover:text-rose-700 font-semibold underline disabled:opacity-50">Desvincular</button>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <select value={linkUserId} onChange={e => setLinkUserId(e.target.value)} className="flex-1 min-w-[180px] border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                            <option value="">Seleccionar cuenta de usuario…</option>
+                                            {linkableUsers.map(u => <option key={u.id} value={u.id}>{u.name}{u.email ? ` (${u.email})` : ''} · {u.role}</option>)}
+                                        </select>
+                                        <button onClick={linkUser} disabled={savingLink || !linkUserId} className="bg-slate-700 text-white font-bold px-4 py-2 rounded-lg hover:bg-slate-800 disabled:opacity-50 text-sm">Vincular</button>
+                                        {linkableUsers.length === 0 && <p className="w-full text-xs text-slate-400">No hay cuentas libres. Creá un usuario en "Mi Equipo" y vinculalo aquí.</p>}
                                     </div>
                                 )}
                             </>
