@@ -3267,7 +3267,9 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             const workedByEmp = new Map<string, Set<string>>();
             for (const s of shiftsMes) {
                 if (!s.employeeId) continue;
-                const ds = s.startTime.toISOString().slice(0, 10);
+                // Día calendario LOCAL de Nicaragua (UTC-6): un turno nocturno no
+                // debe contarse en el día UTC siguiente.
+                const ds = new Date(s.startTime.getTime() - 6 * 3600 * 1000).toISOString().slice(0, 10);
                 if (!holidaySet.has(ds)) continue;
                 const set = workedByEmp.get(s.employeeId) ?? new Set<string>();
                 set.add(ds);
@@ -6053,6 +6055,18 @@ app.post('/api/me/leave', authenticate, async (req: any, res: any) => {
     try {
         const emp = await findMyEmployee(authReq);
         if (!emp) return res.status(404).json({ error: 'Tu usuario no está vinculado a un expediente.' });
+        // Evita apilar solicitudes de vacaciones solapadas (el saldo se valida al aprobar).
+        if (type === 'VACATION') {
+            const solapada = await prisma.leaveRequest.findFirst({
+                where: {
+                    tenantId: authReq.tenantId!, employeeId: emp.id, type: 'VACATION',
+                    status: { in: ['PENDING', 'APPROVED'] },
+                    startDate: { lte: new Date(endDate) }, endDate: { gte: new Date(startDate) },
+                },
+                select: { id: true },
+            });
+            if (solapada) return res.status(400).json({ error: 'Ya tenés una solicitud de vacaciones que se solapa con esas fechas.' });
+        }
         const leave = await prisma.leaveRequest.create({
             data: {
                 tenantId: authReq.tenantId!, employeeId: emp.id, type,
