@@ -33,9 +33,19 @@ interface MePayroll {
     status: string;
 }
 
+interface MeLeave { id: string; type: string; startDate: string; endDate: string; status: string; reason?: string | null; }
+interface MeAdvance { id: string; amount: number; fee: number; status: string; }
+
 const C = (n: number) => `C$ ${Number(n).toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const JORNADA: Record<string, string> = { DIURNA: 'Diurna (8h)', NOCTURNA: 'Nocturna (7h)', MIXTA: 'Mixta (7.5h)' };
+const LEAVE_LABELS: Record<string, string> = { UNPAID: 'Permiso sin goce', VACATION: 'Vacaciones', SICK: 'Incapacidad', MATERNITY: 'Maternidad' };
+const fmtD = (s: string) => new Date(s).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: '2-digit' });
+const statusBadge = (s: string) =>
+    s === 'APPROVED' ? 'bg-emerald-500/15 text-emerald-300'
+        : s === 'REJECTED' ? 'bg-rose-500/15 text-rose-300'
+            : 'bg-amber-500/15 text-amber-300';
+const statusText = (s: string) => s === 'APPROVED' ? 'Aprobada' : s === 'REJECTED' ? 'Rechazada' : 'Pendiente';
 
 const MiEspacio: React.FC = () => {
     const token = localStorage.getItem('nortex_token');
@@ -43,8 +53,21 @@ const MiEspacio: React.FC = () => {
 
     const [profile, setProfile] = useState<MeProfile | null>(null);
     const [payrolls, setPayrolls] = useState<MePayroll[]>([]);
+    const [leaves, setLeaves] = useState<MeLeave[]>([]);
+    const [advances, setAdvances] = useState<MeAdvance[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+
+    const [leaveForm, setLeaveForm] = useState({ type: 'VACATION', startDate: '', endDate: '', reason: '' });
+    const [advAmount, setAdvAmount] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+
+    const loadRequests = async () => {
+        try {
+            const res = await fetch('/api/me/requests', { headers: auth });
+            if (res.ok) { const d = await res.json(); setLeaves(d.leaves || []); setAdvances(d.advances || []); }
+        } catch { /* noop */ }
+    };
 
     useEffect(() => {
         (async () => {
@@ -56,10 +79,41 @@ const MiEspacio: React.FC = () => {
                 if (res.ok) setProfile(await res.json());
                 const pr = await fetch('/api/me/payrolls', { headers: auth });
                 if (pr.ok) setPayrolls(await pr.json());
+                await loadRequests();
             } catch { setError('No se pudo cargar tu espacio.'); }
             finally { setLoading(false); }
         })();
     }, [auth]);
+
+    const submitLeave = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!leaveForm.startDate || !leaveForm.endDate) return;
+        setSubmitting(true);
+        try {
+            const res = await fetch('/api/me/leave', { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(leaveForm) });
+            const d = await res.json();
+            if (!res.ok) { alert(d.error || 'Error'); return; }
+            setLeaveForm({ type: 'VACATION', startDate: '', endDate: '', reason: '' });
+            await loadRequests();
+            alert(d.message);
+        } catch { alert('Error de conexión'); }
+        finally { setSubmitting(false); }
+    };
+
+    const submitAdvance = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!advAmount) return;
+        setSubmitting(true);
+        try {
+            const res = await fetch('/api/me/advance', { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ amount: advAmount }) });
+            const d = await res.json();
+            if (!res.ok) { alert(d.error || 'Error'); return; }
+            setAdvAmount('');
+            await loadRequests();
+            alert(d.message);
+        } catch { alert('Error de conexión'); }
+        finally { setSubmitting(false); }
+    };
 
     const printColilla = (p: MePayroll) => {
         const nombre = profile?.name || 'Colaborador';
@@ -98,6 +152,8 @@ const MiEspacio: React.FC = () => {
         const w = window.open('', '_blank');
         if (w) { w.document.write(html); w.document.close(); setTimeout(() => w.print(), 400); }
     };
+
+    const inputCls = 'w-full bg-white/[0.03] border border-white/[0.08] text-white px-3 py-2 rounded-xl text-sm focus:outline-none focus:border-brand placeholder:text-slate-600';
 
     if (loading) {
         return <div className="h-full flex items-center justify-center bg-surface-950"><Loader2 className="animate-spin text-brand-300" /></div>;
@@ -180,6 +236,55 @@ const MiEspacio: React.FC = () => {
                         </table>
                     </div>
                 </div>
+
+                {/* Solicitudes */}
+                <div className="grid md:grid-cols-2 gap-4 mt-6">
+                    <form onSubmit={submitLeave} className="panel-premium p-5">
+                        <h3 className="text-white font-semibold mb-3">Solicitar ausencia</h3>
+                        <div className="space-y-3">
+                            <select value={leaveForm.type} onChange={e => setLeaveForm({ ...leaveForm, type: e.target.value })} className={inputCls}>
+                                <option value="VACATION">Vacaciones</option>
+                                <option value="UNPAID">Permiso sin goce</option>
+                                <option value="SICK">Incapacidad</option>
+                                <option value="MATERNITY">Maternidad</option>
+                            </select>
+                            <div className="grid grid-cols-2 gap-2">
+                                <input type="date" required value={leaveForm.startDate} onChange={e => setLeaveForm({ ...leaveForm, startDate: e.target.value })} className={`${inputCls} font-mono`} />
+                                <input type="date" required value={leaveForm.endDate} onChange={e => setLeaveForm({ ...leaveForm, endDate: e.target.value })} className={`${inputCls} font-mono`} />
+                            </div>
+                            <input value={leaveForm.reason} onChange={e => setLeaveForm({ ...leaveForm, reason: e.target.value })} placeholder="Motivo (opcional)" className={inputCls} />
+                            <button type="submit" disabled={submitting} className="btn-primary w-full disabled:opacity-50">Enviar solicitud</button>
+                        </div>
+                    </form>
+
+                    <form onSubmit={submitAdvance} className="panel-premium p-5">
+                        <h3 className="text-white font-semibold mb-3">Solicitar adelanto</h3>
+                        <p className="text-xs text-slate-500 mb-3">Hasta el 30% de tu salario. Se descuenta de tu próxima nómina (5% de comisión).</p>
+                        <input inputMode="decimal" value={advAmount} onChange={e => setAdvAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="Monto C$" className={`${inputCls} font-mono`} />
+                        <button type="submit" disabled={submitting} className="btn-primary w-full mt-3 disabled:opacity-50">Solicitar adelanto</button>
+                    </form>
+                </div>
+
+                {/* Mis solicitudes */}
+                {(leaves.length > 0 || advances.length > 0) && (
+                    <div className="panel-premium p-5 mt-4">
+                        <h3 className="text-white font-semibold mb-3">Mis solicitudes</h3>
+                        <div className="space-y-2">
+                            {leaves.map(l => (
+                                <div key={l.id} className="flex items-center justify-between text-sm border-b border-white/[0.04] pb-2">
+                                    <span className="text-slate-300">{LEAVE_LABELS[l.type] || l.type} · <span className="font-mono text-xs text-slate-400">{fmtD(l.startDate)} → {fmtD(l.endDate)}</span></span>
+                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${statusBadge(l.status)}`}>{statusText(l.status)}</span>
+                                </div>
+                            ))}
+                            {advances.map(a => (
+                                <div key={a.id} className="flex items-center justify-between text-sm border-b border-white/[0.04] pb-2">
+                                    <span className="text-slate-300">Adelanto {C(a.amount)} <span className="text-slate-500 text-xs">(+{C(a.fee)} comisión)</span></span>
+                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${statusBadge(a.status)}`}>{statusText(a.status === 'DEDUCTED' ? 'APPROVED' : a.status)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

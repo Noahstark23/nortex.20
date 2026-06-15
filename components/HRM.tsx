@@ -189,6 +189,9 @@ const HRM: React.FC = () => {
     const [leaveForm, setLeaveForm] = useState({ employeeId: '', type: 'UNPAID', startDate: '', endDate: '', reason: '' });
     const [savingLeave, setSavingLeave] = useState(false);
 
+    // Adelantos state
+    const [advancesList, setAdvancesList] = useState<{ id: string; amount: number; fee: number; status: string; employee?: { firstName: string; lastName: string } }[]>([]);
+
     // Aguinaldo state
     const [aguinaldoYear, setAguinaldoYear] = useState(new Date().getFullYear());
     const [aguinaldo, setAguinaldo] = useState<AguinaldoData | null>(null);
@@ -319,6 +322,25 @@ const HRM: React.FC = () => {
         finally { setSavingLeave(false); }
     };
 
+    const decideLeave = async (id: string, action: 'APPROVED' | 'REJECTED') => {
+        try {
+            const res = await fetch(`/api/hr/leave/${id}/decision`, { method: 'PATCH', headers, body: JSON.stringify({ action }) });
+            if (res.ok) await fetchLeaves();
+            else { const d = await res.json(); alert(d.error || 'Error'); }
+        } catch { alert('Error de conexión'); }
+    };
+
+    const fetchAdvances = async () => {
+        try { const res = await fetch('/api/hr/advances', { headers }); if (res.ok) setAdvancesList(await res.json()); } catch (e) { console.error(e); }
+    };
+    const decideAdvance = async (advanceId: string, action: 'APPROVED' | 'REJECTED') => {
+        try {
+            const res = await fetch('/api/hr/advance/approve', { method: 'POST', headers, body: JSON.stringify({ advanceId, action }) });
+            if (res.ok) await fetchAdvances();
+            else { const d = await res.json(); alert(d.error || 'Error'); }
+        } catch { alert('Error de conexión'); }
+    };
+
     const fetchAguinaldo = useCallback(async () => {
         try {
             const res = await fetch(`/api/payroll/aguinaldo/${aguinaldoYear}`, { headers });
@@ -422,6 +444,7 @@ const HRM: React.FC = () => {
     useEffect(() => { if (activeTab === 'PAYROLL') fetchPayrolls(); }, [activeTab, fetchPayrolls]);
     useEffect(() => { if (activeTab === 'LIABILITIES') fetchLiabilities(); }, [activeTab]);
     useEffect(() => { if (activeTab === 'LEAVES') fetchLeaves(); }, [activeTab]);
+    useEffect(() => { if (activeTab === 'ADVANCES') fetchAdvances(); }, [activeTab]);
     useEffect(() => { if (activeTab === 'AGUINALDO') fetchAguinaldo(); }, [activeTab, fetchAguinaldo]);
 
     const fetchDashboard = useCallback(async () => {
@@ -1396,11 +1419,33 @@ const HRM: React.FC = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
-                                    <tr>
-                                        <td colSpan={6} className="p-8 text-center text-slate-400">
-                                            No hay solicitudes de adelanto pendientes.
-                                        </td>
-                                    </tr>
+                                    {advancesList.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={6} className="p-8 text-center text-slate-400">
+                                                No hay solicitudes de adelanto.
+                                            </td>
+                                        </tr>
+                                    ) : advancesList.map(a => (
+                                        <tr key={a.id} className="hover:bg-slate-50">
+                                            <td className="p-4 font-bold text-slate-700">{a.employee ? `${a.employee.firstName} ${a.employee.lastName}` : '—'}</td>
+                                            <td className="p-4 text-center text-xs text-slate-400">—</td>
+                                            <td className="p-4 text-slate-500 text-sm">Adelanto de salario</td>
+                                            <td className="p-4 text-right font-mono font-bold text-slate-700">{formatC(a.amount)}</td>
+                                            <td className="p-4 text-right font-mono text-emerald-600">{formatC(a.fee)}</td>
+                                            <td className="p-4 text-center">
+                                                {a.status === 'PENDING' ? (
+                                                    <div className="flex items-center justify-center gap-2">
+                                                        <button onClick={() => decideAdvance(a.id, 'APPROVED')} className="px-2 py-1 bg-green-50 text-green-700 rounded text-xs font-bold hover:bg-green-100">Aprobar</button>
+                                                        <button onClick={() => decideAdvance(a.id, 'REJECTED')} className="px-2 py-1 bg-red-50 text-red-600 rounded text-xs font-bold hover:bg-red-100">Rechazar</button>
+                                                    </div>
+                                                ) : (
+                                                    <span className={`px-2 py-1 rounded text-xs font-bold ${a.status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                                        {a.status === 'APPROVED' ? '✅ Aprobado' : a.status === 'DEDUCTED' ? '✅ Descontado' : a.status === 'REJECTED' ? '❌ Rechazado' : a.status}
+                                                    </span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
                                 </tbody>
                             </table>
                         </div>
@@ -1483,7 +1528,14 @@ const HRM: React.FC = () => {
                                             <td className="p-4 text-center font-mono text-xs text-slate-600">{fmtDate(l.startDate)} → {fmtDate(l.endDate)}</td>
                                             <td className="p-4 text-sm text-slate-500">{l.reason || '—'}</td>
                                             <td className="p-4 text-center">
-                                                <span className="px-2 py-1 rounded text-xs font-bold bg-green-100 text-green-700">{l.status === 'APPROVED' ? '✅ Aprobada' : l.status}</span>
+                                                {l.status === 'PENDING' ? (
+                                                    <div className="flex items-center justify-center gap-2">
+                                                        <button onClick={() => decideLeave(l.id, 'APPROVED')} className="px-2 py-1 bg-green-50 text-green-700 rounded text-xs font-bold hover:bg-green-100">Aprobar</button>
+                                                        <button onClick={() => decideLeave(l.id, 'REJECTED')} className="px-2 py-1 bg-red-50 text-red-600 rounded text-xs font-bold hover:bg-red-100">Rechazar</button>
+                                                    </div>
+                                                ) : (
+                                                    <span className={`px-2 py-1 rounded text-xs font-bold ${l.status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{l.status === 'APPROVED' ? '✅ Aprobada' : l.status === 'REJECTED' ? '❌ Rechazada' : l.status}</span>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}
