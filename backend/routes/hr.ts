@@ -18,6 +18,42 @@ const requireHRAdmin = (req: any, res: any, next: any) => {
     next();
 };
 
+// Domingo de Pascua (algoritmo gregoriano) — para Jueves/Viernes Santo.
+function easterSunday(year: number): Date {
+    const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+    const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4), k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31);
+    const day = ((h + l - 7 * m + 114) % 31) + 1;
+    return new Date(Date.UTC(year, month - 1, day));
+}
+
+// Siembra idempotente de los feriados nacionales de Nicaragua para un año.
+async function ensureNationalHolidays(tenantId: string, year: number): Promise<void> {
+    const easter = easterSunday(year);
+    const jueves = new Date(easter); jueves.setUTCDate(jueves.getUTCDate() - 3);
+    const viernes = new Date(easter); viernes.setUTCDate(viernes.getUTCDate() - 2);
+    const fechas = [
+        { date: new Date(Date.UTC(year, 0, 1)), name: 'Año Nuevo' },
+        { date: jueves, name: 'Jueves Santo' },
+        { date: viernes, name: 'Viernes Santo' },
+        { date: new Date(Date.UTC(year, 4, 1)), name: 'Día del Trabajo' },
+        { date: new Date(Date.UTC(year, 6, 19)), name: 'Día de la Revolución' },
+        { date: new Date(Date.UTC(year, 8, 14)), name: 'Batalla de San Jacinto' },
+        { date: new Date(Date.UTC(year, 8, 15)), name: 'Independencia' },
+        { date: new Date(Date.UTC(year, 11, 8)), name: 'Purísima Concepción' },
+        { date: new Date(Date.UTC(year, 11, 25)), name: 'Navidad' },
+    ];
+    await prisma.holiday.createMany({
+        data: fechas.map(f => ({ tenantId, date: f.date, name: f.name, national: true })),
+        skipDuplicates: true,
+    });
+}
+
 // ==========================================
 // 🕒 TERMINAL DE ASISTENCIA (CLOCK IN/OUT)
 // ==========================================
@@ -420,6 +456,66 @@ router.patch('/judicial/:id/end', authenticate, requireHRAdmin, async (req: any,
     } catch (error) {
         console.error('Judicial end error:', error);
         res.status(500).json({ error: 'Error al finalizar la deducción.' });
+    }
+});
+
+// ==========================================
+// 📅 FERIADOS — calendario editable (Art. 66 Ley 185)
+// ==========================================
+
+// GET /api/hr/holidays/:year — feriados del año (siembra los nacionales)
+router.get('/holidays/:year', authenticate, requireHRAdmin, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const year = parseInt(req.params.year);
+    if (isNaN(year)) return res.status(400).json({ error: 'Año inválido.' });
+    try {
+        await ensureNationalHolidays(authReq.tenantId!, year);
+        const holidays = await prisma.holiday.findMany({
+            where: {
+                tenantId: authReq.tenantId!,
+                date: { gte: new Date(Date.UTC(year, 0, 1)), lte: new Date(Date.UTC(year, 11, 31)) },
+            },
+            orderBy: { date: 'asc' },
+        });
+        res.json(holidays.map((h: any) => ({ id: h.id, date: h.date, name: h.name, national: h.national })));
+    } catch (error) {
+        console.error('Holidays list error:', error);
+        res.status(500).json({ error: 'Error al obtener los feriados.' });
+    }
+});
+
+// POST /api/hr/holidays — agregar un feriado local
+router.post('/holidays', authenticate, requireHRAdmin, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { date, name } = req.body;
+    if (!date || !name) return res.status(400).json({ error: 'Fecha y nombre son requeridos.' });
+    try {
+        const d = new Date(date);
+        const dateOnly = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+        const holiday = await prisma.holiday.upsert({
+            where: { tenantId_date: { tenantId: authReq.tenantId!, date: dateOnly } },
+            create: { tenantId: authReq.tenantId!, date: dateOnly, name, national: false },
+            update: { name },
+        });
+        res.json({ message: 'Feriado agregado.', holiday });
+    } catch (error) {
+        console.error('Holiday create error:', error);
+        res.status(500).json({ error: 'Error al agregar el feriado.' });
+    }
+});
+
+// DELETE /api/hr/holidays/:id — eliminar un feriado local (los nacionales no)
+router.delete('/holidays/:id', authenticate, requireHRAdmin, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const result = await prisma.holiday.deleteMany({
+            where: { id: req.params.id, tenantId: authReq.tenantId!, national: false },
+        });
+        if (result.count === 0) return res.status(404).json({ error: 'Feriado no encontrado o es nacional (no se puede borrar).' });
+        res.json({ message: 'Feriado eliminado.' });
+    } catch (error) {
+        console.error('Holiday delete error:', error);
+        res.status(500).json({ error: 'Error al eliminar el feriado.' });
     }
 });
 

@@ -58,6 +58,8 @@ export interface PayrollCalculation {
     commissions: number;
     overtimePay: number;   // Horas extra al doble (Art. 62 Ley 185)
     horasExtra: number;    // Cantidad de horas extra del período (informativo)
+    holidayPay: number;    // Recargo por feriado trabajado (Art. 68)
+    diasFeriados: number;  // Días feriados laborados (informativo)
     totalIncome: number;
 
     // Deducciones de Ley
@@ -116,6 +118,7 @@ export function calculatePayroll(
         absenceDeduction?: number;
         irAcumulado?: { mes: number; netoGravablePrevio: number; irRetenidoPrevio: number };
         judicialDeductions?: { amount?: number | null; percentage?: number | null }[];
+        holidayDays?: number;
     }
 ): PayrollCalculation {
     const dBase = new Decimal(baseSalary);
@@ -132,7 +135,12 @@ export function calculatePayroll(
     const horaOrdinaria = dBase.dividedBy(240);
     const overtimePay  = horasExtra.mul(horaOrdinaria).mul(2).toDecimalPlaces(4);
 
-    const totalIncome = earnedBase.plus(dComm).plus(overtimePay);
+    // Feriado trabajado: recargo del 100% (un día extra por feriado laborado),
+    // pues el salario mensual ya cubre el día (Art. 68 Ley 185).
+    const diasFeriados = new Decimal(opts?.holidayDays ?? 0);
+    const holidayPay = diasFeriados.mul(dBase.dividedBy(30)).toDecimalPlaces(4);
+
+    const totalIncome = earnedBase.plus(dComm).plus(overtimePay).plus(holidayPay);
     // B4: INSS patronal parametrizable (21.5% <50 emp · 22.5% ≥50). Default legal.
     const inssPatronalRate = opts?.inssPatronalRate != null ? new Decimal(opts.inssPatronalRate) : INSS_PATRONAL_RATE;
 
@@ -204,6 +212,8 @@ export function calculatePayroll(
         commissions:            dComm.toNumber(),
         overtimePay:            overtimePay.toNumber(),
         horasExtra:             horasExtra.toNumber(),
+        holidayPay:             holidayPay.toNumber(),
+        diasFeriados:           diasFeriados.toNumber(),
         totalIncome:            totalIncome.toNumber(),
         inssLaboral:            inssLaboral.toNumber(),
         irLaboral:              irLaboral.toNumber(),

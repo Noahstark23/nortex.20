@@ -293,6 +293,20 @@ model JudicialDeduction {
   @@index([employeeId])
 }
 
+// Calendario de feriados (Art. 66 Ley 185). Los nacionales se siembran por
+// tenant/año; el negocio puede agregar fiestas locales (national = false).
+model Holiday {
+  id        String   @id @default(cuid())
+  tenantId  String
+  date      DateTime @db.Date
+  name      String
+  national  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, date])
+  @@index([tenantId])
+}
+
 // Expediente digital — contrato de trabajo (Art. 19-28 Ley 185; el MITRAB
 // exige contrato escrito). Un empleado puede tener varios (renovaciones).
 model EmploymentContract {
@@ -368,6 +382,10 @@ model Payroll {
   overtimePay      Decimal @default(0) @db.Decimal(10, 2)
   horasExtra       Float   @default(0)
   advanceDeduction Decimal @default(0) @db.Decimal(10, 2)
+
+  // Fase C2: feriados trabajados (Art. 68, recargo del 100% por día)
+  holidayPay   Decimal @default(0) @db.Decimal(10, 2)
+  diasFeriados Float   @default(0)
 
   // Fase A p2: ausencias sin goce de salario (descuentan días trabajados)
   absenceDeduction Decimal @default(0) @db.Decimal(10, 2)
