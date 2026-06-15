@@ -6006,6 +6006,73 @@ app.get('/api/me/payrolls', authenticate, async (req: any, res: any) => {
     }
 });
 
+// POST /api/me/leave — el colaborador solicita una ausencia (queda PENDING)
+app.post('/api/me/leave', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { type, startDate, endDate, reason } = req.body;
+    if (!['SICK', 'VACATION', 'UNPAID', 'MATERNITY'].includes(type) || !startDate || !endDate) {
+        return res.status(400).json({ error: 'Tipo y fechas son requeridos.' });
+    }
+    if (new Date(endDate) < new Date(startDate)) {
+        return res.status(400).json({ error: 'La fecha final no puede ser anterior a la inicial.' });
+    }
+    try {
+        const emp = await findMyEmployee(authReq);
+        if (!emp) return res.status(404).json({ error: 'Tu usuario no está vinculado a un expediente.' });
+        const leave = await prisma.leaveRequest.create({
+            data: {
+                tenantId: authReq.tenantId!, employeeId: emp.id, type,
+                startDate: new Date(startDate), endDate: new Date(endDate),
+                reason: reason || null, status: 'PENDING',
+            },
+        });
+        res.json({ message: 'Solicitud enviada. Queda pendiente de aprobación.', leave });
+    } catch (error) {
+        console.error('Mi solicitud de ausencia error:', error);
+        res.status(500).json({ error: 'Error al enviar la solicitud.' });
+    }
+});
+
+// POST /api/me/advance — el colaborador solicita un adelanto (queda PENDING)
+app.post('/api/me/advance', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const monto = Number(req.body?.amount);
+    if (!monto || monto <= 0) return res.status(400).json({ error: 'Monto inválido.' });
+    try {
+        const emp = await findMyEmployee(authReq);
+        if (!emp) return res.status(404).json({ error: 'Tu usuario no está vinculado a un expediente.' });
+        const max = Number(emp.baseSalary) * 0.30;
+        if (monto > max) return res.status(400).json({ error: `El monto excede tu límite permitido de C$ ${max.toFixed(2)} (30% del salario).` });
+        const advance = await prisma.salaryAdvance.create({
+            data: { tenantId: authReq.tenantId!, employeeId: emp.id, amount: monto, fee: monto * 0.05, status: 'PENDING' },
+        });
+        res.json({ message: 'Solicitud de adelanto enviada.', advance });
+    } catch (error) {
+        console.error('Mi adelanto error:', error);
+        res.status(500).json({ error: 'Error al solicitar el adelanto.' });
+    }
+});
+
+// GET /api/me/requests — mis solicitudes (ausencias + adelantos) con su estado
+app.get('/api/me/requests', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const emp = await findMyEmployee(authReq);
+        if (!emp) return res.json({ leaves: [], advances: [] });
+        const [leaves, advances] = await Promise.all([
+            prisma.leaveRequest.findMany({ where: { tenantId: authReq.tenantId!, employeeId: emp.id }, orderBy: { startDate: 'desc' }, take: 12 }),
+            prisma.salaryAdvance.findMany({ where: { tenantId: authReq.tenantId!, employeeId: emp.id }, orderBy: { id: 'desc' }, take: 12 }),
+        ]);
+        res.json({
+            leaves: leaves.map(l => ({ id: l.id, type: l.type, startDate: l.startDate, endDate: l.endDate, status: l.status, reason: l.reason })),
+            advances: advances.map(a => ({ id: a.id, amount: Number(a.amount), fee: Number(a.fee), status: a.status })),
+        });
+    } catch (error) {
+        console.error('Mis solicitudes error:', error);
+        res.status(500).json({ error: 'Error al obtener tus solicitudes.' });
+    }
+});
+
 // ==========================================
 // 🌐 PORTAL DE PEDIDOS PÚBLICOS (NO AUTH)
 // ==========================================

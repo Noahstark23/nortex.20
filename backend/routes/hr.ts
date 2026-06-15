@@ -207,6 +207,26 @@ router.post('/advance/approve', authenticate, requireHRAdmin, async (req: any, r
     }
 });
 
+// GET /api/hr/advances — listado de adelantos (para la pestaña de RRHH)
+router.get('/advances', authenticate, requireHRAdmin, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const advances = await prisma.salaryAdvance.findMany({
+            where: { tenantId: authReq.tenantId! },
+            include: { employee: { select: { firstName: true, lastName: true } } },
+            orderBy: { id: 'desc' },
+            take: 100,
+        });
+        res.json(advances.map((a: any) => ({
+            id: a.id, amount: Number(a.amount), fee: Number(a.fee), status: a.status,
+            employee: a.employee,
+        })));
+    } catch (error) {
+        console.error('Advances list error:', error);
+        res.status(500).json({ error: 'Error al obtener los adelantos.' });
+    }
+});
+
 // ==========================================
 // 🏥 NICALABOR LEAVE MANAGEMENT
 // ==========================================
@@ -275,6 +295,39 @@ router.get('/leaves', authenticate, requireHRAdmin, async (req: any, res: any) =
     } catch (error) {
         console.error('Leaves list error:', error);
         res.status(500).json({ error: 'Error al obtener las ausencias' });
+    }
+});
+
+// PATCH /api/hr/leave/:id/decision — aprobar o rechazar una solicitud PENDING
+router.patch('/leave/:id/decision', authenticate, requireHRAdmin, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { action } = req.body; // APPROVED | REJECTED
+    if (!['APPROVED', 'REJECTED'].includes(action)) {
+        return res.status(400).json({ error: 'Acción inválida.' });
+    }
+    try {
+        const leave = await prisma.leaveRequest.findFirst({
+            where: { id: req.params.id, tenantId: authReq.tenantId!, status: 'PENDING' },
+        });
+        if (!leave) return res.status(404).json({ error: 'Solicitud no encontrada o ya procesada.' });
+
+        if (action === 'REJECTED') {
+            await prisma.leaveRequest.update({ where: { id: leave.id }, data: { status: 'REJECTED' } });
+            return res.json({ message: 'Solicitud rechazada.' });
+        }
+
+        // Aprobación: si es VACATION, se descuenta del saldo al aprobar (Art. 76).
+        const dias = Math.max(1, Math.floor((leave.endDate.getTime() - leave.startDate.getTime()) / 86400000) + 1);
+        await prisma.$transaction(async (tx) => {
+            await tx.leaveRequest.update({ where: { id: leave.id }, data: { status: 'APPROVED' } });
+            if (leave.type === 'VACATION') {
+                await tx.employee.update({ where: { id: leave.employeeId }, data: { vacationDays: { decrement: dias } } });
+            }
+        });
+        res.json({ message: 'Solicitud aprobada.' });
+    } catch (error) {
+        console.error('Leave decision error:', error);
+        res.status(500).json({ error: 'Error al procesar la solicitud.' });
     }
 });
 
