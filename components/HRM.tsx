@@ -134,6 +134,7 @@ interface JudicialRow {
     beneficiary: string | null; priority: number; startDate: string;
 }
 interface HolidayRow { id: string; date: string; name: string; national: boolean; }
+interface HRAlert { severity: 'danger' | 'warning' | 'info'; message: string; }
 interface HRDashboard {
     period: string;
     headcount: number;
@@ -201,6 +202,7 @@ const HRM: React.FC = () => {
     const [dashMonth, setDashMonth] = useState(new Date().getMonth() + 1);
     const [dashYear, setDashYear] = useState(new Date().getFullYear());
     const [dashboard, setDashboard] = useState<HRDashboard | null>(null);
+    const [alerts, setAlerts] = useState<HRAlert[]>([]);
 
     // Feriados state
     const [holidayYear, setHolidayYear] = useState(new Date().getFullYear());
@@ -454,6 +456,11 @@ const HRM: React.FC = () => {
         } catch (e) { console.error(e); }
     }, [dashMonth, dashYear]);
     useEffect(() => { if (activeTab === 'DASHBOARD') fetchDashboard(); }, [activeTab, fetchDashboard]);
+
+    const fetchAlerts = async () => {
+        try { const res = await fetch('/api/hr/alerts', { headers }); if (res.ok) { const d = await res.json(); setAlerts(d.alerts || []); } } catch (e) { console.error(e); }
+    };
+    useEffect(() => { fetchAlerts(); }, []);
 
     const fetchHolidays = useCallback(async () => {
         try {
@@ -868,6 +875,7 @@ const HRM: React.FC = () => {
                         className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'DASHBOARD' ? 'bg-nortex-50 text-nortex-700' : 'text-slate-500 hover:bg-slate-50'}`}
                     >
                         <BarChart3 size={18} /> Tablero
+                        {alerts.length > 0 && <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-700">{alerts.length}</span>}
                     </button>
                     <button
                         onClick={() => setActiveTab('TEAM')}
@@ -943,6 +951,16 @@ const HRM: React.FC = () => {
                                 </select>
                             </div>
                         </div>
+
+                        {alerts.length > 0 && (
+                            <div className="mb-6 space-y-2">
+                                <h4 className="text-sm font-bold text-slate-600 flex items-center gap-2"><AlertTriangle size={15} className="text-amber-500" /> Alertas ({alerts.length})</h4>
+                                {alerts.map((a, i) => {
+                                    const cls = a.severity === 'danger' ? 'bg-red-50 border-red-200 text-red-700' : a.severity === 'warning' ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-blue-50 border-blue-200 text-blue-700';
+                                    return <div key={i} className={`text-sm border rounded-lg px-4 py-2.5 ${cls}`}>{a.message}</div>;
+                                })}
+                            </div>
+                        )}
 
                         {!dashboard ? (
                             <div className="py-12 text-center text-slate-400">Cargando…</div>

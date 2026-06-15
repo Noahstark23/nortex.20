@@ -6073,6 +6073,62 @@ app.get('/api/me/requests', authenticate, async (req: any, res: any) => {
     }
 });
 
+// GET /api/hr/alerts — centro de alertas proactivas de RRHH (Fase C6)
+app.get('/api/hr/alerts', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    try {
+        const now = new Date();
+        const DAY = 86400000;
+        const [employees, contracts, pendingLeaves, pendingAdvances] = await Promise.all([
+            prisma.employee.findMany({ where: { tenantId, status: 'ACTIVE' }, select: { id: true, cedula: true, inss: true } }),
+            prisma.employmentContract.findMany({ where: { tenantId, status: 'ACTIVE' }, select: { employeeId: true, endDate: true, probationEnd: true } }),
+            prisma.leaveRequest.count({ where: { tenantId, status: 'PENDING' } }),
+            prisma.salaryAdvance.count({ where: { tenantId, status: 'PENDING' } }),
+        ]);
+
+        const alerts: { severity: 'danger' | 'warning' | 'info'; message: string }[] = [];
+
+        let porVencer = 0, vencidos = 0, prueba = 0;
+        for (const c of contracts) {
+            if (c.endDate) {
+                const d = Math.ceil((c.endDate.getTime() - now.getTime()) / DAY);
+                if (d < 0) vencidos++; else if (d <= 30) porVencer++;
+            }
+            if (c.probationEnd) {
+                const d = Math.ceil((c.probationEnd.getTime() - now.getTime()) / DAY);
+                if (d >= 0 && d <= 7) prueba++;
+            }
+        }
+        if (vencidos > 0) alerts.push({ severity: 'danger', message: `${vencidos} contrato(s) vencido(s) — renovar o liquidar.` });
+        if (porVencer > 0) alerts.push({ severity: 'warning', message: `${porVencer} contrato(s) por vencer en ≤30 días.` });
+        if (prueba > 0) alerts.push({ severity: 'warning', message: `${prueba} período(s) de prueba terminando en ≤7 días.` });
+
+        const conContrato = new Set(contracts.map(c => c.employeeId));
+        const sinContrato = employees.filter(e => !conContrato.has(e.id)).length;
+        if (sinContrato > 0) alerts.push({ severity: 'warning', message: `${sinContrato} colaborador(es) sin contrato registrado (el MITRAB exige contrato escrito).` });
+
+        const sinInss = employees.filter(e => !e.inss).length;
+        const sinCedula = employees.filter(e => !e.cedula).length;
+        if (sinInss > 0) alerts.push({ severity: 'danger', message: `${sinInss} colaborador(es) sin número INSS — bloquea la declaración al SIE.` });
+        if (sinCedula > 0) alerts.push({ severity: 'warning', message: `${sinCedula} colaborador(es) sin cédula registrada.` });
+
+        const dueAg = new Date(now.getFullYear(), 11, 10);
+        const diasAg = Math.ceil((dueAg.getTime() - now.getTime()) / DAY);
+        if (diasAg >= 0 && diasAg <= 45) {
+            alerts.push({ severity: diasAg <= 10 ? 'danger' : 'info', message: `Faltan ${diasAg} día(s) para pagar el aguinaldo (10 de diciembre).` });
+        }
+
+        const pend = pendingLeaves + pendingAdvances;
+        if (pend > 0) alerts.push({ severity: 'info', message: `${pend} solicitud(es) pendiente(s) de aprobación.` });
+
+        res.json({ alerts, total: alerts.length });
+    } catch (error) {
+        console.error('HR alerts error:', error);
+        res.status(500).json({ error: 'Error al obtener las alertas.' });
+    }
+});
+
 // ==========================================
 // 🌐 PORTAL DE PEDIDOS PÚBLICOS (NO AUTH)
 // ==========================================
