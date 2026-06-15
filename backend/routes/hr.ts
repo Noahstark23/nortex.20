@@ -22,6 +22,24 @@ const requireHRAdmin = (req: any, res: any, next: any) => {
     next();
 };
 
+// Valida una ausencia de VACACIONES: sin solapamiento con otra vigente y con
+// saldo suficiente. Devuelve un mensaje de error o null si está OK.
+async function validarVacacion(tenantId: string, employeeId: string, startDate: Date, endDate: Date, dias: number, excludeLeaveId?: string): Promise<string | null> {
+    const solapada = await prisma.leaveRequest.findFirst({
+        where: {
+            tenantId, employeeId, type: 'VACATION',
+            status: { in: ['PENDING', 'APPROVED'] },
+            startDate: { lte: endDate }, endDate: { gte: startDate },
+            ...(excludeLeaveId ? { NOT: { id: excludeLeaveId } } : {}),
+        },
+        select: { id: true },
+    });
+    if (solapada) return 'Ya hay una solicitud de vacaciones que se solapa con esas fechas.';
+    const emp = await prisma.employee.findUnique({ where: { id: employeeId }, select: { vacationDays: true } });
+    if (emp && emp.vacationDays < dias) return `Saldo de vacaciones insuficiente: ${emp.vacationDays.toFixed(1)} día(s) disponibles, se solicitan ${dias}.`;
+    return null;
+}
+
 // Domingo de Pascua (algoritmo gregoriano) — para Jueves/Viernes Santo.
 function easterSunday(year: number): Date {
     const a = year % 19, b = Math.floor(year / 100), c = year % 100;
@@ -253,6 +271,11 @@ router.post('/leave/request', authenticate, requireHRAdmin, async (req: any, res
         // Días calendario de la ausencia (inclusivo).
         const dias = Math.max(1, Math.floor((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) + 1);
 
+        if (type === 'VACATION') {
+            const err = await validarVacacion(authReq.tenantId!, employeeId, new Date(startDate), new Date(endDate), dias);
+            if (err) return res.status(400).json({ error: err });
+        }
+
         const leave = await prisma.$transaction(async (tx) => {
             const created = await tx.leaveRequest.create({
                 data: {
@@ -318,6 +341,10 @@ router.patch('/leave/:id/decision', authenticate, requireHRAdmin, async (req: an
 
         // Aprobación: si es VACATION, se descuenta del saldo al aprobar (Art. 76).
         const dias = Math.max(1, Math.floor((leave.endDate.getTime() - leave.startDate.getTime()) / 86400000) + 1);
+        if (leave.type === 'VACATION') {
+            const err = await validarVacacion(authReq.tenantId!, leave.employeeId, leave.startDate, leave.endDate, dias, leave.id);
+            if (err) return res.status(400).json({ error: err });
+        }
         await prisma.$transaction(async (tx) => {
             await tx.leaveRequest.update({ where: { id: leave.id }, data: { status: 'APPROVED' } });
             if (leave.type === 'VACATION') {
@@ -621,7 +648,8 @@ router.get('/attendance/:year/:month', authenticate, requireHRAdmin, async (req:
         for (const s of shifts) {
             if (!s.employeeId) continue;
             const e = agg.get(s.employeeId) ?? { dias: new Set<string>(), horasReg: 0, horasExtra: 0, feriados: new Set<string>() };
-            const ds = s.startTime.toISOString().slice(0, 10);
+            // Día calendario LOCAL de Nicaragua (UTC-6).
+            const ds = new Date(s.startTime.getTime() - 6 * 3600 * 1000).toISOString().slice(0, 10);
             e.dias.add(ds);
             e.horasReg += s.regularHours;
             e.horasExtra += s.overtimeHours;
@@ -703,7 +731,12 @@ router.patch('/employees/:id/link-user', authenticate, requireHRAdmin, async (re
 
         await prisma.employee.update({ where: { id: emp.id }, data: { userId: userId || null } });
         res.json({ message: userId ? 'Cuenta vinculada.' : 'Cuenta desvinculada.' });
-    } catch (error) {
+    } catch (error: any) {
+        // Carrera: el @unique de Employee.userId puede saltar si dos vínculos al
+        // mismo usuario llegan a la vez.
+        if (error?.code === 'P2002') {
+            return res.status(400).json({ error: 'Esa cuenta ya está vinculada a otro colaborador.' });
+        }
         console.error('Link user error:', error);
         res.status(500).json({ error: 'Error al vincular la cuenta.' });
     }
