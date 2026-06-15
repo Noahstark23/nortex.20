@@ -300,6 +300,7 @@ router.get('/employees/:id/file', authenticate, requireHRAdmin, async (req: any,
             include: {
                 contracts: { orderBy: { startDate: 'desc' } },
                 judicialDeductions: { where: { status: 'ACTIVE' }, orderBy: { priority: 'asc' } },
+                user: { select: { id: true, name: true, email: true } },
             },
         });
         if (!emp) return res.status(404).json({ error: 'Empleado no encontrado.' });
@@ -348,6 +349,7 @@ router.get('/employees/:id/file', authenticate, requireHRAdmin, async (req: any,
                 id: j.id, type: j.type, amount: j.amount != null ? Number(j.amount) : null,
                 percentage: j.percentage, beneficiary: j.beneficiary, priority: j.priority, startDate: j.startDate,
             })),
+            linkedUser: emp.user ? { id: emp.user.id, name: emp.user.name, email: emp.user.email } : null,
             alertas,
         });
     } catch (error) {
@@ -600,6 +602,57 @@ router.get('/attendance/:year/:month', authenticate, requireHRAdmin, async (req:
     } catch (error) {
         console.error('Attendance report error:', error);
         res.status(500).json({ error: 'Error al generar el reporte de asistencia.' });
+    }
+});
+
+// ==========================================
+// 🔗 VÍNCULO EMPLEADO ↔ CUENTA DE ACCESO (para Mi Espacio, Fase C3)
+// ==========================================
+
+// GET /api/hr/linkable-users — usuarios del tenant aún sin expediente vinculado
+router.get('/linkable-users', authenticate, requireHRAdmin, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const users = await prisma.user.findMany({
+            where: { tenantId: authReq.tenantId!, employeeProfile: null },
+            select: { id: true, name: true, email: true, role: true },
+            orderBy: { name: 'asc' },
+        });
+        res.json(users);
+    } catch (error) {
+        console.error('Linkable users error:', error);
+        res.status(500).json({ error: 'Error al obtener las cuentas.' });
+    }
+});
+
+// PATCH /api/hr/employees/:id/link-user — vincula (o desvincula con userId null)
+router.patch('/employees/:id/link-user', authenticate, requireHRAdmin, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { userId } = req.body;
+    try {
+        const emp = await prisma.employee.findFirst({
+            where: { id: req.params.id, tenantId: authReq.tenantId! },
+            select: { id: true },
+        });
+        if (!emp) return res.status(404).json({ error: 'Empleado no encontrado.' });
+
+        if (userId) {
+            // El usuario debe ser del tenant y no estar vinculado a otro empleado.
+            const user = await prisma.user.findFirst({
+                where: { id: userId, tenantId: authReq.tenantId! },
+                include: { employeeProfile: { select: { id: true } } },
+            });
+            if (!user) return res.status(404).json({ error: 'Cuenta de usuario no encontrada.' });
+            if (user.employeeProfile && user.employeeProfile.id !== emp.id) {
+                return res.status(400).json({ error: 'Esa cuenta ya está vinculada a otro colaborador.' });
+            }
+        }
+
+        await prisma.employee.update({ where: { id: emp.id }, data: { userId: userId || null } });
+        res.json({ message: userId ? 'Cuenta vinculada.' : 'Cuenta desvinculada.' });
+    } catch (error) {
+        console.error('Link user error:', error);
+        res.status(500).json({ error: 'Error al vincular la cuenta.' });
     }
 });
 

@@ -14,6 +14,7 @@ import QuotationManager from './components/QuotationManager';
 import Clients from './components/Clients';
 import Suppliers from './components/Suppliers';
 import HRM from './components/HRM';
+import MiEspacio from './components/MiEspacio';
 import SuperAdmin from './components/SuperAdmin';
 import DeliveryManager from './components/DeliveryManager';
 import DriverView from './components/DriverView';
@@ -54,6 +55,7 @@ const ProtectedApp = () => {
         <Route path="clients" element={<Clients />} />
         <Route path="suppliers" element={<Suppliers />} />
         <Route path="hr" element={<HRM />} />
+        <Route path="mi-espacio" element={<MiEspacio />} />
         <Route path="quotations" element={<QuotationManager />} />
         <Route path="receivables" element={<AccountsReceivable />} />
         <Route path="reports" element={<Reports />} />
