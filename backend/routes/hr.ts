@@ -6,6 +6,10 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 const prisma = new PrismaClient();
 const router = express.Router();
 
+// Horas de jornada ordinaria por tipo (Art. 51 Ley 185): diurna 8 / nocturna 7
+// / mixta 7.5. Lo que se trabaja por encima es hora extra.
+const JORNADA_HORAS: Record<string, number> = { DIURNA: 8, NOCTURNA: 7, MIXTA: 7.5 };
+
 /**
  * 🔒 MIDDLEWARE: Validación de Permisos HR
  * Solo Owners o Managers pueden ejecutar acciones críticas de RRHH.
@@ -118,9 +122,10 @@ router.post('/clock-out', authenticate, async (req: any, res: any) => {
         const diffMs = endTime.getTime() - new Date(activeShift.startTime).getTime();
         const totalHours = diffMs / (1000 * 60 * 60);
 
-        // NicaLabor: Más de 8h = Horas Extras
-        const regularHours = Math.min(8, totalHours);
-        const overtimeHours = Math.max(0, totalHours - 8);
+        // Jornada legal del empleado (Art. 51): lo que excede es hora extra.
+        const jornadaHoras = JORNADA_HORAS[employee.jornada] ?? 8;
+        const regularHours = Math.min(jornadaHoras, totalHours);
+        const overtimeHours = Math.max(0, totalHours - jornadaHoras);
 
         await prisma.shift.update({
             where: { id: activeShift.id },
@@ -331,6 +336,7 @@ router.get('/employees/:id/file', authenticate, requireHRAdmin, async (req: any,
                 status: emp.status,
                 vacationDays: emp.vacationDays,
                 bankAccount: emp.bankAccount,
+                jornada: emp.jornada,
                 antiguedadTexto: `${Math.floor(meses / 12)} año(s) ${meses % 12} mes(es)`,
             },
             contracts: emp.contracts.map((c: any) => ({
@@ -516,6 +522,84 @@ router.delete('/holidays/:id', authenticate, requireHRAdmin, async (req: any, re
     } catch (error) {
         console.error('Holiday delete error:', error);
         res.status(500).json({ error: 'Error al eliminar el feriado.' });
+    }
+});
+
+// ==========================================
+// 🕒 REPORTE DE ASISTENCIA MENSUAL
+// ==========================================
+
+// GET /api/hr/attendance/:year/:month — consolida la asistencia que alimenta la nómina
+router.get('/attendance/:year/:month', authenticate, requireHRAdmin, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Año o mes inválido.' });
+    }
+    try {
+        const start = new Date(year, month - 1, 1);
+        const end = new Date(year, month, 0, 23, 59, 59);
+        const DAY = 86400000;
+
+        const [employees, shifts, holidaysM, leaves] = await Promise.all([
+            prisma.employee.findMany({
+                where: { tenantId, status: 'ACTIVE' },
+                select: { id: true, firstName: true, lastName: true, jornada: true },
+                orderBy: { firstName: 'asc' },
+            }),
+            prisma.shift.findMany({
+                where: { tenantId, status: 'COMPLETED', employeeId: { not: null }, startTime: { gte: start, lte: end } },
+                select: { employeeId: true, regularHours: true, overtimeHours: true, startTime: true },
+            }),
+            prisma.holiday.findMany({ where: { tenantId, date: { gte: start, lte: end } }, select: { date: true } }),
+            prisma.leaveRequest.findMany({
+                where: { tenantId, status: 'APPROVED', startDate: { lte: end }, endDate: { gte: start } },
+                select: { employeeId: true, startDate: true, endDate: true },
+            }),
+        ]);
+
+        const holidaySet = new Set(holidaysM.map((h: any) => h.date.toISOString().slice(0, 10)));
+
+        const agg = new Map<string, { dias: Set<string>; horasReg: number; horasExtra: number; feriados: Set<string> }>();
+        for (const s of shifts) {
+            if (!s.employeeId) continue;
+            const e = agg.get(s.employeeId) ?? { dias: new Set<string>(), horasReg: 0, horasExtra: 0, feriados: new Set<string>() };
+            const ds = s.startTime.toISOString().slice(0, 10);
+            e.dias.add(ds);
+            e.horasReg += s.regularHours;
+            e.horasExtra += s.overtimeHours;
+            if (holidaySet.has(ds)) e.feriados.add(ds);
+            agg.set(s.employeeId, e);
+        }
+
+        const ausenciaByEmp = new Map<string, number>();
+        for (const lv of leaves) {
+            const from = lv.startDate > start ? lv.startDate : start;
+            const to = lv.endDate < end ? lv.endDate : end;
+            const days = Math.max(0, Math.floor((to.getTime() - from.getTime()) / DAY) + 1);
+            ausenciaByEmp.set(lv.employeeId, (ausenciaByEmp.get(lv.employeeId) || 0) + days);
+        }
+
+        const items = employees.map((e: any) => {
+            const a = agg.get(e.id);
+            return {
+                employeeId: e.id,
+                name: `${e.firstName} ${e.lastName}`,
+                jornada: e.jornada,
+                diasTrabajados: a ? a.dias.size : 0,
+                horasRegulares: Number((a?.horasReg || 0).toFixed(1)),
+                horasExtra: Number((a?.horasExtra || 0).toFixed(1)),
+                diasFeriados: a ? a.feriados.size : 0,
+                diasAusencia: ausenciaByEmp.get(e.id) || 0,
+            };
+        });
+
+        res.json({ period: `${year}-${String(month).padStart(2, '0')}`, items });
+    } catch (error) {
+        console.error('Attendance report error:', error);
+        res.status(500).json({ error: 'Error al generar el reporte de asistencia.' });
     }
 });
 

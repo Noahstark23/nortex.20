@@ -250,6 +250,7 @@ model Employee {
   hireDate              DateTime @default(now())
   bankAccount           String?
   status                String   @default("ACTIVE") // ACTIVE, SUSPENDED, TERMINATED
+  jornada               String   @default("DIURNA") // DIURNA 8h | NOCTURNA 7h | MIXTA 7.5h (Art. 51)
 
   tenant   Tenant    @relation(fields: [tenantId], references: [id])
   user     User?     @relation(fields: [userId], references: [id])

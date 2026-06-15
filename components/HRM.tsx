@@ -149,11 +149,13 @@ interface HRDashboard {
     bajoMinimo: { id: string; name: string; baseSalary: number }[];
 }
 interface ExpedienteData {
-    employee: { id: string; name: string; cedula?: string; inss?: string; phone?: string; role: string; baseSalary: number; hireDate: string; status: string; vacationDays: number; bankAccount?: string; antiguedadTexto: string };
+    employee: { id: string; name: string; cedula?: string; inss?: string; phone?: string; role: string; baseSalary: number; hireDate: string; status: string; vacationDays: number; bankAccount?: string; jornada?: string; antiguedadTexto: string };
     contracts: ContractRow[];
     judicialDeductions: JudicialRow[];
     alertas: string[];
 }
+interface AttendanceRow { employeeId: string; name: string; jornada: string; diasTrabajados: number; horasRegulares: number; horasExtra: number; diasFeriados: number; diasAusencia: number; }
+interface AttendanceData { period: string; items: AttendanceRow[]; }
 
 const formatC = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (s: string) => new Date(s).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: '2-digit' });
@@ -161,6 +163,7 @@ const LEAVE_LABELS: Record<string, string> = { UNPAID: 'Permiso sin goce', VACAT
 const LEAVE_BADGE: Record<string, string> = { UNPAID: 'bg-amber-100 text-amber-700', VACATION: 'bg-emerald-100 text-emerald-700', SICK: 'bg-orange-100 text-orange-700', MATERNITY: 'bg-pink-100 text-pink-700' };
 const REASON_LABELS: Record<string, string> = { DISMISSAL: 'Despido', RESIGNATION: 'Renuncia', MUTUAL: 'Mutuo acuerdo' };
 const CONTRACT_LABELS: Record<string, string> = { INDETERMINADO: 'Indeterminado', DETERMINADO: 'Determinado', POR_OBRA: 'Por obra' };
+const JORNADA_LABELS: Record<string, string> = { DIURNA: 'Diurna (8h)', NOCTURNA: 'Nocturna (7h)', MIXTA: 'Mixta (7.5h)' };
 const JUDICIAL_LABELS: Record<string, string> = { PENSION_ALIMENTICIA: 'Pensión alimenticia', EMBARGO: 'Embargo', OTRO: 'Otro' };
 
 const HRM: React.FC = () => {
@@ -222,8 +225,12 @@ const HRM: React.FC = () => {
 
     // New Employee Form
     const [formData, setFormData] = useState({
-        firstName: '', lastName: '', role: 'VENDEDOR', baseSalary: '', commissionRate: '', pin: '', cedula: '', inss: ''
+        firstName: '', lastName: '', role: 'VENDEDOR', baseSalary: '', commissionRate: '', pin: '', cedula: '', inss: '', jornada: 'DIURNA'
     });
+
+    // Reporte de asistencia state
+    const [attMonth, setAttMonth] = useState(new Date().getMonth() + 1);
+    const [attendance, setAttendance] = useState<AttendanceData | null>(null);
 
     // PIN change state
     const [pinModal, setPinModal] = useState<{ id: string; name: string } | null>(null);
@@ -429,6 +436,14 @@ const HRM: React.FC = () => {
     }, [holidayYear]);
     useEffect(() => { if (activeTab === 'TIME') fetchHolidays(); }, [activeTab, fetchHolidays]);
 
+    const fetchAttendance = useCallback(async () => {
+        try {
+            const res = await fetch(`/api/hr/attendance/${holidayYear}/${attMonth}`, { headers });
+            if (res.ok) setAttendance(await res.json());
+        } catch (e) { console.error(e); }
+    }, [holidayYear, attMonth]);
+    useEffect(() => { if (activeTab === 'TIME') fetchAttendance(); }, [activeTab, fetchAttendance]);
+
     const fmtHoliday = (iso: string) => {
         const [y, m, d] = iso.slice(0, 10).split('-');
         return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString('es-NI', { weekday: 'short', day: '2-digit', month: 'short' });
@@ -540,12 +555,13 @@ const HRM: React.FC = () => {
                     pin: formData.pin || '0000',
                     cedula: formData.cedula || null,
                     inss: formData.inss || null,
+                    jornada: formData.jornada,
                 })
             });
             const data = await res.json();
             if (res.ok) {
                 setShowModal(false);
-                setFormData({ firstName: '', lastName: '', role: 'VENDEDOR', baseSalary: '', commissionRate: '', pin: '', cedula: '', inss: '' });
+                setFormData({ firstName: '', lastName: '', role: 'VENDEDOR', baseSalary: '', commissionRate: '', pin: '', cedula: '', inss: '', jornada: 'DIURNA' });
                 fetchEmployees();
                 alert("Colaborador añadido exitosamente.");
             } else {
@@ -1271,6 +1287,43 @@ const HRM: React.FC = () => {
                                 ))}
                             </div>
                         </div>
+
+                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-6">
+                            <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-slate-100">
+                                <h4 className="font-bold text-slate-700">Reporte de asistencia</h4>
+                                <select value={attMonth} onChange={e => setAttMonth(Number(e.target.value))} className="border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                    {monthNames.map((m, i) => <option key={i} value={i + 1}>{m} {holidayYear}</option>)}
+                                </select>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left text-sm">
+                                    <thead className="bg-slate-50 text-slate-500 font-mono text-xs uppercase">
+                                        <tr>
+                                            <th className="p-3">Colaborador</th>
+                                            <th className="p-3 text-center">Jornada</th>
+                                            <th className="p-3 text-center">Días</th>
+                                            <th className="p-3 text-center">H. extra</th>
+                                            <th className="p-3 text-center">Feriados</th>
+                                            <th className="p-3 text-center">Ausencias</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {!attendance || attendance.items.length === 0 ? (
+                                            <tr><td colSpan={6} className="p-6 text-center text-slate-400">Sin colaboradores activos.</td></tr>
+                                        ) : attendance.items.map(a => (
+                                            <tr key={a.employeeId} className="hover:bg-slate-50">
+                                                <td className="p-3 font-semibold text-slate-700">{a.name}</td>
+                                                <td className="p-3 text-center text-xs text-slate-500">{JORNADA_LABELS[a.jornada] || a.jornada}</td>
+                                                <td className="p-3 text-center font-mono">{a.diasTrabajados}</td>
+                                                <td className="p-3 text-center font-mono text-amber-600">{a.horasExtra > 0 ? `${a.horasExtra}h` : '—'}</td>
+                                                <td className="p-3 text-center font-mono text-indigo-600">{a.diasFeriados > 0 ? a.diasFeriados : '—'}</td>
+                                                <td className="p-3 text-center font-mono text-orange-600">{a.diasAusencia > 0 ? a.diasAusencia : '—'}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 )}
 
@@ -1557,6 +1610,14 @@ const HRM: React.FC = () => {
                                     <input type="number" required className="w-full border p-2 rounded text-slate-800" placeholder="Ej: 5" value={formData.commissionRate} onChange={e => setFormData({ ...formData, commissionRate: e.target.value })} />
                                 </div>
                             </div>
+                            <div>
+                                <label className="text-xs font-bold text-slate-500">Jornada (Art. 51)</label>
+                                <select className="w-full border p-2 rounded bg-white text-slate-800" value={formData.jornada} onChange={e => setFormData({ ...formData, jornada: e.target.value })}>
+                                    <option value="DIURNA">Diurna (8h)</option>
+                                    <option value="NOCTURNA">Nocturna (7h)</option>
+                                    <option value="MIXTA">Mixta (7.5h)</option>
+                                </select>
+                            </div>
                             <button type="submit" className="w-full bg-nortex-900 text-white py-3 rounded-lg font-bold hover:bg-nortex-800">Guardar</button>
                             <button type="button" onClick={() => setShowModal(false)} className="w-full text-slate-500 py-2 hover:text-slate-700">Cancelar</button>
                         </form>
@@ -1776,6 +1837,7 @@ const HRM: React.FC = () => {
                                         ['N° INSS', expediente.employee.inss || 'N/A'],
                                         ['Teléfono', expediente.employee.phone || 'N/A'],
                                         ['Cargo', expediente.employee.role || 'N/A'],
+                                        ['Jornada', JORNADA_LABELS[expediente.employee.jornada || 'DIURNA'] || 'N/A'],
                                         ['Ingreso', fmtDate(expediente.employee.hireDate)],
                                         ['Antigüedad', expediente.employee.antiguedadTexto],
                                         ['Salario base', formatC(expediente.employee.baseSalary)],
