@@ -3643,6 +3643,15 @@ app.post('/api/purchases', authenticate, validate(CreatePurchaseSchema), async (
 
             // 4. Registro financiero
             if (paymentMethod === 'CASH') {
+                // Guard de saldo: una compra de contado no puede dejar la billetera en
+                // negativo (faltaba esta validación → el wallet podía irse a negativo).
+                const t = await tx.tenant.findUnique({
+                    where: { id: authReq.tenantId },
+                    select: { walletBalance: true }
+                });
+                if (!t || Number(t.walletBalance) < Number(total)) {
+                    throw new Error(`SALDO_INSUFICIENTE: disponible C$ ${Number(t?.walletBalance ?? 0).toFixed(2)}, requerido C$ ${Number(total).toFixed(2)}. Usa crédito o recarga tu billetera.`);
+                }
                 // Descontar de wallet del tenant
                 await tx.tenant.update({
                     where: { id: authReq.tenantId },
@@ -3671,7 +3680,8 @@ app.post('/api/purchases', authenticate, validate(CreatePurchaseSchema), async (
 
     } catch (error: any) {
         console.error('Error registrando compra:', error);
-        res.status(500).json({ error: error.message || 'Error al procesar la compra' });
+        const insufficient = error?.message?.includes('SALDO_INSUFICIENTE');
+        res.status(insufficient ? 400 : 500).json({ error: error.message || 'Error al procesar la compra' });
     }
 });
 

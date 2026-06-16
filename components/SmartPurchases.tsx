@@ -88,41 +88,50 @@ export default function SmartPurchases() {
     // ==========================================
     // DERIVED
     // ==========================================
-    const selectedRows = useMemo(() => items.filter(it => {
+    // Una fila marcada está LISTA para ordenar si tiene cantidad entera ≥ 1,
+    // costo > 0 y proveedor (POST /api/purchases exige int positivo y costo > 0).
+    const rowReady = (it: ReorderItem) => {
         const e = edits[it.productId];
-        return e && e.selected && parseFloat(e.qty) > 0;
-    }), [items, edits]);
+        if (!e || !e.selected) return false;
+        const q = parseInt(e.qty, 10);
+        const c = parseFloat(e.cost);
+        return q >= 1 && c > 0 && !!e.supplierId;
+    };
 
-    const totalSelected = useMemo(() => selectedRows.reduce((s, it) => {
+    const checkedRows = useMemo(() => items.filter(it => edits[it.productId]?.selected), [items, edits]);
+    const validRows = useMemo(() => checkedRows.filter(rowReady), [checkedRows, edits]);
+    const invalidCount = checkedRows.length - validRows.length;
+
+    const totalSelected = useMemo(() => validRows.reduce((s, it) => {
         const e = edits[it.productId];
-        return s + (parseInt(e.qty) || 0) * (parseFloat(e.cost) || 0);
-    }, 0), [selectedRows, edits]);
+        return s + (parseInt(e.qty, 10) || 0) * (parseFloat(e.cost) || 0);
+    }, 0), [validRows, edits]);
 
-    const missingSupplier = selectedRows.some(it => !edits[it.productId]?.supplierId);
-
-    // Agrupado por proveedor para el modal de confirmación
+    // Agrupado por proveedor para el modal de confirmación (solo filas listas)
     const groups = useMemo(() => {
         const map: Record<string, { supplierId: string; supplierName: string; rows: ReorderItem[]; total: number }> = {};
-        for (const it of selectedRows) {
+        for (const it of validRows) {
             const e = edits[it.productId];
             const sid = e.supplierId;
-            if (!sid) continue;
             if (!map[sid]) {
                 const sup = suppliers.find(s => s.id === sid);
                 map[sid] = { supplierId: sid, supplierName: sup?.name || it.supplierName || 'Proveedor', rows: [], total: 0 };
             }
             map[sid].rows.push(it);
-            map[sid].total += (parseInt(e.qty) || 0) * (parseFloat(e.cost) || 0);
+            map[sid].total += (parseInt(e.qty, 10) || 0) * (parseFloat(e.cost) || 0);
         }
         return Object.values(map);
-    }, [selectedRows, edits, suppliers]);
+    }, [validRows, edits, suppliers]);
 
     // ==========================================
     // GENERAR ÓRDENES → POST /api/purchases por proveedor
     // ==========================================
     const generateOrders = async () => {
         setGenerating(true);
-        const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
+        // Sello con milisegundos + sufijo aleatorio → evita choque de nº de orden
+        // si se genera dos veces en el mismo segundo (p. ej. reintento).
+        const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 17);
+        const rnd = Math.random().toString(36).slice(2, 5).toUpperCase();
         let ok = 0, fail = 0;
         const errors: string[] = [];
         try {
@@ -130,12 +139,12 @@ export default function SmartPurchases() {
                 const g = groups[i];
                 const body = {
                     supplierId: g.supplierId,
-                    invoiceNumber: `OC-${stamp}-${i + 1}`,
+                    invoiceNumber: `OC-${stamp}-${rnd}-${i + 1}`,
                     paymentMethod,
                     notes: 'Orden generada por reposición inteligente',
                     items: g.rows.map(it => {
                         const e = edits[it.productId];
-                        return { productId: it.productId, quantity: parseInt(e.qty), unitCost: parseFloat(e.cost) };
+                        return { productId: it.productId, quantity: parseInt(e.qty, 10), unitCost: parseFloat(e.cost) };
                     }),
                 };
                 try {
@@ -206,7 +215,9 @@ export default function SmartPurchases() {
                                     {items.map((it) => {
                                         const e = edits[it.productId];
                                         if (!e) return null;
-                                        const subtotal = (parseInt(e.qty) || 0) * (parseFloat(e.cost) || 0);
+                                        const subtotal = (parseInt(e.qty, 10) || 0) * (parseFloat(e.cost) || 0);
+                                        const badQty = e.selected && !(parseInt(e.qty, 10) >= 1);
+                                        const badCost = e.selected && !(parseFloat(e.cost) > 0);
                                         const noSupplier = e.selected && !e.supplierId;
                                         return (
                                             <tr key={it.productId} className={`transition-colors ${e.selected ? 'bg-slate-800/40' : 'opacity-60'} hover:bg-slate-700/20`}>
@@ -227,14 +238,14 @@ export default function SmartPurchases() {
                                                         <span className={it.daysRemaining <= 3 ? 'text-red-400 font-semibold' : 'text-slate-300'}>{it.daysRemaining}d</span>}
                                                 </td>
                                                 <td className="px-3 py-3 text-right">
-                                                    <input type="text" inputMode="decimal" value={e.qty} disabled={!e.selected}
-                                                        onChange={(ev) => setEdit(it.productId, { qty: sanitizeDecimalInput(ev.target.value) })}
-                                                        className="w-20 bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-sm text-white text-right focus:outline-none focus:border-amber-500 disabled:opacity-50" />
+                                                    <input type="text" inputMode="numeric" value={e.qty} disabled={!e.selected}
+                                                        onChange={(ev) => setEdit(it.productId, { qty: ev.target.value.replace(/[^\d]/g, '') })}
+                                                        className={`w-20 bg-slate-900 border rounded-lg px-2 py-1.5 text-sm text-white text-right focus:outline-none focus:border-amber-500 disabled:opacity-50 ${badQty ? 'border-red-600/70' : 'border-slate-600'}`} />
                                                 </td>
                                                 <td className="px-3 py-3 text-right">
                                                     <input type="text" inputMode="decimal" value={e.cost} disabled={!e.selected}
                                                         onChange={(ev) => setEdit(it.productId, { cost: sanitizeDecimalInput(ev.target.value) })}
-                                                        className="w-24 bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-sm text-white text-right focus:outline-none focus:border-amber-500 disabled:opacity-50" />
+                                                        className={`w-24 bg-slate-900 border rounded-lg px-2 py-1.5 text-sm text-white text-right focus:outline-none focus:border-amber-500 disabled:opacity-50 ${badCost ? 'border-red-600/70' : 'border-slate-600'}`} />
                                                 </td>
                                                 <td className="px-3 py-3">
                                                     <select value={e.supplierId} disabled={!e.selected}
@@ -257,8 +268,9 @@ export default function SmartPurchases() {
                     <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4 sticky bottom-4 shadow-2xl">
                         <div className="flex items-center gap-4">
                             <div>
-                                <p className="text-xs text-slate-400">Seleccionados</p>
-                                <p className="text-lg font-bold text-white">{selectedRows.length} <span className="text-sm text-slate-500">/ {items.length}</span></p>
+                                <p className="text-xs text-slate-400">Listos</p>
+                                <p className="text-lg font-bold text-white">{validRows.length} <span className="text-sm text-slate-500">/ {items.length}</span></p>
+                                {invalidCount > 0 && <p className="text-[11px] text-red-400">{invalidCount} con datos incompletos</p>}
                             </div>
                             <div>
                                 <p className="text-xs text-slate-400">Total estimado</p>
@@ -274,10 +286,10 @@ export default function SmartPurchases() {
                         </div>
                         <button
                             onClick={() => setShowConfirm(true)}
-                            disabled={selectedRows.length === 0 || missingSupplier}
+                            disabled={validRows.length === 0 || invalidCount > 0}
                             className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
                         >
-                            <ShoppingCart size={16} /> {missingSupplier ? 'Asigna proveedor a todo' : `Generar ${groups.length} orden(es)`}
+                            <ShoppingCart size={16} /> {invalidCount > 0 ? `Revisa ${invalidCount} fila(s)` : `Generar ${groups.length} orden(es)`}
                         </button>
                     </div>
                 </>
