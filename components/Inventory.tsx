@@ -5,7 +5,8 @@ import { sanitizeDecimalInput } from '../utils/money';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
     RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
-    Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers, Download, ChevronLeft, ChevronRight
+    Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers, Download, ChevronLeft, ChevronRight,
+    Tag, DollarSign
 } from 'lucide-react';
 import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
@@ -51,6 +52,7 @@ interface KardexEntry {
     date: string;
     user: { name: string; email: string };
     product?: { name: string; sku: string };
+    batch?: { batchNumber: string; expiryDate: string } | null;
 }
 
 type AdjustType = 'ADJUST_LOSS' | 'ADJUST_GAIN' | 'IN_PURCHASE' | 'RETURN';
@@ -76,6 +78,15 @@ const getMovementMeta = (type: string) => {
 };
 
 const formatCurrency = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** Como sanitizeDecimalInput pero admite un '-' inicial (para ajustes porcentuales). */
+const sanitizeSignedDecimal = (raw: string): string => {
+    const neg = raw.trim().startsWith('-');
+    let cleaned = raw.replace(/[^\d.]/g, '');
+    const dot = cleaned.indexOf('.');
+    if (dot !== -1) cleaned = cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, '');
+    return (neg ? '-' : '') + cleaned;
+};
 
 const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', {
     day: '2-digit', month: '2-digit', year: 'numeric',
@@ -116,15 +127,32 @@ export default function Inventory() {
     const [showDropdown, setShowDropdown] = useState(false);
     const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
     const [showBatchesModal, setShowBatchesModal] = useState(false);
+    const [showBulkEditModal, setShowBulkEditModal] = useState(false);
 
-    // Kardex
+    // Kardex (A5: paginado + filtro por fecha)
     const [kardexData, setKardexData] = useState<KardexEntry[]>([]);
     const [kardexLoading, setKardexLoading] = useState(false);
     const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+    const [kardexPage, setKardexPage] = useState(1);
+    const [kardexTotal, setKardexTotal] = useState(0);
+    const [kardexFrom, setKardexFrom] = useState('');
+    const [kardexTo, setKardexTo] = useState('');
+    const KARDEX_PAGE_SIZE = 25;
 
-    // Batches
+    // Batches (A4: alta de lotes)
     const [batchesData, setBatchesData] = useState<ProductBatch[]>([]);
     const [batchesLoading, setBatchesLoading] = useState(false);
+    const [showAddBatchForm, setShowAddBatchForm] = useState(false);
+    const [batchForm, setBatchForm] = useState({ batchNumber: '', expiryDate: '', quantity: '' });
+    const [batchSubmitting, setBatchSubmitting] = useState(false);
+
+    // Bulk edit form (A2: edición masiva de categoría/precio)
+    const [bulkEditForm, setBulkEditForm] = useState({
+        category: '',
+        priceMode: '' as '' | 'set' | 'pct',
+        priceValue: ''
+    });
+    const [bulkEditSubmitting, setBulkEditSubmitting] = useState(false);
 
     // Adjust form
     const [adjustForm, setAdjustForm] = useState({
@@ -333,22 +361,35 @@ export default function Inventory() {
     // KARDEX
     // ==========================================
 
-    const openKardex = async (product: Product) => {
-        setSelectedProduct(product);
-        setShowKardexModal(true);
+    // Fetch paginado del Kardex (A5). from/to son días locales (YYYY-MM-DD); el
+    // backend los interpreta en hora Nicaragua (UTC-6).
+    const fetchKardex = async (productId: string, targetPage: number, from: string, to: string) => {
         setKardexLoading(true);
-
         try {
-            const res = await fetch(`/api/kardex/${product.id}`, { headers });
+            const params = new URLSearchParams({ page: String(targetPage), pageSize: String(KARDEX_PAGE_SIZE) });
+            if (from) params.set('from', from);
+            if (to) params.set('to', to);
+            const res = await fetch(`/api/kardex/${productId}?${params.toString()}`, { headers });
             if (res.ok) {
                 const data = await res.json();
-                setKardexData(data);
+                setKardexData(data.entries || []);
+                setKardexTotal(data.total || 0);
+                setKardexPage(data.page || targetPage);
             }
         } catch (e) {
             console.error('Error fetching kardex:', e);
         } finally {
             setKardexLoading(false);
         }
+    };
+
+    const openKardex = (product: Product) => {
+        setSelectedProduct(product);
+        setKardexFrom('');
+        setKardexTo('');
+        setKardexPage(1);
+        setShowKardexModal(true);
+        fetchKardex(product.id, 1, '', '');
     };
 
     // ==========================================
@@ -358,6 +399,8 @@ export default function Inventory() {
     const openBatches = async (product: Product) => {
         setSelectedProduct(product);
         setShowBatchesModal(true);
+        setShowAddBatchForm(false);
+        setBatchForm({ batchNumber: '', expiryDate: '', quantity: '' });
         setBatchesLoading(true);
 
         try {
@@ -370,6 +413,49 @@ export default function Inventory() {
             console.error('Error fetching batches:', e);
         } finally {
             setBatchesLoading(false);
+        }
+    };
+
+    // A4: alta de lote → suma stock + Kardex (backend). Refresca lotes y la lista.
+    const handleAddBatch = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedProduct) return;
+
+        const qty = parseInt(batchForm.quantity);
+        if (!batchForm.batchNumber.trim() || !batchForm.expiryDate || isNaN(qty) || qty <= 0) {
+            alert('Completa número de lote, fecha de vencimiento y una cantidad mayor que cero.');
+            return;
+        }
+
+        setBatchSubmitting(true);
+        try {
+            const res = await fetch('/api/inventory/batches', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    productId: selectedProduct.id,
+                    batchNumber: batchForm.batchNumber.trim(),
+                    expiryDate: batchForm.expiryDate,
+                    quantity: qty
+                })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setBatchForm({ batchNumber: '', expiryDate: '', quantity: '' });
+                setShowAddBatchForm(false);
+                // Refrescar lotes del producto
+                const r = await fetch(`/api/inventory/batches/${selectedProduct.id}`, { headers });
+                if (r.ok) setBatchesData(await r.json());
+                // El stock del producto cambió → actualizar encabezado del modal y la lista
+                setSelectedProduct(prev => prev ? { ...prev, stock: data.newStock, requiresBatchTracking: true } : prev);
+                reload();
+            } else {
+                alert(`Error: ${data.error}`);
+            }
+        } catch (e) {
+            alert('Error agregando lote');
+        } finally {
+            setBatchSubmitting(false);
         }
     };
 
@@ -589,6 +675,72 @@ export default function Inventory() {
         }
     };
 
+    // ==========================================
+    // BULK EDIT (A2: categoría / precio) — no toca stock ni costo
+    // ==========================================
+
+    const openBulkEdit = () => {
+        setBulkEditForm({ category: '', priceMode: '', priceValue: '' });
+        setShowBulkEditModal(true);
+    };
+
+    const handleBulkEdit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (selectedProductIds.length === 0) return;
+
+        const category = bulkEditForm.category.trim();
+        const hasCategory = category.length > 0;
+        const hasPrice = bulkEditForm.priceMode !== '';
+
+        if (!hasCategory && !hasPrice) {
+            alert('Indica al menos un cambio: categoría o precio.');
+            return;
+        }
+
+        const payload: any = { ids: selectedProductIds };
+        if (hasCategory) payload.category = category;
+        if (hasPrice) {
+            const val = parseFloat(bulkEditForm.priceValue);
+            if (isNaN(val)) {
+                alert('Ingresa un valor de precio válido.');
+                return;
+            }
+            if (bulkEditForm.priceMode === 'set' && val < 0) {
+                alert('El precio no puede ser negativo.');
+                return;
+            }
+            if (bulkEditForm.priceMode === 'pct' && val <= -100) {
+                alert('El descuento porcentual no puede ser ≥ 100%.');
+                return;
+            }
+            payload.priceMode = bulkEditForm.priceMode;
+            payload.priceValue = val;
+        }
+
+        setBulkEditSubmitting(true);
+        try {
+            const res = await fetch('/api/products/bulk-edit', {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setShowBulkEditModal(false);
+                setSelectedProductIds([]);
+                reload();
+                fetchCategories();
+                alert(data.message || 'Productos actualizados.');
+            } else {
+                alert(`Error: ${data.error}`);
+            }
+        } catch (e) {
+            alert('Error en la edición masiva');
+        } finally {
+            setBulkEditSubmitting(false);
+        }
+    };
+
     const toggleSelection = (productId: string) => {
         setSelectedProductIds(prev =>
             prev.includes(productId)
@@ -779,6 +931,13 @@ export default function Inventory() {
                         </span>
                     </div>
                     <div className="flex items-center gap-3">
+                        <button
+                            onClick={openBulkEdit}
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                        >
+                            <Edit size={16} />
+                            Editar precio/categoría
+                        </button>
                         <button
                             onClick={() => handleBulkPublish(true)}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
@@ -1059,8 +1218,47 @@ export default function Inventory() {
                             </button>
                         </div>
 
+                        {/* Kardex: Filtro por fecha (A5) */}
+                        <div className="px-6 py-3 border-b border-slate-700 bg-slate-900/40 flex flex-wrap items-end gap-3">
+                            <div>
+                                <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Desde</label>
+                                <input
+                                    type="date"
+                                    value={kardexFrom}
+                                    onChange={(e) => setKardexFrom(e.target.value)}
+                                    className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Hasta</label>
+                                <input
+                                    type="date"
+                                    value={kardexTo}
+                                    onChange={(e) => setKardexTo(e.target.value)}
+                                    className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+                                />
+                            </div>
+                            <button
+                                onClick={() => fetchKardex(selectedProduct.id, 1, kardexFrom, kardexTo)}
+                                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                            >
+                                <Search size={15} /> Filtrar
+                            </button>
+                            {(kardexFrom || kardexTo) && (
+                                <button
+                                    onClick={() => { setKardexFrom(''); setKardexTo(''); fetchKardex(selectedProduct.id, 1, '', ''); }}
+                                    className="text-slate-400 hover:text-white px-3 py-1.5 rounded-lg text-sm border border-slate-600 hover:bg-slate-700 transition-colors"
+                                >
+                                    Limpiar
+                                </button>
+                            )}
+                            <div className="ml-auto text-xs text-slate-400 self-center">
+                                {kardexTotal} movimiento{kardexTotal === 1 ? '' : 's'}
+                            </div>
+                        </div>
+
                         {/* Kardex Table */}
-                        <div className="overflow-y-auto max-h-[calc(90vh-120px)]">
+                        <div className="overflow-y-auto max-h-[calc(90vh-250px)]">
                             {kardexLoading ? (
                                 <div className="flex flex-col items-center justify-center py-16">
                                     <div className="w-10 h-10 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-3" />
@@ -1128,6 +1326,31 @@ export default function Inventory() {
                                 </table>
                             )}
                         </div>
+
+                        {/* Kardex: Paginación (A5) */}
+                        {kardexTotal > KARDEX_PAGE_SIZE && (
+                            <div className="px-6 py-3 border-t border-slate-700 bg-slate-900/40 flex items-center justify-between">
+                                <span className="text-xs text-slate-400">
+                                    Página {kardexPage} de {Math.max(1, Math.ceil(kardexTotal / KARDEX_PAGE_SIZE))}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        disabled={kardexPage <= 1 || kardexLoading}
+                                        onClick={() => fetchKardex(selectedProduct.id, kardexPage - 1, kardexFrom, kardexTo)}
+                                        className="px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+                                    >
+                                        <ChevronLeft size={15} /> Anterior
+                                    </button>
+                                    <button
+                                        disabled={kardexPage >= Math.ceil(kardexTotal / KARDEX_PAGE_SIZE) || kardexLoading}
+                                        onClick={() => fetchKardex(selectedProduct.id, kardexPage + 1, kardexFrom, kardexTo)}
+                                        className="px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+                                    >
+                                        Siguiente <ChevronRight size={15} />
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -1597,11 +1820,67 @@ export default function Inventory() {
                                     {' '} | Stock Total: <span className="font-bold text-white">{selectedProduct.stock}</span>
                                 </p>
                             </div>
-                            <button onClick={() => setShowBatchesModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
-                                <X size={24} />
-                            </button>
+                            <div className="flex items-center gap-2">
+                                {isOwner && (
+                                    <button
+                                        onClick={() => setShowAddBatchForm(v => !v)}
+                                        className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                                    >
+                                        <Plus size={16} /> Agregar lote
+                                    </button>
+                                )}
+                                <button onClick={() => setShowBatchesModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
+                                    <X size={24} />
+                                </button>
+                            </div>
                         </div>
-                        
+
+                        {/* A4: Formulario de alta de lote */}
+                        {isOwner && showAddBatchForm && (
+                            <form onSubmit={handleAddBatch} className="px-6 py-4 border-b border-slate-700 bg-slate-900/40 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                                <div className="sm:col-span-1">
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Nº Lote</label>
+                                    <input
+                                        type="text"
+                                        value={batchForm.batchNumber}
+                                        onChange={(e) => setBatchForm({ ...batchForm, batchNumber: e.target.value })}
+                                        placeholder="L-2026-001"
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-orange-500"
+                                    />
+                                </div>
+                                <div className="sm:col-span-1">
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Vencimiento</label>
+                                    <input
+                                        type="date"
+                                        value={batchForm.expiryDate}
+                                        onChange={(e) => setBatchForm({ ...batchForm, expiryDate: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                                    />
+                                </div>
+                                <div className="sm:col-span-1">
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Cantidad</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        value={batchForm.quantity}
+                                        onChange={(e) => setBatchForm({ ...batchForm, quantity: e.target.value })}
+                                        placeholder="0"
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                                    />
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={batchSubmitting}
+                                    className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
+                                >
+                                    {batchSubmitting ? 'Guardando...' : (<><Plus size={16} /> Sumar al stock</>)}
+                                </button>
+                                <p className="sm:col-span-4 text-[11px] text-orange-300/70 flex items-center gap-1.5">
+                                    <AlertTriangle size={13} /> Agregar un lote suma al stock del producto y queda registrado en el Kardex. Si el nº de lote ya existe, se acumula.
+                                </p>
+                            </form>
+                        )}
+
                         <div className="flex-1 overflow-y-auto p-0">
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-slate-900/80 sticky top-0 z-10 shadow-md">
@@ -1652,6 +1931,119 @@ export default function Inventory() {
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ==========================================
+                MODAL: EDICIÓN MASIVA (A2 — categoría / precio)
+               ========================================== */}
+            {showBulkEditModal && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowBulkEditModal(false)}>
+                    <div className="bg-slate-800 rounded-2xl w-full max-w-lg shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
+                        <div className="bg-gradient-to-r from-blue-900/50 to-cyan-900/30 px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+                            <div>
+                                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                    <Edit size={20} className="text-blue-400" />
+                                    Edición masiva
+                                </h2>
+                                <p className="text-sm text-slate-400 mt-1">
+                                    {selectedProductIds.length} producto{selectedProductIds.length === 1 ? '' : 's'} seleccionado{selectedProductIds.length === 1 ? '' : 's'}
+                                </p>
+                            </div>
+                            <button onClick={() => setShowBulkEditModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleBulkEdit} className="p-6 space-y-5">
+                            <div className="bg-slate-900/40 border border-slate-700 rounded-lg p-3 flex items-start gap-2">
+                                <Shield size={16} className="text-blue-400 mt-0.5 shrink-0" />
+                                <p className="text-xs text-slate-400">
+                                    Solo se cambia lo que llenes. El <strong className="text-slate-300">stock</strong> y el <strong className="text-slate-300">costo</strong> no se tocan (el costo lo calcula el sistema por promedio ponderado).
+                                </p>
+                            </div>
+
+                            {/* Categoría */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-2 font-medium flex items-center gap-1.5">
+                                    <Tag size={15} className="text-slate-400" /> Categoría
+                                </label>
+                                <input
+                                    type="text"
+                                    list="bulk-category-list"
+                                    value={bulkEditForm.category}
+                                    onChange={(e) => setBulkEditForm({ ...bulkEditForm, category: e.target.value })}
+                                    placeholder="Dejar vacío para no cambiar"
+                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                                />
+                                <datalist id="bulk-category-list">
+                                    {categories.map((c) => <option key={c} value={c} />)}
+                                </datalist>
+                            </div>
+
+                            {/* Precio */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-2 font-medium flex items-center gap-1.5">
+                                    <DollarSign size={15} className="text-slate-400" /> Precio
+                                </label>
+                                <div className="grid grid-cols-3 gap-2 mb-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: '', priceValue: '' })}
+                                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === '' ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                    >
+                                        Sin cambio
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: 'set', priceValue: '' })}
+                                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === 'set' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                    >
+                                        Fijar C$
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: 'pct', priceValue: '' })}
+                                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === 'pct' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                    >
+                                        Ajustar %
+                                    </button>
+                                </div>
+                                {bulkEditForm.priceMode !== '' && (
+                                    <div className="relative">
+                                        <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={bulkEditForm.priceValue}
+                                            onChange={(e) => setBulkEditForm({ ...bulkEditForm, priceValue: bulkEditForm.priceMode === 'pct' ? sanitizeSignedDecimal(e.target.value) : sanitizeDecimalInput(e.target.value) })}
+                                            placeholder={bulkEditForm.priceMode === 'set' ? 'Nuevo precio en C$' : 'Ej: 10 (sube 10%) o -5 (baja 5%)'}
+                                            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                                        />
+                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">
+                                            {bulkEditForm.priceMode === 'set' ? 'C$' : '%'}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex gap-3 pt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowBulkEditModal(false)}
+                                    className="flex-1 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={bulkEditSubmitting}
+                                    className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+                                >
+                                    {bulkEditSubmitting ? 'Aplicando...' : `Aplicar a ${selectedProductIds.length}`}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}
