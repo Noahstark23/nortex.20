@@ -153,6 +153,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           ? [{ path: '/app/cash-registers', label: 'Cajas y Arqueos', shortLabel: 'Cajas', group: 'Ventas', icon: Monitor }]
           : []),
         { path: '/app/inventory',   label: 'Inventario',      shortLabel: 'Stock',    group: 'Ventas', icon: Package  },
+        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
+          ? [{ path: '/app/inventory-count', label: 'Toma Física', shortLabel: 'Conteo', group: 'Ventas', icon: ClipboardList }]
+          : []),
         { path: '/app/delivery',    label: 'Entregas',        shortLabel: 'Entregas', group: 'Ventas', icon: Truck    },
         { path: '/app/quotations',  label: 'Cotizaciones',    shortLabel: 'Cotiz.',   group: 'Ventas', icon: FileText },
         { path: '/app/clients',     label: 'Clientes (CRM)',  shortLabel: 'Clientes', group: 'Ventas', icon: Users    },

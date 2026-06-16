@@ -155,6 +155,24 @@ export const CreateBatchSchema = z.object({
     quantity:    z.number().int().positive('La cantidad debe ser mayor que cero'),
 });
 
+// POST /api/stock-counts  [Bodeguero B1 — toma física]
+export const CreateStockCountSchema = z
+    .object({
+        scope:    z.enum(['ALL', 'CATEGORY']).default('ALL'),
+        category: z.string().trim().min(1).max(100).optional(),
+        notes:    z.string().trim().max(300).optional(),
+    })
+    .refine((d) => d.scope !== 'CATEGORY' || (d.category && d.category.length > 0), {
+        message: 'La categoría es obligatoria cuando el alcance es CATEGORY',
+        path: ['category'],
+    });
+
+// PATCH /api/stock-counts/:id/count  [Bodeguero B1 — captura de conteo]
+export const RecordCountSchema = z.object({
+    productId: z.string().min(1, 'productId requerido'),
+    counted:   z.number().min(0, 'El conteo no puede ser negativo'),
+});
+
 // POST /api/shifts/open
 export const OpenShiftSchema = z.object({
     initialCash: moneyAmount,

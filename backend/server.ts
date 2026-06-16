@@ -16,7 +16,7 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
@@ -45,6 +45,8 @@ import {
     InventoryAdjustSchema,
     BulkEditProductsSchema,
     CreateBatchSchema,
+    CreateStockCountSchema,
+    RecordCountSchema,
     OpenShiftSchema,
     CloseShiftSchema,
     CreateExpenseSchema,
@@ -2878,6 +2880,240 @@ app.get('/api/inventory/low-stock', authenticate, checkRole(['OWNER', 'ADMIN']),
     } catch (error) {
         console.error('Error fetching low stock:', error);
         res.status(500).json({ error: 'Error obteniendo productos con stock bajo' });
+    }
+});
+
+// ==========================================
+// 🧮 TOMA FÍSICA / CONTEO CÍCLICO (Bodeguero B1) — Solo OWNER/ADMIN
+// ==========================================
+
+// POST /api/stock-counts - Crear conteo + snapshot del stock esperado
+app.post('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateStockCountSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { scope, category, notes } = req.body;
+    try {
+        // Solo un conteo abierto a la vez (evita snapshots solapados/confusos).
+        const open = await prisma.stockCount.findFirst({
+            where: { tenantId: authReq.tenantId!, status: 'OPEN' },
+            select: { id: true },
+        });
+        if (open) {
+            return res.status(409).json({ error: 'Ya hay una toma física abierta. Ciérrala o cancélala antes de crear otra.', openCountId: open.id });
+        }
+
+        const where: any = { tenantId: authReq.tenantId! };
+        if (scope === 'CATEGORY') where.category = category;
+
+        const products = await prisma.product.findMany({ where, select: { id: true, stock: true } });
+        if (products.length === 0) {
+            return res.status(400).json({ error: 'No hay productos en el alcance seleccionado.' });
+        }
+
+        const count = await prisma.$transaction(async (tx: any) => {
+            const created = await tx.stockCount.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    status: 'OPEN',
+                    scope,
+                    category: scope === 'CATEGORY' ? category : null,
+                    notes: notes || null,
+                    createdBy: authReq.userId!,
+                },
+            });
+            await tx.stockCountItem.createMany({
+                data: products.map((p: any) => ({
+                    countId: created.id,
+                    productId: p.id,
+                    expected: Number(p.stock),
+                    counted: null,
+                    diff: 0,
+                })),
+            });
+            return created;
+        });
+
+        res.json({ message: `Toma física creada con ${products.length} productos.`, count, items: products.length });
+    } catch (error: any) {
+        console.error('Error creando toma física:', error);
+        res.status(500).json({ error: error.message || 'Error creando toma física' });
+    }
+});
+
+// GET /api/stock-counts - Historial de conteos
+app.get('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const counts = await prisma.stockCount.findMany({
+            where: { tenantId: authReq.tenantId! },
+            include: {
+                creator: { select: { name: true } },
+                _count: { select: { items: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 100,
+        });
+        res.json(counts);
+    } catch (error) {
+        console.error('Error fetching stock counts:', error);
+        res.status(500).json({ error: 'Error obteniendo tomas físicas' });
+    }
+});
+
+// GET /api/stock-counts/:id - Detalle + ítems (para captura / revisión)
+app.get('/api/stock-counts/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    try {
+        const count = await prisma.stockCount.findFirst({
+            where: { id, tenantId: authReq.tenantId! },
+            include: { creator: { select: { name: true } } },
+        });
+        if (!count) return res.status(404).json({ error: 'Toma física no encontrada' });
+
+        const items = await prisma.stockCountItem.findMany({
+            where: { countId: id },
+            include: { product: { select: { name: true, sku: true, unit: true, cost: true, stock: true } } },
+            orderBy: { product: { name: 'asc' } },
+        });
+
+        res.json({ count, items });
+    } catch (error) {
+        console.error('Error fetching stock count:', error);
+        res.status(500).json({ error: 'Error obteniendo toma física' });
+    }
+});
+
+// PATCH /api/stock-counts/:id/count - Capturar conteo físico de un producto (apto escáner)
+app.patch('/api/stock-counts/:id/count', authenticate, checkRole(['OWNER', 'ADMIN']), validate(RecordCountSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    const { productId, counted } = req.body;
+    try {
+        const count = await prisma.stockCount.findFirst({
+            where: { id, tenantId: authReq.tenantId! },
+            select: { status: true },
+        });
+        if (!count) return res.status(404).json({ error: 'Toma física no encontrada' });
+        if (count.status !== 'OPEN') return res.status(400).json({ error: 'La toma física no está abierta.' });
+
+        const updated = await prisma.stockCountItem.updateMany({
+            where: { countId: id, productId },
+            data: { counted, countedAt: new Date() },
+        });
+        if (updated.count === 0) return res.status(404).json({ error: 'Este producto no pertenece a la toma física.' });
+
+        res.json({ message: 'Conteo registrado', productId, counted });
+    } catch (error: any) {
+        console.error('Error registrando conteo:', error);
+        res.status(500).json({ error: error.message || 'Error registrando conteo' });
+    }
+});
+
+// POST /api/stock-counts/:id/close - Cerrar: postea ajustes (Kardex) + asiento de merma/sobrante
+app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    try {
+        // Asegura que existan las cuentas 5.1.2 / 4.1.3 antes del asiento (auto-sanable).
+        await seedChartOfAccounts(authReq.tenantId!);
+
+        const result = await prisma.$transaction(async (tx: any) => {
+            const count = await tx.stockCount.findFirst({
+                where: { id, tenantId: authReq.tenantId! },
+            });
+            if (!count) throw new Error('Toma física no encontrada');
+            if (count.status !== 'OPEN') throw new Error('La toma física ya está cerrada o cancelada.');
+
+            const items = await tx.stockCountItem.findMany({
+                where: { countId: id },
+                include: { product: { select: { name: true, cost: true } } },
+            });
+
+            let lossValue = new Decimal(0); // Σ |diff<0| · costo
+            let gainValue = new Decimal(0); // Σ diff>0 · costo
+            let adjusted = 0;
+            let countedItems = 0;
+
+            for (const it of items) {
+                if (it.counted === null) continue; // no contado → no se toca
+                countedItems++;
+                const diff = Number(it.counted) - Number(it.expected);
+                await tx.stockCountItem.update({ where: { id: it.id }, data: { diff } });
+                if (diff === 0) continue;
+
+                // Delta sobre el stock ACTUAL → respeta ventas/compras entre captura y cierre.
+                const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                    tenantId: authReq.tenantId!,
+                    productId: it.productId,
+                    delta: diff,
+                    enforceSufficient: false,
+                });
+
+                await tx.kardexMovement.create({
+                    data: {
+                        tenantId: authReq.tenantId!,
+                        productId: it.productId,
+                        type: diff < 0 ? 'ADJUST_LOSS' : 'ADJUST_GAIN',
+                        quantity: diff,
+                        stockBefore,
+                        stockAfter,
+                        referenceId: id,
+                        referenceType: 'STOCK_COUNT',
+                        reason: `Toma física #${id.slice(0, 8)}: esperado ${Number(it.expected)}, contado ${Number(it.counted)}`,
+                        userId: authReq.userId!,
+                    },
+                });
+
+                const cost = new Decimal(Number(it.product.cost) || 0);
+                if (diff < 0) lossValue = lossValue.plus(cost.times(Math.abs(diff)));
+                else gainValue = gainValue.plus(cost.times(diff));
+                adjusted++;
+            }
+
+            // Asiento contable de la merma/sobrante (si hubo discrepancia valuada).
+            await recordStockCountAdjustment(
+                tx, authReq.tenantId!, authReq.userId!, id, lossValue.toNumber(), gainValue.toNumber()
+            );
+
+            const closed = await tx.stockCount.update({
+                where: { id },
+                data: { status: 'CLOSED', closedAt: new Date(), closedBy: authReq.userId! },
+            });
+
+            return {
+                count: closed,
+                adjusted,
+                countedItems,
+                uncounted: items.length - countedItems,
+                lossValue: lossValue.toDecimalPlaces(2).toNumber(),
+                gainValue: gainValue.toDecimalPlaces(2).toNumber(),
+            };
+        });
+
+        res.json({ message: `Toma física cerrada. ${result.adjusted} ajuste(s) aplicado(s).`, ...result });
+    } catch (error: any) {
+        console.error('Error cerrando toma física:', error);
+        const msg = error?.message || 'Error cerrando toma física';
+        const code = error instanceof PeriodLockedError ? 423
+            : (msg.includes('no encontrada') || msg.includes('cerrada') || msg.includes('cancelada')) ? 400 : 500;
+        res.status(code).json({ error: msg });
+    }
+});
+
+// POST /api/stock-counts/:id/cancel - Cancelar una toma física abierta (sin ajustes)
+app.post('/api/stock-counts/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    try {
+        const updated = await prisma.stockCount.updateMany({
+            where: { id, tenantId: authReq.tenantId!, status: 'OPEN' },
+            data: { status: 'CANCELLED', closedAt: new Date(), closedBy: authReq.userId! },
+        });
+        if (updated.count === 0) return res.status(400).json({ error: 'No se encontró una toma física abierta con ese id.' });
+        res.json({ message: 'Toma física cancelada' });
+    } catch (error: any) {
+        console.error('Error cancelando toma física:', error);
+        res.status(500).json({ error: error.message || 'Error cancelando toma física' });
     }
 });
 
