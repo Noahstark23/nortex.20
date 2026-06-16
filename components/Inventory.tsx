@@ -6,7 +6,7 @@ import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
     RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
     Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers, Download, ChevronLeft, ChevronRight,
-    Tag, DollarSign
+    Tag, DollarSign, Printer
 } from 'lucide-react';
 import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
@@ -33,6 +33,7 @@ interface Product {
     requiresBatchTracking?: boolean;
     reorderPoint?: number;
     maxStock?: number;
+    defaultSupplierId?: string | null;
 }
 
 interface ProductBatch {
@@ -166,9 +167,10 @@ export default function Inventory() {
 
     // Edit form (solo datos cosméticos/comerciales — sin stock para no disparar Kardex)
     const [editForm, setEditForm] = useState({
-        name: '', description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: ''
+        name: '', description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: '', defaultSupplierId: ''
     });
     const [editSubmitting, setEditSubmitting] = useState(false);
+    const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
 
     // Create form
     const [formData, setFormData] = useState({
@@ -259,6 +261,36 @@ export default function Inventory() {
         finally { setExporting(false); }
     };
 
+    // C3: hoja de etiquetas imprimibles (precio + código) de los productos seleccionados.
+    const handlePrintLabels = () => {
+        const selected = products.filter(p => selectedProductIds.includes(p.id));
+        if (selected.length === 0) return;
+        const esc = (s: string) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+        const labels = selected.map(p => `
+            <div class="label">
+                <div class="name">${esc(p.name)}</div>
+                <div class="price">${esc(formatCurrency(p.price))}</div>
+                <div class="sku">${esc(p.sku)}</div>
+            </div>`).join('');
+        const html = `<!doctype html><html><head><meta charset="utf-8"><title>Etiquetas</title><style>
+            *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:10px;background:#fff;color:#111}
+            .sheet{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+            .label{border:1px dashed #aaa;border-radius:6px;padding:10px 8px;text-align:center;page-break-inside:avoid}
+            .name{font-size:12px;font-weight:600;min-height:32px;line-height:1.2;overflow:hidden}
+            .price{font-size:22px;font-weight:800;margin:6px 0}
+            .sku{font-family:'Courier New',monospace;font-size:13px;letter-spacing:3px;background:#f1f1f1;border-radius:4px;padding:3px 4px;display:inline-block}
+            .bar{font-size:10px;color:#666;margin-top:2px}
+            @media print{.no-print{display:none}}
+        </style></head><body>
+            <button class="no-print" style="margin-bottom:10px;padding:8px 14px;font-weight:700;cursor:pointer" onclick="window.print()">Imprimir</button>
+            <div class="sheet">${labels}</div>
+            <script>window.onload=function(){setTimeout(function(){try{window.print()}catch(e){}},350)}<\/script>
+        </body></html>`;
+        const w = window.open('', '_blank');
+        if (w) { w.document.write(html); w.document.close(); }
+        else { alert('Permite las ventanas emergentes para imprimir etiquetas.'); }
+    };
+
     useEffect(() => {
         const userData = localStorage.getItem('nortex_user');
         if (userData) {
@@ -269,7 +301,12 @@ export default function Inventory() {
         }
         fetchStats();
         fetchCategories();
-    }, [fetchStats, fetchCategories]);
+        // Proveedores para asignar el proveedor por defecto al editar (C2)
+        fetch('/api/suppliers', { headers })
+            .then(r => r.ok ? r.json() : [])
+            .then((data) => setSuppliers(Array.isArray(data) ? data.map((s: any) => ({ id: s.id, name: s.name })) : []))
+            .catch(() => { /* noop */ });
+    }, [fetchStats, fetchCategories, headers]);
 
     // Debounce de la búsqueda (y vuelve a la página 1).
     useEffect(() => {
@@ -505,7 +542,8 @@ export default function Inventory() {
             price: String(product.price),
             imageUrl: product.imageUrl || '',
             reorderPoint: product.reorderPoint ? String(product.reorderPoint) : '',
-            maxStock: product.maxStock ? String(product.maxStock) : ''
+            maxStock: product.maxStock ? String(product.maxStock) : '',
+            defaultSupplierId: product.defaultSupplierId || ''
         });
         setShowEditModal(true);
     };
@@ -525,7 +563,8 @@ export default function Inventory() {
                     price: parseFloat(editForm.price),
                     imageUrl: editForm.imageUrl,
                     reorderPoint: editForm.reorderPoint === '' ? 0 : parseFloat(editForm.reorderPoint),
-                    maxStock: editForm.maxStock === '' ? 0 : parseFloat(editForm.maxStock)
+                    maxStock: editForm.maxStock === '' ? 0 : parseFloat(editForm.maxStock),
+                    defaultSupplierId: editForm.defaultSupplierId || null
                     // ⚠️ stock, cost, minStock y unit EXCLUIDOS intencionalmente
                     //    para no disparar el Kardex ni el sistema antirobo
                 })
@@ -964,6 +1003,13 @@ export default function Inventory() {
                         >
                             <Edit size={16} />
                             Editar precio/categoría
+                        </button>
+                        <button
+                            onClick={handlePrintLabels}
+                            className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors border border-slate-600"
+                        >
+                            <Printer size={16} />
+                            Etiquetas
                         </button>
                         <button
                             onClick={() => handleBulkPublish(true)}
@@ -1607,6 +1653,20 @@ export default function Inventory() {
                                         className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
                                     />
                                 </div>
+                            </div>
+
+                            {/* Proveedor por defecto (C2) */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-1 font-medium">Proveedor por defecto</label>
+                                <select
+                                    value={editForm.defaultSupplierId}
+                                    onChange={(e) => setEditForm({ ...editForm, defaultSupplierId: e.target.value })}
+                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                                >
+                                    <option value="">— Sin proveedor —</option>
+                                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                </select>
+                                <p className="text-[11px] text-slate-500 mt-1">Agrupa este producto al armar órdenes de compra en Compras Inteligentes.</p>
                             </div>
 
                             {/* Imagen */}

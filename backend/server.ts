@@ -1201,6 +1201,54 @@ app.post('/api/suppliers', authenticate, async (req: any, res: any) => {
     } catch (error) { res.status(500).json({ error: 'Error' }); }
 });
 
+// PUT /api/suppliers/:id - Actualizar proveedor (Bodeguero C2 — completa el CRUD)
+app.put('/api/suppliers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    const { name, ruc, contactName, phone, email, address, category } = req.body;
+    try {
+        const existing = await prisma.supplier.findFirst({ where: { id, tenantId: authReq.tenantId! } });
+        if (!existing) return res.status(404).json({ error: 'Proveedor no encontrado' });
+
+        const data: any = {};
+        if (name !== undefined) data.name = name;
+        if (ruc !== undefined) data.ruc = ruc;
+        if (contactName !== undefined) data.contactName = contactName;
+        if (phone !== undefined) data.phone = phone;
+        if (email !== undefined) data.email = email;
+        if (address !== undefined) data.address = address;
+        if (category !== undefined) data.category = category;
+
+        const supplier = await prisma.supplier.update({ where: { id }, data });
+        res.json(supplier);
+    } catch (error: any) {
+        console.error('Error updating supplier:', error);
+        res.status(500).json({ error: 'Error actualizando proveedor' });
+    }
+});
+
+// DELETE /api/suppliers/:id - Eliminar proveedor (solo si no tiene compras)
+app.delete('/api/suppliers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    try {
+        const existing = await prisma.supplier.findFirst({ where: { id, tenantId: authReq.tenantId! } });
+        if (!existing) return res.status(404).json({ error: 'Proveedor no encontrado' });
+
+        const purchases = await prisma.purchase.count({ where: { supplierId: id, tenantId: authReq.tenantId! } });
+        if (purchases > 0) {
+            return res.status(409).json({ error: `No se puede eliminar: el proveedor tiene ${purchases} compra(s) registrada(s).` });
+        }
+
+        // Los productos que lo tenían por defecto quedan en null (onDelete: SetNull).
+        await prisma.supplier.delete({ where: { id } });
+        res.json({ message: 'Proveedor eliminado' });
+    } catch (error: any) {
+        console.error('Error deleting supplier:', error);
+        res.status(500).json({ error: 'Error eliminando proveedor' });
+    }
+});
+
 
 // ==========================================
 // 👔 RRHH: EMPLEADOS & NÓMINA (LÓGICA REAL AGREGADA)
@@ -2190,7 +2238,7 @@ app.get('/api/products/categories', authenticate, async (req: any, res: any) => 
 // POST /api/products - Crear producto (OWNER o ADMIN)
 app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking, reorderPoint, maxStock } = req.body;
+    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking, reorderPoint, maxStock, defaultSupplierId } = req.body;
 
     try {
         // Verificar que SKU no exista
@@ -2225,6 +2273,7 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (re
                 requiresBatchTracking: Boolean(requiresBatchTracking),
                 reorderPoint: parseFloat(reorderPoint) || 0,
                 maxStock: parseFloat(maxStock) || 0,
+                defaultSupplierId: defaultSupplierId || null,
                 createdBy: authReq.userId!
             }
         });
@@ -2378,7 +2427,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
 app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { name, description, category, price, cost, stock, minStock, unit, imageUrl, reorderPoint, maxStock } = req.body;
+    const { name, description, category, price, cost, stock, minStock, unit, imageUrl, reorderPoint, maxStock, defaultSupplierId } = req.body;
 
     try {
         const existing = await prisma.product.findFirst({
@@ -2400,6 +2449,7 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
         if (imageUrl !== undefined) updates.imageUrl = imageUrl;
         if (reorderPoint !== undefined) updates.reorderPoint = parseFloat(reorderPoint) || 0;
         if (maxStock !== undefined) updates.maxStock = parseFloat(maxStock) || 0;
+        if (defaultSupplierId !== undefined) updates.defaultSupplierId = defaultSupplierId || null;
 
         // Si se cambia el stock, crear registro en Kardex
         if (stock !== undefined) {
@@ -6079,7 +6129,11 @@ app.get('/api/inventory/reorder', authenticate, checkRole(['OWNER', 'ADMIN']), a
 
         const products = await prisma.product.findMany({
             where: { tenantId: authReq.tenantId },
-            select: { id: true, name: true, sku: true, stock: true, cost: true, minStock: true, reorderPoint: true, maxStock: true, category: true },
+            select: {
+                id: true, name: true, sku: true, stock: true, cost: true, minStock: true,
+                reorderPoint: true, maxStock: true, category: true, defaultSupplierId: true,
+                defaultSupplier: { select: { id: true, name: true } },
+            },
         });
 
         const items = [];
@@ -6110,6 +6164,8 @@ app.get('/api/inventory/reorder', authenticate, checkRole(['OWNER', 'ADMIN']), a
                 reorderPoint,
                 maxStock,
                 cost,
+                supplierId: p.defaultSupplier?.id || null,
+                supplierName: p.defaultSupplier?.name || null,
                 vpd: Math.round(vpd * 100) / 100,
                 daysRemaining: daysRemaining === Infinity ? null : Math.round(daysRemaining * 10) / 10,
                 reason: belowReorder && fastMoving ? 'BOTH' : belowReorder ? 'REORDER_POINT' : 'VELOCITY',

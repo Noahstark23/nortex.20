@@ -182,8 +182,9 @@ model Supplier {
   category    String?
   createdAt   DateTime @default(now())
 
-  tenant    Tenant     @relation(fields: [tenantId], references: [id])
-  purchases Purchase[]
+  tenant             Tenant     @relation(fields: [tenantId], references: [id])
+  purchases          Purchase[]
+  defaultForProducts Product[]  @relation("DefaultSupplier")
 
   @@index([tenantId])
 }
@@ -706,6 +707,9 @@ model Product {
   reorderPoint Float @default(0) // Punto de reorden: stock ≤ esto → reponer
   maxStock     Float @default(0) // Stock objetivo/máximo (para sugerir cuánto comprar)
 
+  // Proveedor por defecto (Bodeguero C2) — agrupa/prellena la orden de compra
+  defaultSupplierId String?
+
   // Catálogo Público
   isPublished Boolean @default(false) // Visible en catálogo público
   imageUrl    String? // URL de imagen del producto
@@ -725,8 +729,10 @@ model Product {
   pedidoItems     PedidoItem[]
   batches         ProductBatch[]
   stockCountItems StockCountItem[]
+  defaultSupplier Supplier?        @relation("DefaultSupplier", fields: [defaultSupplierId], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, sku])
+  @@index([defaultSupplierId])
   @@index([tenantId])
   @@index([category])
 }

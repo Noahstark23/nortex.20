@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Truck, Plus, Search, Phone, Mail, User, X, Hash, MapPin } from 'lucide-react';
+import { Truck, Plus, Search, Phone, Mail, User, X, Hash, MapPin, Pencil, Trash2 } from 'lucide-react';
 
 interface Supplier {
   id: string;
@@ -16,8 +16,11 @@ const Suppliers: React.FC = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [formData, setFormData] = useState({ name: '', ruc: '', contactName: '', phone: '', email: '', address: '', category: '' });
+
+  const emptyForm = { name: '', ruc: '', contactName: '', phone: '', email: '', address: '', category: '' };
 
   const fetchSuppliers = async () => {
       try {
@@ -33,21 +36,46 @@ const Suppliers: React.FC = () => {
 
   useEffect(() => { fetchSuppliers(); }, []);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const openCreate = () => { setEditingId(null); setFormData(emptyForm); setShowModal(true); };
+  const openEdit = (s: Supplier) => {
+      setEditingId(s.id);
+      setFormData({ name: s.name || '', ruc: s.ruc || '', contactName: s.contactName || '', phone: s.phone || '', email: s.email || '', address: s.address || '', category: s.category || '' });
+      setShowModal(true);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       try {
           const token = localStorage.getItem('nortex_token');
-          const res = await fetch('/api/suppliers', {
-              method: 'POST',
+          const res = await fetch(editingId ? `/api/suppliers/${editingId}` : '/api/suppliers', {
+              method: editingId ? 'PUT' : 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
               body: JSON.stringify(formData)
           });
           if(res.ok) {
               setShowModal(false);
-              setFormData({ name: '', ruc: '', contactName: '', phone: '', email: '', address: '', category: '' });
+              setEditingId(null);
+              setFormData(emptyForm);
               fetchSuppliers();
-              alert("✅ Proveedor agregado.");
+              alert(editingId ? "✅ Proveedor actualizado." : "✅ Proveedor agregado.");
+          } else {
+              const d = await res.json().catch(() => ({}));
+              alert(`Error: ${d.error || 'No se pudo guardar'}`);
           }
+      } catch(e) { alert("Error"); }
+  };
+
+  const handleDelete = async (s: Supplier) => {
+      if (!confirm(`¿Eliminar al proveedor "${s.name}"?`)) return;
+      try {
+          const token = localStorage.getItem('nortex_token');
+          const res = await fetch(`/api/suppliers/${s.id}`, {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${token}` }
+          });
+          const d = await res.json().catch(() => ({}));
+          if (res.ok) { fetchSuppliers(); }
+          else { alert(`Error: ${d.error || 'No se pudo eliminar'}`); }
       } catch(e) { alert("Error"); }
   };
 
@@ -62,7 +90,7 @@ const Suppliers: React.FC = () => {
                 </h1>
                 <p className="text-slate-500 text-sm">Directorio de Cadena de Suministro</p>
             </div>
-            <button onClick={() => setShowModal(true)} className="bg-nortex-900 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-nortex-800">
+            <button onClick={openCreate} className="bg-nortex-900 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-nortex-800">
                 <Plus size={18} /> Agregar Proveedor
             </button>
         </div>
@@ -85,7 +113,11 @@ const Suppliers: React.FC = () => {
                 <div key={s.id} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all text-slate-800">
                     <div className="flex justify-between items-start mb-4">
                         <h3 className="font-bold text-lg text-slate-800">{s.name}</h3>
-                        <span className="text-[10px] bg-slate-100 px-2 py-1 rounded font-bold uppercase text-slate-500">{s.category || 'General'}</span>
+                        <div className="flex items-center gap-1">
+                            <span className="text-[10px] bg-slate-100 px-2 py-1 rounded font-bold uppercase text-slate-500">{s.category || 'General'}</span>
+                            <button onClick={() => openEdit(s)} className="p-1.5 rounded-lg text-slate-400 hover:text-nortex-700 hover:bg-slate-100 transition-colors" title="Editar"><Pencil size={15} /></button>
+                            <button onClick={() => handleDelete(s)} className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Eliminar"><Trash2 size={15} /></button>
+                        </div>
                     </div>
                     <div className="space-y-2 text-sm text-slate-600">
                         {s.ruc && <div className="flex items-center gap-2"><Hash size={14} className="text-amber-500"/> <span className="font-mono font-semibold text-amber-700">{s.ruc}</span></div>}
@@ -103,10 +135,10 @@ const Suppliers: React.FC = () => {
             <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                 <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
                     <div className="flex justify-between items-center mb-6">
-                        <h3 className="font-bold text-lg">Nuevo Proveedor</h3>
-                        <button onClick={() => setShowModal(false)}><X size={20}/></button>
+                        <h3 className="font-bold text-lg">{editingId ? 'Editar Proveedor' : 'Nuevo Proveedor'}</h3>
+                        <button onClick={() => { setShowModal(false); setEditingId(null); }}><X size={20}/></button>
                     </div>
-                    <form onSubmit={handleCreate} className="space-y-3">
+                    <form onSubmit={handleSubmit} className="space-y-3">
                         <input required className="w-full border p-2 rounded text-slate-800" placeholder="Nombre Empresa *" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
                         <input className="w-full border p-2 rounded text-slate-800 font-mono" placeholder="RUC / Cédula Jurídica (DGI)" value={formData.ruc} onChange={e => setFormData({...formData, ruc: e.target.value})} />
                         <input className="w-full border p-2 rounded text-slate-800" placeholder="Persona de Contacto" value={formData.contactName} onChange={e => setFormData({...formData, contactName: e.target.value})} />
@@ -116,7 +148,7 @@ const Suppliers: React.FC = () => {
                             <input className="w-full border p-2 rounded text-slate-800" placeholder="Email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
                         </div>
                         <input className="w-full border p-2 rounded text-slate-800" placeholder="Dirección" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
-                        <button type="submit" className="w-full bg-nortex-900 text-white py-3 rounded font-bold mt-1">Guardar</button>
+                        <button type="submit" className="w-full bg-nortex-900 text-white py-3 rounded font-bold mt-1">{editingId ? 'Guardar cambios' : 'Guardar'}</button>
                     </form>
                 </div>
             </div>
