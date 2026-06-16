@@ -5913,6 +5913,15 @@ app.post('/api/hrm/settlement/:employeeId', authenticate, checkRole(['OWNER', 'A
                 where: { id: employee.id },
                 data: { status: 'TERMINATED', vacationDays: 0 },
             });
+            // Cierra solicitudes que quedan sin sentido tras la baja (no dejarlas colgando).
+            await tx.leaveRequest.updateMany({
+                where: { tenantId, employeeId: employee.id, status: 'PENDING' },
+                data: { status: 'REJECTED' },
+            });
+            await tx.salaryAdvance.updateMany({
+                where: { tenantId, employeeId: employee.id, status: 'PENDING' },
+                data: { status: 'REJECTED' },
+            });
             return created;
         });
 
@@ -6058,18 +6067,17 @@ app.post('/api/me/leave', authenticate, async (req: any, res: any) => {
     try {
         const emp = await findMyEmployee(authReq);
         if (!emp) return res.status(404).json({ error: 'Tu usuario no está vinculado a un expediente.' });
-        // Evita apilar solicitudes de vacaciones solapadas (el saldo se valida al aprobar).
-        if (type === 'VACATION') {
-            const solapada = await prisma.leaveRequest.findFirst({
-                where: {
-                    tenantId: authReq.tenantId!, employeeId: emp.id, type: 'VACATION',
-                    status: { in: ['PENDING', 'APPROVED'] },
-                    startDate: { lte: new Date(endDate) }, endDate: { gte: new Date(startDate) },
-                },
-                select: { id: true },
-            });
-            if (solapada) return res.status(400).json({ error: 'Ya tenés una solicitud de vacaciones que se solapa con esas fechas.' });
-        }
+        // Evita apilar solicitudes solapadas (de cualquier tipo); el saldo de
+        // vacaciones se valida al aprobar.
+        const solapada = await prisma.leaveRequest.findFirst({
+            where: {
+                tenantId: authReq.tenantId!, employeeId: emp.id,
+                status: { in: ['PENDING', 'APPROVED'] },
+                startDate: { lte: new Date(endDate) }, endDate: { gte: new Date(startDate) },
+            },
+            select: { id: true },
+        });
+        if (solapada) return res.status(400).json({ error: 'Ya tenés una ausencia que se solapa con esas fechas.' });
         const leave = await prisma.leaveRequest.create({
             data: {
                 tenantId: authReq.tenantId!, employeeId: emp.id, type,
@@ -6094,6 +6102,8 @@ app.post('/api/me/advance', authenticate, async (req: any, res: any) => {
         if (!emp) return res.status(404).json({ error: 'Tu usuario no está vinculado a un expediente.' });
         const max = Number(emp.baseSalary) * 0.30;
         if (monto > max) return res.status(400).json({ error: `El monto excede tu límite permitido de C$ ${max.toFixed(2)} (30% del salario).` });
+        const pendiente = await prisma.salaryAdvance.findFirst({ where: { tenantId: authReq.tenantId!, employeeId: emp.id, status: 'PENDING' }, select: { id: true } });
+        if (pendiente) return res.status(400).json({ error: 'Ya tenés un adelanto pendiente de aprobación.' });
         const advance = await prisma.salaryAdvance.create({
             data: { tenantId: authReq.tenantId!, employeeId: emp.id, amount: monto, fee: monto * 0.05, status: 'PENDING' },
         });
