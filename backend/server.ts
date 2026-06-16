@@ -2114,7 +2114,7 @@ app.post('/api/cash-movements/:id/void', authenticate, async (req: any, res: any
 // GET /api/products - Lista todos los productos (disponible para todos)
 app.get('/api/products', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { search, lowStock } = req.query;
+    const { search, lowStock, category, status, sort, dir, page, pageSize } = req.query;
 
     try {
         const whereClause: any = { tenantId: authReq.tenantId };
@@ -2126,10 +2126,30 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
                 { category: { contains: search } }
             ];
         }
+        if (category) whereClause.category = String(category);
+        if (status === 'out') whereClause.stock = { lte: 0 };
+        else if (status === 'published') whereClause.isPublished = true;
+        else if (status === 'unpublished') whereClause.isPublished = false;
+
+        // Orden por columna válida (default: nombre).
+        const sortField = ['name', 'stock', 'price', 'cost', 'sku', 'category'].includes(String(sort)) ? String(sort) : 'name';
+        const orderBy: any = { [sortField]: dir === 'desc' ? 'desc' : 'asc' };
+
+        // Modo paginado (opt-in: solo si llega `page`) — para la vista de inventario.
+        // Sin `page`, devuelve el arreglo completo (compatibilidad con POS y otros).
+        if (page) {
+            const take = Math.min(200, Math.max(1, parseInt(String(pageSize)) || 50));
+            const skip = (Math.max(1, parseInt(String(page)) || 1) - 1) * take;
+            const [products, total] = await Promise.all([
+                prisma.product.findMany({ where: whereClause, orderBy, skip, take, include: { creator: { select: { name: true, email: true } } } }),
+                prisma.product.count({ where: whereClause }),
+            ]);
+            return res.json({ products, total, page: Math.max(1, parseInt(String(page)) || 1), pageSize: take });
+        }
 
         let products = await prisma.product.findMany({
             where: whereClause,
-            orderBy: { name: 'asc' },
+            orderBy,
             include: {
                 creator: { select: { name: true, email: true } }
             }
@@ -2143,6 +2163,23 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
     } catch (error) {
         console.error('Error fetching products:', error);
         res.status(500).json({ error: 'Error obteniendo productos' });
+    }
+});
+
+// GET /api/products/categories — categorías distintas (para el filtro)
+app.get('/api/products/categories', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const rows = await prisma.product.findMany({
+            where: { tenantId: authReq.tenantId, category: { not: null } },
+            select: { category: true },
+            distinct: ['category'],
+            orderBy: { category: 'asc' },
+        });
+        res.json(rows.map((r: any) => r.category).filter(Boolean));
+    } catch (error) {
+        console.error('Error fetching categories:', error);
+        res.status(500).json({ error: 'Error obteniendo categorías' });
     }
 });
 
@@ -2822,12 +2859,16 @@ app.get('/api/reports/inventory', authenticate, async (req: any, res: any) => {
         });
 
         let inventoryValue = new Decimal(0);
+        let outOfStock = 0;
+        let totalUnits = 0;
         const lowStock: { id: string; name: string; sku: string; stock: number; minStock: number; cost: number }[] = [];
 
         products.forEach((p) => {
             inventoryValue = inventoryValue.plus(
                 new Decimal(p.stock.toString()).mul(p.cost.toString())
             );
+            totalUnits += Number(p.stock);
+            if (Number(p.stock) <= 0) outOfStock++;
             if (Number(p.stock) <= Number(p.minStock)) {
                 lowStock.push({
                     id: p.id,
@@ -2843,6 +2884,8 @@ app.get('/api/reports/inventory', authenticate, async (req: any, res: any) => {
         res.json({
             inventoryValue: inventoryValue.toDecimalPlaces(2).toNumber(),
             totalProducts: products.length,
+            totalUnits,
+            outOfStock,
             lowStock,
         });
     } catch (error) {
