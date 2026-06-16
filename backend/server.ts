@@ -3643,20 +3643,21 @@ app.post('/api/purchases', authenticate, validate(CreatePurchaseSchema), async (
 
             // 4. Registro financiero
             if (paymentMethod === 'CASH') {
-                // Guard de saldo: una compra de contado no puede dejar la billetera en
-                // negativo (faltaba esta validación → el wallet podía irse a negativo).
-                const t = await tx.tenant.findUnique({
-                    where: { id: authReq.tenantId },
-                    select: { walletBalance: true }
-                });
-                if (!t || Number(t.walletBalance) < Number(total)) {
-                    throw new Error(`SALDO_INSUFICIENTE: disponible C$ ${Number(t?.walletBalance ?? 0).toFixed(2)}, requerido C$ ${Number(total).toFixed(2)}. Usa crédito o recarga tu billetera.`);
-                }
-                // Descontar de wallet del tenant
-                await tx.tenant.update({
-                    where: { id: authReq.tenantId },
+                // Débito ATÓMICO: decrementa solo si hay saldo suficiente. El guard de
+                // suficiencia y la escritura son el MISMO UPDATE condicional (toma el
+                // row-lock), así dos compras de contado concurrentes no pueden ambas
+                // pasar el chequeo y dejar la billetera en negativo (TOCTOU).
+                const debited = await tx.tenant.updateMany({
+                    where: { id: authReq.tenantId, walletBalance: { gte: total } },
                     data: { walletBalance: { decrement: total } }
                 });
+                if (debited.count === 0) {
+                    const t = await tx.tenant.findUnique({
+                        where: { id: authReq.tenantId },
+                        select: { walletBalance: true }
+                    });
+                    throw new Error(`SALDO_INSUFICIENTE: disponible C$ ${Number(t?.walletBalance ?? 0).toFixed(2)}, requerido C$ ${Number(total).toFixed(2)}. Usa crédito o recarga tu billetera.`);
+                }
 
                 // Crear gasto
                 await tx.expense.create({
