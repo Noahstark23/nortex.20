@@ -2190,7 +2190,7 @@ app.get('/api/products/categories', authenticate, async (req: any, res: any) => 
 // POST /api/products - Crear producto (OWNER o ADMIN)
 app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking } = req.body;
+    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking, reorderPoint, maxStock } = req.body;
 
     try {
         // Verificar que SKU no exista
@@ -2223,6 +2223,8 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (re
                 isPublished: Boolean(isPublished),
                 imageUrl: imageUrl || null,
                 requiresBatchTracking: Boolean(requiresBatchTracking),
+                reorderPoint: parseFloat(reorderPoint) || 0,
+                maxStock: parseFloat(maxStock) || 0,
                 createdBy: authReq.userId!
             }
         });
@@ -2376,7 +2378,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
 app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { name, description, category, price, cost, stock, minStock, unit, imageUrl } = req.body;
+    const { name, description, category, price, cost, stock, minStock, unit, imageUrl, reorderPoint, maxStock } = req.body;
 
     try {
         const existing = await prisma.product.findFirst({
@@ -2396,6 +2398,8 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
         if (minStock !== undefined) updates.minStock = parseInt(minStock);
         if (unit !== undefined) updates.unit = unit;
         if (imageUrl !== undefined) updates.imageUrl = imageUrl;
+        if (reorderPoint !== undefined) updates.reorderPoint = parseFloat(reorderPoint) || 0;
+        if (maxStock !== undefined) updates.maxStock = parseFloat(maxStock) || 0;
 
         // Si se cambia el stock, crear registro en Kardex
         if (stock !== undefined) {
@@ -2837,6 +2841,83 @@ app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), 
         console.error('Error creando lote:', error);
         res.status(error.message?.includes('no encontrado') ? 400 : 500)
             .json({ error: error.message || 'Error creando lote' });
+    }
+});
+
+// POST /api/inventory/batches/:batchId/writeoff - Dar de baja un lote (merma) [Bodeguero B3]
+// Resta el stock restante del lote del producto, deja Kardex y asiento de merma
+// (Debe 5.1.2 Pérdida por Merma / Haber 1.1.4 Inventario, valuado al costo).
+app.post('/api/inventory/batches/:batchId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { batchId } = req.params;
+    const reason = (req.body?.reason || '').toString().trim();
+    try {
+        await seedChartOfAccounts(authReq.tenantId!); // garantiza 5.1.2 / 1.1.4
+
+        const result = await prisma.$transaction(async (tx: any) => {
+            const batch = await tx.productBatch.findFirst({
+                where: { id: batchId, tenantId: authReq.tenantId! },
+                include: { product: { select: { name: true, cost: true } } },
+            });
+            if (!batch) throw new Error('Lote no encontrado');
+            const qty = Number(batch.stock);
+            if (qty <= 0) throw new Error('El lote no tiene stock para dar de baja.');
+
+            // Restar del stock del producto (realidad física: el lote se descarta).
+            const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                tenantId: authReq.tenantId!,
+                productId: batch.productId,
+                delta: -qty,
+                enforceSufficient: false,
+            });
+
+            await tx.productBatch.update({ where: { id: batchId }, data: { stock: 0 } });
+
+            await tx.kardexMovement.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    productId: batch.productId,
+                    type: 'ADJUST_LOSS',
+                    quantity: -qty,
+                    stockBefore,
+                    stockAfter,
+                    referenceId: batchId,
+                    referenceType: 'BATCH_WRITEOFF',
+                    reason: reason || `Baja de lote ${batch.batchNumber} (vence ${new Date(batch.expiryDate).toISOString().slice(0, 10)})`,
+                    userId: authReq.userId!,
+                    batchId,
+                },
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'BATCH_WRITEOFF',
+                    details: JSON.stringify({ batchId, batchNumber: batch.batchNumber, productName: batch.product.name, quantity: qty, expiryDate: batch.expiryDate, reason: reason || null, timestamp: new Date().toISOString() }),
+                },
+            });
+
+            const lossValue = new Decimal(qty).times(Number(batch.product.cost) || 0).toDecimalPlaces(2).toNumber();
+            if (lossValue > 0) {
+                await createJournalEntry(
+                    tx, authReq.tenantId!, `Baja de lote vencido ${batch.batchNumber}`, batchId, 'BATCH_WRITEOFF', authReq.userId!,
+                    [
+                        { accountCode: '5.1.2', debit: lossValue, credit: 0 },
+                        { accountCode: '1.1.4', debit: 0, credit: lossValue },
+                    ]
+                );
+            }
+
+            return { newStock: stockAfter, lossValue, batchNumber: batch.batchNumber, qty };
+        });
+
+        res.json({ message: `Lote ${result.batchNumber} dado de baja (${result.qty} uds). Merma: C$ ${result.lossValue.toFixed(2)}`, ...result });
+    } catch (error: any) {
+        console.error('Error dando de baja lote:', error);
+        const msg = error?.message || 'Error dando de baja el lote';
+        const code = error instanceof PeriodLockedError ? 423 : (msg.includes('no encontrado') || msg.includes('stock')) ? 400 : 500;
+        res.status(code).json({ error: msg });
     }
 });
 
@@ -5975,6 +6056,74 @@ app.get('/api/inventory/oracle', authenticate, async (req: any, res: any) => {
     } catch (error) {
         console.error('Oracle Error:', error);
         res.status(500).json({ error: 'Error calculando predicciones del Oráculo' });
+    }
+});
+
+// GET /api/inventory/reorder — ¿Qué reponer? (Bodeguero B2)
+// Combina el punto de reorden estático (stock ≤ reorderPoint) con la velocidad de
+// venta (VPD, mismo cálculo del oráculo) en una sola lista, con cantidad sugerida.
+app.get('/api/inventory/reorder', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        const saleMovements = await prisma.kardexMovement.findMany({
+            where: { tenantId: authReq.tenantId, type: 'SALE', date: { gte: thirtyDaysAgo } },
+            select: { productId: true, quantity: true },
+        });
+        const salesByProduct: Record<string, number> = {};
+        for (const m of saleMovements) {
+            salesByProduct[m.productId] = (salesByProduct[m.productId] || 0) + Math.abs(m.quantity);
+        }
+
+        const products = await prisma.product.findMany({
+            where: { tenantId: authReq.tenantId },
+            select: { id: true, name: true, sku: true, stock: true, cost: true, minStock: true, reorderPoint: true, maxStock: true, category: true },
+        });
+
+        const items = [];
+        for (const p of products) {
+            const stock = Number(p.stock);
+            const reorderPoint = Number(p.reorderPoint) || 0;
+            const maxStock = Number(p.maxStock) || 0;
+            const totalSold = salesByProduct[p.id] || 0;
+            const vpd = totalSold / 30; // Venta Diaria Promedio
+            const daysRemaining = vpd > 0 ? stock / vpd : Infinity;
+
+            const belowReorder = reorderPoint > 0 && stock <= reorderPoint;
+            const fastMoving = vpd > 0 && daysRemaining <= 7;
+            if (!belowReorder && !fastMoving) continue;
+
+            // Cuánto reponer: llevar al máximo si está definido; si no, a 15 días de
+            // venta o al doble del punto de reorden.
+            const target = maxStock > 0 ? maxStock : (vpd > 0 ? vpd * 15 : reorderPoint * 2);
+            const suggestedQty = Math.max(0, Math.ceil(target - stock));
+            const cost = Number(p.cost) || 0;
+
+            items.push({
+                productId: p.id,
+                name: p.name,
+                sku: p.sku,
+                category: p.category,
+                currentStock: stock,
+                reorderPoint,
+                maxStock,
+                cost,
+                vpd: Math.round(vpd * 100) / 100,
+                daysRemaining: daysRemaining === Infinity ? null : Math.round(daysRemaining * 10) / 10,
+                reason: belowReorder && fastMoving ? 'BOTH' : belowReorder ? 'REORDER_POINT' : 'VELOCITY',
+                suggestedQty,
+                suggestedCost: Math.round(suggestedQty * cost * 100) / 100,
+            });
+        }
+
+        items.sort((a, b) => (a.daysRemaining ?? 9999) - (b.daysRemaining ?? 9999));
+
+        res.json({ items, total: items.length, totalEstimatedCost: items.reduce((s, i) => s + i.suggestedCost, 0) });
+    } catch (error) {
+        console.error('Reorder Error:', error);
+        res.status(500).json({ error: 'Error calculando reposición' });
     }
 });
 

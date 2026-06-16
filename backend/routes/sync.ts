@@ -171,10 +171,17 @@ router.post('/', authenticate, async (req: any, res: any) => {
                         // (stock >= deduct) — nunca sobre-descuenta un lote bajo
                         // concurrencia; el remanente cae al siguiente lote o al
                         // asiento "sin lote asignado".
+                        // B3: los lotes VENCIDOS se excluyen del consumo automático —
+                        // no se venden por FEFO; quedan para darse de baja (merma).
                         let remainingQty = effectiveQty;
                         let kardexCursor = stockBefore;
                         const activeBatches = await tx.productBatch.findMany({
-                            where: { productId: item.id, tenantId: callerTenantId, stock: { gt: 0 } },
+                            where: {
+                                productId: item.id,
+                                tenantId: callerTenantId,
+                                stock: { gt: 0 },
+                                expiryDate: { gte: new Date() },
+                            },
                             orderBy: { expiryDate: 'asc' },
                         });
 
