@@ -16,7 +16,7 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordLaborProvision, recordAguinaldoPayment, recordSettlement, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
@@ -3267,7 +3267,9 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             const workedByEmp = new Map<string, Set<string>>();
             for (const s of shiftsMes) {
                 if (!s.employeeId) continue;
-                const ds = s.startTime.toISOString().slice(0, 10);
+                // Día calendario LOCAL de Nicaragua (UTC-6): un turno nocturno no
+                // debe contarse en el día UTC siguiente.
+                const ds = new Date(s.startTime.getTime() - 6 * 3600 * 1000).toISOString().slice(0, 10);
                 if (!holidaySet.has(ds)) continue;
                 const set = workedByEmp.get(s.employeeId) ?? new Set<string>();
                 set.add(ds);
@@ -3287,13 +3289,17 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             const diasAusencia = Math.min(30, absenceDaysByEmployee.get(emp.id) || 0);
             const absenceDeduction = (baseSalary / 30) * diasAusencia;
 
-            // Adelantos a recuperar: los APPROVED aún sin nómina + los ya enlazados
-            // a la nómina de este período. Así recalcular el mes no los duplica ni
-            // los pierde (idempotente).
             const existing = await prisma.payroll.findUnique({
                 where: { employeeId_month_year: { employeeId: emp.id, month: Number(month), year: Number(year) } },
-                select: { id: true },
             });
+            // No recalcular una nómina ya PAGADA (preserva el pago y sus asientos).
+            if (existing && existing.status === 'PAGADO') {
+                payrolls.push({ ...existing, employeeName: `${emp.firstName} ${emp.lastName}`, cedula: emp.cedula, inss: emp.inss, ventasMes });
+                continue;
+            }
+
+            // Adelantos candidatos: los ya enlazados a esta nómina (prioridad en un
+            // recálculo) + los APPROVED aún sin nómina.
             const advances = await prisma.salaryAdvance.findMany({
                 where: {
                     tenantId: authReq.tenantId!,
@@ -3303,12 +3309,14 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
                         ...(existing ? [{ payrollId: existing.id }] : []),
                     ],
                 },
-                select: { id: true, amount: true, fee: true },
+                select: { id: true, amount: true, fee: true, payrollId: true },
             });
-            const advanceDeduction = advances.reduce((s, a) => s + Number(a.amount) + Number(a.fee), 0);
+            advances.sort((a, b) => (a.payrollId === existing?.id ? 0 : 1) - (b.payrollId === existing?.id ? 0 : 1));
 
+            // Se calcula SIN adelanto para conocer el disponible; el judicial ya está
+            // acotado, así que el disponible (= neto antes de adelantos) es ≥ 0.
             const calc = calculatePayroll(baseSalary, comisiones, {
-                inssPatronalRate, overtimeHours, advanceDeduction, absenceDeduction, holidayDays,
+                inssPatronalRate, overtimeHours, advanceDeduction: 0, absenceDeduction, holidayDays,
                 irAcumulado: {
                     mes: Number(month),
                     netoGravablePrevio: netoPrevioByEmp.get(emp.id) || 0,
@@ -3316,6 +3324,25 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
                 },
                 judicialDeductions: judicialByEmp.get(emp.id) ?? [],
             });
+
+            // Aplicar los adelantos en orden, solo hasta agotar el disponible (nunca
+            // dejar el neto negativo). Los que no caben se difieren al mes siguiente.
+            const disponible = calc.netSalary;
+            let restante = disponible;
+            let advanceApplied = 0;
+            const aplicados: string[] = [];
+            for (const adv of advances) {
+                const monto = Number(adv.amount) + Number(adv.fee);
+                // Epsilon mínimo (< medio centavo) solo para evitar falsos negativos
+                // por la representación binaria; no permite sobre-aplicar un centavo.
+                if (monto <= restante + 0.001) {
+                    advanceApplied = Number((advanceApplied + monto).toFixed(2));
+                    restante = Number((restante - monto).toFixed(2));
+                    aplicados.push(adv.id);
+                }
+            }
+            // Clamp de seguridad: el neto nunca queda negativo.
+            const netFinal = Math.max(0, Number((disponible - advanceApplied).toFixed(2)));
 
             const data = {
                 grossSalary: calc.grossSalary,
@@ -3328,11 +3355,11 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
                 inssLaboral: calc.inssLaboral,
                 irLaboral: calc.irLaboral,
                 totalDeductions: calc.totalDeductions,
-                advanceDeduction: calc.advanceDeduction,
+                advanceDeduction: advanceApplied,
                 absenceDeduction: calc.absenceDeduction,
                 diasAusencia,
                 judicialDeduction: calc.judicialDeduction,
-                netSalary: calc.netSalary,
+                netSalary: netFinal,
                 inssPatronal: calc.inssPatronal,
                 inatec: calc.inatec,
             };
@@ -3345,13 +3372,14 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
                 create: { tenantId: authReq.tenantId!, employeeId: emp.id, month: Number(month), year: Number(year), ...data },
             });
 
-            // Enlazar y marcar los adelantos descontados (idempotente: vuelven a
-            // recuperarse en un recálculo del mismo mes por el payrollId).
-            if (advances.length > 0) {
-                await prisma.salaryAdvance.updateMany({
-                    where: { id: { in: advances.map(a => a.id) } },
-                    data: { status: 'DEDUCTED', payrollId: payroll.id },
-                });
+            // Marcar como descontados solo los adelantos aplicados; los que no
+            // cupieron y estaban enlazados a esta nómina, devolverlos a APPROVED.
+            if (aplicados.length > 0) {
+                await prisma.salaryAdvance.updateMany({ where: { id: { in: aplicados } }, data: { status: 'DEDUCTED', payrollId: payroll.id } });
+            }
+            const diferidos = advances.filter(a => !aplicados.includes(a.id)).map(a => a.id);
+            if (diferidos.length > 0) {
+                await prisma.salaryAdvance.updateMany({ where: { id: { in: diferidos }, payrollId: payroll.id }, data: { status: 'APPROVED', payrollId: null } });
             }
 
             payrolls.push({
@@ -3477,7 +3505,7 @@ app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'ACC
                 data: { status: 'PAGADO', paidAt: new Date() },
             });
 
-            // Gasto operativo de la nómina (neto pagado).
+            // Gasto operativo de la nómina (neto pagado) — alimenta los dashboards.
             await tx.expense.create({
                 data: {
                     tenantId: authReq.tenantId!,
@@ -3486,6 +3514,15 @@ app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'ACC
                     category: 'NOMINA',
                 },
             });
+
+            // Asiento de nómina en el libro de partida doble: Debe Gasto Nómina /
+            // INSS Patronal / INATEC, Haber Caja + pasivos. Así la nómina aparece
+            // en el Flujo de Caja, el Balance y el Estado de Resultados. Fail-soft.
+            try {
+                await recordPayroll(tx, authReq.tenantId!, authReq.userId!, updated.id, Number(updated.netSalary), Number(updated.inssLaboral), Number(updated.irLaboral), Number(updated.inssPatronal), Number(updated.inatec));
+            } catch (payErr) {
+                console.warn('⚠️ Asiento de nómina omitido (la nómina se paga igual):', payErr);
+            }
 
             // Devengo mensual del pasivo laboral: aguinaldo + vacaciones +
             // indemnización ≈ 1/12 del salario ordinario cada uno (~25% total).
@@ -5766,14 +5803,16 @@ app.post('/api/accounting/fiscal-close', authenticate, async (req: any, res: any
 // Salario mensual base de la liquidación: promedio de los últimos 6 meses de
 // nómina (Art. 78, salario variable) o el salario base si no hay historial.
 async function salarioBaseLiquidacion(tenantId: string, employeeId: string, baseSalary: number): Promise<number> {
+    // Art. 78: base = salario ORDINARIO (salario + comisiones), promedio de los
+    // últimos 6 meses. Se excluyen horas extra y feriado (extraordinarios).
     const recientes = await prisma.payroll.findMany({
         where: { tenantId, employeeId },
         orderBy: [{ year: 'desc' }, { month: 'desc' }],
         take: 6,
-        select: { totalIncome: true },
+        select: { grossSalary: true, commissions: true },
     });
     if (recientes.length === 0) return baseSalary;
-    const suma = recientes.reduce((s, p) => s.plus(p.totalIncome.toString()), new Decimal(0));
+    const suma = recientes.reduce((s, p) => s.plus(p.grossSalary.toString()).plus(p.commissions.toString()), new Decimal(0));
     return suma.dividedBy(recientes.length).toDecimalPlaces(2).toNumber();
 }
 
@@ -5873,6 +5912,15 @@ app.post('/api/hrm/settlement/:employeeId', authenticate, checkRole(['OWNER', 'A
             await tx.employee.update({
                 where: { id: employee.id },
                 data: { status: 'TERMINATED', vacationDays: 0 },
+            });
+            // Cierra solicitudes que quedan sin sentido tras la baja (no dejarlas colgando).
+            await tx.leaveRequest.updateMany({
+                where: { tenantId, employeeId: employee.id, status: 'PENDING' },
+                data: { status: 'REJECTED' },
+            });
+            await tx.salaryAdvance.updateMany({
+                where: { tenantId, employeeId: employee.id, status: 'PENDING' },
+                data: { status: 'REJECTED' },
             });
             return created;
         });
@@ -6019,6 +6067,17 @@ app.post('/api/me/leave', authenticate, async (req: any, res: any) => {
     try {
         const emp = await findMyEmployee(authReq);
         if (!emp) return res.status(404).json({ error: 'Tu usuario no está vinculado a un expediente.' });
+        // Evita apilar solicitudes solapadas (de cualquier tipo); el saldo de
+        // vacaciones se valida al aprobar.
+        const solapada = await prisma.leaveRequest.findFirst({
+            where: {
+                tenantId: authReq.tenantId!, employeeId: emp.id,
+                status: { in: ['PENDING', 'APPROVED'] },
+                startDate: { lte: new Date(endDate) }, endDate: { gte: new Date(startDate) },
+            },
+            select: { id: true },
+        });
+        if (solapada) return res.status(400).json({ error: 'Ya tenés una ausencia que se solapa con esas fechas.' });
         const leave = await prisma.leaveRequest.create({
             data: {
                 tenantId: authReq.tenantId!, employeeId: emp.id, type,
@@ -6043,6 +6102,8 @@ app.post('/api/me/advance', authenticate, async (req: any, res: any) => {
         if (!emp) return res.status(404).json({ error: 'Tu usuario no está vinculado a un expediente.' });
         const max = Number(emp.baseSalary) * 0.30;
         if (monto > max) return res.status(400).json({ error: `El monto excede tu límite permitido de C$ ${max.toFixed(2)} (30% del salario).` });
+        const pendiente = await prisma.salaryAdvance.findFirst({ where: { tenantId: authReq.tenantId!, employeeId: emp.id, status: 'PENDING' }, select: { id: true } });
+        if (pendiente) return res.status(400).json({ error: 'Ya tenés un adelanto pendiente de aprobación.' });
         const advance = await prisma.salaryAdvance.create({
             data: { tenantId: authReq.tenantId!, employeeId: emp.id, amount: monto, fee: monto * 0.05, status: 'PENDING' },
         });
