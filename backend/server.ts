@@ -16,7 +16,7 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
@@ -2912,6 +2912,8 @@ app.post('/api/inventory/batches/:batchId/writeoff', authenticate, checkRole(['O
             if (!batch) throw new Error('Lote no encontrado');
             const qty = Number(batch.stock);
             if (qty <= 0) throw new Error('El lote no tiene stock para dar de baja.');
+            // Período cerrado → no se permite dar de baja (aun si el costo fuese 0).
+            await assertPeriodOpen(tx, authReq.tenantId!, new Date());
 
             // Restar del stock del producto (realidad física: el lote se descarta).
             const { stockBefore, stockAfter } = await applyStockDelta(tx, {
@@ -3154,29 +3156,41 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
             });
             if (!count) throw new Error('Toma física no encontrada');
             if (count.status !== 'OPEN') throw new Error('La toma física ya está cerrada o cancelada.');
+            // Un período cerrado congela TODO ajuste de inventario, aun si el valor
+            // de la merma fuese 0 (productos sin costo) y no se generara asiento.
+            await assertPeriodOpen(tx, authReq.tenantId!, new Date());
 
             const items = await tx.stockCountItem.findMany({
                 where: { countId: id },
-                include: { product: { select: { name: true, cost: true } } },
+                include: { product: { select: { name: true, cost: true, stock: true } } },
             });
 
-            let lossValue = new Decimal(0); // Σ |diff<0| · costo
-            let gainValue = new Decimal(0); // Σ diff>0 · costo
+            let lossValue = new Decimal(0); // Σ |merma| · costo
+            let gainValue = new Decimal(0); // Σ sobrante · costo
             let adjusted = 0;
             let countedItems = 0;
 
             for (const it of items) {
                 if (it.counted === null) continue; // no contado → no se toca
                 countedItems++;
-                const diff = Number(it.counted) - Number(it.expected);
-                await tx.stockCountItem.update({ where: { id: it.id }, data: { diff } });
-                if (diff === 0) continue;
+                const counted = Number(it.counted);
 
-                // Delta sobre el stock ACTUAL → respeta ventas/compras entre captura y cierre.
+                // `variance` = conteo vs el snapshot inicial (informativo, para el reporte).
+                const variance = counted - Number(it.expected);
+                await tx.stockCountItem.update({ where: { id: it.id }, data: { diff: variance } });
+
+                // El ajuste REAL se mide contra el stock de LIBRO ACTUAL: así las ventas/
+                // compras ya contabilizadas (que movieron el libro entre snapshot y cierre)
+                // NO se cuentan como merma — solo la diferencia inexplicada cuadra el stock
+                // al conteo físico y evita re-contabilizar COGS como pérdida.
+                const currentBook = Number(it.product.stock);
+                const delta = counted - currentBook;
+                if (delta === 0) continue;
+
                 const { stockBefore, stockAfter } = await applyStockDelta(tx, {
                     tenantId: authReq.tenantId!,
                     productId: it.productId,
-                    delta: diff,
+                    delta,
                     enforceSufficient: false,
                 });
 
@@ -3184,20 +3198,20 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
                     data: {
                         tenantId: authReq.tenantId!,
                         productId: it.productId,
-                        type: diff < 0 ? 'ADJUST_LOSS' : 'ADJUST_GAIN',
-                        quantity: diff,
+                        type: delta < 0 ? 'ADJUST_LOSS' : 'ADJUST_GAIN',
+                        quantity: delta,
                         stockBefore,
                         stockAfter,
                         referenceId: id,
                         referenceType: 'STOCK_COUNT',
-                        reason: `Toma física #${id.slice(0, 8)}: esperado ${Number(it.expected)}, contado ${Number(it.counted)}`,
+                        reason: `Toma física #${id.slice(0, 8)}: libro ${currentBook}, contado ${counted}`,
                         userId: authReq.userId!,
                     },
                 });
 
                 const cost = new Decimal(Number(it.product.cost) || 0);
-                if (diff < 0) lossValue = lossValue.plus(cost.times(Math.abs(diff)));
-                else gainValue = gainValue.plus(cost.times(diff));
+                if (delta < 0) lossValue = lossValue.plus(cost.times(Math.abs(delta)));
+                else gainValue = gainValue.plus(cost.times(delta));
                 adjusted++;
             }
 
