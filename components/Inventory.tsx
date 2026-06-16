@@ -31,6 +31,8 @@ interface Product {
     creator?: { name: string };
     updatedAt?: string;
     requiresBatchTracking?: boolean;
+    reorderPoint?: number;
+    maxStock?: number;
 }
 
 interface ProductBatch {
@@ -164,14 +166,14 @@ export default function Inventory() {
 
     // Edit form (solo datos cosméticos/comerciales — sin stock para no disparar Kardex)
     const [editForm, setEditForm] = useState({
-        name: '', description: '', category: '', price: '', imageUrl: ''
+        name: '', description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: ''
     });
     const [editSubmitting, setEditSubmitting] = useState(false);
 
     // Create form
     const [formData, setFormData] = useState({
         name: '', sku: '', description: '', category: '',
-        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false
+        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: ''
     });
 
     const token = localStorage.getItem('nortex_token');
@@ -459,6 +461,27 @@ export default function Inventory() {
         }
     };
 
+    // B3: dar de baja un lote (merma) → resta stock + Kardex + asiento de merma.
+    const handleWriteoffBatch = async (batchId: string, batchNumber: string) => {
+        if (!selectedProduct) return;
+        if (!confirm(`¿Dar de baja el lote ${batchNumber}? Se restará su stock y se registrará como merma (no se puede deshacer).`)) return;
+        try {
+            const res = await fetch(`/api/inventory/batches/${batchId}/writeoff`, { method: 'POST', headers, body: JSON.stringify({}) });
+            const data = await res.json();
+            if (res.ok) {
+                const r = await fetch(`/api/inventory/batches/${selectedProduct.id}`, { headers });
+                if (r.ok) setBatchesData(await r.json());
+                setSelectedProduct(prev => prev ? { ...prev, stock: data.newStock } : prev);
+                reload();
+                alert(data.message);
+            } else {
+                alert(`Error: ${data.error}`);
+            }
+        } catch (e) {
+            alert('Error dando de baja el lote');
+        }
+    };
+
     // ==========================================
     // ADJUST
     // ==========================================
@@ -480,7 +503,9 @@ export default function Inventory() {
             description: product.description || '',
             category: product.category || '',
             price: String(product.price),
-            imageUrl: product.imageUrl || ''
+            imageUrl: product.imageUrl || '',
+            reorderPoint: product.reorderPoint ? String(product.reorderPoint) : '',
+            maxStock: product.maxStock ? String(product.maxStock) : ''
         });
         setShowEditModal(true);
     };
@@ -498,7 +523,9 @@ export default function Inventory() {
                     description: editForm.description,
                     category: editForm.category,
                     price: parseFloat(editForm.price),
-                    imageUrl: editForm.imageUrl
+                    imageUrl: editForm.imageUrl,
+                    reorderPoint: editForm.reorderPoint === '' ? 0 : parseFloat(editForm.reorderPoint),
+                    maxStock: editForm.maxStock === '' ? 0 : parseFloat(editForm.maxStock)
                     // ⚠️ stock, cost, minStock y unit EXCLUIDOS intencionalmente
                     //    para no disparar el Kardex ni el sistema antirobo
                 })
@@ -584,7 +611,7 @@ export default function Inventory() {
 
             if (res.ok) {
                 setShowCreateModal(false);
-                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false });
+                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: '' });
                 reload();
                 alert('Producto creado exitosamente');
             } else {
@@ -1556,6 +1583,32 @@ export default function Inventory() {
                                 />
                             </div>
 
+                            {/* Reposición (B2) */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Punto de Reorden</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editForm.reorderPoint}
+                                        onChange={(e) => setEditForm({ ...editForm, reorderPoint: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="0 = sin alerta"
+                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Stock Objetivo (máx)</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editForm.maxStock}
+                                        onChange={(e) => setEditForm({ ...editForm, maxStock: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="sugiere cuánto comprar"
+                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    />
+                                </div>
+                            </div>
+
                             {/* Imagen */}
                             <div>
                                 <label className="block text-sm text-slate-300 mb-2 font-medium">Foto del Producto</label>
@@ -1710,6 +1763,28 @@ export default function Inventory() {
                                         inputMode="decimal"
                                         value={formData.minStock}
                                         onChange={(e) => setFormData({ ...formData, minStock: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Punto de Reorden</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={formData.reorderPoint}
+                                        onChange={(e) => setFormData({ ...formData, reorderPoint: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="0 = sin alerta"
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Stock Objetivo (máx)</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={formData.maxStock}
+                                        onChange={(e) => setFormData({ ...formData, maxStock: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="para sugerir cuánto comprar"
                                         className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
                                     />
                                 </div>
@@ -1888,12 +1963,13 @@ export default function Inventory() {
                                         <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700">Nº Lote</th>
                                         <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700">Vencimiento</th>
                                         <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700 text-right">Stock</th>
+                                        {isOwner && <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700 text-right">Acción</th>}
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-700/50">
                                     {batchesLoading ? (
                                         <tr>
-                                            <td colSpan={3} className="px-6 py-12 text-center text-slate-400">
+                                            <td colSpan={isOwner ? 4 : 3} className="px-6 py-12 text-center text-slate-400">
                                                 <div className="flex justify-center mb-2">
                                                     <div className="w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
                                                 </div>
@@ -1902,7 +1978,7 @@ export default function Inventory() {
                                         </tr>
                                     ) : batchesData.length === 0 ? (
                                         <tr>
-                                            <td colSpan={3} className="px-6 py-8 text-center text-slate-400">
+                                            <td colSpan={isOwner ? 4 : 3} className="px-6 py-8 text-center text-slate-400">
                                                 No hay lotes con stock positivo para este producto.
                                             </td>
                                         </tr>
@@ -1910,7 +1986,7 @@ export default function Inventory() {
                                         batchesData.map((batch) => {
                                             const isExpired = new Date(batch.expiryDate) < new Date();
                                             const isExpiringSoon = new Date(batch.expiryDate) < new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
-                                            
+
                                             return (
                                                 <tr key={batch.id} className="hover:bg-slate-700/20 transition-colors">
                                                     <td className="px-6 py-4 text-sm font-medium text-white font-mono">
@@ -1918,12 +1994,23 @@ export default function Inventory() {
                                                     </td>
                                                     <td className="px-6 py-4 text-sm">
                                                         <span className={`px-2 py-1 rounded-full text-xs font-semibold ${isExpired ? 'bg-red-900/40 text-red-400' : isExpiringSoon ? 'bg-amber-900/40 text-amber-400' : 'bg-emerald-900/40 text-emerald-400'}`}>
-                                                            {new Date(batch.expiryDate).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                                            {isExpired ? '⚠ ' : ''}{new Date(batch.expiryDate).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                                                         </span>
                                                     </td>
                                                     <td className="px-6 py-4 text-sm text-right font-bold text-white">
                                                         {batch.stock}
                                                     </td>
+                                                    {isOwner && (
+                                                        <td className="px-6 py-4 text-right">
+                                                            <button
+                                                                onClick={() => handleWriteoffBatch(batch.id, batch.batchNumber)}
+                                                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${isExpired ? 'bg-red-600/20 border-red-600/50 text-red-300 hover:bg-red-600/40' : 'border-slate-600 text-slate-400 hover:bg-slate-700'}`}
+                                                                title="Dar de baja este lote (merma)"
+                                                            >
+                                                                Dar de baja
+                                                            </button>
+                                                        </td>
+                                                    )}
                                                 </tr>
                                             );
                                         })

@@ -49,8 +49,10 @@ const CHART_OF_ACCOUNTS = [
     // INGRESOS (4.x.x)
     { code: '4.1.1', name: 'Ventas', type: 'REVENUE', subtype: null },
     { code: '4.1.2', name: 'Devoluciones sobre Ventas', type: 'REVENUE', subtype: null },
+    { code: '4.1.3', name: 'Sobrantes de Inventario', type: 'REVENUE', subtype: null },
     // GASTOS (5.x.x)
     { code: '5.1.1', name: 'Costo de Ventas', type: 'EXPENSE', subtype: null },
+    { code: '5.1.2', name: 'Pérdida por Merma de Inventario', type: 'EXPENSE', subtype: null },
     { code: '5.2.1', name: 'Gastos Operativos', type: 'EXPENSE', subtype: null },
     { code: '5.2.2', name: 'Gastos de Nómina', type: 'EXPENSE', subtype: null },
     { code: '5.2.3', name: 'INSS Patronal (Gasto)', type: 'EXPENSE', subtype: null },
@@ -343,6 +345,40 @@ export async function recordReturn(
         { accountCode: '1.1.1', debit: 0, credit: total },
         { accountCode: '5.1.1', debit: 0, credit: costTotal },
     ]);
+}
+
+/**
+ * TOMA FÍSICA (ajuste de inventario por conteo cíclico):
+ *   Merma   (Σ pérdidas·costo): Debe Pérdida por Merma (5.1.2) / Haber Inventario (1.1.4).
+ *   Sobrante (Σ sobrantes·costo): Debe Inventario (1.1.4) / Haber Sobrantes (4.1.3).
+ * Se netea Inventario (1.1.4) en una sola línea para que el asiento quede limpio.
+ * `lossValue` y `gainValue` son magnitudes positivas (valuadas al costo promedio).
+ * Requiere que 5.1.2/4.1.3 existan: el endpoint llama seedChartOfAccounts antes.
+ */
+export async function recordStockCountAdjustment(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    countId: string,
+    lossValue: number,
+    gainValue: number
+) {
+    const loss = new Decimal(lossValue).toDecimalPlaces(2);
+    const gain = new Decimal(gainValue).toDecimalPlaces(2);
+    if (loss.lessThanOrEqualTo(0) && gain.lessThanOrEqualTo(0)) return; // sin discrepancia → sin asiento
+
+    const lines: { accountCode: string; debit: number; credit: number }[] = [];
+    if (loss.greaterThan(0)) lines.push({ accountCode: '5.1.2', debit: loss.toNumber(), credit: 0 });
+    if (gain.greaterThan(0)) lines.push({ accountCode: '4.1.3', debit: 0, credit: gain.toNumber() });
+
+    // Inventario neteado: sobrante sube (Debe), merma baja (Haber).
+    const net = gain.minus(loss); // >0 → Debe; <0 → Haber
+    if (net.greaterThan(0)) lines.push({ accountCode: '1.1.4', debit: net.toNumber(), credit: 0 });
+    else if (net.lessThan(0)) lines.push({ accountCode: '1.1.4', debit: 0, credit: net.abs().toNumber() });
+
+    await createJournalEntry(
+        tx, tenantId, `Toma física #${countId.slice(0, 8)}`, countId, 'STOCK_COUNT', userId, lines
+    );
 }
 
 /**
