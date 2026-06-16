@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import * as XLSX from 'xlsx';
 import ImageUploader from './ImageUploader';
 import { sanitizeDecimalInput } from '../utils/money';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
     RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
-    Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers
+    Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers, Download, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
@@ -89,7 +90,20 @@ export default function Inventory() {
     const [products, setProducts] = useState<Product[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
     const [userRole, setUserRole] = useState('EMPLOYEE');
+
+    // Paginación / filtros / orden (server-side)
+    const PAGE_SIZE = 50;
+    const [page, setPage] = useState(1);
+    const [total, setTotal] = useState(0);
+    const [categoryFilter, setCategoryFilter] = useState('');
+    const [statusFilter, setStatusFilter] = useState(''); // '' | out | published | unpublished
+    const [sortField, setSortField] = useState('name');
+    const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+    const [categories, setCategories] = useState<string[]>([]);
+    const [stats, setStats] = useState<{ totalProducts: number; inventoryValue: number; totalUnits: number; outOfStock: number; lowStockCount: number } | null>(null);
+    const [exporting, setExporting] = useState(false);
 
     // Modals
     const [showCreateModal, setShowCreateModal] = useState(false);
@@ -142,6 +156,79 @@ export default function Inventory() {
     // DATA FETCHING
     // ==========================================
 
+    const fetchProducts = useCallback(async () => {
+        try {
+            setLoading(true);
+            const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE), sort: sortField, dir: sortDir });
+            if (debouncedSearch) params.set('search', debouncedSearch);
+            if (categoryFilter) params.set('category', categoryFilter);
+            if (statusFilter) params.set('status', statusFilter);
+            const res = await fetch(`/api/products?${params.toString()}`, { headers });
+            if (res.ok) {
+                const data = await res.json();
+                setProducts(data.products || []);
+                setTotal(data.total || 0);
+            }
+        } catch (e) {
+            console.error('Error fetching products:', e);
+        } finally {
+            setLoading(false);
+            setSelectedProductIds([]); // Reset selection on fetch
+        }
+    }, [page, debouncedSearch, categoryFilter, statusFilter, sortField, sortDir, headers]);
+
+    const fetchStats = useCallback(async () => {
+        try {
+            const res = await fetch('/api/reports/inventory', { headers });
+            if (res.ok) {
+                const d = await res.json();
+                setStats({
+                    totalProducts: d.totalProducts || 0,
+                    inventoryValue: d.inventoryValue || 0,
+                    totalUnits: d.totalUnits || 0,
+                    outOfStock: d.outOfStock || 0,
+                    lowStockCount: Math.max(0, (d.lowStock?.length || 0) - (d.outOfStock || 0)),
+                });
+            }
+        } catch (e) { console.error('Error fetching stats:', e); }
+    }, [headers]);
+
+    const fetchCategories = useCallback(async () => {
+        try {
+            const res = await fetch('/api/products/categories', { headers });
+            if (res.ok) setCategories(await res.json());
+        } catch (e) { console.error('Error fetching categories:', e); }
+    }, [headers]);
+
+    // Recarga todo (lista + KPIs) tras una mutación.
+    const reload = useCallback(() => { fetchProducts(); fetchStats(); }, [fetchProducts, fetchStats]);
+
+    // Exporta a Excel TODO lo que coincide con el filtro actual (no solo la página).
+    const handleExport = async () => {
+        setExporting(true);
+        try {
+            const params = new URLSearchParams({ sort: sortField, dir: sortDir });
+            if (debouncedSearch) params.set('search', debouncedSearch);
+            if (categoryFilter) params.set('category', categoryFilter);
+            if (statusFilter) params.set('status', statusFilter);
+            const res = await fetch(`/api/products?${params.toString()}`, { headers });
+            const data = res.ok ? await res.json() : [];
+            const arr = Array.isArray(data) ? data : (data.products || []);
+            const rows = arr.map((p: any) => ({
+                SKU: p.sku, Producto: p.name, 'Categoría': p.category || '', Unidad: p.unit,
+                Stock: Number(p.stock), 'Stock mínimo': Number(p.minStock),
+                Costo: Number(p.cost), Precio: Number(p.price),
+                'Valor (costo)': Number((Number(p.stock) * Number(p.cost)).toFixed(2)),
+                Publicado: p.isPublished ? 'Sí' : 'No',
+            }));
+            const ws = XLSX.utils.json_to_sheet(rows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+            XLSX.writeFile(wb, `Inventario_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        } catch (e) { alert('No se pudo exportar.'); }
+        finally { setExporting(false); }
+    };
+
     useEffect(() => {
         const userData = localStorage.getItem('nortex_user');
         if (userData) {
@@ -150,24 +237,18 @@ export default function Inventory() {
                 setUserRole(user.role || 'EMPLOYEE');
             } catch (e) { /* ignore */ }
         }
-        fetchProducts();
-    }, []);
+        fetchStats();
+        fetchCategories();
+    }, [fetchStats, fetchCategories]);
 
-    const fetchProducts = useCallback(async () => {
-        try {
-            setLoading(true);
-            const res = await fetch(`/api/products?search=${searchTerm}`, { headers });
-            if (res.ok) {
-                const data = await res.json();
-                setProducts(data);
-            }
-        } catch (e) {
-            console.error('Error fetching products:', e);
-        } finally {
-            setLoading(false);
-            setSelectedProductIds([]); // Reset selection on fetch
-        }
-    }, [searchTerm, headers]);
+    // Debounce de la búsqueda (y vuelve a la página 1).
+    useEffect(() => {
+        const t = setTimeout(() => { setDebouncedSearch(searchTerm); setPage(1); }, 300);
+        return () => clearTimeout(t);
+    }, [searchTerm]);
+
+    // Recarga la página al cambiar paginación/filtros/orden.
+    useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
     // ==========================================
     // SCAN DETECTION
@@ -214,16 +295,17 @@ export default function Inventory() {
             if (e.key === 'Enter') {
                 if (buffer.length >= 3) {
                     const scannedCode = buffer;
-                    const found = products.find(p => p.sku === scannedCode || p.sku === scannedCode.toUpperCase());
-
-                    if (found) {
-                        playScanSound(true);
-                        setSearchTerm(found.sku);
-                    } else {
-                        playScanSound(false);
-                        setQuickAddSKU(scannedCode);
-                        setShowQuickAddModal(true);
-                    }
+                    // Consulta al servidor (la lista está paginada; no basta el arreglo local).
+                    (async () => {
+                        try {
+                            const res = await fetch(`/api/products?search=${encodeURIComponent(scannedCode)}`, { headers });
+                            const data = res.ok ? await res.json() : [];
+                            const arr = Array.isArray(data) ? data : (data.products || []);
+                            const found = arr.find((p: any) => p.sku === scannedCode || p.sku === scannedCode.toUpperCase());
+                            if (found) { playScanSound(true); setSearchTerm(found.sku); }
+                            else { playScanSound(false); setQuickAddSKU(scannedCode); setShowQuickAddModal(true); }
+                        } catch { playScanSound(false); }
+                    })();
                 }
                 buffer = '';
             } else if (e.key.length === 1) {
@@ -233,27 +315,19 @@ export default function Inventory() {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [products, showCreateModal, showImportModal, showQuickAddModal, showKardexModal, showAdjustModal, showEditModal, playScanSound]);
+    }, [headers, showCreateModal, showImportModal, showQuickAddModal, showKardexModal, showAdjustModal, showEditModal, playScanSound]);
 
     // ==========================================
     // INVENTORY TOTALS
     // ==========================================
 
-    const totals = useMemo(() => {
-        let totalValue = 0;
-        let totalItems = 0;
-        let lowStockCount = 0;
-        let outOfStockCount = 0;
-
-        products.forEach(p => {
-            totalValue += p.stock * p.cost;
-            totalItems += p.stock;
-            if (p.stock <= p.minStock && p.stock > 0) lowStockCount++;
-            if (p.stock === 0) outOfStockCount++;
-        });
-
-        return { totalValue, totalItems, lowStockCount, outOfStockCount };
-    }, [products]);
+    // KPIs sobre TODO el inventario (no solo la página visible): vienen del stats.
+    const totals = useMemo(() => ({
+        totalValue: stats?.inventoryValue ?? 0,
+        totalItems: stats?.totalUnits ?? 0,
+        lowStockCount: stats?.lowStockCount ?? 0,
+        outOfStockCount: stats?.outOfStock ?? 0,
+    }), [stats]);
 
     // ==========================================
     // KARDEX
@@ -345,7 +419,7 @@ export default function Inventory() {
             });
             if (res.ok) {
                 setShowEditModal(false);
-                fetchProducts();
+                reload();
             } else {
                 const err = await res.json();
                 alert(`Error: ${err.error}`);
@@ -389,7 +463,7 @@ export default function Inventory() {
 
             if (res.ok) {
                 setShowAdjustModal(false);
-                fetchProducts();
+                reload();
                 alert(`Ajuste registrado: ${data.message}`);
             } else {
                 alert(`Error: ${data.error}`);
@@ -425,7 +499,7 @@ export default function Inventory() {
             if (res.ok) {
                 setShowCreateModal(false);
                 setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false });
-                fetchProducts();
+                reload();
                 alert('Producto creado exitosamente');
             } else {
                 const error = await res.json();
@@ -450,7 +524,7 @@ export default function Inventory() {
             });
 
             if (res.ok) {
-                fetchProducts();
+                reload();
                 alert('Producto eliminado');
             } else {
                 const error = await res.json();
@@ -474,7 +548,7 @@ export default function Inventory() {
             });
 
             if (res.ok) {
-                fetchProducts();
+                reload();
             } else {
                 const error = await res.json();
                 alert(`Error: ${error.error}`);
@@ -503,7 +577,7 @@ export default function Inventory() {
 
             if (res.ok) {
                 const data = await res.json();
-                fetchProducts();
+                reload();
                 setSelectedProductIds([]);
                 // alert(`Catálogo actualizado: ${data.count} productos modificados`);
             } else {
@@ -535,12 +609,8 @@ export default function Inventory() {
     // FILTERED PRODUCTS
     // ==========================================
 
-    const filteredProducts = useMemo(() =>
-        products.filter(p =>
-            p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (p.category || '').toLowerCase().includes(searchTerm.toLowerCase())
-        ), [products, searchTerm]);
+    // El servidor ya filtra y pagina; la página actual es `products`.
+    const filteredProducts = products;
 
     const isOwner = userRole === 'OWNER' || userRole === 'ADMIN';
 
@@ -623,7 +693,7 @@ export default function Inventory() {
                         <Package size={16} className="text-blue-400" />
                         <span className="text-xs text-slate-400 uppercase tracking-wider">Productos</span>
                     </div>
-                    <p className="text-2xl font-bold text-white">{products.length}</p>
+                    <p className="text-2xl font-bold text-white">{(stats?.totalProducts ?? 0).toLocaleString()}</p>
                     <p className="text-xs text-slate-500">{totals.totalItems.toLocaleString()} unidades en bodega</p>
                 </div>
 
@@ -659,19 +729,44 @@ export default function Inventory() {
                 </div>
             </div>
 
-            {/* SEARCH BAR */}
-            <div className="flex gap-3">
-                <div className="flex-1 relative">
+            {/* SEARCH + FILTROS + ORDEN + EXPORTAR */}
+            <div className="flex flex-wrap gap-3 items-center">
+                <div className="flex-1 min-w-[200px] relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                     <input
                         type="text"
                         placeholder="Buscar por nombre, SKU o categoría..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        onKeyUp={fetchProducts}
                         className="w-full pl-10 pr-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
                     />
                 </div>
+                <select value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setPage(1); }}
+                    className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
+                    <option value="">Todas las categorías</option>
+                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+                    className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
+                    <option value="">Todos</option>
+                    <option value="out">Agotados</option>
+                    <option value="published">Publicados</option>
+                    <option value="unpublished">Ocultos</option>
+                </select>
+                <select value={`${sortField}:${sortDir}`} onChange={(e) => { const [f, d] = e.target.value.split(':'); setSortField(f); setSortDir(d as 'asc' | 'desc'); setPage(1); }}
+                    className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
+                    <option value="name:asc">Nombre A-Z</option>
+                    <option value="name:desc">Nombre Z-A</option>
+                    <option value="stock:asc">Stock ↑ (bajos primero)</option>
+                    <option value="stock:desc">Stock ↓</option>
+                    <option value="price:desc">Precio ↓</option>
+                    <option value="price:asc">Precio ↑</option>
+                    <option value="cost:desc">Costo ↓</option>
+                </select>
+                <button onClick={handleExport} disabled={exporting}
+                    className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 border border-slate-600 disabled:opacity-50 transition-colors">
+                    <Download size={16} /> {exporting ? 'Exportando…' : 'Excel'}
+                </button>
             </div>
 
             {/* BULK ACTIONS BAR */}
@@ -926,6 +1021,18 @@ export default function Inventory() {
                         </tbody>
                     </table>
                 </div>
+                {total > PAGE_SIZE && (
+                    <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700 text-sm text-slate-400">
+                        <span>{((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, total)} de {total.toLocaleString()}</span>
+                        <div className="flex items-center gap-2">
+                            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+                                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 flex items-center gap-1 transition-colors"><ChevronLeft size={16} /> Anterior</button>
+                            <span className="text-slate-300 font-mono">{page} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
+                            <button onClick={() => setPage(p => p + 1)} disabled={page >= Math.ceil(total / PAGE_SIZE)}
+                                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 flex items-center gap-1 transition-colors">Siguiente <ChevronRight size={16} /></button>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* ==========================================
@@ -1455,7 +1562,7 @@ export default function Inventory() {
                 <ProductImporter
                     onClose={() => setShowImportModal(false)}
                     onSuccess={() => {
-                        fetchProducts();
+                        reload();
                         setShowImportModal(false);
                     }}
                 />
@@ -1468,7 +1575,7 @@ export default function Inventory() {
                     initialSKU={quickAddSKU}
                     onClose={() => setShowQuickAddModal(false)}
                     onSuccess={() => {
-                        fetchProducts();
+                        reload();
                     }}
                 />
             )}
