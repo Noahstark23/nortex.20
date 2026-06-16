@@ -43,6 +43,8 @@ import {
     CreateCashMovementSchema,
     CreatePurchaseSchema,
     InventoryAdjustSchema,
+    BulkEditProductsSchema,
+    CreateBatchSchema,
     OpenShiftSchema,
     CloseShiftSchema,
     CreateExpenseSchema,
@@ -2453,6 +2455,68 @@ app.patch('/api/products/publish-bulk', authenticate, checkRole(['OWNER', 'ADMIN
     }
 });
 
+// PATCH /api/products/bulk-edit - Edición masiva de categoría y/o precio (Solo OWNER/ADMIN)
+// [Bodeguero A2] No toca stock ni costo (el costo es promedio ponderado del sistema).
+//   priceMode 'set' → fija el precio; 'pct' → ajusta ± un porcentaje (redondeado a 2 dec.).
+app.patch('/api/products/bulk-edit', authenticate, checkRole(['OWNER', 'ADMIN']), validate(BulkEditProductsSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { ids, category, priceMode, priceValue } = req.body;
+
+    try {
+        let count = 0;
+
+        if (priceMode === 'pct') {
+            // Ajuste porcentual: requiere leer cada precio → recalcular → redondear.
+            const factor = 1 + priceValue / 100;
+            count = await prisma.$transaction(async (tx: any) => {
+                const prods = await tx.product.findMany({
+                    where: { id: { in: ids }, tenantId: authReq.tenantId! },
+                    select: { id: true, price: true },
+                });
+                for (const p of prods) {
+                    const newPrice = Math.max(0, Math.round(Number(p.price) * factor * 100) / 100);
+                    const data: any = { price: newPrice };
+                    if (category !== undefined) data.category = category;
+                    await tx.product.update({ where: { id: p.id }, data });
+                }
+                return prods.length;
+            });
+        } else {
+            // 'set' y/o categoría → un solo updateMany atómico.
+            const data: any = {};
+            if (category !== undefined) data.category = category;
+            if (priceMode === 'set') data.price = Math.round(priceValue * 100) / 100;
+            const result = await prisma.product.updateMany({
+                where: { id: { in: ids }, tenantId: authReq.tenantId! },
+                data,
+            });
+            count = result.count;
+        }
+
+        // Rastro de auditoría: una mutación masiva de precios/categoría debe quedar registrada.
+        await prisma.auditLog.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                action: 'PRODUCT_BULK_EDIT',
+                details: JSON.stringify({
+                    count,
+                    requestedIds: ids.length,
+                    category: category ?? null,
+                    priceMode: priceMode ?? null,
+                    priceValue: priceValue ?? null,
+                    timestamp: new Date().toISOString(),
+                }),
+            },
+        });
+
+        res.json({ message: `${count} producto(s) actualizado(s).`, count });
+    } catch (error: any) {
+        console.error('Error en edición masiva:', error);
+        res.status(500).json({ error: error.message || 'Error en edición masiva' });
+    }
+});
+
 // PATCH /api/products/:id/publish - Toggle public catalog visibility (Solo OWNER/ADMIN)
 app.patch('/api/products/:id/publish', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
@@ -2510,22 +2574,59 @@ app.delete('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), asy
 });
 
 // GET /api/kardex/:productId - Historial de movimientos (Solo OWNER)
+// [Bodeguero A5] Filtro por rango de fechas (hora Nicaragua, UTC-6) + paginación opt-in.
+//   - Sin ?page  → array (compat: últimos 50, respetando from/to si vienen).
+//   - Con  ?page → { entries, total, page, pageSize }.
 app.get('/api/kardex/:productId', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { productId } = req.params;
+    const { from, to, page, pageSize } = req.query;
 
     try {
+        const where: any = { productId, tenantId: authReq.tenantId! };
+
+        // Rango de fechas interpretado como días locales de Nicaragua (UTC-6, sin DST).
+        const NI_OFFSET_MS = 6 * 3600 * 1000;
+        const DAY_MS = 24 * 3600 * 1000;
+        if (from || to) {
+            where.date = {};
+            if (from) {
+                const d = String(from).slice(0, 10);
+                where.date.gte = new Date(new Date(d + 'T00:00:00.000Z').getTime() + NI_OFFSET_MS);
+            }
+            if (to) {
+                const d = String(to).slice(0, 10);
+                where.date.lte = new Date(new Date(d + 'T00:00:00.000Z').getTime() + NI_OFFSET_MS + DAY_MS - 1);
+            }
+        }
+
+        const include = {
+            user: { select: { name: true, email: true } },
+            product: { select: { name: true, sku: true } },
+            batch: { select: { batchNumber: true, expiryDate: true } },
+        };
+
+        if (page !== undefined) {
+            const take = Math.min(200, Math.max(1, parseInt(pageSize) || 50));
+            const pageNum = Math.max(1, parseInt(page) || 1);
+            const [entries, total] = await Promise.all([
+                prisma.kardexMovement.findMany({
+                    where,
+                    include,
+                    orderBy: { date: 'desc' },
+                    skip: (pageNum - 1) * take,
+                    take,
+                }),
+                prisma.kardexMovement.count({ where }),
+            ]);
+            return res.json({ entries, total, page: pageNum, pageSize: take });
+        }
+
         const movements = await prisma.kardexMovement.findMany({
-            where: {
-                productId,
-                tenantId: authReq.tenantId!
-            },
-            include: {
-                user: { select: { name: true, email: true } },
-                product: { select: { name: true, sku: true } }
-            },
+            where,
+            include,
             orderBy: { date: 'desc' },
-            take: 50
+            take: 50,
         });
 
         res.json(movements);
@@ -2654,6 +2755,86 @@ app.get('/api/inventory/batches/:productId', authenticate, async (req: any, res:
     } catch (error) {
         console.error('Error fetching batches:', error);
         res.status(500).json({ error: 'Error obteniendo lotes' });
+    }
+});
+
+// POST /api/inventory/batches - Alta de lote (Solo OWNER/ADMIN)
+// [Bodeguero A4] Crea (o incrementa) un lote, suma el stock del producto de forma
+//   atómica vía applyStockDelta y deja rastro en el Kardex enlazado al lote. Activa el
+//   control de lotes del producto si aún no lo tenía (FEFO/alertas de vencimiento).
+app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateBatchSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { productId, batchNumber, expiryDate, quantity } = req.body;
+
+    const expiry = new Date(String(expiryDate).slice(0, 10) + 'T00:00:00.000Z');
+    if (isNaN(expiry.getTime())) {
+        return res.status(400).json({ error: 'Fecha de vencimiento inválida.' });
+    }
+
+    try {
+        const result = await prisma.$transaction(async (tx: any) => {
+            const product = await tx.product.findFirst({
+                where: { id: productId, tenantId: authReq.tenantId! },
+            });
+            if (!product) throw new Error('Producto no encontrado en tu inventario.');
+
+            // 1. Sumar stock del producto (atómico, row-lock).
+            const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                tenantId: authReq.tenantId!,
+                productId,
+                delta: quantity,
+                enforceSufficient: false,
+            });
+
+            // 2. Crear o incrementar el lote (mismo lote = se acumula).
+            const batch = await tx.productBatch.upsert({
+                where: { productId_batchNumber: { productId, batchNumber } },
+                update: { stock: { increment: quantity } },
+                create: {
+                    tenantId: authReq.tenantId!,
+                    productId,
+                    batchNumber,
+                    expiryDate: expiry,
+                    stock: quantity,
+                },
+            });
+
+            // 3. Activar control de lotes si aún no estaba (habilita FEFO + alertas).
+            if (!product.requiresBatchTracking) {
+                await tx.product.update({
+                    where: { id: productId },
+                    data: { requiresBatchTracking: true },
+                });
+            }
+
+            // 4. Kardex: entrada por alta de lote, enlazada al lote.
+            const movement = await tx.kardexMovement.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    productId,
+                    type: 'IN_PURCHASE',
+                    quantity,
+                    stockBefore,
+                    stockAfter,
+                    referenceType: 'BATCH',
+                    reason: `Alta de lote ${batchNumber} (vence ${expiry.toISOString().slice(0, 10)})`,
+                    userId: authReq.userId!,
+                    batchId: batch.id,
+                },
+            });
+
+            return { batch, movement, newStock: stockAfter, productName: product.name };
+        });
+
+        res.json({
+            message: `Lote ${batchNumber} agregado a ${result.productName}. Stock: ${result.newStock}`,
+            batch: result.batch,
+            newStock: result.newStock,
+        });
+    } catch (error: any) {
+        console.error('Error creando lote:', error);
+        res.status(error.message?.includes('no encontrado') ? 400 : 500)
+            .json({ error: error.message || 'Error creando lote' });
     }
 });
 
