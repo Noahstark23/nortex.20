@@ -1469,12 +1469,33 @@ model Loan {
   // Historial de cobros
   payments Repayment[]
 
+  // Plan de cuotas (Cobranza B2)
+  schedule LoanInstallment[]
+
   // Asignación de Ruta (Motorizado encargado de cobrar)
   assignedToId String?
   assignedTo   User?   @relation("LoanCollector", fields: [assignedToId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Cuota del plan de pago de un préstamo (Cobranza B2)
+model LoanInstallment {
+  id         String   @id @default(uuid())
+  loanId     String
+  number     Int // Nº de cuota (1..n)
+  dueDate    DateTime // Vencimiento de la cuota
+  amountDue  Decimal  @db.Decimal(10, 2)
+  amountPaid Decimal  @default(0) @db.Decimal(10, 2)
+  status     String   @default("PENDING") // PENDING | PARTIAL | PAID
+  createdAt  DateTime @default(now())
+
+  loan Loan @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  @@unique([loanId, number])
+  @@index([loanId])
+  @@index([dueDate])
 }
 
 model Repayment {

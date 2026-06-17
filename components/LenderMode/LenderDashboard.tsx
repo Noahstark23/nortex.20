@@ -405,7 +405,8 @@ const LenderDashboard: React.FC = () => {
                                     loans.map((loan) => (
                                         <React.Fragment key={loan.id}>
                                             {(() => {
-                                                const isOverdue = loan.status === 'ACTIVE' && new Date(loan.dueDate) < new Date();
+                                                // Mora por cuota (Cobranza B2); cae al vencimiento final para préstamos viejos sin plan.
+                                                const isOverdue = loan.status === 'ACTIVE' && ((loan.overdueCount ?? 0) > 0 || new Date(loan.dueDate) < new Date());
                                                 return (
                                                     <>
                                                         <tr
@@ -416,6 +417,15 @@ const LenderDashboard: React.FC = () => {
                                                                 <span className="text-slate-500 group-hover:text-nortex-accent transition-colors">{expandedLoan === loan.id ? '▼' : '▶'}</span>
                                                                 {loan.clientName}
                                                                 {isOverdue && <span title="Cliente en Mora" className="inline-flex ml-2"><AlertTriangle size={14} className="text-red-500 animate-pulse" /></span>}
+                                                                {(loan.overdueCount ?? 0) > 0 ? (
+                                                                    <span className="ml-2 text-[11px] font-bold text-red-400" title="Cuotas vencidas">
+                                                                        {loan.daysOverdue}d · ${Number(loan.overdueAmount || 0).toFixed(2)}
+                                                                    </span>
+                                                                ) : loan.nextDueDate && loan.status === 'ACTIVE' ? (
+                                                                    <span className="ml-2 text-[11px] text-slate-500" title="Próxima cuota">
+                                                                        próx: {new Date(loan.nextDueDate).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit' })}
+                                                                    </span>
+                                                                ) : null}
                                                             </td>
                                                             <td className="p-4">
                                                                 <span className={`px-2 py-1 rounded text-xs font-bold ${loan.type === 'FORMAL_AMORTIZED' ? 'bg-blue-500/20 text-blue-400' : 'bg-amber-500/20 text-amber-400'}`}>
