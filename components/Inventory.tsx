@@ -5,7 +5,8 @@ import { sanitizeDecimalInput } from '../utils/money';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
     RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
-    Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers, Download, ChevronLeft, ChevronRight
+    Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers, Download, ChevronLeft, ChevronRight,
+    Tag, DollarSign, Printer
 } from 'lucide-react';
 import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
@@ -30,6 +31,9 @@ interface Product {
     creator?: { name: string };
     updatedAt?: string;
     requiresBatchTracking?: boolean;
+    reorderPoint?: number;
+    maxStock?: number;
+    defaultSupplierId?: string | null;
 }
 
 interface ProductBatch {
@@ -51,6 +55,7 @@ interface KardexEntry {
     date: string;
     user: { name: string; email: string };
     product?: { name: string; sku: string };
+    batch?: { batchNumber: string; expiryDate: string } | null;
 }
 
 type AdjustType = 'ADJUST_LOSS' | 'ADJUST_GAIN' | 'IN_PURCHASE' | 'RETURN';
@@ -76,6 +81,15 @@ const getMovementMeta = (type: string) => {
 };
 
 const formatCurrency = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** Como sanitizeDecimalInput pero admite un '-' inicial (para ajustes porcentuales). */
+const sanitizeSignedDecimal = (raw: string): string => {
+    const neg = raw.trim().startsWith('-');
+    let cleaned = raw.replace(/[^\d.]/g, '');
+    const dot = cleaned.indexOf('.');
+    if (dot !== -1) cleaned = cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, '');
+    return (neg ? '-' : '') + cleaned;
+};
 
 const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', {
     day: '2-digit', month: '2-digit', year: 'numeric',
@@ -116,15 +130,32 @@ export default function Inventory() {
     const [showDropdown, setShowDropdown] = useState(false);
     const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
     const [showBatchesModal, setShowBatchesModal] = useState(false);
+    const [showBulkEditModal, setShowBulkEditModal] = useState(false);
 
-    // Kardex
+    // Kardex (A5: paginado + filtro por fecha)
     const [kardexData, setKardexData] = useState<KardexEntry[]>([]);
     const [kardexLoading, setKardexLoading] = useState(false);
     const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+    const [kardexPage, setKardexPage] = useState(1);
+    const [kardexTotal, setKardexTotal] = useState(0);
+    const [kardexFrom, setKardexFrom] = useState('');
+    const [kardexTo, setKardexTo] = useState('');
+    const KARDEX_PAGE_SIZE = 25;
 
-    // Batches
+    // Batches (A4: alta de lotes)
     const [batchesData, setBatchesData] = useState<ProductBatch[]>([]);
     const [batchesLoading, setBatchesLoading] = useState(false);
+    const [showAddBatchForm, setShowAddBatchForm] = useState(false);
+    const [batchForm, setBatchForm] = useState({ batchNumber: '', expiryDate: '', quantity: '' });
+    const [batchSubmitting, setBatchSubmitting] = useState(false);
+
+    // Bulk edit form (A2: edición masiva de categoría/precio)
+    const [bulkEditForm, setBulkEditForm] = useState({
+        category: '',
+        priceMode: '' as '' | 'set' | 'pct',
+        priceValue: ''
+    });
+    const [bulkEditSubmitting, setBulkEditSubmitting] = useState(false);
 
     // Adjust form
     const [adjustForm, setAdjustForm] = useState({
@@ -136,14 +167,15 @@ export default function Inventory() {
 
     // Edit form (solo datos cosméticos/comerciales — sin stock para no disparar Kardex)
     const [editForm, setEditForm] = useState({
-        name: '', description: '', category: '', price: '', imageUrl: ''
+        name: '', description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: '', defaultSupplierId: ''
     });
     const [editSubmitting, setEditSubmitting] = useState(false);
+    const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
 
     // Create form
     const [formData, setFormData] = useState({
         name: '', sku: '', description: '', category: '',
-        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false
+        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: ''
     });
 
     const token = localStorage.getItem('nortex_token');
@@ -229,6 +261,36 @@ export default function Inventory() {
         finally { setExporting(false); }
     };
 
+    // C3: hoja de etiquetas imprimibles (precio + código) de los productos seleccionados.
+    const handlePrintLabels = () => {
+        const selected = products.filter(p => selectedProductIds.includes(p.id));
+        if (selected.length === 0) return;
+        const esc = (s: string) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+        const labels = selected.map(p => `
+            <div class="label">
+                <div class="name">${esc(p.name)}</div>
+                <div class="price">${esc(formatCurrency(p.price))}</div>
+                <div class="sku">${esc(p.sku)}</div>
+            </div>`).join('');
+        const html = `<!doctype html><html><head><meta charset="utf-8"><title>Etiquetas</title><style>
+            *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:10px;background:#fff;color:#111}
+            .sheet{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+            .label{border:1px dashed #aaa;border-radius:6px;padding:10px 8px;text-align:center;page-break-inside:avoid}
+            .name{font-size:12px;font-weight:600;min-height:32px;line-height:1.2;overflow:hidden}
+            .price{font-size:22px;font-weight:800;margin:6px 0}
+            .sku{font-family:'Courier New',monospace;font-size:13px;letter-spacing:3px;background:#f1f1f1;border-radius:4px;padding:3px 4px;display:inline-block}
+            .bar{font-size:10px;color:#666;margin-top:2px}
+            @media print{.no-print{display:none}}
+        </style></head><body>
+            <button class="no-print" style="margin-bottom:10px;padding:8px 14px;font-weight:700;cursor:pointer" onclick="window.print()">Imprimir</button>
+            <div class="sheet">${labels}</div>
+            <script>window.onload=function(){setTimeout(function(){try{window.print()}catch(e){}},350)}<\/script>
+        </body></html>`;
+        const w = window.open('', '_blank');
+        if (w) { w.document.write(html); w.document.close(); }
+        else { alert('Permite las ventanas emergentes para imprimir etiquetas.'); }
+    };
+
     useEffect(() => {
         const userData = localStorage.getItem('nortex_user');
         if (userData) {
@@ -239,7 +301,12 @@ export default function Inventory() {
         }
         fetchStats();
         fetchCategories();
-    }, [fetchStats, fetchCategories]);
+        // Proveedores para asignar el proveedor por defecto al editar (C2)
+        fetch('/api/suppliers', { headers })
+            .then(r => r.ok ? r.json() : [])
+            .then((data) => setSuppliers(Array.isArray(data) ? data.map((s: any) => ({ id: s.id, name: s.name })) : []))
+            .catch(() => { /* noop */ });
+    }, [fetchStats, fetchCategories, headers]);
 
     // Debounce de la búsqueda (y vuelve a la página 1).
     useEffect(() => {
@@ -333,22 +400,35 @@ export default function Inventory() {
     // KARDEX
     // ==========================================
 
-    const openKardex = async (product: Product) => {
-        setSelectedProduct(product);
-        setShowKardexModal(true);
+    // Fetch paginado del Kardex (A5). from/to son días locales (YYYY-MM-DD); el
+    // backend los interpreta en hora Nicaragua (UTC-6).
+    const fetchKardex = async (productId: string, targetPage: number, from: string, to: string) => {
         setKardexLoading(true);
-
         try {
-            const res = await fetch(`/api/kardex/${product.id}`, { headers });
+            const params = new URLSearchParams({ page: String(targetPage), pageSize: String(KARDEX_PAGE_SIZE) });
+            if (from) params.set('from', from);
+            if (to) params.set('to', to);
+            const res = await fetch(`/api/kardex/${productId}?${params.toString()}`, { headers });
             if (res.ok) {
                 const data = await res.json();
-                setKardexData(data);
+                setKardexData(data.entries || []);
+                setKardexTotal(data.total || 0);
+                setKardexPage(data.page || targetPage);
             }
         } catch (e) {
             console.error('Error fetching kardex:', e);
         } finally {
             setKardexLoading(false);
         }
+    };
+
+    const openKardex = (product: Product) => {
+        setSelectedProduct(product);
+        setKardexFrom('');
+        setKardexTo('');
+        setKardexPage(1);
+        setShowKardexModal(true);
+        fetchKardex(product.id, 1, '', '');
     };
 
     // ==========================================
@@ -358,6 +438,8 @@ export default function Inventory() {
     const openBatches = async (product: Product) => {
         setSelectedProduct(product);
         setShowBatchesModal(true);
+        setShowAddBatchForm(false);
+        setBatchForm({ batchNumber: '', expiryDate: '', quantity: '' });
         setBatchesLoading(true);
 
         try {
@@ -370,6 +452,70 @@ export default function Inventory() {
             console.error('Error fetching batches:', e);
         } finally {
             setBatchesLoading(false);
+        }
+    };
+
+    // A4: alta de lote → suma stock + Kardex (backend). Refresca lotes y la lista.
+    const handleAddBatch = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedProduct) return;
+
+        const qty = parseInt(batchForm.quantity);
+        if (!batchForm.batchNumber.trim() || !batchForm.expiryDate || isNaN(qty) || qty <= 0) {
+            alert('Completa número de lote, fecha de vencimiento y una cantidad mayor que cero.');
+            return;
+        }
+
+        setBatchSubmitting(true);
+        try {
+            const res = await fetch('/api/inventory/batches', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    productId: selectedProduct.id,
+                    batchNumber: batchForm.batchNumber.trim(),
+                    expiryDate: batchForm.expiryDate,
+                    quantity: qty
+                })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setBatchForm({ batchNumber: '', expiryDate: '', quantity: '' });
+                setShowAddBatchForm(false);
+                // Refrescar lotes del producto
+                const r = await fetch(`/api/inventory/batches/${selectedProduct.id}`, { headers });
+                if (r.ok) setBatchesData(await r.json());
+                // El stock del producto cambió → actualizar encabezado del modal y la lista
+                setSelectedProduct(prev => prev ? { ...prev, stock: data.newStock, requiresBatchTracking: true } : prev);
+                reload();
+            } else {
+                alert(`Error: ${data.error}`);
+            }
+        } catch (e) {
+            alert('Error agregando lote');
+        } finally {
+            setBatchSubmitting(false);
+        }
+    };
+
+    // B3: dar de baja un lote (merma) → resta stock + Kardex + asiento de merma.
+    const handleWriteoffBatch = async (batchId: string, batchNumber: string) => {
+        if (!selectedProduct) return;
+        if (!confirm(`¿Dar de baja el lote ${batchNumber}? Se restará su stock y se registrará como merma (no se puede deshacer).`)) return;
+        try {
+            const res = await fetch(`/api/inventory/batches/${batchId}/writeoff`, { method: 'POST', headers, body: JSON.stringify({}) });
+            const data = await res.json();
+            if (res.ok) {
+                const r = await fetch(`/api/inventory/batches/${selectedProduct.id}`, { headers });
+                if (r.ok) setBatchesData(await r.json());
+                setSelectedProduct(prev => prev ? { ...prev, stock: data.newStock } : prev);
+                reload();
+                alert(data.message);
+            } else {
+                alert(`Error: ${data.error}`);
+            }
+        } catch (e) {
+            alert('Error dando de baja el lote');
         }
     };
 
@@ -394,7 +540,10 @@ export default function Inventory() {
             description: product.description || '',
             category: product.category || '',
             price: String(product.price),
-            imageUrl: product.imageUrl || ''
+            imageUrl: product.imageUrl || '',
+            reorderPoint: product.reorderPoint ? String(product.reorderPoint) : '',
+            maxStock: product.maxStock ? String(product.maxStock) : '',
+            defaultSupplierId: product.defaultSupplierId || ''
         });
         setShowEditModal(true);
     };
@@ -412,7 +561,10 @@ export default function Inventory() {
                     description: editForm.description,
                     category: editForm.category,
                     price: parseFloat(editForm.price),
-                    imageUrl: editForm.imageUrl
+                    imageUrl: editForm.imageUrl,
+                    reorderPoint: editForm.reorderPoint === '' ? 0 : parseFloat(editForm.reorderPoint),
+                    maxStock: editForm.maxStock === '' ? 0 : parseFloat(editForm.maxStock),
+                    defaultSupplierId: editForm.defaultSupplierId || null
                     // ⚠️ stock, cost, minStock y unit EXCLUIDOS intencionalmente
                     //    para no disparar el Kardex ni el sistema antirobo
                 })
@@ -498,7 +650,7 @@ export default function Inventory() {
 
             if (res.ok) {
                 setShowCreateModal(false);
-                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false });
+                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: '' });
                 reload();
                 alert('Producto creado exitosamente');
             } else {
@@ -586,6 +738,72 @@ export default function Inventory() {
             }
         } catch (e) {
             alert('Error actualizando productos de forma masiva');
+        }
+    };
+
+    // ==========================================
+    // BULK EDIT (A2: categoría / precio) — no toca stock ni costo
+    // ==========================================
+
+    const openBulkEdit = () => {
+        setBulkEditForm({ category: '', priceMode: '', priceValue: '' });
+        setShowBulkEditModal(true);
+    };
+
+    const handleBulkEdit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (selectedProductIds.length === 0) return;
+
+        const category = bulkEditForm.category.trim();
+        const hasCategory = category.length > 0;
+        const hasPrice = bulkEditForm.priceMode !== '';
+
+        if (!hasCategory && !hasPrice) {
+            alert('Indica al menos un cambio: categoría o precio.');
+            return;
+        }
+
+        const payload: any = { ids: selectedProductIds };
+        if (hasCategory) payload.category = category;
+        if (hasPrice) {
+            const val = parseFloat(bulkEditForm.priceValue);
+            if (isNaN(val)) {
+                alert('Ingresa un valor de precio válido.');
+                return;
+            }
+            if (bulkEditForm.priceMode === 'set' && val < 0) {
+                alert('El precio no puede ser negativo.');
+                return;
+            }
+            if (bulkEditForm.priceMode === 'pct' && val <= -100) {
+                alert('El descuento porcentual no puede ser ≥ 100%.');
+                return;
+            }
+            payload.priceMode = bulkEditForm.priceMode;
+            payload.priceValue = val;
+        }
+
+        setBulkEditSubmitting(true);
+        try {
+            const res = await fetch('/api/products/bulk-edit', {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setShowBulkEditModal(false);
+                setSelectedProductIds([]);
+                reload();
+                fetchCategories();
+                alert(data.message || 'Productos actualizados.');
+            } else {
+                alert(`Error: ${data.error}`);
+            }
+        } catch (e) {
+            alert('Error en la edición masiva');
+        } finally {
+            setBulkEditSubmitting(false);
         }
     };
 
@@ -779,6 +997,20 @@ export default function Inventory() {
                         </span>
                     </div>
                     <div className="flex items-center gap-3">
+                        <button
+                            onClick={openBulkEdit}
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                        >
+                            <Edit size={16} />
+                            Editar precio/categoría
+                        </button>
+                        <button
+                            onClick={handlePrintLabels}
+                            className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors border border-slate-600"
+                        >
+                            <Printer size={16} />
+                            Etiquetas
+                        </button>
                         <button
                             onClick={() => handleBulkPublish(true)}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
@@ -1059,8 +1291,47 @@ export default function Inventory() {
                             </button>
                         </div>
 
+                        {/* Kardex: Filtro por fecha (A5) */}
+                        <div className="px-6 py-3 border-b border-slate-700 bg-slate-900/40 flex flex-wrap items-end gap-3">
+                            <div>
+                                <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Desde</label>
+                                <input
+                                    type="date"
+                                    value={kardexFrom}
+                                    onChange={(e) => setKardexFrom(e.target.value)}
+                                    className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Hasta</label>
+                                <input
+                                    type="date"
+                                    value={kardexTo}
+                                    onChange={(e) => setKardexTo(e.target.value)}
+                                    className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+                                />
+                            </div>
+                            <button
+                                onClick={() => fetchKardex(selectedProduct.id, 1, kardexFrom, kardexTo)}
+                                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                            >
+                                <Search size={15} /> Filtrar
+                            </button>
+                            {(kardexFrom || kardexTo) && (
+                                <button
+                                    onClick={() => { setKardexFrom(''); setKardexTo(''); fetchKardex(selectedProduct.id, 1, '', ''); }}
+                                    className="text-slate-400 hover:text-white px-3 py-1.5 rounded-lg text-sm border border-slate-600 hover:bg-slate-700 transition-colors"
+                                >
+                                    Limpiar
+                                </button>
+                            )}
+                            <div className="ml-auto text-xs text-slate-400 self-center">
+                                {kardexTotal} movimiento{kardexTotal === 1 ? '' : 's'}
+                            </div>
+                        </div>
+
                         {/* Kardex Table */}
-                        <div className="overflow-y-auto max-h-[calc(90vh-120px)]">
+                        <div className="overflow-y-auto max-h-[calc(90vh-250px)]">
                             {kardexLoading ? (
                                 <div className="flex flex-col items-center justify-center py-16">
                                     <div className="w-10 h-10 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-3" />
@@ -1128,6 +1399,31 @@ export default function Inventory() {
                                 </table>
                             )}
                         </div>
+
+                        {/* Kardex: Paginación (A5) */}
+                        {kardexTotal > KARDEX_PAGE_SIZE && (
+                            <div className="px-6 py-3 border-t border-slate-700 bg-slate-900/40 flex items-center justify-between">
+                                <span className="text-xs text-slate-400">
+                                    Página {kardexPage} de {Math.max(1, Math.ceil(kardexTotal / KARDEX_PAGE_SIZE))}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        disabled={kardexPage <= 1 || kardexLoading}
+                                        onClick={() => fetchKardex(selectedProduct.id, kardexPage - 1, kardexFrom, kardexTo)}
+                                        className="px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+                                    >
+                                        <ChevronLeft size={15} /> Anterior
+                                    </button>
+                                    <button
+                                        disabled={kardexPage >= Math.ceil(kardexTotal / KARDEX_PAGE_SIZE) || kardexLoading}
+                                        onClick={() => fetchKardex(selectedProduct.id, kardexPage + 1, kardexFrom, kardexTo)}
+                                        className="px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+                                    >
+                                        Siguiente <ChevronRight size={15} />
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -1333,6 +1629,46 @@ export default function Inventory() {
                                 />
                             </div>
 
+                            {/* Reposición (B2) */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Punto de Reorden</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editForm.reorderPoint}
+                                        onChange={(e) => setEditForm({ ...editForm, reorderPoint: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="0 = sin alerta"
+                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Stock Objetivo (máx)</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editForm.maxStock}
+                                        onChange={(e) => setEditForm({ ...editForm, maxStock: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="sugiere cuánto comprar"
+                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Proveedor por defecto (C2) */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-1 font-medium">Proveedor por defecto</label>
+                                <select
+                                    value={editForm.defaultSupplierId}
+                                    onChange={(e) => setEditForm({ ...editForm, defaultSupplierId: e.target.value })}
+                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                                >
+                                    <option value="">— Sin proveedor —</option>
+                                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                </select>
+                                <p className="text-[11px] text-slate-500 mt-1">Agrupa este producto al armar órdenes de compra en Compras Inteligentes.</p>
+                            </div>
+
                             {/* Imagen */}
                             <div>
                                 <label className="block text-sm text-slate-300 mb-2 font-medium">Foto del Producto</label>
@@ -1490,6 +1826,28 @@ export default function Inventory() {
                                         className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
                                     />
                                 </div>
+                                <div className="col-span-2">
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Punto de Reorden</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={formData.reorderPoint}
+                                        onChange={(e) => setFormData({ ...formData, reorderPoint: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="0 = sin alerta"
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Stock Objetivo (máx)</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={formData.maxStock}
+                                        onChange={(e) => setFormData({ ...formData, maxStock: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="para sugerir cuánto comprar"
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                    />
+                                </div>
                                 <div className="col-span-4 mt-2">
                                     <label className="block text-sm text-slate-300 mb-2 font-medium">Foto del Producto</label>
                                     <ImageUploader
@@ -1597,11 +1955,67 @@ export default function Inventory() {
                                     {' '} | Stock Total: <span className="font-bold text-white">{selectedProduct.stock}</span>
                                 </p>
                             </div>
-                            <button onClick={() => setShowBatchesModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
-                                <X size={24} />
-                            </button>
+                            <div className="flex items-center gap-2">
+                                {isOwner && (
+                                    <button
+                                        onClick={() => setShowAddBatchForm(v => !v)}
+                                        className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                                    >
+                                        <Plus size={16} /> Agregar lote
+                                    </button>
+                                )}
+                                <button onClick={() => setShowBatchesModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
+                                    <X size={24} />
+                                </button>
+                            </div>
                         </div>
-                        
+
+                        {/* A4: Formulario de alta de lote */}
+                        {isOwner && showAddBatchForm && (
+                            <form onSubmit={handleAddBatch} className="px-6 py-4 border-b border-slate-700 bg-slate-900/40 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                                <div className="sm:col-span-1">
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Nº Lote</label>
+                                    <input
+                                        type="text"
+                                        value={batchForm.batchNumber}
+                                        onChange={(e) => setBatchForm({ ...batchForm, batchNumber: e.target.value })}
+                                        placeholder="L-2026-001"
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-orange-500"
+                                    />
+                                </div>
+                                <div className="sm:col-span-1">
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Vencimiento</label>
+                                    <input
+                                        type="date"
+                                        value={batchForm.expiryDate}
+                                        onChange={(e) => setBatchForm({ ...batchForm, expiryDate: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                                    />
+                                </div>
+                                <div className="sm:col-span-1">
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Cantidad</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        value={batchForm.quantity}
+                                        onChange={(e) => setBatchForm({ ...batchForm, quantity: e.target.value })}
+                                        placeholder="0"
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                                    />
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={batchSubmitting}
+                                    className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
+                                >
+                                    {batchSubmitting ? 'Guardando...' : (<><Plus size={16} /> Sumar al stock</>)}
+                                </button>
+                                <p className="sm:col-span-4 text-[11px] text-orange-300/70 flex items-center gap-1.5">
+                                    <AlertTriangle size={13} /> Agregar un lote suma al stock del producto y queda registrado en el Kardex. Si el nº de lote ya existe, se acumula.
+                                </p>
+                            </form>
+                        )}
+
                         <div className="flex-1 overflow-y-auto p-0">
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-slate-900/80 sticky top-0 z-10 shadow-md">
@@ -1609,12 +2023,13 @@ export default function Inventory() {
                                         <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700">Nº Lote</th>
                                         <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700">Vencimiento</th>
                                         <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700 text-right">Stock</th>
+                                        {isOwner && <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700 text-right">Acción</th>}
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-700/50">
                                     {batchesLoading ? (
                                         <tr>
-                                            <td colSpan={3} className="px-6 py-12 text-center text-slate-400">
+                                            <td colSpan={isOwner ? 4 : 3} className="px-6 py-12 text-center text-slate-400">
                                                 <div className="flex justify-center mb-2">
                                                     <div className="w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
                                                 </div>
@@ -1623,7 +2038,7 @@ export default function Inventory() {
                                         </tr>
                                     ) : batchesData.length === 0 ? (
                                         <tr>
-                                            <td colSpan={3} className="px-6 py-8 text-center text-slate-400">
+                                            <td colSpan={isOwner ? 4 : 3} className="px-6 py-8 text-center text-slate-400">
                                                 No hay lotes con stock positivo para este producto.
                                             </td>
                                         </tr>
@@ -1631,7 +2046,7 @@ export default function Inventory() {
                                         batchesData.map((batch) => {
                                             const isExpired = new Date(batch.expiryDate) < new Date();
                                             const isExpiringSoon = new Date(batch.expiryDate) < new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
-                                            
+
                                             return (
                                                 <tr key={batch.id} className="hover:bg-slate-700/20 transition-colors">
                                                     <td className="px-6 py-4 text-sm font-medium text-white font-mono">
@@ -1639,12 +2054,23 @@ export default function Inventory() {
                                                     </td>
                                                     <td className="px-6 py-4 text-sm">
                                                         <span className={`px-2 py-1 rounded-full text-xs font-semibold ${isExpired ? 'bg-red-900/40 text-red-400' : isExpiringSoon ? 'bg-amber-900/40 text-amber-400' : 'bg-emerald-900/40 text-emerald-400'}`}>
-                                                            {new Date(batch.expiryDate).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                                            {isExpired ? '⚠ ' : ''}{new Date(batch.expiryDate).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                                                         </span>
                                                     </td>
                                                     <td className="px-6 py-4 text-sm text-right font-bold text-white">
                                                         {batch.stock}
                                                     </td>
+                                                    {isOwner && (
+                                                        <td className="px-6 py-4 text-right">
+                                                            <button
+                                                                onClick={() => handleWriteoffBatch(batch.id, batch.batchNumber)}
+                                                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${isExpired ? 'bg-red-600/20 border-red-600/50 text-red-300 hover:bg-red-600/40' : 'border-slate-600 text-slate-400 hover:bg-slate-700'}`}
+                                                                title="Dar de baja este lote (merma)"
+                                                            >
+                                                                Dar de baja
+                                                            </button>
+                                                        </td>
+                                                    )}
                                                 </tr>
                                             );
                                         })
@@ -1652,6 +2078,119 @@ export default function Inventory() {
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ==========================================
+                MODAL: EDICIÓN MASIVA (A2 — categoría / precio)
+               ========================================== */}
+            {showBulkEditModal && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowBulkEditModal(false)}>
+                    <div className="bg-slate-800 rounded-2xl w-full max-w-lg shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
+                        <div className="bg-gradient-to-r from-blue-900/50 to-cyan-900/30 px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+                            <div>
+                                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                    <Edit size={20} className="text-blue-400" />
+                                    Edición masiva
+                                </h2>
+                                <p className="text-sm text-slate-400 mt-1">
+                                    {selectedProductIds.length} producto{selectedProductIds.length === 1 ? '' : 's'} seleccionado{selectedProductIds.length === 1 ? '' : 's'}
+                                </p>
+                            </div>
+                            <button onClick={() => setShowBulkEditModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleBulkEdit} className="p-6 space-y-5">
+                            <div className="bg-slate-900/40 border border-slate-700 rounded-lg p-3 flex items-start gap-2">
+                                <Shield size={16} className="text-blue-400 mt-0.5 shrink-0" />
+                                <p className="text-xs text-slate-400">
+                                    Solo se cambia lo que llenes. El <strong className="text-slate-300">stock</strong> y el <strong className="text-slate-300">costo</strong> no se tocan (el costo lo calcula el sistema por promedio ponderado).
+                                </p>
+                            </div>
+
+                            {/* Categoría */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-2 font-medium flex items-center gap-1.5">
+                                    <Tag size={15} className="text-slate-400" /> Categoría
+                                </label>
+                                <input
+                                    type="text"
+                                    list="bulk-category-list"
+                                    value={bulkEditForm.category}
+                                    onChange={(e) => setBulkEditForm({ ...bulkEditForm, category: e.target.value })}
+                                    placeholder="Dejar vacío para no cambiar"
+                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                                />
+                                <datalist id="bulk-category-list">
+                                    {categories.map((c) => <option key={c} value={c} />)}
+                                </datalist>
+                            </div>
+
+                            {/* Precio */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-2 font-medium flex items-center gap-1.5">
+                                    <DollarSign size={15} className="text-slate-400" /> Precio
+                                </label>
+                                <div className="grid grid-cols-3 gap-2 mb-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: '', priceValue: '' })}
+                                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === '' ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                    >
+                                        Sin cambio
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: 'set', priceValue: '' })}
+                                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === 'set' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                    >
+                                        Fijar C$
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: 'pct', priceValue: '' })}
+                                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === 'pct' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                    >
+                                        Ajustar %
+                                    </button>
+                                </div>
+                                {bulkEditForm.priceMode !== '' && (
+                                    <div className="relative">
+                                        <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={bulkEditForm.priceValue}
+                                            onChange={(e) => setBulkEditForm({ ...bulkEditForm, priceValue: bulkEditForm.priceMode === 'pct' ? sanitizeSignedDecimal(e.target.value) : sanitizeDecimalInput(e.target.value) })}
+                                            placeholder={bulkEditForm.priceMode === 'set' ? 'Nuevo precio en C$' : 'Ej: 10 (sube 10%) o -5 (baja 5%)'}
+                                            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                                        />
+                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">
+                                            {bulkEditForm.priceMode === 'set' ? 'C$' : '%'}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex gap-3 pt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowBulkEditModal(false)}
+                                    className="flex-1 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={bulkEditSubmitting}
+                                    className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+                                >
+                                    {bulkEditSubmitting ? 'Aplicando...' : `Aplicar a ${selectedProductIds.length}`}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}

@@ -123,6 +123,56 @@ export const InventoryAdjustSchema = z.object({
     type:      z.enum(['ADJUST_LOSS', 'ADJUST_GAIN', 'IN_PURCHASE', 'RETURN']).optional(),
 });
 
+// PATCH /api/products/bulk-edit  [Bodeguero A2 — edición masiva]
+export const BulkEditProductsSchema = z
+    .object({
+        ids:        z.array(z.string().min(1)).min(1, 'Selecciona al menos 1 producto').max(500, 'Máximo 500 productos por lote'),
+        category:   z.string().trim().min(1).max(100).optional(),
+        priceMode:  z.enum(['set', 'pct']).optional(),
+        priceValue: z.number().finite().optional(),
+    })
+    .refine((d) => d.category !== undefined || d.priceMode !== undefined, {
+        message: 'Indica al menos un cambio: categoría o precio',
+    })
+    .refine((d) => d.priceMode === undefined || d.priceValue !== undefined, {
+        message: 'priceValue es obligatorio al cambiar el precio',
+        path: ['priceValue'],
+    })
+    .refine((d) => !(d.priceMode === 'set' && d.priceValue !== undefined && d.priceValue < 0), {
+        message: 'El precio no puede ser negativo',
+        path: ['priceValue'],
+    })
+    .refine((d) => !(d.priceMode === 'pct' && d.priceValue !== undefined && d.priceValue <= -100), {
+        message: 'El descuento porcentual no puede ser ≥ 100%',
+        path: ['priceValue'],
+    });
+
+// POST /api/inventory/batches  [Bodeguero A4 — alta de lote]
+export const CreateBatchSchema = z.object({
+    productId:   z.string().min(1, 'productId requerido'),
+    batchNumber: z.string().trim().min(1, 'Número de lote requerido').max(100),
+    expiryDate:  z.string().min(1, 'Fecha de vencimiento requerida'),
+    quantity:    z.number().int().positive('La cantidad debe ser mayor que cero'),
+});
+
+// POST /api/stock-counts  [Bodeguero B1 — toma física]
+export const CreateStockCountSchema = z
+    .object({
+        scope:    z.enum(['ALL', 'CATEGORY']).default('ALL'),
+        category: z.string().trim().min(1).max(100).optional(),
+        notes:    z.string().trim().max(300).optional(),
+    })
+    .refine((d) => d.scope !== 'CATEGORY' || (d.category && d.category.length > 0), {
+        message: 'La categoría es obligatoria cuando el alcance es CATEGORY',
+        path: ['category'],
+    });
+
+// PATCH /api/stock-counts/:id/count  [Bodeguero B1 — captura de conteo]
+export const RecordCountSchema = z.object({
+    productId: z.string().min(1, 'productId requerido'),
+    counted:   z.number().min(0, 'El conteo no puede ser negativo'),
+});
+
 // POST /api/shifts/open
 export const OpenShiftSchema = z.object({
     initialCash: moneyAmount,

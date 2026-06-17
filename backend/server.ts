@@ -16,7 +16,7 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, PeriodLockedError } from './services/accounting';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
@@ -43,6 +43,10 @@ import {
     CreateCashMovementSchema,
     CreatePurchaseSchema,
     InventoryAdjustSchema,
+    BulkEditProductsSchema,
+    CreateBatchSchema,
+    CreateStockCountSchema,
+    RecordCountSchema,
     OpenShiftSchema,
     CloseShiftSchema,
     CreateExpenseSchema,
@@ -1197,6 +1201,54 @@ app.post('/api/suppliers', authenticate, async (req: any, res: any) => {
     } catch (error) { res.status(500).json({ error: 'Error' }); }
 });
 
+// PUT /api/suppliers/:id - Actualizar proveedor (Bodeguero C2 — completa el CRUD)
+app.put('/api/suppliers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    const { name, ruc, contactName, phone, email, address, category } = req.body;
+    try {
+        const existing = await prisma.supplier.findFirst({ where: { id, tenantId: authReq.tenantId! } });
+        if (!existing) return res.status(404).json({ error: 'Proveedor no encontrado' });
+
+        const data: any = {};
+        if (name !== undefined) data.name = name;
+        if (ruc !== undefined) data.ruc = ruc;
+        if (contactName !== undefined) data.contactName = contactName;
+        if (phone !== undefined) data.phone = phone;
+        if (email !== undefined) data.email = email;
+        if (address !== undefined) data.address = address;
+        if (category !== undefined) data.category = category;
+
+        const supplier = await prisma.supplier.update({ where: { id }, data });
+        res.json(supplier);
+    } catch (error: any) {
+        console.error('Error updating supplier:', error);
+        res.status(500).json({ error: 'Error actualizando proveedor' });
+    }
+});
+
+// DELETE /api/suppliers/:id - Eliminar proveedor (solo si no tiene compras)
+app.delete('/api/suppliers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    try {
+        const existing = await prisma.supplier.findFirst({ where: { id, tenantId: authReq.tenantId! } });
+        if (!existing) return res.status(404).json({ error: 'Proveedor no encontrado' });
+
+        const purchases = await prisma.purchase.count({ where: { supplierId: id, tenantId: authReq.tenantId! } });
+        if (purchases > 0) {
+            return res.status(409).json({ error: `No se puede eliminar: el proveedor tiene ${purchases} compra(s) registrada(s).` });
+        }
+
+        // Los productos que lo tenían por defecto quedan en null (onDelete: SetNull).
+        await prisma.supplier.delete({ where: { id } });
+        res.json({ message: 'Proveedor eliminado' });
+    } catch (error: any) {
+        console.error('Error deleting supplier:', error);
+        res.status(500).json({ error: 'Error eliminando proveedor' });
+    }
+});
+
 
 // ==========================================
 // 👔 RRHH: EMPLEADOS & NÓMINA (LÓGICA REAL AGREGADA)
@@ -2186,7 +2238,7 @@ app.get('/api/products/categories', authenticate, async (req: any, res: any) => 
 // POST /api/products - Crear producto (OWNER o ADMIN)
 app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking } = req.body;
+    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking, reorderPoint, maxStock, defaultSupplierId } = req.body;
 
     try {
         // Verificar que SKU no exista
@@ -2219,6 +2271,9 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (re
                 isPublished: Boolean(isPublished),
                 imageUrl: imageUrl || null,
                 requiresBatchTracking: Boolean(requiresBatchTracking),
+                reorderPoint: parseFloat(reorderPoint) || 0,
+                maxStock: parseFloat(maxStock) || 0,
+                defaultSupplierId: defaultSupplierId || null,
                 createdBy: authReq.userId!
             }
         });
@@ -2372,7 +2427,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
 app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { name, description, category, price, cost, stock, minStock, unit, imageUrl } = req.body;
+    const { name, description, category, price, cost, stock, minStock, unit, imageUrl, reorderPoint, maxStock, defaultSupplierId } = req.body;
 
     try {
         const existing = await prisma.product.findFirst({
@@ -2392,6 +2447,9 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
         if (minStock !== undefined) updates.minStock = parseInt(minStock);
         if (unit !== undefined) updates.unit = unit;
         if (imageUrl !== undefined) updates.imageUrl = imageUrl;
+        if (reorderPoint !== undefined) updates.reorderPoint = parseFloat(reorderPoint) || 0;
+        if (maxStock !== undefined) updates.maxStock = parseFloat(maxStock) || 0;
+        if (defaultSupplierId !== undefined) updates.defaultSupplierId = defaultSupplierId || null;
 
         // Si se cambia el stock, crear registro en Kardex
         if (stock !== undefined) {
@@ -2453,6 +2511,68 @@ app.patch('/api/products/publish-bulk', authenticate, checkRole(['OWNER', 'ADMIN
     }
 });
 
+// PATCH /api/products/bulk-edit - Edición masiva de categoría y/o precio (Solo OWNER/ADMIN)
+// [Bodeguero A2] No toca stock ni costo (el costo es promedio ponderado del sistema).
+//   priceMode 'set' → fija el precio; 'pct' → ajusta ± un porcentaje (redondeado a 2 dec.).
+app.patch('/api/products/bulk-edit', authenticate, checkRole(['OWNER', 'ADMIN']), validate(BulkEditProductsSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { ids, category, priceMode, priceValue } = req.body;
+
+    try {
+        let count = 0;
+
+        if (priceMode === 'pct') {
+            // Ajuste porcentual: requiere leer cada precio → recalcular → redondear.
+            const factor = 1 + priceValue / 100;
+            count = await prisma.$transaction(async (tx: any) => {
+                const prods = await tx.product.findMany({
+                    where: { id: { in: ids }, tenantId: authReq.tenantId! },
+                    select: { id: true, price: true },
+                });
+                for (const p of prods) {
+                    const newPrice = Math.max(0, Math.round(Number(p.price) * factor * 100) / 100);
+                    const data: any = { price: newPrice };
+                    if (category !== undefined) data.category = category;
+                    await tx.product.update({ where: { id: p.id }, data });
+                }
+                return prods.length;
+            });
+        } else {
+            // 'set' y/o categoría → un solo updateMany atómico.
+            const data: any = {};
+            if (category !== undefined) data.category = category;
+            if (priceMode === 'set') data.price = Math.round(priceValue * 100) / 100;
+            const result = await prisma.product.updateMany({
+                where: { id: { in: ids }, tenantId: authReq.tenantId! },
+                data,
+            });
+            count = result.count;
+        }
+
+        // Rastro de auditoría: una mutación masiva de precios/categoría debe quedar registrada.
+        await prisma.auditLog.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                action: 'PRODUCT_BULK_EDIT',
+                details: JSON.stringify({
+                    count,
+                    requestedIds: ids.length,
+                    category: category ?? null,
+                    priceMode: priceMode ?? null,
+                    priceValue: priceValue ?? null,
+                    timestamp: new Date().toISOString(),
+                }),
+            },
+        });
+
+        res.json({ message: `${count} producto(s) actualizado(s).`, count });
+    } catch (error: any) {
+        console.error('Error en edición masiva:', error);
+        res.status(500).json({ error: error.message || 'Error en edición masiva' });
+    }
+});
+
 // PATCH /api/products/:id/publish - Toggle public catalog visibility (Solo OWNER/ADMIN)
 app.patch('/api/products/:id/publish', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
@@ -2510,22 +2630,59 @@ app.delete('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), asy
 });
 
 // GET /api/kardex/:productId - Historial de movimientos (Solo OWNER)
+// [Bodeguero A5] Filtro por rango de fechas (hora Nicaragua, UTC-6) + paginación opt-in.
+//   - Sin ?page  → array (compat: últimos 50, respetando from/to si vienen).
+//   - Con  ?page → { entries, total, page, pageSize }.
 app.get('/api/kardex/:productId', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { productId } = req.params;
+    const { from, to, page, pageSize } = req.query;
 
     try {
+        const where: any = { productId, tenantId: authReq.tenantId! };
+
+        // Rango de fechas interpretado como días locales de Nicaragua (UTC-6, sin DST).
+        const NI_OFFSET_MS = 6 * 3600 * 1000;
+        const DAY_MS = 24 * 3600 * 1000;
+        if (from || to) {
+            where.date = {};
+            if (from) {
+                const d = String(from).slice(0, 10);
+                where.date.gte = new Date(new Date(d + 'T00:00:00.000Z').getTime() + NI_OFFSET_MS);
+            }
+            if (to) {
+                const d = String(to).slice(0, 10);
+                where.date.lte = new Date(new Date(d + 'T00:00:00.000Z').getTime() + NI_OFFSET_MS + DAY_MS - 1);
+            }
+        }
+
+        const include = {
+            user: { select: { name: true, email: true } },
+            product: { select: { name: true, sku: true } },
+            batch: { select: { batchNumber: true, expiryDate: true } },
+        };
+
+        if (page !== undefined) {
+            const take = Math.min(200, Math.max(1, parseInt(pageSize) || 50));
+            const pageNum = Math.max(1, parseInt(page) || 1);
+            const [entries, total] = await Promise.all([
+                prisma.kardexMovement.findMany({
+                    where,
+                    include,
+                    orderBy: { date: 'desc' },
+                    skip: (pageNum - 1) * take,
+                    take,
+                }),
+                prisma.kardexMovement.count({ where }),
+            ]);
+            return res.json({ entries, total, page: pageNum, pageSize: take });
+        }
+
         const movements = await prisma.kardexMovement.findMany({
-            where: {
-                productId,
-                tenantId: authReq.tenantId!
-            },
-            include: {
-                user: { select: { name: true, email: true } },
-                product: { select: { name: true, sku: true } }
-            },
+            where,
+            include,
             orderBy: { date: 'desc' },
-            take: 50
+            take: 50,
         });
 
         res.json(movements);
@@ -2657,6 +2814,165 @@ app.get('/api/inventory/batches/:productId', authenticate, async (req: any, res:
     }
 });
 
+// POST /api/inventory/batches - Alta de lote (Solo OWNER/ADMIN)
+// [Bodeguero A4] Crea (o incrementa) un lote, suma el stock del producto de forma
+//   atómica vía applyStockDelta y deja rastro en el Kardex enlazado al lote. Activa el
+//   control de lotes del producto si aún no lo tenía (FEFO/alertas de vencimiento).
+app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateBatchSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { productId, batchNumber, expiryDate, quantity } = req.body;
+
+    const expiry = new Date(String(expiryDate).slice(0, 10) + 'T00:00:00.000Z');
+    if (isNaN(expiry.getTime())) {
+        return res.status(400).json({ error: 'Fecha de vencimiento inválida.' });
+    }
+
+    try {
+        const result = await prisma.$transaction(async (tx: any) => {
+            const product = await tx.product.findFirst({
+                where: { id: productId, tenantId: authReq.tenantId! },
+            });
+            if (!product) throw new Error('Producto no encontrado en tu inventario.');
+
+            // 1. Sumar stock del producto (atómico, row-lock).
+            const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                tenantId: authReq.tenantId!,
+                productId,
+                delta: quantity,
+                enforceSufficient: false,
+            });
+
+            // 2. Crear o incrementar el lote (mismo lote = se acumula).
+            const batch = await tx.productBatch.upsert({
+                where: { productId_batchNumber: { productId, batchNumber } },
+                update: { stock: { increment: quantity } },
+                create: {
+                    tenantId: authReq.tenantId!,
+                    productId,
+                    batchNumber,
+                    expiryDate: expiry,
+                    stock: quantity,
+                },
+            });
+
+            // 3. Activar control de lotes si aún no estaba (habilita FEFO + alertas).
+            if (!product.requiresBatchTracking) {
+                await tx.product.update({
+                    where: { id: productId },
+                    data: { requiresBatchTracking: true },
+                });
+            }
+
+            // 4. Kardex: entrada por alta de lote, enlazada al lote.
+            const movement = await tx.kardexMovement.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    productId,
+                    type: 'IN_PURCHASE',
+                    quantity,
+                    stockBefore,
+                    stockAfter,
+                    referenceType: 'BATCH',
+                    reason: `Alta de lote ${batchNumber} (vence ${expiry.toISOString().slice(0, 10)})`,
+                    userId: authReq.userId!,
+                    batchId: batch.id,
+                },
+            });
+
+            return { batch, movement, newStock: stockAfter, productName: product.name };
+        });
+
+        res.json({
+            message: `Lote ${batchNumber} agregado a ${result.productName}. Stock: ${result.newStock}`,
+            batch: result.batch,
+            newStock: result.newStock,
+        });
+    } catch (error: any) {
+        console.error('Error creando lote:', error);
+        res.status(error.message?.includes('no encontrado') ? 400 : 500)
+            .json({ error: error.message || 'Error creando lote' });
+    }
+});
+
+// POST /api/inventory/batches/:batchId/writeoff - Dar de baja un lote (merma) [Bodeguero B3]
+// Resta el stock restante del lote del producto, deja Kardex y asiento de merma
+// (Debe 5.1.2 Pérdida por Merma / Haber 1.1.4 Inventario, valuado al costo).
+app.post('/api/inventory/batches/:batchId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { batchId } = req.params;
+    const reason = (req.body?.reason || '').toString().trim();
+    try {
+        await seedChartOfAccounts(authReq.tenantId!); // garantiza 5.1.2 / 1.1.4
+
+        const result = await prisma.$transaction(async (tx: any) => {
+            const batch = await tx.productBatch.findFirst({
+                where: { id: batchId, tenantId: authReq.tenantId! },
+                include: { product: { select: { name: true, cost: true } } },
+            });
+            if (!batch) throw new Error('Lote no encontrado');
+            const qty = Number(batch.stock);
+            if (qty <= 0) throw new Error('El lote no tiene stock para dar de baja.');
+            // Período cerrado → no se permite dar de baja (aun si el costo fuese 0).
+            await assertPeriodOpen(tx, authReq.tenantId!, new Date());
+
+            // Restar del stock del producto (realidad física: el lote se descarta).
+            const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                tenantId: authReq.tenantId!,
+                productId: batch.productId,
+                delta: -qty,
+                enforceSufficient: false,
+            });
+
+            await tx.productBatch.update({ where: { id: batchId }, data: { stock: 0 } });
+
+            await tx.kardexMovement.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    productId: batch.productId,
+                    type: 'ADJUST_LOSS',
+                    quantity: -qty,
+                    stockBefore,
+                    stockAfter,
+                    referenceId: batchId,
+                    referenceType: 'BATCH_WRITEOFF',
+                    reason: reason || `Baja de lote ${batch.batchNumber} (vence ${new Date(batch.expiryDate).toISOString().slice(0, 10)})`,
+                    userId: authReq.userId!,
+                    batchId,
+                },
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'BATCH_WRITEOFF',
+                    details: JSON.stringify({ batchId, batchNumber: batch.batchNumber, productName: batch.product.name, quantity: qty, expiryDate: batch.expiryDate, reason: reason || null, timestamp: new Date().toISOString() }),
+                },
+            });
+
+            const lossValue = new Decimal(qty).times(Number(batch.product.cost) || 0).toDecimalPlaces(2).toNumber();
+            if (lossValue > 0) {
+                await createJournalEntry(
+                    tx, authReq.tenantId!, `Baja de lote vencido ${batch.batchNumber}`, batchId, 'BATCH_WRITEOFF', authReq.userId!,
+                    [
+                        { accountCode: '5.1.2', debit: lossValue, credit: 0 },
+                        { accountCode: '1.1.4', debit: 0, credit: lossValue },
+                    ]
+                );
+            }
+
+            return { newStock: stockAfter, lossValue, batchNumber: batch.batchNumber, qty };
+        });
+
+        res.json({ message: `Lote ${result.batchNumber} dado de baja (${result.qty} uds). Merma: C$ ${result.lossValue.toFixed(2)}`, ...result });
+    } catch (error: any) {
+        console.error('Error dando de baja lote:', error);
+        const msg = error?.message || 'Error dando de baja el lote';
+        const code = error instanceof PeriodLockedError ? 423 : (msg.includes('no encontrado') || msg.includes('stock')) ? 400 : 500;
+        res.status(code).json({ error: msg });
+    }
+});
+
 // GET /api/inventory/expiring-soon - Lotes próximos a vencer (≤ 90 días)
 app.get('/api/inventory/expiring-soon', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
@@ -2697,6 +3013,252 @@ app.get('/api/inventory/low-stock', authenticate, checkRole(['OWNER', 'ADMIN']),
     } catch (error) {
         console.error('Error fetching low stock:', error);
         res.status(500).json({ error: 'Error obteniendo productos con stock bajo' });
+    }
+});
+
+// ==========================================
+// 🧮 TOMA FÍSICA / CONTEO CÍCLICO (Bodeguero B1) — Solo OWNER/ADMIN
+// ==========================================
+
+// POST /api/stock-counts - Crear conteo + snapshot del stock esperado
+app.post('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateStockCountSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { scope, category, notes } = req.body;
+    try {
+        // Solo un conteo abierto a la vez (evita snapshots solapados/confusos).
+        const open = await prisma.stockCount.findFirst({
+            where: { tenantId: authReq.tenantId!, status: 'OPEN' },
+            select: { id: true },
+        });
+        if (open) {
+            return res.status(409).json({ error: 'Ya hay una toma física abierta. Ciérrala o cancélala antes de crear otra.', openCountId: open.id });
+        }
+
+        const where: any = { tenantId: authReq.tenantId! };
+        if (scope === 'CATEGORY') where.category = category;
+
+        const products = await prisma.product.findMany({ where, select: { id: true, stock: true } });
+        if (products.length === 0) {
+            return res.status(400).json({ error: 'No hay productos en el alcance seleccionado.' });
+        }
+
+        const count = await prisma.$transaction(async (tx: any) => {
+            const created = await tx.stockCount.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    status: 'OPEN',
+                    scope,
+                    category: scope === 'CATEGORY' ? category : null,
+                    notes: notes || null,
+                    createdBy: authReq.userId!,
+                },
+            });
+            await tx.stockCountItem.createMany({
+                data: products.map((p: any) => ({
+                    countId: created.id,
+                    productId: p.id,
+                    expected: Number(p.stock),
+                    counted: null,
+                    diff: 0,
+                })),
+            });
+            return created;
+        });
+
+        res.json({ message: `Toma física creada con ${products.length} productos.`, count, items: products.length });
+    } catch (error: any) {
+        console.error('Error creando toma física:', error);
+        res.status(500).json({ error: error.message || 'Error creando toma física' });
+    }
+});
+
+// GET /api/stock-counts - Historial de conteos
+app.get('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const counts = await prisma.stockCount.findMany({
+            where: { tenantId: authReq.tenantId! },
+            include: {
+                creator: { select: { name: true } },
+                _count: { select: { items: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 100,
+        });
+        res.json(counts);
+    } catch (error) {
+        console.error('Error fetching stock counts:', error);
+        res.status(500).json({ error: 'Error obteniendo tomas físicas' });
+    }
+});
+
+// GET /api/stock-counts/:id - Detalle + ítems (para captura / revisión)
+app.get('/api/stock-counts/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    try {
+        const count = await prisma.stockCount.findFirst({
+            where: { id, tenantId: authReq.tenantId! },
+            include: { creator: { select: { name: true } } },
+        });
+        if (!count) return res.status(404).json({ error: 'Toma física no encontrada' });
+
+        const items = await prisma.stockCountItem.findMany({
+            where: { countId: id },
+            include: { product: { select: { name: true, sku: true, unit: true, cost: true, stock: true } } },
+            orderBy: { product: { name: 'asc' } },
+        });
+
+        res.json({ count, items });
+    } catch (error) {
+        console.error('Error fetching stock count:', error);
+        res.status(500).json({ error: 'Error obteniendo toma física' });
+    }
+});
+
+// PATCH /api/stock-counts/:id/count - Capturar conteo físico de un producto (apto escáner)
+app.patch('/api/stock-counts/:id/count', authenticate, checkRole(['OWNER', 'ADMIN']), validate(RecordCountSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    const { productId, counted } = req.body;
+    try {
+        const count = await prisma.stockCount.findFirst({
+            where: { id, tenantId: authReq.tenantId! },
+            select: { status: true },
+        });
+        if (!count) return res.status(404).json({ error: 'Toma física no encontrada' });
+        if (count.status !== 'OPEN') return res.status(400).json({ error: 'La toma física no está abierta.' });
+
+        const updated = await prisma.stockCountItem.updateMany({
+            where: { countId: id, productId },
+            data: { counted, countedAt: new Date() },
+        });
+        if (updated.count === 0) return res.status(404).json({ error: 'Este producto no pertenece a la toma física.' });
+
+        res.json({ message: 'Conteo registrado', productId, counted });
+    } catch (error: any) {
+        console.error('Error registrando conteo:', error);
+        res.status(500).json({ error: error.message || 'Error registrando conteo' });
+    }
+});
+
+// POST /api/stock-counts/:id/close - Cerrar: postea ajustes (Kardex) + asiento de merma/sobrante
+app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    try {
+        // Asegura que existan las cuentas 5.1.2 / 4.1.3 antes del asiento (auto-sanable).
+        await seedChartOfAccounts(authReq.tenantId!);
+
+        const result = await prisma.$transaction(async (tx: any) => {
+            const count = await tx.stockCount.findFirst({
+                where: { id, tenantId: authReq.tenantId! },
+            });
+            if (!count) throw new Error('Toma física no encontrada');
+            if (count.status !== 'OPEN') throw new Error('La toma física ya está cerrada o cancelada.');
+            // Un período cerrado congela TODO ajuste de inventario, aun si el valor
+            // de la merma fuese 0 (productos sin costo) y no se generara asiento.
+            await assertPeriodOpen(tx, authReq.tenantId!, new Date());
+
+            const items = await tx.stockCountItem.findMany({
+                where: { countId: id },
+                include: { product: { select: { name: true, cost: true, stock: true } } },
+            });
+
+            let lossValue = new Decimal(0); // Σ |merma| · costo
+            let gainValue = new Decimal(0); // Σ sobrante · costo
+            let adjusted = 0;
+            let countedItems = 0;
+
+            for (const it of items) {
+                if (it.counted === null) continue; // no contado → no se toca
+                countedItems++;
+                const counted = Number(it.counted);
+
+                // `variance` = conteo vs el snapshot inicial (informativo, para el reporte).
+                const variance = counted - Number(it.expected);
+                await tx.stockCountItem.update({ where: { id: it.id }, data: { diff: variance } });
+
+                // El ajuste REAL se mide contra el stock de LIBRO ACTUAL: así las ventas/
+                // compras ya contabilizadas (que movieron el libro entre snapshot y cierre)
+                // NO se cuentan como merma — solo la diferencia inexplicada cuadra el stock
+                // al conteo físico y evita re-contabilizar COGS como pérdida.
+                const currentBook = Number(it.product.stock);
+                const delta = counted - currentBook;
+                if (delta === 0) continue;
+
+                const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                    tenantId: authReq.tenantId!,
+                    productId: it.productId,
+                    delta,
+                    enforceSufficient: false,
+                });
+
+                await tx.kardexMovement.create({
+                    data: {
+                        tenantId: authReq.tenantId!,
+                        productId: it.productId,
+                        type: delta < 0 ? 'ADJUST_LOSS' : 'ADJUST_GAIN',
+                        quantity: delta,
+                        stockBefore,
+                        stockAfter,
+                        referenceId: id,
+                        referenceType: 'STOCK_COUNT',
+                        reason: `Toma física #${id.slice(0, 8)}: libro ${currentBook}, contado ${counted}`,
+                        userId: authReq.userId!,
+                    },
+                });
+
+                const cost = new Decimal(Number(it.product.cost) || 0);
+                if (delta < 0) lossValue = lossValue.plus(cost.times(Math.abs(delta)));
+                else gainValue = gainValue.plus(cost.times(delta));
+                adjusted++;
+            }
+
+            // Asiento contable de la merma/sobrante (si hubo discrepancia valuada).
+            await recordStockCountAdjustment(
+                tx, authReq.tenantId!, authReq.userId!, id, lossValue.toNumber(), gainValue.toNumber()
+            );
+
+            const closed = await tx.stockCount.update({
+                where: { id },
+                data: { status: 'CLOSED', closedAt: new Date(), closedBy: authReq.userId! },
+            });
+
+            return {
+                count: closed,
+                adjusted,
+                countedItems,
+                uncounted: items.length - countedItems,
+                lossValue: lossValue.toDecimalPlaces(2).toNumber(),
+                gainValue: gainValue.toDecimalPlaces(2).toNumber(),
+            };
+        });
+
+        res.json({ message: `Toma física cerrada. ${result.adjusted} ajuste(s) aplicado(s).`, ...result });
+    } catch (error: any) {
+        console.error('Error cerrando toma física:', error);
+        const msg = error?.message || 'Error cerrando toma física';
+        const code = error instanceof PeriodLockedError ? 423
+            : (msg.includes('no encontrada') || msg.includes('cerrada') || msg.includes('cancelada')) ? 400 : 500;
+        res.status(code).json({ error: msg });
+    }
+});
+
+// POST /api/stock-counts/:id/cancel - Cancelar una toma física abierta (sin ajustes)
+app.post('/api/stock-counts/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    try {
+        const updated = await prisma.stockCount.updateMany({
+            where: { id, tenantId: authReq.tenantId!, status: 'OPEN' },
+            data: { status: 'CANCELLED', closedAt: new Date(), closedBy: authReq.userId! },
+        });
+        if (updated.count === 0) return res.status(400).json({ error: 'No se encontró una toma física abierta con ese id.' });
+        res.json({ message: 'Toma física cancelada' });
+    } catch (error: any) {
+        console.error('Error cancelando toma física:', error);
+        res.status(500).json({ error: error.message || 'Error cancelando toma física' });
     }
 });
 
@@ -3081,11 +3643,21 @@ app.post('/api/purchases', authenticate, validate(CreatePurchaseSchema), async (
 
             // 4. Registro financiero
             if (paymentMethod === 'CASH') {
-                // Descontar de wallet del tenant
-                await tx.tenant.update({
-                    where: { id: authReq.tenantId },
+                // Débito ATÓMICO: decrementa solo si hay saldo suficiente. El guard de
+                // suficiencia y la escritura son el MISMO UPDATE condicional (toma el
+                // row-lock), así dos compras de contado concurrentes no pueden ambas
+                // pasar el chequeo y dejar la billetera en negativo (TOCTOU).
+                const debited = await tx.tenant.updateMany({
+                    where: { id: authReq.tenantId, walletBalance: { gte: total } },
                     data: { walletBalance: { decrement: total } }
                 });
+                if (debited.count === 0) {
+                    const t = await tx.tenant.findUnique({
+                        where: { id: authReq.tenantId },
+                        select: { walletBalance: true }
+                    });
+                    throw new Error(`SALDO_INSUFICIENTE: disponible C$ ${Number(t?.walletBalance ?? 0).toFixed(2)}, requerido C$ ${Number(total).toFixed(2)}. Usa crédito o recarga tu billetera.`);
+                }
 
                 // Crear gasto
                 await tx.expense.create({
@@ -3109,7 +3681,8 @@ app.post('/api/purchases', authenticate, validate(CreatePurchaseSchema), async (
 
     } catch (error: any) {
         console.error('Error registrando compra:', error);
-        res.status(500).json({ error: error.message || 'Error al procesar la compra' });
+        const insufficient = error?.message?.includes('SALDO_INSUFICIENTE');
+        res.status(insufficient ? 400 : 500).json({ error: error.message || 'Error al procesar la compra' });
     }
 });
 
@@ -5558,6 +6131,80 @@ app.get('/api/inventory/oracle', authenticate, async (req: any, res: any) => {
     } catch (error) {
         console.error('Oracle Error:', error);
         res.status(500).json({ error: 'Error calculando predicciones del Oráculo' });
+    }
+});
+
+// GET /api/inventory/reorder — ¿Qué reponer? (Bodeguero B2)
+// Combina el punto de reorden estático (stock ≤ reorderPoint) con la velocidad de
+// venta (VPD, mismo cálculo del oráculo) en una sola lista, con cantidad sugerida.
+app.get('/api/inventory/reorder', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        const saleMovements = await prisma.kardexMovement.findMany({
+            where: { tenantId: authReq.tenantId, type: 'SALE', date: { gte: thirtyDaysAgo } },
+            select: { productId: true, quantity: true },
+        });
+        const salesByProduct: Record<string, number> = {};
+        for (const m of saleMovements) {
+            salesByProduct[m.productId] = (salesByProduct[m.productId] || 0) + Math.abs(m.quantity);
+        }
+
+        const products = await prisma.product.findMany({
+            where: { tenantId: authReq.tenantId },
+            select: {
+                id: true, name: true, sku: true, stock: true, cost: true, minStock: true,
+                reorderPoint: true, maxStock: true, category: true, defaultSupplierId: true,
+                defaultSupplier: { select: { id: true, name: true } },
+            },
+        });
+
+        const items = [];
+        for (const p of products) {
+            const stock = Number(p.stock);
+            const reorderPoint = Number(p.reorderPoint) || 0;
+            const maxStock = Number(p.maxStock) || 0;
+            const totalSold = salesByProduct[p.id] || 0;
+            const vpd = totalSold / 30; // Venta Diaria Promedio
+            const daysRemaining = vpd > 0 ? stock / vpd : Infinity;
+
+            const belowReorder = reorderPoint > 0 && stock <= reorderPoint;
+            const fastMoving = vpd > 0 && daysRemaining <= 7;
+            if (!belowReorder && !fastMoving) continue;
+
+            // Cuánto reponer: llevar al máximo si está definido; si no, a 15 días de
+            // venta o al doble del punto de reorden.
+            const target = maxStock > 0 ? maxStock : (vpd > 0 ? vpd * 15 : reorderPoint * 2);
+            const suggestedQty = Math.max(0, Math.ceil(target - stock));
+            const cost = Number(p.cost) || 0;
+
+            items.push({
+                productId: p.id,
+                name: p.name,
+                sku: p.sku,
+                category: p.category,
+                currentStock: stock,
+                reorderPoint,
+                maxStock,
+                cost,
+                supplierId: p.defaultSupplier?.id || null,
+                supplierName: p.defaultSupplier?.name || null,
+                vpd: Math.round(vpd * 100) / 100,
+                daysRemaining: daysRemaining === Infinity ? null : Math.round(daysRemaining * 10) / 10,
+                reason: belowReorder && fastMoving ? 'BOTH' : belowReorder ? 'REORDER_POINT' : 'VELOCITY',
+                suggestedQty,
+                suggestedCost: Math.round(suggestedQty * cost * 100) / 100,
+            });
+        }
+
+        items.sort((a, b) => (a.daysRemaining ?? 9999) - (b.daysRemaining ?? 9999));
+
+        res.json({ items, total: items.length, totalEstimatedCost: items.reduce((s, i) => s + i.suggestedCost, 0) });
+    } catch (error) {
+        console.error('Reorder Error:', error);
+        res.status(500).json({ error: 'Error calculando reposición' });
     }
 });
 
