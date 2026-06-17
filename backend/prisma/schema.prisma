@@ -1503,6 +1503,21 @@ model RouteExpense {
   shift Shift? @relation(fields: [shiftId], references: [id])
 }
 
+// Entrega de efectivo del cobrador a la bóveda del prestamista (Cobranza A3)
+model CollectorDeposit {
+  id            String   @id @default(uuid())
+  lenderId      String // El Tenant prestamista que recibe la entrega
+  collectorId   String? // userId del cobrador (si está en el sistema)
+  collectorName String? // Nombre del cobrador (respaldo de auditoría)
+  amount        Decimal  @db.Decimal(12, 2) // Efectivo entregado
+  notes         String?  @db.Text
+  receivedBy    String // userId del jefe que registró la entrega
+  date          DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([lenderId])
+}
+
 // ==========================================
 // 📱 CANAL WHATSAPP
 // ==========================================

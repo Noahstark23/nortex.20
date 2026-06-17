@@ -427,4 +427,73 @@ router.post('/collectors', authenticate, async (req: any, res: any) => {
     }
 });
 
+// 9. ASIGNAR COBRADOR A UN PRÉSTAMO (Cobranza A3 — botón del dashboard que hoy falla)
+router.patch('/:id/assign', authenticate, async (req: any, res: any) => {
+    try {
+        const { id } = req.params;
+        const { assignedToId } = req.body;
+        const lenderId = req.tenantId;
+
+        // El préstamo debe ser de este prestamista (aislamiento por tenant).
+        const loan = await prisma.loan.findFirst({ where: { id, lenderId } });
+        if (!loan) return res.status(404).json({ success: false, error: 'Préstamo no encontrado' });
+
+        // Si se asigna un cobrador, debe pertenecer al mismo tenant.
+        if (assignedToId) {
+            const collector = await prisma.user.findFirst({ where: { id: assignedToId, tenantId: lenderId } });
+            if (!collector) return res.status(400).json({ success: false, error: 'Cobrador no válido' });
+        }
+
+        const updated = await prisma.loan.update({
+            where: { id },
+            data: { assignedToId: assignedToId || null },
+            include: { assignedTo: { select: { id: true, name: true } } }
+        });
+
+        res.json({ success: true, data: updated });
+    } catch (error) {
+        console.error('Error asignando cobrador:', error);
+        res.status(500).json({ success: false, error: 'Error asignando el cobrador' });
+    }
+});
+
+// 10. DEPÓSITO A BÓVEDA (Cobranza A3 — entrega de efectivo del cobrador; botón que hoy falla)
+router.post('/vault/deposit', authenticate, async (req: any, res: any) => {
+    try {
+        const { collectorId, amount, notes } = req.body;
+        const lenderId = req.tenantId;
+
+        const amt = parseFloat(amount);
+        if (isNaN(amt) || amt <= 0) {
+            return res.status(400).json({ success: false, error: 'El monto debe ser mayor que cero.' });
+        }
+
+        let collectorName: string | null = null;
+        if (collectorId) {
+            const collector = await prisma.user.findFirst({
+                where: { id: collectorId, tenantId: lenderId },
+                select: { name: true }
+            });
+            if (!collector) return res.status(400).json({ success: false, error: 'Cobrador no válido' });
+            collectorName = collector.name;
+        }
+
+        const deposit = await prisma.collectorDeposit.create({
+            data: {
+                lenderId,
+                collectorId: collectorId || null,
+                collectorName,
+                amount: amt,
+                notes: notes || null,
+                receivedBy: req.user.id
+            }
+        });
+
+        res.status(201).json({ success: true, data: deposit });
+    } catch (error) {
+        console.error('Error registrando depósito a bóveda:', error);
+        res.status(500).json({ success: false, error: 'Error registrando el depósito' });
+    }
+});
+
 export default router;

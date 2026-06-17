@@ -5080,6 +5080,158 @@ app.get('/api/credits/debtors', authenticate, async (req: any, res: any) => {
     }
 });
 
+// GET /api/collections/worklist - "Cobrar hoy" (Cobranza A1): deudas a crédito por
+// urgencia (vencidas primero) + KPIs de cobranza. dueSoonDays = ventana "por vencer".
+app.get('/api/collections/worklist', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const dueSoonDays = Math.min(60, Math.max(1, parseInt(req.query.dueSoonDays) || 7));
+    try {
+        const now = new Date();
+        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const MS_DAY = 86400000;
+        // Días vencidos desde la referencia (vence ?? emisión); >0 vencido, <0 por vencer.
+        const diasVencido = (ref: Date) => {
+            const r = new Date(ref);
+            const refMid = new Date(r.getFullYear(), r.getMonth(), r.getDate()).getTime();
+            return Math.floor((hoy.getTime() - refMid) / MS_DAY);
+        };
+        const bucketDe = (d: number) => d <= 0 ? 'corriente' : d <= 30 ? 'b1_30' : d <= 60 ? 'b31_60' : d <= 90 ? 'b61_90' : 'b90';
+
+        const sales = await prisma.sale.findMany({
+            where: { tenantId, paymentMethod: 'CREDIT', balance: { gt: 0 } },
+            include: { customer: { select: { id: true, name: true, phone: true } } },
+        });
+
+        let totalReceivable = new Decimal(0);
+        let totalOverdue = new Decimal(0);
+        let dueSoonAmount = new Decimal(0);
+        let overdueCount = 0, dueSoonCount = 0;
+
+        const items = sales.map((s: any) => {
+            const ref = s.dueDate ?? s.createdAt;
+            const dias = diasVencido(ref);
+            const balance = new Decimal(s.balance.toString());
+            totalReceivable = totalReceivable.plus(balance);
+            const overdue = dias > 0;
+            const dueSoon = !overdue && dias >= -dueSoonDays; // vence hoy o dentro de la ventana
+            if (overdue) { totalOverdue = totalOverdue.plus(balance); overdueCount++; }
+            else if (dueSoon) { dueSoonAmount = dueSoonAmount.plus(balance); dueSoonCount++; }
+            return {
+                saleId: s.id,
+                customerId: s.customer?.id ?? null,
+                customerName: s.customer?.name ?? s.customerName ?? 'Cliente General',
+                phone: s.customer?.phone ?? null,
+                invoiceNumber: s.invoiceNumber != null ? String(s.invoiceNumber) : null,
+                date: s.createdAt,
+                dueDate: s.dueDate,
+                total: Number(s.total),
+                balance: balance.toDecimalPlaces(2).toNumber(),
+                daysOverdue: dias,
+                bucket: bucketDe(dias),
+                status: overdue ? 'OVERDUE' : dueSoon ? 'DUE_SOON' : 'CURRENT',
+            };
+        });
+        // Más vencido primero; luego por vencer (más cerca de hoy), luego corriente.
+        items.sort((a, b) => b.daysOverdue - a.daysOverdue);
+
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const collectedToday = await prisma.payment.aggregate({
+            where: { sale: { tenantId }, createdAt: { gte: startOfDay } },
+            _sum: { amount: true },
+        });
+
+        res.json({
+            summary: {
+                totalReceivable: totalReceivable.toDecimalPlaces(2).toNumber(),
+                totalOverdue: totalOverdue.toDecimalPlaces(2).toNumber(),
+                overdueCount,
+                dueSoon: dueSoonAmount.toDecimalPlaces(2).toNumber(),
+                dueSoonCount,
+                collectedToday: Number(collectedToday._sum.amount || 0),
+                dueSoonDays,
+            },
+            items,
+        });
+    } catch (error) {
+        console.error('Error fetching worklist:', error);
+        res.status(500).json({ error: 'Error obteniendo la lista de cobro' });
+    }
+});
+
+// GET /api/customers/:id/statement - Estado de cuenta del cliente (Cobranza A2):
+// facturas a crédito con saldo/abonos + aging + totales. Para imprimir/enviar.
+app.get('/api/customers/:id/statement', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const { id } = req.params;
+    try {
+        const customer = await prisma.customer.findFirst({ where: { id, tenantId } });
+        if (!customer) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+        const sales = await prisma.sale.findMany({
+            where: { tenantId, customerId: id, paymentMethod: 'CREDIT' },
+            include: { payments: { orderBy: { createdAt: 'asc' }, include: { user: { select: { name: true } } } } },
+            orderBy: { createdAt: 'desc' },
+        });
+
+        const now = new Date();
+        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const MS_DAY = 86400000;
+        const diasVencido = (ref: Date) => {
+            const r = new Date(ref);
+            const refMid = new Date(r.getFullYear(), r.getMonth(), r.getDate()).getTime();
+            return Math.floor((hoy.getTime() - refMid) / MS_DAY);
+        };
+
+        let totalBilled = new Decimal(0), totalPaid = new Decimal(0), totalBalance = new Decimal(0), totalOverdue = new Decimal(0);
+        const invoices = sales.map((s: any) => {
+            const total = new Decimal(s.total.toString());
+            const balance = new Decimal(s.balance.toString());
+            const paid = total.minus(balance);
+            const dias = diasVencido(s.dueDate ?? s.createdAt);
+            const open = balance.greaterThan(0);
+            const overdue = open && dias > 0;
+            totalBilled = totalBilled.plus(total);
+            totalPaid = totalPaid.plus(paid);
+            totalBalance = totalBalance.plus(balance);
+            if (overdue) totalOverdue = totalOverdue.plus(balance);
+            return {
+                id: s.id,
+                invoiceNumber: s.invoiceNumber != null ? String(s.invoiceNumber) : null,
+                date: s.createdAt,
+                dueDate: s.dueDate,
+                total: total.toDecimalPlaces(2).toNumber(),
+                paid: paid.toDecimalPlaces(2).toNumber(),
+                balance: balance.toDecimalPlaces(2).toNumber(),
+                daysOverdue: dias,
+                status: !open ? 'PAID' : overdue ? 'OVERDUE' : 'PENDING',
+                payments: s.payments.map((p: any) => ({
+                    id: p.id, amount: Number(p.amount), method: p.method, date: p.createdAt, collectedBy: p.user?.name || null,
+                })),
+            };
+        });
+
+        res.json({
+            customer: {
+                id: customer.id, name: customer.name, phone: customer.phone,
+                creditLimit: Number(customer.creditLimit), currentDebt: Number(customer.currentDebt), isBlocked: customer.isBlocked,
+            },
+            invoices,
+            totals: {
+                billed: totalBilled.toDecimalPlaces(2).toNumber(),
+                paid: totalPaid.toDecimalPlaces(2).toNumber(),
+                balance: totalBalance.toDecimalPlaces(2).toNumber(),
+                overdue: totalOverdue.toDecimalPlaces(2).toNumber(),
+            },
+            generatedAt: now,
+        });
+    } catch (error) {
+        console.error('Error fetching statement:', error);
+        res.status(500).json({ error: 'Error obteniendo el estado de cuenta' });
+    }
+});
+
 // POST /api/credits/payment - Registrar abono
 app.post('/api/credits/payment', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
