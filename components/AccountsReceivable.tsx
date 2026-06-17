@@ -112,6 +112,32 @@ const AccountsReceivable: React.FC = () => {
     setShowPayModal(true);
   };
 
+  // B3: recibo de abono imprimible (ventana limpia, formato media carta).
+  const printReceipt = (r: { customer: string; amount: number; method: string; prevBalance: number; newBalance: number }) => {
+    const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+    const methodLbl = r.method === 'CASH' ? 'Efectivo' : r.method === 'TRANSFER' ? 'Transferencia' : r.method === 'CARD' ? 'Tarjeta' : r.method;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Recibo de abono</title>
+      <style>body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:24px;max-width:420px}
+        h1{font-size:18px;margin:0 0 2px}.muted{color:#666;font-size:12px}
+        .row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #ddd;font-size:14px}
+        .big{font-size:22px;font-weight:800;margin:10px 0;text-align:center}
+        .sig{margin-top:40px;border-top:1px solid #333;text-align:center;font-size:12px;padding-top:4px}
+        @media print{.no-print{display:none}}</style></head><body>
+        <button class="no-print" onclick="window.print()" style="margin-bottom:12px;padding:8px 14px;font-weight:700;cursor:pointer">Imprimir</button>
+        <h1>Recibo de Abono</h1>
+        <div class="muted">${new Date().toLocaleString('es-NI')}</div>
+        <div class="big">${fmt(r.amount)}</div>
+        <div class="row"><span>Cliente</span><b>${esc(r.customer)}</b></div>
+        <div class="row"><span>Método</span><span>${esc(methodLbl)}</span></div>
+        <div class="row"><span>Saldo anterior</span><span>${fmt(r.prevBalance)}</span></div>
+        <div class="row"><span>Nuevo saldo</span><b>${fmt(r.newBalance)}</b></div>
+        <div class="sig">Firma / Recibí conforme</div>
+        <script>window.onload=function(){setTimeout(function(){try{window.print()}catch(e){}},300)}<\/script>
+      </body></html>`;
+    const w = window.open('', '_blank');
+    if (w) { w.document.write(html); w.document.close(); }
+  };
+
   const handleRegisterPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!paySale) return;
@@ -125,9 +151,11 @@ const AccountsReceivable: React.FC = () => {
         body: JSON.stringify({ saleId: paySale.id, amount, method: paymentMethod }),
       });
       if (res.ok) {
+        const receipt = { customer: paySale.customerName, amount, method: paymentMethod, prevBalance: paySale.balance, newBalance: Math.max(0, paySale.balance - amount) };
         setShowPayModal(false);
         setPaymentAmount('');
         await reloadDetail();
+        if (window.confirm('Abono registrado. ¿Imprimir recibo?')) printReceipt(receipt);
       } else {
         const err = await res.json().catch(() => ({}));
         alert(err.error || 'Error al registrar pago');
