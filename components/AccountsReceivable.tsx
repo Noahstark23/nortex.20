@@ -26,7 +26,7 @@ interface StatementPayment { id: string; amount: number; method: string; date: s
 interface StatementInvoice {
   id: string; invoiceNumber: string | null; date: string; dueDate: string | null;
   total: number; paid: number; balance: number; daysOverdue: number;
-  status: 'PAID' | 'OVERDUE' | 'PENDING'; payments: StatementPayment[];
+  status: 'PAID' | 'OVERDUE' | 'PENDING' | 'WRITTEN_OFF'; payments: StatementPayment[];
 }
 interface Statement {
   customer: { id: string; name: string; phone: string | null; creditLimit: number; currentDebt: number; isBlocked: boolean };
@@ -64,6 +64,9 @@ const AccountsReceivable: React.FC = () => {
 
   const token = localStorage.getItem('nortex_token');
   const headers = useMemo(() => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }), [token]);
+  const isOwner = useMemo(() => {
+    try { const r = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.role; return r === 'OWNER' || r === 'ADMIN'; } catch { return false; }
+  }, []);
 
   const fetchWorklist = useCallback(async () => {
     setLoading(true);
@@ -131,6 +134,18 @@ const AccountsReceivable: React.FC = () => {
       }
     } catch (e) { alert('Error de conexión al registrar pago'); }
     finally { setSubmitting(false); }
+  };
+
+  const handleWriteoff = async (saleId: string, balance: number) => {
+    const reason = window.prompt(`Castigar como INCOBRABLE el saldo de ${fmt(balance)}.\nSe reconoce la pérdida contablemente y no se podrá deshacer.\n\nJustificación (obligatoria):`);
+    if (reason === null) return;
+    if (reason.trim().length < 3) { alert('La justificación es obligatoria (mínimo 3 caracteres).'); return; }
+    try {
+      const res = await fetch(`/api/credits/${saleId}/writeoff`, { method: 'POST', headers, body: JSON.stringify({ reason: reason.trim() }) });
+      const data = await res.json();
+      if (res.ok) { await reloadDetail(); alert(data.message); }
+      else alert(`Error: ${data.error}`);
+    } catch (e) { alert('Error castigando la venta'); }
   };
 
   const notifyWhatsapp = (name: string, phone: string | null, balance: number) => {
@@ -322,8 +337,8 @@ const AccountsReceivable: React.FC = () => {
                         <div>
                           <div className="font-bold text-slate-800">Factura {inv.invoiceNumber || inv.id.slice(0, 8)}</div>
                           <div className="text-xs text-slate-500 mt-0.5">Emitida {fmtDate(inv.date)} · Vence {fmtDate(inv.dueDate)}</div>
-                          <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${inv.status === 'PAID' ? 'bg-emerald-100 text-emerald-700' : inv.status === 'OVERDUE' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
-                            {inv.status === 'PAID' ? 'Pagada' : inv.status === 'OVERDUE' ? `Vencida ${inv.daysOverdue}d` : 'Pendiente'}
+                          <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${inv.status === 'PAID' ? 'bg-emerald-100 text-emerald-700' : inv.status === 'WRITTEN_OFF' ? 'bg-slate-200 text-slate-600' : inv.status === 'OVERDUE' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                            {inv.status === 'PAID' ? 'Pagada' : inv.status === 'WRITTEN_OFF' ? 'Incobrable' : inv.status === 'OVERDUE' ? `Vencida ${inv.daysOverdue}d` : 'Pendiente'}
                           </span>
                         </div>
                         <div className="text-right">
@@ -331,10 +346,19 @@ const AccountsReceivable: React.FC = () => {
                           <div className="font-mono font-bold text-red-600">{fmt(inv.balance)}</div>
                           <div className="text-[11px] text-slate-400">de {fmt(inv.total)}</div>
                           {inv.balance > 0 && (
-                            <button onClick={() => openPay({ id: inv.id, customerName: statement.customer.name, balance: inv.balance })}
-                              className="no-print mt-1 px-3 py-1 bg-nortex-900 text-white rounded-lg text-xs font-bold hover:bg-nortex-800">
-                              Abonar
-                            </button>
+                            <div className="no-print mt-1 flex gap-1 justify-end">
+                              <button onClick={() => openPay({ id: inv.id, customerName: statement.customer.name, balance: inv.balance })}
+                                className="px-3 py-1 bg-nortex-900 text-white rounded-lg text-xs font-bold hover:bg-nortex-800">
+                                Abonar
+                              </button>
+                              {isOwner && (
+                                <button onClick={() => handleWriteoff(inv.id, inv.balance)}
+                                  className="px-2 py-1 border border-slate-300 text-slate-500 rounded-lg text-xs font-semibold hover:bg-red-50 hover:text-red-600 hover:border-red-200"
+                                  title="Castigar como incobrable">
+                                  Incobrable
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>

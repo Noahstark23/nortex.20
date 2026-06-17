@@ -59,6 +59,7 @@ const CHART_OF_ACCOUNTS = [
     { code: '5.2.4', name: 'INATEC (Gasto)', type: 'EXPENSE', subtype: null },
     { code: '5.2.5', name: 'Depreciación', type: 'EXPENSE', subtype: null },
     { code: '5.2.6', name: 'Prestaciones Sociales', type: 'EXPENSE', subtype: null },
+    { code: '5.2.7', name: 'Cuentas Incobrables', type: 'EXPENSE', subtype: null },
 ];
 
 // ==========================================
@@ -344,6 +345,27 @@ export async function recordReturn(
         { accountCode: '1.1.4', debit: costTotal, credit: 0 },
         { accountCode: '1.1.1', debit: 0, credit: total },
         { accountCode: '5.1.1', debit: 0, credit: costTotal },
+    ]);
+}
+
+/**
+ * CASTIGO DE CUENTA INCOBRABLE (write-off de una venta a crédito):
+ *   Debe: Cuentas Incobrables (5.2.7, gasto) / Haber: Cuentas por Cobrar (1.1.3).
+ * Reconoce la pérdida y saca la deuda del activo. `amount` = saldo pendiente.
+ * Requiere 5.2.7: el endpoint llama seedChartOfAccounts antes.
+ */
+export async function recordBadDebt(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    saleId: string,
+    amount: number
+) {
+    const amt = new Decimal(amount).toDecimalPlaces(2);
+    if (amt.lessThanOrEqualTo(0)) return;
+    await createJournalEntry(tx, tenantId, `Castigo incobrable #${saleId.slice(0, 8)}`, saleId, 'BAD_DEBT', userId, [
+        { accountCode: '5.2.7', debit: amt.toNumber(), credit: 0 },
+        { accountCode: '1.1.3', debit: 0, credit: amt.toNumber() },
     ]);
 }
 
