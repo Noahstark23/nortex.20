@@ -919,7 +919,13 @@ app.get('/api/onboarding', authenticate, async (req: any, res: any) => {
             isLender ? prisma.loan.count({ where: { lenderId: tenantId } }) : Promise.resolve(0),
         ]);
 
-        const hasFiscal = !!(tenant.taxId && String(tenant.taxId).trim());
+        // El registro siembra un taxId placeholder "TAX-<timestamp>"; el paso solo
+        // se completa cuando el dueño guarda su RUC real (Configuración DGI).
+        const hasFiscal = !!(
+            tenant.taxId &&
+            String(tenant.taxId).trim() &&
+            !/^TAX-\d+$/.test(String(tenant.taxId))
+        );
         const teamReady = employees > 1;
 
         const steps = isLender
@@ -940,7 +946,7 @@ app.get('/api/onboarding', authenticate, async (req: any, res: any) => {
         const completed = steps.filter(s => s.done).length;
         res.json({
             type: tenant.type,
-            businessName: (tenant as any).businessName ?? (tenant as any).name ?? '',
+            businessName: tenant.businessName ?? '',
             steps,
             completed,
             total: steps.length,

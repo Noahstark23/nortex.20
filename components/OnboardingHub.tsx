@@ -69,10 +69,12 @@ const OnboardingHub: React.FC = () => {
       if (!res.ok) return;
       const json: OnbData = await res.json();
       setData(json);
-      // La bienvenida aparece una sola vez, y solo si aún falta configurar algo.
+      // La bienvenida solo se auto-muestra tras registrarse (?welcome=1) y una
+      // sola vez por navegador. Quien vuelve a entrar no la ve de nuevo; puede
+      // reabrirla desde Ayuda → "Ver mis primeros pasos".
       const welcomeSeen = localStorage.getItem(WELCOME_KEY) === '1';
       const forced = new URLSearchParams(window.location.search).get('welcome') === '1';
-      if ((forced || !welcomeSeen) && !json.allDone) setShowWelcome(true);
+      if (forced && !welcomeSeen && !json.allDone) setShowWelcome(true);
     } catch {
       /* silencioso: el onboarding nunca debe romper la app */
     }
@@ -160,7 +162,8 @@ const OnboardingHub: React.FC = () => {
       )}
 
       {/* ---------- LANZADOR FLOTANTE + PANEL ---------- */}
-      <div className="fixed bottom-5 right-5 z-40 print:hidden">
+      {/* En móvil lo subimos por encima de la barra inferior (h-16); en desktop, abajo. */}
+      <div className="fixed bottom-20 right-5 lg:bottom-5 z-40 print:hidden">
         {open && (
           <div className="mb-3 w-[22rem] max-w-[calc(100vw-2.5rem)] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
             <div className="bg-nortex-900 px-5 py-4 flex items-center justify-between">
