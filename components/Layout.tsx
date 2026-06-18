@@ -237,6 +237,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <span className="font-bold text-sm uppercase tracking-wider">Clock In/Out</span>
           </button>
           <button
+            onClick={() => navigate('/app/ayuda')}
+            className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-3 rounded-xl text-slate-400 hover:bg-white/[0.06] hover:text-white transition-colors"
+          >
+            <BookOpen size={20} />
+            <span className="font-medium text-sm">Ayuda y Tutoriales</span>
+          </button>
+          <button
             onClick={handleLogout}
             className="w-full flex items-center justify-start gap-3 px-3 py-3 rounded-xl text-slate-500 hover:bg-red-500/10 hover:text-red-400 transition-colors"
           >

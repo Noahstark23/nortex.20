@@ -931,8 +931,8 @@ app.get('/api/onboarding', authenticate, async (req: any, res: any) => {
               ]
             : [
                 { key: 'fiscal',    label: 'Configurá tus datos fiscales (DGI)', done: hasFiscal,        href: '/app/dashboard', cta: 'Configurar' },
-                { key: 'product',   label: 'Agregá tu primer producto',          done: products > 0,     href: '/app/inventory', cta: 'Agregar producto' },
-                { key: 'sale',      label: 'Hacé tu primera venta',              done: sales > 0,        href: '/app/pos',       cta: 'Ir al POS' },
+                { key: 'product',   label: 'Agregá tu primer producto',          done: products > 0,     href: '/app/inventory?tour=inv', cta: 'Agregar producto' },
+                { key: 'sale',      label: 'Hacé tu primera venta',              done: sales > 0,        href: '/app/pos?tour=pos',       cta: 'Ir al POS' },
                 { key: 'customer',  label: 'Registrá un cliente',                done: customers > 0,    href: '/app/clients',   cta: 'Agregar cliente' },
                 { key: 'team',      label: 'Invitá a tu equipo',                 done: teamReady,        href: '/app/team',      cta: 'Invitar' },
               ];
