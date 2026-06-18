@@ -130,6 +130,34 @@ El menú lateral agrupa todo por áreas. Según tu rol verás más o menos opcio
 > En modo **Prestamista** el menú cambia a: Dashboard Financiero, Cartera de Clientes,
 > Reportes de Cobro y Cobradores.
 
+### 3.6 Tu primer día (paso a paso)
+
+Al registrarte, Nortex te recibe con una **bienvenida** y una guía de **«Primeros
+pasos»**: un checklist (botón flotante abajo a la derecha) que **se completa solo** a
+medida que usás el sistema. No tenés que marcar nada a mano: cuando hacés tu primera
+venta, ese paso queda listo. Siempre podés volver a abrirlo desde **Ayuda y Tutoriales**
+(barra lateral), donde además hay **tutoriales guiados** del POS y del Inventario.
+
+**Si vendés (ferretería, pulpería, retail):**
+1. **Configurá tus datos fiscales (DGI)** desde «Configuración DGI» en el panel (RUC,
+   dirección) — así tus tickets salen válidos.
+2. **Agregá tu primer producto** en Inventario (nombre, precio, stock). Tip: podés
+   importar muchos desde Excel.
+3. **Hacé tu primera venta** en el POS: buscá el producto, agregalo, cobrá con Efectivo,
+   imprimí el ticket. 🎉 Ese es el momento clave.
+4. **Registrá un cliente** si vas a vender al crédito (asignale su límite).
+5. **Invitá a tu equipo** desde Mi Equipo (cada quien marca entrada con su PIN).
+6. Volvé al panel: ya verás tus **ventas de hoy** y el **flujo de caja** con datos reales.
+
+**Si prestás dinero (Prestamista):**
+1. **Configurá los datos de tu negocio.**
+2. **Registrá tu primer cliente** (o se crea solo al originar el préstamo).
+3. **Creá tu primer préstamo**: capital, tasa, número de cuotas y frecuencia. Se genera
+   el plan de cuotas. 🎉
+4. **Agregá un cobrador** y asignale préstamos; entra por el celular a su ruta.
+
+> Consejo: dejá que el checklist te guíe. En 15–20 minutos tu negocio queda operando.
+
 ---
 
 ## 4. Guías rápidas por rol
