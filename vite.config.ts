@@ -34,6 +34,10 @@ export default defineConfig(({ mode }) => {
           },
           workbox: {
             globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+            // El bundle del SPA ronda los 2 MB (sobre el límite por defecto de
+            // Workbox de 2 MiB). Subimos el tope para que el PWA precachee toda
+            // la app y siga funcionando offline. (Build fallaba al superar 2 MiB.)
+            maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
             // La raíz "/" la sirve Express con landing.html (marketing/SEO).
             // Sin este denylist, el SW intercepta la navegación a "/" y devuelve
             // el index.html cacheado (el SPA), ocultando la landing profesional.

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle } from 'lucide-react';
 import { PinPadClock } from './PinPadClock';
+import OnboardingHub from './OnboardingHub';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -382,6 +383,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         ))}
       </div>
+
+      {/* 🚀 Onboarding guiado (solo Dueño/Admin; se auto-oculta al completar) */}
+      <OnboardingHub />
     </div>
   );
 };
