@@ -81,8 +81,9 @@ Antes de empezar, cuatro ideas que se repiten en todo el sistema:
 
 **Contexto Nicaragua que el sistema ya conoce:**
 - **IVA 15%** sobre las ventas gravadas.
-- **INSS laboral 7%** (se le retiene al trabajador), **INSS patronal 22.5%** e
-  **INATEC 2%** (los paga el empleador) — Ley 539.
+- **INSS laboral 7%** (se le retiene al trabajador), **INSS patronal 21.5%** (negocios
+  con menos de 50 empleados) o **22.5%** (50 o más), e **INATEC 2%** — estos tres los paga
+  el empleador (Ley 539).
 - **IR laboral** según la tabla progresiva de la DGI.
 - **NIIF PyMES** para la contabilidad; **partida doble** (todo asiento cuadra: Debe = Haber).
 
@@ -156,7 +157,9 @@ Lo mínimo que cada quien necesita para su día a día. La referencia completa e
   **asientos manuales** cuando haga falta.
 - **Cierre de período:** al cerrar el mes, **bloqueás el período** para que nadie cambie
   cifras ya declaradas a la DGI.
-- **Reportes / Fiscal:** sacá los reportes de IVA, IR y los estados financieros.
+- **Nómina:** el Contador también puede **calcular y pagar la planilla** (y el aguinaldo).
+- **Reportes / Fiscal:** sacá los reportes de IVA, IR, **retenciones** (IR/IMI/IVA retenido) y
+  los estados financieros.
 - **Auditoría:** revisá el registro de quién hizo qué.
 
 ### 4.4 Cobrador (Prestamista)
@@ -305,7 +308,8 @@ Ver [Inventario (Bodega)](#53-inventario-bodega).
   **retenciones** se contabilizan automáticamente.
 
 #### Reportes / Fiscal
-- **¿Qué es?** Reportes de **ventas, inventario e impuestos** (IVA, IR), exportables.
+- **¿Qué es?** Reportes de **ventas, inventario e impuestos**: IVA, IR y **retenciones**
+  (IR 2% sobre compras, IMI municipal, IVA retenido), exportables.
 - **Cómo se usa:** elegí el rango de fechas y descargá; sirve para la declaración a la DGI.
 
 #### Salud Financiera
@@ -326,17 +330,21 @@ Ver [Inventario (Bodega)](#53-inventario-bodega).
 - **Quién lo usa:** Dueño/Admin (y Contador para lo fiscal).
 - **Cómo se usa:**
   - **Empleados:** alta con cédula, **INSS**, salario, comisión, **jornada** (Diurna 8h,
-    Nocturna 7h, Mixta 7.5h — Ley 185) y cuenta bancaria.
+    Nocturna 7h, Mixta 7.5h — Ley 185), cuenta bancaria, **contrato** (indeterminado,
+    determinado o por obra) y expediente, con avisos de fin de período de prueba/contrato.
   - **Nómina:** el sistema calcula el neto descontando **INSS laboral (7%)** e **IR laboral**,
-    y reconoce el costo patronal: **INSS patronal (22.5%)** e **INATEC (2%)**. Al pagar, deja
-    el asiento contable.
+    suma **horas extra** y **recargo por feriado trabajado** cuando aplica, y reconoce el costo
+    patronal: **INSS patronal (21.5%/22.5%)** e **INATEC (2%)**. También aplica **deducciones
+    judiciales** (pensión alimenticia, embargos — Art. 88). Al pagar, deja el asiento contable.
+  - **Provisión mensual de prestaciones:** cada mes acumula el costo de aguinaldo, vacaciones e
+    indemnización (no espera a fin de año), para que el resultado no quede subestimado.
   - **Aguinaldo (treceavo):** se calcula por el **método de 360 días**.
   - **Vacaciones** y **liquidación**: la indemnización sigue el **Art. 45** (30 días por año
     los primeros 3 años, 20 desde el 4º, con piso de 1 mes y techo de 5 meses).
   - **Permisos y adelantos:** solicitudes que el sistema valida (saldo de vacaciones,
-    solapamientos) y descuenta en planilla.
-- **Mi Espacio:** el portal del empleado para **marcar entrada/salida**, ver sus horas y
-  solicitar permisos/adelantos.
+    solapamientos) y descuenta en planilla. *(Las vacaciones y otros permisos los registra RRHH.)*
+- **Mi Espacio:** el portal del empleado para **marcar entrada/salida**, ver sus horas, solicitar
+  **permiso sin goce** y **adelantos**, y ver su colilla de pago.
 
 ### 5.6 Cobranza
 
@@ -395,7 +403,7 @@ Cada usuario tiene un rol que define qué ve y qué puede hacer:
 | **ADMIN** | Igual que el Dueño (mano derecha). |
 | **MANAGER (Gerente)** | Operación: POS, inventario, clientes, proveedores, compras, cotizaciones, reportes. No ve contabilidad ni auditoría. |
 | **CASHIER (Cajero)** | Punto de venta; consulta inventario y clientes. |
-| **ACCOUNTANT (Contador)** | Solo fiscal: Contabilidad, Reportes, Compras, Auditoría. |
+| **ACCOUNTANT (Contador)** | Fiscal y planilla: Contabilidad, **Nómina/Planilla**, Reportes, Compras, Auditoría. |
 | **VIEWER (Consulta)** | Solo lectura (paneles y reportes). |
 | **EMPLOYEE (Empleado)** | Acceso mínimo: POS y consulta de inventario. |
 | **COLLECTOR (Cobrador)** | Solo la vista móvil del cobrador (modo Prestamista). |
@@ -408,7 +416,8 @@ Cada usuario tiene un rol que define qué ve y qué puede hacer:
 - **DGI:** Dirección General de Ingresos (autoridad fiscal de Nicaragua).
 - **IVA:** Impuesto al Valor Agregado, 15% en Nicaragua.
 - **IR:** Impuesto sobre la Renta (laboral = el que se le retiene al trabajador).
-- **INSS:** seguro social. **Laboral 7%** (al trabajador), **patronal 22.5%** (al empleador).
+- **INSS:** seguro social. **Laboral 7%** (al trabajador); **patronal 21.5%** (menos de 50
+  empleados) o **22.5%** (50 o más), al empleador.
 - **INATEC:** aporte de capacitación, 2% (lo paga el empleador).
 - **NIIF PyMES:** normas de contabilidad para pequeñas y medianas empresas.
 - **Aguinaldo (treceavo):** mes 13 de salario; se calcula por método de 360 días.
