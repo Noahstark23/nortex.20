@@ -78,6 +78,9 @@ Antes de empezar, cuatro ideas que se repiten en todo el sistema:
 - **Funciona con y sin internet (PWA).** El punto de venta sigue trabajando aunque se
   caiga el internet: guarda las ventas en el dispositivo y las **sincroniza** cuando
   vuelve la señal. No se pierde ninguna venta.
+- **Integración con WhatsApp.** Nortex envía tickets y recordatorios por WhatsApp e incluye
+  un **asistente por WhatsApp** para atender pedidos y consultas. Requiere conectar la API de
+  WhatsApp Business; lo configura el dueño/administrador.
 
 **Contexto Nicaragua que el sistema ya conoce:**
 - **IVA 15%** sobre las ventas gravadas.
@@ -138,7 +141,7 @@ Lo mínimo que cada quien necesita para su día a día. La referencia completa e
 1. **Marcá tu entrada** con tu PIN.
 2. Abrí **Punto de Venta**. Si tu negocio usa cajas, **abrí la caja** con el efectivo inicial.
 3. **Vendé:** buscá el producto (o escaneá el código de barras), agregalo al carrito, repetí.
-4. **Cobrá:** elegí el método (Efectivo, Tarjeta, Transferencia, Crédito/fiado o QR) y confirmá.
+4. **Cobrá:** elegí el método (**Efectivo** o **Crédito/fiado**) y confirmá.
 5. **Entregá el ticket** (impreso o por WhatsApp).
 6. Al final del turno, **cerrá la caja** (arqueo): contás el efectivo y el sistema te dice
    si cuadra.
@@ -184,8 +187,11 @@ Nicaragua · Errores comunes.**
   1. Buscá el producto por nombre o **escaneá el código de barras**.
   2. Ajustá la cantidad y agregá los productos al **carrito**.
   3. (Opcional) Aplicá un **descuento** o elegí el **cliente** (para fiado).
-  4. Elegí el **método de pago**: Efectivo, Tarjeta, Transferencia, **Crédito (fiado)** o **QR**.
+  4. Elegí el **método de pago**: **Efectivo** o **Crédito (fiado)**. Se admite también el
+     pago en **dólares** (con su tasa de cambio).
   5. Confirmá. Se imprime el **ticket** y se puede enviar por **WhatsApp**.
+  - **Devoluciones, entradas/salidas de efectivo** y **carritos en espera** también se manejan
+    desde el POS durante el turno.
 - **Notas Nicaragua:** el **IVA 15%** se calcula automáticamente. La venta al **crédito**
   exige un **cliente con límite de crédito** disponible y genera una cuenta por cobrar.
 - **Errores comunes:** “Sin caja abierta” → primero abrí la caja en *Cajas y Arqueos*.
@@ -193,7 +199,9 @@ Nicaragua · Errores comunes.**
 
 #### Cajas y Arqueos
 - **¿Qué es?** El control del efectivo de cada turno.
-- **Quién lo usa:** Cajero (abre/cierra), Gerente, Dueño (supervisa).
+- **Quién lo usa:** el **Cajero abre/cierra su turno desde el propio Punto de Venta**; la
+  pantalla **Cajas y Arqueos** (monitor de turnos en vivo, historial y forzar cierre) es para
+  **Gerente, Dueño y Admin**.
 - **Cómo se usa:** **Abrí la caja** con el efectivo inicial → durante el turno se registran
   ventas, **entradas y salidas** de efectivo → al final **cerrás la caja** declarando el
   efectivo contado. El sistema muestra si **sobra o falta** (descuadre).
@@ -245,6 +253,7 @@ Ver [Inventario (Bodega)](#53-inventario-bodega).
 
 #### Compras Inteligentes
 - **¿Qué es?** El asistente de reposición: **¿qué reponer?**.
+- **Quién lo usa:** Dueño/Admin.
 - **Cómo se usa:** combina el **punto de reorden** con la **velocidad de venta** y lista lo
   que conviene comprar, con cantidad sugerida. Seleccionás, ajustás cantidades y
   **genera una orden de compra por proveedor** que, al confirmar, crea la compra.
@@ -273,6 +282,7 @@ Ver [Inventario (Bodega)](#53-inventario-bodega).
 
 #### Toma Física (conteo cíclico)
 - **¿Qué es?** Contar el inventario real y **cuadrarlo** contra el sistema.
+- **Quién lo usa:** Dueño/Admin.
 - **Cómo se usa:**
   1. **Creá una toma** (todo el inventario o una categoría): el sistema toma una “foto”
      del stock esperado.
@@ -302,7 +312,7 @@ Ver [Inventario (Bodega)](#53-inventario-bodega).
     aperturas).
   - **Cierre de período:** **bloquear** un mes ya declarado para que ningún asiento lo
     modifique (protege lo declarado a la DGI). Un período cerrado rechaza cualquier asiento
-    con esa fecha.
+    con esa fecha. Lo puede **cerrar** el Dueño, Admin o Contador; **reabrirlo solo el Dueño**.
   - **Estados financieros:** Balance General y Estado de Resultados se arman solos.
 - **Notas Nicaragua:** cuentas y cálculos siguen NIIF PyMES y la DGI; el **IVA** y las
   **retenciones** se contabilizan automáticamente.
@@ -409,6 +419,11 @@ Cada usuario tiene un rol que define qué ve y qué puede hacer:
 | **COLLECTOR (Cobrador)** | Solo la vista móvil del cobrador (modo Prestamista). |
 | **SUPER_ADMIN** | Administración global de la plataforma (interno de Nortex). |
 
+> Esta tabla describe lo que cada rol **puede hacer** (el sistema bloquea las acciones no
+> permitidas en el servidor). En el menú lateral algunos roles pueden **ver** más opciones de
+> las que pueden usar: las acciones sensibles (editar inventario, contabilidad, nómina, etc.)
+> quedan igualmente protegidas aunque aparezcan en el menú.
+
 ---
 
 ## 7. Glosario
@@ -445,8 +460,8 @@ Cada usuario tiene un rol que define qué ve y qué puede hacer:
   disponible y que no esté **bloqueado** (en *Clientes*).
 - **Se cayó el internet.** Seguí vendiendo: el POS guarda las ventas y las **sincroniza**
   cuando vuelve la señal.
-- **“Período cerrado”.** El contador cerró ese mes. Para registrar algo con esa fecha hay
-  que **reabrir el período** en *Contabilidad*.
+- **“Período cerrado”.** Se cerró ese mes. Para registrar algo con esa fecha, el **Dueño**
+  debe **reabrir el período** en *Contabilidad* (solo el Dueño puede reabrir).
 - **Una compra de contado no se registra: “saldo insuficiente”.** No hay saldo en la
   billetera; usá **crédito** o recargá.
 - **Olvidé mi PIN o contraseña.** La contraseña se recupera por correo (“¿Olvidó su
