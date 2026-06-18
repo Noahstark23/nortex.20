@@ -93,7 +93,11 @@ router.post('/:id/repayments', authenticate, async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { amountPaid, collectedBy, notes, timestamp } = req.body;
+        const lenderId = req.tenantId;
         const payment = parseFloat(amountPaid);
+        if (isNaN(payment) || payment <= 0) {
+            return res.status(400).json({ success: false, error: 'Monto de pago inválido' });
+        }
 
         // Hacking prevention: Offline Clock Validation
         // Si mandan timestamp (modo offline), validar que no tenga más de 48h de desfase
@@ -108,6 +112,10 @@ router.post('/:id/repayments', authenticate, async (req: any, res: any) => {
                 return res.status(400).json({ success: false, error: 'Fecha del dispositivo inválida o excesivamente desfasada. Sincronice el reloj de su celular.' });
             }
         }
+
+        // Aislamiento multi-tenant: el préstamo debe pertenecer a este prestamista.
+        const owned = await prisma.loan.findFirst({ where: { id, lenderId } });
+        if (!owned) return res.status(404).json({ success: false, error: 'Préstamo no encontrado' });
 
         // Transacción Atómica: Registramos el pago y bajamos el saldo en la misma operación
         const transaction = await prisma.$transaction(async (tx) => {
@@ -158,8 +166,8 @@ router.get('/', authenticate, async (req: any, res: any) => {
 
         // Si es MOTORIZADO, solo ve los asignados a su ID
         const whereClause: any = { lenderId };
-        if (req.user?.role === 'COLLECTOR') {
-            whereClause.assignedToId = req.user.id;
+        if (req.role === 'COLLECTOR') {
+            whereClause.assignedToId = req.userId;
         }
 
         // Solo traemos los pagos de "hoy" para el cálculo del Arqueo Diario
@@ -226,13 +234,17 @@ router.patch('/clients/:clientId', authenticate, async (req: any, res: any) => {
     try {
         const { clientId } = req.params;
         const { isBlocked, creditLimit } = req.body;
-        const updated = await prisma.customer.update({
-            where: { id: clientId },
+        const lenderId = req.tenantId;
+        // Aislamiento multi-tenant: solo actualiza si el cliente es de este prestamista.
+        const result = await prisma.customer.updateMany({
+            where: { id: clientId, tenantId: lenderId },
             data: {
                 ...(isBlocked !== undefined && { isBlocked }),
                 ...(creditLimit !== undefined && { creditLimit: parseFloat(creditLimit) })
             }
         });
+        if (result.count === 0) return res.status(404).json({ success: false, error: 'Cliente no encontrado' });
+        const updated = await prisma.customer.findFirst({ where: { id: clientId, tenantId: lenderId } });
         res.json({ success: true, data: updated });
     } catch (error) {
         res.status(500).json({ success: false, error: 'Error actualizando cliente' });
@@ -284,7 +296,8 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
 
         const result = await prisma.$transaction(async (tx) => {
             // 1. Obtener el préstamo viejo
-            const oldLoan = await tx.loan.findUnique({ where: { id } });
+            // Aislamiento multi-tenant: el préstamo debe pertenecer a este prestamista.
+            const oldLoan = await tx.loan.findFirst({ where: { id, lenderId } });
             if (!oldLoan) throw new Error('Préstamo no encontrado');
 
             // 2. Cerrar el préstamo viejo como PAID_OFF (liquidado por refinanciamiento)
@@ -379,7 +392,7 @@ router.post('/:id/penalty', authenticate, async (req: any, res: any) => {
                 data: {
                     loanId: id,
                     amountPaid: -amount,
-                    collectedBy: req.user?.name || 'Sistema',
+                    collectedBy: req.email || 'Sistema',
                     notes: `Penalidad / Multa: ${reason || 'Atraso'}`
                 }
             });
@@ -485,7 +498,7 @@ router.post('/vault/deposit', authenticate, async (req: any, res: any) => {
                 collectorName,
                 amount: amt,
                 notes: notes || null,
-                receivedBy: req.user.id
+                receivedBy: req.userId
             }
         });
 

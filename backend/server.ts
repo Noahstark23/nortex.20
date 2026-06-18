@@ -178,6 +178,17 @@ const loginLimiter = rateLimit({
     legacyHeaders: false,
 });
 app.use('/api/auth/login', loginLimiter as any);
+
+// Registro: evita spam de cuentas / credential-stuffing desde una misma red.
+const registerLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    message: { error: '🔒 Demasiados registros desde esta red. Espera 1 hora.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+app.use('/api/auth/register', registerLimiter as any);
+
 app.use('/api/hr', hrRouter);
 app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
@@ -812,7 +823,8 @@ app.get('/api/auth/reset-password/:token', async (req: any, res: any) => {
 });
 
 // POST /api/auth/reset-password/:token — Cambiar contraseña
-app.post('/api/auth/reset-password/:token', async (req: any, res: any) => {
+// Limitado: previene fuerza bruta del token de reseteo (= toma de cuenta).
+app.post('/api/auth/reset-password/:token', forgotPasswordLimiter, async (req: any, res: any) => {
     const { token } = req.params;
     const { password } = req.body;
 
@@ -5238,10 +5250,12 @@ app.post('/api/credits/payment', authenticate, async (req: any, res: any) => {
     const { saleId, amount, method } = req.body;
 
     if (!saleId || !amount) return res.status(400).json({ error: 'Faltan datos' });
+    if (isNaN(Number(amount)) || Number(amount) <= 0) return res.status(400).json({ error: 'Monto de abono inválido' });
 
     try {
         await prisma.$transaction(async (tx: any) => {
-            const sale = await tx.sale.findUnique({ where: { id: saleId } });
+            // Aislamiento multi-tenant: la venta debe pertenecer a este negocio.
+            const sale = await tx.sale.findFirst({ where: { id: saleId, tenantId: authReq.tenantId } });
             if (!sale) throw new Error('Venta no encontrada');
 
             const newBalance = Number(sale.balance) - Number(amount);
