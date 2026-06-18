@@ -6281,6 +6281,9 @@ app.get('/api/inventory/oracle', authenticate, async (req: any, res: any) => {
             if (daysRemaining <= 5) {
                 const suggestedQty = Math.ceil(vpd * 15); // Restock para 15 días
                 const cost = Number(p.cost) || 0;
+                // No sugerir como financiable lo que no tiene costo/cantidad válidos:
+                // /api/capital/finance-purchase exige unitCost y quantity > 0 (Zod).
+                if (cost <= 0 || suggestedQty <= 0) continue;
                 alerts.push({
                     productId: p.id,
                     name: p.name,
