@@ -33,6 +33,12 @@ const moneyAmountPositive = moneyAmount.refine((v) => parseFloat(v) > 0, {
 /** Entero positivo */
 const positiveInt = z.number().int().positive();
 
+/** Número que acepta string o number (defensa ante payloads con strings). */
+const numeric = z
+    .union([z.string(), z.number()])
+    .transform((v) => Number(v))
+    .refine((v) => !isNaN(v), { message: 'Debe ser un número válido' });
+
 /** Método de pago permitido */
 const paymentMethod = z.enum(['CASH', 'CARD', 'TRANSFER', 'CREDIT', 'QR']);
 
@@ -194,6 +200,118 @@ export const PayrollCalculateSchema = z.object({
 
 // POST /api/tax-report/generate
 export const TaxReportSchema = PayrollCalculateSchema;
+
+// ============================================================
+// AUTH
+// ============================================================
+const businessType = z.enum(['FERRETERIA', 'PULPERIA', 'FARMACIA', 'BOUTIQUE', 'RETAIL', 'LENDER']);
+
+// POST /api/auth/register
+export const RegisterSchema = z.object({
+    companyName: z.string().trim().min(2, 'El nombre del negocio es obligatorio').max(120),
+    email:       z.string().trim().email('Correo inválido'),
+    password:    z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(200),
+    type:        businessType.optional(),
+});
+
+// POST /api/auth/login — sin mínimo de contraseña para no bloquear cuentas viejas.
+export const LoginSchema = z.object({
+    email:    z.string().trim().email('Correo inválido'),
+    password: z.string().min(1, 'La contraseña es obligatoria'),
+});
+
+// POST /api/auth/reset-password/:token
+export const ResetPasswordSchema = z.object({
+    password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(200),
+});
+
+// ============================================================
+// PRÉSTAMOS (Prestamista)
+// ============================================================
+const loanFrequency = z.enum(['DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY']);
+const loanType = z.enum(['INFORMAL_FLAT', 'FORMAL_AMORTIZED']);
+
+// POST /api/loans
+export const OriginateLoanSchema = z.object({
+    clientName:      z.string().trim().min(1, 'El nombre del cliente es obligatorio').max(160),
+    clientPhone:     z.string().trim().max(40).optional(),
+    clientAddress:   z.string().trim().max(300).optional(),
+    principalAmount: moneyAmountPositive,
+    interestRate:    numeric.refine((v) => v >= 0 && v <= 1000, { message: 'Tasa de interés fuera de rango' }),
+    installments:    numeric.refine((v) => Number.isInteger(v) && v > 0, { message: 'Número de cuotas inválido' }),
+    frequency:       loanFrequency.optional(),
+    type:            loanType.optional(),
+});
+
+// POST /api/loans/:id/repayments
+export const RepaymentSchema = z.object({
+    amountPaid:  moneyAmountPositive,
+    collectedBy: z.string().trim().max(120).optional(),
+    notes:       z.string().trim().max(500).optional(),
+    timestamp:   z.union([z.string(), z.number()]).optional(),
+});
+
+// PATCH /api/loans/clients/:clientId
+export const UpdateClientSchema = z.object({
+    isBlocked:   z.boolean().optional(),
+    creditLimit: moneyAmount.optional(),
+}).refine((d) => d.isBlocked !== undefined || d.creditLimit !== undefined, {
+    message: 'Indicá al menos un cambio (bloqueo o límite de crédito)',
+});
+
+// POST /api/loans/:id/refinance
+export const RefinanceLoanSchema = z.object({
+    newPrincipal: moneyAmount,
+    interestRate: numeric.refine((v) => v >= 0 && v <= 1000, { message: 'Tasa de interés fuera de rango' }),
+    installments: numeric.refine((v) => Number.isInteger(v) && v > 0, { message: 'Número de cuotas inválido' }),
+    frequency:    loanFrequency.optional(),
+    type:         loanType.optional(),
+});
+
+// POST /api/loans/:id/penalty
+export const PenaltySchema = z.object({
+    penaltyAmount: moneyAmountPositive,
+    reason:        z.string().trim().max(300).optional(),
+});
+
+// POST /api/loans/vault/deposit
+export const VaultDepositSchema = z.object({
+    collectorId: z.string().trim().optional(),
+    amount:      moneyAmountPositive,
+    notes:       z.string().trim().max(500).optional(),
+});
+
+// POST /api/loans/route-expenses
+export const RouteExpenseSchema = z.object({
+    amount:      moneyAmountPositive,
+    description: z.string().trim().min(1, 'La descripción es obligatoria').max(300),
+    collectedBy: z.string().trim().max(120).optional(),
+});
+
+// ============================================================
+// INVENTARIO / CAPITAL
+// ============================================================
+
+// POST /api/kardex/record
+export const KardexRecordSchema = z.object({
+    productId:     z.string().min(1, 'productId requerido'),
+    type:          z.string().min(1).max(40),
+    quantity:      numeric.refine((v) => v !== 0, { message: 'La cantidad no puede ser cero' }),
+    referenceId:   z.string().optional(),
+    referenceType: z.string().optional(),
+    reason:        z.string().trim().max(300).optional(),
+});
+
+// POST /api/capital/finance-purchase
+export const FinancePurchaseSchema = z.object({
+    supplierId: z.string().min(1, 'supplierId requerido'),
+    items: z.array(z.object({
+        productId:   z.string().min(1),
+        productName: z.string().optional(),
+        quantity:    positiveInt,
+        unitCost:    moneyAmountPositive,
+    })).min(1, 'Se requiere al menos 1 ítem'),
+});
 
 // ============================================================
 // MIDDLEWARE FACTORY

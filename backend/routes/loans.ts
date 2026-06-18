@@ -3,6 +3,10 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import Decimal from 'decimal.js';
 import { authenticate } from '../middleware/auth';
+import {
+    validate, OriginateLoanSchema, RepaymentSchema, UpdateClientSchema,
+    RefinanceLoanSchema, PenaltySchema, VaultDepositSchema, RouteExpenseSchema,
+} from '../validation/schemas.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -10,7 +14,7 @@ const router = express.Router();
 const prisma = new PrismaClient();
 
 // 1. ORIGINAR UN CRÉDITO (Desembolso) — Motor Dual
-router.post('/', authenticate, async (req: any, res: any) => {
+router.post('/', authenticate, validate(OriginateLoanSchema), async (req: any, res: any) => {
     try {
         const { clientName, clientPhone, clientAddress, principalAmount, interestRate, installments, frequency, type } = req.body;
         const lenderId = req.tenantId;
@@ -89,7 +93,7 @@ router.post('/', authenticate, async (req: any, res: any) => {
 });
 
 // 2. REGISTRAR COBRO DIARIO (Para el Motorizado)
-router.post('/:id/repayments', authenticate, async (req: any, res: any) => {
+router.post('/:id/repayments', authenticate, validate(RepaymentSchema), async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { amountPaid, collectedBy, notes, timestamp } = req.body;
@@ -230,7 +234,7 @@ router.get('/clients', authenticate, async (req: any, res: any) => {
 });
 
 // 8. ACTUALIZAR CLIENTE (Bloquear / Cambiar Límite)
-router.patch('/clients/:clientId', authenticate, async (req: any, res: any) => {
+router.patch('/clients/:clientId', authenticate, validate(UpdateClientSchema), async (req: any, res: any) => {
     try {
         const { clientId } = req.params;
         const { isBlocked, creditLimit } = req.body;
@@ -252,7 +256,7 @@ router.patch('/clients/:clientId', authenticate, async (req: any, res: any) => {
 });
 
 // 4. REGISTRAR GASTO DE RUTA (Motorizado)
-router.post('/route-expenses', authenticate, async (req: any, res: any) => {
+router.post('/route-expenses', authenticate, validate(RouteExpenseSchema), async (req: any, res: any) => {
     try {
         const { amount, description, collectedBy } = req.body;
         const lenderId = req.tenantId;
@@ -288,7 +292,7 @@ router.get('/route-expenses', authenticate, async (req: any, res: any) => {
 });
 
 // 6. REFINANCIAR PRÉSTAMO (El botón de oro del Jefe)
-router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
+router.post('/:id/refinance', authenticate, validate(RefinanceLoanSchema), async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { newPrincipal, interestRate, installments, frequency, type } = req.body;
@@ -365,7 +369,7 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
 });
 
 // APLICAR PENALIDAD A UN PRÉSTAMO
-router.post('/:id/penalty', authenticate, async (req: any, res: any) => {
+router.post('/:id/penalty', authenticate, validate(PenaltySchema), async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { penaltyAmount, reason } = req.body;
@@ -471,7 +475,7 @@ router.patch('/:id/assign', authenticate, async (req: any, res: any) => {
 });
 
 // 10. DEPÓSITO A BÓVEDA (Cobranza A3 — entrega de efectivo del cobrador; botón que hoy falla)
-router.post('/vault/deposit', authenticate, async (req: any, res: any) => {
+router.post('/vault/deposit', authenticate, validate(VaultDepositSchema), async (req: any, res: any) => {
     try {
         const { collectorId, amount, notes } = req.body;
         const lenderId = req.tenantId;

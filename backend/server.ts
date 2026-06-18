@@ -52,6 +52,11 @@ import {
     CreateExpenseSchema,
     PayrollCalculateSchema,
     TaxReportSchema,
+    RegisterSchema,
+    LoginSchema,
+    ResetPasswordSchema,
+    KardexRecordSchema,
+    FinancePurchaseSchema,
 } from './validation/schemas.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
@@ -172,7 +177,7 @@ app.use('/api/', globalLimiter as any);
 // Rate Limit Estricto para Login: 5 intentos / hora (anti brute-force)
 const loginLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
-    max: 10,
+    max: 5,
     message: { error: '🔒 Demasiados intentos de inicio de sesión. Espera 1 hora.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -212,7 +217,7 @@ app.use((req: any, res: any, next: any) => {
 // 🔐 AUTHENTICATION ROUTES
 // ==========================================
 
-app.post('/api/auth/register', async (req: any, res: any) => {
+app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: any) => {
     const { companyName, email, password, type } = req.body;
 
     try {
@@ -286,7 +291,7 @@ app.post('/api/auth/register', async (req: any, res: any) => {
     }
 });
 
-app.post('/api/auth/login', async (req: any, res: any) => {
+app.post('/api/auth/login', validate(LoginSchema), async (req: any, res: any) => {
     const { email, password } = req.body;
 
     try {
@@ -824,7 +829,7 @@ app.get('/api/auth/reset-password/:token', async (req: any, res: any) => {
 
 // POST /api/auth/reset-password/:token — Cambiar contraseña
 // Limitado: previene fuerza bruta del token de reseteo (= toma de cuenta).
-app.post('/api/auth/reset-password/:token', forgotPasswordLimiter, async (req: any, res: any) => {
+app.post('/api/auth/reset-password/:token', forgotPasswordLimiter, validate(ResetPasswordSchema), async (req: any, res: any) => {
     const { token } = req.params;
     const { password } = req.body;
 
@@ -3276,7 +3281,7 @@ app.post('/api/stock-counts/:id/cancel', authenticate, checkRole(['OWNER', 'ADMI
 
 // POST /api/kardex/record - Registrar movimiento de inventario (interno/automático)
 // NOTA: Usar POST /api/inventory/adjust para ajustes manuales (más seguro)
-app.post('/api/kardex/record', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.post('/api/kardex/record', authenticate, checkRole(['OWNER', 'ADMIN']), validate(KardexRecordSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { productId, type, quantity, referenceId, referenceType, reason } = req.body;
 
@@ -5245,7 +5250,7 @@ app.get('/api/customers/:id/statement', authenticate, async (req: any, res: any)
 });
 
 // POST /api/credits/payment - Registrar abono
-app.post('/api/credits/payment', authenticate, async (req: any, res: any) => {
+app.post('/api/credits/payment', authenticate, validate(CreatePaymentSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { saleId, amount, method } = req.body;
 
@@ -6375,7 +6380,7 @@ app.get('/api/inventory/reorder', authenticate, checkRole(['OWNER', 'ADMIN']), a
 });
 
 // POST /api/capital/finance-purchase — Financiar compra con Nortex Capital
-app.post('/api/capital/finance-purchase', authenticate, async (req: any, res: any) => {
+app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchaseSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { supplierId, items } = req.body;
     // items: [{ productId, productName, quantity, unitCost }]

@@ -21,6 +21,11 @@ ordenadas por **riesgo/esfuerzo**: primero lo crítico-barato, al final lo grand
 
 ## Fase 1 — Urgente, SIN migración (1–3 días)
 
+> **Estado:** las partes de **código/config** ya están aplicadas (1b docker-compose,
+> 1c Zod en auth + endpoints de dinero, 1d login a 5/h, 1a password de super-admin a
+> env). Quedan las **ops del CEO**: rotar los valores reales de los secretos, purgar el
+> historial de git, y desplegar el cron de backup + bucket off-site.
+
 ### 1a. Rotación de secretos comprometidos (CEO) — S19, S25
 - `JWT_SECRET`: generar nuevo. Gracias al **keyring** (`services/secrets.ts`), poné el nuevo
   como primero en `JWT_SECRETS` (CSV) y mantené el viejo unas horas para no expulsar
