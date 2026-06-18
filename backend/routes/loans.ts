@@ -85,6 +85,22 @@ router.post('/', authenticate, validate(OriginateLoanSchema), async (req: any, r
             }
         });
 
+        await prisma.auditLog.create({
+            data: {
+                tenantId: lenderId,
+                userId: req.userId,
+                action: 'LOAN_DISBURSED',
+                details: JSON.stringify({
+                    loanId: newLoan.id,
+                    customerId: customer.id,
+                    principal: amount.toString(),
+                    totalToRepay: totalToRepay.toString(),
+                    installments: n,
+                    interestRate: String(interestRate),
+                }),
+            },
+        });
+
         res.status(201).json({ success: true, data: newLoan });
     } catch (error: any) {
         console.error('Error originando crédito:', error.message, error.stack);
@@ -152,6 +168,21 @@ router.post('/:id/repayments', authenticate, validate(RepaymentSchema), async (r
                     data: { status: 'PAID_OFF' }
                 });
             }
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: lenderId,
+                    userId: req.userId,
+                    action: 'LOAN_PAYMENT',
+                    details: JSON.stringify({
+                        loanId: id,
+                        amountPaid: String(payment),
+                        balanceBefore: owned.balanceRemaining.toString(),
+                        balanceAfter: updatedLoan.balanceRemaining.toString(),
+                        collectedBy: collectedBy ?? null,
+                    }),
+                },
+            });
 
             return { repayment, updatedLoan };
         });
@@ -358,6 +389,21 @@ router.post('/:id/refinance', authenticate, validate(RefinanceLoanSchema), async
                 }
             });
 
+            await tx.auditLog.create({
+                data: {
+                    tenantId: lenderId,
+                    userId: req.userId,
+                    action: 'LOAN_REFINANCED',
+                    details: JSON.stringify({
+                        oldLoanId: oldLoan.id,
+                        newLoanId: newLoan.id,
+                        carryOver: carryOver.toString(),
+                        freshCapital: freshCapital.toString(),
+                        newTotalToRepay: totalToRepay.toString(),
+                    }),
+                },
+            });
+
             return { oldLoan, newLoan, carryOver: carryOver.toNumber(), freshCapital: freshCapital.toNumber() };
         });
 
@@ -399,6 +445,21 @@ router.post('/:id/penalty', authenticate, validate(PenaltySchema), async (req: a
                     collectedBy: req.email || 'Sistema',
                     notes: `Penalidad / Multa: ${reason || 'Atraso'}`
                 }
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: lenderId,
+                    userId: req.userId,
+                    action: 'LOAN_PENALTY',
+                    details: JSON.stringify({
+                        loanId: id,
+                        penaltyAmount: String(amount),
+                        balanceBefore: loan.balanceRemaining.toString(),
+                        balanceAfter: updatedLoan.balanceRemaining.toString(),
+                        reason: reason ?? null,
+                    }),
+                },
             });
 
             return updatedLoan;
@@ -504,6 +565,19 @@ router.post('/vault/deposit', authenticate, validate(VaultDepositSchema), async 
                 notes: notes || null,
                 receivedBy: req.userId
             }
+        });
+
+        await prisma.auditLog.create({
+            data: {
+                tenantId: lenderId,
+                userId: req.userId,
+                action: 'VAULT_DEPOSIT',
+                details: JSON.stringify({
+                    depositId: deposit.id,
+                    collectorId: collectorId ?? null,
+                    amount: String(amt),
+                }),
+            },
         });
 
         res.status(201).json({ success: true, data: deposit });

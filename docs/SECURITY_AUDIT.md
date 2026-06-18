@@ -59,11 +59,11 @@ libre; **sin columnas `before`/`after` ni inmutabilidad** a nivel BD (filas edit
 
 | ID | Mutación sin auditoría | Ubicación | Sev | Estado |
 |----|------------------------|-----------|-----|--------|
-| S8 | Desembolso de préstamo | `routes/loans.ts:64` | 🔴 CRÍTICO | 📋 PLAN |
-| S9 | Pago/abono de préstamo (cambia saldo) | `routes/loans.ts:115` | 🔴 CRÍTICO | 📋 PLAN |
-| S10 | Abono a crédito (A/R) — muta `Sale.balance` | `server.ts:5248` | 🔴 CRÍTICO | 📋 PLAN |
-| S11 | Penalidad / refinanciamiento / depósito a bóveda | `routes/loans.ts:355,279,461` | 🟠 HIGH | 📋 PLAN |
-| S12 | Cambio de precio/costo (solo stock escribe Kardex) | `server.ts:2445` | 🟠 HIGH | 📋 PLAN |
+| S8 | Desembolso de préstamo | `routes/loans.ts:64` | 🔴 CRÍTICO | ✅ FIXED (`LOAN_DISBURSED`) |
+| S9 | Pago/abono de préstamo (cambia saldo) | `routes/loans.ts:115` | 🔴 CRÍTICO | ✅ FIXED (`LOAN_PAYMENT` before/after) |
+| S10 | Abono a crédito (A/R) — muta `Sale.balance` | `server.ts:5248` | 🔴 CRÍTICO | ✅ FIXED (`CREDIT_PAYMENT` before/after) |
+| S11 | Penalidad / refinanciamiento / depósito a bóveda | `routes/loans.ts:355,279,461` | 🟠 HIGH | ✅ FIXED (3 acciones) |
+| S12 | Cambio de precio/costo (solo stock escribe Kardex) | `server.ts:2445` | 🟠 HIGH | ✅ FIXED (`PRICE_CHANGED`) |
 | S13 | Desembolso de capital (tiene firma+asiento, sin AuditLog) | `server.ts:6425` | 🟠 HIGH | 📋 PLAN |
 | S14 | Anticipos de nómina / deducciones judiciales; wallet de motorizado | `routes/hr.ts:197`, `routes/driver.ts:312` | 🟡 MED | 📋 PLAN |
 

@@ -2496,6 +2496,24 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
             data: updates
         });
 
+        // Auditoría de cambio de precio/costo (antes no quedaba rastro de quién lo cambió).
+        const priceChanged = price !== undefined && Number(existing.price) !== Number(updated.price);
+        const costChanged  = cost  !== undefined && Number(existing.cost)  !== Number(updated.cost);
+        if (priceChanged || costChanged) {
+            await prisma.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'PRICE_CHANGED',
+                    details: JSON.stringify({
+                        productId: id,
+                        priceBefore: String(existing.price), priceAfter: String(updated.price),
+                        costBefore: String(existing.cost), costAfter: String(updated.cost),
+                    }),
+                },
+            });
+        }
+
         res.json(updated);
     } catch (error) {
         console.error('Error updating product:', error);
@@ -5287,6 +5305,21 @@ app.post('/api/credits/payment', authenticate, validate(CreatePaymentSchema), as
                     payments: { orderBy: { createdAt: 'desc' } },
                     customer: { select: { name: true } }
                 }
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'CREDIT_PAYMENT',
+                    details: JSON.stringify({
+                        saleId,
+                        amount: String(amount),
+                        balanceBefore: String(sale.balance),
+                        balanceAfter: String(newBalance),
+                        method: method ?? 'CASH',
+                    }),
+                },
             });
 
             // Format response
