@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import useSWR from 'swr';
 import Decimal from 'decimal.js';
-import { Shield, Zap, Users, Building2, DollarSign, TrendingUp, AlertTriangle, Ban, CheckCircle, Eye, RefreshCw, Skull, Activity, CreditCard, ArrowRight, Clock, BarChart3, Wallet, Target, XCircle, Banknote, FileCheck, X } from 'lucide-react';
+import { Shield, Users, Building2, DollarSign, TrendingUp, Ban, CheckCircle, Eye, RefreshCw, Skull, Activity, CreditCard, Clock, BarChart3, Target, XCircle, Banknote, FileCheck, X } from 'lucide-react';
 
 // ── Tipos de respuesta del backend (tipado estricto, sin any) ──
 // El dinero viaja como string con precisión Decimal(18,4); se parsea con Decimal.js en el cliente.
@@ -64,9 +64,9 @@ const formatMoney = (value: string | number, symbol = '$'): string => {
     } catch {
         d = new Decimal(0);
     }
-    const negative = d.isNegative() && !d.isZero();
-    const fixed = d.abs().toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
-    const [intPart, decPart] = fixed.split('.');
+    const rounded = d.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const negative = rounded.isNegative() && !rounded.isZero();
+    const [intPart, decPart] = rounded.abs().toFixed(2).split('.');
     const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     return `${negative ? '-' : ''}${symbol}${grouped}.${decPart}`;
 };
