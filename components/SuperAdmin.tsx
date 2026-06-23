@@ -1,12 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
+import useSWR from 'swr';
+import Decimal from 'decimal.js';
 import { Shield, Zap, Users, Building2, DollarSign, TrendingUp, AlertTriangle, Ban, CheckCircle, Eye, RefreshCw, Skull, Activity, CreditCard, ArrowRight, Clock, BarChart3, Wallet, Target, XCircle, Banknote, FileCheck, X } from 'lucide-react';
 
+// ── Tipos de respuesta del backend (tipado estricto, sin any) ──
+// El dinero viaja como string con precisión Decimal(18,4); se parsea con Decimal.js en el cliente.
 interface TenantInfo {
     id: string;
     businessName: string;
     taxId: string;
-    walletBalance: number;
-    creditLimit: number;
+    walletBalance: string;
+    creditLimit: string;
     creditScore: number;
     subscriptionStatus: string;
     createdAt: string;
@@ -14,33 +18,33 @@ interface TenantInfo {
     stats: { sales: number; products: number; employees: number };
 }
 
-interface PlatformStats {
+interface AdminMetrics {
     totalTenants: number;
     activeTenants: number;
     morosos: number;
     activeUsers: number;
-    totalDebtLent: number;
-    totalWallet: number;
-    monthlySales: number;
     monthlyTransactions: number;
-    platformFee: number;
-    interestIncome: number;
-    monthlyRevenue: number;
+    totalDebtLent: string;   // Capital asignado vigente
+    totalWallet: string;
+    monthlySales: string;
+    platformFee: string;     // 2% sobre ventas
+    interestIncome: string;  // 5% de retención sobre capital
+    monthlyRevenue: string;
 }
 
 interface LoanRequest {
     id: string;
     tenantId: string;
-    totalAmount: number;
+    total: string;
     status: string;
     createdAt: string;
-    tenant: { businessName: string; creditScore: number; walletBalance: number; creditLimit: number };
+    tenant: { businessName: string; creditScore: number; walletBalance: string; creditLimit: string };
 }
 
 interface ManualPaymentAdmin {
     id: string;
     tenantId: string;
-    amount: number;
+    amount: string;
     currency: string;
     bank: string;
     referenceNumber: string;
@@ -52,7 +56,33 @@ interface ManualPaymentAdmin {
     tenant: { businessName: string; subscriptionStatus: string; users: { email: string; name: string }[] };
 }
 
-const formatMoney = (n: number) => '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Formato monetario 100% Decimal.js (cero float): separador de miles + 2 decimales para display.
+const formatMoney = (value: string | number, symbol = '$'): string => {
+    let d: Decimal;
+    try {
+        d = new Decimal(value === '' || value === null || value === undefined ? 0 : value);
+    } catch {
+        d = new Decimal(0);
+    }
+    const negative = d.isNegative() && !d.isZero();
+    const fixed = d.abs().toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+    const [intPart, decPart] = fixed.split('.');
+    const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return `${negative ? '-' : ''}${symbol}${grouped}.${decPart}`;
+};
+
+// Fetcher tipado para SWR: adjunta el JWT y lanza en respuestas no-OK.
+async function fetcher<T>(url: string): Promise<T> {
+    const token = localStorage.getItem('nortex_token');
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token ?? ''}` } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json() as Promise<T>;
+}
+
+const authHeaders = (): Record<string, string> => ({
+    Authorization: `Bearer ${localStorage.getItem('nortex_token') ?? ''}`,
+    'Content-Type': 'application/json',
+});
 
 const getScoreColor = (score: number) => {
     if (score >= 700) return 'text-green-400';
@@ -79,55 +109,39 @@ const getStatusBadge = (status: string) => {
 };
 
 const SuperAdmin: React.FC = () => {
-    const [stats, setStats] = useState<PlatformStats | null>(null);
-    const [tenants, setTenants] = useState<TenantInfo[]>([]);
-    const [loanRequests, setLoanRequests] = useState<LoanRequest[]>([]);
-    const [manualPayments, setManualPayments] = useState<ManualPaymentAdmin[]>([]);
     const [rejectModal, setRejectModal] = useState<{ id: string; reason: string } | null>(null);
-    const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState<string | null>(null);
-    const [lastRefresh, setLastRefresh] = useState(new Date());
+    const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
 
-    const token = localStorage.getItem('nortex_token');
-    const headers: Record<string, string> = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+    // ── Datos en vivo vía SWR (polling 30s, sin useEffect + fetch manual) ──
+    const swrConfig = { refreshInterval: 30000, revalidateOnFocus: false, keepPreviousData: true };
 
-    const fetchAll = useCallback(async () => {
-        setLoading(true);
-        try {
-            const [statsRes, tenantsRes, loansRes, paymentsRes] = await Promise.all([
-                fetch('/api/admin/stats', { headers }),
-                fetch('/api/admin/tenants', { headers }),
-                fetch('/api/admin/loan-requests', { headers }),
-                fetch('/api/admin/manual-payments', { headers }),
-            ]);
+    const {
+        data: metrics,
+        error: metricsError,
+        isLoading: metricsLoading,
+        isValidating: metricsValidating,
+        mutate: mutateMetrics,
+    } = useSWR<AdminMetrics>('/api/admin/metrics', fetcher, { ...swrConfig, onSuccess: () => setLastRefresh(new Date()) });
 
-            if (statsRes.ok) setStats(await statsRes.json());
-            if (tenantsRes.ok) setTenants(await tenantsRes.json());
-            if (loansRes.ok) setLoanRequests(await loansRes.json());
-            if (paymentsRes.ok) setManualPayments(await paymentsRes.json());
-            setLastRefresh(new Date());
-        } catch (e) {
-            console.error('Admin fetch error:', e);
-        } finally {
-            setLoading(false);
-        }
-    }, []);
+    const { data: tenants = [], mutate: mutateTenants } = useSWR<TenantInfo[]>('/api/admin/tenants', fetcher, swrConfig);
+    const { data: loanRequests = [], mutate: mutateLoans } = useSWR<LoanRequest[]>('/api/admin/loan-requests', fetcher, swrConfig);
+    const { data: manualPayments = [], mutate: mutatePayments } = useSWR<ManualPaymentAdmin[]>('/api/admin/manual-payments', fetcher, swrConfig);
 
-    useEffect(() => { fetchAll(); }, [fetchAll]);
-
-    // Auto-refresh every 30s
-    useEffect(() => {
-        const interval = setInterval(fetchAll, 30000);
-        return () => clearInterval(interval);
-    }, [fetchAll]);
+    const refreshAll = () => {
+        mutateMetrics();
+        mutateTenants();
+        mutateLoans();
+        mutatePayments();
+    };
 
     const handleSuspend = async (tenantId: string, name: string) => {
         if (!confirm(`CONFIRMAR SUSPENSIÓN de "${name}"\n\nEsta acción bloqueará todas las operaciones de escritura inmediatamente.`)) return;
         setActionLoading(tenantId);
         try {
-            const res = await fetch(`/api/admin/tenants/${tenantId}/suspend`, { method: 'POST', headers });
+            const res = await fetch(`/api/admin/tenants/${tenantId}/suspend`, { method: 'POST', headers: authHeaders() });
             if (res.ok) {
-                fetchAll();
+                refreshAll();
             } else {
                 const err = await res.json();
                 alert(err.error || 'Error');
@@ -140,23 +154,23 @@ const SuperAdmin: React.FC = () => {
         if (!confirm(`¿Reactivar "${name}"?`)) return;
         setActionLoading(tenantId);
         try {
-            const res = await fetch(`/api/admin/tenants/${tenantId}/reactivate`, { method: 'POST', headers });
+            const res = await fetch(`/api/admin/tenants/${tenantId}/reactivate`, { method: 'POST', headers: authHeaders() });
             if (res.ok) {
-                fetchAll();
+                refreshAll();
             }
         } catch (e) { alert('Error de conexión'); }
         finally { setActionLoading(null); }
     };
 
-    const handleApproveLoan = async (orderId: string, amount: number) => {
+    const handleApproveLoan = async (orderId: string, amount: string) => {
         if (!confirm(`¿Aprobar préstamo de ${formatMoney(amount)}?`)) return;
         setActionLoading(orderId);
         try {
             const res = await fetch('/api/admin/loans/approve', {
-                method: 'POST', headers,
+                method: 'POST', headers: authHeaders(),
                 body: JSON.stringify({ orderId, amount }),
             });
-            if (res.ok) { fetchAll(); }
+            if (res.ok) { refreshAll(); }
         } catch (e) { alert('Error'); }
         finally { setActionLoading(null); }
     };
@@ -166,10 +180,10 @@ const SuperAdmin: React.FC = () => {
         setActionLoading(orderId);
         try {
             const res = await fetch('/api/admin/loans/reject', {
-                method: 'POST', headers,
+                method: 'POST', headers: authHeaders(),
                 body: JSON.stringify({ orderId }),
             });
-            if (res.ok) { fetchAll(); }
+            if (res.ok) { refreshAll(); }
         } catch (e) { alert('Error'); }
         finally { setActionLoading(null); }
     };
@@ -178,11 +192,11 @@ const SuperAdmin: React.FC = () => {
         if (!confirm('¿Aprobar este pago y activar la suscripción del cliente?')) return;
         setActionLoading(`approve-pay-${id}`);
         try {
-            const res = await fetch(`/api/admin/manual-payments/${id}/approve`, { method: 'POST', headers });
+            const res = await fetch(`/api/admin/manual-payments/${id}/approve`, { method: 'POST', headers: authHeaders() });
             const data = await res.json();
-            if (res.ok) { alert(data.message); fetchAll(); }
+            if (res.ok) { alert(data.message); refreshAll(); }
             else alert(data.error);
-        } catch (e: any) { alert(e.message); }
+        } catch (e) { alert(e instanceof Error ? e.message : 'Error'); }
         finally { setActionLoading(null); }
     };
 
@@ -191,13 +205,13 @@ const SuperAdmin: React.FC = () => {
         setActionLoading(`reject-pay-${rejectModal.id}`);
         try {
             const res = await fetch(`/api/admin/manual-payments/${rejectModal.id}/reject`, {
-                method: 'POST', headers,
+                method: 'POST', headers: authHeaders(),
                 body: JSON.stringify({ reason: rejectModal.reason || 'Comprobante inválido.' }),
             });
             const data = await res.json();
-            if (res.ok) { alert(data.message); setRejectModal(null); fetchAll(); }
+            if (res.ok) { alert(data.message); setRejectModal(null); refreshAll(); }
             else alert(data.error);
-        } catch (e: any) { alert(e.message); }
+        } catch (e) { alert(e instanceof Error ? e.message : 'Error'); }
         finally { setActionLoading(null); }
     };
 
@@ -207,7 +221,7 @@ const SuperAdmin: React.FC = () => {
         window.location.href = '/login';
     };
 
-    if (loading && !stats) {
+    if (metricsLoading && !metrics) {
         return (
             <div className="min-h-screen bg-gray-950 flex items-center justify-center">
                 <div className="text-center">
@@ -221,6 +235,8 @@ const SuperAdmin: React.FC = () => {
         );
     }
 
+    const pendingPayments = manualPayments.filter(p => p.status === 'PENDING').length;
+
     return (
         <div className="min-h-screen bg-gray-950 text-gray-100 font-mono">
             {/* HEADER BAR */}
@@ -233,15 +249,15 @@ const SuperAdmin: React.FC = () => {
                     </div>
                     <div className="h-4 w-px bg-gray-700" />
                     <div className="flex items-center gap-2 text-xs text-gray-500">
-                        <Activity size={12} className="text-green-500 animate-pulse" />
-                        LIVE
+                        <Activity size={12} className={metricsError ? 'text-red-500' : 'text-green-500 animate-pulse'} />
+                        {metricsError ? 'RECONECTANDO' : 'LIVE'}
                         <span className="text-gray-600">|</span>
                         Last: {lastRefresh.toLocaleTimeString()}
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
-                    <button onClick={fetchAll} className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-400 hover:text-white">
-                        <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                    <button onClick={refreshAll} className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-400 hover:text-white">
+                        <RefreshCw size={16} className={metricsValidating ? 'animate-spin' : ''} />
                     </button>
                     <button onClick={handleLogout} className="text-xs text-gray-500 hover:text-red-400 transition-colors">
                         LOGOUT
@@ -252,27 +268,27 @@ const SuperAdmin: React.FC = () => {
             <div className="p-6 max-w-[1600px] mx-auto">
                 {/* KPI STRIP */}
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
-                    <KPICard icon={<Building2 size={18} />} label="EMPRESAS" value={String(stats?.totalTenants || 0)} sub={`${stats?.activeTenants || 0} activas`} color="blue" />
-                    <KPICard icon={<Ban size={18} />} label="MOROSOS" value={String(stats?.morosos || 0)} sub="Suspendidos" color={stats?.morosos ? "red" : "green"} />
-                    <KPICard icon={<Users size={18} />} label="USUARIOS" value={String(stats?.activeUsers || 0)} sub="Registrados" color="cyan" />
-                    <KPICard icon={<DollarSign size={18} />} label="PRESTADO" value={formatMoney(stats?.totalDebtLent || 0)} sub="Riesgo actual" color="yellow" />
-                    <KPICard icon={<BarChart3 size={18} />} label="VENTAS MES" value={formatMoney(stats?.monthlySales || 0)} sub={`${stats?.monthlyTransactions || 0} txns`} color="green" />
-                    <KPICard icon={<TrendingUp size={18} />} label="TU GANANCIA" value={formatMoney(stats?.monthlyRevenue || 0)} sub="Fees + Intereses" color="emerald" highlight />
+                    <KPICard icon={<Building2 size={18} />} label="EMPRESAS" value={String(metrics?.totalTenants ?? 0)} sub={`${metrics?.activeTenants ?? 0} activas`} color="blue" />
+                    <KPICard icon={<Ban size={18} />} label="MOROSOS" value={String(metrics?.morosos ?? 0)} sub="Suspendidos" color={metrics?.morosos ? "red" : "green"} />
+                    <KPICard icon={<Users size={18} />} label="USUARIOS" value={String(metrics?.activeUsers ?? 0)} sub="Registrados" color="cyan" />
+                    <KPICard icon={<DollarSign size={18} />} label="CAPITAL ASIGNADO" value={formatMoney(metrics?.totalDebtLent ?? 0)} sub="Riesgo actual" color="yellow" />
+                    <KPICard icon={<BarChart3 size={18} />} label="VENTAS MES" value={formatMoney(metrics?.monthlySales ?? 0)} sub={`${metrics?.monthlyTransactions ?? 0} txns`} color="green" />
+                    <KPICard icon={<TrendingUp size={18} />} label="TU GANANCIA" value={formatMoney(metrics?.monthlyRevenue ?? 0)} sub="Fees + Retención" color="emerald" highlight />
                 </div>
 
                 {/* Revenue breakdown */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                         <div className="text-[10px] text-gray-500 mb-1">PLATFORM FEE (2% VENTAS)</div>
-                        <div className="text-xl font-bold text-blue-400">{formatMoney(stats?.platformFee || 0)}</div>
+                        <div className="text-xl font-bold text-blue-400">{formatMoney(metrics?.platformFee ?? 0)}</div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                        <div className="text-[10px] text-gray-500 mb-1">INTERESES (5% DEUDA)</div>
-                        <div className="text-xl font-bold text-yellow-400">{formatMoney(stats?.interestIncome || 0)}</div>
+                        <div className="text-[10px] text-gray-500 mb-1">FEES (5% RETENCIÓN)</div>
+                        <div className="text-xl font-bold text-yellow-400">{formatMoney(metrics?.interestIncome ?? 0)}</div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                         <div className="text-[10px] text-gray-500 mb-1">WALLETS TOTALES</div>
-                        <div className="text-xl font-bold text-green-400">{formatMoney(stats?.totalWallet || 0)}</div>
+                        <div className="text-xl font-bold text-green-400">{formatMoney(metrics?.totalWallet ?? 0)}</div>
                     </div>
                 </div>
 
@@ -368,9 +384,9 @@ const SuperAdmin: React.FC = () => {
                                     <Banknote size={16} className="text-green-500" />
                                     <span className="font-bold text-sm text-gray-300">TESORERIA - PAGOS MANUALES</span>
                                 </div>
-                                {manualPayments.filter(p => p.status === 'PENDING').length > 0 && (
+                                {pendingPayments > 0 && (
                                     <span className="bg-green-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold animate-pulse">
-                                        {manualPayments.filter(p => p.status === 'PENDING').length} PENDIENTES
+                                        {pendingPayments} PENDIENTES
                                     </span>
                                 )}
                             </div>
@@ -399,7 +415,7 @@ const SuperAdmin: React.FC = () => {
                                                     </div>
                                                     <div className="text-right">
                                                         <div className="font-mono font-bold text-green-400 text-lg">
-                                                            {p.currency === 'NIO' ? 'C$' : '$'}{Number(p.amount).toFixed(2)}
+                                                            {formatMoney(p.amount, p.currency === 'NIO' ? 'C$' : '$')}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -476,14 +492,14 @@ const SuperAdmin: React.FC = () => {
                                                         </div>
                                                     </div>
                                                     <div className="text-right">
-                                                        <div className="text-yellow-400 font-bold text-lg">{formatMoney(Number(lr.totalAmount))}</div>
+                                                        <div className="text-yellow-400 font-bold text-lg">{formatMoney(lr.total)}</div>
                                                     </div>
                                                 </div>
 
                                                 {/* Score badge */}
                                                 <div className="flex items-center gap-3 mb-3">
                                                     <div className={`flex items-center gap-1 px-2 py-1 rounded ${
-                                                        lr.tenant.creditScore >= 700 ? 'bg-green-500/10' : 
+                                                        lr.tenant.creditScore >= 700 ? 'bg-green-500/10' :
                                                         lr.tenant.creditScore >= 500 ? 'bg-yellow-500/10' : 'bg-red-500/10'
                                                     }`}>
                                                         <Target size={12} className={getScoreColor(lr.tenant.creditScore)} />
@@ -495,14 +511,14 @@ const SuperAdmin: React.FC = () => {
                                                         </span>
                                                     </div>
                                                     <div className="text-[10px] text-gray-500">
-                                                        Wallet: {formatMoney(Number(lr.tenant.walletBalance))} | Limit: {formatMoney(Number(lr.tenant.creditLimit))}
+                                                        Wallet: {formatMoney(lr.tenant.walletBalance)} | Limit: {formatMoney(lr.tenant.creditLimit)}
                                                     </div>
                                                 </div>
 
                                                 {/* Action buttons */}
                                                 <div className="flex gap-2">
                                                     <button
-                                                        onClick={() => handleApproveLoan(lr.id, Number(lr.totalAmount))}
+                                                        onClick={() => handleApproveLoan(lr.id, lr.total)}
                                                         disabled={actionLoading === lr.id}
                                                         className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-green-500/20 text-green-400 rounded font-bold text-xs hover:bg-green-500/30 transition-colors disabled:opacity-50"
                                                     >
@@ -523,14 +539,13 @@ const SuperAdmin: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* System status */}
+                        {/* System status — derivado del estado real de SWR (sin mock) */}
                         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 mt-3">
                             <div className="text-[10px] text-gray-500 font-bold mb-3">SYSTEM STATUS</div>
                             <div className="space-y-2">
-                                <StatusLine label="API Server" status="online" />
-                                <StatusLine label="Database" status="online" />
-                                <StatusLine label="Payment Gateway" status="standby" />
-                                <StatusLine label="Notifications" status="online" />
+                                <StatusLine label="API Server" status={metricsError ? 'offline' : 'online'} />
+                                <StatusLine label="Base de Datos" status={metrics ? 'online' : metricsError ? 'offline' : 'standby'} />
+                                <StatusLine label="Auto-actualización (30s)" status="online" />
                             </div>
                         </div>
                     </div>
@@ -573,7 +588,7 @@ const SuperAdmin: React.FC = () => {
 // SUB-COMPONENTS
 // ==========================================
 
-const KPICard: React.FC<{ icon: React.ReactNode; label: string; value: string; sub: string; color: string; highlight?: boolean }> = 
+const KPICard: React.FC<{ icon: React.ReactNode; label: string; value: string; sub: string; color: string; highlight?: boolean }> =
     ({ icon, label, value, sub, color, highlight }) => {
     const colorMap: Record<string, string> = {
         blue: 'text-blue-400 bg-blue-500/10',
