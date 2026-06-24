@@ -16,7 +16,7 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
@@ -909,6 +909,71 @@ app.post('/api/auth/reset-password/:token', forgotPasswordLimiter, validate(Rese
 // ==========================================
 // 📊 DASHBOARD & INTELLIGENCE (REAL DATA)
 // ==========================================
+
+/**
+ * Onboarding guiado: deriva los hitos de activación de los datos REALES del
+ * negocio (no hay tabla de progreso — los conteos son la fuente de verdad), así
+ * el checklist se auto-completa solo. Los pasos se ramifican por tipo de negocio.
+ * Las banderas cosméticas (bienvenida vista / descartado) viven en localStorage.
+ */
+app.get('/api/onboarding', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const tenantId = authReq.tenantId;
+        const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+        if (!tenant) return res.status(404).json({ error: 'Negocio no encontrado' });
+
+        const isLender = tenant.type === 'LENDER';
+
+        // Conteos reales (alcance: este negocio). Los préstamos del prestamista se
+        // identifican por lenderId; el Employee del dueño se crea al registrarse,
+        // por eso "equipo" = más de 1 empleado.
+        const [products, sales, customers, employees, lenderLoans] = await Promise.all([
+            prisma.product.count({ where: { tenantId } }),
+            prisma.sale.count({ where: { tenantId } }),
+            prisma.customer.count({ where: { tenantId } }),
+            prisma.employee.count({ where: { tenantId } }),
+            isLender ? prisma.loan.count({ where: { lenderId: tenantId } }) : Promise.resolve(0),
+        ]);
+
+        // El registro siembra un taxId placeholder "TAX-<timestamp>"; el paso solo
+        // se completa cuando el dueño guarda su RUC real (Configuración DGI).
+        const hasFiscal = !!(
+            tenant.taxId &&
+            String(tenant.taxId).trim() &&
+            !/^TAX-\d+$/.test(String(tenant.taxId))
+        );
+        const teamReady = employees > 1;
+
+        const steps = isLender
+            ? [
+                { key: 'fiscal',    label: 'Configurá los datos de tu negocio',  done: hasFiscal,        href: '/app/dashboard', cta: 'Configurar' },
+                { key: 'customer',  label: 'Registrá tu primer cliente',         done: customers > 0,    href: '/app/dashboard', cta: 'Agregar cliente' },
+                { key: 'loan',      label: 'Creá tu primer préstamo',            done: lenderLoans > 0,  href: '/app/dashboard', cta: 'Crear préstamo' },
+                { key: 'team',      label: 'Agregá un cobrador a tu equipo',     done: teamReady,        href: '/app/hr',        cta: 'Agregar cobrador' },
+              ]
+            : [
+                { key: 'fiscal',    label: 'Configurá tus datos fiscales (DGI)', done: hasFiscal,        href: '/app/dashboard', cta: 'Configurar' },
+                { key: 'product',   label: 'Agregá tu primer producto',          done: products > 0,     href: '/app/inventory?tour=inv', cta: 'Agregar producto' },
+                { key: 'sale',      label: 'Hacé tu primera venta',              done: sales > 0,        href: '/app/pos?tour=pos',       cta: 'Ir al POS' },
+                { key: 'customer',  label: 'Registrá un cliente',                done: customers > 0,    href: '/app/clients',   cta: 'Agregar cliente' },
+                { key: 'team',      label: 'Invitá a tu equipo',                 done: teamReady,        href: '/app/team',      cta: 'Invitar' },
+              ];
+
+        const completed = steps.filter(s => s.done).length;
+        res.json({
+            type: tenant.type,
+            businessName: tenant.businessName ?? '',
+            steps,
+            completed,
+            total: steps.length,
+            allDone: completed === steps.length,
+        });
+    } catch (e: any) {
+        console.error('onboarding status error', e);
+        res.status(500).json({ error: 'Error al calcular el onboarding' });
+    }
+});
 
 app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
@@ -5240,7 +5305,7 @@ app.get('/api/customers/:id/statement', authenticate, async (req: any, res: any)
                 paid: paid.toDecimalPlaces(2).toNumber(),
                 balance: balance.toDecimalPlaces(2).toNumber(),
                 daysOverdue: dias,
-                status: !open ? 'PAID' : overdue ? 'OVERDUE' : 'PENDING',
+                status: s.status === 'UNCOLLECTIBLE' ? 'WRITTEN_OFF' : !open ? 'PAID' : overdue ? 'OVERDUE' : 'PENDING',
                 payments: s.payments.map((p: any) => ({
                     id: p.id, amount: Number(p.amount), method: p.method, date: p.createdAt, collectedBy: p.user?.name || null,
                 })),
@@ -5346,6 +5411,62 @@ app.post('/api/credits/payment', authenticate, validate(CreatePaymentSchema), as
         res.status(400).json({ error: error.message || 'Error al registrar pago' });
     }
 });
+
+// POST /api/credits/:saleId/writeoff - Castigar una venta a crédito como incobrable
+// (Cobranza B1). Postea el asiento Debe 5.2.7 / Haber 1.1.3, salda la venta y baja
+// la deuda del cliente. Solo OWNER/ADMIN; respeta el lock de período.
+app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { saleId } = req.params;
+    const reason = (req.body?.reason || '').toString().trim();
+    if (reason.length < 3) {
+        return res.status(400).json({ error: 'La justificación es obligatoria (mínimo 3 caracteres).' });
+    }
+    try {
+        await seedChartOfAccounts(authReq.tenantId!); // garantiza 5.2.7
+
+        const result = await prisma.$transaction(async (tx: any) => {
+            const sale = await tx.sale.findFirst({ where: { id: saleId, tenantId: authReq.tenantId! } });
+            if (!sale) throw new Error('Venta no encontrada');
+            if (sale.paymentMethod !== 'CREDIT') throw new Error('Solo se castigan ventas a crédito.');
+            const balance = new Decimal(sale.balance.toString());
+            if (balance.lessThanOrEqualTo(0)) throw new Error('Esta venta no tiene saldo pendiente.');
+
+            // Asiento de incobrable (assertPeriodOpen vive dentro de createJournalEntry).
+            await recordBadDebt(tx, authReq.tenantId!, authReq.userId!, saleId, balance.toNumber());
+
+            // Saldar la venta y marcarla como incobrable.
+            await tx.sale.update({ where: { id: saleId }, data: { balance: 0, status: 'UNCOLLECTIBLE' } });
+
+            // Bajar la deuda del cliente (clamp a 0 por si el contador venía desfasado).
+            if (sale.customerId) {
+                const cust = await tx.customer.findUnique({ where: { id: sale.customerId }, select: { currentDebt: true } });
+                const newDebt = Math.max(0, Number(cust?.currentDebt || 0) - balance.toNumber());
+                await tx.customer.update({ where: { id: sale.customerId }, data: { currentDebt: newDebt } });
+            }
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'BAD_DEBT_WRITEOFF',
+                    details: JSON.stringify({ saleId, customerId: sale.customerId, amount: balance.toDecimalPlaces(2).toNumber(), reason, timestamp: new Date().toISOString() }),
+                },
+            });
+
+            return { amount: balance.toDecimalPlaces(2).toNumber() };
+        });
+
+        res.json({ message: `Venta castigada como incobrable. Pérdida reconocida: C$ ${result.amount.toFixed(2)}`, ...result });
+    } catch (error: any) {
+        console.error('Error castigando incobrable:', error);
+        const msg = error?.message || 'Error castigando la venta';
+        const code = error instanceof PeriodLockedError ? 423
+            : (msg.includes('no encontrada') || msg.includes('crédito') || msg.includes('saldo')) ? 400 : 500;
+        res.status(code).json({ error: msg });
+    }
+});
+
 app.post('/api/admin/manual-payments/:id/reject', authenticate, requireSuperAdmin, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { reason } = req.body;

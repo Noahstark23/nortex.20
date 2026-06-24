@@ -26,7 +26,7 @@ interface StatementPayment { id: string; amount: number; method: string; date: s
 interface StatementInvoice {
   id: string; invoiceNumber: string | null; date: string; dueDate: string | null;
   total: number; paid: number; balance: number; daysOverdue: number;
-  status: 'PAID' | 'OVERDUE' | 'PENDING'; payments: StatementPayment[];
+  status: 'PAID' | 'OVERDUE' | 'PENDING' | 'WRITTEN_OFF'; payments: StatementPayment[];
 }
 interface Statement {
   customer: { id: string; name: string; phone: string | null; creditLimit: number; currentDebt: number; isBlocked: boolean };
@@ -64,6 +64,9 @@ const AccountsReceivable: React.FC = () => {
 
   const token = localStorage.getItem('nortex_token');
   const headers = useMemo(() => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }), [token]);
+  const isOwner = useMemo(() => {
+    try { const r = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.role; return r === 'OWNER' || r === 'ADMIN'; } catch { return false; }
+  }, []);
 
   const fetchWorklist = useCallback(async () => {
     setLoading(true);
@@ -109,6 +112,32 @@ const AccountsReceivable: React.FC = () => {
     setShowPayModal(true);
   };
 
+  // B3: recibo de abono imprimible (ventana limpia, formato media carta).
+  const printReceipt = (r: { customer: string; amount: number; method: string; prevBalance: number; newBalance: number }) => {
+    const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+    const methodLbl = r.method === 'CASH' ? 'Efectivo' : r.method === 'TRANSFER' ? 'Transferencia' : r.method === 'CARD' ? 'Tarjeta' : r.method;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Recibo de abono</title>
+      <style>body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:24px;max-width:420px}
+        h1{font-size:18px;margin:0 0 2px}.muted{color:#666;font-size:12px}
+        .row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #ddd;font-size:14px}
+        .big{font-size:22px;font-weight:800;margin:10px 0;text-align:center}
+        .sig{margin-top:40px;border-top:1px solid #333;text-align:center;font-size:12px;padding-top:4px}
+        @media print{.no-print{display:none}}</style></head><body>
+        <button class="no-print" onclick="window.print()" style="margin-bottom:12px;padding:8px 14px;font-weight:700;cursor:pointer">Imprimir</button>
+        <h1>Recibo de Abono</h1>
+        <div class="muted">${new Date().toLocaleString('es-NI')}</div>
+        <div class="big">${fmt(r.amount)}</div>
+        <div class="row"><span>Cliente</span><b>${esc(r.customer)}</b></div>
+        <div class="row"><span>Método</span><span>${esc(methodLbl)}</span></div>
+        <div class="row"><span>Saldo anterior</span><span>${fmt(r.prevBalance)}</span></div>
+        <div class="row"><span>Nuevo saldo</span><b>${fmt(r.newBalance)}</b></div>
+        <div class="sig">Firma / Recibí conforme</div>
+        <script>window.onload=function(){setTimeout(function(){try{window.print()}catch(e){}},300)}<\/script>
+      </body></html>`;
+    const w = window.open('', '_blank');
+    if (w) { w.document.write(html); w.document.close(); }
+  };
+
   const handleRegisterPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!paySale) return;
@@ -122,15 +151,29 @@ const AccountsReceivable: React.FC = () => {
         body: JSON.stringify({ saleId: paySale.id, amount, method: paymentMethod }),
       });
       if (res.ok) {
+        const receipt = { customer: paySale.customerName, amount, method: paymentMethod, prevBalance: paySale.balance, newBalance: Math.max(0, paySale.balance - amount) };
         setShowPayModal(false);
         setPaymentAmount('');
         await reloadDetail();
+        if (window.confirm('Abono registrado. ¿Imprimir recibo?')) printReceipt(receipt);
       } else {
         const err = await res.json().catch(() => ({}));
         alert(err.error || 'Error al registrar pago');
       }
     } catch (e) { alert('Error de conexión al registrar pago'); }
     finally { setSubmitting(false); }
+  };
+
+  const handleWriteoff = async (saleId: string, balance: number) => {
+    const reason = window.prompt(`Castigar como INCOBRABLE el saldo de ${fmt(balance)}.\nSe reconoce la pérdida contablemente y no se podrá deshacer.\n\nJustificación (obligatoria):`);
+    if (reason === null) return;
+    if (reason.trim().length < 3) { alert('La justificación es obligatoria (mínimo 3 caracteres).'); return; }
+    try {
+      const res = await fetch(`/api/credits/${saleId}/writeoff`, { method: 'POST', headers, body: JSON.stringify({ reason: reason.trim() }) });
+      const data = await res.json();
+      if (res.ok) { await reloadDetail(); alert(data.message); }
+      else alert(`Error: ${data.error}`);
+    } catch (e) { alert('Error castigando la venta'); }
   };
 
   const notifyWhatsapp = (name: string, phone: string | null, balance: number) => {
@@ -322,8 +365,8 @@ const AccountsReceivable: React.FC = () => {
                         <div>
                           <div className="font-bold text-slate-800">Factura {inv.invoiceNumber || inv.id.slice(0, 8)}</div>
                           <div className="text-xs text-slate-500 mt-0.5">Emitida {fmtDate(inv.date)} · Vence {fmtDate(inv.dueDate)}</div>
-                          <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${inv.status === 'PAID' ? 'bg-emerald-100 text-emerald-700' : inv.status === 'OVERDUE' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
-                            {inv.status === 'PAID' ? 'Pagada' : inv.status === 'OVERDUE' ? `Vencida ${inv.daysOverdue}d` : 'Pendiente'}
+                          <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${inv.status === 'PAID' ? 'bg-emerald-100 text-emerald-700' : inv.status === 'WRITTEN_OFF' ? 'bg-slate-200 text-slate-600' : inv.status === 'OVERDUE' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                            {inv.status === 'PAID' ? 'Pagada' : inv.status === 'WRITTEN_OFF' ? 'Incobrable' : inv.status === 'OVERDUE' ? `Vencida ${inv.daysOverdue}d` : 'Pendiente'}
                           </span>
                         </div>
                         <div className="text-right">
@@ -331,10 +374,19 @@ const AccountsReceivable: React.FC = () => {
                           <div className="font-mono font-bold text-red-600">{fmt(inv.balance)}</div>
                           <div className="text-[11px] text-slate-400">de {fmt(inv.total)}</div>
                           {inv.balance > 0 && (
-                            <button onClick={() => openPay({ id: inv.id, customerName: statement.customer.name, balance: inv.balance })}
-                              className="no-print mt-1 px-3 py-1 bg-nortex-900 text-white rounded-lg text-xs font-bold hover:bg-nortex-800">
-                              Abonar
-                            </button>
+                            <div className="no-print mt-1 flex gap-1 justify-end">
+                              <button onClick={() => openPay({ id: inv.id, customerName: statement.customer.name, balance: inv.balance })}
+                                className="px-3 py-1 bg-nortex-900 text-white rounded-lg text-xs font-bold hover:bg-nortex-800">
+                                Abonar
+                              </button>
+                              {isOwner && (
+                                <button onClick={() => handleWriteoff(inv.id, inv.balance)}
+                                  className="px-2 py-1 border border-slate-300 text-slate-500 rounded-lg text-xs font-semibold hover:bg-red-50 hover:text-red-600 hover:border-red-200"
+                                  title="Castigar como incobrable">
+                                  Incobrable
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>

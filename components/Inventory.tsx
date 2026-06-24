@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
+import { maybeAutostartTour } from '../utils/tours';
 
 // ==========================================
 // TYPES
@@ -316,6 +317,9 @@ export default function Inventory() {
 
     // Recarga la página al cambiar paginación/filtros/orden.
     useEffect(() => { fetchProducts(); }, [fetchProducts]);
+
+    // Tutorial guiado: si entran con ?tour=inv (desde Ayuda o el checklist).
+    useEffect(() => { maybeAutostartTour(); }, []);
 
     // ==========================================
     // SCAN DETECTION
@@ -853,6 +857,7 @@ export default function Inventory() {
                 {isOwner && (
                     <div className="relative">
                         <button
+                            data-tour="inv-new"
                             onClick={() => setShowDropdown(!showDropdown)}
                             className="btn-primary flex items-center gap-2"
                         >
@@ -952,6 +957,7 @@ export default function Inventory() {
                 <div className="flex-1 min-w-[200px] relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                     <input
+                        data-tour="inv-search"
                         type="text"
                         placeholder="Buscar por nombre, SKU o categoría..."
                         value={searchTerm}

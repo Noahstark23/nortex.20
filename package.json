@@ -20,6 +20,7 @@
     "cors": "^2.8.6",
     "decimal.js": "^10.6.0",
     "dexie": "^4.4.2",
+    "driver.js": "^1.4.0",
     "express": "^5.2.1",
     "express-rate-limit": "^7.5.0",
     "jsonwebtoken": "^9.0.3",
