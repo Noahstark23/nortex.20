@@ -61,24 +61,45 @@ router.post('/', authenticate, async (req: any, res: any) => {
             return res.status(403).json({ success: false, error: 'Cliente bloqueado. No se puede originar crédito.' });
         }
 
-        const newLoan = await prisma.loan.create({
-            data: {
-                lenderId,
-                customerId: customer.id,
-                clientName,
-                clientPhone: clientPhone || null,
-                clientAddress: clientAddress || null,
-                principalAmount: amount.toDecimalPlaces(4).toNumber(),
-                interestRate: new Decimal(interestRate).toNumber(),
-                totalToRepay: totalToRepay.toDecimalPlaces(4).toNumber(),
-                balanceRemaining: totalToRepay.toDecimalPlaces(4).toNumber(),
-                installments: n,
-                installmentAmount: installmentAmount.toDecimalPlaces(4).toNumber(),
-                frequency: frequency || 'DAILY',
-                type: type || 'INFORMAL_FLAT',
-                dueDate,
-                status: 'ACTIVE'
+        const newLoan = await prisma.$transaction(async (tx) => {
+            const loan = await tx.loan.create({
+                data: {
+                    lenderId,
+                    customerId: customer!.id,
+                    clientName,
+                    clientPhone: clientPhone || null,
+                    clientAddress: clientAddress || null,
+                    principalAmount: amount.toDecimalPlaces(4).toNumber(),
+                    interestRate: new Decimal(interestRate).toNumber(),
+                    totalToRepay: totalToRepay.toDecimalPlaces(4).toNumber(),
+                    balanceRemaining: totalToRepay.toDecimalPlaces(4).toNumber(),
+                    installments: n,
+                    installmentAmount: installmentAmount.toDecimalPlaces(4).toNumber(),
+                    frequency: frequency || 'DAILY',
+                    type: type || 'INFORMAL_FLAT',
+                    dueDate,
+                    status: 'ACTIVE'
+                }
+            });
+
+            // Plan de cuotas (Cobranza B2): n cuotas espaciadas por la frecuencia.
+            // La última absorbe el redondeo para que Σ cuotas == totalToRepay.
+            const stepDays = freqDays[frequency] || 1;
+            const perInstallment = installmentAmount.toDecimalPlaces(2);
+            const totalRounded = totalToRepay.toDecimalPlaces(2);
+            const base = new Date();
+            let acc = new Decimal(0);
+            const rows = [];
+            for (let i = 1; i <= n; i++) {
+                const d = new Date(base);
+                d.setDate(d.getDate() + stepDays * i);
+                const due = i < n ? perInstallment : totalRounded.minus(acc);
+                acc = acc.plus(due);
+                rows.push({ loanId: loan.id, number: i, dueDate: d, amountDue: due.toNumber(), status: 'PENDING' });
             }
+            await tx.loanInstallment.createMany({ data: rows });
+
+            return loan;
         });
 
         res.status(201).json({ success: true, data: newLoan });
@@ -141,6 +162,30 @@ router.post('/:id/repayments', authenticate, async (req: any, res: any) => {
                 });
             }
 
+            // 4. Imputar el abono a las cuotas, más antiguas primero (Cobranza B2).
+            let remaining = new Decimal(payment);
+            const pendientes = await tx.loanInstallment.findMany({
+                where: { loanId: id, status: { not: 'PAID' } },
+                orderBy: { number: 'asc' }
+            });
+            for (const cuota of pendientes) {
+                if (remaining.lessThanOrEqualTo(0)) break;
+                const due  = new Decimal(cuota.amountDue.toString());
+                const paid = new Decimal(cuota.amountPaid.toString());
+                const falta = due.minus(paid);
+                if (falta.lessThanOrEqualTo(0)) continue;
+                const aplica = Decimal.min(remaining, falta);
+                const nuevoPaid = paid.plus(aplica);
+                await tx.loanInstallment.update({
+                    where: { id: cuota.id },
+                    data: {
+                        amountPaid: nuevoPaid.toNumber(),
+                        status: nuevoPaid.greaterThanOrEqualTo(due) ? 'PAID' : 'PARTIAL'
+                    }
+                });
+                remaining = remaining.minus(aplica);
+            }
+
             return { repayment, updatedLoan };
         });
 
@@ -174,13 +219,65 @@ router.get('/', authenticate, async (req: any, res: any) => {
                 payments: {
                     where: { paymentDate: { gte: startOfDay, lte: endOfDay } },
                     orderBy: { createdAt: 'desc' }
-                }
+                },
+                schedule: { where: { status: { not: 'PAID' } }, orderBy: { number: 'asc' } }
             }
         });
-        res.json({ success: true, data: loans });
+
+        // Enriquecer con próxima cuota y mora (Cobranza B2).
+        const now = new Date();
+        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const r2 = (x: number) => Math.round(x * 100) / 100;
+        const data = loans.map((l: any) => {
+            let overdueAmount = 0, overdueCount = 0;
+            let nextDueDate: Date | null = null, nextDueAmount = 0;
+            for (const c of l.schedule) {
+                const falta = Number(c.amountDue) - Number(c.amountPaid);
+                if (falta <= 0.001) continue;
+                if (new Date(c.dueDate) < hoy) { overdueAmount += falta; overdueCount++; }
+                if (!nextDueDate) { nextDueDate = c.dueDate; nextDueAmount = falta; }
+            }
+            const earliest = l.schedule.find((c: any) => Number(c.amountDue) - Number(c.amountPaid) > 0.001);
+            const daysOverdue = earliest && new Date(earliest.dueDate) < hoy
+                ? Math.floor((hoy.getTime() - new Date(earliest.dueDate).getTime()) / 86400000) : 0;
+            const { schedule, ...rest } = l;
+            return { ...rest, nextDueDate, nextDueAmount: r2(nextDueAmount), overdueAmount: r2(overdueAmount), overdueCount, daysOverdue };
+        });
+
+        res.json({ success: true, data });
     } catch (error) {
         console.error('Error obteniendo cartera:', error);
         res.status(500).json({ success: false, error: 'Error obteniendo la cartera' });
+    }
+});
+
+// 3.C PLAN DE CUOTAS + mora de un préstamo (Cobranza B2)
+router.get('/:id/schedule', authenticate, async (req: any, res: any) => {
+    try {
+        const { id } = req.params;
+        const lenderId = req.tenantId;
+        const loan = await prisma.loan.findFirst({ where: { id, lenderId } });
+        if (!loan) return res.status(404).json({ success: false, error: 'Préstamo no encontrado' });
+
+        const cuotas = await prisma.loanInstallment.findMany({ where: { loanId: id }, orderBy: { number: 'asc' } });
+        const now = new Date();
+        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const data = cuotas.map((c) => {
+            const falta = Number(c.amountDue) - Number(c.amountPaid);
+            const overdue = falta > 0.001 && new Date(c.dueDate) < hoy;
+            const daysOverdue = overdue ? Math.floor((hoy.getTime() - new Date(c.dueDate).getTime()) / 86400000) : 0;
+            return {
+                id: c.id, number: c.number, dueDate: c.dueDate,
+                amountDue: Number(c.amountDue), amountPaid: Number(c.amountPaid),
+                balance: Math.round(falta * 100) / 100,
+                status: c.status === 'PAID' ? 'PAID' : overdue ? 'OVERDUE' : c.status === 'PARTIAL' ? 'PARTIAL' : 'PENDING',
+                daysOverdue
+            };
+        });
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error('Error obteniendo plan de cuotas:', error);
+        res.status(500).json({ success: false, error: 'Error obteniendo el plan de cuotas' });
     }
 });
 
@@ -340,6 +437,22 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
                     status: 'ACTIVE'
                 }
             });
+
+            // Plan de cuotas del préstamo refinanciado (Cobranza B2).
+            const stepDays = freqDays[frequency] || 1;
+            const perInstallment = installmentAmount.toDecimalPlaces(2);
+            const totalRounded = totalToRepay.toDecimalPlaces(2);
+            const base = new Date();
+            let acc = new Decimal(0);
+            const rows = [];
+            for (let i = 1; i <= n; i++) {
+                const d = new Date(base);
+                d.setDate(d.getDate() + stepDays * i);
+                const due = i < n ? perInstallment : totalRounded.minus(acc);
+                acc = acc.plus(due);
+                rows.push({ loanId: newLoan.id, number: i, dueDate: d, amountDue: due.toNumber(), status: 'PENDING' });
+            }
+            await tx.loanInstallment.createMany({ data: rows });
 
             return { oldLoan, newLoan, carryOver: carryOver.toNumber(), freshCapital: freshCapital.toNumber() };
         });
