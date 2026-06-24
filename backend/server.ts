@@ -28,6 +28,7 @@ import { verifyHandler as whatsappVerify, webhookHandler as whatsappWebhook } fr
 import { encryptField } from './services/crypto';
 import Stripe from 'stripe';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import hrRouter from './routes/hr';
 import pedidosRouter from './routes/pedidos';
@@ -7903,12 +7904,23 @@ if (isProduction) {
         immutable: true,
     }));
 
-    // Resto de archivos estáticos (favicon, logos, etc.)
-    app.use(express.static(distPath, { maxAge: 0 }));
+    // Resto de archivos estáticos (favicon, logos, etc.).
+    // redirect:false → no redirige /ruta → /ruta/ (controlamos el HTML por-ruta abajo).
+    app.use(express.static(distPath, { maxAge: 0, redirect: false }));
 
-    // SPA catch-all: cualquier ruta que no sea /api → index.html sin cache
+    // SPA catch-all: cualquier ruta que no sea /api.
+    // Sirve el HTML prerenderizado por-ruta (dist/<ruta>/index.html) si existe — cada uno
+    // con su <title>, description y canonical únicos (SEO). Si no, cae al shell del SPA.
     app.get(/^(?!\/api).+/, (req: any, res: any) => {
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        const rel = req.path.replace(/^\/+|\/+$/g, '');
+        if (rel) {
+            const prerendered = path.join(distPath, rel, 'index.html');
+            // Guard anti-traversal: el archivo debe quedar dentro de distPath.
+            if (prerendered.startsWith(distPath + path.sep) && fs.existsSync(prerendered)) {
+                return res.sendFile(prerendered);
+            }
+        }
         res.sendFile(path.join(distPath, 'index.html'));
     });
     console.log(`📂 Serving static files from: ${distPath}`);

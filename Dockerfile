@@ -19,8 +19,8 @@ RUN DATABASE_URL="mysql://dummy:dummy@localhost:3306/dummy" npx prisma generate 
 # 6. Copiar el resto del código
 COPY . .
 
-# 7. Construir la aplicación (React + Backend) con límite de memoria para servidores pequeños
-RUN NODE_OPTIONS="--max-old-space-size=3072" npm run build
+# 7. Construir la aplicación (React + Backend) + prerender SEO por-ruta
+RUN NODE_OPTIONS="--max-old-space-size=3072" npm run build:seo
 
 # 8. Puerto en el que corre la app
 EXPOSE 3000
