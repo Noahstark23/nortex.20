@@ -3,8 +3,18 @@ import { TrendingUp, TrendingDown, DollarSign, Activity, AlertCircle, CreditCard
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Loan, Tenant } from '../types';
 import { useNavigate } from 'react-router-dom';
+import LenderDashboard from './LenderMode/LenderDashboard';
 
-const Dashboard: React.FC = () => {
+/** Lee el tipo de tenant del usuario guardado (LENDER = prestamista). */
+function getTenantType(): string {
+  try {
+    const u = localStorage.getItem('nortex_user');
+    if (u) return JSON.parse(u)?.tenant?.type || '';
+  } catch { /* ignore */ }
+  return '';
+}
+
+const RetailDashboard: React.FC = () => {
   const navigate = useNavigate();
   // State for Lending
   const [showLoanModal, setShowLoanModal] = useState(false);
@@ -811,6 +821,16 @@ const Dashboard: React.FC = () => {
       )}
     </div>
   );
+};
+
+/**
+ * Enrutador del dashboard: el prestamista (tenant LENDER) ve la cartera de
+ * préstamos (LenderDashboard, antes huérfano); el resto, el dashboard retail.
+ * Wrapper sin hooks → no rompe las Reglas de Hooks. [Cobranza A3]
+ */
+const Dashboard: React.FC = () => {
+  if (getTenantType() === 'LENDER') return <LenderDashboard />;
+  return <RetailDashboard />;
 };
 
 export default Dashboard;

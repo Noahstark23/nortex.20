@@ -1,12 +1,16 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import * as XLSX from 'xlsx';
 import ImageUploader from './ImageUploader';
+import { sanitizeDecimalInput } from '../utils/money';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
     RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
-    Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers
+    Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers, Download, ChevronLeft, ChevronRight,
+    Tag, DollarSign, Printer
 } from 'lucide-react';
 import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
+import { maybeAutostartTour } from '../utils/tours';
 
 // ==========================================
 // TYPES
@@ -28,6 +32,9 @@ interface Product {
     creator?: { name: string };
     updatedAt?: string;
     requiresBatchTracking?: boolean;
+    reorderPoint?: number;
+    maxStock?: number;
+    defaultSupplierId?: string | null;
 }
 
 interface ProductBatch {
@@ -49,6 +56,7 @@ interface KardexEntry {
     date: string;
     user: { name: string; email: string };
     product?: { name: string; sku: string };
+    batch?: { batchNumber: string; expiryDate: string } | null;
 }
 
 type AdjustType = 'ADJUST_LOSS' | 'ADJUST_GAIN' | 'IN_PURCHASE' | 'RETURN';
@@ -75,6 +83,15 @@ const getMovementMeta = (type: string) => {
 
 const formatCurrency = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/** Como sanitizeDecimalInput pero admite un '-' inicial (para ajustes porcentuales). */
+const sanitizeSignedDecimal = (raw: string): string => {
+    const neg = raw.trim().startsWith('-');
+    let cleaned = raw.replace(/[^\d.]/g, '');
+    const dot = cleaned.indexOf('.');
+    if (dot !== -1) cleaned = cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, '');
+    return (neg ? '-' : '') + cleaned;
+};
+
 const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit'
@@ -88,7 +105,20 @@ export default function Inventory() {
     const [products, setProducts] = useState<Product[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
     const [userRole, setUserRole] = useState('EMPLOYEE');
+
+    // Paginación / filtros / orden (server-side)
+    const PAGE_SIZE = 50;
+    const [page, setPage] = useState(1);
+    const [total, setTotal] = useState(0);
+    const [categoryFilter, setCategoryFilter] = useState('');
+    const [statusFilter, setStatusFilter] = useState(''); // '' | out | published | unpublished
+    const [sortField, setSortField] = useState('name');
+    const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+    const [categories, setCategories] = useState<string[]>([]);
+    const [stats, setStats] = useState<{ totalProducts: number; inventoryValue: number; totalUnits: number; outOfStock: number; lowStockCount: number } | null>(null);
+    const [exporting, setExporting] = useState(false);
 
     // Modals
     const [showCreateModal, setShowCreateModal] = useState(false);
@@ -101,15 +131,32 @@ export default function Inventory() {
     const [showDropdown, setShowDropdown] = useState(false);
     const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
     const [showBatchesModal, setShowBatchesModal] = useState(false);
+    const [showBulkEditModal, setShowBulkEditModal] = useState(false);
 
-    // Kardex
+    // Kardex (A5: paginado + filtro por fecha)
     const [kardexData, setKardexData] = useState<KardexEntry[]>([]);
     const [kardexLoading, setKardexLoading] = useState(false);
     const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+    const [kardexPage, setKardexPage] = useState(1);
+    const [kardexTotal, setKardexTotal] = useState(0);
+    const [kardexFrom, setKardexFrom] = useState('');
+    const [kardexTo, setKardexTo] = useState('');
+    const KARDEX_PAGE_SIZE = 25;
 
-    // Batches
+    // Batches (A4: alta de lotes)
     const [batchesData, setBatchesData] = useState<ProductBatch[]>([]);
     const [batchesLoading, setBatchesLoading] = useState(false);
+    const [showAddBatchForm, setShowAddBatchForm] = useState(false);
+    const [batchForm, setBatchForm] = useState({ batchNumber: '', expiryDate: '', quantity: '' });
+    const [batchSubmitting, setBatchSubmitting] = useState(false);
+
+    // Bulk edit form (A2: edición masiva de categoría/precio)
+    const [bulkEditForm, setBulkEditForm] = useState({
+        category: '',
+        priceMode: '' as '' | 'set' | 'pct',
+        priceValue: ''
+    });
+    const [bulkEditSubmitting, setBulkEditSubmitting] = useState(false);
 
     // Adjust form
     const [adjustForm, setAdjustForm] = useState({
@@ -121,14 +168,15 @@ export default function Inventory() {
 
     // Edit form (solo datos cosméticos/comerciales — sin stock para no disparar Kardex)
     const [editForm, setEditForm] = useState({
-        name: '', description: '', category: '', price: '', imageUrl: ''
+        name: '', description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: '', defaultSupplierId: ''
     });
     const [editSubmitting, setEditSubmitting] = useState(false);
+    const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
 
     // Create form
     const [formData, setFormData] = useState({
         name: '', sku: '', description: '', category: '',
-        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false
+        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: ''
     });
 
     const token = localStorage.getItem('nortex_token');
@@ -141,6 +189,109 @@ export default function Inventory() {
     // DATA FETCHING
     // ==========================================
 
+    const fetchProducts = useCallback(async () => {
+        try {
+            setLoading(true);
+            const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE), sort: sortField, dir: sortDir });
+            if (debouncedSearch) params.set('search', debouncedSearch);
+            if (categoryFilter) params.set('category', categoryFilter);
+            if (statusFilter) params.set('status', statusFilter);
+            const res = await fetch(`/api/products?${params.toString()}`, { headers });
+            if (res.ok) {
+                const data = await res.json();
+                setProducts(data.products || []);
+                setTotal(data.total || 0);
+            }
+        } catch (e) {
+            console.error('Error fetching products:', e);
+        } finally {
+            setLoading(false);
+            setSelectedProductIds([]); // Reset selection on fetch
+        }
+    }, [page, debouncedSearch, categoryFilter, statusFilter, sortField, sortDir, headers]);
+
+    const fetchStats = useCallback(async () => {
+        try {
+            const res = await fetch('/api/reports/inventory', { headers });
+            if (res.ok) {
+                const d = await res.json();
+                setStats({
+                    totalProducts: d.totalProducts || 0,
+                    inventoryValue: d.inventoryValue || 0,
+                    totalUnits: d.totalUnits || 0,
+                    outOfStock: d.outOfStock || 0,
+                    lowStockCount: Math.max(0, (d.lowStock?.length || 0) - (d.outOfStock || 0)),
+                });
+            }
+        } catch (e) { console.error('Error fetching stats:', e); }
+    }, [headers]);
+
+    const fetchCategories = useCallback(async () => {
+        try {
+            const res = await fetch('/api/products/categories', { headers });
+            if (res.ok) setCategories(await res.json());
+        } catch (e) { console.error('Error fetching categories:', e); }
+    }, [headers]);
+
+    // Recarga todo (lista + KPIs) tras una mutación.
+    const reload = useCallback(() => { fetchProducts(); fetchStats(); }, [fetchProducts, fetchStats]);
+
+    // Exporta a Excel TODO lo que coincide con el filtro actual (no solo la página).
+    const handleExport = async () => {
+        setExporting(true);
+        try {
+            const params = new URLSearchParams({ sort: sortField, dir: sortDir });
+            if (debouncedSearch) params.set('search', debouncedSearch);
+            if (categoryFilter) params.set('category', categoryFilter);
+            if (statusFilter) params.set('status', statusFilter);
+            const res = await fetch(`/api/products?${params.toString()}`, { headers });
+            const data = res.ok ? await res.json() : [];
+            const arr = Array.isArray(data) ? data : (data.products || []);
+            const rows = arr.map((p: any) => ({
+                SKU: p.sku, Producto: p.name, 'Categoría': p.category || '', Unidad: p.unit,
+                Stock: Number(p.stock), 'Stock mínimo': Number(p.minStock),
+                Costo: Number(p.cost), Precio: Number(p.price),
+                'Valor (costo)': Number((Number(p.stock) * Number(p.cost)).toFixed(2)),
+                Publicado: p.isPublished ? 'Sí' : 'No',
+            }));
+            const ws = XLSX.utils.json_to_sheet(rows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+            XLSX.writeFile(wb, `Inventario_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        } catch (e) { alert('No se pudo exportar.'); }
+        finally { setExporting(false); }
+    };
+
+    // C3: hoja de etiquetas imprimibles (precio + código) de los productos seleccionados.
+    const handlePrintLabels = () => {
+        const selected = products.filter(p => selectedProductIds.includes(p.id));
+        if (selected.length === 0) return;
+        const esc = (s: string) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+        const labels = selected.map(p => `
+            <div class="label">
+                <div class="name">${esc(p.name)}</div>
+                <div class="price">${esc(formatCurrency(p.price))}</div>
+                <div class="sku">${esc(p.sku)}</div>
+            </div>`).join('');
+        const html = `<!doctype html><html><head><meta charset="utf-8"><title>Etiquetas</title><style>
+            *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:10px;background:#fff;color:#111}
+            .sheet{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+            .label{border:1px dashed #aaa;border-radius:6px;padding:10px 8px;text-align:center;page-break-inside:avoid}
+            .name{font-size:12px;font-weight:600;min-height:32px;line-height:1.2;overflow:hidden}
+            .price{font-size:22px;font-weight:800;margin:6px 0}
+            .sku{font-family:'Courier New',monospace;font-size:13px;letter-spacing:3px;background:#f1f1f1;border-radius:4px;padding:3px 4px;display:inline-block}
+            .bar{font-size:10px;color:#666;margin-top:2px}
+            @media print{.no-print{display:none}}
+        </style></head><body>
+            <button class="no-print" style="margin-bottom:10px;padding:8px 14px;font-weight:700;cursor:pointer" onclick="window.print()">Imprimir</button>
+            <div class="sheet">${labels}</div>
+            <script>window.onload=function(){setTimeout(function(){try{window.print()}catch(e){}},350)}<\/script>
+        </body></html>`;
+        const w = window.open('', '_blank');
+        if (w) { w.document.write(html); w.document.close(); }
+        else { alert('Permite las ventanas emergentes para imprimir etiquetas.'); }
+    };
+
     useEffect(() => {
         const userData = localStorage.getItem('nortex_user');
         if (userData) {
@@ -149,24 +300,26 @@ export default function Inventory() {
                 setUserRole(user.role || 'EMPLOYEE');
             } catch (e) { /* ignore */ }
         }
-        fetchProducts();
-    }, []);
+        fetchStats();
+        fetchCategories();
+        // Proveedores para asignar el proveedor por defecto al editar (C2)
+        fetch('/api/suppliers', { headers })
+            .then(r => r.ok ? r.json() : [])
+            .then((data) => setSuppliers(Array.isArray(data) ? data.map((s: any) => ({ id: s.id, name: s.name })) : []))
+            .catch(() => { /* noop */ });
+    }, [fetchStats, fetchCategories, headers]);
 
-    const fetchProducts = useCallback(async () => {
-        try {
-            setLoading(true);
-            const res = await fetch(`/api/products?search=${searchTerm}`, { headers });
-            if (res.ok) {
-                const data = await res.json();
-                setProducts(data);
-            }
-        } catch (e) {
-            console.error('Error fetching products:', e);
-        } finally {
-            setLoading(false);
-            setSelectedProductIds([]); // Reset selection on fetch
-        }
-    }, [searchTerm, headers]);
+    // Debounce de la búsqueda (y vuelve a la página 1).
+    useEffect(() => {
+        const t = setTimeout(() => { setDebouncedSearch(searchTerm); setPage(1); }, 300);
+        return () => clearTimeout(t);
+    }, [searchTerm]);
+
+    // Recarga la página al cambiar paginación/filtros/orden.
+    useEffect(() => { fetchProducts(); }, [fetchProducts]);
+
+    // Tutorial guiado: si entran con ?tour=inv (desde Ayuda o el checklist).
+    useEffect(() => { maybeAutostartTour(); }, []);
 
     // ==========================================
     // SCAN DETECTION
@@ -213,16 +366,17 @@ export default function Inventory() {
             if (e.key === 'Enter') {
                 if (buffer.length >= 3) {
                     const scannedCode = buffer;
-                    const found = products.find(p => p.sku === scannedCode || p.sku === scannedCode.toUpperCase());
-
-                    if (found) {
-                        playScanSound(true);
-                        setSearchTerm(found.sku);
-                    } else {
-                        playScanSound(false);
-                        setQuickAddSKU(scannedCode);
-                        setShowQuickAddModal(true);
-                    }
+                    // Consulta al servidor (la lista está paginada; no basta el arreglo local).
+                    (async () => {
+                        try {
+                            const res = await fetch(`/api/products?search=${encodeURIComponent(scannedCode)}`, { headers });
+                            const data = res.ok ? await res.json() : [];
+                            const arr = Array.isArray(data) ? data : (data.products || []);
+                            const found = arr.find((p: any) => p.sku === scannedCode || p.sku === scannedCode.toUpperCase());
+                            if (found) { playScanSound(true); setSearchTerm(found.sku); }
+                            else { playScanSound(false); setQuickAddSKU(scannedCode); setShowQuickAddModal(true); }
+                        } catch { playScanSound(false); }
+                    })();
                 }
                 buffer = '';
             } else if (e.key.length === 1) {
@@ -232,48 +386,53 @@ export default function Inventory() {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [products, showCreateModal, showImportModal, showQuickAddModal, showKardexModal, showAdjustModal, showEditModal, playScanSound]);
+    }, [headers, showCreateModal, showImportModal, showQuickAddModal, showKardexModal, showAdjustModal, showEditModal, playScanSound]);
 
     // ==========================================
     // INVENTORY TOTALS
     // ==========================================
 
-    const totals = useMemo(() => {
-        let totalValue = 0;
-        let totalItems = 0;
-        let lowStockCount = 0;
-        let outOfStockCount = 0;
-
-        products.forEach(p => {
-            totalValue += p.stock * p.cost;
-            totalItems += p.stock;
-            if (p.stock <= p.minStock && p.stock > 0) lowStockCount++;
-            if (p.stock === 0) outOfStockCount++;
-        });
-
-        return { totalValue, totalItems, lowStockCount, outOfStockCount };
-    }, [products]);
+    // KPIs sobre TODO el inventario (no solo la página visible): vienen del stats.
+    const totals = useMemo(() => ({
+        totalValue: stats?.inventoryValue ?? 0,
+        totalItems: stats?.totalUnits ?? 0,
+        lowStockCount: stats?.lowStockCount ?? 0,
+        outOfStockCount: stats?.outOfStock ?? 0,
+    }), [stats]);
 
     // ==========================================
     // KARDEX
     // ==========================================
 
-    const openKardex = async (product: Product) => {
-        setSelectedProduct(product);
-        setShowKardexModal(true);
+    // Fetch paginado del Kardex (A5). from/to son días locales (YYYY-MM-DD); el
+    // backend los interpreta en hora Nicaragua (UTC-6).
+    const fetchKardex = async (productId: string, targetPage: number, from: string, to: string) => {
         setKardexLoading(true);
-
         try {
-            const res = await fetch(`/api/kardex/${product.id}`, { headers });
+            const params = new URLSearchParams({ page: String(targetPage), pageSize: String(KARDEX_PAGE_SIZE) });
+            if (from) params.set('from', from);
+            if (to) params.set('to', to);
+            const res = await fetch(`/api/kardex/${productId}?${params.toString()}`, { headers });
             if (res.ok) {
                 const data = await res.json();
-                setKardexData(data);
+                setKardexData(data.entries || []);
+                setKardexTotal(data.total || 0);
+                setKardexPage(data.page || targetPage);
             }
         } catch (e) {
             console.error('Error fetching kardex:', e);
         } finally {
             setKardexLoading(false);
         }
+    };
+
+    const openKardex = (product: Product) => {
+        setSelectedProduct(product);
+        setKardexFrom('');
+        setKardexTo('');
+        setKardexPage(1);
+        setShowKardexModal(true);
+        fetchKardex(product.id, 1, '', '');
     };
 
     // ==========================================
@@ -283,6 +442,8 @@ export default function Inventory() {
     const openBatches = async (product: Product) => {
         setSelectedProduct(product);
         setShowBatchesModal(true);
+        setShowAddBatchForm(false);
+        setBatchForm({ batchNumber: '', expiryDate: '', quantity: '' });
         setBatchesLoading(true);
 
         try {
@@ -295,6 +456,70 @@ export default function Inventory() {
             console.error('Error fetching batches:', e);
         } finally {
             setBatchesLoading(false);
+        }
+    };
+
+    // A4: alta de lote → suma stock + Kardex (backend). Refresca lotes y la lista.
+    const handleAddBatch = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedProduct) return;
+
+        const qty = parseInt(batchForm.quantity);
+        if (!batchForm.batchNumber.trim() || !batchForm.expiryDate || isNaN(qty) || qty <= 0) {
+            alert('Completa número de lote, fecha de vencimiento y una cantidad mayor que cero.');
+            return;
+        }
+
+        setBatchSubmitting(true);
+        try {
+            const res = await fetch('/api/inventory/batches', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    productId: selectedProduct.id,
+                    batchNumber: batchForm.batchNumber.trim(),
+                    expiryDate: batchForm.expiryDate,
+                    quantity: qty
+                })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setBatchForm({ batchNumber: '', expiryDate: '', quantity: '' });
+                setShowAddBatchForm(false);
+                // Refrescar lotes del producto
+                const r = await fetch(`/api/inventory/batches/${selectedProduct.id}`, { headers });
+                if (r.ok) setBatchesData(await r.json());
+                // El stock del producto cambió → actualizar encabezado del modal y la lista
+                setSelectedProduct(prev => prev ? { ...prev, stock: data.newStock, requiresBatchTracking: true } : prev);
+                reload();
+            } else {
+                alert(`Error: ${data.error}`);
+            }
+        } catch (e) {
+            alert('Error agregando lote');
+        } finally {
+            setBatchSubmitting(false);
+        }
+    };
+
+    // B3: dar de baja un lote (merma) → resta stock + Kardex + asiento de merma.
+    const handleWriteoffBatch = async (batchId: string, batchNumber: string) => {
+        if (!selectedProduct) return;
+        if (!confirm(`¿Dar de baja el lote ${batchNumber}? Se restará su stock y se registrará como merma (no se puede deshacer).`)) return;
+        try {
+            const res = await fetch(`/api/inventory/batches/${batchId}/writeoff`, { method: 'POST', headers, body: JSON.stringify({}) });
+            const data = await res.json();
+            if (res.ok) {
+                const r = await fetch(`/api/inventory/batches/${selectedProduct.id}`, { headers });
+                if (r.ok) setBatchesData(await r.json());
+                setSelectedProduct(prev => prev ? { ...prev, stock: data.newStock } : prev);
+                reload();
+                alert(data.message);
+            } else {
+                alert(`Error: ${data.error}`);
+            }
+        } catch (e) {
+            alert('Error dando de baja el lote');
         }
     };
 
@@ -319,7 +544,10 @@ export default function Inventory() {
             description: product.description || '',
             category: product.category || '',
             price: String(product.price),
-            imageUrl: product.imageUrl || ''
+            imageUrl: product.imageUrl || '',
+            reorderPoint: product.reorderPoint ? String(product.reorderPoint) : '',
+            maxStock: product.maxStock ? String(product.maxStock) : '',
+            defaultSupplierId: product.defaultSupplierId || ''
         });
         setShowEditModal(true);
     };
@@ -337,14 +565,17 @@ export default function Inventory() {
                     description: editForm.description,
                     category: editForm.category,
                     price: parseFloat(editForm.price),
-                    imageUrl: editForm.imageUrl
+                    imageUrl: editForm.imageUrl,
+                    reorderPoint: editForm.reorderPoint === '' ? 0 : parseFloat(editForm.reorderPoint),
+                    maxStock: editForm.maxStock === '' ? 0 : parseFloat(editForm.maxStock),
+                    defaultSupplierId: editForm.defaultSupplierId || null
                     // ⚠️ stock, cost, minStock y unit EXCLUIDOS intencionalmente
                     //    para no disparar el Kardex ni el sistema antirobo
                 })
             });
             if (res.ok) {
                 setShowEditModal(false);
-                fetchProducts();
+                reload();
             } else {
                 const err = await res.json();
                 alert(`Error: ${err.error}`);
@@ -388,7 +619,7 @@ export default function Inventory() {
 
             if (res.ok) {
                 setShowAdjustModal(false);
-                fetchProducts();
+                reload();
                 alert(`Ajuste registrado: ${data.message}`);
             } else {
                 alert(`Error: ${data.error}`);
@@ -423,8 +654,8 @@ export default function Inventory() {
 
             if (res.ok) {
                 setShowCreateModal(false);
-                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false });
-                fetchProducts();
+                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: '' });
+                reload();
                 alert('Producto creado exitosamente');
             } else {
                 const error = await res.json();
@@ -449,7 +680,7 @@ export default function Inventory() {
             });
 
             if (res.ok) {
-                fetchProducts();
+                reload();
                 alert('Producto eliminado');
             } else {
                 const error = await res.json();
@@ -473,7 +704,7 @@ export default function Inventory() {
             });
 
             if (res.ok) {
-                fetchProducts();
+                reload();
             } else {
                 const error = await res.json();
                 alert(`Error: ${error.error}`);
@@ -502,7 +733,7 @@ export default function Inventory() {
 
             if (res.ok) {
                 const data = await res.json();
-                fetchProducts();
+                reload();
                 setSelectedProductIds([]);
                 // alert(`Catálogo actualizado: ${data.count} productos modificados`);
             } else {
@@ -511,6 +742,72 @@ export default function Inventory() {
             }
         } catch (e) {
             alert('Error actualizando productos de forma masiva');
+        }
+    };
+
+    // ==========================================
+    // BULK EDIT (A2: categoría / precio) — no toca stock ni costo
+    // ==========================================
+
+    const openBulkEdit = () => {
+        setBulkEditForm({ category: '', priceMode: '', priceValue: '' });
+        setShowBulkEditModal(true);
+    };
+
+    const handleBulkEdit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (selectedProductIds.length === 0) return;
+
+        const category = bulkEditForm.category.trim();
+        const hasCategory = category.length > 0;
+        const hasPrice = bulkEditForm.priceMode !== '';
+
+        if (!hasCategory && !hasPrice) {
+            alert('Indica al menos un cambio: categoría o precio.');
+            return;
+        }
+
+        const payload: any = { ids: selectedProductIds };
+        if (hasCategory) payload.category = category;
+        if (hasPrice) {
+            const val = parseFloat(bulkEditForm.priceValue);
+            if (isNaN(val)) {
+                alert('Ingresa un valor de precio válido.');
+                return;
+            }
+            if (bulkEditForm.priceMode === 'set' && val < 0) {
+                alert('El precio no puede ser negativo.');
+                return;
+            }
+            if (bulkEditForm.priceMode === 'pct' && val <= -100) {
+                alert('El descuento porcentual no puede ser ≥ 100%.');
+                return;
+            }
+            payload.priceMode = bulkEditForm.priceMode;
+            payload.priceValue = val;
+        }
+
+        setBulkEditSubmitting(true);
+        try {
+            const res = await fetch('/api/products/bulk-edit', {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setShowBulkEditModal(false);
+                setSelectedProductIds([]);
+                reload();
+                fetchCategories();
+                alert(data.message || 'Productos actualizados.');
+            } else {
+                alert(`Error: ${data.error}`);
+            }
+        } catch (e) {
+            alert('Error en la edición masiva');
+        } finally {
+            setBulkEditSubmitting(false);
         }
     };
 
@@ -534,12 +831,8 @@ export default function Inventory() {
     // FILTERED PRODUCTS
     // ==========================================
 
-    const filteredProducts = useMemo(() =>
-        products.filter(p =>
-            p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (p.category || '').toLowerCase().includes(searchTerm.toLowerCase())
-        ), [products, searchTerm]);
+    // El servidor ya filtra y pagina; la página actual es `products`.
+    const filteredProducts = products;
 
     const isOwner = userRole === 'OWNER' || userRole === 'ADMIN';
 
@@ -564,8 +857,9 @@ export default function Inventory() {
                 {isOwner && (
                     <div className="relative">
                         <button
+                            data-tour="inv-new"
                             onClick={() => setShowDropdown(!showDropdown)}
-                            className="flex items-center gap-2 bg-blue-600 px-4 py-2.5 rounded-lg hover:bg-blue-700 text-white font-semibold transition-colors shadow-lg shadow-blue-900/30"
+                            className="btn-primary flex items-center gap-2"
                         >
                             <Plus size={20} />
                             Nuevo Producto
@@ -622,7 +916,7 @@ export default function Inventory() {
                         <Package size={16} className="text-blue-400" />
                         <span className="text-xs text-slate-400 uppercase tracking-wider">Productos</span>
                     </div>
-                    <p className="text-2xl font-bold text-white">{products.length}</p>
+                    <p className="text-2xl font-bold text-white">{(stats?.totalProducts ?? 0).toLocaleString()}</p>
                     <p className="text-xs text-slate-500">{totals.totalItems.toLocaleString()} unidades en bodega</p>
                 </div>
 
@@ -658,19 +952,45 @@ export default function Inventory() {
                 </div>
             </div>
 
-            {/* SEARCH BAR */}
-            <div className="flex gap-3">
-                <div className="flex-1 relative">
+            {/* SEARCH + FILTROS + ORDEN + EXPORTAR */}
+            <div className="flex flex-wrap gap-3 items-center">
+                <div className="flex-1 min-w-[200px] relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                     <input
+                        data-tour="inv-search"
                         type="text"
                         placeholder="Buscar por nombre, SKU o categoría..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        onKeyUp={fetchProducts}
                         className="w-full pl-10 pr-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
                     />
                 </div>
+                <select value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setPage(1); }}
+                    className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
+                    <option value="">Todas las categorías</option>
+                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+                    className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
+                    <option value="">Todos</option>
+                    <option value="out">Agotados</option>
+                    <option value="published">Publicados</option>
+                    <option value="unpublished">Ocultos</option>
+                </select>
+                <select value={`${sortField}:${sortDir}`} onChange={(e) => { const [f, d] = e.target.value.split(':'); setSortField(f); setSortDir(d as 'asc' | 'desc'); setPage(1); }}
+                    className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
+                    <option value="name:asc">Nombre A-Z</option>
+                    <option value="name:desc">Nombre Z-A</option>
+                    <option value="stock:asc">Stock ↑ (bajos primero)</option>
+                    <option value="stock:desc">Stock ↓</option>
+                    <option value="price:desc">Precio ↓</option>
+                    <option value="price:asc">Precio ↑</option>
+                    <option value="cost:desc">Costo ↓</option>
+                </select>
+                <button onClick={handleExport} disabled={exporting}
+                    className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 border border-slate-600 disabled:opacity-50 transition-colors">
+                    <Download size={16} /> {exporting ? 'Exportando…' : 'Excel'}
+                </button>
             </div>
 
             {/* BULK ACTIONS BAR */}
@@ -683,6 +1003,20 @@ export default function Inventory() {
                         </span>
                     </div>
                     <div className="flex items-center gap-3">
+                        <button
+                            onClick={openBulkEdit}
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                        >
+                            <Edit size={16} />
+                            Editar precio/categoría
+                        </button>
+                        <button
+                            onClick={handlePrintLabels}
+                            className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors border border-slate-600"
+                        >
+                            <Printer size={16} />
+                            Etiquetas
+                        </button>
                         <button
                             onClick={() => handleBulkPublish(true)}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
@@ -704,7 +1038,7 @@ export default function Inventory() {
             {/* PRODUCTS TABLE */}
             <div className="bg-slate-800/60 rounded-xl border border-slate-700 overflow-hidden">
                 <div className="overflow-x-auto">
-                    <table className="w-full">
+                    <table className="table-premium w-full">
                         <thead>
                             <tr className="bg-slate-900/80">
                                 {isOwner && (
@@ -731,7 +1065,7 @@ export default function Inventory() {
                                 <th className="text-center px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Acciones</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-700/50">
+                        <tbody>
                             {loading ? (
                                 <tr>
                                     <td colSpan={isOwner ? 8 : 6} className="text-center py-12 text-slate-400">
@@ -838,27 +1172,30 @@ export default function Inventory() {
                                             </td>
                                             <td className="px-4 py-3 text-right">
                                                 <div className="flex items-center justify-end gap-2">
-                                                    {(isLow || isOut) && (
-                                                        <AlertTriangle size={14} className={isOut ? 'text-red-400' : 'text-amber-400'} />
-                                                    )}
-                                                    <span className={`font-bold ${isOut ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-white'}`}>
+                                                    <span className={`font-mono tabular-nums font-bold ${isOut ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-white'}`}>
                                                         {product.stock}
                                                     </span>
                                                     <span className="text-xs text-slate-500">{product.unit}</span>
                                                 </div>
-                                                {isLow && (
-                                                    <span className="text-[10px] text-amber-500">Mín: {product.minStock}</span>
-                                                )}
+                                                <div className="mt-1 flex justify-end">
+                                                    {isOut ? (
+                                                        <span className="badge-soft-danger"><AlertTriangle size={11} /> Agotado</span>
+                                                    ) : isLow ? (
+                                                        <span className="badge-soft-warning"><AlertTriangle size={11} /> Reorden · mín {product.minStock}</span>
+                                                    ) : (
+                                                        <span className="badge-soft-success">OK</span>
+                                                    )}
+                                                </div>
                                             </td>
-                                            <td className="px-4 py-3 text-right text-emerald-400 font-semibold">
+                                            <td className="px-4 py-3 text-right text-emerald-400 font-semibold font-mono tabular-nums">
                                                 {formatCurrency(product.price)}
                                             </td>
                                             {isOwner && (
                                                 <>
-                                                    <td className="px-4 py-3 text-right text-slate-400">
+                                                    <td className="px-4 py-3 text-right text-slate-400 font-mono tabular-nums">
                                                         {formatCurrency(product.cost)}
                                                     </td>
-                                                    <td className="px-4 py-3 text-right font-semibold text-cyan-400">
+                                                    <td className="px-4 py-3 text-right font-semibold text-cyan-400 font-mono tabular-nums">
                                                         {formatCurrency(product.stock * product.cost)}
                                                     </td>
                                                 </>
@@ -876,14 +1213,14 @@ export default function Inventory() {
                                                             </button>
                                                             <button
                                                                 onClick={() => openKardex(product)}
-                                                                className="p-2 hover:bg-blue-500/20 rounded-lg text-blue-400 transition-colors"
+                                                                className="btn-ghost p-2 rounded-lg"
                                                                 title="Auditar Kardex"
                                                             >
                                                                 <Eye size={17} />
                                                             </button>
                                                             <button
                                                                 onClick={() => openEditModal(product)}
-                                                                className="p-2 hover:bg-slate-500/20 rounded-lg text-slate-300 transition-colors"
+                                                                className="btn-ghost p-2 rounded-lg"
                                                                 title="Editar Producto"
                                                             >
                                                                 <Edit size={17} />
@@ -899,7 +1236,7 @@ export default function Inventory() {
                                                             )}
                                                             <button
                                                                 onClick={() => openAdjust(product)}
-                                                                className="p-2 hover:bg-amber-500/20 rounded-lg text-amber-400 transition-colors"
+                                                                className="btn-ghost p-2 rounded-lg"
                                                                 title="Ajuste de Stock (Kardex)"
                                                             >
                                                                 <Wrench size={17} />
@@ -922,6 +1259,18 @@ export default function Inventory() {
                         </tbody>
                     </table>
                 </div>
+                {total > PAGE_SIZE && (
+                    <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700 text-sm text-slate-400">
+                        <span>{((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, total)} de {total.toLocaleString()}</span>
+                        <div className="flex items-center gap-2">
+                            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+                                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 flex items-center gap-1 transition-colors"><ChevronLeft size={16} /> Anterior</button>
+                            <span className="text-slate-300 font-mono">{page} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
+                            <button onClick={() => setPage(p => p + 1)} disabled={page >= Math.ceil(total / PAGE_SIZE)}
+                                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 flex items-center gap-1 transition-colors">Siguiente <ChevronRight size={16} /></button>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* ==========================================
@@ -948,8 +1297,47 @@ export default function Inventory() {
                             </button>
                         </div>
 
+                        {/* Kardex: Filtro por fecha (A5) */}
+                        <div className="px-6 py-3 border-b border-slate-700 bg-slate-900/40 flex flex-wrap items-end gap-3">
+                            <div>
+                                <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Desde</label>
+                                <input
+                                    type="date"
+                                    value={kardexFrom}
+                                    onChange={(e) => setKardexFrom(e.target.value)}
+                                    className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Hasta</label>
+                                <input
+                                    type="date"
+                                    value={kardexTo}
+                                    onChange={(e) => setKardexTo(e.target.value)}
+                                    className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+                                />
+                            </div>
+                            <button
+                                onClick={() => fetchKardex(selectedProduct.id, 1, kardexFrom, kardexTo)}
+                                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                            >
+                                <Search size={15} /> Filtrar
+                            </button>
+                            {(kardexFrom || kardexTo) && (
+                                <button
+                                    onClick={() => { setKardexFrom(''); setKardexTo(''); fetchKardex(selectedProduct.id, 1, '', ''); }}
+                                    className="text-slate-400 hover:text-white px-3 py-1.5 rounded-lg text-sm border border-slate-600 hover:bg-slate-700 transition-colors"
+                                >
+                                    Limpiar
+                                </button>
+                            )}
+                            <div className="ml-auto text-xs text-slate-400 self-center">
+                                {kardexTotal} movimiento{kardexTotal === 1 ? '' : 's'}
+                            </div>
+                        </div>
+
                         {/* Kardex Table */}
-                        <div className="overflow-y-auto max-h-[calc(90vh-120px)]">
+                        <div className="overflow-y-auto max-h-[calc(90vh-250px)]">
                             {kardexLoading ? (
                                 <div className="flex flex-col items-center justify-center py-16">
                                     <div className="w-10 h-10 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-3" />
@@ -1017,6 +1405,31 @@ export default function Inventory() {
                                 </table>
                             )}
                         </div>
+
+                        {/* Kardex: Paginación (A5) */}
+                        {kardexTotal > KARDEX_PAGE_SIZE && (
+                            <div className="px-6 py-3 border-t border-slate-700 bg-slate-900/40 flex items-center justify-between">
+                                <span className="text-xs text-slate-400">
+                                    Página {kardexPage} de {Math.max(1, Math.ceil(kardexTotal / KARDEX_PAGE_SIZE))}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        disabled={kardexPage <= 1 || kardexLoading}
+                                        onClick={() => fetchKardex(selectedProduct.id, kardexPage - 1, kardexFrom, kardexTo)}
+                                        className="px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+                                    >
+                                        <ChevronLeft size={15} /> Anterior
+                                    </button>
+                                    <button
+                                        disabled={kardexPage >= Math.ceil(kardexTotal / KARDEX_PAGE_SIZE) || kardexLoading}
+                                        onClick={() => fetchKardex(selectedProduct.id, kardexPage + 1, kardexFrom, kardexTo)}
+                                        className="px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+                                    >
+                                        Siguiente <ChevronRight size={15} />
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -1091,12 +1504,12 @@ export default function Inventory() {
                                 </label>
                                 <input
                                     required
-                                    type="number"
-                                    min="1"
+                                    type="text"
+                                    inputMode="decimal"
                                     value={adjustForm.quantity}
-                                    onChange={(e) => setAdjustForm({ ...adjustForm, quantity: e.target.value })}
+                                    onChange={(e) => setAdjustForm({ ...adjustForm, quantity: sanitizeDecimalInput(e.target.value) })}
                                     placeholder="Ej: 5"
-                                    className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg font-bold focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                                    className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg font-bold font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
                                 />
                                 {adjustForm.quantity && (
                                     <p className="text-xs mt-1.5 text-slate-400">
@@ -1214,13 +1627,52 @@ export default function Inventory() {
                                 <label className="block text-sm text-slate-300 mb-1 font-medium">Precio de Venta *</label>
                                 <input
                                     required
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
+                                    type="text"
+                                    inputMode="decimal"
                                     value={editForm.price}
-                                    onChange={(e) => setEditForm({ ...editForm, price: e.target.value })}
-                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                                    onChange={(e) => setEditForm({ ...editForm, price: sanitizeDecimalInput(e.target.value) })}
+                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
                                 />
+                            </div>
+
+                            {/* Reposición (B2) */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Punto de Reorden</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editForm.reorderPoint}
+                                        onChange={(e) => setEditForm({ ...editForm, reorderPoint: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="0 = sin alerta"
+                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Stock Objetivo (máx)</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editForm.maxStock}
+                                        onChange={(e) => setEditForm({ ...editForm, maxStock: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="sugiere cuánto comprar"
+                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Proveedor por defecto (C2) */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-1 font-medium">Proveedor por defecto</label>
+                                <select
+                                    value={editForm.defaultSupplierId}
+                                    onChange={(e) => setEditForm({ ...editForm, defaultSupplierId: e.target.value })}
+                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                                >
+                                    <option value="">— Sin proveedor —</option>
+                                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                </select>
+                                <p className="text-[11px] text-slate-500 mt-1">Agrupa este producto al armar órdenes de compra en Compras Inteligentes.</p>
                             </div>
 
                             {/* Imagen */}
@@ -1342,44 +1794,64 @@ export default function Inventory() {
                                     <label className="block text-sm text-slate-300 mb-1 font-medium">Precio de Venta *</label>
                                     <input
                                         required
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
+                                        type="text"
+                                        inputMode="decimal"
                                         value={formData.price}
-                                        onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        onChange={(e) => setFormData({ ...formData, price: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
                                     />
                                 </div>
                                 <div className="col-span-2">
                                     <label className="block text-sm text-slate-300 mb-1 font-medium">Costo de Compra *</label>
                                     <input
                                         required
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
+                                        type="text"
+                                        inputMode="decimal"
                                         value={formData.cost}
-                                        onChange={(e) => setFormData({ ...formData, cost: e.target.value })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        onChange={(e) => setFormData({ ...formData, cost: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
                                     />
                                 </div>
                                 <div className="col-span-2">
                                     <label className="block text-sm text-slate-300 mb-1 font-medium">Stock Inicial</label>
                                     <input
-                                        type="number"
-                                        min="0"
+                                        type="text"
+                                        inputMode="decimal"
                                         value={formData.stock}
-                                        onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        onChange={(e) => setFormData({ ...formData, stock: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
                                     />
                                 </div>
                                 <div className="col-span-2">
                                     <label className="block text-sm text-slate-300 mb-1 font-medium">Stock Mínimo</label>
                                     <input
-                                        type="number"
-                                        min="0"
+                                        type="text"
+                                        inputMode="decimal"
                                         value={formData.minStock}
-                                        onChange={(e) => setFormData({ ...formData, minStock: e.target.value })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        onChange={(e) => setFormData({ ...formData, minStock: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Punto de Reorden</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={formData.reorderPoint}
+                                        onChange={(e) => setFormData({ ...formData, reorderPoint: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="0 = sin alerta"
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Stock Objetivo (máx)</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={formData.maxStock}
+                                        onChange={(e) => setFormData({ ...formData, maxStock: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="para sugerir cuánto comprar"
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
                                     />
                                 </div>
                                 <div className="col-span-4 mt-2">
@@ -1454,7 +1926,7 @@ export default function Inventory() {
                 <ProductImporter
                     onClose={() => setShowImportModal(false)}
                     onSuccess={() => {
-                        fetchProducts();
+                        reload();
                         setShowImportModal(false);
                     }}
                 />
@@ -1467,7 +1939,7 @@ export default function Inventory() {
                     initialSKU={quickAddSKU}
                     onClose={() => setShowQuickAddModal(false)}
                     onSuccess={() => {
-                        fetchProducts();
+                        reload();
                     }}
                 />
             )}
@@ -1489,11 +1961,67 @@ export default function Inventory() {
                                     {' '} | Stock Total: <span className="font-bold text-white">{selectedProduct.stock}</span>
                                 </p>
                             </div>
-                            <button onClick={() => setShowBatchesModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
-                                <X size={24} />
-                            </button>
+                            <div className="flex items-center gap-2">
+                                {isOwner && (
+                                    <button
+                                        onClick={() => setShowAddBatchForm(v => !v)}
+                                        className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                                    >
+                                        <Plus size={16} /> Agregar lote
+                                    </button>
+                                )}
+                                <button onClick={() => setShowBatchesModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
+                                    <X size={24} />
+                                </button>
+                            </div>
                         </div>
-                        
+
+                        {/* A4: Formulario de alta de lote */}
+                        {isOwner && showAddBatchForm && (
+                            <form onSubmit={handleAddBatch} className="px-6 py-4 border-b border-slate-700 bg-slate-900/40 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                                <div className="sm:col-span-1">
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Nº Lote</label>
+                                    <input
+                                        type="text"
+                                        value={batchForm.batchNumber}
+                                        onChange={(e) => setBatchForm({ ...batchForm, batchNumber: e.target.value })}
+                                        placeholder="L-2026-001"
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-orange-500"
+                                    />
+                                </div>
+                                <div className="sm:col-span-1">
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Vencimiento</label>
+                                    <input
+                                        type="date"
+                                        value={batchForm.expiryDate}
+                                        onChange={(e) => setBatchForm({ ...batchForm, expiryDate: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                                    />
+                                </div>
+                                <div className="sm:col-span-1">
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Cantidad</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        value={batchForm.quantity}
+                                        onChange={(e) => setBatchForm({ ...batchForm, quantity: e.target.value })}
+                                        placeholder="0"
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                                    />
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={batchSubmitting}
+                                    className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
+                                >
+                                    {batchSubmitting ? 'Guardando...' : (<><Plus size={16} /> Sumar al stock</>)}
+                                </button>
+                                <p className="sm:col-span-4 text-[11px] text-orange-300/70 flex items-center gap-1.5">
+                                    <AlertTriangle size={13} /> Agregar un lote suma al stock del producto y queda registrado en el Kardex. Si el nº de lote ya existe, se acumula.
+                                </p>
+                            </form>
+                        )}
+
                         <div className="flex-1 overflow-y-auto p-0">
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-slate-900/80 sticky top-0 z-10 shadow-md">
@@ -1501,12 +2029,13 @@ export default function Inventory() {
                                         <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700">Nº Lote</th>
                                         <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700">Vencimiento</th>
                                         <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700 text-right">Stock</th>
+                                        {isOwner && <th className="px-6 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700 text-right">Acción</th>}
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-700/50">
                                     {batchesLoading ? (
                                         <tr>
-                                            <td colSpan={3} className="px-6 py-12 text-center text-slate-400">
+                                            <td colSpan={isOwner ? 4 : 3} className="px-6 py-12 text-center text-slate-400">
                                                 <div className="flex justify-center mb-2">
                                                     <div className="w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
                                                 </div>
@@ -1515,7 +2044,7 @@ export default function Inventory() {
                                         </tr>
                                     ) : batchesData.length === 0 ? (
                                         <tr>
-                                            <td colSpan={3} className="px-6 py-8 text-center text-slate-400">
+                                            <td colSpan={isOwner ? 4 : 3} className="px-6 py-8 text-center text-slate-400">
                                                 No hay lotes con stock positivo para este producto.
                                             </td>
                                         </tr>
@@ -1523,7 +2052,7 @@ export default function Inventory() {
                                         batchesData.map((batch) => {
                                             const isExpired = new Date(batch.expiryDate) < new Date();
                                             const isExpiringSoon = new Date(batch.expiryDate) < new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
-                                            
+
                                             return (
                                                 <tr key={batch.id} className="hover:bg-slate-700/20 transition-colors">
                                                     <td className="px-6 py-4 text-sm font-medium text-white font-mono">
@@ -1531,12 +2060,23 @@ export default function Inventory() {
                                                     </td>
                                                     <td className="px-6 py-4 text-sm">
                                                         <span className={`px-2 py-1 rounded-full text-xs font-semibold ${isExpired ? 'bg-red-900/40 text-red-400' : isExpiringSoon ? 'bg-amber-900/40 text-amber-400' : 'bg-emerald-900/40 text-emerald-400'}`}>
-                                                            {new Date(batch.expiryDate).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                                            {isExpired ? '⚠ ' : ''}{new Date(batch.expiryDate).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                                                         </span>
                                                     </td>
                                                     <td className="px-6 py-4 text-sm text-right font-bold text-white">
                                                         {batch.stock}
                                                     </td>
+                                                    {isOwner && (
+                                                        <td className="px-6 py-4 text-right">
+                                                            <button
+                                                                onClick={() => handleWriteoffBatch(batch.id, batch.batchNumber)}
+                                                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${isExpired ? 'bg-red-600/20 border-red-600/50 text-red-300 hover:bg-red-600/40' : 'border-slate-600 text-slate-400 hover:bg-slate-700'}`}
+                                                                title="Dar de baja este lote (merma)"
+                                                            >
+                                                                Dar de baja
+                                                            </button>
+                                                        </td>
+                                                    )}
                                                 </tr>
                                             );
                                         })
@@ -1544,6 +2084,119 @@ export default function Inventory() {
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ==========================================
+                MODAL: EDICIÓN MASIVA (A2 — categoría / precio)
+               ========================================== */}
+            {showBulkEditModal && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowBulkEditModal(false)}>
+                    <div className="bg-slate-800 rounded-2xl w-full max-w-lg shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
+                        <div className="bg-gradient-to-r from-blue-900/50 to-cyan-900/30 px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+                            <div>
+                                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                    <Edit size={20} className="text-blue-400" />
+                                    Edición masiva
+                                </h2>
+                                <p className="text-sm text-slate-400 mt-1">
+                                    {selectedProductIds.length} producto{selectedProductIds.length === 1 ? '' : 's'} seleccionado{selectedProductIds.length === 1 ? '' : 's'}
+                                </p>
+                            </div>
+                            <button onClick={() => setShowBulkEditModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleBulkEdit} className="p-6 space-y-5">
+                            <div className="bg-slate-900/40 border border-slate-700 rounded-lg p-3 flex items-start gap-2">
+                                <Shield size={16} className="text-blue-400 mt-0.5 shrink-0" />
+                                <p className="text-xs text-slate-400">
+                                    Solo se cambia lo que llenes. El <strong className="text-slate-300">stock</strong> y el <strong className="text-slate-300">costo</strong> no se tocan (el costo lo calcula el sistema por promedio ponderado).
+                                </p>
+                            </div>
+
+                            {/* Categoría */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-2 font-medium flex items-center gap-1.5">
+                                    <Tag size={15} className="text-slate-400" /> Categoría
+                                </label>
+                                <input
+                                    type="text"
+                                    list="bulk-category-list"
+                                    value={bulkEditForm.category}
+                                    onChange={(e) => setBulkEditForm({ ...bulkEditForm, category: e.target.value })}
+                                    placeholder="Dejar vacío para no cambiar"
+                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                                />
+                                <datalist id="bulk-category-list">
+                                    {categories.map((c) => <option key={c} value={c} />)}
+                                </datalist>
+                            </div>
+
+                            {/* Precio */}
+                            <div>
+                                <label className="block text-sm text-slate-300 mb-2 font-medium flex items-center gap-1.5">
+                                    <DollarSign size={15} className="text-slate-400" /> Precio
+                                </label>
+                                <div className="grid grid-cols-3 gap-2 mb-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: '', priceValue: '' })}
+                                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === '' ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                    >
+                                        Sin cambio
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: 'set', priceValue: '' })}
+                                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === 'set' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                    >
+                                        Fijar C$
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: 'pct', priceValue: '' })}
+                                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === 'pct' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                    >
+                                        Ajustar %
+                                    </button>
+                                </div>
+                                {bulkEditForm.priceMode !== '' && (
+                                    <div className="relative">
+                                        <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={bulkEditForm.priceValue}
+                                            onChange={(e) => setBulkEditForm({ ...bulkEditForm, priceValue: bulkEditForm.priceMode === 'pct' ? sanitizeSignedDecimal(e.target.value) : sanitizeDecimalInput(e.target.value) })}
+                                            placeholder={bulkEditForm.priceMode === 'set' ? 'Nuevo precio en C$' : 'Ej: 10 (sube 10%) o -5 (baja 5%)'}
+                                            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                                        />
+                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">
+                                            {bulkEditForm.priceMode === 'set' ? 'C$' : '%'}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex gap-3 pt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowBulkEditModal(false)}
+                                    className="flex-1 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={bulkEditSubmitting}
+                                    className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+                                >
+                                    {bulkEditSubmitting ? 'Aplicando...' : `Aplicar a ${selectedProductIds.length}`}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}

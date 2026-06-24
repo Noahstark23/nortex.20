@@ -9,14 +9,26 @@
   body * {
     visibility: hidden;
     height: 0;
-    overflow: hidden; 
+    overflow: hidden;
   }
   #receipt-area, #receipt-area *,
   #shift-report-area, #shift-report-area * {
     visibility: visible;
     height: auto;
     overflow: visible;
+    /* 🖨️ ANULAR EL TEMA OBSIDIAN: papel térmico = tinta negra sobre blanco.
+       Sin fondos oscuros, sin sombras ni glows (no imprimen / arruinan el ticket). */
+    background: transparent !important;
+    color: #000 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+    border-color: #000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
+  /* El contenedor SÍ lleva fondo blanco absoluto (los hijos van transparentes). */
   #receipt-area, #shift-report-area {
     position: fixed;
     left: 0;
@@ -24,6 +36,9 @@
     width: 100%;
     margin: 0;
     padding: 0;
+    background: #fff !important;
+    color: #000 !important;
+    box-shadow: none !important;
   }
   @page {
     size: 80mm auto;
@@ -32,29 +47,87 @@
 }
 
 /* ==========================================
-   SCROLLBAR CORPORATIVO (CLEAN UI)
+   FUNDACIÓN GLOBAL — TEMA "OBSIDIAN"
    ========================================== */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-track {
-  background: #f1f5f9; /* slate-100 */
-}
-::-webkit-scrollbar-thumb {
-  background: #cbd5e1; /* slate-300 */
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8; /* slate-400 */
+@layer base {
+  body {
+    @apply bg-surface-950 text-slate-100 antialiased selection:bg-brand selection:text-white;
+    /* Ligaduras y variantes que hacen ver "caro" al tipo de letra */
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    /* ERP = números por todos lados: que SIEMPRE alineen en columna */
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Scrollbar fino y oscuro (el anterior era light y chocaba con la UI) */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2e2e33;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #52525b;
+  }
 }
 
 /* ==========================================
-   FUNDACIÓN GLOBAL (LIGHT MODE OPERATIVO)
+   PRIMITIVAS DE COMPONENTE (adopción incremental)
    ========================================== */
-body {
-  background-color: #f8fafc; /* Fondo limpio y claro para el sistema (slate-50) */
-  color: #1e293b; /* Texto oscuro de alto contraste (slate-800) */
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@layer components {
+  /* Panel/tarjeta base del sistema — borde hairline, sombra difusa */
+  .panel-premium {
+    @apply bg-surface-900 rounded-2xl border border-white/[0.06] shadow-premium;
+  }
+  .panel-premium-light {
+    @apply bg-white rounded-2xl border border-slate-100 shadow-premium-light;
+  }
+
+  /* Botón primario de marca — táctil (active:scale) y con glow al hover */
+  .btn-primary {
+    @apply bg-brand text-white font-semibold px-4 py-2 rounded-xl
+           transition-all duration-200 active:scale-[0.98]
+           hover:bg-brand-hover hover:shadow-glow shadow-brand/30
+           border border-transparent focus:outline-none focus:ring-2 focus:ring-brand/40;
+  }
+  .btn-ghost {
+    @apply text-slate-300 font-medium px-4 py-2 rounded-xl border border-white/[0.06]
+           transition-all duration-200 active:scale-[0.98] hover:bg-white/[0.04] hover:text-white;
+  }
+
+  /* Input sin caja gris: línea base + foco de marca */
+  .input-premium {
+    @apply w-full bg-transparent border-b border-white/10 px-0 py-2.5 text-slate-100
+           placeholder:text-slate-500 focus:border-brand focus:ring-0 focus:outline-none
+           transition-colors;
+  }
+
+  /* Estados como badges suaves, nunca texto plano */
+  .badge-soft-success {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium
+           bg-emerald-500/10 text-emerald-400 border border-emerald-500/20;
+  }
+  .badge-soft-warning {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium
+           bg-amber-500/10 text-amber-400 border border-amber-500/20;
+  }
+  .badge-soft-danger {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium
+           bg-red-500/10 text-red-400 border border-red-500/20;
+  }
+
+  /* Tablas densas: solo divisores horizontales tenues, números en mono */
+  .table-premium th {
+    @apply text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 pb-3;
+  }
+  .table-premium td {
+    @apply border-b border-white/[0.04] py-3 text-sm;
+  }
+  .table-premium .num {
+    @apply font-mono tabular-nums;
+  }
 }

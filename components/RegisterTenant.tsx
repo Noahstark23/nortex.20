@@ -73,8 +73,12 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
           sku: 'MOCK-SKU'
         }));
         localStorage.setItem('nortex_pending_cart', JSON.stringify(persistentCart));
+        // Venía del catálogo con un carrito: lo llevamos directo a cobrar.
+        navigate('/app/pos');
+      } else {
+        // Registro normal: lo recibe el panel con la bienvenida + primeros pasos.
+        navigate('/app/dashboard?welcome=1');
       }
-      navigate('/app/pos');
 
     } catch (err: any) {
       setError(err.message);

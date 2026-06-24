@@ -30,6 +30,9 @@ model Tenant {
   subscriptionEndsAt   DateTime? // Fecha de vencimiento de la suscripción activa
   trialEndsAt          DateTime? // Fecha límite del trial gratuito (14 días desde registro)
   theftAlertThreshold  Decimal   @default(500) @db.Decimal(10, 2)
+  // Costo de entrega plano del catálogo público (lo fija el negocio; el
+  // cliente NUNCA lo manda — se calcula server-side al crear el Pedido).
+  deliveryFee          Decimal   @default(0) @db.Decimal(10, 2)
   // Campos Fiscales DGI
   address              String? // Dirección fiscal
   phone                String? // Teléfono del negocio
@@ -49,6 +52,7 @@ model Tenant {
   products         Product[]
   productBatches   ProductBatch[]
   kardexMovements  KardexMovement[]
+  stockCounts      StockCount[]
   purchases        Purchase[]
   manualPayments   ManualPayment[]
   quotations       Quotation[]
@@ -96,6 +100,7 @@ model User {
   auditLogs       AuditLog[]
   productsCreated Product[]
   kardexMovements KardexMovement[]
+  stockCounts     StockCount[]
   passwordResets  PasswordReset[]
   cashMovements   CashMovement[]
   employeeProfile Employee?
@@ -177,8 +182,9 @@ model Supplier {
   category    String?
   createdAt   DateTime @default(now())
 
-  tenant    Tenant     @relation(fields: [tenantId], references: [id])
-  purchases Purchase[]
+  tenant             Tenant     @relation(fields: [tenantId], references: [id])
+  purchases          Purchase[]
+  defaultForProducts Product[]  @relation("DefaultSupplier")
 
   @@index([tenantId])
 }
@@ -247,6 +253,7 @@ model Employee {
   hireDate              DateTime @default(now())
   bankAccount           String?
   status                String   @default("ACTIVE") // ACTIVE, SUSPENDED, TERMINATED
+  jornada               String   @default("DIURNA") // DIURNA 8h | NOCTURNA 7h | MIXTA 7.5h (Art. 51)
 
   tenant   Tenant    @relation(fields: [tenantId], references: [id])
   user     User?     @relation(fields: [userId], references: [id])
@@ -259,7 +266,91 @@ model Employee {
   salaryAdvances        SalaryAdvance[]
   terminationSettlement TerminationSettlement?
   payrollLines          PayrollLine[]
+  aguinaldos            Aguinaldo[]
+  contracts             EmploymentContract[]
+  judicialDeductions    JudicialDeduction[]
 
+  @@index([tenantId])
+}
+
+// Deducción judicial recurrente — pensión alimenticia / embargo (Art. 88 Ley
+// 185; tienen prioridad legal sobre otras deducciones). Monto fijo o % del
+// salario disponible (neto de deducciones de ley).
+model JudicialDeduction {
+  id          String    @id @default(cuid())
+  tenantId    String
+  employeeId  String
+  type        String // PENSION_ALIMENTICIA | EMBARGO | OTRO
+  amount      Decimal?  @db.Decimal(10, 2) // monto fijo (alternativa a percentage)
+  percentage  Float? // % del salario disponible (alternativa a amount)
+  beneficiary String? // a quién se paga / N° de expediente judicial
+  priority    Int       @default(1) // menor = mayor prioridad (pensión = 1)
+  status      String    @default("ACTIVE") // ACTIVE | ENDED
+  startDate   DateTime  @default(now())
+  endDate     DateTime?
+  createdBy   String
+  createdAt   DateTime  @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
+}
+
+// Calendario de feriados (Art. 66 Ley 185). Los nacionales se siembran por
+// tenant/año; el negocio puede agregar fiestas locales (national = false).
+model Holiday {
+  id        String   @id @default(cuid())
+  tenantId  String
+  date      DateTime @db.Date
+  name      String
+  national  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, date])
+  @@index([tenantId])
+}
+
+// Expediente digital — contrato de trabajo (Art. 19-28 Ley 185; el MITRAB
+// exige contrato escrito). Un empleado puede tener varios (renovaciones).
+model EmploymentContract {
+  id           String    @id @default(cuid())
+  tenantId     String
+  employeeId   String
+  type         String // INDETERMINADO | DETERMINADO | POR_OBRA
+  startDate    DateTime
+  endDate      DateTime? // para DETERMINADO / POR_OBRA
+  probationEnd DateTime? // fin del período de prueba (hasta 30 días, Art. 28)
+  salary       Decimal   @db.Decimal(10, 2)
+  position     String? // cargo
+  notes        String?   @db.Text
+  status       String    @default("ACTIVE") // ACTIVE | ENDED
+  createdBy    String
+  createdAt    DateTime  @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
+}
+
+// Corrida de aguinaldo (treceavo mes) — Art. 93-95 Ley 185.
+// Una fila por empleado y año de corrida (período dic[year-1] → nov[year]).
+model Aguinaldo {
+  id            String   @id @default(cuid())
+  tenantId      String
+  employeeId    String
+  year          Int
+  diasLaborados Int
+  baseSalary    Decimal  @db.Decimal(10, 2)
+  monto         Decimal  @db.Decimal(10, 2)
+  status        String   @default("PAGADO")
+  paidAt        DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, year])
   @@index([tenantId])
 }
 
@@ -291,11 +382,28 @@ model Payroll {
   inssPatronal Decimal @db.Decimal(10, 2) // 22.5% (INSS Patronal)
   inatec       Decimal @db.Decimal(10, 2) // 2% (INATEC)
 
+  // Fase A RRHH: horas extra (Art. 62 Ley 185, al doble) y descuento de adelantos
+  overtimePay      Decimal @default(0) @db.Decimal(10, 2)
+  horasExtra       Float   @default(0)
+  advanceDeduction Decimal @default(0) @db.Decimal(10, 2)
+
+  // Fase C2: feriados trabajados (Art. 68, recargo del 100% por día)
+  holidayPay   Decimal @default(0) @db.Decimal(10, 2)
+  diasFeriados Float   @default(0)
+
+  // Fase A p2: ausencias sin goce de salario (descuentan días trabajados)
+  absenceDeduction Decimal @default(0) @db.Decimal(10, 2)
+  diasAusencia     Float   @default(0)
+
+  // Fase C4: deducciones judiciales (pensión alimenticia / embargos)
+  judicialDeduction Decimal @default(0) @db.Decimal(10, 2)
+
   status    String    @default("PENDIENTE") // PENDIENTE | PAGADO
   paidAt    DateTime?
   createdAt DateTime  @default(now())
 
-  employee Employee @relation(fields: [employeeId], references: [id])
+  employee         Employee        @relation(fields: [employeeId], references: [id])
+  advancesDeducted SalaryAdvance[]
 
   @@unique([employeeId, month, year])
   @@index([tenantId])
@@ -484,6 +592,66 @@ model LedgerHead {
   updatedAt DateTime @updatedAt
 }
 
+// ==========================================
+// WHATSAPP — Agente IA (RAG) · infraestructura Fase 1
+// tenantId como escalar (sin relación) para no tocar el bloque de
+// relaciones de Tenant; el aislamiento se aplica en la capa de servicio.
+// ==========================================
+
+// Mapea un número de WhatsApp (phone_number_id de Meta) → tenant.
+// Un solo Meta App de plataforma (WHATSAPP_APP_SECRET global verifica la
+// firma de TODO webhook); cada tenant trae su número/WABA y su access token
+// de envío (cifrado con crypto.encryptField).
+model WhatsAppChannel {
+  id             String   @id @default(cuid())
+  tenantId       String
+  phoneNumberId  String   @unique // ID del número en Meta — routing de entrada
+  wabaId         String? // WhatsApp Business Account
+  displayPhone   String? // +505… legible
+  accessTokenEnc String   @db.Text // token de envío, CIFRADO (enc:v1:…)
+  botScope       String   @default("B2C") // B2C | B2B | BOTH
+  defaultMode    String   @default("BOT") // BOT | HUMAN
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+// Una conversación por (tenant, waId). Mantiene el estado de handoff.
+model WhatsAppConversation {
+  id             String    @id @default(cuid())
+  tenantId       String
+  waId           String // número del cliente final (E.164 sin +)
+  customerId     String? // resuelto contra Customer (null = onboarding pendiente)
+  status         String    @default("BOT") // BOT | HUMAN | CLOSED
+  lastInboundAt  DateTime?
+  lastOutboundAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  messages WhatsAppMessage[]
+
+  @@unique([tenantId, waId])
+  @@index([tenantId, status])
+}
+
+model WhatsAppMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  tenantId       String
+  direction      String // IN | OUT
+  waMessageId    String?  @unique // id de Meta — idempotencia de entrada
+  type           String   @default("text")
+  body           String   @db.Text
+  status         String? // sent | delivered | read | failed (salientes)
+  createdAt      DateTime @default(now())
+
+  conversation WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([conversationId])
+}
+
 model B2BOrder {
   id        String   @id @default(cuid())
   tenantId  String
@@ -535,6 +703,13 @@ model Product {
   minStock Float  @default(0) // Stock mínimo para alerta
   unit     String @default("unidad") // kg, litro, unidad, caja, etc.
 
+  // Reposición (Bodeguero B2)
+  reorderPoint Float @default(0) // Punto de reorden: stock ≤ esto → reponer
+  maxStock     Float @default(0) // Stock objetivo/máximo (para sugerir cuánto comprar)
+
+  // Proveedor por defecto (Bodeguero C2) — agrupa/prellena la orden de compra
+  defaultSupplierId String?
+
   // Catálogo Público
   isPublished Boolean @default(false) // Visible en catálogo público
   imageUrl    String? // URL de imagen del producto
@@ -553,8 +728,11 @@ model Product {
   kardexMovements KardexMovement[]
   pedidoItems     PedidoItem[]
   batches         ProductBatch[]
+  stockCountItems StockCountItem[]
+  defaultSupplier Supplier?        @relation("DefaultSupplier", fields: [defaultSupplierId], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, sku])
+  @@index([defaultSupplierId])
   @@index([tenantId])
   @@index([category])
 }
@@ -618,6 +796,47 @@ model ProductBatch {
   @@index([tenantId])
   @@index([productId])
   @@index([expiryDate])
+}
+
+// ==========================================
+// TOMA FÍSICA / CONTEO CÍCLICO (Bodeguero B1)
+// ==========================================
+
+model StockCount {
+  id        String    @id @default(cuid())
+  tenantId  String
+  status    String    @default("OPEN") // OPEN | CLOSED | CANCELLED
+  scope     String    @default("ALL") // ALL | CATEGORY
+  category  String? // si scope=CATEGORY
+  notes     String?   @db.Text
+  createdBy String
+  createdAt DateTime  @default(now())
+  closedAt  DateTime?
+  closedBy  String? // userId que cerró (sin relación, solo traza)
+
+  tenant  Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  creator User             @relation(fields: [createdBy], references: [id])
+  items   StockCountItem[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model StockCountItem {
+  id        String    @id @default(cuid())
+  countId   String
+  productId String
+  expected  Float // snapshot del stock del sistema al crear el conteo
+  counted   Float? // conteo físico capturado (null = aún no contado)
+  diff      Float     @default(0) // counted - expected (calculado al cerrar)
+  countedAt DateTime?
+
+  count   StockCount @relation(fields: [countId], references: [id], onDelete: Cascade)
+  product Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([countId, productId])
+  @@index([countId])
+  @@index([productId])
 }
 
 // ==========================================
@@ -805,6 +1024,8 @@ model LeaveRequest {
   startDate  DateTime
   endDate    DateTime
   status     String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  reason     String?  @db.Text
+  createdAt  DateTime @default(now())
 
   tenant   Tenant   @relation(fields: [tenantId], references: [id])
   employee Employee @relation(fields: [employeeId], references: [id])
@@ -859,14 +1080,18 @@ model SalaryAdvance {
   fee                Decimal @default(0) @db.Decimal(10, 2)
   status             String  @default("PENDING") // PENDING, APPROVED, REJECTED, DEDUCTED
   repaymentPayrollId String?
+  // Fase A RRHH: enlaza el adelanto a la nómina (Payroll) donde se descontó.
+  payrollId          String?
 
   tenant           Tenant       @relation(fields: [tenantId], references: [id])
   employee         Employee     @relation(fields: [employeeId], references: [id])
   repaymentPayroll PayrollLine? @relation(fields: [repaymentPayrollId], references: [id])
+  payroll          Payroll?     @relation(fields: [payrollId], references: [id])
 
   @@index([tenantId])
   @@index([employeeId])
   @@index([repaymentPayrollId])
+  @@index([payrollId])
 }
 
 model TerminationSettlement {
@@ -943,10 +1168,190 @@ model Motorizado {
   vehiculoPlaca        String?  @db.VarChar(20)
   createdAt            DateTime @default(now())
 
-  tenant  Tenant?  @relation(fields: [tenantId], references: [id])
-  pedidos Pedido[]
+  // ── Red NORTEX: registro público + KYC + login teléfono+PIN ──
+  cedula          String? @db.VarChar(25) // Cédula de identidad (KYC)
+  pinHash         String? // bcrypt del PIN — login del driver (reemplaza el magic-link)
+  kycStatus       String  @default("PENDIENTE") // PENDIENTE | APROBADO | RECHAZADO
+  kycNota         String? @db.Text // Motivo de rechazo / notas del revisor
+  fotoCedulaUrl   String? // KYC: foto de la cédula (Cloudinary)
+  fotoVehiculoUrl String? // KYC: foto de la moto con placa visible (Cloudinary)
+
+  // ── FASE 3: Wallet del Real Money Protocol ──
+  // PROYECCIÓN del saldo — la verdad es el libro firmado (DriverWalletMovement).
+  // Se verifica recomputando contra la cadena; jamás se firma el saldo mutable.
+  walletBalance Decimal @default(0) @db.Decimal(12, 2)
+
+  tenant      Tenant?                @relation(fields: [tenantId], references: [id])
+  pedidos     Pedido[]
+  movimientos DriverWalletMovement[]
 
   @@index([tenantId])
+  @@index([telefono])
+  @@index([kycStatus])
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// FASE A — Períodos fiscales (bloqueo del cierre)
+// Una fila existe SOLO cuando el período fue cerrado (o reabierto). Sin fila →
+// el período se trata como ABIERTO (no rompe los flujos existentes). El guard
+// assertPeriodOpen bloquea cualquier asiento cuya fecha caiga en CLOSED.
+// ══════════════════════════════════════════════════════════════════════════
+model FiscalPeriod {
+  id           String    @id @default(cuid())
+  tenantId     String
+  year         Int
+  month        Int // 1-12
+  status       String    @default("CLOSED") // CLOSED | OPEN (reabierto)
+  closedBy     String?
+  closedAt     DateTime?
+  reopenedBy   String?
+  reopenedAt   DateTime?
+  reopenReason String?   @db.Text
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([tenantId, year, month])
+  @@index([tenantId])
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// FASE B — Cumplimiento (parte 1): parametrización + retenciones sufridas
+// ══════════════════════════════════════════════════════════════════════════
+
+// B4 — Tasas fiscales por tenant. Las constantes del código pasan a defaults;
+// el contador ajusta según el contribuyente (INSS 21.5/<50 emp · 22.5/≥50,
+// Anticipo IR/PMD 1-3%, IMI por alcaldía).
+model TaxConfig {
+  tenantId         String   @id
+  inssPatronalRate Decimal  @default(0.225) @db.Decimal(6, 4)
+  anticipoIrRate   Decimal  @default(0.0100) @db.Decimal(6, 4)
+  imiRate          Decimal  @default(0.0100) @db.Decimal(6, 4)
+  salarioMinimo    Decimal  @default(0) @db.Decimal(12, 2)
+  updatedAt        DateTime @updatedAt
+}
+
+// B6 — Tipo de cambio (deslizamiento del córdoba). Mata el 36.56 hardcodeado.
+// Se usa la fila con fecha <= hoy más reciente. Carga manual o semilla BCN.
+model ExchangeRate {
+  id        String   @id @default(cuid())
+  tenantId  String
+  fecha     DateTime @db.Date
+  rate      Decimal  @db.Decimal(10, 4) // C$ por US$
+  source    String   @default("MANUAL") // MANUAL | BCN
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, fecha])
+  @@index([tenantId, fecha])
+}
+
+// B1 — Retención SUFRIDA: el cliente (empresa/Estado) le retuvo IR 2% / IMI 1%
+// al negocio. Es CRÉDITO contra el Anticipo IR del mes → deja de pagar de más.
+model RetencionSufrida {
+  id               String   @id @default(cuid())
+  tenantId         String
+  fecha            DateTime
+  clienteRetenedor String   @db.VarChar(160)
+  tipo             String // IR_2 | IMI_1
+  baseAmount       Decimal  @db.Decimal(12, 2)
+  amount           Decimal  @db.Decimal(12, 2)
+  numeroConstancia String?  @db.VarChar(60)
+  saleId           String?
+  createdBy        String
+  createdAt        DateTime @default(now())
+
+  @@index([tenantId, fecha])
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// FASE B parte 2 — Activos fijos + depreciación (Ley 822)
+// ══════════════════════════════════════════════════════════════════════════
+model FixedAsset {
+  id               String   @id @default(cuid())
+  tenantId         String
+  nombre           String   @db.VarChar(160)
+  categoria        String // EDIFICIO | VEHICULO | MAQUINARIA | MOBILIARIO | COMPUTO | OTRO
+  costo            Decimal  @db.Decimal(14, 2)
+  fechaAdquisicion DateTime @db.Date
+  vidaUtilMeses    Int // método de línea recta (cuota = costo / vidaUtilMeses)
+
+  depreciacionAcumulada Decimal @default(0) @db.Decimal(14, 2)
+  mesesDepreciados      Int     @default(0)
+  // "YYYY-MM" de la última cuota posteada → idempotencia del corrido mensual.
+  ultimoPeriodoDep      String?
+  estado                String  @default("ACTIVO") // ACTIVO | BAJA
+
+  createdBy String
+  createdAt DateTime @default(now())
+
+  movimientos DepreciationEntry[]
+
+  @@index([tenantId])
+  @@index([estado])
+}
+
+// Cuota mensual posteada (auditoría + idempotencia dura por @@unique).
+model DepreciationEntry {
+  id        String   @id @default(cuid())
+  assetId   String
+  tenantId  String
+  year      Int
+  month     Int
+  amount    Decimal  @db.Decimal(14, 2)
+  createdAt DateTime @default(now())
+
+  asset FixedAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, year, month])
+  @@index([tenantId])
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// FASE C — Panel del contador: estado de obligaciones del mes (checklist)
+// ══════════════════════════════════════════════════════════════════════════
+model ObligationStatus {
+  id        String    @id @default(cuid())
+  tenantId  String
+  year      Int
+  month     Int
+  key       String // IVA | ANTICIPO_IR | IMI | INSS | INATEC
+  declarado Boolean   @default(false)
+  markedBy  String?
+  markedAt  DateTime?
+  updatedAt DateTime  @updatedAt
+
+  @@unique([tenantId, year, month, key])
+  @@index([tenantId])
+}
+
+// el UPDATE con increment toma row-lock → serializa los appends del driver).
+model DriverLedgerHead {
+  motorizadoId String   @id
+  lastSeq      Int      @default(0)
+  lastHash     String   @default("GENESIS")
+  updatedAt    DateTime @updatedAt
+}
+
+// Libro inmutable del wallet del repartidor (tamper-evidence).
+// amount: + acredita (comisión por entrega), − debita (pago de Nortex al driver).
+model DriverWalletMovement {
+  id           String   @id @default(cuid())
+  motorizadoId String
+  tenantId     String? // Negocio para el que se repartió (null en pagos/ajustes de plataforma)
+  pedidoId     String?  @unique // 1 entrega = 1 comisión (idempotencia a nivel de DB)
+  type         String // COMISION_ENTREGA | PAGO_NORTEX | AJUSTE
+  amount       Decimal  @db.Decimal(12, 2)
+  descripcion  String   @db.Text
+  createdAt    DateTime @default(now())
+
+  // Cadena firmada (mismo esquema que CashMovement): null = legacy/sin claves.
+  seq       Int?
+  prevHash  String?
+  signature String?
+
+  motorizado Motorizado @relation(fields: [motorizadoId], references: [id])
+
+  @@unique([motorizadoId, seq])
+  @@index([motorizadoId])
+  @@index([type])
 }
 
 model Pedido {
@@ -1064,12 +1469,33 @@ model Loan {
   // Historial de cobros
   payments Repayment[]
 
+  // Plan de cuotas (Cobranza B2)
+  schedule LoanInstallment[]
+
   // Asignación de Ruta (Motorizado encargado de cobrar)
   assignedToId String?
   assignedTo   User?   @relation("LoanCollector", fields: [assignedToId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Cuota del plan de pago de un préstamo (Cobranza B2)
+model LoanInstallment {
+  id         String   @id @default(uuid())
+  loanId     String
+  number     Int // Nº de cuota (1..n)
+  dueDate    DateTime // Vencimiento de la cuota
+  amountDue  Decimal  @db.Decimal(10, 2)
+  amountPaid Decimal  @default(0) @db.Decimal(10, 2)
+  status     String   @default("PENDING") // PENDING | PARTIAL | PAID
+  createdAt  DateTime @default(now())
+
+  loan Loan @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  @@unique([loanId, number])
+  @@index([loanId])
+  @@index([dueDate])
 }
 
 model Repayment {
@@ -1096,6 +1522,21 @@ model RouteExpense {
   createdAt   DateTime @default(now())
 
   shift Shift? @relation(fields: [shiftId], references: [id])
+}
+
+// Entrega de efectivo del cobrador a la bóveda del prestamista (Cobranza A3)
+model CollectorDeposit {
+  id            String   @id @default(uuid())
+  lenderId      String // El Tenant prestamista que recibe la entrega
+  collectorId   String? // userId del cobrador (si está en el sistema)
+  collectorName String? // Nombre del cobrador (respaldo de auditoría)
+  amount        Decimal  @db.Decimal(12, 2) // Efectivo entregado
+  notes         String?  @db.Text
+  receivedBy    String // userId del jefe que registró la entrega
+  date          DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([lenderId])
 }
 
 // ==========================================

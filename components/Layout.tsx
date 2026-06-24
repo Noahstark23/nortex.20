@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle } from 'lucide-react';
 import { PinPadClock } from './PinPadClock';
+import OnboardingHub from './OnboardingHub';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -141,6 +142,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       : userRole === 'ACCOUNTANT'
       ? [
         // ── CONTADOR — vista reducida ────────────────────
+        { path: '/app/accounting', label: 'Contabilidad',      shortLabel: 'Contab.',    group: 'Fiscal',    icon: BookOpen },
         { path: '/app/reports',   label: 'Reportes / Fiscal', shortLabel: 'Fiscal',     group: 'Fiscal',    icon: PieChart },
         { path: '/app/purchases', label: 'Compras',           shortLabel: 'Compras',    group: 'Fiscal',    icon: Truck    },
         { path: '/app/audit',     label: 'Auditoría',         shortLabel: 'Auditoría',  group: 'Fiscal',    icon: Shield   },
@@ -152,6 +154,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           ? [{ path: '/app/cash-registers', label: 'Cajas y Arqueos', shortLabel: 'Cajas', group: 'Ventas', icon: Monitor }]
           : []),
         { path: '/app/inventory',   label: 'Inventario',      shortLabel: 'Stock',    group: 'Ventas', icon: Package  },
+        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
+          ? [{ path: '/app/inventory-count', label: 'Toma Física', shortLabel: 'Conteo', group: 'Ventas', icon: ClipboardList }]
+          : []),
         { path: '/app/delivery',    label: 'Entregas',        shortLabel: 'Entregas', group: 'Ventas', icon: Truck    },
         { path: '/app/quotations',  label: 'Cotizaciones',    shortLabel: 'Cotiz.',   group: 'Ventas', icon: FileText },
         { path: '/app/clients',     label: 'Clientes (CRM)',  shortLabel: 'Clientes', group: 'Ventas', icon: Users    },
@@ -168,6 +173,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         { path: '/app/dashboard',   label: 'Finanzas',       shortLabel: 'Finanzas', group: 'Finanzas', icon: LayoutGrid },
         { path: '/app/receivables', label: 'Cobranza',       shortLabel: 'Cobros',   group: 'Finanzas', icon: Wallet     },
         { path: '/app/billing',     label: 'Facturación',    shortLabel: 'Facturas', group: 'Finanzas', icon: CreditCard },
+        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
+          ? [{ path: '/app/accounting', label: 'Contabilidad', shortLabel: 'Contab.', group: 'Finanzas', icon: BookOpen }]
+          : []),
         { path: '/app/reports',     label: 'Reportes',       shortLabel: 'Reportes', group: 'Finanzas', icon: PieChart   },
         ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
           ? [
@@ -175,6 +183,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             { path: '/app/audit',            label: 'Auditoría',        shortLabel: 'Auditoría',group: 'Finanzas',       icon: Shield    },
           ]
           : []),
+
+        // ── PERSONAL ────────────────────────────────────
+        { path: '/app/mi-espacio', label: 'Mi Espacio',       shortLabel: 'Mi Espacio', group: 'Personal', icon: UserCircle },
 
         // ── ADMINISTRACIÓN ──────────────────────────────
         { path: '/app/hr',        label: 'Recursos Humanos', shortLabel: 'RRHH',   group: 'Administración', icon: Briefcase },
@@ -184,15 +195,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   ];
 
   return (
-    <div className="flex h-screen w-screen bg-slate-900 overflow-hidden">
+    <div className="flex h-screen w-screen bg-surface-950 overflow-hidden">
       {/* DESKTOP SIDEBAR */}
-      <aside className="hidden lg:flex w-64 bg-nortex-900 border-r border-nortex-800 flex-col justify-between transition-all duration-300">
+      <aside className="hidden lg:flex w-64 bg-nortex-900 border-r border-white/[0.06] flex-col justify-between transition-all duration-300">
         <div>
-          <div className="h-16 flex items-center justify-start px-6 border-b border-nortex-800">
-            <div className="w-8 h-8 bg-nortex-accent rounded-lg flex items-center justify-center mr-3 shadow-[0_0_15px_rgba(16,185,129,0.4)]">
-              <span className="font-bold text-nortex-900 text-lg">N</span>
+          <div className="h-16 flex items-center justify-start px-6 border-b border-white/[0.06]">
+            <div className="w-8 h-8 bg-nortex-accent rounded-lg flex items-center justify-center mr-3 shadow-glow shadow-emerald-500/40">
+              <span className="font-bold text-surface-950 text-lg">N</span>
             </div>
-            <span className="font-mono font-bold text-white tracking-widest">NORTEX</span>
+            <span className="font-bold text-white text-lg tracking-tight">Nortex<span className="text-nortex-accent">.</span></span>
           </div>
 
           <nav className="p-4 space-y-1 mt-4 overflow-y-auto max-h-[calc(100vh-160px)] custom-scrollbar">
@@ -203,10 +214,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   key={item.path}
                   to={item.path}
                   className={({ isActive }) => `
-                    w-full flex items-center justify-start gap-3 px-3 py-3 rounded-xl transition-all duration-200 group
+                    w-full flex items-center justify-start gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group active:scale-[0.98]
                     ${isActive
-                      ? 'bg-nortex-500 text-white shadow-lg shadow-blue-900/20'
-                      : 'text-slate-400 hover:bg-nortex-800 hover:text-white'}
+                      ? 'bg-brand text-white shadow-glow shadow-brand/25'
+                      : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'}
                   `}
                 >
                   <Icon size={20} />
@@ -217,13 +228,20 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </nav>
         </div >
 
-        <div className="p-4 border-t border-nortex-800">
+        <div className="p-4 border-t border-white/[0.06]">
           <button
             onClick={() => setShowClock(true)}
-            className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-3 rounded-xl bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 hover:text-indigo-300 transition-colors border border-indigo-500/20 shadow-[0_0_15px_rgba(99,102,241,0.1)]"
+            className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-3 rounded-xl bg-brand/10 text-brand-300 hover:bg-brand/20 hover:text-brand-200 transition-all active:scale-[0.98] border border-brand/20 shadow-glow shadow-brand/10"
           >
             <Clock size={20} />
             <span className="font-bold text-sm uppercase tracking-wider">Clock In/Out</span>
+          </button>
+          <button
+            onClick={() => navigate('/app/ayuda')}
+            className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-3 rounded-xl text-slate-400 hover:bg-white/[0.06] hover:text-white transition-colors"
+          >
+            <BookOpen size={20} />
+            <span className="font-medium text-sm">Ayuda y Tutoriales</span>
           </button>
           <button
             onClick={handleLogout}
@@ -236,7 +254,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       </aside>
 
       {/* MOBILE BOTTOM NAV */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-slate-900 border-t border-slate-800 flex items-center justify-around z-40 px-1 pb-safe shadow-[0_-5px_15px_rgba(0,0,0,0.5)]">
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-surface-950/90 backdrop-blur-md border-t border-white/[0.06] flex items-center justify-around z-40 px-1 pb-safe">
         {navItems.slice(0, 4).map((item) => {
           const Icon = item.icon;
           return (
@@ -309,8 +327,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                           className={({ isActive }) => `
                             flex flex-col items-center justify-center gap-1.5 p-3 rounded-2xl border transition-all text-center
                             ${isActive
-                              ? 'bg-nortex-500/10 border-nortex-500 text-nortex-accent shadow-[0_0_15px_rgba(16,185,129,0.1)]'
-                              : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-white'}
+                              ? 'bg-brand/10 border-brand/40 text-white shadow-glow shadow-brand/10'
+                              : 'bg-white/[0.03] border-white/[0.06] text-slate-400 hover:bg-white/[0.06] hover:text-white'}
                           `}
                         >
                           <Icon size={24} className={item.path === '/app/pos' ? 'text-nortex-accent' : ''} />
@@ -372,6 +390,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         ))}
       </div>
+
+      {/* 🚀 Onboarding guiado (solo Dueño/Admin; se auto-oculta al completar) */}
+      <OnboardingHub />
     </div>
   );
 };

@@ -106,14 +106,22 @@ router.post('/', authenticate, async (req: any, res: any) => {
                     },
                 });
 
-                // 3. SALE ITEMS
+                // 3. SALE ITEMS — el costo de venta sale de Product.cost (servidor),
+                //    nunca del payload offline. Mismo invariante que el POS online:
+                //    el cliente no dicta el COGS.
+                const costRows = await tx.product.findMany({
+                    where: { tenantId: callerTenantId, id: { in: sale.items.map(i => i.id) } },
+                    select: { id: true, cost: true },
+                });
+                const costByProduct = new Map(costRows.map(p => [p.id, Number(p.cost)]));
+
                 await tx.saleItem.createMany({
                     data: sale.items.map(item => ({
                         saleId: newSale.id,
                         productId: item.id,
                         quantity: item.quantity,
                         priceAtSale: item.price,
-                        costAtSale: item.costPrice,
+                        costAtSale: costByProduct.get(item.id) ?? 0,
                         discount: item.discount || 0,
                     })),
                 });
@@ -140,7 +148,7 @@ router.post('/', authenticate, async (req: any, res: any) => {
                     });
                     if (!product) continue;
 
-                    costTotal += item.costPrice * effectiveQty;
+                    costTotal += (costByProduct.get(item.id) ?? 0) * effectiveQty;
 
                     let stockBefore: number;
                     let stockAfter: number;
@@ -163,10 +171,17 @@ router.post('/', authenticate, async (req: any, res: any) => {
                         // (stock >= deduct) — nunca sobre-descuenta un lote bajo
                         // concurrencia; el remanente cae al siguiente lote o al
                         // asiento "sin lote asignado".
+                        // B3: los lotes VENCIDOS se excluyen del consumo automático —
+                        // no se venden por FEFO; quedan para darse de baja (merma).
                         let remainingQty = effectiveQty;
                         let kardexCursor = stockBefore;
                         const activeBatches = await tx.productBatch.findMany({
-                            where: { productId: item.id, tenantId: callerTenantId, stock: { gt: 0 } },
+                            where: {
+                                productId: item.id,
+                                tenantId: callerTenantId,
+                                stock: { gt: 0 },
+                                expiryDate: { gte: new Date() },
+                            },
                             orderBy: { expiryDate: 'asc' },
                         });
 

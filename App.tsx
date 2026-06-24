@@ -14,17 +14,24 @@ import QuotationManager from './components/QuotationManager';
 import Clients from './components/Clients';
 import Suppliers from './components/Suppliers';
 import HRM from './components/HRM';
+import MiEspacio from './components/MiEspacio';
 import SuperAdmin from './components/SuperAdmin';
 import DeliveryManager from './components/DeliveryManager';
 import DriverView from './components/DriverView';
+import RegistroRepartidor from './components/RegistroRepartidor';
 import Inventory from './components/Inventory';
+import StockCount from './components/StockCount';
+import SmartPurchases from './components/SmartPurchases';
 import CashRegisters from './components/CashRegisters';
 import Purchases from './components/Purchases';
 import FinancialHealth from './components/FinancialHealth';
 import AuditDashboard from './components/AuditDashboard';
+import Contabilidad from './components/Contabilidad';
 import Billing from './components/Billing';
 import TeamManagement from './components/TeamManagement';
+import HelpCenter from './components/HelpCenter';
 import PublicCatalog from './components/PublicCatalog';
+import TrackPedido from './components/TrackPedido';
 
 // SEO Landing Pages & Blog
 import LandingFerreteria from './components/LandingFerreteria';
@@ -51,6 +58,7 @@ const ProtectedApp = () => {
         <Route path="clients" element={<Clients />} />
         <Route path="suppliers" element={<Suppliers />} />
         <Route path="hr" element={<HRM />} />
+        <Route path="mi-espacio" element={<MiEspacio />} />
         <Route path="quotations" element={<QuotationManager />} />
         <Route path="receivables" element={<AccountsReceivable />} />
         <Route path="reports" element={<Reports />} />
@@ -58,14 +66,17 @@ const ProtectedApp = () => {
         <Route path="blueprint" element={<BlueprintViewer />} />
         <Route path="delivery" element={<DeliveryManager />} />
         <Route path="inventory" element={<Inventory />} />
+        <Route path="inventory-count" element={<StockCount />} />
         {/* ── Rutas registradas para evitar redirección silenciosa ── */}
         <Route path="cash-registers" element={<CashRegisters />} />
-        <Route path="smart-purchases" element={<div className="flex items-center justify-center h-full"><div className="text-center"><p className="text-4xl mb-4">🤖</p><h2 className="text-xl font-bold text-white">IA de Compras</h2><p className="text-slate-400 mt-2">Módulo en construcción — próximamente</p></div></div>} />
+        <Route path="smart-purchases" element={<SmartPurchases />} />
         <Route path="purchases" element={<Purchases />} />
         <Route path="financial-health" element={<FinancialHealth />} />
         <Route path="audit" element={<AuditDashboard />} />
+        <Route path="accounting" element={<Contabilidad />} />
         <Route path="billing" element={<Billing />} />
         <Route path="team" element={<TeamManagement />} />
+        <Route path="ayuda" element={<HelpCenter />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
     </Layout>
@@ -91,7 +102,12 @@ function App() {
         <Route path="/reset-password/:token" element={<ResetPassword />} />
         <Route path="/pedidos/:slug" element={<PublicCatalog />} />
         <Route path="/catalog/:slug" element={<PublicCatalog />} />
+        {/* App del repartidor: login teléfono+PIN. /driver/:id queda por
+            compatibilidad con links viejos — ahora solo muestra el login. */}
+        <Route path="/driver" element={<DriverView />} />
+        <Route path="/track/:pedidoId" element={<TrackPedido />} />
         <Route path="/driver/:id" element={<DriverView />} />
+        <Route path="/repartidor/registro" element={<RegistroRepartidor />} />
         <Route path="/app/*" element={<ProtectedApp />} />
       </Routes>
     </BrowserRouter>

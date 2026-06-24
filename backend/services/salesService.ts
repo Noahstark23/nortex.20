@@ -69,7 +69,9 @@ export const CreateSaleSchema = z.object({
                 id:        z.string().min(1, 'id requerido'),  // frontend sends product id as 'id'
                 quantity:  z.number().positive('quantity debe ser > 0'),
                 price:     moneyStringPositive,
-                costPrice: moneyString.optional(),
+                // costPrice: el cliente ya NO dicta el costo. Se ignora si llega
+                // (Zod descarta llaves desconocidas). El costo de venta lo fija
+                // el servidor desde Product.cost — ver paso 5c.
                 discount:  moneyString.optional(),
             })
         )
@@ -217,11 +219,22 @@ export async function executeSale(
             },
         });
 
-        // 5c. Items + stock decrement + Kardex
+        // 5c. Costos autoritativos del servidor — el costo de venta sale de
+        //     Product.cost (promedio ponderado que mantiene el flujo de compras),
+        //     NUNCA del cliente. Evita que un POS manipulado falsee el COGS (y
+        //     con él la utilidad y el IR).
+        const productIds = [...new Set(items.map((i) => i.id))];
+        const costRows = await tx.product.findMany({
+            where: { tenantId, id: { in: productIds } },
+            select: { id: true, cost: true },
+        });
+        const costByProduct = new Map(costRows.map((p) => [p.id, new Decimal(p.cost)]));
+
+        // 5d. Items + stock decrement + Kardex
         let costTotal = new Decimal(0);
         for (const item of items) {
             const priceD = new Decimal(item.price);
-            const costD  = new Decimal(item.costPrice ?? '0');
+            const costD  = costByProduct.get(item.id) ?? new Decimal(0);
 
             await tx.saleItem.create({
                 data: {

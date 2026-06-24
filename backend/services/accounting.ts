@@ -27,6 +27,7 @@ const CHART_OF_ACCOUNTS = [
     { code: '1.1.3', name: 'Cuentas por Cobrar', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.1.4', name: 'Inventario de Mercancías', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.1.5', name: 'IVA Crédito Fiscal', type: 'ASSET', subtype: 'CURRENT_ASSET' },
+    { code: '1.1.6', name: 'Anticipo IR (Retenciones Sufridas)', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.2.1', name: 'Mobiliario y Equipo', type: 'ASSET', subtype: 'FIXED_ASSET' },
     { code: '1.2.2', name: 'Depreciación Acumulada', type: 'ASSET', subtype: 'FIXED_ASSET' },
     // PASIVOS (2.x.x)
@@ -38,6 +39,9 @@ const CHART_OF_ACCOUNTS = [
     { code: '2.1.6', name: 'INATEC por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     { code: '2.1.7', name: 'Retenciones por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     { code: '2.1.8', name: 'Préstamos Nortex Capital por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    { code: '2.1.9', name: 'Aguinaldo por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    { code: '2.1.10', name: 'Vacaciones por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    { code: '2.1.11', name: 'Indemnización por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     // CAPITAL (3.x.x)
     { code: '3.1.1', name: 'Capital Social', type: 'EQUITY', subtype: null },
     { code: '3.1.2', name: 'Utilidades Retenidas', type: 'EQUITY', subtype: null },
@@ -45,13 +49,17 @@ const CHART_OF_ACCOUNTS = [
     // INGRESOS (4.x.x)
     { code: '4.1.1', name: 'Ventas', type: 'REVENUE', subtype: null },
     { code: '4.1.2', name: 'Devoluciones sobre Ventas', type: 'REVENUE', subtype: null },
+    { code: '4.1.3', name: 'Sobrantes de Inventario', type: 'REVENUE', subtype: null },
     // GASTOS (5.x.x)
     { code: '5.1.1', name: 'Costo de Ventas', type: 'EXPENSE', subtype: null },
+    { code: '5.1.2', name: 'Pérdida por Merma de Inventario', type: 'EXPENSE', subtype: null },
     { code: '5.2.1', name: 'Gastos Operativos', type: 'EXPENSE', subtype: null },
     { code: '5.2.2', name: 'Gastos de Nómina', type: 'EXPENSE', subtype: null },
     { code: '5.2.3', name: 'INSS Patronal (Gasto)', type: 'EXPENSE', subtype: null },
     { code: '5.2.4', name: 'INATEC (Gasto)', type: 'EXPENSE', subtype: null },
     { code: '5.2.5', name: 'Depreciación', type: 'EXPENSE', subtype: null },
+    { code: '5.2.6', name: 'Prestaciones Sociales', type: 'EXPENSE', subtype: null },
+    { code: '5.2.7', name: 'Cuentas Incobrables', type: 'EXPENSE', subtype: null },
 ];
 
 // ==========================================
@@ -59,10 +67,10 @@ const CHART_OF_ACCOUNTS = [
 // ==========================================
 
 export async function seedChartOfAccounts(tenantId: string): Promise<void> {
-    const existing = await prisma.account.count({ where: { tenantId } });
-    if (existing > 0) return; // Already seeded
-
-    await prisma.account.createMany({
+    // Idempotente y AUTO-SANABLE: createMany skipDuplicates agrega solo las
+    // cuentas faltantes (el @@unique(tenantId,code) las dedupe). Así un tenant
+    // ya sembrado recibe cuentas NUEVAS del catálogo (ej. 1.1.6) sin migración.
+    const result = await prisma.account.createMany({
         data: CHART_OF_ACCOUNTS.map(a => ({
             tenantId,
             code: a.code,
@@ -74,7 +82,9 @@ export async function seedChartOfAccounts(tenantId: string): Promise<void> {
         })),
         skipDuplicates: true,
     });
-    console.log(`📊 Chart of Accounts seeded for tenant ${tenantId} (${CHART_OF_ACCOUNTS.length} accounts)`);
+    if (result.count > 0) {
+        console.log(`📊 Chart of Accounts: +${result.count} cuentas para tenant ${tenantId}`);
+    }
 }
 
 // ==========================================
@@ -95,6 +105,35 @@ async function getAccount(tenantId: string, code: string) {
     return account;
 }
 
+// ── FASE A — Bloqueo de períodos fiscales ───────────────────────────────────
+
+type AnyTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/** Error tipado: el período de la fecha del asiento está cerrado. → HTTP 409. */
+export class PeriodLockedError extends Error {
+    constructor(public readonly period: string) {
+        super(`PERÍODO CERRADO: el período ${period} ya fue cerrado fiscalmente. Reábrelo para registrar movimientos con esa fecha.`);
+        this.name = 'PeriodLockedError';
+    }
+}
+
+/**
+ * Verifica que el período (año/mes) de `date` no esté cerrado. Sin fila de
+ * FiscalPeriod = abierto (no rompe los flujos previos). Es el guard único:
+ * lo llama createJournalEntry, así que protege ventas, compras, gastos,
+ * nómina, devoluciones y asientos manuales por igual.
+ */
+export async function assertPeriodOpen(tx: AnyTx, tenantId: string, date: Date): Promise<void> {
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    const period = await tx.fiscalPeriod.findUnique({
+        where: { tenantId_year_month: { tenantId, year, month } },
+    });
+    if (period && period.status === 'CLOSED') {
+        throw new PeriodLockedError(`${year}-${String(month).padStart(2, '0')}`);
+    }
+}
+
 export async function createJournalEntry(
     tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
     tenantId: string,
@@ -102,8 +141,15 @@ export async function createJournalEntry(
     referenceId: string,
     referenceType: string,
     userId: string,
-    lines: { accountCode: string; debit: number; credit: number }[]
+    lines: { accountCode: string; debit: number; credit: number }[],
+    opts?: { isAutomatic?: boolean; date?: Date }
 ): Promise<void> {
+    const date = opts?.date ?? new Date();
+    const isAutomatic = opts?.isAutomatic ?? true;
+
+    // A3: ningún asiento entra en un período cerrado (cubre TODO el motor).
+    await assertPeriodOpen(tx, tenantId, date);
+
     // Validate: Sum of debits must equal sum of credits (Decimal para evitar 0.1+0.2 != 0.3)
     const totalDebit = lines.reduce((sum, l) => new Decimal(sum).plus(l.debit).toNumber(), 0);
     const totalCredit = lines.reduce((sum, l) => new Decimal(sum).plus(l.credit).toNumber(), 0);
@@ -119,10 +165,11 @@ export async function createJournalEntry(
     const entry = await tx.journalEntry.create({
         data: {
             tenantId,
+            date,
             description,
             referenceId,
             referenceType,
-            isAutomatic: true,
+            isAutomatic,
             createdBy: userId,
         }
     });
@@ -302,9 +349,69 @@ export async function recordReturn(
 }
 
 /**
+ * CASTIGO DE CUENTA INCOBRABLE (write-off de una venta a crédito):
+ *   Debe: Cuentas Incobrables (5.2.7, gasto) / Haber: Cuentas por Cobrar (1.1.3).
+ * Reconoce la pérdida y saca la deuda del activo. `amount` = saldo pendiente.
+ * Requiere 5.2.7: el endpoint llama seedChartOfAccounts antes.
+ */
+export async function recordBadDebt(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    saleId: string,
+    amount: number
+) {
+    const amt = new Decimal(amount).toDecimalPlaces(2);
+    if (amt.lessThanOrEqualTo(0)) return;
+    await createJournalEntry(tx, tenantId, `Castigo incobrable #${saleId.slice(0, 8)}`, saleId, 'BAD_DEBT', userId, [
+        { accountCode: '5.2.7', debit: amt.toNumber(), credit: 0 },
+        { accountCode: '1.1.3', debit: 0, credit: amt.toNumber() },
+    ]);
+}
+
+/**
+ * TOMA FÍSICA (ajuste de inventario por conteo cíclico):
+ *   Merma   (Σ pérdidas·costo): Debe Pérdida por Merma (5.1.2) / Haber Inventario (1.1.4).
+ *   Sobrante (Σ sobrantes·costo): Debe Inventario (1.1.4) / Haber Sobrantes (4.1.3).
+ * Se netea Inventario (1.1.4) en una sola línea para que el asiento quede limpio.
+ * `lossValue` y `gainValue` son magnitudes positivas (valuadas al costo promedio).
+ * Requiere que 5.1.2/4.1.3 existan: el endpoint llama seedChartOfAccounts antes.
+ */
+export async function recordStockCountAdjustment(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    countId: string,
+    lossValue: number,
+    gainValue: number
+) {
+    const loss = new Decimal(lossValue).toDecimalPlaces(2);
+    const gain = new Decimal(gainValue).toDecimalPlaces(2);
+    if (loss.lessThanOrEqualTo(0) && gain.lessThanOrEqualTo(0)) return; // sin discrepancia → sin asiento
+
+    const lines: { accountCode: string; debit: number; credit: number }[] = [];
+    if (loss.greaterThan(0)) lines.push({ accountCode: '5.1.2', debit: loss.toNumber(), credit: 0 });
+    if (gain.greaterThan(0)) lines.push({ accountCode: '4.1.3', debit: 0, credit: gain.toNumber() });
+
+    // Inventario neteado: sobrante sube (Debe), merma baja (Haber).
+    const net = gain.minus(loss); // >0 → Debe; <0 → Haber
+    if (net.greaterThan(0)) lines.push({ accountCode: '1.1.4', debit: net.toNumber(), credit: 0 });
+    else if (net.lessThan(0)) lines.push({ accountCode: '1.1.4', debit: 0, credit: net.abs().toNumber() });
+
+    await createJournalEntry(
+        tx, tenantId, `Toma física #${countId.slice(0, 8)}`, countId, 'STOCK_COUNT', userId, lines
+    );
+}
+
+/**
  * NÓMINA:
- *   Debe: Gastos de Nómina (5.2.2) + INSS Patronal (5.2.3) + INATEC (5.2.4)
- *   Haber: Caja (1.1.1) + INSS por Pagar (2.1.5) + INATEC por Pagar (2.1.6)
+ *   Debe: Gastos de Nómina (5.2.2, = neto + INSS laboral + IR laboral) +
+ *         INSS Patronal (5.2.3) + INATEC (5.2.4)
+ *   Haber: Caja (1.1.1, neto al trabajador) + Retenciones por Pagar (2.1.7, INSS
+ *         laboral retenido) + IR por Pagar (2.1.3, IR retenido) + INSS Patronal
+ *         por Pagar (2.1.5) + INATEC por Pagar (2.1.6)
+ * Así el gasto de nómina refleja el salario devengado (no solo el neto) y las
+ * retenciones del trabajador quedan como pasivo (ligado al cierre IR_LABORAL/INSS).
  */
 export async function recordPayroll(
     tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
@@ -312,19 +419,105 @@ export async function recordPayroll(
     userId: string,
     payrollId: string,
     netSalary: number,
+    inssLaboral: number,
+    irLaboral: number,
     inssPatronal: number,
     inatec: number
 ) {
-    const totalCost = netSalary + inssPatronal + inatec;
+    // El gasto de nómina = lo que recibe el trabajador + lo retenido a su nombre.
+    const gastoNomina = Number((netSalary + inssLaboral + irLaboral).toFixed(2));
 
     await createJournalEntry(tx, tenantId, `Nómina #${payrollId.slice(0, 8)}`, payrollId, 'PAYROLL', userId, [
-        { accountCode: '5.2.2', debit: netSalary, credit: 0 },       // Gasto Nómina ↑
+        { accountCode: '5.2.2', debit: gastoNomina, credit: 0 },     // Gasto Nómina ↑ (devengado)
         { accountCode: '5.2.3', debit: inssPatronal, credit: 0 },    // INSS Patronal ↑
         { accountCode: '5.2.4', debit: inatec, credit: 0 },          // INATEC ↑
-        { accountCode: '1.1.1', debit: 0, credit: netSalary },       // Caja ↓
-        { accountCode: '2.1.5', debit: 0, credit: inssPatronal },    // INSS por Pagar ↑
+        { accountCode: '1.1.1', debit: 0, credit: netSalary },       // Caja ↓ (neto)
+        { accountCode: '2.1.7', debit: 0, credit: inssLaboral },     // Retenciones por Pagar (INSS laboral) ↑
+        { accountCode: '2.1.3', debit: 0, credit: irLaboral },       // IR por Pagar ↑
+        { accountCode: '2.1.5', debit: 0, credit: inssPatronal },    // INSS Patronal por Pagar ↑
         { accountCode: '2.1.6', debit: 0, credit: inatec },          // INATEC por Pagar ↑
     ]);
+}
+
+/**
+ * PROVISIÓN DE PRESTACIONES SOCIALES (devengo mensual del pasivo laboral):
+ *   Debe: Prestaciones Sociales (5.2.6, gasto)
+ *   Haber: Aguinaldo (2.1.9) + Vacaciones (2.1.10) + Indemnización (2.1.11) por Pagar
+ * Reconoce cada mes el costo que se acumula para el treceavo mes, las vacaciones
+ * y la antigüedad — así el P&L deja de subestimar ~25% el costo laboral.
+ */
+export async function recordLaborProvision(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    payrollId: string,
+    aguinaldo: number,
+    vacaciones: number,
+    indemnizacion: number
+) {
+    // Redondear cada componente a 2 decimales y derivar el total de la suma
+    // redondeada → garantiza Σdebe == Σhaber en createJournalEntry.
+    const ag = Number(aguinaldo.toFixed(2));
+    const vac = Number(vacaciones.toFixed(2));
+    const ind = Number(indemnizacion.toFixed(2));
+    const total = Number((ag + vac + ind).toFixed(2));
+    if (total <= 0) return;
+
+    await createJournalEntry(tx, tenantId, `Provisión prestaciones #${payrollId.slice(0, 8)}`, payrollId, 'PAYROLL_PROVISION', userId, [
+        { accountCode: '5.2.6', debit: total, credit: 0 },     // Prestaciones Sociales ↑
+        { accountCode: '2.1.9', debit: 0, credit: ag },        // Aguinaldo por Pagar ↑
+        { accountCode: '2.1.10', debit: 0, credit: vac },      // Vacaciones por Pagar ↑
+        { accountCode: '2.1.11', debit: 0, credit: ind },      // Indemnización por Pagar ↑
+    ]);
+}
+
+/**
+ * PAGO DE AGUINALDO (treceavo mes, exento de INSS/IR):
+ *   Debe: Aguinaldo por Pagar (2.1.9) — cancela la provisión acumulada
+ *   Haber: Caja (1.1.1)
+ */
+export async function recordAguinaldoPayment(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    aguinaldoId: string,
+    monto: number
+) {
+    const m = Number(monto.toFixed(2));
+    if (m <= 0) return;
+    await createJournalEntry(tx, tenantId, `Aguinaldo #${aguinaldoId.slice(0, 8)}`, aguinaldoId, 'AGUINALDO', userId, [
+        { accountCode: '2.1.9', debit: m, credit: 0 },  // Aguinaldo por Pagar ↓
+        { accountCode: '1.1.1', debit: 0, credit: m },  // Caja ↓
+    ]);
+}
+
+/**
+ * LIQUIDACIÓN FINAL (finiquito): cancela las provisiones acumuladas y paga.
+ *   Debe: Aguinaldo (2.1.9) + Vacaciones (2.1.10) + Indemnización (2.1.11) por Pagar
+ *   Haber: Caja (1.1.1)
+ */
+export async function recordSettlement(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    settlementId: string,
+    aguinaldo: number,
+    vacaciones: number,
+    indemnizacion: number
+) {
+    const ag = Number(aguinaldo.toFixed(2));
+    const vac = Number(vacaciones.toFixed(2));
+    const ind = Number(indemnizacion.toFixed(2));
+    const total = Number((ag + vac + ind).toFixed(2));
+    if (total <= 0) return;
+
+    const lines: { accountCode: string; debit: number; credit: number }[] = [];
+    if (ag > 0) lines.push({ accountCode: '2.1.9', debit: ag, credit: 0 });
+    if (vac > 0) lines.push({ accountCode: '2.1.10', debit: vac, credit: 0 });
+    if (ind > 0) lines.push({ accountCode: '2.1.11', debit: ind, credit: 0 });
+    lines.push({ accountCode: '1.1.1', debit: 0, credit: total }); // Caja ↓
+
+    await createJournalEntry(tx, tenantId, `Liquidación #${settlementId.slice(0, 8)}`, settlementId, 'SETTLEMENT', userId, lines);
 }
 
 // ==========================================
@@ -550,7 +743,7 @@ export async function generateRetentions(tenantId: string, month: number, year: 
  * Cierre fiscal mensual: genera snapshot del Balance General + P&L
  * y guarda en TaxReport.
  */
-export async function fiscalClose(tenantId: string, month: number, year: number) {
+export async function fiscalClose(tenantId: string, month: number, year: number, closedBy: string = 'SYSTEM') {
     const period = `${year}-${String(month).padStart(2, '0')}`;
 
     // Generar estados financieros del periodo
@@ -595,8 +788,16 @@ export async function fiscalClose(tenantId: string, month: number, year: number)
         await prisma.taxReport.create({ data: reportData });
     }
 
+    // A3: CERRAR el período → ningún asiento futuro puede caer en este mes.
+    await prisma.fiscalPeriod.upsert({
+        where: { tenantId_year_month: { tenantId, year, month } },
+        create: { tenantId, year, month, status: 'CLOSED', closedBy, closedAt: new Date() },
+        update: { status: 'CLOSED', closedBy, closedAt: new Date(), reopenedBy: null, reopenedAt: null, reopenReason: null },
+    });
+
     return {
         period,
+        locked: true,
         balance: balance.totals,
         estadoResultados: {
             revenue: estado.revenue.total,

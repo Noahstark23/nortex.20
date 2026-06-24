@@ -3,10 +3,78 @@ import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff } from 'lucide-react';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
+import { maybeAutostartTour } from '../utils/tours';
 import { ReceiptTicket } from './ReceiptTicket';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import * as XLSX from 'xlsx';
 import { db, generateOfflineId, saveSaleOffline, getPendingSales, markSalesSynced } from '../lib/db';
+import Decimal from 'decimal.js';
+
+// ── Utilidades financieras del POS (string controlado + Decimal.js) ──────────
+// CartItem no modela discount/unit; se anotan en runtime → tipo local (sin `any`).
+type CartLine = CartItem & { discount?: number; unit?: string };
+
+// Sanitiza la entrada cruda de un input de dinero/cantidad a un string decimal
+// seguro: solo dígitos y UN punto. Nunca usamos type="number" (quirks de float y
+// separador local); el input es texto controlado y el estado se parsea con Decimal.
+const sanitizeDecimalInput = (raw: string): string => {
+    const cleaned = raw.replace(/[^\d.]/g, '');
+    const dot = cleaned.indexOf('.');
+    return dot === -1 ? cleaned : cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, '');
+};
+
+// Parser tolerante a string vacío/parcial ("", ".") → Decimal(0). Nunca lanza.
+const toDecimal = (v: string | number): Decimal => {
+    try {
+        const d = new Decimal(v === '' || v === '.' ? 0 : v);
+        return d.isFinite() ? d : new Decimal(0);
+    } catch {
+        return new Decimal(0);
+    }
+};
+
+// Input numérico controlado para estado `number` (cantidad, % descuento por
+// ítem): mantiene un BORRADOR string para que se puedan teclear decimales
+// ("1." no se "come" el punto) y commitea el número parseado. Nunca type="number".
+const NumberDraftInput: React.FC<{
+    value: number;
+    onCommit: (n: number) => void;
+    className?: string;
+    placeholder?: string;
+    ariaLabel?: string;
+    allowZero?: boolean;
+}> = ({ value, onCommit, className, placeholder, ariaLabel, allowZero }) => {
+    const [draft, setDraft] = useState<string>(value ? String(value) : '');
+    const lastCommitted = useRef<number>(value);
+
+    useEffect(() => {
+        // Resync solo si el valor externo cambió por algo distinto a este input
+        // (botones +/-, reset de carrito) — no pisamos el borrador propio.
+        if (value !== lastCommitted.current) {
+            setDraft(value ? String(value) : '');
+            lastCommitted.current = value;
+        }
+    }, [value]);
+
+    return (
+        <input
+            type="text"
+            inputMode="decimal"
+            placeholder={placeholder}
+            aria-label={ariaLabel}
+            className={className}
+            value={draft}
+            onChange={(e) => {
+                const s = sanitizeDecimalInput(e.target.value);
+                setDraft(s);
+                if (s === '' && !allowZero) return; // permitir borrar sin forzar 0
+                const n = toDecimal(s).toNumber();
+                lastCommitted.current = n;
+                onCommit(n);
+            }}
+        />
+    );
+};
 
 interface Customer {
     id: string;
@@ -89,10 +157,11 @@ const POS: React.FC = () => {
     const [creditOverrideAuthorized, setCreditOverrideAuthorized] = useState(false);
 
     // 💸 DESCUENTOS STATE
-    const [globalDiscount, setGlobalDiscount] = useState(0);
+    const [globalDiscount, setGlobalDiscount] = useState('');
 
-    // 💱 NIO/USD STATE
-    const [exchangeRate] = useState(36.56);
+    // 💱 NIO/USD STATE — tipo de cambio del tenant (B6); 36.56 solo es fallback
+    // hasta que carga el vigente desde /exchange-rate/latest.
+    const [exchangeRate, setExchangeRate] = useState(36.56);
     const [payingInUSD, setPayingInUSD] = useState(false);
     const [usdAmount, setUsdAmount] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
@@ -241,6 +310,19 @@ const POS: React.FC = () => {
         const pending = await getPendingSales();
         setPendingOfflineCount(pending.length);
     }, []);
+
+    // B6 — cargar el tipo de cambio vigente del tenant (BCN/manual).
+    useEffect(() => {
+        const t = localStorage.getItem('nortex_token');
+        if (!t) return;
+        fetch('/api/accounting/exchange-rate/latest', { headers: { Authorization: `Bearer ${t}` } })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d && typeof d.rate === 'number' && d.rate > 0) setExchangeRate(d.rate); })
+            .catch(() => { /* mantiene el fallback */ });
+    }, []);
+
+    // Tutorial guiado: si entran con ?tour=pos (desde Ayuda o el checklist).
+    useEffect(() => { maybeAutostartTour(); }, []);
 
     useEffect(() => {
         refreshOfflineCount();
@@ -633,7 +715,7 @@ const POS: React.FC = () => {
         setCart([]);
         setSelectedCustomer(null);
         setCustomerSearch('');
-        setGlobalDiscount(0);
+        setGlobalDiscount('');
         setCreditOverrideAuthorized(false);
         setCreditOverridePin('');
     }, [cart, heldCarts, selectedCustomer]);
@@ -662,7 +744,7 @@ const POS: React.FC = () => {
         setSelectedCustomer(toRestore.customer);
         setCustomerSearch(toRestore.customer?.name || '');
         setShowHeldCarts(false);
-        setGlobalDiscount(0);
+        setGlobalDiscount('');
     }, [cart, heldCarts, selectedCustomer]);
 
     const handleRemoveHeldCart = useCallback((heldId: string) => {
@@ -915,13 +997,24 @@ const POS: React.FC = () => {
         }
     };
 
-    const total = cart.reduce((sum, item) => {
-        const lineDiscount = (item as any).discount || 0;
-        return sum + (item.price * item.quantity * (1 - lineDiscount / 100));
-    }, 0);
-    const discountedTotal = total * (1 - globalDiscount / 100);
-    const tax = discountedTotal * 0.15; // IVA 15% Nicaragua
-    const grandTotal = discountedTotal + tax;
+    // 💰 Totales 100% en Decimal.js (sin float). El descuento global es string
+    // controlado; se clampa 0–100 y se parsea aquí. El IVA también en Decimal.
+    const globalDiscountD = Decimal.min(100, Decimal.max(0, toDecimal(globalDiscount)));
+    const totalD = cart.reduce((acc, item) => {
+        const lineDiscount = toDecimal((item as CartLine).discount ?? 0);
+        const factor = new Decimal(1).minus(lineDiscount.div(100));
+        return acc.plus(toDecimal(item.price).mul(item.quantity).mul(factor));
+    }, new Decimal(0));
+    const discountedTotalD = totalD.mul(new Decimal(1).minus(globalDiscountD.div(100)));
+    const taxD = discountedTotalD.mul('0.15'); // IVA 15% Nicaragua
+    const grandTotalD = discountedTotalD.plus(taxD);
+
+    // Proyecciones numéricas (2 decimales) para UI y payload; la verdad es Decimal.
+    const total = totalD.toDecimalPlaces(2).toNumber();
+    const discountedTotal = discountedTotalD.toDecimalPlaces(2).toNumber();
+    const tax = taxD.toDecimalPlaces(2).toNumber();
+    const grandTotal = grandTotalD.toDecimalPlaces(2).toNumber();
+    const globalDiscountNum = globalDiscountD.toNumber();
 
     // SMART CREDIT CHECK
     const isCreditBlocked = useMemo(() => {
@@ -972,12 +1065,12 @@ const POS: React.FC = () => {
                     tenantId,
                     userId,
                     shiftId: currentShift?.id ?? null,
-                    employeeId: (currentShift as any)?.employeeId ?? (currentShift as any)?.employee?.id ?? null,
+                    employeeId: currentShift?.employeeId ?? currentShift?.employee?.id ?? null,
                     customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
                     customerId: selectedCustomer?.id ?? null,
                     paymentMethod: method,
                     total: grandTotal,
-                    globalDiscount,
+                    globalDiscount: globalDiscountNum,
                     items: cart.map(c => ({
                         id: c.id,
                         name: c.name,
@@ -1015,8 +1108,8 @@ const POS: React.FC = () => {
                     customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
                     customerId: selectedCustomer?.id,
                     total: grandTotal,
-                    globalDiscount: globalDiscount,
-                    employeeId: currentShift?.employeeId || (currentShift as any)?.employee?.id || null
+                    globalDiscount: globalDiscountNum,
+                    employeeId: currentShift?.employeeId || currentShift?.employee?.id || null
                 })
             });
 
@@ -1111,7 +1204,7 @@ const POS: React.FC = () => {
         setCart([]);
         setSelectedCustomer(null);
         setCustomerSearch('');
-        setGlobalDiscount(0);
+        setGlobalDiscount('');
         setCreditOverrideAuthorized(false);
         setCreditOverridePin('');
         setShowCreditPanel(false);
@@ -1350,13 +1443,12 @@ const POS: React.FC = () => {
                             <div>
                                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Monto (C$)</label>
                                 <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0.01"
+                                    type="text"
+                                    inputMode="decimal"
                                     value={cashAmount}
-                                    onChange={e => setCashAmount(e.target.value)}
+                                    onChange={e => setCashAmount(sanitizeDecimalInput(e.target.value))}
                                     placeholder="0.00"
-                                    className="w-full text-2xl font-bold text-center border-2 border-slate-300 rounded-xl p-4 focus:border-nortex-500 outline-none text-slate-800 bg-slate-50"
+                                    className="w-full text-2xl font-bold text-center border-2 border-slate-300 rounded-xl p-4 focus:border-nortex-500 outline-none text-slate-800 bg-slate-50 font-mono tabular-nums"
                                     autoFocus
                                     required
                                 />
@@ -1547,16 +1639,17 @@ const POS: React.FC = () => {
                             <div>
                                 <label className="text-xs font-mono font-bold text-slate-400 uppercase tracking-wider">Fondo Inicial (Efectivo)</label>
                                 <input
-                                    type="number"
-                                    className="w-full text-center text-3xl font-bold border-b-2 border-slate-300 focus:border-nortex-500 outline-none pb-2 mt-2 text-slate-800"
+                                    type="text"
+                                    inputMode="decimal"
+                                    className="w-full text-center text-3xl font-bold border-b-2 border-slate-300 focus:border-nortex-500 outline-none pb-2 mt-2 text-slate-800 font-mono tabular-nums"
                                     placeholder="0.00"
                                     value={initialCash}
-                                    onChange={e => setInitialCash(e.target.value)}
+                                    onChange={e => setInitialCash(sanitizeDecimalInput(e.target.value))}
                                     required
                                 />
                             </div>
 
-                            <button type="submit" disabled={shiftLoading || employeePin.length !== 4} className="w-full py-3 bg-nortex-900 text-white font-bold rounded-lg hover:bg-nortex-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
+                            <button type="submit" disabled={shiftLoading || employeePin.length !== 4} className="btn-primary w-full py-3 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100">
                                 {shiftLoading ? 'VERIFICANDO PIN...' : 'ABRIR TURNO'}
                             </button>
                         </form>
@@ -1577,12 +1670,13 @@ const POS: React.FC = () => {
                                     <div className="relative mb-6">
                                         <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                                         <input
-                                            type="number"
+                                            type="text"
+                                            inputMode="decimal"
                                             autoFocus
-                                            className="w-full pl-10 py-3 text-2xl font-bold border border-slate-300 rounded-lg focus:ring-2 focus:ring-nortex-500 outline-none text-slate-800"
+                                            className="w-full pl-10 py-3 text-2xl font-bold border border-slate-300 rounded-lg focus:ring-2 focus:ring-nortex-500 outline-none text-slate-800 font-mono tabular-nums"
                                             placeholder="0.00"
                                             value={declaredCash}
-                                            onChange={e => setDeclaredCash(e.target.value)}
+                                            onChange={e => setDeclaredCash(sanitizeDecimalInput(e.target.value))}
                                             required
                                         />
                                     </div>
@@ -1664,21 +1758,21 @@ const POS: React.FC = () => {
                                 </div>
                                 <div>
                                     <label className="block text-xs font-mono text-slate-500 mb-1">PRECIO VENTA *</label>
-                                    <input type="number" step="0.01" required min="0" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-800"
-                                        placeholder="0.00" value={newProduct.price} onChange={e => setNewProduct({ ...newProduct, price: e.target.value })} />
+                                    <input type="text" inputMode="decimal" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-800 font-mono tabular-nums"
+                                        placeholder="0.00" value={newProduct.price} onChange={e => setNewProduct({ ...newProduct, price: sanitizeDecimalInput(e.target.value) })} />
                                 </div>
                                 <div>
                                     <label className="block text-xs font-mono text-slate-500 mb-1">COSTO (Wholesale) *</label>
-                                    <input type="number" step="0.01" required min="0" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 bg-slate-50 text-slate-800"
-                                        placeholder="0.00" value={newProduct.costPrice} onChange={e => setNewProduct({ ...newProduct, costPrice: e.target.value })} />
+                                    <input type="text" inputMode="decimal" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 bg-slate-50 text-slate-800 font-mono tabular-nums"
+                                        placeholder="0.00" value={newProduct.costPrice} onChange={e => setNewProduct({ ...newProduct, costPrice: sanitizeDecimalInput(e.target.value) })} />
                                 </div>
                                 <div className="col-span-2">
                                     <label className="block text-xs font-mono text-slate-500 mb-1">STOCK INICIAL *</label>
-                                    <input type="number" required min="0" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-800"
-                                        placeholder="0" value={newProduct.stock} onChange={e => setNewProduct({ ...newProduct, stock: e.target.value })} />
+                                    <input type="text" inputMode="decimal" required className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-800 font-mono tabular-nums"
+                                        placeholder="0" value={newProduct.stock} onChange={e => setNewProduct({ ...newProduct, stock: sanitizeDecimalInput(e.target.value) })} />
                                 </div>
                             </div>
-                            <button type="submit" className="w-full py-3 rounded-lg bg-nortex-900 text-white font-bold hover:bg-nortex-800 shadow-lg transition-all flex items-center justify-center gap-2">
+                            <button type="submit" className="btn-primary w-full py-3 flex items-center justify-center gap-2">
                                 <Save size={18} /> Guardar en Inventario
                             </button>
                         </form>
@@ -1725,30 +1819,30 @@ const POS: React.FC = () => {
                                 <div>
                                     <label className="text-[10px] text-slate-500 font-bold">PRECIO *</label>
                                     <input
-                                        required type="number" step="0.01" min="0"
+                                        required type="text" inputMode="decimal"
                                         placeholder="0.00"
                                         value={quickProduct.price}
-                                        onChange={e => setQuickProduct({ ...quickProduct, price: e.target.value })}
-                                        className="w-full px-2 py-2 border border-slate-300 rounded-lg text-slate-800 font-bold text-lg focus:ring-2 focus:ring-amber-500 outline-none"
+                                        onChange={e => setQuickProduct({ ...quickProduct, price: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-2 py-2 border border-slate-300 rounded-lg text-slate-800 font-bold text-lg focus:ring-2 focus:ring-amber-500 outline-none font-mono tabular-nums"
                                     />
                                 </div>
                                 <div>
                                     <label className="text-[10px] text-slate-500 font-bold">COSTO</label>
                                     <input
-                                        type="number" step="0.01" min="0"
+                                        type="text" inputMode="decimal"
                                         placeholder="0.00"
                                         value={quickProduct.cost}
-                                        onChange={e => setQuickProduct({ ...quickProduct, cost: e.target.value })}
-                                        className="w-full px-2 py-2 border border-slate-300 rounded-lg text-slate-800 focus:ring-2 focus:ring-amber-500 outline-none"
+                                        onChange={e => setQuickProduct({ ...quickProduct, cost: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-2 py-2 border border-slate-300 rounded-lg text-slate-800 focus:ring-2 focus:ring-amber-500 outline-none font-mono tabular-nums"
                                     />
                                 </div>
                                 <div>
                                     <label className="text-[10px] text-slate-500 font-bold">STOCK</label>
                                     <input
-                                        type="number" min="0"
+                                        type="text" inputMode="decimal"
                                         value={quickProduct.stock}
-                                        onChange={e => setQuickProduct({ ...quickProduct, stock: e.target.value })}
-                                        className="w-full px-2 py-2 border border-slate-300 rounded-lg text-slate-800 focus:ring-2 focus:ring-amber-500 outline-none"
+                                        onChange={e => setQuickProduct({ ...quickProduct, stock: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-2 py-2 border border-slate-300 rounded-lg text-slate-800 focus:ring-2 focus:ring-amber-500 outline-none font-mono tabular-nums"
                                     />
                                 </div>
                             </div>
@@ -1965,17 +2059,22 @@ const POS: React.FC = () => {
 
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 overflow-y-auto pb-4 custom-scrollbar flex-1 min-h-0">
                     {filteredProducts.map(product => (
-                        <button key={product.id} onClick={() => { addToCart(product); playBeep(); }} className="bg-white p-4 rounded-xl border border-slate-200 hover:border-nortex-500 hover:shadow-md transition-all text-left flex flex-col justify-between text-slate-800 active:scale-[0.98]">
-                            <div>
-                                <div className="flex justify-between items-start mb-1">
-                                    <span className="text-xs font-mono text-slate-400">{product.sku}</span>
-                                    <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded font-medium">{product.category}</span>
+                        <button
+                            key={product.id}
+                            onClick={() => { addToCart(product); playBeep(); }}
+                            disabled={product.stock === 0}
+                            className="panel-premium-light aspect-square p-4 hover:border-brand/40 hover:shadow-glow shadow-brand/10 transition-all text-left flex flex-col justify-between text-slate-800 active:scale-95 disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand/40"
+                        >
+                            <div className="min-w-0">
+                                <div className="flex justify-between items-start mb-1 gap-1">
+                                    <span className="text-xs font-mono tabular-nums text-slate-400 truncate">{product.sku}</span>
+                                    <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded font-medium flex-shrink-0">{product.category}</span>
                                 </div>
-                                <h3 className="font-semibold text-slate-800 leading-tight mt-1">{product.name}</h3>
+                                <h3 className="font-semibold text-slate-800 leading-tight mt-1 line-clamp-3">{product.name}</h3>
                             </div>
-                            <div className="mt-3 flex justify-between items-end">
-                                <span className="text-lg font-bold text-slate-900">C$ {product.price.toFixed(2)}</span>
-                                <span className={`text-xs px-2 py-1 rounded ${product.stock === 0 ? 'bg-red-100 text-red-600 font-bold' : product.stock <= 5 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                            <div className="mt-3 flex justify-between items-end gap-1">
+                                <span className="text-lg font-bold text-slate-900 font-mono tabular-nums">C$ {product.price.toFixed(2)}</span>
+                                <span className={`text-xs px-2 py-1 rounded flex-shrink-0 ${product.stock === 0 ? 'bg-red-100 text-red-600 font-bold' : product.stock <= 5 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
                                     {product.stock === 0 ? 'AGOTADO' : `Stock: ${product.stock}`}
                                 </span>
                             </div>
@@ -2120,51 +2219,45 @@ const POS: React.FC = () => {
                         </div>
                     ) : (
                         cart.map(item => {
-                            const lineDiscount = (item as any).discount || 0;
-                            const lineTotal = item.price * item.quantity * (1 - lineDiscount / 100);
+                            const lineDiscount = (item as CartLine).discount ?? 0;
+                            const lineDiscountD = toDecimal(lineDiscount);
+                            const lineTotalD = toDecimal(item.price).mul(item.quantity).mul(new Decimal(1).minus(lineDiscountD.div(100)));
                             return (
                                 <div key={item.id} className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-slate-800">
                                     <div className="flex items-center gap-3">
                                         <div className="flex-1 min-w-0">
                                             <h4 className="text-sm font-medium text-slate-800 line-clamp-1">{item.name}</h4>
-                                            <div className="text-xs text-slate-500 mt-0.5">C$ {item.price.toFixed(2)} / {(item as any).unit || 'und'}</div>
+                                            <div className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums">C$ {item.price.toFixed(2)} / {(item as CartLine).unit || 'und'}</div>
                                         </div>
                                         <div className="flex items-center gap-1 bg-white rounded border border-slate-200 p-1 text-slate-800">
                                             <button onClick={() => updateQuantity(item.id, -0.5)} className="p-1 hover:bg-slate-100 rounded text-slate-600"><Minus size={14} /></button>
-                                            <input
-                                                type="number"
-                                                step="0.01"
-                                                min="0.01"
-                                                className="w-14 text-center text-sm font-mono font-bold border-0 outline-none bg-transparent text-slate-800 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                            <NumberDraftInput
                                                 value={item.quantity}
-                                                onChange={e => {
-                                                    const val = parseFloat(e.target.value);
-                                                    if (!isNaN(val) && val > 0) setQuantity(item.id, val);
-                                                }}
+                                                onCommit={(n) => { if (n > 0) setQuantity(item.id, n); }}
+                                                ariaLabel={`Cantidad de ${item.name}`}
+                                                className="w-14 text-center text-sm font-mono tabular-nums font-bold border-0 outline-none bg-transparent text-slate-800"
                                             />
                                             <button onClick={() => updateQuantity(item.id, 0.5)} className="p-1 hover:bg-slate-100 rounded text-slate-600"><Plus size={14} /></button>
                                         </div>
                                         <div className="text-right min-w-[60px]">
-                                            <div className="text-sm font-bold text-slate-900">C$ {lineTotal.toFixed(2)}</div>
+                                            <div className="text-sm font-bold text-slate-900 font-mono tabular-nums">C$ {lineTotalD.toFixed(2)}</div>
                                             <button onClick={() => removeFromCart(item.id)} className="text-red-400 hover:text-red-600 mt-1"><Trash2 size={14} className="ml-auto" /></button>
                                         </div>
                                     </div>
                                     {/* Per-item discount row */}
                                     <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-slate-100">
                                         <Percent size={11} className="text-slate-400" />
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            max="100"
-                                            step="1"
+                                        <NumberDraftInput
+                                            value={lineDiscount}
+                                            onCommit={(n) => setItemDiscount(item.id, n)}
+                                            allowZero
                                             placeholder="0"
-                                            className="w-12 text-[11px] text-center border border-slate-200 rounded px-1 py-0.5 outline-none focus:border-blue-400 text-slate-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                            value={lineDiscount || ''}
-                                            onChange={e => setItemDiscount(item.id, parseFloat(e.target.value) || 0)}
+                                            ariaLabel={`Descuento de ${item.name} en porcentaje`}
+                                            className="w-12 text-[11px] text-center border border-slate-200 rounded px-1 py-0.5 outline-none focus:border-brand text-slate-700 font-mono tabular-nums"
                                         />
                                         <span className="text-[10px] text-slate-400">% desc</span>
-                                        {lineDiscount > 0 && (
-                                            <span className="text-[10px] text-red-500 font-bold ml-auto">-C${(item.price * item.quantity * lineDiscount / 100).toFixed(2)}</span>
+                                        {lineDiscountD.greaterThan(0) && (
+                                            <span className="text-[10px] text-red-500 font-bold ml-auto">-C${toDecimal(item.price).mul(item.quantity).mul(lineDiscountD).div(100).toFixed(2)}</span>
                                         )}
                                     </div>
                                 </div>
@@ -2178,24 +2271,23 @@ const POS: React.FC = () => {
                         <Percent size={14} className="text-slate-400" />
                         <span className="text-xs text-slate-500 font-bold">Descuento Global</span>
                         <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="1"
+                            type="text"
+                            inputMode="decimal"
                             placeholder="0"
-                            className="w-14 text-xs text-center border border-slate-200 rounded px-1 py-1 outline-none focus:border-blue-400 text-slate-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            value={globalDiscount || ''}
-                            onChange={e => setGlobalDiscount(parseFloat(e.target.value) || 0)}
+                            aria-label="Descuento global en porcentaje"
+                            className="w-14 text-xs text-center border border-slate-200 rounded px-1 py-1 outline-none focus:border-brand text-slate-700 font-mono tabular-nums"
+                            value={globalDiscount}
+                            onChange={e => setGlobalDiscount(sanitizeDecimalInput(e.target.value))}
                         />
                         <span className="text-xs text-slate-400">%</span>
-                        {globalDiscount > 0 && (
-                            <span className="text-xs text-red-500 font-bold ml-auto">-C${(total * globalDiscount / 100).toFixed(2)}</span>
+                        {globalDiscountD.greaterThan(0) && (
+                            <span className="text-xs text-red-500 font-bold ml-auto">-C${totalD.mul(globalDiscountD).div(100).toFixed(2)}</span>
                         )}
                     </div>
-                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>Subtotal</span><span>C$ {total.toFixed(2)}</span></div>
-                    {globalDiscount > 0 && <div className="flex justify-between text-sm text-red-500 mb-1"><span>Descuento ({globalDiscount}%)</span><span>-C$ {(total * globalDiscount / 100).toFixed(2)}</span></div>}
-                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>IVA (15%)</span><span>C$ {tax.toFixed(2)}</span></div>
-                    <div className="flex justify-between text-xl font-bold text-nortex-900 mb-4 pt-2 border-t border-slate-200 text-slate-800"><span>Total</span><span>C$ {grandTotal.toFixed(2)}</span></div>
+                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>Subtotal</span><span className="font-mono tabular-nums">C$ {total.toFixed(2)}</span></div>
+                    {globalDiscountD.greaterThan(0) && <div className="flex justify-between text-sm text-red-500 mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="font-mono tabular-nums">-C$ {totalD.mul(globalDiscountD).div(100).toFixed(2)}</span></div>}
+                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>IVA (15%)</span><span className="font-mono tabular-nums">C$ {tax.toFixed(2)}</span></div>
+                    <div className="flex justify-between text-xl font-bold text-slate-900 mb-4 pt-2 border-t border-slate-200"><span>Total</span><span className="font-mono tabular-nums">C$ {grandTotal.toFixed(2)}</span></div>
 
                     {/* 💥 MASSIVE PAYMENT BUTTONS - FAT FINGER FRIENDLY */}
                     <div className="grid grid-cols-2 gap-3 mb-3">
@@ -2516,26 +2608,28 @@ const POS: React.FC = () => {
                                     <div className="relative">
                                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500 font-bold text-sm">$</span>
                                         <input
-                                            type="number"
+                                            type="text"
+                                            inputMode="decimal"
                                             autoFocus
-                                            className="w-full pl-8 pr-4 py-3 border border-blue-300 rounded-lg text-xl font-bold text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 bg-blue-50"
+                                            aria-label="Monto recibido en dólares"
+                                            className="w-full pl-8 pr-4 py-3 border border-blue-300 rounded-lg text-xl font-bold text-slate-800 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 bg-blue-50 font-mono tabular-nums"
                                             placeholder="0.00"
                                             value={usdAmount}
                                             onChange={e => {
-                                                setUsdAmount(e.target.value);
-                                                const usd = parseFloat(e.target.value);
-                                                if (!isNaN(usd)) setCashReceived((usd * exchangeRate).toFixed(2));
+                                                const s = sanitizeDecimalInput(e.target.value);
+                                                setUsdAmount(s);
+                                                setCashReceived(s === '' ? '' : toDecimal(s).mul(exchangeRate).toFixed(2));
                                             }}
                                         />
                                     </div>
                                     <div className="text-xs text-blue-600 text-center font-medium">Tasa: 1 USD = C${exchangeRate.toFixed(2)} NIO</div>
-                                    {usdAmount && parseFloat(usdAmount) > 0 && (
+                                    {toDecimal(usdAmount).greaterThan(0) && (
                                         <div className="bg-blue-50 px-3 py-2 rounded-lg border border-blue-200 text-sm">
-                                            <div className="flex justify-between"><span className="text-blue-600">Equivalente NIO:</span><span className="font-bold text-blue-800">C$ {(parseFloat(usdAmount) * exchangeRate).toFixed(2)}</span></div>
-                                            {parseFloat(usdAmount) * exchangeRate >= grandTotal && (
+                                            <div className="flex justify-between"><span className="text-blue-600">Equivalente NIO:</span><span className="font-bold text-blue-800 font-mono tabular-nums">C$ {toDecimal(usdAmount).mul(exchangeRate).toFixed(2)}</span></div>
+                                            {toDecimal(usdAmount).mul(exchangeRate).greaterThanOrEqualTo(grandTotal) && (
                                                 <>
-                                                    <div className="flex justify-between mt-1 pt-1 border-t border-blue-200"><span className="font-bold text-emerald-600">Cambio NIO:</span><span className="font-bold text-emerald-600">C$ {(parseFloat(usdAmount) * exchangeRate - grandTotal).toFixed(2)}</span></div>
-                                                    <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-emerald-500 text-xs">$ {(parseFloat(usdAmount) - grandTotal / exchangeRate).toFixed(2)}</span></div>
+                                                    <div className="flex justify-between mt-1 pt-1 border-t border-blue-200"><span className="font-bold text-emerald-600">Cambio NIO:</span><span className="font-bold text-emerald-600 font-mono tabular-nums">C$ {toDecimal(usdAmount).mul(exchangeRate).minus(grandTotal).toFixed(2)}</span></div>
+                                                    <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-emerald-500 text-xs font-mono tabular-nums">$ {toDecimal(usdAmount).minus(toDecimal(grandTotal).div(exchangeRate)).toFixed(2)}</span></div>
                                                 </>
                                             )}
                                         </div>
@@ -2552,24 +2646,26 @@ const POS: React.FC = () => {
                                     <div className="relative">
                                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">C$</span>
                                         <input
-                                            type="number"
+                                            type="text"
+                                            inputMode="decimal"
                                             autoFocus
-                                            className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-lg text-xl font-bold text-slate-800 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30"
+                                            aria-label="Efectivo recibido en córdobas"
+                                            className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-lg text-xl font-bold text-slate-800 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono tabular-nums"
                                             placeholder={grandTotal.toFixed(2)}
                                             value={cashReceived}
-                                            onChange={e => setCashReceived(e.target.value)}
+                                            onChange={e => setCashReceived(sanitizeDecimalInput(e.target.value))}
                                         />
                                     </div>
-                                    {cashReceived && parseFloat(cashReceived) >= grandTotal && (
+                                    {cashReceived !== '' && toDecimal(cashReceived).greaterThanOrEqualTo(grandTotal) && (
                                         <div className="flex justify-between items-center bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
                                             <span className="font-bold text-emerald-700 text-sm">CAMBIO</span>
-                                            <span className="text-2xl font-black text-emerald-600">C$ {(parseFloat(cashReceived) - grandTotal).toFixed(2)}</span>
+                                            <span className="text-2xl font-black text-emerald-600 font-mono tabular-nums">C$ {toDecimal(cashReceived).minus(grandTotal).toFixed(2)}</span>
                                         </div>
                                     )}
-                                    {cashReceived && parseFloat(cashReceived) < grandTotal && (
+                                    {cashReceived !== '' && toDecimal(cashReceived).lessThan(grandTotal) && (
                                         <div className="flex justify-between items-center bg-red-50 px-3 py-2 rounded-lg border border-red-200">
                                             <span className="font-bold text-red-600 text-sm">FALTANTE</span>
-                                            <span className="text-xl font-bold text-red-600">C$ {(grandTotal - parseFloat(cashReceived)).toFixed(2)}</span>
+                                            <span className="text-xl font-bold text-red-600 font-mono tabular-nums">C$ {toDecimal(grandTotal).minus(toDecimal(cashReceived)).toFixed(2)}</span>
                                         </div>
                                     )}
                                 </>
@@ -2633,18 +2729,18 @@ const POS: React.FC = () => {
                                 </div>
 
                                 {/* Cash change summary - read-only, set before sale */}
-                                {completedSale.paymentMethod === 'CASH' && cashReceived && parseFloat(cashReceived) > 0 && (
+                                {completedSale.paymentMethod === 'CASH' && cashReceived !== '' && toDecimal(cashReceived).greaterThan(0) && (
                                     <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
                                         <div className="flex justify-between items-center">
                                             <span className="text-sm text-slate-500">Efectivo recibido</span>
-                                            <span className="font-bold text-slate-700">
-                                                {payingInUSD && usdAmount ? `$ ${usdAmount} (C$ ${cashReceived})` : `C$ ${parseFloat(cashReceived).toFixed(2)}`}
+                                            <span className="font-bold text-slate-700 font-mono tabular-nums">
+                                                {payingInUSD && usdAmount ? `$ ${usdAmount} (C$ ${cashReceived})` : `C$ ${toDecimal(cashReceived).toFixed(2)}`}
                                             </span>
                                         </div>
-                                        {parseFloat(cashReceived) >= completedSale.grandTotal && (
+                                        {toDecimal(cashReceived).greaterThanOrEqualTo(completedSale.grandTotal) && (
                                             <div className="flex justify-between items-center bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
                                                 <span className="font-bold text-emerald-700 text-sm">CAMBIO</span>
-                                                <span className="text-xl font-black text-emerald-600">C$ {(parseFloat(cashReceived) - completedSale.grandTotal).toFixed(2)}</span>
+                                                <span className="text-xl font-black text-emerald-600 font-mono tabular-nums">C$ {toDecimal(cashReceived).minus(completedSale.grandTotal).toFixed(2)}</span>
                                             </div>
                                         )}
                                     </div>

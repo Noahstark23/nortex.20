@@ -35,6 +35,14 @@ interface ClosedShift {
     cardTotal: number;
     creditTotal: number;
     grandTotal: number;
+    // Movimientos manuales de caja recientes (mostramos los últimos 3 en el detalle)
+    recentMovements?: {
+        category: string;
+        description: string;
+        createdAt: string;
+        type: 'IN' | 'OUT';
+        amount: number;
+    }[];
 }
 
 const CashRegisters: React.FC = () => {

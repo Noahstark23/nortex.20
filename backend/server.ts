@@ -16,18 +16,24 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados } from './services/accounting';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
+import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
 import { applyStockDelta, StockError } from './services/stockService';
-import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger } from './services/ledger';
+import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger, appendDriverWalletMovement, verifyDriverLedger } from './services/ledger';
 import { signAuthToken } from './services/secrets';
+import { isWhatsAppEnabled } from './services/whatsapp/config';
+import { verifyHandler as whatsappVerify, webhookHandler as whatsappWebhook } from './services/whatsapp/webhook';
+import { encryptField } from './services/crypto';
 import Stripe from 'stripe';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import hrRouter from './routes/hr';
 import pedidosRouter from './routes/pedidos';
 import motorizadosRouter from './routes/motorizados';
+import driverRouter from './routes/driver';
 import loanRoutes from './routes/loans';
 import syncRoutes from './routes/sync';
 import Decimal from 'decimal.js';
@@ -38,6 +44,10 @@ import {
     CreateCashMovementSchema,
     CreatePurchaseSchema,
     InventoryAdjustSchema,
+    BulkEditProductsSchema,
+    CreateBatchSchema,
+    CreateStockCountSchema,
+    RecordCountSchema,
     OpenShiftSchema,
     CloseShiftSchema,
     CreateExpenseSchema,
@@ -139,6 +149,14 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }) as an
     }
 });
 
+// ⚠️ WhatsApp Webhook — también ANTES de express.json (firma sobre body crudo).
+// Inerte salvo WHATSAPP_ENABLED=true (no afecta la app si no está configurado).
+if (isWhatsAppEnabled()) {
+    app.get('/api/whatsapp/webhook', whatsappVerify as any);
+    app.post('/api/whatsapp/webhook', express.raw({ type: 'application/json' }) as any, whatsappWebhook as any);
+    console.log('🟢 WhatsApp webhook montado en /api/whatsapp/webhook');
+}
+
 // JSON Parser con límite de body (anti-abuse)
 app.use(express.json({ limit: '2mb' }) as any);
 
@@ -164,6 +182,7 @@ app.use('/api/auth/login', loginLimiter as any);
 app.use('/api/hr', hrRouter);
 app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
+app.use('/api/driver', driverRouter); // Red NORTEX: registro, login PIN, entregas
 app.use('/api/loans', loanRoutes);
 app.use('/api/sales/sync', syncRoutes);
 
@@ -875,6 +894,71 @@ app.post('/api/auth/reset-password/:token', async (req: any, res: any) => {
 // 📊 DASHBOARD & INTELLIGENCE (REAL DATA)
 // ==========================================
 
+/**
+ * Onboarding guiado: deriva los hitos de activación de los datos REALES del
+ * negocio (no hay tabla de progreso — los conteos son la fuente de verdad), así
+ * el checklist se auto-completa solo. Los pasos se ramifican por tipo de negocio.
+ * Las banderas cosméticas (bienvenida vista / descartado) viven en localStorage.
+ */
+app.get('/api/onboarding', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const tenantId = authReq.tenantId;
+        const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+        if (!tenant) return res.status(404).json({ error: 'Negocio no encontrado' });
+
+        const isLender = tenant.type === 'LENDER';
+
+        // Conteos reales (alcance: este negocio). Los préstamos del prestamista se
+        // identifican por lenderId; el Employee del dueño se crea al registrarse,
+        // por eso "equipo" = más de 1 empleado.
+        const [products, sales, customers, employees, lenderLoans] = await Promise.all([
+            prisma.product.count({ where: { tenantId } }),
+            prisma.sale.count({ where: { tenantId } }),
+            prisma.customer.count({ where: { tenantId } }),
+            prisma.employee.count({ where: { tenantId } }),
+            isLender ? prisma.loan.count({ where: { lenderId: tenantId } }) : Promise.resolve(0),
+        ]);
+
+        // El registro siembra un taxId placeholder "TAX-<timestamp>"; el paso solo
+        // se completa cuando el dueño guarda su RUC real (Configuración DGI).
+        const hasFiscal = !!(
+            tenant.taxId &&
+            String(tenant.taxId).trim() &&
+            !/^TAX-\d+$/.test(String(tenant.taxId))
+        );
+        const teamReady = employees > 1;
+
+        const steps = isLender
+            ? [
+                { key: 'fiscal',    label: 'Configurá los datos de tu negocio',  done: hasFiscal,        href: '/app/dashboard', cta: 'Configurar' },
+                { key: 'customer',  label: 'Registrá tu primer cliente',         done: customers > 0,    href: '/app/dashboard', cta: 'Agregar cliente' },
+                { key: 'loan',      label: 'Creá tu primer préstamo',            done: lenderLoans > 0,  href: '/app/dashboard', cta: 'Crear préstamo' },
+                { key: 'team',      label: 'Agregá un cobrador a tu equipo',     done: teamReady,        href: '/app/hr',        cta: 'Agregar cobrador' },
+              ]
+            : [
+                { key: 'fiscal',    label: 'Configurá tus datos fiscales (DGI)', done: hasFiscal,        href: '/app/dashboard', cta: 'Configurar' },
+                { key: 'product',   label: 'Agregá tu primer producto',          done: products > 0,     href: '/app/inventory?tour=inv', cta: 'Agregar producto' },
+                { key: 'sale',      label: 'Hacé tu primera venta',              done: sales > 0,        href: '/app/pos?tour=pos',       cta: 'Ir al POS' },
+                { key: 'customer',  label: 'Registrá un cliente',                done: customers > 0,    href: '/app/clients',   cta: 'Agregar cliente' },
+                { key: 'team',      label: 'Invitá a tu equipo',                 done: teamReady,        href: '/app/team',      cta: 'Invitar' },
+              ];
+
+        const completed = steps.filter(s => s.done).length;
+        res.json({
+            type: tenant.type,
+            businessName: tenant.businessName ?? '',
+            steps,
+            completed,
+            total: steps.length,
+            allDone: completed === steps.length,
+        });
+    } catch (e: any) {
+        console.error('onboarding status error', e);
+        res.status(500).json({ error: 'Error al calcular el onboarding' });
+    }
+});
+
 app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
@@ -1183,6 +1267,54 @@ app.post('/api/suppliers', authenticate, async (req: any, res: any) => {
     } catch (error) { res.status(500).json({ error: 'Error' }); }
 });
 
+// PUT /api/suppliers/:id - Actualizar proveedor (Bodeguero C2 — completa el CRUD)
+app.put('/api/suppliers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    const { name, ruc, contactName, phone, email, address, category } = req.body;
+    try {
+        const existing = await prisma.supplier.findFirst({ where: { id, tenantId: authReq.tenantId! } });
+        if (!existing) return res.status(404).json({ error: 'Proveedor no encontrado' });
+
+        const data: any = {};
+        if (name !== undefined) data.name = name;
+        if (ruc !== undefined) data.ruc = ruc;
+        if (contactName !== undefined) data.contactName = contactName;
+        if (phone !== undefined) data.phone = phone;
+        if (email !== undefined) data.email = email;
+        if (address !== undefined) data.address = address;
+        if (category !== undefined) data.category = category;
+
+        const supplier = await prisma.supplier.update({ where: { id }, data });
+        res.json(supplier);
+    } catch (error: any) {
+        console.error('Error updating supplier:', error);
+        res.status(500).json({ error: 'Error actualizando proveedor' });
+    }
+});
+
+// DELETE /api/suppliers/:id - Eliminar proveedor (solo si no tiene compras)
+app.delete('/api/suppliers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    try {
+        const existing = await prisma.supplier.findFirst({ where: { id, tenantId: authReq.tenantId! } });
+        if (!existing) return res.status(404).json({ error: 'Proveedor no encontrado' });
+
+        const purchases = await prisma.purchase.count({ where: { supplierId: id, tenantId: authReq.tenantId! } });
+        if (purchases > 0) {
+            return res.status(409).json({ error: `No se puede eliminar: el proveedor tiene ${purchases} compra(s) registrada(s).` });
+        }
+
+        // Los productos que lo tenían por defecto quedan en null (onDelete: SetNull).
+        await prisma.supplier.delete({ where: { id } });
+        res.json({ message: 'Proveedor eliminado' });
+    } catch (error: any) {
+        console.error('Error deleting supplier:', error);
+        res.status(500).json({ error: 'Error eliminando proveedor' });
+    }
+});
+
 
 // ==========================================
 // 👔 RRHH: EMPLEADOS & NÓMINA (LÓGICA REAL AGREGADA)
@@ -1231,7 +1363,7 @@ app.get('/api/employees', authenticate, async (req: any, res: any) => {
 
 app.post('/api/employees', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { firstName, lastName, role, baseSalary, commissionRate, phone, pin, cedula, inss } = req.body;
+    const { firstName, lastName, role, baseSalary, commissionRate, phone, pin, cedula, inss, jornada } = req.body;
 
     // Validar PIN de 4 dígitos
     const employeePin = pin ? String(pin).trim() : '0000';
@@ -1260,6 +1392,7 @@ app.post('/api/employees', authenticate, async (req: any, res: any) => {
                 pin: employeePin,
                 cedula: cedula || null,
                 inss: inss || null,
+                jornada: ['DIURNA', 'NOCTURNA', 'MIXTA'].includes(jornada) ? jornada : 'DIURNA',
             }
         });
         res.json(employee);
@@ -1359,11 +1492,15 @@ app.post('/api/returns', authenticate, validate(CreateReturnSchema), async (req:
 
     try {
         const sale = await prisma.sale.findFirst({
-            where: { id: saleId, tenantId: authReq.tenantId }
+            where: { id: saleId, tenantId: authReq.tenantId },
+            include: { items: { select: { productId: true, costAtSale: true } } },
         });
         if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
 
         const returnTotal = items.reduce((sum: number, item: any) => sum + Number(item.price) * Number(item.quantity), 0);
+        // Costo de lo devuelto: reversa el costo REAL que la venta registró
+        // (SaleItem.costAtSale, fijado por el servidor), no una aproximación.
+        const costByProduct = new Map(sale.items.map(it => [it.productId, new Decimal(it.costAtSale.toString())]));
 
         const result = await prisma.$transaction(async (tx: any) => {
             // 1. Create return record
@@ -1421,10 +1558,10 @@ app.post('/api/returns', authenticate, validate(CreateReturnSchema), async (req:
 
             // 📊 MOTOR CONTABLE: Registrar devolución
             const costTotal = items.reduce(
-                (sum: Decimal, item: { price?: unknown; quantity?: unknown }) =>
-                    sum.plus(new Decimal(Number(item.price) || 0).mul('0.7').mul(Number(item.quantity) || 0)),
+                (sum: Decimal, item: { productId?: unknown; quantity?: unknown }) =>
+                    sum.plus((costByProduct.get(String(item.productId)) ?? new Decimal(0)).mul(Number(item.quantity) || 0)),
                 new Decimal(0)
-            ).toNumber(); // Aprox. costo = 70% del precio de venta
+            ).toNumber();
             try {
                 await recordReturn(tx, authReq.tenantId!, authReq.userId!, productReturn.id, returnTotal, costTotal);
             } catch (accErr) { console.warn('⚠️ Accounting hook failed (return continues):', accErr); }
@@ -2095,7 +2232,7 @@ app.post('/api/cash-movements/:id/void', authenticate, async (req: any, res: any
 // GET /api/products - Lista todos los productos (disponible para todos)
 app.get('/api/products', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { search, lowStock } = req.query;
+    const { search, lowStock, category, status, sort, dir, page, pageSize } = req.query;
 
     try {
         const whereClause: any = { tenantId: authReq.tenantId };
@@ -2107,10 +2244,30 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
                 { category: { contains: search } }
             ];
         }
+        if (category) whereClause.category = String(category);
+        if (status === 'out') whereClause.stock = { lte: 0 };
+        else if (status === 'published') whereClause.isPublished = true;
+        else if (status === 'unpublished') whereClause.isPublished = false;
+
+        // Orden por columna válida (default: nombre).
+        const sortField = ['name', 'stock', 'price', 'cost', 'sku', 'category'].includes(String(sort)) ? String(sort) : 'name';
+        const orderBy: any = { [sortField]: dir === 'desc' ? 'desc' : 'asc' };
+
+        // Modo paginado (opt-in: solo si llega `page`) — para la vista de inventario.
+        // Sin `page`, devuelve el arreglo completo (compatibilidad con POS y otros).
+        if (page) {
+            const take = Math.min(200, Math.max(1, parseInt(String(pageSize)) || 50));
+            const skip = (Math.max(1, parseInt(String(page)) || 1) - 1) * take;
+            const [products, total] = await Promise.all([
+                prisma.product.findMany({ where: whereClause, orderBy, skip, take, include: { creator: { select: { name: true, email: true } } } }),
+                prisma.product.count({ where: whereClause }),
+            ]);
+            return res.json({ products, total, page: Math.max(1, parseInt(String(page)) || 1), pageSize: take });
+        }
 
         let products = await prisma.product.findMany({
             where: whereClause,
-            orderBy: { name: 'asc' },
+            orderBy,
             include: {
                 creator: { select: { name: true, email: true } }
             }
@@ -2127,10 +2284,27 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
     }
 });
 
+// GET /api/products/categories — categorías distintas (para el filtro)
+app.get('/api/products/categories', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const rows = await prisma.product.findMany({
+            where: { tenantId: authReq.tenantId, category: { not: null } },
+            select: { category: true },
+            distinct: ['category'],
+            orderBy: { category: 'asc' },
+        });
+        res.json(rows.map((r: any) => r.category).filter(Boolean));
+    } catch (error) {
+        console.error('Error fetching categories:', error);
+        res.status(500).json({ error: 'Error obteniendo categorías' });
+    }
+});
+
 // POST /api/products - Crear producto (OWNER o ADMIN)
 app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking } = req.body;
+    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking, reorderPoint, maxStock, defaultSupplierId } = req.body;
 
     try {
         // Verificar que SKU no exista
@@ -2163,6 +2337,9 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (re
                 isPublished: Boolean(isPublished),
                 imageUrl: imageUrl || null,
                 requiresBatchTracking: Boolean(requiresBatchTracking),
+                reorderPoint: parseFloat(reorderPoint) || 0,
+                maxStock: parseFloat(maxStock) || 0,
+                defaultSupplierId: defaultSupplierId || null,
                 createdBy: authReq.userId!
             }
         });
@@ -2316,7 +2493,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
 app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { name, description, category, price, cost, stock, minStock, unit, imageUrl } = req.body;
+    const { name, description, category, price, cost, stock, minStock, unit, imageUrl, reorderPoint, maxStock, defaultSupplierId } = req.body;
 
     try {
         const existing = await prisma.product.findFirst({
@@ -2336,6 +2513,9 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
         if (minStock !== undefined) updates.minStock = parseInt(minStock);
         if (unit !== undefined) updates.unit = unit;
         if (imageUrl !== undefined) updates.imageUrl = imageUrl;
+        if (reorderPoint !== undefined) updates.reorderPoint = parseFloat(reorderPoint) || 0;
+        if (maxStock !== undefined) updates.maxStock = parseFloat(maxStock) || 0;
+        if (defaultSupplierId !== undefined) updates.defaultSupplierId = defaultSupplierId || null;
 
         // Si se cambia el stock, crear registro en Kardex
         if (stock !== undefined) {
@@ -2397,6 +2577,68 @@ app.patch('/api/products/publish-bulk', authenticate, checkRole(['OWNER', 'ADMIN
     }
 });
 
+// PATCH /api/products/bulk-edit - Edición masiva de categoría y/o precio (Solo OWNER/ADMIN)
+// [Bodeguero A2] No toca stock ni costo (el costo es promedio ponderado del sistema).
+//   priceMode 'set' → fija el precio; 'pct' → ajusta ± un porcentaje (redondeado a 2 dec.).
+app.patch('/api/products/bulk-edit', authenticate, checkRole(['OWNER', 'ADMIN']), validate(BulkEditProductsSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { ids, category, priceMode, priceValue } = req.body;
+
+    try {
+        let count = 0;
+
+        if (priceMode === 'pct') {
+            // Ajuste porcentual: requiere leer cada precio → recalcular → redondear.
+            const factor = 1 + priceValue / 100;
+            count = await prisma.$transaction(async (tx: any) => {
+                const prods = await tx.product.findMany({
+                    where: { id: { in: ids }, tenantId: authReq.tenantId! },
+                    select: { id: true, price: true },
+                });
+                for (const p of prods) {
+                    const newPrice = Math.max(0, Math.round(Number(p.price) * factor * 100) / 100);
+                    const data: any = { price: newPrice };
+                    if (category !== undefined) data.category = category;
+                    await tx.product.update({ where: { id: p.id }, data });
+                }
+                return prods.length;
+            });
+        } else {
+            // 'set' y/o categoría → un solo updateMany atómico.
+            const data: any = {};
+            if (category !== undefined) data.category = category;
+            if (priceMode === 'set') data.price = Math.round(priceValue * 100) / 100;
+            const result = await prisma.product.updateMany({
+                where: { id: { in: ids }, tenantId: authReq.tenantId! },
+                data,
+            });
+            count = result.count;
+        }
+
+        // Rastro de auditoría: una mutación masiva de precios/categoría debe quedar registrada.
+        await prisma.auditLog.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                action: 'PRODUCT_BULK_EDIT',
+                details: JSON.stringify({
+                    count,
+                    requestedIds: ids.length,
+                    category: category ?? null,
+                    priceMode: priceMode ?? null,
+                    priceValue: priceValue ?? null,
+                    timestamp: new Date().toISOString(),
+                }),
+            },
+        });
+
+        res.json({ message: `${count} producto(s) actualizado(s).`, count });
+    } catch (error: any) {
+        console.error('Error en edición masiva:', error);
+        res.status(500).json({ error: error.message || 'Error en edición masiva' });
+    }
+});
+
 // PATCH /api/products/:id/publish - Toggle public catalog visibility (Solo OWNER/ADMIN)
 app.patch('/api/products/:id/publish', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
@@ -2454,22 +2696,59 @@ app.delete('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), asy
 });
 
 // GET /api/kardex/:productId - Historial de movimientos (Solo OWNER)
+// [Bodeguero A5] Filtro por rango de fechas (hora Nicaragua, UTC-6) + paginación opt-in.
+//   - Sin ?page  → array (compat: últimos 50, respetando from/to si vienen).
+//   - Con  ?page → { entries, total, page, pageSize }.
 app.get('/api/kardex/:productId', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { productId } = req.params;
+    const { from, to, page, pageSize } = req.query;
 
     try {
+        const where: any = { productId, tenantId: authReq.tenantId! };
+
+        // Rango de fechas interpretado como días locales de Nicaragua (UTC-6, sin DST).
+        const NI_OFFSET_MS = 6 * 3600 * 1000;
+        const DAY_MS = 24 * 3600 * 1000;
+        if (from || to) {
+            where.date = {};
+            if (from) {
+                const d = String(from).slice(0, 10);
+                where.date.gte = new Date(new Date(d + 'T00:00:00.000Z').getTime() + NI_OFFSET_MS);
+            }
+            if (to) {
+                const d = String(to).slice(0, 10);
+                where.date.lte = new Date(new Date(d + 'T00:00:00.000Z').getTime() + NI_OFFSET_MS + DAY_MS - 1);
+            }
+        }
+
+        const include = {
+            user: { select: { name: true, email: true } },
+            product: { select: { name: true, sku: true } },
+            batch: { select: { batchNumber: true, expiryDate: true } },
+        };
+
+        if (page !== undefined) {
+            const take = Math.min(200, Math.max(1, parseInt(pageSize) || 50));
+            const pageNum = Math.max(1, parseInt(page) || 1);
+            const [entries, total] = await Promise.all([
+                prisma.kardexMovement.findMany({
+                    where,
+                    include,
+                    orderBy: { date: 'desc' },
+                    skip: (pageNum - 1) * take,
+                    take,
+                }),
+                prisma.kardexMovement.count({ where }),
+            ]);
+            return res.json({ entries, total, page: pageNum, pageSize: take });
+        }
+
         const movements = await prisma.kardexMovement.findMany({
-            where: {
-                productId,
-                tenantId: authReq.tenantId!
-            },
-            include: {
-                user: { select: { name: true, email: true } },
-                product: { select: { name: true, sku: true } }
-            },
+            where,
+            include,
             orderBy: { date: 'desc' },
-            take: 50
+            take: 50,
         });
 
         res.json(movements);
@@ -2601,6 +2880,165 @@ app.get('/api/inventory/batches/:productId', authenticate, async (req: any, res:
     }
 });
 
+// POST /api/inventory/batches - Alta de lote (Solo OWNER/ADMIN)
+// [Bodeguero A4] Crea (o incrementa) un lote, suma el stock del producto de forma
+//   atómica vía applyStockDelta y deja rastro en el Kardex enlazado al lote. Activa el
+//   control de lotes del producto si aún no lo tenía (FEFO/alertas de vencimiento).
+app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateBatchSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { productId, batchNumber, expiryDate, quantity } = req.body;
+
+    const expiry = new Date(String(expiryDate).slice(0, 10) + 'T00:00:00.000Z');
+    if (isNaN(expiry.getTime())) {
+        return res.status(400).json({ error: 'Fecha de vencimiento inválida.' });
+    }
+
+    try {
+        const result = await prisma.$transaction(async (tx: any) => {
+            const product = await tx.product.findFirst({
+                where: { id: productId, tenantId: authReq.tenantId! },
+            });
+            if (!product) throw new Error('Producto no encontrado en tu inventario.');
+
+            // 1. Sumar stock del producto (atómico, row-lock).
+            const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                tenantId: authReq.tenantId!,
+                productId,
+                delta: quantity,
+                enforceSufficient: false,
+            });
+
+            // 2. Crear o incrementar el lote (mismo lote = se acumula).
+            const batch = await tx.productBatch.upsert({
+                where: { productId_batchNumber: { productId, batchNumber } },
+                update: { stock: { increment: quantity } },
+                create: {
+                    tenantId: authReq.tenantId!,
+                    productId,
+                    batchNumber,
+                    expiryDate: expiry,
+                    stock: quantity,
+                },
+            });
+
+            // 3. Activar control de lotes si aún no estaba (habilita FEFO + alertas).
+            if (!product.requiresBatchTracking) {
+                await tx.product.update({
+                    where: { id: productId },
+                    data: { requiresBatchTracking: true },
+                });
+            }
+
+            // 4. Kardex: entrada por alta de lote, enlazada al lote.
+            const movement = await tx.kardexMovement.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    productId,
+                    type: 'IN_PURCHASE',
+                    quantity,
+                    stockBefore,
+                    stockAfter,
+                    referenceType: 'BATCH',
+                    reason: `Alta de lote ${batchNumber} (vence ${expiry.toISOString().slice(0, 10)})`,
+                    userId: authReq.userId!,
+                    batchId: batch.id,
+                },
+            });
+
+            return { batch, movement, newStock: stockAfter, productName: product.name };
+        });
+
+        res.json({
+            message: `Lote ${batchNumber} agregado a ${result.productName}. Stock: ${result.newStock}`,
+            batch: result.batch,
+            newStock: result.newStock,
+        });
+    } catch (error: any) {
+        console.error('Error creando lote:', error);
+        res.status(error.message?.includes('no encontrado') ? 400 : 500)
+            .json({ error: error.message || 'Error creando lote' });
+    }
+});
+
+// POST /api/inventory/batches/:batchId/writeoff - Dar de baja un lote (merma) [Bodeguero B3]
+// Resta el stock restante del lote del producto, deja Kardex y asiento de merma
+// (Debe 5.1.2 Pérdida por Merma / Haber 1.1.4 Inventario, valuado al costo).
+app.post('/api/inventory/batches/:batchId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { batchId } = req.params;
+    const reason = (req.body?.reason || '').toString().trim();
+    try {
+        await seedChartOfAccounts(authReq.tenantId!); // garantiza 5.1.2 / 1.1.4
+
+        const result = await prisma.$transaction(async (tx: any) => {
+            const batch = await tx.productBatch.findFirst({
+                where: { id: batchId, tenantId: authReq.tenantId! },
+                include: { product: { select: { name: true, cost: true } } },
+            });
+            if (!batch) throw new Error('Lote no encontrado');
+            const qty = Number(batch.stock);
+            if (qty <= 0) throw new Error('El lote no tiene stock para dar de baja.');
+            // Período cerrado → no se permite dar de baja (aun si el costo fuese 0).
+            await assertPeriodOpen(tx, authReq.tenantId!, new Date());
+
+            // Restar del stock del producto (realidad física: el lote se descarta).
+            const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                tenantId: authReq.tenantId!,
+                productId: batch.productId,
+                delta: -qty,
+                enforceSufficient: false,
+            });
+
+            await tx.productBatch.update({ where: { id: batchId }, data: { stock: 0 } });
+
+            await tx.kardexMovement.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    productId: batch.productId,
+                    type: 'ADJUST_LOSS',
+                    quantity: -qty,
+                    stockBefore,
+                    stockAfter,
+                    referenceId: batchId,
+                    referenceType: 'BATCH_WRITEOFF',
+                    reason: reason || `Baja de lote ${batch.batchNumber} (vence ${new Date(batch.expiryDate).toISOString().slice(0, 10)})`,
+                    userId: authReq.userId!,
+                    batchId,
+                },
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'BATCH_WRITEOFF',
+                    details: JSON.stringify({ batchId, batchNumber: batch.batchNumber, productName: batch.product.name, quantity: qty, expiryDate: batch.expiryDate, reason: reason || null, timestamp: new Date().toISOString() }),
+                },
+            });
+
+            const lossValue = new Decimal(qty).times(Number(batch.product.cost) || 0).toDecimalPlaces(2).toNumber();
+            if (lossValue > 0) {
+                await createJournalEntry(
+                    tx, authReq.tenantId!, `Baja de lote vencido ${batch.batchNumber}`, batchId, 'BATCH_WRITEOFF', authReq.userId!,
+                    [
+                        { accountCode: '5.1.2', debit: lossValue, credit: 0 },
+                        { accountCode: '1.1.4', debit: 0, credit: lossValue },
+                    ]
+                );
+            }
+
+            return { newStock: stockAfter, lossValue, batchNumber: batch.batchNumber, qty };
+        });
+
+        res.json({ message: `Lote ${result.batchNumber} dado de baja (${result.qty} uds). Merma: C$ ${result.lossValue.toFixed(2)}`, ...result });
+    } catch (error: any) {
+        console.error('Error dando de baja lote:', error);
+        const msg = error?.message || 'Error dando de baja el lote';
+        const code = error instanceof PeriodLockedError ? 423 : (msg.includes('no encontrado') || msg.includes('stock')) ? 400 : 500;
+        res.status(code).json({ error: msg });
+    }
+});
+
 // GET /api/inventory/expiring-soon - Lotes próximos a vencer (≤ 90 días)
 app.get('/api/inventory/expiring-soon', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
@@ -2641,6 +3079,252 @@ app.get('/api/inventory/low-stock', authenticate, checkRole(['OWNER', 'ADMIN']),
     } catch (error) {
         console.error('Error fetching low stock:', error);
         res.status(500).json({ error: 'Error obteniendo productos con stock bajo' });
+    }
+});
+
+// ==========================================
+// 🧮 TOMA FÍSICA / CONTEO CÍCLICO (Bodeguero B1) — Solo OWNER/ADMIN
+// ==========================================
+
+// POST /api/stock-counts - Crear conteo + snapshot del stock esperado
+app.post('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateStockCountSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { scope, category, notes } = req.body;
+    try {
+        // Solo un conteo abierto a la vez (evita snapshots solapados/confusos).
+        const open = await prisma.stockCount.findFirst({
+            where: { tenantId: authReq.tenantId!, status: 'OPEN' },
+            select: { id: true },
+        });
+        if (open) {
+            return res.status(409).json({ error: 'Ya hay una toma física abierta. Ciérrala o cancélala antes de crear otra.', openCountId: open.id });
+        }
+
+        const where: any = { tenantId: authReq.tenantId! };
+        if (scope === 'CATEGORY') where.category = category;
+
+        const products = await prisma.product.findMany({ where, select: { id: true, stock: true } });
+        if (products.length === 0) {
+            return res.status(400).json({ error: 'No hay productos en el alcance seleccionado.' });
+        }
+
+        const count = await prisma.$transaction(async (tx: any) => {
+            const created = await tx.stockCount.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    status: 'OPEN',
+                    scope,
+                    category: scope === 'CATEGORY' ? category : null,
+                    notes: notes || null,
+                    createdBy: authReq.userId!,
+                },
+            });
+            await tx.stockCountItem.createMany({
+                data: products.map((p: any) => ({
+                    countId: created.id,
+                    productId: p.id,
+                    expected: Number(p.stock),
+                    counted: null,
+                    diff: 0,
+                })),
+            });
+            return created;
+        });
+
+        res.json({ message: `Toma física creada con ${products.length} productos.`, count, items: products.length });
+    } catch (error: any) {
+        console.error('Error creando toma física:', error);
+        res.status(500).json({ error: error.message || 'Error creando toma física' });
+    }
+});
+
+// GET /api/stock-counts - Historial de conteos
+app.get('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const counts = await prisma.stockCount.findMany({
+            where: { tenantId: authReq.tenantId! },
+            include: {
+                creator: { select: { name: true } },
+                _count: { select: { items: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 100,
+        });
+        res.json(counts);
+    } catch (error) {
+        console.error('Error fetching stock counts:', error);
+        res.status(500).json({ error: 'Error obteniendo tomas físicas' });
+    }
+});
+
+// GET /api/stock-counts/:id - Detalle + ítems (para captura / revisión)
+app.get('/api/stock-counts/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    try {
+        const count = await prisma.stockCount.findFirst({
+            where: { id, tenantId: authReq.tenantId! },
+            include: { creator: { select: { name: true } } },
+        });
+        if (!count) return res.status(404).json({ error: 'Toma física no encontrada' });
+
+        const items = await prisma.stockCountItem.findMany({
+            where: { countId: id },
+            include: { product: { select: { name: true, sku: true, unit: true, cost: true, stock: true } } },
+            orderBy: { product: { name: 'asc' } },
+        });
+
+        res.json({ count, items });
+    } catch (error) {
+        console.error('Error fetching stock count:', error);
+        res.status(500).json({ error: 'Error obteniendo toma física' });
+    }
+});
+
+// PATCH /api/stock-counts/:id/count - Capturar conteo físico de un producto (apto escáner)
+app.patch('/api/stock-counts/:id/count', authenticate, checkRole(['OWNER', 'ADMIN']), validate(RecordCountSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    const { productId, counted } = req.body;
+    try {
+        const count = await prisma.stockCount.findFirst({
+            where: { id, tenantId: authReq.tenantId! },
+            select: { status: true },
+        });
+        if (!count) return res.status(404).json({ error: 'Toma física no encontrada' });
+        if (count.status !== 'OPEN') return res.status(400).json({ error: 'La toma física no está abierta.' });
+
+        const updated = await prisma.stockCountItem.updateMany({
+            where: { countId: id, productId },
+            data: { counted, countedAt: new Date() },
+        });
+        if (updated.count === 0) return res.status(404).json({ error: 'Este producto no pertenece a la toma física.' });
+
+        res.json({ message: 'Conteo registrado', productId, counted });
+    } catch (error: any) {
+        console.error('Error registrando conteo:', error);
+        res.status(500).json({ error: error.message || 'Error registrando conteo' });
+    }
+});
+
+// POST /api/stock-counts/:id/close - Cerrar: postea ajustes (Kardex) + asiento de merma/sobrante
+app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    try {
+        // Asegura que existan las cuentas 5.1.2 / 4.1.3 antes del asiento (auto-sanable).
+        await seedChartOfAccounts(authReq.tenantId!);
+
+        const result = await prisma.$transaction(async (tx: any) => {
+            const count = await tx.stockCount.findFirst({
+                where: { id, tenantId: authReq.tenantId! },
+            });
+            if (!count) throw new Error('Toma física no encontrada');
+            if (count.status !== 'OPEN') throw new Error('La toma física ya está cerrada o cancelada.');
+            // Un período cerrado congela TODO ajuste de inventario, aun si el valor
+            // de la merma fuese 0 (productos sin costo) y no se generara asiento.
+            await assertPeriodOpen(tx, authReq.tenantId!, new Date());
+
+            const items = await tx.stockCountItem.findMany({
+                where: { countId: id },
+                include: { product: { select: { name: true, cost: true, stock: true } } },
+            });
+
+            let lossValue = new Decimal(0); // Σ |merma| · costo
+            let gainValue = new Decimal(0); // Σ sobrante · costo
+            let adjusted = 0;
+            let countedItems = 0;
+
+            for (const it of items) {
+                if (it.counted === null) continue; // no contado → no se toca
+                countedItems++;
+                const counted = Number(it.counted);
+
+                // `variance` = conteo vs el snapshot inicial (informativo, para el reporte).
+                const variance = counted - Number(it.expected);
+                await tx.stockCountItem.update({ where: { id: it.id }, data: { diff: variance } });
+
+                // El ajuste REAL se mide contra el stock de LIBRO ACTUAL: así las ventas/
+                // compras ya contabilizadas (que movieron el libro entre snapshot y cierre)
+                // NO se cuentan como merma — solo la diferencia inexplicada cuadra el stock
+                // al conteo físico y evita re-contabilizar COGS como pérdida.
+                const currentBook = Number(it.product.stock);
+                const delta = counted - currentBook;
+                if (delta === 0) continue;
+
+                const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                    tenantId: authReq.tenantId!,
+                    productId: it.productId,
+                    delta,
+                    enforceSufficient: false,
+                });
+
+                await tx.kardexMovement.create({
+                    data: {
+                        tenantId: authReq.tenantId!,
+                        productId: it.productId,
+                        type: delta < 0 ? 'ADJUST_LOSS' : 'ADJUST_GAIN',
+                        quantity: delta,
+                        stockBefore,
+                        stockAfter,
+                        referenceId: id,
+                        referenceType: 'STOCK_COUNT',
+                        reason: `Toma física #${id.slice(0, 8)}: libro ${currentBook}, contado ${counted}`,
+                        userId: authReq.userId!,
+                    },
+                });
+
+                const cost = new Decimal(Number(it.product.cost) || 0);
+                if (delta < 0) lossValue = lossValue.plus(cost.times(Math.abs(delta)));
+                else gainValue = gainValue.plus(cost.times(delta));
+                adjusted++;
+            }
+
+            // Asiento contable de la merma/sobrante (si hubo discrepancia valuada).
+            await recordStockCountAdjustment(
+                tx, authReq.tenantId!, authReq.userId!, id, lossValue.toNumber(), gainValue.toNumber()
+            );
+
+            const closed = await tx.stockCount.update({
+                where: { id },
+                data: { status: 'CLOSED', closedAt: new Date(), closedBy: authReq.userId! },
+            });
+
+            return {
+                count: closed,
+                adjusted,
+                countedItems,
+                uncounted: items.length - countedItems,
+                lossValue: lossValue.toDecimalPlaces(2).toNumber(),
+                gainValue: gainValue.toDecimalPlaces(2).toNumber(),
+            };
+        });
+
+        res.json({ message: `Toma física cerrada. ${result.adjusted} ajuste(s) aplicado(s).`, ...result });
+    } catch (error: any) {
+        console.error('Error cerrando toma física:', error);
+        const msg = error?.message || 'Error cerrando toma física';
+        const code = error instanceof PeriodLockedError ? 423
+            : (msg.includes('no encontrada') || msg.includes('cerrada') || msg.includes('cancelada')) ? 400 : 500;
+        res.status(code).json({ error: msg });
+    }
+});
+
+// POST /api/stock-counts/:id/cancel - Cancelar una toma física abierta (sin ajustes)
+app.post('/api/stock-counts/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    try {
+        const updated = await prisma.stockCount.updateMany({
+            where: { id, tenantId: authReq.tenantId!, status: 'OPEN' },
+            data: { status: 'CANCELLED', closedAt: new Date(), closedBy: authReq.userId! },
+        });
+        if (updated.count === 0) return res.status(400).json({ error: 'No se encontró una toma física abierta con ese id.' });
+        res.json({ message: 'Toma física cancelada' });
+    } catch (error: any) {
+        console.error('Error cancelando toma física:', error);
+        res.status(500).json({ error: error.message || 'Error cancelando toma física' });
     }
 });
 
@@ -2803,12 +3487,16 @@ app.get('/api/reports/inventory', authenticate, async (req: any, res: any) => {
         });
 
         let inventoryValue = new Decimal(0);
+        let outOfStock = 0;
+        let totalUnits = 0;
         const lowStock: { id: string; name: string; sku: string; stock: number; minStock: number; cost: number }[] = [];
 
         products.forEach((p) => {
             inventoryValue = inventoryValue.plus(
                 new Decimal(p.stock.toString()).mul(p.cost.toString())
             );
+            totalUnits += Number(p.stock);
+            if (Number(p.stock) <= 0) outOfStock++;
             if (Number(p.stock) <= Number(p.minStock)) {
                 lowStock.push({
                     id: p.id,
@@ -2824,6 +3512,8 @@ app.get('/api/reports/inventory', authenticate, async (req: any, res: any) => {
         res.json({
             inventoryValue: inventoryValue.toDecimalPlaces(2).toNumber(),
             totalProducts: products.length,
+            totalUnits,
+            outOfStock,
             lowStock,
         });
     } catch (error) {
@@ -3019,11 +3709,21 @@ app.post('/api/purchases', authenticate, validate(CreatePurchaseSchema), async (
 
             // 4. Registro financiero
             if (paymentMethod === 'CASH') {
-                // Descontar de wallet del tenant
-                await tx.tenant.update({
-                    where: { id: authReq.tenantId },
+                // Débito ATÓMICO: decrementa solo si hay saldo suficiente. El guard de
+                // suficiencia y la escritura son el MISMO UPDATE condicional (toma el
+                // row-lock), así dos compras de contado concurrentes no pueden ambas
+                // pasar el chequeo y dejar la billetera en negativo (TOCTOU).
+                const debited = await tx.tenant.updateMany({
+                    where: { id: authReq.tenantId, walletBalance: { gte: total } },
                     data: { walletBalance: { decrement: total } }
                 });
+                if (debited.count === 0) {
+                    const t = await tx.tenant.findUnique({
+                        where: { id: authReq.tenantId },
+                        select: { walletBalance: true }
+                    });
+                    throw new Error(`SALDO_INSUFICIENTE: disponible C$ ${Number(t?.walletBalance ?? 0).toFixed(2)}, requerido C$ ${Number(total).toFixed(2)}. Usa crédito o recarga tu billetera.`);
+                }
 
                 // Crear gasto
                 await tx.expense.create({
@@ -3047,7 +3747,8 @@ app.post('/api/purchases', authenticate, validate(CreatePurchaseSchema), async (
 
     } catch (error: any) {
         console.error('Error registrando compra:', error);
-        res.status(500).json({ error: error.message || 'Error al procesar la compra' });
+        const insufficient = error?.message?.includes('SALDO_INSUFICIENTE');
+        res.status(insufficient ? 400 : 500).json({ error: error.message || 'Error al procesar la compra' });
     }
 });
 
@@ -3136,7 +3837,7 @@ import { calculatePayroll, calculateLaborLiability } from './services/nicaLabor'
 import { generateMonthlyReport, saveMonthlyReport } from './services/nicaTax';
 
 // POST /api/payroll/calculate - Calcular nómina de todos los empleados
-app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER']), validate(PayrollCalculateSchema), async (req: any, res: any) => {
+app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), validate(PayrollCalculateSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { month, year } = req.body;
 
@@ -3167,51 +3868,201 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER']), validate(
             salesByEmployee.map((s: any) => [s.employeeId, Number(s._sum.total || 0)])
         );
 
+        // B4: INSS patronal según la config del tenant (21.5/22.5). Default legal.
+        const taxCfg = await prisma.taxConfig.findUnique({ where: { tenantId: authReq.tenantId! } });
+        const inssPatronalRate = taxCfg ? Number(taxCfg.inssPatronalRate) : undefined;
+
+        // Fase A: horas extra del mes por empleado (turnos de asistencia cerrados).
+        const overtimeByEmployee = await prisma.shift.groupBy({
+            by: ['employeeId'],
+            where: {
+                tenantId: authReq.tenantId,
+                status: 'COMPLETED',
+                employeeId: { not: null },
+                startTime: { gte: startOfMonth, lte: endOfMonth },
+            },
+            _sum: { overtimeHours: true },
+        });
+        const overtimeMap = new Map(
+            overtimeByEmployee.map((s: any) => [s.employeeId, Number(s._sum.overtimeHours || 0)])
+        );
+
+        // Fase A p2: ausencias sin goce (UNPAID) aprobadas que solapan el mes →
+        // días no trabajados por empleado.
+        const unpaidLeaves = await prisma.leaveRequest.findMany({
+            where: {
+                tenantId: authReq.tenantId!,
+                type: 'UNPAID',
+                status: 'APPROVED',
+                startDate: { lte: endOfMonth },
+                endDate: { gte: startOfMonth },
+            },
+            select: { employeeId: true, startDate: true, endDate: true },
+        });
+        const absenceDaysByEmployee = new Map<string, number>();
+        for (const lv of unpaidLeaves) {
+            const from = lv.startDate > startOfMonth ? lv.startDate : startOfMonth;
+            const to = lv.endDate < endOfMonth ? lv.endDate : endOfMonth;
+            const days = Math.max(0, Math.floor((to.getTime() - from.getTime()) / 86400000) + 1);
+            absenceDaysByEmployee.set(lv.employeeId, (absenceDaysByEmployee.get(lv.employeeId) || 0) + days);
+        }
+
+        // Fase A p2b: IR acumulado (método DGI). Renta neta gravable e IR ya
+        // retenido de los meses ANTERIORES del mismo año, por empleado.
+        const prevPayrolls = await prisma.payroll.findMany({
+            where: { tenantId: authReq.tenantId!, year: Number(year), month: { lt: Number(month) } },
+            select: { employeeId: true, totalIncome: true, inssLaboral: true, irLaboral: true },
+        });
+        const netoPrevioByEmp = new Map<string, number>();
+        const irPrevioByEmp = new Map<string, number>();
+        for (const pp of prevPayrolls) {
+            const neto = Number(pp.totalIncome) - Number(pp.inssLaboral);
+            netoPrevioByEmp.set(pp.employeeId, (netoPrevioByEmp.get(pp.employeeId) || 0) + neto);
+            irPrevioByEmp.set(pp.employeeId, (irPrevioByEmp.get(pp.employeeId) || 0) + Number(pp.irLaboral));
+        }
+
+        // Fase C4: deducciones judiciales activas por empleado (orden de prioridad).
+        const judiciales = await prisma.judicialDeduction.findMany({
+            where: { tenantId: authReq.tenantId!, status: 'ACTIVE' },
+            orderBy: { priority: 'asc' },
+            select: { employeeId: true, amount: true, percentage: true },
+        });
+        const judicialByEmp = new Map<string, { amount?: number | null; percentage?: number | null }[]>();
+        for (const j of judiciales) {
+            const arr = judicialByEmp.get(j.employeeId) ?? [];
+            arr.push({ amount: j.amount != null ? Number(j.amount) : null, percentage: j.percentage });
+            judicialByEmp.set(j.employeeId, arr);
+        }
+
+        // Fase C2: feriados del mes trabajados por empleado (recargo Art. 68).
+        const holidaysMonth = await prisma.holiday.findMany({
+            where: { tenantId: authReq.tenantId!, date: { gte: startOfMonth, lte: endOfMonth } },
+            select: { date: true },
+        });
+        const holidaySet = new Set(holidaysMonth.map(h => h.date.toISOString().slice(0, 10)));
+        const holidayDaysByEmp = new Map<string, number>();
+        if (holidaySet.size > 0) {
+            const shiftsMes = await prisma.shift.findMany({
+                where: { tenantId: authReq.tenantId!, status: 'COMPLETED', employeeId: { not: null }, startTime: { gte: startOfMonth, lte: endOfMonth } },
+                select: { employeeId: true, startTime: true },
+            });
+            const workedByEmp = new Map<string, Set<string>>();
+            for (const s of shiftsMes) {
+                if (!s.employeeId) continue;
+                // Día calendario LOCAL de Nicaragua (UTC-6): un turno nocturno no
+                // debe contarse en el día UTC siguiente.
+                const ds = new Date(s.startTime.getTime() - 6 * 3600 * 1000).toISOString().slice(0, 10);
+                if (!holidaySet.has(ds)) continue;
+                const set = workedByEmp.get(s.employeeId) ?? new Set<string>();
+                set.add(ds);
+                workedByEmp.set(s.employeeId, set);
+            }
+            for (const [empId, set] of workedByEmp) holidayDaysByEmp.set(empId, set.size);
+        }
+
         const payrolls = [];
 
         for (const emp of employees) {
             const baseSalary = Number(emp.baseSalary);
             const ventasMes = salesMap.get(emp.id) || 0;
             const comisiones = ventasMes * Number(emp.commissionRate);
+            const overtimeHours = overtimeMap.get(emp.id) || 0;
+            const holidayDays = holidayDaysByEmp.get(emp.id) || 0;
+            const diasAusencia = Math.min(30, absenceDaysByEmployee.get(emp.id) || 0);
+            const absenceDeduction = (baseSalary / 30) * diasAusencia;
 
-            const calc = calculatePayroll(baseSalary, comisiones);
+            const existing = await prisma.payroll.findUnique({
+                where: { employeeId_month_year: { employeeId: emp.id, month: Number(month), year: Number(year) } },
+            });
+            // No recalcular una nómina ya PAGADA (preserva el pago y sus asientos).
+            if (existing && existing.status === 'PAGADO') {
+                payrolls.push({ ...existing, employeeName: `${emp.firstName} ${emp.lastName}`, cedula: emp.cedula, inss: emp.inss, ventasMes });
+                continue;
+            }
 
-            // Upsert en DB
-            const payroll = await prisma.payroll.upsert({
+            // Adelantos candidatos: los ya enlazados a esta nómina (prioridad en un
+            // recálculo) + los APPROVED aún sin nómina.
+            const advances = await prisma.salaryAdvance.findMany({
                 where: {
-                    employeeId_month_year: {
-                        employeeId: emp.id,
-                        month: Number(month),
-                        year: Number(year),
-                    }
-                },
-                update: {
-                    grossSalary: calc.grossSalary,
-                    commissions: calc.commissions,
-                    totalIncome: calc.totalIncome,
-                    inssLaboral: calc.inssLaboral,
-                    irLaboral: calc.irLaboral,
-                    totalDeductions: calc.totalDeductions,
-                    netSalary: calc.netSalary,
-                    inssPatronal: calc.inssPatronal,
-                    inatec: calc.inatec,
-                },
-                create: {
                     tenantId: authReq.tenantId!,
                     employeeId: emp.id,
-                    month: Number(month),
-                    year: Number(year),
-                    grossSalary: calc.grossSalary,
-                    commissions: calc.commissions,
-                    totalIncome: calc.totalIncome,
-                    inssLaboral: calc.inssLaboral,
-                    irLaboral: calc.irLaboral,
-                    totalDeductions: calc.totalDeductions,
-                    netSalary: calc.netSalary,
-                    inssPatronal: calc.inssPatronal,
-                    inatec: calc.inatec,
+                    OR: [
+                        { status: 'APPROVED', payrollId: null },
+                        ...(existing ? [{ payrollId: existing.id }] : []),
+                    ],
                 },
+                select: { id: true, amount: true, fee: true, payrollId: true },
             });
+            advances.sort((a, b) => (a.payrollId === existing?.id ? 0 : 1) - (b.payrollId === existing?.id ? 0 : 1));
+
+            // Se calcula SIN adelanto para conocer el disponible; el judicial ya está
+            // acotado, así que el disponible (= neto antes de adelantos) es ≥ 0.
+            const calc = calculatePayroll(baseSalary, comisiones, {
+                inssPatronalRate, overtimeHours, advanceDeduction: 0, absenceDeduction, holidayDays,
+                irAcumulado: {
+                    mes: Number(month),
+                    netoGravablePrevio: netoPrevioByEmp.get(emp.id) || 0,
+                    irRetenidoPrevio: irPrevioByEmp.get(emp.id) || 0,
+                },
+                judicialDeductions: judicialByEmp.get(emp.id) ?? [],
+            });
+
+            // Aplicar los adelantos en orden, solo hasta agotar el disponible (nunca
+            // dejar el neto negativo). Los que no caben se difieren al mes siguiente.
+            const disponible = calc.netSalary;
+            let restante = disponible;
+            let advanceApplied = 0;
+            const aplicados: string[] = [];
+            for (const adv of advances) {
+                const monto = Number(adv.amount) + Number(adv.fee);
+                // Epsilon mínimo (< medio centavo) solo para evitar falsos negativos
+                // por la representación binaria; no permite sobre-aplicar un centavo.
+                if (monto <= restante + 0.001) {
+                    advanceApplied = Number((advanceApplied + monto).toFixed(2));
+                    restante = Number((restante - monto).toFixed(2));
+                    aplicados.push(adv.id);
+                }
+            }
+            // Clamp de seguridad: el neto nunca queda negativo.
+            const netFinal = Math.max(0, Number((disponible - advanceApplied).toFixed(2)));
+
+            const data = {
+                grossSalary: calc.grossSalary,
+                commissions: calc.commissions,
+                overtimePay: calc.overtimePay,
+                horasExtra: calc.horasExtra,
+                holidayPay: calc.holidayPay,
+                diasFeriados: calc.diasFeriados,
+                totalIncome: calc.totalIncome,
+                inssLaboral: calc.inssLaboral,
+                irLaboral: calc.irLaboral,
+                totalDeductions: calc.totalDeductions,
+                advanceDeduction: advanceApplied,
+                absenceDeduction: calc.absenceDeduction,
+                diasAusencia,
+                judicialDeduction: calc.judicialDeduction,
+                netSalary: netFinal,
+                inssPatronal: calc.inssPatronal,
+                inatec: calc.inatec,
+            };
+
+            const payroll = await prisma.payroll.upsert({
+                where: {
+                    employeeId_month_year: { employeeId: emp.id, month: Number(month), year: Number(year) },
+                },
+                update: data,
+                create: { tenantId: authReq.tenantId!, employeeId: emp.id, month: Number(month), year: Number(year), ...data },
+            });
+
+            // Marcar como descontados solo los adelantos aplicados; los que no
+            // cupieron y estaban enlazados a esta nómina, devolverlos a APPROVED.
+            if (aplicados.length > 0) {
+                await prisma.salaryAdvance.updateMany({ where: { id: { in: aplicados } }, data: { status: 'DEDUCTED', payrollId: payroll.id } });
+            }
+            const diferidos = advances.filter(a => !aplicados.includes(a.id)).map(a => a.id);
+            if (diferidos.length > 0) {
+                await prisma.salaryAdvance.updateMany({ where: { id: { in: diferidos }, payrollId: payroll.id }, data: { status: 'APPROVED', payrollId: null } });
+            }
 
             payrolls.push({
                 ...payroll,
@@ -3257,37 +4108,237 @@ app.get('/api/payroll/:month/:year', authenticate, async (req: any, res: any) =>
     }
 });
 
+// GET /api/payroll/sie/:month/:year — Reporte INSS/SIE consolidado del mes (B5)
+// Datos por empleado listos para declarar al SIE del INSS (+ INATEC aparte).
+app.get('/api/payroll/sie/:month/:year', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const month = Number(req.params.month);
+    const year = Number(req.params.year);
+    if (isNaN(month) || isNaN(year) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Mes o año inválido.' });
+    }
+    try {
+        const payrolls = await prisma.payroll.findMany({
+            where: { tenantId: authReq.tenantId!, month, year },
+            include: { employee: { select: { firstName: true, lastName: true, cedula: true, inss: true } } },
+            orderBy: { employee: { firstName: 'asc' } },
+        });
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: authReq.tenantId! }, select: { businessName: true, taxId: true },
+        });
+
+        const empleados = payrolls.map(p => {
+            const inssLaboral = new Decimal(p.inssLaboral.toString());
+            const inssPatronal = new Decimal(p.inssPatronal.toString());
+            return {
+                inss: p.employee.inss || '',
+                cedula: p.employee.cedula || '',
+                nombre: `${p.employee.firstName} ${p.employee.lastName}`.trim(),
+                salario: Number(p.totalIncome),
+                inssLaboral: inssLaboral.toNumber(),
+                inssPatronal: inssPatronal.toNumber(),
+                inatec: Number(p.inatec),
+                totalInss: inssLaboral.plus(inssPatronal).toDecimalPlaces(2).toNumber(),
+                sinNumeroInss: !p.employee.inss,
+            };
+        });
+
+        const sum = (k: 'salario' | 'inssLaboral' | 'inssPatronal' | 'inatec' | 'totalInss') =>
+            empleados.reduce((acc, e) => acc.plus(e[k]), new Decimal(0)).toDecimalPlaces(2).toNumber();
+
+        res.json({
+            empresa: tenant?.businessName ?? '', ruc: tenant?.taxId ?? '',
+            month, year, empleados,
+            totals: {
+                salario: sum('salario'), inssLaboral: sum('inssLaboral'),
+                inssPatronal: sum('inssPatronal'), inatec: sum('inatec'), totalInss: sum('totalInss'),
+            },
+            empleadosSinINSS: empleados.filter(e => e.sinNumeroInss).length,
+        });
+    } catch (error) {
+        console.error('SIE report error:', error);
+        res.status(500).json({ error: 'Error al generar el reporte INSS.' });
+    }
+});
+
 // POST /api/payroll/:id/pay - Marcar nómina como pagada
-app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER']), async (req: any, res: any) => {
+app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        // Anti-IDOR: verificar que la nómina pertenece al tenant antes de tocarla.
+        // Anti-IDOR: la nómina debe pertenecer al tenant del token.
         const owned = await prisma.payroll.findFirst({
             where: { id: req.params.id, tenantId: authReq.tenantId },
-            select: { id: true },
         });
         if (!owned) {
             return res.status(404).json({ error: 'Nómina no encontrada' });
         }
+        // Idempotente: no re-pagar (evita doble gasto, doble provisión y doble
+        // acumulación de vacaciones).
+        if (owned.status === 'PAGADO') {
+            return res.status(400).json({ error: 'Esta nómina ya fue pagada.' });
+        }
 
-        const payroll = await prisma.payroll.update({
-            where: { id: owned.id, tenantId: authReq.tenantId },
-            data: { status: 'PAGADO', paidAt: new Date() },
-        });
+        // Asegura que el catálogo tenga las cuentas de prestaciones (auto-sanable).
+        await seedChartOfAccounts(authReq.tenantId!);
 
-        // Registrar gasto
-        await prisma.expense.create({
-            data: {
-                tenantId: authReq.tenantId!,
-                amount: payroll.netSalary,
-                description: `Nómina ${payroll.month}/${payroll.year} - Empleado`,
-                category: 'NOMINA',
-            },
+        const payroll = await prisma.$transaction(async (tx: any) => {
+            const updated = await tx.payroll.update({
+                where: { id: owned.id },
+                data: { status: 'PAGADO', paidAt: new Date() },
+            });
+
+            // Gasto operativo de la nómina (neto pagado) — alimenta los dashboards.
+            await tx.expense.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    amount: updated.netSalary,
+                    description: `Nómina ${updated.month}/${updated.year} - Empleado`,
+                    category: 'NOMINA',
+                },
+            });
+
+            // Asiento de nómina en el libro de partida doble: Debe Gasto Nómina /
+            // INSS Patronal / INATEC, Haber Caja + pasivos. Así la nómina aparece
+            // en el Flujo de Caja, el Balance y el Estado de Resultados. Fail-soft.
+            try {
+                await recordPayroll(tx, authReq.tenantId!, authReq.userId!, updated.id, Number(updated.netSalary), Number(updated.inssLaboral), Number(updated.irLaboral), Number(updated.inssPatronal), Number(updated.inatec));
+            } catch (payErr) {
+                console.warn('⚠️ Asiento de nómina omitido (la nómina se paga igual):', payErr);
+            }
+
+            // Devengo mensual del pasivo laboral: aguinaldo + vacaciones +
+            // indemnización ≈ 1/12 del salario ordinario cada uno (~25% total).
+            // El cálculo fino se hace al pagar el aguinaldo (B2) y en la
+            // liquidación (B3); esto es la provisión contable del mes. Fail-soft:
+            // la nómina se paga aunque el período esté cerrado.
+            const cuota = Number(owned.grossSalary) / 12;
+            try {
+                await recordLaborProvision(tx, authReq.tenantId!, authReq.userId!, owned.id, cuota, cuota, cuota);
+            } catch (provErr) {
+                console.warn('⚠️ Provisión de prestaciones omitida (la nómina se paga igual):', provErr);
+            }
+
+            // Acumular las vacaciones devengadas del mes (2.5 días, Art. 76).
+            await tx.employee.update({
+                where: { id: owned.employeeId },
+                data: { vacationDays: { increment: 2.5 } },
+            });
+
+            return updated;
         });
 
         res.json(payroll);
     } catch (error) {
+        console.error('Error al pagar nómina:', error);
         res.status(500).json({ error: 'Error al pagar nómina' });
+    }
+});
+
+// ==========================================
+// 🎄 AGUINALDO (TRECEAVO MES) — Art. 93-95 Ley 185
+// ==========================================
+
+// Aguinaldo proporcional = salario × min(1, díasLaborados / 360) en el período
+// dic[year-1] → nov[year], desde la fecha de ingreso si es posterior, y solo
+// hasta hoy si el período aún no termina.
+function computeAguinaldo(baseSalary: number, hireDate: Date, year: number, today: Date) {
+    const periodStart = new Date(year - 1, 11, 1); // 1 dic año anterior
+    const periodEnd = new Date(year, 10, 30);      // 30 nov del año
+    const effectiveEnd = today < periodEnd ? today : periodEnd;
+    const start = hireDate > periodStart ? hireDate : periodStart;
+    let dias = 0;
+    if (effectiveEnd >= start) {
+        dias = Math.min(360, Math.floor((effectiveEnd.getTime() - start.getTime()) / 86400000) + 1);
+    }
+    const monto = Number((baseSalary * Math.min(1, dias / 360)).toFixed(2));
+    return { dias, monto };
+}
+
+// GET /api/payroll/aguinaldo/:year — previsualización + estado de la corrida.
+app.get('/api/payroll/aguinaldo/:year', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    if (isNaN(year)) return res.status(400).json({ error: 'Año inválido.' });
+    try {
+        const today = new Date();
+        const employees = await prisma.employee.findMany({ where: { tenantId, status: 'ACTIVE' }, orderBy: { firstName: 'asc' } });
+        const existing = await prisma.aguinaldo.findMany({ where: { tenantId, year } });
+        const paidMap = new Map(existing.map(a => [a.employeeId, a]));
+
+        const items = employees.map(emp => {
+            const paid = paidMap.get(emp.id);
+            const base = Number(emp.baseSalary);
+            const calc = computeAguinaldo(base, new Date(emp.hireDate), year, today);
+            return {
+                employeeId: emp.id,
+                name: `${emp.firstName} ${emp.lastName}`,
+                cedula: emp.cedula,
+                baseSalary: base,
+                diasLaborados: paid ? paid.diasLaborados : calc.dias,
+                monto: paid ? Number(paid.monto) : calc.monto,
+                pagado: !!paid,
+                paidAt: paid?.paidAt ?? null,
+            };
+        });
+
+        const totalMonto = Number(items.reduce((s, i) => s + i.monto, 0).toFixed(2));
+        const dueDate = new Date(year, 11, 10); // 10 de diciembre (fecha límite legal)
+        const diasParaVencer = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
+        const pendientes = items.filter(i => !i.pagado && i.monto > 0).length;
+
+        res.json({ year, periodo: `Dic ${year - 1} – Nov ${year}`, items, totalMonto, dueDate, diasParaVencer, pendientes });
+    } catch (error) {
+        console.error('Aguinaldo preview error:', error);
+        res.status(500).json({ error: 'Error al calcular el aguinaldo.' });
+    }
+});
+
+// POST /api/payroll/aguinaldo/:year/run — corre y paga el aguinaldo (idempotente).
+app.post('/api/payroll/aguinaldo/:year/run', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    if (isNaN(year)) return res.status(400).json({ error: 'Año inválido.' });
+    try {
+        await seedChartOfAccounts(tenantId);
+        const today = new Date();
+        const employees = await prisma.employee.findMany({ where: { tenantId, status: 'ACTIVE' } });
+        const existing = await prisma.aguinaldo.findMany({ where: { tenantId, year }, select: { employeeId: true } });
+        const alreadyPaid = new Set(existing.map(a => a.employeeId));
+
+        let pagados = 0;
+        let total = 0;
+        for (const emp of employees) {
+            if (alreadyPaid.has(emp.id)) continue; // ya tiene aguinaldo este año
+            const base = Number(emp.baseSalary);
+            const { dias, monto } = computeAguinaldo(base, new Date(emp.hireDate), year, today);
+            if (monto <= 0) continue;
+            try {
+                await prisma.$transaction(async (tx: any) => {
+                    const ag = await tx.aguinaldo.create({
+                        data: { tenantId, employeeId: emp.id, year, diasLaborados: dias, baseSalary: base, monto, status: 'PAGADO' },
+                    });
+                    // Exento de INSS/IR: Debe Aguinaldo por Pagar / Haber Caja.
+                    // Fail-soft: el aguinaldo se paga aunque el período esté cerrado.
+                    try {
+                        await recordAguinaldoPayment(tx, tenantId, authReq.userId!, ag.id, monto);
+                    } catch (accErr) {
+                        console.warn('⚠️ Asiento de aguinaldo omitido:', accErr);
+                    }
+                });
+                pagados++;
+                total += monto;
+            } catch (e: any) {
+                if (e?.code === 'P2002') continue; // carrera: ya pagado
+                console.error('Aguinaldo empleado error:', e);
+            }
+        }
+
+        res.json({ message: `Aguinaldo procesado para ${pagados} colaborador(es).`, pagados, total: Number(total.toFixed(2)), year });
+    } catch (error) {
+        console.error('Aguinaldo run error:', error);
+        res.status(500).json({ error: 'Error al correr el aguinaldo.' });
     }
 });
 
@@ -3376,6 +4427,179 @@ app.get('/api/admin/ledger/verify/:tenantId', authenticate, requireSuperAdmin, a
         res.status(report.ok ? 200 : 409).json(report);
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Error verificando libro';
+        res.status(500).json({ error: message });
+    }
+});
+
+// POST /api/admin/whatsapp/channels — registra/actualiza el número WhatsApp de
+// un tenant. El access token se guarda CIFRADO (crypto.encryptField). Requiere
+// NORTEX_DATA_KEYS configurado. SUPER_ADMIN (manejo de credenciales).
+app.post('/api/admin/whatsapp/channels', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+    try {
+        const { tenantId, phoneNumberId, wabaId, displayPhone, accessToken, botScope, defaultMode } = req.body ?? {};
+        if (!tenantId || !phoneNumberId || !accessToken) {
+            return res.status(400).json({ error: 'tenantId, phoneNumberId y accessToken son requeridos' });
+        }
+        const accessTokenEnc = encryptField(String(accessToken));
+        const channel = await prisma.whatsAppChannel.upsert({
+            where: { phoneNumberId: String(phoneNumberId) },
+            create: {
+                tenantId: String(tenantId),
+                phoneNumberId: String(phoneNumberId),
+                wabaId: wabaId ? String(wabaId) : null,
+                displayPhone: displayPhone ? String(displayPhone) : null,
+                accessTokenEnc,
+                botScope: botScope ? String(botScope) : 'B2C',
+                defaultMode: defaultMode ? String(defaultMode) : 'BOT',
+            },
+            update: {
+                tenantId: String(tenantId),
+                wabaId: wabaId ? String(wabaId) : null,
+                displayPhone: displayPhone ? String(displayPhone) : null,
+                accessTokenEnc,
+                botScope: botScope ? String(botScope) : 'B2C',
+                defaultMode: defaultMode ? String(defaultMode) : 'BOT',
+                active: true,
+            },
+        });
+        res.json({ id: channel.id, tenantId: channel.tenantId, phoneNumberId: channel.phoneNumberId, botScope: channel.botScope });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Error registrando canal';
+        res.status(500).json({ error: message });
+    }
+});
+
+// ==========================================
+// 🛵 KYC RED NORTEX — revisión manual de motorizados (SUPER_ADMIN)
+// ==========================================
+
+// GET /api/admin/motorizados?status=PENDIENTE — cola de revisión KYC
+app.get('/api/admin/motorizados', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+    try {
+        const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+        const motorizados = await prisma.motorizado.findMany({
+            where: {
+                tipoFlota: 'NORTEX',
+                ...(status ? { kycStatus: status } : {}),
+            },
+            select: {
+                id: true, nombre: true, telefono: true, cedula: true,
+                zonaCobertura: true, vehiculoPlaca: true, fotoCedulaUrl: true,
+                fotoVehiculoUrl: true, kycStatus: true, kycNota: true,
+                activo: true, calificacionPromedio: true, createdAt: true,
+                walletBalance: true,
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+        res.json({ motorizados });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Error listando motorizados';
+        res.status(500).json({ error: message });
+    }
+});
+
+// PATCH /api/admin/motorizados/:id/kyc — aprobar / rechazar (KYC manual)
+app.patch('/api/admin/motorizados/:id/kyc', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+    try {
+        const { decision, nota } = req.body ?? {};
+        if (decision !== 'APROBADO' && decision !== 'RECHAZADO') {
+            return res.status(400).json({ error: 'decision debe ser APROBADO o RECHAZADO' });
+        }
+        const existing = await prisma.motorizado.findFirst({
+            where: { id: req.params.id, tipoFlota: 'NORTEX' },
+            select: { id: true },
+        });
+        if (!existing) return res.status(404).json({ error: 'Motorizado no encontrado' });
+
+        const motorizado = await prisma.motorizado.update({
+            where: { id: existing.id },
+            data: {
+                kycStatus: decision,
+                // La aprobación ACTIVA al repartidor; el rechazo lo desactiva.
+                activo: decision === 'APROBADO',
+                kycNota: typeof nota === 'string' && nota.trim() ? nota.trim() : null,
+            },
+            select: { id: true, nombre: true, kycStatus: true, activo: true },
+        });
+        res.json({ message: `Motorizado ${decision === 'APROBADO' ? 'aprobado' : 'rechazado'}.`, motorizado });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Error procesando KYC';
+        res.status(500).json({ error: message });
+    }
+});
+
+// GET /api/admin/motorizados/:id/wallet — saldo + libro + verificación de la
+// cadena firmada (FASE 3): detecta UPDATE/DELETE manual y proyección alterada.
+app.get('/api/admin/motorizados/:id/wallet', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+    try {
+        const motorizado = await prisma.motorizado.findUnique({
+            where: { id: req.params.id },
+            select: { id: true, nombre: true, tipoFlota: true, walletBalance: true },
+        });
+        if (!motorizado) return res.status(404).json({ error: 'Motorizado no encontrado' });
+
+        const [movimientos, verification] = await Promise.all([
+            prisma.driverWalletMovement.findMany({
+                where: { motorizadoId: motorizado.id },
+                orderBy: { createdAt: 'desc' },
+                take: 100,
+            }),
+            verifyDriverLedger(prisma, motorizado.id),
+        ]);
+
+        res.status(verification.ok ? 200 : 409).json({
+            motorizado: { ...motorizado, walletBalance: Number(motorizado.walletBalance) },
+            verification,
+            movimientos: movimientos.map((m: typeof movimientos[number]) => ({ ...m, amount: Number(m.amount) })),
+        });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Error consultando wallet';
+        res.status(500).json({ error: message });
+    }
+});
+
+// POST /api/admin/motorizados/:id/wallet/payout — registrar el pago de Nortex
+// al repartidor (debita el wallet con un movimiento FIRMADO; no permite
+// sobregiro). El dinero físico se mueve fuera; aquí queda el rastro inmutable.
+app.post('/api/admin/motorizados/:id/wallet/payout', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+    try {
+        const { amount, nota } = req.body ?? {};
+        const monto = Number(amount);
+        if (!Number.isFinite(monto) || monto <= 0) {
+            return res.status(400).json({ error: 'amount debe ser un número > 0' });
+        }
+
+        const movement = await prisma.$transaction(async (tx) => {
+            // Lectura DENTRO de la tx: el saldo no puede cambiar entre chequeo y débito
+            // (el row-lock del update de proyección serializa con las comisiones).
+            const driver = await tx.motorizado.findUnique({
+                where: { id: req.params.id },
+                select: { id: true, nombre: true, walletBalance: true },
+            });
+            if (!driver) throw new Error('DRIVER_NOT_FOUND');
+            if (Number(driver.walletBalance) < monto) throw new Error('SALDO_INSUFICIENTE');
+
+            return appendDriverWalletMovement(tx, {
+                motorizadoId: driver.id,
+                tenantId: null,
+                pedidoId: null,
+                type: 'PAGO_NORTEX',
+                amount: -monto,
+                descripcion: typeof nota === 'string' && nota.trim()
+                    ? `Pago Nortex: ${nota.trim()}`
+                    : 'Pago de comisiones Nortex al repartidor',
+            });
+        });
+
+        res.json({ message: 'Pago registrado en el libro del repartidor.', movementId: movement.id, amount: -monto });
+    } catch (error: unknown) {
+        if (error instanceof Error && error.message === 'DRIVER_NOT_FOUND') {
+            return res.status(404).json({ error: 'Motorizado no encontrado' });
+        }
+        if (error instanceof Error && error.message === 'SALDO_INSUFICIENTE') {
+            return res.status(400).json({ error: 'El monto excede el saldo del wallet del repartidor.' });
+        }
+        const message = error instanceof Error ? error.message : 'Error registrando pago';
         res.status(500).json({ error: message });
     }
 });
@@ -3939,6 +5163,158 @@ app.get('/api/credits/debtors', authenticate, async (req: any, res: any) => {
     }
 });
 
+// GET /api/collections/worklist - "Cobrar hoy" (Cobranza A1): deudas a crédito por
+// urgencia (vencidas primero) + KPIs de cobranza. dueSoonDays = ventana "por vencer".
+app.get('/api/collections/worklist', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const dueSoonDays = Math.min(60, Math.max(1, parseInt(req.query.dueSoonDays) || 7));
+    try {
+        const now = new Date();
+        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const MS_DAY = 86400000;
+        // Días vencidos desde la referencia (vence ?? emisión); >0 vencido, <0 por vencer.
+        const diasVencido = (ref: Date) => {
+            const r = new Date(ref);
+            const refMid = new Date(r.getFullYear(), r.getMonth(), r.getDate()).getTime();
+            return Math.floor((hoy.getTime() - refMid) / MS_DAY);
+        };
+        const bucketDe = (d: number) => d <= 0 ? 'corriente' : d <= 30 ? 'b1_30' : d <= 60 ? 'b31_60' : d <= 90 ? 'b61_90' : 'b90';
+
+        const sales = await prisma.sale.findMany({
+            where: { tenantId, paymentMethod: 'CREDIT', balance: { gt: 0 } },
+            include: { customer: { select: { id: true, name: true, phone: true } } },
+        });
+
+        let totalReceivable = new Decimal(0);
+        let totalOverdue = new Decimal(0);
+        let dueSoonAmount = new Decimal(0);
+        let overdueCount = 0, dueSoonCount = 0;
+
+        const items = sales.map((s: any) => {
+            const ref = s.dueDate ?? s.createdAt;
+            const dias = diasVencido(ref);
+            const balance = new Decimal(s.balance.toString());
+            totalReceivable = totalReceivable.plus(balance);
+            const overdue = dias > 0;
+            const dueSoon = !overdue && dias >= -dueSoonDays; // vence hoy o dentro de la ventana
+            if (overdue) { totalOverdue = totalOverdue.plus(balance); overdueCount++; }
+            else if (dueSoon) { dueSoonAmount = dueSoonAmount.plus(balance); dueSoonCount++; }
+            return {
+                saleId: s.id,
+                customerId: s.customer?.id ?? null,
+                customerName: s.customer?.name ?? s.customerName ?? 'Cliente General',
+                phone: s.customer?.phone ?? null,
+                invoiceNumber: s.invoiceNumber != null ? String(s.invoiceNumber) : null,
+                date: s.createdAt,
+                dueDate: s.dueDate,
+                total: Number(s.total),
+                balance: balance.toDecimalPlaces(2).toNumber(),
+                daysOverdue: dias,
+                bucket: bucketDe(dias),
+                status: overdue ? 'OVERDUE' : dueSoon ? 'DUE_SOON' : 'CURRENT',
+            };
+        });
+        // Más vencido primero; luego por vencer (más cerca de hoy), luego corriente.
+        items.sort((a, b) => b.daysOverdue - a.daysOverdue);
+
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const collectedToday = await prisma.payment.aggregate({
+            where: { sale: { tenantId }, createdAt: { gte: startOfDay } },
+            _sum: { amount: true },
+        });
+
+        res.json({
+            summary: {
+                totalReceivable: totalReceivable.toDecimalPlaces(2).toNumber(),
+                totalOverdue: totalOverdue.toDecimalPlaces(2).toNumber(),
+                overdueCount,
+                dueSoon: dueSoonAmount.toDecimalPlaces(2).toNumber(),
+                dueSoonCount,
+                collectedToday: Number(collectedToday._sum.amount || 0),
+                dueSoonDays,
+            },
+            items,
+        });
+    } catch (error) {
+        console.error('Error fetching worklist:', error);
+        res.status(500).json({ error: 'Error obteniendo la lista de cobro' });
+    }
+});
+
+// GET /api/customers/:id/statement - Estado de cuenta del cliente (Cobranza A2):
+// facturas a crédito con saldo/abonos + aging + totales. Para imprimir/enviar.
+app.get('/api/customers/:id/statement', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const { id } = req.params;
+    try {
+        const customer = await prisma.customer.findFirst({ where: { id, tenantId } });
+        if (!customer) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+        const sales = await prisma.sale.findMany({
+            where: { tenantId, customerId: id, paymentMethod: 'CREDIT' },
+            include: { payments: { orderBy: { createdAt: 'asc' }, include: { user: { select: { name: true } } } } },
+            orderBy: { createdAt: 'desc' },
+        });
+
+        const now = new Date();
+        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const MS_DAY = 86400000;
+        const diasVencido = (ref: Date) => {
+            const r = new Date(ref);
+            const refMid = new Date(r.getFullYear(), r.getMonth(), r.getDate()).getTime();
+            return Math.floor((hoy.getTime() - refMid) / MS_DAY);
+        };
+
+        let totalBilled = new Decimal(0), totalPaid = new Decimal(0), totalBalance = new Decimal(0), totalOverdue = new Decimal(0);
+        const invoices = sales.map((s: any) => {
+            const total = new Decimal(s.total.toString());
+            const balance = new Decimal(s.balance.toString());
+            const paid = total.minus(balance);
+            const dias = diasVencido(s.dueDate ?? s.createdAt);
+            const open = balance.greaterThan(0);
+            const overdue = open && dias > 0;
+            totalBilled = totalBilled.plus(total);
+            totalPaid = totalPaid.plus(paid);
+            totalBalance = totalBalance.plus(balance);
+            if (overdue) totalOverdue = totalOverdue.plus(balance);
+            return {
+                id: s.id,
+                invoiceNumber: s.invoiceNumber != null ? String(s.invoiceNumber) : null,
+                date: s.createdAt,
+                dueDate: s.dueDate,
+                total: total.toDecimalPlaces(2).toNumber(),
+                paid: paid.toDecimalPlaces(2).toNumber(),
+                balance: balance.toDecimalPlaces(2).toNumber(),
+                daysOverdue: dias,
+                status: s.status === 'UNCOLLECTIBLE' ? 'WRITTEN_OFF' : !open ? 'PAID' : overdue ? 'OVERDUE' : 'PENDING',
+                payments: s.payments.map((p: any) => ({
+                    id: p.id, amount: Number(p.amount), method: p.method, date: p.createdAt, collectedBy: p.user?.name || null,
+                })),
+            };
+        });
+
+        res.json({
+            customer: {
+                id: customer.id, name: customer.name, phone: customer.phone,
+                creditLimit: Number(customer.creditLimit), currentDebt: Number(customer.currentDebt), isBlocked: customer.isBlocked,
+            },
+            invoices,
+            totals: {
+                billed: totalBilled.toDecimalPlaces(2).toNumber(),
+                paid: totalPaid.toDecimalPlaces(2).toNumber(),
+                balance: totalBalance.toDecimalPlaces(2).toNumber(),
+                overdue: totalOverdue.toDecimalPlaces(2).toNumber(),
+            },
+            generatedAt: now,
+        });
+    } catch (error) {
+        console.error('Error fetching statement:', error);
+        res.status(500).json({ error: 'Error obteniendo el estado de cuenta' });
+    }
+});
+
 // POST /api/credits/payment - Registrar abono
 app.post('/api/credits/payment', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
@@ -4001,6 +5377,62 @@ app.post('/api/credits/payment', authenticate, async (req: any, res: any) => {
         res.status(400).json({ error: error.message || 'Error al registrar pago' });
     }
 });
+
+// POST /api/credits/:saleId/writeoff - Castigar una venta a crédito como incobrable
+// (Cobranza B1). Postea el asiento Debe 5.2.7 / Haber 1.1.3, salda la venta y baja
+// la deuda del cliente. Solo OWNER/ADMIN; respeta el lock de período.
+app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { saleId } = req.params;
+    const reason = (req.body?.reason || '').toString().trim();
+    if (reason.length < 3) {
+        return res.status(400).json({ error: 'La justificación es obligatoria (mínimo 3 caracteres).' });
+    }
+    try {
+        await seedChartOfAccounts(authReq.tenantId!); // garantiza 5.2.7
+
+        const result = await prisma.$transaction(async (tx: any) => {
+            const sale = await tx.sale.findFirst({ where: { id: saleId, tenantId: authReq.tenantId! } });
+            if (!sale) throw new Error('Venta no encontrada');
+            if (sale.paymentMethod !== 'CREDIT') throw new Error('Solo se castigan ventas a crédito.');
+            const balance = new Decimal(sale.balance.toString());
+            if (balance.lessThanOrEqualTo(0)) throw new Error('Esta venta no tiene saldo pendiente.');
+
+            // Asiento de incobrable (assertPeriodOpen vive dentro de createJournalEntry).
+            await recordBadDebt(tx, authReq.tenantId!, authReq.userId!, saleId, balance.toNumber());
+
+            // Saldar la venta y marcarla como incobrable.
+            await tx.sale.update({ where: { id: saleId }, data: { balance: 0, status: 'UNCOLLECTIBLE' } });
+
+            // Bajar la deuda del cliente (clamp a 0 por si el contador venía desfasado).
+            if (sale.customerId) {
+                const cust = await tx.customer.findUnique({ where: { id: sale.customerId }, select: { currentDebt: true } });
+                const newDebt = Math.max(0, Number(cust?.currentDebt || 0) - balance.toNumber());
+                await tx.customer.update({ where: { id: sale.customerId }, data: { currentDebt: newDebt } });
+            }
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'BAD_DEBT_WRITEOFF',
+                    details: JSON.stringify({ saleId, customerId: sale.customerId, amount: balance.toDecimalPlaces(2).toNumber(), reason, timestamp: new Date().toISOString() }),
+                },
+            });
+
+            return { amount: balance.toDecimalPlaces(2).toNumber() };
+        });
+
+        res.json({ message: `Venta castigada como incobrable. Pérdida reconocida: C$ ${result.amount.toFixed(2)}`, ...result });
+    } catch (error: any) {
+        console.error('Error castigando incobrable:', error);
+        const msg = error?.message || 'Error castigando la venta';
+        const code = error instanceof PeriodLockedError ? 423
+            : (msg.includes('no encontrada') || msg.includes('crédito') || msg.includes('saldo')) ? 400 : 500;
+        res.status(code).json({ error: msg });
+    }
+});
+
 app.post('/api/admin/manual-payments/:id/reject', authenticate, requireSuperAdmin, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { reason } = req.body;
@@ -4137,6 +5569,791 @@ app.get('/api/accounting/journal', authenticate, async (req: any, res: any) => {
     } catch (error) { res.status(500).json({ error: 'Error fetching journal' }); }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// 📒 FASE A — CONTABILIDAD DEL CONTADOR (asiento manual, libros, períodos)
+// ══════════════════════════════════════════════════════════════════════════
+
+// POST /api/accounting/journal — Asiento de diario MANUAL (A1) / apertura (A2)
+// Body: { date, description, type?: 'MANUAL'|'OPENING', lines: [{accountCode, debit, credit}] }
+app.post('/api/accounting/journal', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { date, description, type, lines } = req.body ?? {};
+        if (!description || typeof description !== 'string' || !description.trim()) {
+            return res.status(400).json({ error: 'La descripción del asiento es requerida.' });
+        }
+        if (!Array.isArray(lines) || lines.length < 2) {
+            return res.status(400).json({ error: 'Un asiento requiere al menos 2 líneas (debe y haber).' });
+        }
+        const entryDate = date ? new Date(date) : new Date();
+        if (isNaN(entryDate.getTime())) {
+            return res.status(400).json({ error: 'Fecha inválida.' });
+        }
+
+        // Normalizar + validar líneas: cada línea tiene SOLO debe o SOLO haber > 0.
+        const normLines = lines.map((l: any) => ({
+            accountCode: String(l.accountCode ?? '').trim(),
+            debit: new Decimal(Number(l.debit) || 0).toDecimalPlaces(2).toNumber(),
+            credit: new Decimal(Number(l.credit) || 0).toDecimalPlaces(2).toNumber(),
+        }));
+        for (const l of normLines) {
+            if (!l.accountCode) return res.status(400).json({ error: 'Cada línea debe indicar una cuenta.' });
+            if (l.debit < 0 || l.credit < 0) return res.status(400).json({ error: 'Los montos no pueden ser negativos.' });
+            if ((l.debit > 0) === (l.credit > 0)) {
+                return res.status(400).json({ error: `La cuenta ${l.accountCode} debe llevar monto en debe O en haber, no ambos ni cero.` });
+            }
+        }
+
+        // Las cuentas deben EXISTIR (evita que createJournalEntry descarte una
+        // línea con código inválido y deje el asiento descuadrado).
+        await seedChartOfAccounts(authReq.tenantId!);
+        const codes = [...new Set(normLines.map((l: { accountCode: string }) => l.accountCode))];
+        const found = await prisma.account.findMany({
+            where: { tenantId: authReq.tenantId!, code: { in: codes } },
+            select: { code: true },
+        });
+        const missing = codes.filter(c => !found.some(f => f.code === c));
+        if (missing.length > 0) {
+            return res.status(400).json({ error: `Cuentas inexistentes en tu catálogo: ${missing.join(', ')}` });
+        }
+
+        const refType = type === 'OPENING' ? 'OPENING' : 'MANUAL';
+        await prisma.$transaction(async (tx: any) => {
+            await createJournalEntry(
+                tx, authReq.tenantId!, description.trim(), '', refType, authReq.userId!, normLines,
+                { isAutomatic: false, date: entryDate }
+            );
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: refType === 'OPENING' ? 'OPENING_BALANCE' : 'MANUAL_JOURNAL_ENTRY',
+                    details: JSON.stringify({ date: entryDate.toISOString(), description: description.trim(), lines: normLines }),
+                },
+            });
+        });
+
+        res.status(201).json({ message: refType === 'OPENING' ? 'Saldos de apertura registrados.' : 'Asiento manual registrado.' });
+    } catch (error: unknown) {
+        if (error instanceof PeriodLockedError) return res.status(409).json({ error: error.message });
+        const msg = error instanceof Error ? error.message : 'Error al registrar el asiento';
+        if (msg.includes('DESCUADRADO')) return res.status(400).json({ error: msg });
+        console.error('Manual journal error:', error);
+        res.status(500).json({ error: msg });
+    }
+});
+
+// GET /api/accounting/libro-diario/:year/:month — Libro Diario (A4)
+app.get('/api/accounting/libro-diario/:year/:month', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Año o mes inválido.' });
+    }
+    try {
+        const start = new Date(year, month - 1, 1);
+        const end = new Date(year, month, 0, 23, 59, 59);
+        const entries = await prisma.journalEntry.findMany({
+            where: { tenantId: authReq.tenantId!, date: { gte: start, lte: end } },
+            include: { lines: { include: { account: { select: { code: true, name: true } } } } },
+            orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
+        });
+        const period = await prisma.fiscalPeriod.findUnique({
+            where: { tenantId_year_month: { tenantId: authReq.tenantId!, year, month } },
+        });
+        let totalDebe = new Decimal(0);
+        let totalHaber = new Decimal(0);
+        const asientos = entries.map((e, i) => {
+            const lineas = e.lines.map(l => ({
+                cuenta: l.account.code, nombre: l.account.name,
+                debe: Number(l.debit), haber: Number(l.credit),
+            }));
+            for (const l of lineas) { totalDebe = totalDebe.plus(l.debe); totalHaber = totalHaber.plus(l.haber); }
+            return {
+                numero: i + 1, id: e.id, fecha: e.date, descripcion: e.description,
+                tipo: e.referenceType, esManual: !e.isAutomatic, lineas,
+            };
+        });
+        res.json({
+            period: `${year}-${String(month).padStart(2, '0')}`,
+            locked: period?.status === 'CLOSED',
+            totalDebe: totalDebe.toNumber(), totalHaber: totalHaber.toNumber(),
+            asientos,
+        });
+    } catch (error) {
+        console.error('Libro diario error:', error);
+        res.status(500).json({ error: 'Error al generar el libro diario.' });
+    }
+});
+
+// GET /api/accounting/libro-mayor/:year/:month?accountCode= — Mayor / Balanza (A4)
+// Sin accountCode → balanza de comprobación (saldo inicial + debe + haber + final
+// por cuenta). Con accountCode → detalle de movimientos de esa cuenta.
+app.get('/api/accounting/libro-mayor/:year/:month', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    const accountCode = typeof req.query.accountCode === 'string' ? req.query.accountCode : null;
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Año o mes inválido.' });
+    }
+    try {
+        const start = new Date(year, month - 1, 1);
+        const end = new Date(year, month, 0, 23, 59, 59);
+        const accounts = await prisma.account.findMany({
+            where: { tenantId }, select: { id: true, code: true, name: true, type: true },
+        });
+        const byId = new Map(accounts.map(a => [a.id, a]));
+        const normalDebit = (type: string) => type === 'ASSET' || type === 'EXPENSE';
+
+        if (accountCode) {
+            const acc = accounts.find(a => a.code === accountCode);
+            if (!acc) return res.status(404).json({ error: 'Cuenta no encontrada.' });
+            // Saldo inicial: líneas de esta cuenta antes del período.
+            const prev = await prisma.journalLine.aggregate({
+                where: { accountId: acc.id, entry: { tenantId, date: { lt: start } } },
+                _sum: { debit: true, credit: true },
+            });
+            const prevDebe = new Decimal(prev._sum.debit?.toString() ?? '0');
+            const prevHaber = new Decimal(prev._sum.credit?.toString() ?? '0');
+            let saldo = normalDebit(acc.type) ? prevDebe.minus(prevHaber) : prevHaber.minus(prevDebe);
+            const saldoInicial = saldo.toNumber();
+
+            const lines = await prisma.journalLine.findMany({
+                where: { accountId: acc.id, entry: { tenantId, date: { gte: start, lte: end } } },
+                include: { entry: { select: { date: true, description: true } } },
+                orderBy: { entry: { date: 'asc' } },
+            });
+            const movimientos = lines.map(l => {
+                const debe = Number(l.debit), haber = Number(l.credit);
+                saldo = normalDebit(acc.type) ? saldo.plus(debe).minus(haber) : saldo.plus(haber).minus(debe);
+                return { fecha: l.entry.date, descripcion: l.entry.description, debe, haber, saldo: saldo.toNumber() };
+            });
+            return res.json({ cuenta: acc.code, nombre: acc.name, saldoInicial, movimientos, saldoFinal: saldo.toNumber() });
+        }
+
+        // Balanza de comprobación: agregados por cuenta.
+        const [prevAgg, periodAgg] = await Promise.all([
+            prisma.journalLine.groupBy({ by: ['accountId'], where: { entry: { tenantId, date: { lt: start } } }, _sum: { debit: true, credit: true } }),
+            prisma.journalLine.groupBy({ by: ['accountId'], where: { entry: { tenantId, date: { gte: start, lte: end } } }, _sum: { debit: true, credit: true } }),
+        ]);
+        const prevMap = new Map(prevAgg.map(p => [p.accountId, p]));
+        const periodMap = new Map(periodAgg.map(p => [p.accountId, p]));
+        const ids = new Set([...prevMap.keys(), ...periodMap.keys()]);
+
+        const balanza = [...ids].map(id => {
+            const acc = byId.get(id)!;
+            const pd = new Decimal(prevMap.get(id)?._sum.debit?.toString() ?? '0');
+            const ph = new Decimal(prevMap.get(id)?._sum.credit?.toString() ?? '0');
+            const debe = new Decimal(periodMap.get(id)?._sum.debit?.toString() ?? '0');
+            const haber = new Decimal(periodMap.get(id)?._sum.credit?.toString() ?? '0');
+            const saldoInicial = normalDebit(acc.type) ? pd.minus(ph) : ph.minus(pd);
+            const movimiento = normalDebit(acc.type) ? debe.minus(haber) : haber.minus(debe);
+            return {
+                cuenta: acc.code, nombre: acc.name, tipo: acc.type,
+                saldoInicial: saldoInicial.toNumber(),
+                debe: debe.toNumber(), haber: haber.toNumber(),
+                saldoFinal: saldoInicial.plus(movimiento).toNumber(),
+            };
+        }).sort((a, b) => a.cuenta.localeCompare(b.cuenta));
+
+        const totDebe = balanza.reduce((s, b) => s.plus(b.debe), new Decimal(0)).toNumber();
+        const totHaber = balanza.reduce((s, b) => s.plus(b.haber), new Decimal(0)).toNumber();
+        res.json({ period: `${year}-${String(month).padStart(2, '0')}`, balanza, totales: { debe: totDebe, haber: totHaber } });
+    } catch (error) {
+        console.error('Libro mayor error:', error);
+        res.status(500).json({ error: 'Error al generar el libro mayor.' });
+    }
+});
+
+// GET /api/accounting/periods — estado de los períodos cerrados/reabiertos (A3)
+app.get('/api/accounting/periods', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const periods = await prisma.fiscalPeriod.findMany({
+            where: { tenantId: authReq.tenantId! },
+            orderBy: [{ year: 'desc' }, { month: 'desc' }],
+        });
+        res.json({ periods });
+    } catch (error) {
+        res.status(500).json({ error: 'Error al listar los períodos.' });
+    }
+});
+
+// POST /api/accounting/periods/:year/:month/reopen — Reabrir período (solo OWNER)
+app.post('/api/accounting/periods/:year/:month/reopen', authenticate, checkRole(['OWNER']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    const { reason } = req.body ?? {};
+    if (isNaN(year) || isNaN(month)) return res.status(400).json({ error: 'Año o mes inválido.' });
+    if (!reason || typeof reason !== 'string' || !reason.trim()) {
+        return res.status(400).json({ error: 'Reabrir un período exige un motivo (queda auditado).' });
+    }
+    try {
+        const period = await prisma.fiscalPeriod.findUnique({
+            where: { tenantId_year_month: { tenantId: authReq.tenantId!, year, month } },
+        });
+        if (!period || period.status !== 'CLOSED') {
+            return res.status(404).json({ error: 'El período no está cerrado.' });
+        }
+        await prisma.$transaction([
+            prisma.fiscalPeriod.update({
+                where: { id: period.id },
+                data: { status: 'OPEN', reopenedBy: authReq.userId!, reopenedAt: new Date(), reopenReason: reason.trim() },
+            }),
+            prisma.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!, userId: authReq.userId!, action: 'PERIOD_REOPENED',
+                    details: JSON.stringify({ year, month, reason: reason.trim() }),
+                },
+            }),
+        ]);
+        res.json({ message: `Período ${year}-${String(month).padStart(2, '0')} reabierto.` });
+    } catch (error) {
+        console.error('Reopen period error:', error);
+        res.status(500).json({ error: 'Error al reabrir el período.' });
+    }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 🧾 FASE B — Parametrización fiscal + tipo de cambio + retenciones sufridas
+// ══════════════════════════════════════════════════════════════════════════
+
+// B4 — GET/PUT configuración fiscal del tenant
+app.get('/api/accounting/tax-config', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const cfg = await prisma.taxConfig.findUnique({ where: { tenantId: authReq.tenantId! } });
+        res.json(cfg ?? { tenantId: authReq.tenantId, inssPatronalRate: 0.225, anticipoIrRate: 0.01, imiRate: 0.01, salarioMinimo: 0, isDefault: true });
+    } catch { res.status(500).json({ error: 'Error al obtener la configuración fiscal.' }); }
+});
+
+app.put('/api/accounting/tax-config', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { inssPatronalRate, anticipoIrRate, imiRate, salarioMinimo } = req.body ?? {};
+        const rate = (v: unknown, name: string) => {
+            const n = new Decimal(Number(v) || 0);
+            if (n.lessThan(0) || n.greaterThan(1)) throw new Error(`${name} debe ser una fracción entre 0 y 1 (ej. 0.225 = 22.5%).`);
+            return n.toDecimalPlaces(4).toNumber();
+        };
+        const data = {
+            inssPatronalRate: rate(inssPatronalRate, 'INSS patronal'),
+            anticipoIrRate: rate(anticipoIrRate, 'Anticipo IR'),
+            imiRate: rate(imiRate, 'IMI'),
+            salarioMinimo: new Decimal(Number(salarioMinimo) || 0).toDecimalPlaces(2).toNumber(),
+        };
+        const cfg = await prisma.taxConfig.upsert({
+            where: { tenantId: authReq.tenantId! },
+            create: { tenantId: authReq.tenantId!, ...data },
+            update: data,
+        });
+        res.json({ message: 'Configuración fiscal actualizada.', config: cfg });
+    } catch (error: unknown) {
+        res.status(400).json({ error: error instanceof Error ? error.message : 'Error al guardar.' });
+    }
+});
+
+// B6 — Tipo de cambio: último vigente, listado, y registrar
+app.get('/api/accounting/exchange-rate/latest', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const today = new Date(); today.setHours(23, 59, 59, 999);
+        const latest = await prisma.exchangeRate.findFirst({
+            where: { tenantId: authReq.tenantId!, fecha: { lte: today } },
+            orderBy: { fecha: 'desc' },
+        });
+        res.json(latest ? { rate: Number(latest.rate), fecha: latest.fecha, source: latest.source } : { rate: null });
+    } catch { res.status(500).json({ error: 'Error al obtener el tipo de cambio.' }); }
+});
+
+app.get('/api/accounting/exchange-rate', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const rates = await prisma.exchangeRate.findMany({
+            where: { tenantId: authReq.tenantId! }, orderBy: { fecha: 'desc' }, take: 60,
+        });
+        res.json({ rates: rates.map(r => ({ id: r.id, fecha: r.fecha, rate: Number(r.rate), source: r.source })) });
+    } catch { res.status(500).json({ error: 'Error al listar tipos de cambio.' }); }
+});
+
+app.post('/api/accounting/exchange-rate', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { fecha, rate } = req.body ?? {};
+        const r = new Decimal(Number(rate) || 0);
+        if (r.lessThanOrEqualTo(0) || r.greaterThan(10000)) return res.status(400).json({ error: 'Tipo de cambio inválido.' });
+        const day = fecha ? new Date(fecha) : new Date();
+        if (isNaN(day.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
+        day.setHours(0, 0, 0, 0);
+        const saved = await prisma.exchangeRate.upsert({
+            where: { tenantId_fecha: { tenantId: authReq.tenantId!, fecha: day } },
+            create: { tenantId: authReq.tenantId!, fecha: day, rate: r.toDecimalPlaces(4).toNumber(), source: 'MANUAL' },
+            update: { rate: r.toDecimalPlaces(4).toNumber() },
+        });
+        res.status(201).json({ message: 'Tipo de cambio registrado.', rate: Number(saved.rate), fecha: saved.fecha });
+    } catch (error) {
+        console.error('Exchange rate error:', error);
+        res.status(500).json({ error: 'Error al registrar el tipo de cambio.' });
+    }
+});
+
+// B1 — Retenciones SUFRIDAS (crédito contra el anticipo IR / IMI)
+app.post('/api/accounting/retenciones-sufridas', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { fecha, clienteRetenedor, tipo, baseAmount, amount, numeroConstancia, saleId } = req.body ?? {};
+        if (!clienteRetenedor || typeof clienteRetenedor !== 'string') return res.status(400).json({ error: 'El cliente retenedor es requerido.' });
+        if (tipo !== 'IR_2' && tipo !== 'IMI_1') return res.status(400).json({ error: 'Tipo inválido (IR_2 | IMI_1).' });
+        const amt = new Decimal(Number(amount) || 0).toDecimalPlaces(2);
+        const base = new Decimal(Number(baseAmount) || 0).toDecimalPlaces(2);
+        if (amt.lessThanOrEqualTo(0)) return res.status(400).json({ error: 'El monto retenido debe ser mayor a cero.' });
+        const day = fecha ? new Date(fecha) : new Date();
+        if (isNaN(day.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
+
+        await prisma.$transaction(async (tx: any) => {
+            await tx.retencionSufrida.create({
+                data: {
+                    tenantId: authReq.tenantId!, fecha: day, clienteRetenedor: clienteRetenedor.trim(),
+                    tipo, baseAmount: base.toNumber(), amount: amt.toNumber(),
+                    numeroConstancia: numeroConstancia ? String(numeroConstancia).trim() : null,
+                    saleId: saleId ? String(saleId) : null, createdBy: authReq.userId!,
+                },
+            });
+            // Asiento: el crédito fiscal (activo) sube; la CxC del cliente baja
+            // (el cliente liquidó parte del saldo vía retención).
+            await createJournalEntry(
+                tx, authReq.tenantId!,
+                `Retención ${tipo === 'IR_2' ? 'IR 2%' : 'IMI 1%'} sufrida — ${clienteRetenedor.trim()}`,
+                '', 'RETENCION_SUFRIDA', authReq.userId!,
+                [
+                    { accountCode: '1.1.6', debit: amt.toNumber(), credit: 0 },
+                    { accountCode: '1.1.3', debit: 0, credit: amt.toNumber() },
+                ],
+                { isAutomatic: true, date: day }
+            );
+        });
+        res.status(201).json({ message: 'Retención sufrida registrada — se acreditará contra tu anticipo IR del mes.' });
+    } catch (error: unknown) {
+        if (error instanceof PeriodLockedError) return res.status(409).json({ error: error.message });
+        console.error('Retención sufrida error:', error);
+        res.status(500).json({ error: error instanceof Error ? error.message : 'Error al registrar la retención.' });
+    }
+});
+
+app.get('/api/accounting/retenciones-sufridas', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const where: any = { tenantId: authReq.tenantId! };
+        const { month, year } = req.query;
+        if (month && year) {
+            const s = new Date(parseInt(year), parseInt(month) - 1, 1);
+            const e = new Date(parseInt(year), parseInt(month), 0, 23, 59, 59);
+            where.fecha = { gte: s, lte: e };
+        }
+        const items = await prisma.retencionSufrida.findMany({ where, orderBy: { fecha: 'desc' }, take: 200 });
+        res.json({ retenciones: items.map(r => ({ ...r, baseAmount: Number(r.baseAmount), amount: Number(r.amount) })) });
+    } catch { res.status(500).json({ error: 'Error al listar las retenciones.' }); }
+});
+
+// ── B2 — Activos fijos + depreciación ───────────────────────────────────────
+
+// GET lista (con valor en libros)
+app.get('/api/accounting/fixed-assets', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const assets = await prisma.fixedAsset.findMany({
+            where: { tenantId: authReq.tenantId! }, orderBy: { createdAt: 'desc' },
+        });
+        res.json({
+            assets: assets.map(a => {
+                const costo = Number(a.costo);
+                const acum = Number(a.depreciacionAcumulada);
+                return {
+                    id: a.id, nombre: a.nombre, categoria: a.categoria, costo,
+                    fechaAdquisicion: a.fechaAdquisicion, vidaUtilMeses: a.vidaUtilMeses,
+                    depreciacionAcumulada: acum, mesesDepreciados: a.mesesDepreciados,
+                    valorEnLibros: Number((costo - acum).toFixed(2)), estado: a.estado,
+                    ultimoPeriodoDep: a.ultimoPeriodoDep,
+                };
+            }),
+        });
+    } catch { res.status(500).json({ error: 'Error al listar activos.' }); }
+});
+
+// POST registrar activo
+app.post('/api/accounting/fixed-assets', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { nombre, categoria, costo, fechaAdquisicion, vidaUtilMeses } = req.body ?? {};
+        if (!nombre || typeof nombre !== 'string') return res.status(400).json({ error: 'Nombre requerido.' });
+        const cat = String(categoria || 'OTRO').toUpperCase();
+        if (!(cat in VIDA_UTIL_DEFAULT)) return res.status(400).json({ error: 'Categoría inválida.' });
+        const costoD = new Decimal(Number(costo) || 0);
+        if (costoD.lessThanOrEqualTo(0)) return res.status(400).json({ error: 'El costo debe ser mayor a cero.' });
+        const fecha = fechaAdquisicion ? new Date(fechaAdquisicion) : new Date();
+        if (isNaN(fecha.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
+        const vida = Number(vidaUtilMeses) > 0 ? Math.floor(Number(vidaUtilMeses)) : VIDA_UTIL_DEFAULT[cat];
+
+        const asset = await prisma.fixedAsset.create({
+            data: {
+                tenantId: authReq.tenantId!, nombre: nombre.trim(), categoria: cat,
+                costo: costoD.toDecimalPlaces(2).toNumber(), fechaAdquisicion: fecha,
+                vidaUtilMeses: vida, createdBy: authReq.userId!,
+            },
+        });
+        res.status(201).json({ message: 'Activo registrado.', asset });
+    } catch (error) {
+        console.error('Create fixed asset error:', error);
+        res.status(500).json({ error: 'Error al registrar el activo.' });
+    }
+});
+
+// PATCH dar de baja
+app.patch('/api/accounting/fixed-assets/:id/baja', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const owned = await prisma.fixedAsset.findFirst({ where: { id: req.params.id, tenantId: authReq.tenantId! }, select: { id: true } });
+        if (!owned) return res.status(404).json({ error: 'Activo no encontrado.' });
+        await prisma.fixedAsset.update({ where: { id: owned.id }, data: { estado: 'BAJA' } });
+        res.json({ message: 'Activo dado de baja.' });
+    } catch { res.status(500).json({ error: 'Error al dar de baja.' }); }
+});
+
+// POST correr depreciación (manual; el cron hace lo mismo mensual)
+app.post('/api/accounting/depreciacion/run', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const now = new Date();
+        const year = Number(req.body?.year) || now.getFullYear();
+        const month = Number(req.body?.month) || (now.getMonth() + 1);
+        const result = await runDepreciationForTenant(authReq.tenantId!, year, month, authReq.userId!);
+        res.json({ message: `Depreciación ${result.period}: ${result.depreciados} cuotas posteadas.`, ...result });
+    } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : 'Error al correr la depreciación';
+        res.status(500).json({ error: msg });
+    }
+});
+
+// ── B3 — Declaración anual de IR ────────────────────────────────────────────
+app.get('/api/fiscal/renta-anual/:year', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const year = parseInt(req.params.year);
+    if (isNaN(year) || year < 2000 || year > 2100) return res.status(400).json({ error: 'Año inválido.' });
+    try {
+        const { generateAnnualIR } = await import('./services/nicaTax');
+        const report = await generateAnnualIR(authReq.tenantId!, year);
+        res.json(report);
+    } catch (error) {
+        console.error('Annual IR error:', error);
+        res.status(500).json({ error: 'Error al generar la declaración anual.' });
+    }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// FASE C — Panel del contador: checklist de obligaciones del mes
+// ══════════════════════════════════════════════════════════════════════════
+const OBLIGATION_KEYS = ['IVA', 'ANTICIPO_IR', 'IMI', 'INSS', 'INATEC', 'IR_LABORAL'];
+
+app.get('/api/accounting/cierre-mensual/:year/:month', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Año o mes inválido.' });
+    }
+    try {
+        const { generateMonthlyReport } = await import('./services/nicaTax');
+        const vet = await generateMonthlyReport(tenantId, month, year);
+
+        // INSS / INATEC / IR laboral retenido desde la nómina del período
+        const payrolls = await prisma.payroll.findMany({
+            where: { tenantId, month, year },
+            select: { inssLaboral: true, inssPatronal: true, inatec: true, irLaboral: true },
+        });
+        const inssTotal = payrolls.reduce((a, p) => a.plus(p.inssLaboral.toString()).plus(p.inssPatronal.toString()), new Decimal(0)).toDecimalPlaces(2).toNumber();
+        const inatecTotal = payrolls.reduce((a, p) => a.plus(p.inatec.toString()), new Decimal(0)).toDecimalPlaces(2).toNumber();
+        const irLaboralTotal = payrolls.reduce((a, p) => a.plus(p.irLaboral.toString()), new Decimal(0)).toDecimalPlaces(2).toNumber();
+        const planillaCalculada = payrolls.length > 0;
+
+        const period = await prisma.fiscalPeriod.findUnique({ where: { tenantId_year_month: { tenantId, year, month } } });
+        const statuses = await prisma.obligationStatus.findMany({ where: { tenantId, year, month } });
+        const declared = (k: string) => statuses.find(s => s.key === k)?.declarado ?? false;
+
+        // Vencimientos: DGI al 15 del mes siguiente, INSS/INATEC al 17.
+        const nm = month === 12 ? 1 : month + 1;
+        const ny = month === 12 ? year + 1 : year;
+        const dgiDue = new Date(ny, nm - 1, 15);
+        const inssDue = new Date(ny, nm - 1, 17);
+        // IR rentas del trabajo: primeros 5 días hábiles del mes siguiente.
+        const irLaboralDue = new Date(ny, nm - 1, 1);
+        for (let habiles = 0; ;) {
+            const dow = irLaboralDue.getDay();
+            if (dow !== 0 && dow !== 6 && ++habiles === 5) break;
+            irLaboralDue.setDate(irLaboralDue.getDate() + 1);
+        }
+
+        const obligaciones = [
+            { key: 'IVA', label: 'IVA Neto', entidad: 'DGI (VET)', monto: vet.ivaNeto, vence: dgiDue, dataLista: true, declarado: declared('IVA'), nota: vet.ivaCredito > 0 ? `Crédito a favor C$ ${vet.ivaCredito.toFixed(2)}` : undefined },
+            { key: 'ANTICIPO_IR', label: 'Anticipo IR', entidad: 'DGI (VET)', monto: vet.anticipoIRaPagar, vence: dgiDue, dataLista: true, declarado: declared('ANTICIPO_IR'), nota: vet.retencionIRSufrida > 0 ? `Neto de C$ ${vet.retencionIRSufrida.toFixed(2)} retenido` : undefined },
+            { key: 'IMI', label: 'IMI Alcaldía', entidad: 'Alcaldía', monto: vet.imiAPagar, vence: dgiDue, dataLista: true, declarado: declared('IMI') },
+            { key: 'INSS', label: 'INSS (obrero-patronal)', entidad: 'INSS / SIE', monto: inssTotal, vence: inssDue, dataLista: planillaCalculada, declarado: declared('INSS'), nota: planillaCalculada ? undefined : 'Falta calcular la nómina del mes' },
+            { key: 'INATEC', label: 'INATEC 2%', entidad: 'INATEC', monto: inatecTotal, vence: inssDue, dataLista: planillaCalculada, declarado: declared('INATEC'), nota: planillaCalculada ? undefined : 'Falta calcular la nómina del mes' },
+            { key: 'IR_LABORAL', label: 'IR Rentas del Trabajo (retenido)', entidad: 'DGI', monto: irLaboralTotal, vence: irLaboralDue, dataLista: planillaCalculada, declarado: declared('IR_LABORAL'), nota: planillaCalculada ? undefined : 'Falta calcular la nómina del mes' },
+        ];
+
+        const totalDeclarar = new Decimal(vet.ivaNeto).plus(vet.anticipoIRaPagar).plus(vet.imiAPagar).plus(inssTotal).plus(inatecTotal).plus(irLaboralTotal).toDecimalPlaces(2).toNumber();
+        const pendientes = obligaciones.filter(o => o.monto > 0 && !o.declarado).length;
+
+        res.json({
+            period: `${year}-${String(month).padStart(2, '0')}`,
+            obligaciones, totalDeclarar, pendientes,
+            periodoCerrado: period?.status === 'CLOSED',
+            planillaCalculada,
+            vetSummary: vet.vetSummary,
+        });
+    } catch (error) {
+        console.error('Cierre mensual error:', error);
+        res.status(500).json({ error: 'Error al generar el panel de cierre.' });
+    }
+});
+
+app.put('/api/accounting/cierre-mensual/:year/:month/:key', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    const key = String(req.params.key);
+    if (isNaN(year) || isNaN(month) || !OBLIGATION_KEYS.includes(key)) {
+        return res.status(400).json({ error: 'Parámetros inválidos.' });
+    }
+    const declarado = Boolean(req.body?.declarado);
+    try {
+        await prisma.obligationStatus.upsert({
+            where: { tenantId_year_month_key: { tenantId: authReq.tenantId!, year, month, key } },
+            create: { tenantId: authReq.tenantId!, year, month, key, declarado, markedBy: authReq.userId!, markedAt: declarado ? new Date() : null },
+            update: { declarado, markedBy: authReq.userId!, markedAt: declarado ? new Date() : null },
+        });
+        res.json({ message: declarado ? 'Marcado como declarado.' : 'Desmarcado.', key, declarado });
+    } catch (error) {
+        console.error('Toggle obligation error:', error);
+        res.status(500).json({ error: 'Error al actualizar el estado.' });
+    }
+});
+
+// ==========================================
+// 📅 ANTIGÜEDAD DE SALDOS — Aging CxC / CxP (Fase C3)
+// ==========================================
+
+// GET /api/accounting/aging — ¿quién me debe y a quién le debo, por antigüedad?
+app.get('/api/accounting/aging', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    try {
+        type BucketKey = 'corriente' | 'b1_30' | 'b31_60' | 'b61_90' | 'b90';
+        interface Factura { id: string; numero: string | null; fecha: Date; vence: Date | null; monto: number; saldo: number; dias: number; bucket: BucketKey; }
+        interface EntAcc { id: string; nombre: string; telefono: string | null; buckets: Record<BucketKey, Decimal>; total: Decimal; vencido: Decimal; facturas: Factura[]; }
+        interface RawItem { id: string; entidadId: string; entidadNombre: string; telefono: string | null; numero: string | null; fecha: Date; vence: Date | null; monto: number; saldo: Decimal; }
+
+        const now = new Date();
+        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const MS_DAY = 86400000;
+
+        // Días vencidos desde la fecha de referencia (vence ?? fecha de emisión).
+        const diasVencido = (ref: Date) => {
+            const r = new Date(ref);
+            const refMid = new Date(r.getFullYear(), r.getMonth(), r.getDate()).getTime();
+            return Math.floor((hoy.getTime() - refMid) / MS_DAY);
+        };
+        const bucketDe = (d: number): BucketKey => d <= 0 ? 'corriente' : d <= 30 ? 'b1_30' : d <= 60 ? 'b31_60' : d <= 90 ? 'b61_90' : 'b90';
+        const zero = (): Record<BucketKey, Decimal> => ({ corriente: new Decimal(0), b1_30: new Decimal(0), b31_60: new Decimal(0), b61_90: new Decimal(0), b90: new Decimal(0) });
+        const numBuckets = (b: Record<BucketKey, Decimal>) => ({
+            corriente: b.corriente.toDecimalPlaces(2).toNumber(),
+            b1_30: b.b1_30.toDecimalPlaces(2).toNumber(),
+            b31_60: b.b31_60.toDecimalPlaces(2).toNumber(),
+            b61_90: b.b61_90.toDecimalPlaces(2).toNumber(),
+            b90: b.b90.toDecimalPlaces(2).toNumber(),
+        });
+
+        // Agrupa las facturas por entidad y las reparte en los cinco tramos de antigüedad.
+        const buildAging = (items: RawItem[]) => {
+            const map = new Map<string, EntAcc>();
+            const totals = zero();
+            for (const it of items) {
+                const dias = diasVencido(it.vence ?? it.fecha);
+                const bk = bucketDe(dias);
+                let e = map.get(it.entidadId);
+                if (!e) { e = { id: it.entidadId, nombre: it.entidadNombre, telefono: it.telefono, buckets: zero(), total: new Decimal(0), vencido: new Decimal(0), facturas: [] }; map.set(it.entidadId, e); }
+                e.buckets[bk] = e.buckets[bk].plus(it.saldo);
+                e.total = e.total.plus(it.saldo);
+                if (bk !== 'corriente') e.vencido = e.vencido.plus(it.saldo);
+                totals[bk] = totals[bk].plus(it.saldo);
+                e.facturas.push({ id: it.id, numero: it.numero, fecha: it.fecha, vence: it.vence, monto: it.monto, saldo: it.saldo.toDecimalPlaces(2).toNumber(), dias, bucket: bk });
+            }
+            const entidades = [...map.values()]
+                .map(e => ({ id: e.id, nombre: e.nombre, telefono: e.telefono, total: e.total.toDecimalPlaces(2).toNumber(), vencido: e.vencido.toDecimalPlaces(2).toNumber(), ...numBuckets(e.buckets), facturas: e.facturas }))
+                .sort((a, b) => b.vencido - a.vencido || b.total - a.total);
+            const total = totals.corriente.plus(totals.b1_30).plus(totals.b31_60).plus(totals.b61_90).plus(totals.b90).toDecimalPlaces(2).toNumber();
+            const vencido = totals.b1_30.plus(totals.b31_60).plus(totals.b61_90).plus(totals.b90).toDecimalPlaces(2).toNumber();
+            return { total, vencido, buckets: numBuckets(totals), entidades };
+        };
+
+        // CxC: ventas a crédito con saldo pendiente (mismo filtro que /api/credits/debtors).
+        const sales = await prisma.sale.findMany({
+            where: { tenantId, paymentMethod: 'CREDIT', balance: { gt: 0 } },
+            include: { customer: { select: { name: true, phone: true } } },
+            orderBy: { dueDate: 'asc' },
+        });
+        // CxP: compras a crédito pendientes (mismo filtro que /api/purchases/pending).
+        const purchases = await prisma.purchase.findMany({
+            where: { tenantId, status: 'PENDING_PAYMENT' },
+            include: { supplier: { select: { name: true } } },
+            orderBy: { dueDate: 'asc' },
+        });
+
+        const cxc = buildAging(sales.map((s): RawItem => ({
+            id: s.id,
+            entidadId: s.customerId ?? `name:${s.customerName ?? 'general'}`,
+            entidadNombre: s.customer?.name ?? s.customerName ?? 'Cliente General',
+            telefono: s.customer?.phone ?? null,
+            numero: s.invoiceNumber != null ? String(s.invoiceNumber) : null,
+            fecha: s.createdAt,
+            vence: s.dueDate,
+            monto: new Decimal(s.total.toString()).toDecimalPlaces(2).toNumber(),
+            saldo: new Decimal(s.balance.toString()),
+        })));
+        const cxp = buildAging(purchases.map((p): RawItem => ({
+            id: p.id,
+            entidadId: p.supplierId,
+            entidadNombre: p.supplier?.name ?? 'Proveedor',
+            telefono: null,
+            numero: p.invoiceNumber,
+            fecha: p.date,
+            vence: p.dueDate,
+            monto: new Decimal(p.total.toString()).toDecimalPlaces(2).toNumber(),
+            saldo: new Decimal(p.total.toString()),
+        })));
+
+        res.json({ asOf: hoy, cxc, cxp });
+    } catch (error) {
+        console.error('Aging error:', error);
+        res.status(500).json({ error: 'Error al generar la antigüedad de saldos.' });
+    }
+});
+
+// ==========================================
+// 💵 FLUJO DE EFECTIVO — Estado de flujo de caja (Fase C2)
+// ==========================================
+
+// GET /api/accounting/flujo-efectivo/:year/:month — ¿cuánta plata real entró y salió?
+// Método directo, derivado del mayor de las cuentas de efectivo (Caja 1.1.1 + Bancos
+// 1.1.2). Un débito a efectivo es entrada; un crédito, salida. Reconcilia con el
+// balance: saldoInicial + flujoNeto = saldoFinal.
+app.get('/api/accounting/flujo-efectivo/:year/:month', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Año o mes inválido.' });
+    }
+    try {
+        const CASH_CODES = ['1.1.1', '1.1.2'];
+        const periodStart = new Date(year, month - 1, 1);
+        const periodEnd = new Date(year, month, 1); // exclusivo (primer día del mes siguiente)
+
+        type Section = 'operacion' | 'inversion' | 'financiamiento';
+        interface ContraLine { account: { code: string; name: string; type: string; subtype: string | null }; debit: unknown; credit: unknown; }
+
+        // Saldo de efectivo al inicio del período = Σ(débito − crédito) de todo lo anterior.
+        const before = await prisma.journalLine.aggregate({
+            where: { account: { tenantId, code: { in: CASH_CODES } }, entry: { date: { lt: periodStart } } },
+            _sum: { debit: true, credit: true },
+        });
+        const saldoInicial = new Decimal(before._sum.debit?.toString() ?? '0').minus(before._sum.credit?.toString() ?? '0');
+
+        // Asientos del período que tocan efectivo, con todas sus líneas y cuentas.
+        const entries = await prisma.journalEntry.findMany({
+            where: { tenantId, date: { gte: periodStart, lt: periodEnd }, lines: { some: { account: { code: { in: CASH_CODES } } } } },
+            include: { lines: { include: { account: { select: { code: true, name: true, type: true, subtype: true } } } } },
+            orderBy: { date: 'asc' },
+        });
+
+        const CONCEPTO: Record<string, string> = {
+            SALE: 'Ventas de contado',
+            PAYMENT: 'Cobros a clientes (créditos)',
+            PURCHASE: 'Compras a proveedores',
+            EXPENSE: 'Gastos',
+            PAYROLL: 'Planilla (sueldos netos)',
+            RETURN: 'Devoluciones a clientes',
+        };
+        const absAmt = (l: ContraLine) => new Decimal(l.debit?.toString() ?? '0').minus(l.credit?.toString() ?? '0').abs();
+
+        const clasificar = (contra: ContraLine[]): Section => {
+            if (contra.some(l => l.account.subtype === 'FIXED_ASSET')) return 'inversion';
+            if (contra.some(l => l.account.type === 'EQUITY' || l.account.code === '2.1.8')) return 'financiamiento';
+            return 'operacion';
+        };
+        const concepto = (refType: string | null, contra: ContraLine[]): string => {
+            if (refType && CONCEPTO[refType]) return CONCEPTO[refType];
+            const dom = contra.slice().sort((a, b) => absAmt(b).minus(absAmt(a)).toNumber())[0];
+            return dom ? dom.account.name : 'Otros movimientos';
+        };
+
+        // sección → concepto → { entrada, salida }
+        const acc: Record<Section, Map<string, { entrada: Decimal; salida: Decimal }>> = {
+            operacion: new Map(), inversion: new Map(), financiamiento: new Map(),
+        };
+        for (const e of entries) {
+            const cashDelta = e.lines
+                .filter(l => CASH_CODES.includes(l.account.code))
+                .reduce((s, l) => s.plus(l.debit.toString()).minus(l.credit.toString()), new Decimal(0));
+            if (cashDelta.isZero()) continue; // transferencia interna Caja↔Bancos: no es flujo
+            const contra = e.lines.filter(l => !CASH_CODES.includes(l.account.code));
+            const sec = clasificar(contra);
+            const label = concepto(e.referenceType, contra);
+            const m = acc[sec];
+            const cur = m.get(label) ?? { entrada: new Decimal(0), salida: new Decimal(0) };
+            if (cashDelta.greaterThan(0)) cur.entrada = cur.entrada.plus(cashDelta);
+            else cur.salida = cur.salida.plus(cashDelta.abs());
+            m.set(label, cur);
+        }
+
+        const buildSection = (m: Map<string, { entrada: Decimal; salida: Decimal }>) => {
+            const conceptos = [...m.entries()]
+                .map(([label, v]) => ({ label, entrada: v.entrada.toDecimalPlaces(2).toNumber(), salida: v.salida.toDecimalPlaces(2).toNumber(), neto: v.entrada.minus(v.salida).toDecimalPlaces(2).toNumber() }))
+                .sort((a, b) => Math.abs(b.neto) - Math.abs(a.neto));
+            const entradas = conceptos.reduce((s, c) => s + c.entrada, 0);
+            const salidas = conceptos.reduce((s, c) => s + c.salida, 0);
+            return { entradas: Number(entradas.toFixed(2)), salidas: Number(salidas.toFixed(2)), neto: Number((entradas - salidas).toFixed(2)), conceptos };
+        };
+
+        const operacion = buildSection(acc.operacion);
+        const inversion = buildSection(acc.inversion);
+        const financiamiento = buildSection(acc.financiamiento);
+        const flujoNeto = new Decimal(operacion.neto).plus(inversion.neto).plus(financiamiento.neto).toDecimalPlaces(2).toNumber();
+        const saldoFinal = saldoInicial.plus(flujoNeto).toDecimalPlaces(2).toNumber();
+        const entradasTotal = Number((operacion.entradas + inversion.entradas + financiamiento.entradas).toFixed(2));
+        const salidasTotal = Number((operacion.salidas + inversion.salidas + financiamiento.salidas).toFixed(2));
+
+        res.json({
+            period: `${year}-${String(month).padStart(2, '0')}`,
+            saldoInicial: saldoInicial.toDecimalPlaces(2).toNumber(),
+            saldoFinal,
+            flujoNeto,
+            entradasTotal,
+            salidasTotal,
+            secciones: { operacion, inversion, financiamiento },
+        });
+    } catch (error) {
+        console.error('Flujo de efectivo error:', error);
+        res.status(500).json({ error: 'Error al generar el flujo de efectivo.' });
+    }
+});
+
 // ==========================================
 // 🔮 ORÁCULO DE INVENTARIO (COMPRAS INTELIGENTES)
 // ==========================================
@@ -4205,6 +6422,80 @@ app.get('/api/inventory/oracle', authenticate, async (req: any, res: any) => {
     } catch (error) {
         console.error('Oracle Error:', error);
         res.status(500).json({ error: 'Error calculando predicciones del Oráculo' });
+    }
+});
+
+// GET /api/inventory/reorder — ¿Qué reponer? (Bodeguero B2)
+// Combina el punto de reorden estático (stock ≤ reorderPoint) con la velocidad de
+// venta (VPD, mismo cálculo del oráculo) en una sola lista, con cantidad sugerida.
+app.get('/api/inventory/reorder', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        const saleMovements = await prisma.kardexMovement.findMany({
+            where: { tenantId: authReq.tenantId, type: 'SALE', date: { gte: thirtyDaysAgo } },
+            select: { productId: true, quantity: true },
+        });
+        const salesByProduct: Record<string, number> = {};
+        for (const m of saleMovements) {
+            salesByProduct[m.productId] = (salesByProduct[m.productId] || 0) + Math.abs(m.quantity);
+        }
+
+        const products = await prisma.product.findMany({
+            where: { tenantId: authReq.tenantId },
+            select: {
+                id: true, name: true, sku: true, stock: true, cost: true, minStock: true,
+                reorderPoint: true, maxStock: true, category: true, defaultSupplierId: true,
+                defaultSupplier: { select: { id: true, name: true } },
+            },
+        });
+
+        const items = [];
+        for (const p of products) {
+            const stock = Number(p.stock);
+            const reorderPoint = Number(p.reorderPoint) || 0;
+            const maxStock = Number(p.maxStock) || 0;
+            const totalSold = salesByProduct[p.id] || 0;
+            const vpd = totalSold / 30; // Venta Diaria Promedio
+            const daysRemaining = vpd > 0 ? stock / vpd : Infinity;
+
+            const belowReorder = reorderPoint > 0 && stock <= reorderPoint;
+            const fastMoving = vpd > 0 && daysRemaining <= 7;
+            if (!belowReorder && !fastMoving) continue;
+
+            // Cuánto reponer: llevar al máximo si está definido; si no, a 15 días de
+            // venta o al doble del punto de reorden.
+            const target = maxStock > 0 ? maxStock : (vpd > 0 ? vpd * 15 : reorderPoint * 2);
+            const suggestedQty = Math.max(0, Math.ceil(target - stock));
+            const cost = Number(p.cost) || 0;
+
+            items.push({
+                productId: p.id,
+                name: p.name,
+                sku: p.sku,
+                category: p.category,
+                currentStock: stock,
+                reorderPoint,
+                maxStock,
+                cost,
+                supplierId: p.defaultSupplier?.id || null,
+                supplierName: p.defaultSupplier?.name || null,
+                vpd: Math.round(vpd * 100) / 100,
+                daysRemaining: daysRemaining === Infinity ? null : Math.round(daysRemaining * 10) / 10,
+                reason: belowReorder && fastMoving ? 'BOTH' : belowReorder ? 'REORDER_POINT' : 'VELOCITY',
+                suggestedQty,
+                suggestedCost: Math.round(suggestedQty * cost * 100) / 100,
+            });
+        }
+
+        items.sort((a, b) => (a.daysRemaining ?? 9999) - (b.daysRemaining ?? 9999));
+
+        res.json({ items, total: items.length, totalEstimatedCost: items.reduce((s, i) => s + i.suggestedCost, 0) });
+    } catch (error) {
+        console.error('Reorder Error:', error);
+        res.status(500).json({ error: 'Error calculando reposición' });
     }
 });
 
@@ -4482,50 +6773,401 @@ app.post('/api/accounting/fiscal-close', authenticate, async (req: any, res: any
 
     try {
         const { fiscalClose } = await import('./services/accounting');
-        const result = await fiscalClose(authReq.tenantId!, month, year);
-        res.json({ message: `Cierre fiscal ${month}/${year} completado`, ...result });
+        const result = await fiscalClose(authReq.tenantId!, month, year, authReq.userId!);
+        res.json({ message: `Cierre fiscal ${month}/${year} completado y período BLOQUEADO`, ...result });
     } catch (error) {
         console.error('Fiscal close error:', error);
         res.status(500).json({ error: 'Error al realizar cierre fiscal' });
     }
 });
 
-// GET /api/hrm/settlement-preview/:employeeId — Calcular aguinaldo + liquidación
+// Salario mensual base de la liquidación: promedio de los últimos 6 meses de
+// nómina (Art. 78, salario variable) o el salario base si no hay historial.
+async function salarioBaseLiquidacion(tenantId: string, employeeId: string, baseSalary: number): Promise<number> {
+    // Art. 78: base = salario ORDINARIO (salario + comisiones), promedio de los
+    // últimos 6 meses. Se excluyen horas extra y feriado (extraordinarios).
+    const recientes = await prisma.payroll.findMany({
+        where: { tenantId, employeeId },
+        orderBy: [{ year: 'desc' }, { month: 'desc' }],
+        take: 6,
+        select: { grossSalary: true, commissions: true },
+    });
+    if (recientes.length === 0) return baseSalary;
+    const suma = recientes.reduce((s, p) => s.plus(p.grossSalary.toString()).plus(p.commissions.toString()), new Decimal(0));
+    return suma.dividedBy(recientes.length).toDecimalPlaces(2).toNumber();
+}
+
+const SETTLEMENT_REASONS = ['DISMISSAL', 'RESIGNATION', 'MUTUAL'];
+
+// GET /api/hrm/settlement-preview/:employeeId?reason=&date= — Previsualizar finiquito
 app.get('/api/hrm/settlement-preview/:employeeId', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { employeeId } = req.params;
+    const reason = SETTLEMENT_REASONS.includes(String(req.query.reason)) ? String(req.query.reason) : 'DISMISSAL';
+    const terminationDate = req.query.date ? new Date(String(req.query.date)) : new Date();
 
     try {
         const employee = await prisma.employee.findFirst({
             where: { id: employeeId, tenantId: authReq.tenantId! },
         });
-
         if (!employee) return res.status(404).json({ error: 'Empleado no encontrado' });
 
-        const { calculateLaborLiability, calculatePayroll } = await import('./services/nicaLabor');
+        const { calculateSettlement } = await import('./services/nicaLabor');
+        const salarioMensual = await salarioBaseLiquidacion(authReq.tenantId!, employee.id, Number(employee.baseSalary || 0));
 
-        const liability = calculateLaborLiability(
-            employee.id,
-            (employee as any).firstName + ' ' + (employee as any).lastName,
-            (employee as any).hireDate,
-            Number((employee as any).baseSalary || 0)
-        );
+        const settlement = calculateSettlement({
+            hireDate: employee.hireDate,
+            terminationDate,
+            reason: reason as 'DISMISSAL' | 'RESIGNATION' | 'MUTUAL',
+            salarioMensual,
+            vacationDaysBalance: Number(employee.vacationDays || 0),
+        });
 
-        const payroll = calculatePayroll(Number((employee as any).baseSalary || 0));
+        const existing = await prisma.terminationSettlement.findUnique({ where: { employeeId: employee.id } });
 
         res.json({
             employee: {
                 id: employee.id,
-                name: (employee as any).firstName + ' ' + (employee as any).lastName,
-                hireDate: (employee as any).hireDate,
-                baseSalary: Number((employee as any).baseSalary || 0),
+                name: `${employee.firstName} ${employee.lastName}`,
+                cedula: employee.cedula,
+                hireDate: employee.hireDate,
+                baseSalary: Number(employee.baseSalary || 0),
+                status: employee.status,
             },
-            liability,
-            payroll,
+            settlement,
+            yaLiquidado: !!existing,
         });
     } catch (error) {
         console.error('Settlement preview error:', error);
         res.status(500).json({ error: 'Error al calcular liquidación' });
+    }
+});
+
+// POST /api/hrm/settlement/:employeeId — Ejecuta la liquidación (paga + contabiliza)
+app.post('/api/hrm/settlement/:employeeId', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const { employeeId } = req.params;
+    const reason = SETTLEMENT_REASONS.includes(String(req.body?.reason)) ? String(req.body.reason) : 'DISMISSAL';
+    const terminationDate = req.body?.terminationDate ? new Date(String(req.body.terminationDate)) : new Date();
+
+    try {
+        const employee = await prisma.employee.findFirst({ where: { id: employeeId, tenantId } });
+        if (!employee) return res.status(404).json({ error: 'Empleado no encontrado' });
+
+        const existing = await prisma.terminationSettlement.findUnique({ where: { employeeId: employee.id } });
+        if (existing) return res.status(400).json({ error: 'Este colaborador ya fue liquidado.' });
+
+        const { calculateSettlement } = await import('./services/nicaLabor');
+        const salarioMensual = await salarioBaseLiquidacion(tenantId, employee.id, Number(employee.baseSalary || 0));
+        const s = calculateSettlement({
+            hireDate: employee.hireDate,
+            terminationDate,
+            reason: reason as 'DISMISSAL' | 'RESIGNATION' | 'MUTUAL',
+            salarioMensual,
+            vacationDaysBalance: Number(employee.vacationDays || 0),
+        });
+
+        await seedChartOfAccounts(tenantId);
+
+        const settlement = await prisma.$transaction(async (tx: any) => {
+            const created = await tx.terminationSettlement.create({
+                data: {
+                    tenantId,
+                    employeeId: employee.id,
+                    terminationDate,
+                    reason,
+                    aguinaldoAmount: s.aguinaldo,
+                    vacationAmount: s.vacaciones,
+                    severanceAmount: s.indemnizacion,
+                    totalAmount: s.total,
+                },
+            });
+            // Cancela las provisiones y paga; fail-soft con el lock de períodos.
+            try {
+                await recordSettlement(tx, tenantId, authReq.userId!, created.id, s.aguinaldo, s.vacaciones, s.indemnizacion);
+            } catch (accErr) {
+                console.warn('⚠️ Asiento de liquidación omitido:', accErr);
+            }
+            // Empleado liquidado: TERMINATED y saldo de vacaciones en cero.
+            await tx.employee.update({
+                where: { id: employee.id },
+                data: { status: 'TERMINATED', vacationDays: 0 },
+            });
+            // Cierra solicitudes que quedan sin sentido tras la baja (no dejarlas colgando).
+            await tx.leaveRequest.updateMany({
+                where: { tenantId, employeeId: employee.id, status: 'PENDING' },
+                data: { status: 'REJECTED' },
+            });
+            await tx.salaryAdvance.updateMany({
+                where: { tenantId, employeeId: employee.id, status: 'PENDING' },
+                data: { status: 'REJECTED' },
+            });
+            return created;
+        });
+
+        res.json({ message: 'Liquidación procesada.', settlement, detalle: s });
+    } catch (error) {
+        console.error('Settlement run error:', error);
+        res.status(500).json({ error: 'Error al procesar la liquidación' });
+    }
+});
+
+// GET /api/hrm/dashboard/:year/:month — Tablero gerencial de RRHH (solo lectura)
+app.get('/api/hrm/dashboard/:year/:month', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month);
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: 'Año o mes inválido.' });
+    }
+    try {
+        const [employees, payrolls, taxCfg, bajasAnio] = await Promise.all([
+            prisma.employee.findMany({
+                where: { tenantId, status: 'ACTIVE' },
+                select: { id: true, firstName: true, lastName: true, baseSalary: true, role: true },
+            }),
+            prisma.payroll.findMany({
+                where: { tenantId, year, month },
+                select: { grossSalary: true, totalIncome: true, netSalary: true, inssPatronal: true, inatec: true, diasAusencia: true },
+            }),
+            prisma.taxConfig.findUnique({ where: { tenantId } }),
+            prisma.terminationSettlement.count({
+                where: { tenantId, terminationDate: { gte: new Date(year, 0, 1), lte: new Date(year, 11, 31, 23, 59, 59) } },
+            }),
+        ]);
+
+        const r2 = (n: number) => Number(n.toFixed(2));
+        const sum = (fn: (p: typeof payrolls[number]) => number) => payrolls.reduce((s, p) => s + fn(p), 0);
+
+        const headcount = employees.length;
+        const planillaCalculada = payrolls.length > 0;
+        const totalDevengado = sum(p => Number(p.totalIncome));
+        const nominaNeta = sum(p => Number(p.netSalary));
+        const aportesPatronales = sum(p => Number(p.inssPatronal) + Number(p.inatec));
+        // Provisión mensual del pasivo laboral ≈ 25% del salario ordinario (B1).
+        const provisionMensual = sum(p => Number(p.grossSalary)) / 4;
+        const costoLaboralReal = totalDevengado + aportesPatronales + provisionMensual;
+
+        const diasAusencia = sum(p => Number(p.diasAusencia || 0));
+        const empleadosConAusencia = payrolls.filter(p => Number(p.diasAusencia || 0) > 0).length;
+
+        const salarioMinimo = taxCfg ? Number(taxCfg.salarioMinimo) : 0;
+        const bajoMinimo = salarioMinimo > 0
+            ? employees
+                .filter(e => Number(e.baseSalary) < salarioMinimo)
+                .map(e => ({ id: e.id, name: `${e.firstName} ${e.lastName}`, baseSalary: Number(e.baseSalary) }))
+            : [];
+
+        const tasaRotacion = (headcount + bajasAnio) > 0 ? (bajasAnio / (headcount + bajasAnio)) * 100 : 0;
+
+        res.json({
+            period: `${year}-${String(month).padStart(2, '0')}`,
+            headcount,
+            planillaCalculada,
+            costoLaboralReal: r2(costoLaboralReal),
+            totalDevengado: r2(totalDevengado),
+            nominaNeta: r2(nominaNeta),
+            aportesPatronales: r2(aportesPatronales),
+            provisionMensual: r2(provisionMensual),
+            ausentismo: { diasAusencia: r2(diasAusencia), empleadosConAusencia },
+            rotacion: { bajasAnio, tasaRotacion: r2(tasaRotacion) },
+            salarioMinimo,
+            bajoMinimo,
+        });
+    } catch (error) {
+        console.error('HR dashboard error:', error);
+        res.status(500).json({ error: 'Error al generar el tablero.' });
+    }
+});
+
+// ==========================================
+// 👤 MI ESPACIO — Autoservicio del colaborador (Fase C3)
+// ==========================================
+
+// Encuentra el expediente del usuario autenticado (vínculo Employee.userId).
+async function findMyEmployee(authReq: AuthRequest) {
+    return prisma.employee.findFirst({ where: { tenantId: authReq.tenantId!, userId: authReq.userId! } });
+}
+
+// GET /api/me/profile — datos del propio colaborador
+app.get('/api/me/profile', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const emp = await findMyEmployee(authReq);
+        if (!emp) return res.status(404).json({ error: 'Tu usuario no está vinculado a un expediente. Pídele a Recursos Humanos que lo vincule.' });
+        const now = new Date();
+        const meses = Math.max(0, Math.floor((now.getTime() - new Date(emp.hireDate).getTime()) / (86400000 * 30.44)));
+        res.json({
+            id: emp.id,
+            name: `${emp.firstName} ${emp.lastName}`,
+            role: emp.role,
+            cedula: emp.cedula,
+            inss: emp.inss,
+            baseSalary: Number(emp.baseSalary),
+            vacationDays: emp.vacationDays,
+            jornada: emp.jornada,
+            hireDate: emp.hireDate,
+            antiguedadTexto: `${Math.floor(meses / 12)} año(s) ${meses % 12} mes(es)`,
+        });
+    } catch (error) {
+        console.error('Mi perfil error:', error);
+        res.status(500).json({ error: 'Error al obtener tu perfil.' });
+    }
+});
+
+// GET /api/me/payrolls — historial de colillas del propio colaborador
+app.get('/api/me/payrolls', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const emp = await findMyEmployee(authReq);
+        if (!emp) return res.json([]);
+        const payrolls = await prisma.payroll.findMany({
+            where: { tenantId: authReq.tenantId!, employeeId: emp.id },
+            orderBy: [{ year: 'desc' }, { month: 'desc' }],
+            take: 24,
+        });
+        res.json(payrolls);
+    } catch (error) {
+        console.error('Mis colillas error:', error);
+        res.status(500).json({ error: 'Error al obtener tus colillas.' });
+    }
+});
+
+// POST /api/me/leave — el colaborador solicita una ausencia (queda PENDING)
+app.post('/api/me/leave', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { type, startDate, endDate, reason } = req.body;
+    if (!['SICK', 'VACATION', 'UNPAID', 'MATERNITY'].includes(type) || !startDate || !endDate) {
+        return res.status(400).json({ error: 'Tipo y fechas son requeridos.' });
+    }
+    if (new Date(endDate) < new Date(startDate)) {
+        return res.status(400).json({ error: 'La fecha final no puede ser anterior a la inicial.' });
+    }
+    try {
+        const emp = await findMyEmployee(authReq);
+        if (!emp) return res.status(404).json({ error: 'Tu usuario no está vinculado a un expediente.' });
+        // Evita apilar solicitudes solapadas (de cualquier tipo); el saldo de
+        // vacaciones se valida al aprobar.
+        const solapada = await prisma.leaveRequest.findFirst({
+            where: {
+                tenantId: authReq.tenantId!, employeeId: emp.id,
+                status: { in: ['PENDING', 'APPROVED'] },
+                startDate: { lte: new Date(endDate) }, endDate: { gte: new Date(startDate) },
+            },
+            select: { id: true },
+        });
+        if (solapada) return res.status(400).json({ error: 'Ya tenés una ausencia que se solapa con esas fechas.' });
+        const leave = await prisma.leaveRequest.create({
+            data: {
+                tenantId: authReq.tenantId!, employeeId: emp.id, type,
+                startDate: new Date(startDate), endDate: new Date(endDate),
+                reason: reason || null, status: 'PENDING',
+            },
+        });
+        res.json({ message: 'Solicitud enviada. Queda pendiente de aprobación.', leave });
+    } catch (error) {
+        console.error('Mi solicitud de ausencia error:', error);
+        res.status(500).json({ error: 'Error al enviar la solicitud.' });
+    }
+});
+
+// POST /api/me/advance — el colaborador solicita un adelanto (queda PENDING)
+app.post('/api/me/advance', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const monto = Number(req.body?.amount);
+    if (!monto || monto <= 0) return res.status(400).json({ error: 'Monto inválido.' });
+    try {
+        const emp = await findMyEmployee(authReq);
+        if (!emp) return res.status(404).json({ error: 'Tu usuario no está vinculado a un expediente.' });
+        const max = Number(emp.baseSalary) * 0.30;
+        if (monto > max) return res.status(400).json({ error: `El monto excede tu límite permitido de C$ ${max.toFixed(2)} (30% del salario).` });
+        const pendiente = await prisma.salaryAdvance.findFirst({ where: { tenantId: authReq.tenantId!, employeeId: emp.id, status: 'PENDING' }, select: { id: true } });
+        if (pendiente) return res.status(400).json({ error: 'Ya tenés un adelanto pendiente de aprobación.' });
+        const advance = await prisma.salaryAdvance.create({
+            data: { tenantId: authReq.tenantId!, employeeId: emp.id, amount: monto, fee: monto * 0.05, status: 'PENDING' },
+        });
+        res.json({ message: 'Solicitud de adelanto enviada.', advance });
+    } catch (error) {
+        console.error('Mi adelanto error:', error);
+        res.status(500).json({ error: 'Error al solicitar el adelanto.' });
+    }
+});
+
+// GET /api/me/requests — mis solicitudes (ausencias + adelantos) con su estado
+app.get('/api/me/requests', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const emp = await findMyEmployee(authReq);
+        if (!emp) return res.json({ leaves: [], advances: [] });
+        const [leaves, advances] = await Promise.all([
+            prisma.leaveRequest.findMany({ where: { tenantId: authReq.tenantId!, employeeId: emp.id }, orderBy: { startDate: 'desc' }, take: 12 }),
+            prisma.salaryAdvance.findMany({ where: { tenantId: authReq.tenantId!, employeeId: emp.id }, orderBy: { id: 'desc' }, take: 12 }),
+        ]);
+        res.json({
+            leaves: leaves.map(l => ({ id: l.id, type: l.type, startDate: l.startDate, endDate: l.endDate, status: l.status, reason: l.reason })),
+            advances: advances.map(a => ({ id: a.id, amount: Number(a.amount), fee: Number(a.fee), status: a.status })),
+        });
+    } catch (error) {
+        console.error('Mis solicitudes error:', error);
+        res.status(500).json({ error: 'Error al obtener tus solicitudes.' });
+    }
+});
+
+// GET /api/hr/alerts — centro de alertas proactivas de RRHH (Fase C6)
+app.get('/api/hr/alerts', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    try {
+        const now = new Date();
+        const DAY = 86400000;
+        const [employees, contracts, pendingLeaves, pendingAdvances] = await Promise.all([
+            prisma.employee.findMany({ where: { tenantId, status: 'ACTIVE' }, select: { id: true, cedula: true, inss: true } }),
+            prisma.employmentContract.findMany({ where: { tenantId, status: 'ACTIVE' }, select: { employeeId: true, endDate: true, probationEnd: true } }),
+            prisma.leaveRequest.count({ where: { tenantId, status: 'PENDING' } }),
+            prisma.salaryAdvance.count({ where: { tenantId, status: 'PENDING' } }),
+        ]);
+
+        const alerts: { severity: 'danger' | 'warning' | 'info'; message: string }[] = [];
+
+        let porVencer = 0, vencidos = 0, prueba = 0;
+        for (const c of contracts) {
+            if (c.endDate) {
+                const d = Math.ceil((c.endDate.getTime() - now.getTime()) / DAY);
+                if (d < 0) vencidos++; else if (d <= 30) porVencer++;
+            }
+            if (c.probationEnd) {
+                const d = Math.ceil((c.probationEnd.getTime() - now.getTime()) / DAY);
+                if (d >= 0 && d <= 7) prueba++;
+            }
+        }
+        if (vencidos > 0) alerts.push({ severity: 'danger', message: `${vencidos} contrato(s) vencido(s) — renovar o liquidar.` });
+        if (porVencer > 0) alerts.push({ severity: 'warning', message: `${porVencer} contrato(s) por vencer en ≤30 días.` });
+        if (prueba > 0) alerts.push({ severity: 'warning', message: `${prueba} período(s) de prueba terminando en ≤7 días.` });
+
+        const conContrato = new Set(contracts.map(c => c.employeeId));
+        const sinContrato = employees.filter(e => !conContrato.has(e.id)).length;
+        if (sinContrato > 0) alerts.push({ severity: 'warning', message: `${sinContrato} colaborador(es) sin contrato registrado (el MITRAB exige contrato escrito).` });
+
+        const sinInss = employees.filter(e => !e.inss).length;
+        const sinCedula = employees.filter(e => !e.cedula).length;
+        if (sinInss > 0) alerts.push({ severity: 'danger', message: `${sinInss} colaborador(es) sin número INSS — bloquea la declaración al SIE.` });
+        if (sinCedula > 0) alerts.push({ severity: 'warning', message: `${sinCedula} colaborador(es) sin cédula registrada.` });
+
+        const dueAg = new Date(now.getFullYear(), 11, 10);
+        const diasAg = Math.ceil((dueAg.getTime() - now.getTime()) / DAY);
+        if (diasAg >= 0 && diasAg <= 45) {
+            alerts.push({ severity: diasAg <= 10 ? 'danger' : 'info', message: `Faltan ${diasAg} día(s) para pagar el aguinaldo (10 de diciembre).` });
+        }
+
+        const pend = pendingLeaves + pendingAdvances;
+        if (pend > 0) alerts.push({ severity: 'info', message: `${pend} solicitud(es) pendiente(s) de aprobación.` });
+
+        res.json({ alerts, total: alerts.length });
+    } catch (error) {
+        console.error('HR alerts error:', error);
+        res.status(500).json({ error: 'Error al obtener las alertas.' });
     }
 });
 
@@ -4836,172 +7478,11 @@ app.patch('/api/public-orders/:id/convert', authenticate, async (req: any, res: 
 });
 
 // ==========================================
-// DRIVER APP (Rutas Públicas para Motorizados)
+// DRIVER APP — movida a routes/driver.ts (/api/driver/*)
+// El magic-link /api/public/driver/:id fue REEMPLAZADO por login
+// teléfono+PIN con token firmado (FASE 2): cualquiera que reenviara el
+// link podía entrar y marcar entregas/cobros de otro repartidor.
 // ==========================================
-
-// GET /api/public/driver/:id/orders
-// Retorna pedidos activos ('preparando', 'en_camino') asignados a este motorizado
-app.get('/api/public/driver/:id/orders', publicLimiter, async (req: any, res: any) => {
-    const motorizadoId = req.params.id;
-    try {
-        const motorizado = await prisma.motorizado.findUnique({ where: { id: motorizadoId } });
-        if (!motorizado || !motorizado.activo) {
-            return res.status(404).json({ error: 'Motorizado no encontrado o inactivo' });
-        }
-
-        const orders = await prisma.pedido.findMany({
-            where: {
-                motorizadoId,
-                estado: { in: ['asignado', 'preparando', 'en_tienda', 'en_ruta', 'en_camino', 'en_punto'] }
-            },
-            include: {
-                items: {
-                    include: { producto: { select: { name: true } } }
-                }
-            },
-            orderBy: { createdAt: 'asc' }
-        });
-
-        // 💰 Liquidación en tiempo real para el Uber View
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-
-        const hoyPedidos = await prisma.pedido.findMany({
-            where: { motorizadoId, estado: 'entregado', entregadoAt: { gte: todayStart } }
-        });
-
-        let totalCobradoEfectivo = 0;
-        let totalComisiones = 0;
-
-        for (const p of hoyPedidos) {
-            totalCobradoEfectivo += Number(p.total);
-            totalComisiones += Number(p.costoEntrega);
-        }
-
-        const liquidacionDiaria = {
-            pedidosEntregados: hoyPedidos.length,
-            totalCobrado: totalCobradoEfectivo,
-            comisionesGanadas: totalComisiones,
-            netoADepositarA_Tienda: totalCobradoEfectivo - totalComisiones > 0 ? totalCobradoEfectivo - totalComisiones : 0
-        };
-
-        res.json({ driver: motorizado, orders, liquidacionDiaria });
-    } catch (error) {
-        console.error('Get driver orders error:', error);
-        res.status(500).json({ error: 'Error al obtener pedidos del motorizado' });
-    }
-});
-
-// PATCH /api/public/driver/:id/orders/:orderId/deliver
-// Permite al motorizado marcar un pedido como 'entregado' (dispara contabilidad)
-app.patch('/api/public/driver/:id/orders/:orderId/deliver', async (req: any, res: any) => {
-    const motorizadoId = req.params.id;
-    const orderId = req.params.orderId;
-    const { lat, lng } = req.body || {}; // Extraemos GPS tracking
-
-    try {
-        const pedido = await prisma.pedido.findFirst({
-            where: { id: orderId, motorizadoId },
-            include: { items: true }
-        });
-
-        if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado o no asignado a ti.' });
-        if (pedido.estado === 'entregado' || pedido.estado === 'cancelado') {
-            return res.status(400).json({ error: 'El pedido ya fue procesado.' });
-        }
-
-        // Mismo flujo contable que en routes/pedidos.ts pero sin `authReq.userId` (usa system/motorizado logic)
-        // Usando el recordSale del top-level import
-
-        const updated = await prisma.$transaction(async (tx: any) => {
-            const entregadoAtCalculated = new Date();
-            const p = await tx.pedido.update({
-                where: { id: orderId },
-                data: { estado: 'entregado', entregadoAt: entregadoAtCalculated }
-            });
-
-            await tx.trackingEvento.create({
-                data: {
-                    pedidoId: orderId,
-                    estado: 'entregado',
-                    nota: 'Entregado vía App del Motorizado',
-                    lat: lat ? Number(lat) : null,
-                    lng: lng ? Number(lng) : null
-                }
-            });
-
-            // Alerta de proximidad GPS si aplican coordenadas
-            if (lat && lng) {
-                await tx.auditLog.create({
-                    data: {
-                        tenantId: pedido.tenantId,
-                        userId: 'SYSTEM',
-                        action: 'GPS_AUDIT_ALERT',
-                        details: JSON.stringify({
-                            mensaje: 'Pedido entregado por motorizado desde la Driver App.',
-                            lat: Number(lat),
-                            lng: Number(lng),
-                            pedidoId: orderId,
-                            motorizadoId: motorizadoId
-                        })
-                    }
-                });
-            }
-
-            if (!pedido.facturaId) {
-                let costTotal = 0;
-                const saleItemsData = [];
-                for (const item of pedido.items) {
-                    const prod = await tx.product.findUnique({ where: { id: item.productoId } });
-                    if (prod) {
-                        const unitCost = Number(prod.cost || 0);
-                        costTotal += (unitCost * item.cantidad);
-                        saleItemsData.push({
-                            productId: item.productoId,
-                            quantity: item.cantidad,
-                            priceAtSale: item.precioUnitario,
-                            costAtSale: unitCost,
-                            discount: 0
-                        });
-                    }
-                }
-
-                const sale = await tx.sale.create({
-                    data: {
-                        tenantId: pedido.tenantId,
-                        total: pedido.total,
-                        status: 'COMPLETED',
-                        paymentMethod: 'CASH',
-                        customerName: pedido.clienteNombre,
-                        items: { create: saleItemsData }
-                    }
-                });
-
-                await tx.payment.create({
-                    data: {
-                        saleId: sale.id,
-                        amount: pedido.total,
-                        method: 'CASH',
-                        collectedBy: motorizadoId ?? null // Motorizado lo cobró
-                    }
-                });
-
-                await recordSale(tx, pedido.tenantId, motorizadoId ?? null, sale.id, Number(pedido.total), costTotal, 'CASH');
-
-                await tx.pedido.update({
-                    where: { id: orderId },
-                    data: { facturaId: sale.id }
-                });
-            }
-            return p;
-        });
-
-        res.json({ message: 'Entregado exitosamente', pedido: updated });
-    } catch (error) {
-        console.error('Driver deliver error:', error);
-        res.status(500).json({ error: 'Error al procesar la entrega.' });
-    }
-});
 
 // ==========================================
 // 🧾 SPRINT B — CONSTANCIA DE RETENCIÓN DGI
@@ -5440,12 +7921,23 @@ if (isProduction) {
         immutable: true,
     }));
 
-    // Resto de archivos estáticos (favicon, logos, etc.)
-    app.use(express.static(distPath, { maxAge: 0 }));
+    // Resto de archivos estáticos (favicon, logos, etc.).
+    // redirect:false → no redirige /ruta → /ruta/ (controlamos el HTML por-ruta abajo).
+    app.use(express.static(distPath, { maxAge: 0, redirect: false }));
 
-    // SPA catch-all: cualquier ruta que no sea /api → index.html sin cache
+    // SPA catch-all: cualquier ruta que no sea /api.
+    // Sirve el HTML prerenderizado por-ruta (dist/<ruta>/index.html) si existe — cada uno
+    // con su <title>, description y canonical únicos (SEO). Si no, cae al shell del SPA.
     app.get(/^(?!\/api).+/, (req: any, res: any) => {
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        const rel = req.path.replace(/^\/+|\/+$/g, '');
+        if (rel) {
+            const prerendered = path.join(distPath, rel, 'index.html');
+            // Guard anti-traversal: el archivo debe quedar dentro de distPath.
+            if (prerendered.startsWith(distPath + path.sep) && fs.existsSync(prerendered)) {
+                return res.sendFile(prerendered);
+            }
+        }
         res.sendFile(path.join(distPath, 'index.html'));
     });
     console.log(`📂 Serving static files from: ${distPath}`);
@@ -5483,6 +7975,11 @@ async function checkExpiredSubscriptions() {
 
 checkExpiredSubscriptions();
 setInterval(checkExpiredSubscriptions, 60 * 60 * 1000); // cada hora
+
+// ⏰ CRON: depreciación mensual automática (Ley 822). Idempotente por
+// período/activo → correr a diario es seguro; solo postea la cuota una vez.
+runMonthlyDepreciationAllTenants();
+setInterval(runMonthlyDepreciationAllTenants, 24 * 60 * 60 * 1000); // cada 24h
 
 // ==========================================
 // 🚀 START SERVER

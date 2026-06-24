@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import useSWR from 'swr';
 import Decimal from 'decimal.js';
 import { Shield, Users, Building2, DollarSign, TrendingUp, Ban, CheckCircle, Eye, RefreshCw, Skull, Activity, CreditCard, Clock, BarChart3, Target, XCircle, Banknote, FileCheck, X } from 'lucide-react';
+import AdminMotorizadosKYC from './AdminMotorizadosKYC';
 
 // ── Tipos de respuesta del backend (tipado estricto, sin any) ──
 // El dinero viaja como string con precisión Decimal(18,4); se parsea con Decimal.js en el cliente.
@@ -291,6 +292,9 @@ const SuperAdmin: React.FC = () => {
                         <div className="text-xl font-bold text-green-400">{formatMoney(metrics?.totalWallet ?? 0)}</div>
                     </div>
                 </div>
+
+                {/* 🛵 Cola de revisión KYC — Red Nortex de repartidores */}
+                <AdminMotorizadosKYC />
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     {/* TENANT TABLE - 2 cols */}

@@ -47,6 +47,15 @@ export interface Shift {
   systemExpectedCash?: number;
   difference?: number; // declared - expected
   status: 'OPEN' | 'CLOSED';
+  // Empleado/cajero asignado al abrir turno (via PIN). Opcional: turnos
+  // legacy o abiertos por el dueño pueden no tenerlo.
+  employeeId?: string;
+  employee?: {
+    id?: string;
+    firstName: string;
+    lastName: string;
+    role: string;
+  };
 }
 
 export interface CashMovement {
@@ -145,6 +154,16 @@ export interface Quotation {
   createdAt: string;
   expiresAt: string;
   status: 'DRAFT' | 'SENT' | 'CONVERTED' | 'EXPIRED';
+}
+
+// Pedido entrante del catálogo público / portal web, convertible a cotización.
+export interface PublicOrder {
+  id: string;
+  customerName: string;
+  customerPhone?: string;
+  status: string; // 'PENDING' | 'CONVERTED'
+  items?: unknown[];
+  createdAt: string;
 }
 
 export type ViewMode = 'POS' | 'DASHBOARD' | 'BLUEPRINT' | 'SETTINGS' | 'MARKETPLACE' | 'REPORTS' | 'QUOTATIONS';
