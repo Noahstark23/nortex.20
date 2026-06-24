@@ -3,6 +3,7 @@ import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff } from 'lucide-react';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
+import { maybeAutostartTour } from '../utils/tours';
 import { ReceiptTicket } from './ReceiptTicket';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import * as XLSX from 'xlsx';
@@ -319,6 +320,9 @@ const POS: React.FC = () => {
             .then(d => { if (d && typeof d.rate === 'number' && d.rate > 0) setExchangeRate(d.rate); })
             .catch(() => { /* mantiene el fallback */ });
     }, []);
+
+    // Tutorial guiado: si entran con ?tour=pos (desde Ayuda o el checklist).
+    useEffect(() => { maybeAutostartTour(); }, []);
 
     useEffect(() => {
         refreshOfflineCount();

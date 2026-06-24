@@ -29,6 +29,7 @@ import AuditDashboard from './components/AuditDashboard';
 import Contabilidad from './components/Contabilidad';
 import Billing from './components/Billing';
 import TeamManagement from './components/TeamManagement';
+import HelpCenter from './components/HelpCenter';
 import PublicCatalog from './components/PublicCatalog';
 import TrackPedido from './components/TrackPedido';
 
@@ -75,6 +76,7 @@ const ProtectedApp = () => {
         <Route path="accounting" element={<Contabilidad />} />
         <Route path="billing" element={<Billing />} />
         <Route path="team" element={<TeamManagement />} />
+        <Route path="ayuda" element={<HelpCenter />} />
         <Route path="*" element={<Navigate to="dashboard" replace />} />
       </Routes>
     </Layout>

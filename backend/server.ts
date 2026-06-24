@@ -893,6 +893,71 @@ app.post('/api/auth/reset-password/:token', async (req: any, res: any) => {
 // 📊 DASHBOARD & INTELLIGENCE (REAL DATA)
 // ==========================================
 
+/**
+ * Onboarding guiado: deriva los hitos de activación de los datos REALES del
+ * negocio (no hay tabla de progreso — los conteos son la fuente de verdad), así
+ * el checklist se auto-completa solo. Los pasos se ramifican por tipo de negocio.
+ * Las banderas cosméticas (bienvenida vista / descartado) viven en localStorage.
+ */
+app.get('/api/onboarding', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const tenantId = authReq.tenantId;
+        const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+        if (!tenant) return res.status(404).json({ error: 'Negocio no encontrado' });
+
+        const isLender = tenant.type === 'LENDER';
+
+        // Conteos reales (alcance: este negocio). Los préstamos del prestamista se
+        // identifican por lenderId; el Employee del dueño se crea al registrarse,
+        // por eso "equipo" = más de 1 empleado.
+        const [products, sales, customers, employees, lenderLoans] = await Promise.all([
+            prisma.product.count({ where: { tenantId } }),
+            prisma.sale.count({ where: { tenantId } }),
+            prisma.customer.count({ where: { tenantId } }),
+            prisma.employee.count({ where: { tenantId } }),
+            isLender ? prisma.loan.count({ where: { lenderId: tenantId } }) : Promise.resolve(0),
+        ]);
+
+        // El registro siembra un taxId placeholder "TAX-<timestamp>"; el paso solo
+        // se completa cuando el dueño guarda su RUC real (Configuración DGI).
+        const hasFiscal = !!(
+            tenant.taxId &&
+            String(tenant.taxId).trim() &&
+            !/^TAX-\d+$/.test(String(tenant.taxId))
+        );
+        const teamReady = employees > 1;
+
+        const steps = isLender
+            ? [
+                { key: 'fiscal',    label: 'Configurá los datos de tu negocio',  done: hasFiscal,        href: '/app/dashboard', cta: 'Configurar' },
+                { key: 'customer',  label: 'Registrá tu primer cliente',         done: customers > 0,    href: '/app/dashboard', cta: 'Agregar cliente' },
+                { key: 'loan',      label: 'Creá tu primer préstamo',            done: lenderLoans > 0,  href: '/app/dashboard', cta: 'Crear préstamo' },
+                { key: 'team',      label: 'Agregá un cobrador a tu equipo',     done: teamReady,        href: '/app/hr',        cta: 'Agregar cobrador' },
+              ]
+            : [
+                { key: 'fiscal',    label: 'Configurá tus datos fiscales (DGI)', done: hasFiscal,        href: '/app/dashboard', cta: 'Configurar' },
+                { key: 'product',   label: 'Agregá tu primer producto',          done: products > 0,     href: '/app/inventory?tour=inv', cta: 'Agregar producto' },
+                { key: 'sale',      label: 'Hacé tu primera venta',              done: sales > 0,        href: '/app/pos?tour=pos',       cta: 'Ir al POS' },
+                { key: 'customer',  label: 'Registrá un cliente',                done: customers > 0,    href: '/app/clients',   cta: 'Agregar cliente' },
+                { key: 'team',      label: 'Invitá a tu equipo',                 done: teamReady,        href: '/app/team',      cta: 'Invitar' },
+              ];
+
+        const completed = steps.filter(s => s.done).length;
+        res.json({
+            type: tenant.type,
+            businessName: tenant.businessName ?? '',
+            steps,
+            completed,
+            total: steps.length,
+            allDone: completed === steps.length,
+        });
+    } catch (e: any) {
+        console.error('onboarding status error', e);
+        res.status(500).json({ error: 'Error al calcular el onboarding' });
+    }
+});
+
 app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
