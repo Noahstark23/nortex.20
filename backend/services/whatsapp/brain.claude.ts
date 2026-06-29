@@ -11,11 +11,29 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { AgentBrain, AgentInput, AgentReply } from './agent';
+import { AgentBrain, AgentInput, AgentReply, AgentTurn } from './agent';
 import { toolsForScope } from './tools';
 
 const MODEL = process.env.WHATSAPP_LLM_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_TOOL_ITERATIONS = 4;
+
+/**
+ * Arma los `messages` para la API a partir del historial + el mensaje actual.
+ * Garantiza el contrato de Anthropic: empieza en 'user' y alterna roles
+ * (fusiona turnos consecutivos del mismo rol; descarta 'assistant' inicial).
+ */
+function buildMessages(history: AgentTurn[], current: string): Anthropic.MessageParam[] {
+    const turns: AgentTurn[] = [...history, { role: 'user', text: current }];
+    const merged: AgentTurn[] = [];
+    for (const t of turns) {
+        if (!t.text.trim()) continue;
+        const last = merged[merged.length - 1];
+        if (last && last.role === t.role) last.text += `\n${t.text}`;
+        else merged.push({ role: t.role, text: t.text });
+    }
+    while (merged.length > 0 && merged[0].role === 'assistant') merged.shift();
+    return merged.map((t) => ({ role: t.role, content: t.text }));
+}
 
 export class ClaudeBrain implements AgentBrain {
     private readonly client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -35,7 +53,7 @@ export class ClaudeBrain implements AgentBrain {
             `con una persona o se muestra molesto, respondé exactamente "[HANDOFF]". ` +
             (input.customerName ? `El cliente se llama ${input.customerName}.` : `El cliente aún no está registrado.`);
 
-        const messages: Anthropic.MessageParam[] = [{ role: 'user', content: input.text }];
+        const messages: Anthropic.MessageParam[] = buildMessages(input.history ?? [], input.text);
 
         for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
             const response = await this.client.messages.create({
