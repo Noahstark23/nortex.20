@@ -1,9 +1,32 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
-import { blogPosts } from '../data/blog-posts';
-import { ArrowRight, Clock } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { postsByDate } from '../data/blog-posts';
+import { orderedClusters } from '../data/blog-clusters';
+import { ArrowRight, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
+
+const PAGE_SIZE = 12;
 
 const Blog: React.FC = () => {
+  const [params, setParams] = useSearchParams();
+  const clusters = orderedClusters();
+  const posts = postsByDate();
+
+  const totalPages = Math.max(1, Math.ceil(posts.length / PAGE_SIZE));
+  const requested = parseInt(params.get('page') || '1', 10);
+  const page = Number.isNaN(requested) ? 1 : Math.min(Math.max(requested, 1), totalPages);
+  const start = (page - 1) * PAGE_SIZE;
+  const pagePosts = posts.slice(start, start + PAGE_SIZE);
+
+  const goToPage = (n: number) => {
+    if (n <= 1) {
+      params.delete('page');
+    } else {
+      params.set('page', String(n));
+    }
+    setParams(params);
+    window.scrollTo({ top: 0 });
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
       <nav className="bg-white border-b border-slate-200 py-4 px-6">
@@ -27,8 +50,27 @@ const Blog: React.FC = () => {
           Guías de nómina, facturación DGI, impuestos y gestión de negocios para PyMES nicaragüenses.
         </p>
 
+        {/* Explorá por tema (hubs de clúster) */}
+        <section className="mb-12">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-400 mb-4">
+            Explorá por tema
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {clusters.map((c) => (
+              <Link
+                key={c.slug}
+                to={`/blog/categoria/${c.slug}`}
+                className="text-sm font-medium text-slate-700 bg-white border border-slate-200 px-4 py-2 rounded-full hover:border-emerald-300 hover:text-emerald-700 transition-colors"
+              >
+                {c.name}
+              </Link>
+            ))}
+          </div>
+        </section>
+
+        {/* Listado paginado de artículos */}
         <div className="grid md:grid-cols-2 gap-6">
-          {blogPosts.map(post => (
+          {pagePosts.map((post) => (
             <Link
               key={post.slug}
               to={`/blog/${post.slug}`}
@@ -54,6 +96,29 @@ const Blog: React.FC = () => {
             </Link>
           ))}
         </div>
+
+        {/* Paginación */}
+        {totalPages > 1 && (
+          <nav className="flex items-center justify-center gap-2 mt-12" aria-label="Paginación">
+            <button
+              onClick={() => goToPage(page - 1)}
+              disabled={page === 1}
+              className="flex items-center gap-1 px-3 py-2 text-sm font-medium text-slate-600 rounded-lg border border-slate-200 bg-white disabled:opacity-40 disabled:cursor-not-allowed hover:border-emerald-300"
+            >
+              <ChevronLeft size={14} /> Anterior
+            </button>
+            <span className="text-sm text-slate-500 px-2">
+              Página {page} de {totalPages}
+            </span>
+            <button
+              onClick={() => goToPage(page + 1)}
+              disabled={page === totalPages}
+              className="flex items-center gap-1 px-3 py-2 text-sm font-medium text-slate-600 rounded-lg border border-slate-200 bg-white disabled:opacity-40 disabled:cursor-not-allowed hover:border-emerald-300"
+            >
+              Siguiente <ChevronRight size={14} />
+            </button>
+          </nav>
+        )}
       </main>
     </div>
   );
