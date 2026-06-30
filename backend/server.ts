@@ -35,6 +35,7 @@ import pedidosRouter from './routes/pedidos';
 import motorizadosRouter from './routes/motorizados';
 import driverRouter from './routes/driver';
 import loanRoutes from './routes/loans';
+import purchaseOrdersRouter from './routes/purchaseOrders';
 import syncRoutes from './routes/sync';
 import Decimal from 'decimal.js';
 import {
@@ -199,6 +200,7 @@ app.use('/api/hr', hrRouter);
 app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
 app.use('/api/driver', driverRouter); // Red NORTEX: registro, login PIN, entregas
+app.use('/api/purchase-orders', purchaseOrdersRouter); // Órdenes de Compra (procurement)
 app.use('/api/loans', loanRoutes);
 app.use('/api/sales/sync', syncRoutes);
 
@@ -5531,6 +5533,33 @@ app.put('/api/tenant/fiscal', authenticate, checkRole(['ADMIN', 'OWNER']), async
         res.json(tenant);
     } catch (error: any) {
         res.status(500).json({ error: 'Error al actualizar configuración fiscal', details: error.message });
+    }
+});
+
+// PUT /api/tenant/inventory-settings — política de inventario (0a: stock negativo)
+app.put('/api/tenant/inventory-settings', authenticate, checkRole(['ADMIN', 'OWNER']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { allowNegativeStock } = req.body;
+    if (typeof allowNegativeStock !== 'boolean') {
+        return res.status(400).json({ error: 'allowNegativeStock debe ser booleano (true/false)' });
+    }
+    try {
+        const tenant = await prisma.tenant.update({
+            where: { id: authReq.tenantId! },
+            data: { allowNegativeStock },
+            select: { id: true, allowNegativeStock: true },
+        });
+        await prisma.auditLog.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                action: 'INVENTORY_SETTINGS_UPDATED',
+                details: JSON.stringify({ allowNegativeStock }),
+            },
+        });
+        res.json({ success: true, data: tenant });
+    } catch (error: any) {
+        res.status(500).json({ error: 'Error al actualizar configuración de inventario', details: error.message });
     }
 });
 

@@ -230,6 +230,15 @@ export async function executeSale(
         });
         const costByProduct = new Map(costRows.map((p) => [p.id, new Decimal(p.cost)]));
 
+        // 0a · Política de stock negativo del tenant. Si está activa, la venta NO se
+        // bloquea por stock insuficiente (la salida puede dejar el stock en negativo y
+        // el Kardex refleja la realidad). Por defecto se sigue exigiendo suficiencia.
+        const tenantCfg = await tx.tenant.findUnique({
+            where: { id: tenantId },
+            select: { allowNegativeStock: true },
+        });
+        const enforceStock = !(tenantCfg?.allowNegativeStock ?? false);
+
         // 5d. Items + stock decrement + Kardex
         let costTotal = new Decimal(0);
         for (const item of items) {
@@ -259,7 +268,7 @@ export async function executeSale(
                     tenantId,
                     productId: item.id,
                     delta: -item.quantity,
-                    enforceSufficient: true,
+                    enforceSufficient: enforceStock,
                 });
                 stockBefore = result.stockBefore;
                 stockAfter  = result.stockAfter;
