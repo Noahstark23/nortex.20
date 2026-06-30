@@ -13,11 +13,18 @@
 
 import { AgentTool, ToolContext, toolsForScope } from './tools';
 
+export interface AgentTurn {
+    role: 'user' | 'assistant';
+    text: string;
+}
+
 export interface AgentInput {
     text: string;
     ctx: ToolContext;
     customerName: string | null;
     businessName: string;
+    /** Turnos previos de la conversación (cronológico). Lo usa ClaudeBrain; MenuBot lo ignora. */
+    history?: AgentTurn[];
 }
 
 export interface AgentReply {

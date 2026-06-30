@@ -735,6 +735,7 @@ model Product {
   @@index([defaultSupplierId])
   @@index([tenantId])
   @@index([category])
+  @@fulltext([name, category])
 }
 
 model KardexMovement {
