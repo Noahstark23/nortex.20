@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import POS from './components/POS';
@@ -37,14 +37,24 @@ import TrackPedido from './components/TrackPedido';
 import LandingFerreteria from './components/LandingFerreteria';
 import LandingFarmacia from './components/LandingFarmacia';
 import LandingNicaragua from './components/LandingNicaragua';
-import Blog from './components/Blog';
-import BlogPost from './components/BlogPost';
+// Blog: lazy-load — el contenido de marketing crece (cientos de artículos) y no
+// debe pesar en el bundle inicial del SPA (límite de precache del PWA).
+const Blog = lazy(() => import('./components/Blog'));
+const BlogPost = lazy(() => import('./components/BlogPost'));
+const ClusterPage = lazy(() => import('./components/ClusterPage'));
 import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
 
 // Legal pages
 import PrivacyPolicy from './components/PrivacyPolicy';
 import TermsOfService from './components/TermsOfService';
+
+// Fallback liviano mientras se carga el chunk del blog (lazy).
+const BlogLoading = () => (
+  <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-400 text-sm">
+    Cargando…
+  </div>
+);
 
 const ProtectedApp = () => {
   const token = localStorage.getItem('nortex_token');
@@ -95,8 +105,9 @@ function App() {
         <Route path="/ferreterias" element={<LandingFerreteria />} />
         <Route path="/farmacias" element={<LandingFarmacia />} />
         <Route path="/nicaragua" element={<LandingNicaragua />} />
-        <Route path="/blog" element={<Blog />} />
-        <Route path="/blog/:slug" element={<BlogPost />} />
+        <Route path="/blog" element={<Suspense fallback={<BlogLoading />}><Blog /></Suspense>} />
+        <Route path="/blog/categoria/:slug" element={<Suspense fallback={<BlogLoading />}><ClusterPage /></Suspense>} />
+        <Route path="/blog/:slug" element={<Suspense fallback={<BlogLoading />}><BlogPost /></Suspense>} />
         <Route path="/admin" element={<SuperAdmin />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password/:token" element={<ResetPassword />} />
