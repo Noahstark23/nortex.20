@@ -33,6 +33,9 @@ model Tenant {
   // Costo de entrega plano del catálogo público (lo fija el negocio; el
   // cliente NUNCA lo manda — se calcula server-side al crear el Pedido).
   deliveryFee          Decimal   @default(0) @db.Decimal(10, 2)
+  // Inventario: si true, las ventas/salidas pueden dejar el stock en negativo
+  // (negocios que venden sin contar; el Kardex refleja la realidad). Default false.
+  allowNegativeStock   Boolean   @default(false)
   // Campos Fiscales DGI
   address              String? // Dirección fiscal
   phone                String? // Teléfono del negocio
@@ -54,6 +57,7 @@ model Tenant {
   kardexMovements  KardexMovement[]
   stockCounts      StockCount[]
   purchases        Purchase[]
+  purchaseOrders   PurchaseOrder[]
   manualPayments   ManualPayment[]
   quotations       Quotation[]
   invitations      Invitation[]
@@ -184,6 +188,7 @@ model Supplier {
 
   tenant             Tenant     @relation(fields: [tenantId], references: [id])
   purchases          Purchase[]
+  purchaseOrders     PurchaseOrder[]
   defaultForProducts Product[]  @relation("DefaultSupplier")
 
   @@index([tenantId])
@@ -208,13 +213,17 @@ model Purchase {
   notes         String?   @db.Text
   createdBy     String
   createdAt     DateTime  @default(now())
+  // Recepción de una Orden de Compra (null = compra directa sin OC previa)
+  purchaseOrderId String?
 
-  tenant      Tenant         @relation(fields: [tenantId], references: [id])
-  supplier    Supplier       @relation(fields: [supplierId], references: [id])
-  items       PurchaseItem[]
-  capitalLoan CapitalLoan?
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  supplier      Supplier       @relation(fields: [supplierId], references: [id])
+  items         PurchaseItem[]
+  capitalLoan   CapitalLoan?
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
 
   @@index([tenantId])
+  @@index([purchaseOrderId])
   @@index([supplierId])
   @@index([status])
 }
@@ -233,6 +242,51 @@ model PurchaseItem {
   purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
 
   @@index([purchaseId])
+}
+
+// ==========================================
+// ÓRDENES DE COMPRA (procurement: pedido → aprobación → recepción)
+// ==========================================
+
+model PurchaseOrder {
+  id          String    @id @default(cuid())
+  tenantId    String
+  supplierId  String
+  orderNumber String // correlativo legible por tenant (OC-0001)
+  status      String    @default("DRAFT") // DRAFT | APPROVED | PARTIALLY_RECEIVED | RECEIVED | CANCELLED
+  notes       String?   @db.Text
+  expectedDate DateTime? // fecha esperada de entrega
+  createdBy   String
+  approvedBy  String? // userId que aprobó (traza, sin relación)
+  approvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant   Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  supplier Supplier            @relation(fields: [supplierId], references: [id])
+  items    PurchaseOrderItem[]
+  receipts Purchase[] // recepciones (parciales o total) generadas contra esta OC
+
+  @@unique([tenantId, orderNumber])
+  @@index([tenantId])
+  @@index([supplierId])
+  @@index([status])
+}
+
+model PurchaseOrderItem {
+  id               String  @id @default(cuid())
+  purchaseOrderId  String
+  productId        String
+  productName      String // snapshot del nombre al crear la OC
+  quantityOrdered  Float
+  quantityReceived Float   @default(0)
+  unitCost         Decimal @db.Decimal(10, 2)
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product       Product       @relation(fields: [productId], references: [id])
+
+  @@index([purchaseOrderId])
+  @@index([productId])
 }
 
 model Employee {
@@ -729,6 +783,7 @@ model Product {
   pedidoItems     PedidoItem[]
   batches         ProductBatch[]
   stockCountItems StockCountItem[]
+  purchaseOrderItems PurchaseOrderItem[]
   defaultSupplier Supplier?        @relation("DefaultSupplier", fields: [defaultSupplierId], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, sku])
