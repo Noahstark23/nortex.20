@@ -1,0 +1,319 @@
+# Instincts generated from https://github.com/Noahstark23/nortex.20
+# Generated: 2026-06-30T20:56:02.894Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: nortex.20-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/Noahstark23/nortex.20
+---
+
+# Nortex.20 Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: feat
+
+## Evidence
+
+- 1 commits analyzed
+- Detected conventional commit pattern
+- Examples: feat(blog): lazy-load del blog + clústeres temáticos, JSON-LD y sitemap
+
+---
+id: nortex.20-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/Noahstark23/nortex.20
+---
+
+# Nortex.20 Commit Length
+
+## Action
+
+Write moderate-length commit messages (~71 characters)
+
+## Evidence
+
+- Average commit message length: 71 chars
+- Based on 1 commits
+
+---
+id: nortex.20-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Noahstark23/nortex.20
+---
+
+# Nortex.20 Naming Files
+
+## Action
+
+Use PascalCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: PascalCase
+
+---
+id: nortex.20-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Noahstark23/nortex.20
+---
+
+# Nortex.20 Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: nortex.20-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Noahstark23/nortex.20
+---
+
+# Nortex.20 Export Style
+
+## Action
+
+Prefer mixed exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: mixed
+
+---
+id: nortex.20-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/Noahstark23/nortex.20
+---
+
+# Nortex.20 Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: nortex.20-instinct-file-naming
+trigger: "When creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Noahstark23/nortex.20
+---
+
+# Nortex.20 Instinct File Naming
+
+## Action
+
+Name the file using PascalCase
+
+## Evidence
+
+- namingConventions.files = PascalCase
+
+---
+id: nortex.20-instinct-function-naming
+trigger: "When defining a new function"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: Noahstark23/nortex.20
+---
+
+# Nortex.20 Instinct Function Naming
+
+## Action
+
+Name the function using camelCase
+
+## Evidence
+
+- namingConventions.functions = camelCase
+
+---
+id: nortex.20-instinct-class-naming
+trigger: "When creating a new class"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: Noahstark23/nortex.20
+---
+
+# Nortex.20 Instinct Class Naming
+
+## Action
+
+Name the class using PascalCase
+
+## Evidence
+
+- namingConventions.classes = PascalCase
+
+---
+id: nortex.20-instinct-constant-naming
+trigger: "When declaring a constant"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: Noahstark23/nortex.20
+---
+
+# Nortex.20 Instinct Constant Naming
+
+## Action
+
+Name the constant using SCREAMING_SNAKE_CASE
+
+## Evidence
+
+- namingConventions.constants = SCREAMING_SNAKE_CASE
+
+---
+id: nortex.20-instinct-import-style
+trigger: "When importing modules"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: Noahstark23/nortex.20
+---
+
+# Nortex.20 Instinct Import Style
+
+## Action
+
+Use relative import paths
+
+## Evidence
+
+- importStyle = relative
+
+---
+id: nortex.20-instinct-export-style
+trigger: "When exporting modules or members"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: Noahstark23/nortex.20
+---
+
+# Nortex.20 Instinct Export Style
+
+## Action
+
+Use either named or default exports as appropriate (mixed style)
+
+## Evidence
+
+- exportStyle = mixed
+
+---
+id: nortex.20-instinct-git-commit-format
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: Noahstark23/nortex.20
+---
+
+# Nortex.20 Instinct Git Commit Format
+
+## Action
+
+Use the conventional commit format with the 'feat' prefix for new features
+
+## Evidence
+
+- commits.type = conventional
+- commits.prefixes includes 'feat'
+- Example: 'feat(blog): lazy-load del blog + clústeres temáticos, JSON-LD y sitemap'
+
+---
+id: nortex.20-instinct-git-commit-length
+trigger: "When composing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: Noahstark23/nortex.20
+---
+
+# Nortex.20 Instinct Git Commit Length
+
+## Action
+
+Aim for commit messages around 70 characters in length
+
+## Evidence
+
+- commits.averageLength = 71
+
+---
+id: nortex.20-instinct-test-location
+trigger: "When adding new tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: Noahstark23/nortex.20
+---
+
+# Nortex.20 Instinct Test Location
+
+## Action
+
+Place test files in a separate location from source files
+
+## Evidence
+
+- testLocation = separate
+
+---
+id: nortex.20-instinct-folder-structure
+trigger: "When organizing new code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: Noahstark23/nortex.20
+---
+
+# Nortex.20 Instinct Folder Structure
+
+## Action
+
+Place code in one of the common folders: components, data, utils, or scripts
+
+## Evidence
+
+- commonFolders = ['components', 'data', 'utils', 'scripts']
+
