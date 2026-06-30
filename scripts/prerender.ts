@@ -5,52 +5,40 @@
 // misma description y canonical apuntando a la home) para TODAS las rutas, así
 // que Google las veía como duplicados de la home y no las indexaba.
 //
-// QUÉ HACE: genera un HTML estático por ruta de marketing (dist/<ruta>/index.html)
-// con título, descripción y canonical AUTO-REFERENTE únicos, Open Graph y
-// contenido VISIBLE (no oculto) para los crawlers. React reemplaza ese contenido
-// al montar en #root (la app usa createRoot, no hydrateRoot → sin mismatch).
+// QUÉ HACE: genera un HTML estático por ruta de marketing, por HUB de clúster
+// (/blog/categoria/:slug) y por artículo (dist/<ruta>/index.html) con título,
+// descripción y canonical AUTO-REFERENTE únicos, Open Graph, JSON-LD
+// (Article/Breadcrumb/FAQ) y contenido VISIBLE para los crawlers. React
+// reemplaza ese contenido al montar en #root (createRoot, no hydrateRoot).
+// Además GENERA dist/sitemap.xml con todas las rutas, artículos y hubs.
 import fs from 'fs';
 import path from 'path';
 import { blogPosts } from '../data/blog-posts';
+import { blogClusters } from '../data/blog-clusters';
+import { mdToHtml } from '../utils/markdown';
+import { articleJsonLd, breadcrumbJsonLd, faqJsonLd, type JsonLd } from '../utils/seo';
 
 const DIST = path.join(process.cwd(), 'dist');
 const ORIGIN = 'https://somosnortex.com';
-const OG_IMAGE = `${ORIGIN}/og-image.svg`;
 
 const shell = fs.readFileSync(path.join(DIST, 'index.html'), 'utf-8');
 
 interface RouteSEO {
-    path: string;        // p.ej. '/ferreterias'
+    path: string;
     title: string;
     description: string;
     h1: string;
-    body: string;        // HTML visible del bloque SEO
+    body: string;            // HTML visible del bloque SEO
+    jsonLd?: JsonLd[];       // datos estructurados a inyectar en <head>
+    lastmod?: string;        // YYYY-MM-DD para el sitemap
+    changefreq?: string;
+    priority?: number;
 }
 
 const esc = (s: string): string =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-// Conversión mínima del markdown de los artículos a HTML crawleable.
-function mdToHtml(md: string): string {
-    const out: string[] = [];
-    let inList = false;
-    const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
-    const inline = (t: string): string =>
-        esc(t)
-            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-            .replace(/\[(.+?)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-    for (const raw of md.split('\n')) {
-        const line = raw.trim();
-        if (!line) { closeList(); continue; }
-        if (line.startsWith('### ')) { closeList(); out.push(`<h3>${inline(line.slice(4))}</h3>`); }
-        else if (line.startsWith('## ')) { closeList(); out.push(`<h2>${inline(line.slice(3))}</h2>`); }
-        else if (line.startsWith('# ')) { closeList(); out.push(`<h2>${inline(line.slice(2))}</h2>`); }
-        else if (line.startsWith('- ')) { if (!inList) { out.push('<ul>'); inList = true; } out.push(`<li>${inline(line.slice(2))}</li>`); }
-        else { closeList(); out.push(`<p>${inline(line)}</p>`); }
-    }
-    closeList();
-    return out.join('\n');
-}
+const TODAY = new Date().toISOString().slice(0, 10);
 
 // ── Rutas de marketing (landings de nicho + institucionales) ──
 // La home ('/') NO va aquí: se sirve desde landing.html (estático aparte).
@@ -71,6 +59,7 @@ const routes: RouteSEO[] = [
         <li>Reportes de ventas, márgenes y productos más vendidos</li>
       </ul>
       <p>Empieza gratis por 30 días, sin tarjeta de crédito.</p>`,
+        changefreq: 'monthly', priority: 0.9,
     },
     {
         path: '/farmacias',
@@ -88,6 +77,7 @@ const routes: RouteSEO[] = [
         <li>Reportes de ventas y rotación de productos</li>
       </ul>
       <p>Prueba Nortex gratis por 30 días y deja de perder dinero por vencimientos.</p>`,
+        changefreq: 'monthly', priority: 0.9,
     },
     {
         path: '/nicaragua',
@@ -105,6 +95,7 @@ const routes: RouteSEO[] = [
         <li>Soporte local en español</li>
       </ul>
       <p>Prueba gratis por 30 días. Sin papeleos, sin instalaciones.</p>`,
+        changefreq: 'monthly', priority: 0.8,
     },
     {
         path: '/register',
@@ -112,17 +103,19 @@ const routes: RouteSEO[] = [
         description: 'Crea tu cuenta de Nortex y prueba gratis 30 días el sistema de facturación, inventario y punto de venta para PyMES en Nicaragua.',
         h1: 'Crea tu cuenta gratis en Nortex',
         body: `<p>Empieza a facturar con la DGI y a controlar tu inventario hoy mismo. 30 días gratis, sin tarjeta de crédito.</p>`,
+        changefreq: 'monthly', priority: 0.8,
     },
     {
         path: '/blog',
-        title: 'Blog Nortex | Facturación DGI, Nómina y Gestión de PyMES en Nicaragua',
-        description: 'Guías prácticas sobre facturación DGI, nómina según la Ley 185, retenciones IR e IVA y gestión de PyMES en Nicaragua.',
+        title: 'Blog Nortex | Inventario, Facturación DGI, Nómina e Impuestos en Nicaragua',
+        description: 'Guías prácticas sobre control de inventario, facturación DGI, nómina (Ley 185), IVA, IR y gestión de PyMES en Nicaragua.',
         h1: 'Blog de Nortex: guías para PyMES de Nicaragua',
         body: `
-      <p>Recursos prácticos sobre facturación, impuestos y gestión de negocios en Nicaragua.</p>
+      <p>Recursos prácticos sobre inventario, facturación, impuestos y gestión de negocios en Nicaragua.</p>
       <ul>
-        ${blogPosts.map(p => `<li><a href="/blog/${p.slug}">${esc(p.title)}</a> — ${esc(p.description)}</li>`).join('\n        ')}
+        ${blogClusters.map(c => `<li><a href="/blog/categoria/${c.slug}">${esc(c.name)}</a></li>`).join('\n        ')}
       </ul>`,
+        changefreq: 'weekly', priority: 0.7,
     },
     {
         path: '/privacy',
@@ -130,6 +123,7 @@ const routes: RouteSEO[] = [
         description: 'Política de privacidad de Nortex: cómo recolectamos, usamos y protegemos los datos de tu negocio.',
         h1: 'Política de Privacidad',
         body: `<p>Conoce cómo Nortex protege la información de tu negocio y tus clientes.</p>`,
+        changefreq: 'yearly', priority: 0.3,
     },
     {
         path: '/terms',
@@ -137,17 +131,50 @@ const routes: RouteSEO[] = [
         description: 'Términos y condiciones de uso del servicio Nortex.',
         h1: 'Términos y Condiciones',
         body: `<p>Condiciones de uso del servicio Nortex.</p>`,
+        changefreq: 'yearly', priority: 0.3,
     },
 ];
 
+// ── Hubs de clúster (/blog/categoria/:slug) ──
+for (const c of blogClusters) {
+    const posts = blogPosts.filter(p => p.cluster === c.name);
+    if (posts.length === 0) continue;
+    routes.push({
+        path: `/blog/categoria/${c.slug}`,
+        title: `${c.name} | Blog Nortex`,
+        description: c.description,
+        h1: c.name,
+        body: `<p>${esc(c.description)}</p>\n<ul>\n${posts.map(p => `        <li><a href="/blog/${p.slug}">${esc(p.title)}</a> — ${esc(p.description)}</li>`).join('\n')}\n</ul>`,
+        jsonLd: [breadcrumbJsonLd(
+            [{ name: 'Inicio', url: '/' }, { name: 'Blog', url: '/blog' }, { name: c.name, url: `/blog/categoria/${c.slug}` }],
+            ORIGIN,
+        )],
+        changefreq: 'weekly', priority: 0.6,
+    });
+}
+
 // ── Artículos del blog (uno por slug en data/blog-posts.ts) ──
 for (const post of blogPosts) {
+    const cluster = blogClusters.find(c => c.name === post.cluster);
+    const crumbs = [
+        { name: 'Inicio', url: '/' },
+        { name: 'Blog', url: '/blog' },
+        ...(cluster ? [{ name: cluster.name, url: `/blog/categoria/${cluster.slug}` }] : []),
+        { name: post.title, url: `/blog/${post.slug}` },
+    ];
     routes.push({
         path: `/blog/${post.slug}`,
         title: `${post.title} | Nortex Blog`,
         description: post.description,
         h1: post.title,
         body: mdToHtml(post.content),
+        jsonLd: [
+            articleJsonLd(post, ORIGIN),
+            breadcrumbJsonLd(crumbs, ORIGIN),
+            ...(post.faq && post.faq.length ? [faqJsonLd(post.faq)] : []),
+        ],
+        lastmod: post.updated ?? post.date,
+        changefreq: 'monthly', priority: 0.7,
     });
 }
 
@@ -166,6 +193,14 @@ function buildHtml(route: RouteSEO): string {
     swap(/<meta\s+property="og:title"\s+content="[\s\S]*?"\s*\/?>/, `<meta property="og:title" content="${esc(route.title)}" />`);
     swap(/<meta\s+property="og:description"\s+content="[\s\S]*?"\s*\/?>/, `<meta property="og:description" content="${esc(route.description)}" />`);
 
+    // JSON-LD específico de la ruta (Article / BreadcrumbList / FAQPage).
+    if (route.jsonLd && route.jsonLd.length) {
+        const blocks = route.jsonLd
+            .map(ld => `<script type="application/ld+json">${JSON.stringify(ld)}</script>`)
+            .join('\n  ');
+        html = html.replace('</head>', `  ${blocks}\n</head>`);
+    }
+
     // Contenido VISIBLE para crawlers; React lo reemplaza al montar en #root.
     const seoBlock = `<div id="root"><div data-prerender="seo" style="max-width:820px;margin:0 auto;padding:24px;font-family:system-ui,-apple-system,sans-serif;line-height:1.6"><h1>${esc(route.h1)}</h1>${route.body}</div></div>`;
     html = html.replace(/<div id="root">\s*<\/div>/, seoBlock);
@@ -181,4 +216,29 @@ for (const route of routes) {
     count++;
 }
 
-console.log(`✅ Prerender: ${count} rutas → dist/<ruta>/index.html (títulos, canonical y contenido únicos)`);
+// ── Sitemap dinámico (incluye home, landings, hubs y todos los artículos) ──
+function buildSitemap(): string {
+    const entries: { loc: string; lastmod: string; changefreq: string; priority: number }[] = [
+        { loc: '/', lastmod: TODAY, changefreq: 'weekly', priority: 1.0 },
+        ...routes.map(r => ({
+            loc: r.path,
+            lastmod: r.lastmod ?? TODAY,
+            changefreq: r.changefreq ?? 'monthly',
+            priority: r.priority ?? 0.6,
+        })),
+    ];
+    const body = entries.map(e => `  <url>
+    <loc>${ORIGIN}${e.loc}</loc>
+    <lastmod>${e.lastmod}</lastmod>
+    <changefreq>${e.changefreq}</changefreq>
+    <priority>${e.priority.toFixed(1)}</priority>
+  </url>`).join('\n');
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${body}
+</urlset>
+`;
+}
+fs.writeFileSync(path.join(DIST, 'sitemap.xml'), buildSitemap(), 'utf-8');
+
+console.log(`✅ Prerender: ${count} rutas (${blogPosts.length} artículos, ${blogClusters.length} hubs) + sitemap.xml con ${routes.length + 1} URLs`);
