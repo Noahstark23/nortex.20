@@ -53,6 +53,11 @@ import {
     CreateExpenseSchema,
     PayrollCalculateSchema,
     TaxReportSchema,
+    RegisterSchema,
+    LoginSchema,
+    ResetPasswordSchema,
+    KardexRecordSchema,
+    FinancePurchaseSchema,
 } from './validation/schemas.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
@@ -173,12 +178,23 @@ app.use('/api/', globalLimiter as any);
 // Rate Limit Estricto para Login: 5 intentos / hora (anti brute-force)
 const loginLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
-    max: 10,
+    max: 5,
     message: { error: '🔒 Demasiados intentos de inicio de sesión. Espera 1 hora.' },
     standardHeaders: true,
     legacyHeaders: false,
 });
 app.use('/api/auth/login', loginLimiter as any);
+
+// Registro: evita spam de cuentas / credential-stuffing desde una misma red.
+const registerLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    message: { error: '🔒 Demasiados registros desde esta red. Espera 1 hora.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+app.use('/api/auth/register', registerLimiter as any);
+
 app.use('/api/hr', hrRouter);
 app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
@@ -202,7 +218,7 @@ app.use((req: any, res: any, next: any) => {
 // 🔐 AUTHENTICATION ROUTES
 // ==========================================
 
-app.post('/api/auth/register', async (req: any, res: any) => {
+app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: any) => {
     const { companyName, email, password, type } = req.body;
 
     try {
@@ -276,7 +292,7 @@ app.post('/api/auth/register', async (req: any, res: any) => {
     }
 });
 
-app.post('/api/auth/login', async (req: any, res: any) => {
+app.post('/api/auth/login', validate(LoginSchema), async (req: any, res: any) => {
     const { email, password } = req.body;
 
     try {
@@ -813,7 +829,8 @@ app.get('/api/auth/reset-password/:token', async (req: any, res: any) => {
 });
 
 // POST /api/auth/reset-password/:token — Cambiar contraseña
-app.post('/api/auth/reset-password/:token', async (req: any, res: any) => {
+// Limitado: previene fuerza bruta del token de reseteo (= toma de cuenta).
+app.post('/api/auth/reset-password/:token', forgotPasswordLimiter, validate(ResetPasswordSchema), async (req: any, res: any) => {
     const { token } = req.params;
     const { password } = req.body;
 
@@ -2545,6 +2562,24 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
             data: updates
         });
 
+        // Auditoría de cambio de precio/costo (antes no quedaba rastro de quién lo cambió).
+        const priceChanged = price !== undefined && Number(existing.price) !== Number(updated.price);
+        const costChanged  = cost  !== undefined && Number(existing.cost)  !== Number(updated.cost);
+        if (priceChanged || costChanged) {
+            await prisma.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'PRICE_CHANGED',
+                    details: JSON.stringify({
+                        productId: id,
+                        priceBefore: String(existing.price), priceAfter: String(updated.price),
+                        costBefore: String(existing.cost), costAfter: String(updated.cost),
+                    }),
+                },
+            });
+        }
+
         res.json(updated);
     } catch (error) {
         console.error('Error updating product:', error);
@@ -3330,7 +3365,7 @@ app.post('/api/stock-counts/:id/cancel', authenticate, checkRole(['OWNER', 'ADMI
 
 // POST /api/kardex/record - Registrar movimiento de inventario (interno/automático)
 // NOTA: Usar POST /api/inventory/adjust para ajustes manuales (más seguro)
-app.post('/api/kardex/record', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.post('/api/kardex/record', authenticate, checkRole(['OWNER', 'ADMIN']), validate(KardexRecordSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { productId, type, quantity, referenceId, referenceType, reason } = req.body;
 
@@ -5299,15 +5334,17 @@ app.get('/api/customers/:id/statement', authenticate, async (req: any, res: any)
 });
 
 // POST /api/credits/payment - Registrar abono
-app.post('/api/credits/payment', authenticate, async (req: any, res: any) => {
+app.post('/api/credits/payment', authenticate, validate(CreatePaymentSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { saleId, amount, method } = req.body;
 
     if (!saleId || !amount) return res.status(400).json({ error: 'Faltan datos' });
+    if (isNaN(Number(amount)) || Number(amount) <= 0) return res.status(400).json({ error: 'Monto de abono inválido' });
 
     try {
         await prisma.$transaction(async (tx: any) => {
-            const sale = await tx.sale.findUnique({ where: { id: saleId } });
+            // Aislamiento multi-tenant: la venta debe pertenecer a este negocio.
+            const sale = await tx.sale.findFirst({ where: { id: saleId, tenantId: authReq.tenantId } });
             if (!sale) throw new Error('Venta no encontrada');
 
             const newBalance = Number(sale.balance) - Number(amount);
@@ -5334,6 +5371,21 @@ app.post('/api/credits/payment', authenticate, async (req: any, res: any) => {
                     payments: { orderBy: { createdAt: 'desc' } },
                     customer: { select: { name: true } }
                 }
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'CREDIT_PAYMENT',
+                    details: JSON.stringify({
+                        saleId,
+                        amount: String(amount),
+                        balanceBefore: String(sale.balance),
+                        balanceAfter: String(newBalance),
+                        method: method ?? 'CASH',
+                    }),
+                },
             });
 
             // Format response
@@ -6384,6 +6436,9 @@ app.get('/api/inventory/oracle', authenticate, async (req: any, res: any) => {
             if (daysRemaining <= 5) {
                 const suggestedQty = Math.ceil(vpd * 15); // Restock para 15 días
                 const cost = Number(p.cost) || 0;
+                // No sugerir como financiable lo que no tiene costo/cantidad válidos:
+                // /api/capital/finance-purchase exige unitCost y quantity > 0 (Zod).
+                if (cost <= 0 || suggestedQty <= 0) continue;
                 alerts.push({
                     productId: p.id,
                     name: p.name,
@@ -6483,7 +6538,7 @@ app.get('/api/inventory/reorder', authenticate, checkRole(['OWNER', 'ADMIN']), a
 });
 
 // POST /api/capital/finance-purchase — Financiar compra con Nortex Capital
-app.post('/api/capital/finance-purchase', authenticate, async (req: any, res: any) => {
+app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchaseSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { supplierId, items } = req.body;
     // items: [{ productId, productName, quantity, unitCost }]

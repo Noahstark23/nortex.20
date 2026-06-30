@@ -8,9 +8,14 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
-    const email = 'noelpinedaa96@gmail.com';
-    const password = 'Nortex20261996@NIC';
+    const email = process.env.SUPERADMIN_EMAIL || 'noelpinedaa96@gmail.com';
+    const password = process.env.SUPERADMIN_PASSWORD;
     const name = 'Noel Pineda (CEO)';
+
+    if (!password || password.length < 12) {
+        console.error('❌ Definí SUPERADMIN_PASSWORD (mín. 12 caracteres) en el entorno antes de correr este script.');
+        process.exit(1);
+    }
 
     console.log('🦈 NORTEX SUPER ADMIN SETUP');
     console.log('============================');
@@ -52,7 +57,6 @@ async function main() {
 
         console.log(`✅ SUPER_ADMIN creado exitosamente`);
         console.log(`   Email: ${email}`);
-        console.log(`   Password: ${password}`);
         console.log(`   Tenant: ${tenant.businessName} (${tenant.id})`);
         console.log(`   User ID: ${user.id}`);
     }
