@@ -6,16 +6,28 @@
 // que Google las veía como duplicados de la home y no las indexaba.
 //
 // QUÉ HACE: genera un HTML estático por ruta de marketing (dist/<ruta>/index.html)
-// con título, descripción y canonical AUTO-REFERENTE únicos, Open Graph y
-// contenido VISIBLE (no oculto) para los crawlers. React reemplaza ese contenido
-// al montar en #root (la app usa createRoot, no hydrateRoot → sin mismatch).
+// con título, descripción y canonical AUTO-REFERENTE únicos, Open Graph, datos
+// estructurados (JSON-LD) y contenido VISIBLE (no oculto) para los crawlers.
+// React reemplaza ese contenido al montar en #root (la app usa createRoot, no
+// hydrateRoot → sin mismatch).
 import fs from 'fs';
 import path from 'path';
 import { blogPosts } from '../data/blog-posts';
+import {
+    SITE_ORIGIN,
+    clustersWithPosts,
+    postsByCluster,
+    getPillar,
+    getCluster,
+    clusterName,
+    articleJsonLd,
+    breadcrumbJsonLd,
+    faqJsonLd,
+} from '../data/blog-taxonomy';
+import { markdownToHtml, escapeHtml as esc } from '../lib/markdown';
 
 const DIST = path.join(process.cwd(), 'dist');
-const ORIGIN = 'https://somosnortex.com';
-const OG_IMAGE = `${ORIGIN}/og-image.svg`;
+const ORIGIN = SITE_ORIGIN;
 
 const shell = fs.readFileSync(path.join(DIST, 'index.html'), 'utf-8');
 
@@ -25,31 +37,7 @@ interface RouteSEO {
     description: string;
     h1: string;
     body: string;        // HTML visible del bloque SEO
-}
-
-const esc = (s: string): string =>
-    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-// Conversión mínima del markdown de los artículos a HTML crawleable.
-function mdToHtml(md: string): string {
-    const out: string[] = [];
-    let inList = false;
-    const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
-    const inline = (t: string): string =>
-        esc(t)
-            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-            .replace(/\[(.+?)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-    for (const raw of md.split('\n')) {
-        const line = raw.trim();
-        if (!line) { closeList(); continue; }
-        if (line.startsWith('### ')) { closeList(); out.push(`<h3>${inline(line.slice(4))}</h3>`); }
-        else if (line.startsWith('## ')) { closeList(); out.push(`<h2>${inline(line.slice(3))}</h2>`); }
-        else if (line.startsWith('# ')) { closeList(); out.push(`<h2>${inline(line.slice(2))}</h2>`); }
-        else if (line.startsWith('- ')) { if (!inList) { out.push('<ul>'); inList = true; } out.push(`<li>${inline(line.slice(2))}</li>`); }
-        else { closeList(); out.push(`<p>${inline(line)}</p>`); }
-    }
-    closeList();
-    return out.join('\n');
+    jsonLd?: Record<string, unknown>[]; // datos estructurados a inyectar en <head>
 }
 
 // ── Rutas de marketing (landings de nicho + institucionales) ──
@@ -116,10 +104,15 @@ const routes: RouteSEO[] = [
     {
         path: '/blog',
         title: 'Blog Nortex | Facturación DGI, Nómina y Gestión de PyMES en Nicaragua',
-        description: 'Guías prácticas sobre facturación DGI, nómina según la Ley 185, retenciones IR e IVA y gestión de PyMES en Nicaragua.',
+        description: 'Guías prácticas sobre facturación DGI, nómina según la Ley 185, retenciones IR e IVA, inventario y gestión de PyMES en Nicaragua.',
         h1: 'Blog de Nortex: guías para PyMES de Nicaragua',
         body: `
-      <p>Recursos prácticos sobre facturación, impuestos y gestión de negocios en Nicaragua.</p>
+      <p>Recursos prácticos sobre facturación, impuestos, inventario y gestión de negocios en Nicaragua.</p>
+      <h2>Temas</h2>
+      <ul>
+        ${clustersWithPosts().map(c => `<li><a href="/blog/categoria/${c.slug}">${esc(c.name)}</a> — ${esc(c.description)}</li>`).join('\n        ')}
+      </ul>
+      <h2>Artículos recientes</h2>
       <ul>
         ${blogPosts.map(p => `<li><a href="/blog/${p.slug}">${esc(p.title)}</a> — ${esc(p.description)}</li>`).join('\n        ')}
       </ul>`,
@@ -140,14 +133,60 @@ const routes: RouteSEO[] = [
     },
 ];
 
+// ── Hubs de categoría (uno por clúster con artículos) ──
+for (const cluster of clustersWithPosts()) {
+    const posts = postsByCluster(cluster.slug);
+    const pillar = getPillar(cluster.slug);
+    const rest = posts.filter(p => p.slug !== pillar?.slug);
+    const listItems = [
+        ...(pillar ? [`<li><strong>Guía principal:</strong> <a href="/blog/${pillar.slug}">${esc(pillar.title)}</a></li>`] : []),
+        ...rest.map(p => `<li><a href="/blog/${p.slug}">${esc(p.title)}</a> — ${esc(p.description)}</li>`),
+    ];
+    routes.push({
+        path: `/blog/categoria/${cluster.slug}`,
+        title: `${cluster.name} | Blog Nortex`,
+        description: cluster.description,
+        h1: cluster.name,
+        body: `
+      <p>${esc(cluster.description)}</p>
+      <ul>
+        ${listItems.join('\n        ')}
+      </ul>`,
+        jsonLd: [
+            breadcrumbJsonLd([
+                { name: 'Blog', path: '/blog' },
+                { name: cluster.name, path: `/blog/categoria/${cluster.slug}` },
+            ]),
+        ],
+    });
+}
+
 // ── Artículos del blog (uno por slug en data/blog-posts.ts) ──
 for (const post of blogPosts) {
+    const cluster = getCluster(post.cluster);
+    const ld: Record<string, unknown>[] = [
+        articleJsonLd(post),
+        breadcrumbJsonLd([
+            { name: 'Blog', path: '/blog' },
+            ...(cluster ? [{ name: cluster.name, path: `/blog/categoria/${cluster.slug}` }] : []),
+            { name: post.title, path: `/blog/${post.slug}` },
+        ]),
+    ];
+    const faq = faqJsonLd(post.faqs);
+    if (faq) ld.push(faq);
+
+    // FAQ visible para crawlers (además del FAQPage estructurado).
+    const faqHtml = post.faqs && post.faqs.length
+        ? `<h2>Preguntas frecuentes</h2>${post.faqs.map(f => `<h3>${esc(f.q)}</h3><p>${esc(f.a)}</p>`).join('')}`
+        : '';
+
     routes.push({
         path: `/blog/${post.slug}`,
         title: `${post.title} | Nortex Blog`,
         description: post.description,
         h1: post.title,
-        body: mdToHtml(post.content),
+        body: `<p><a href="/blog/categoria/${post.cluster}">${esc(clusterName(post))}</a></p>${markdownToHtml(post.content)}${faqHtml}`,
+        jsonLd: ld,
     });
 }
 
@@ -166,6 +205,14 @@ function buildHtml(route: RouteSEO): string {
     swap(/<meta\s+property="og:title"\s+content="[\s\S]*?"\s*\/?>/, `<meta property="og:title" content="${esc(route.title)}" />`);
     swap(/<meta\s+property="og:description"\s+content="[\s\S]*?"\s*\/?>/, `<meta property="og:description" content="${esc(route.description)}" />`);
 
+    // Datos estructurados específicos de la ruta (Article, BreadcrumbList, FAQPage).
+    if (route.jsonLd?.length) {
+        const scripts = route.jsonLd
+            .map(block => `<script type="application/ld+json">${JSON.stringify(block)}</script>`)
+            .join('\n  ');
+        html = html.replace('</head>', `  ${scripts}\n</head>`);
+    }
+
     // Contenido VISIBLE para crawlers; React lo reemplaza al montar en #root.
     const seoBlock = `<div id="root"><div data-prerender="seo" style="max-width:820px;margin:0 auto;padding:24px;font-family:system-ui,-apple-system,sans-serif;line-height:1.6"><h1>${esc(route.h1)}</h1>${route.body}</div></div>`;
     html = html.replace(/<div id="root">\s*<\/div>/, seoBlock);
@@ -181,4 +228,4 @@ for (const route of routes) {
     count++;
 }
 
-console.log(`✅ Prerender: ${count} rutas → dist/<ruta>/index.html (títulos, canonical y contenido únicos)`);
+console.log(`✅ Prerender: ${count} rutas → dist/<ruta>/index.html (títulos, canonical, JSON-LD y contenido únicos)`);

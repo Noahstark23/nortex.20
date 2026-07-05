@@ -1,37 +1,53 @@
 import React, { useEffect } from 'react';
 import { Link, useParams, Navigate } from 'react-router-dom';
 import { blogPosts } from '../data/blog-posts';
-import { ArrowLeft, Clock, Calendar } from 'lucide-react';
+import {
+  getCluster,
+  clusterName,
+  getRelated,
+  articleJsonLd,
+  breadcrumbJsonLd,
+  faqJsonLd,
+} from '../data/blog-taxonomy';
+import { markdownToHtml } from '../lib/markdown';
+import { ArrowLeft, ArrowRight, Clock, Calendar } from 'lucide-react';
 
 const BlogPost: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
   const post = blogPosts.find(p => p.slug === slug);
+  const cluster = post ? getCluster(post.cluster) : undefined;
+  const related = post ? getRelated(post) : [];
 
   useEffect(() => {
-    if (post) {
-      document.title = `${post.title} | Nortex Blog`;
-    }
-  }, [post]);
+    if (!post) return;
+    document.title = `${post.title} | Nortex Blog`;
+
+    // Datos estructurados: Article + BreadcrumbList (+ FAQPage si hay FAQs).
+    // El prerender ya inyecta lo mismo en el HTML estático para crawlers; esto
+    // cubre la navegación en cliente (SPA) sin duplicar al volver a montar.
+    const blocks: Record<string, unknown>[] = [
+      articleJsonLd(post),
+      breadcrumbJsonLd([
+        { name: 'Blog', path: '/blog' },
+        ...(cluster ? [{ name: cluster.name, path: `/blog/categoria/${cluster.slug}` }] : []),
+        { name: post.title, path: `/blog/${post.slug}` },
+      ]),
+    ];
+    const faq = faqJsonLd(post.faqs);
+    if (faq) blocks.push(faq);
+
+    const nodes = blocks.map(block => {
+      const el = document.createElement('script');
+      el.type = 'application/ld+json';
+      el.dataset.blogJsonld = 'post';
+      el.text = JSON.stringify(block);
+      document.head.appendChild(el);
+      return el;
+    });
+    return () => { nodes.forEach(n => n.remove()); };
+  }, [post, cluster]);
 
   if (!post) return <Navigate to="/blog" replace />;
-
-  const renderContent = (content: string) => {
-    return content
-      .split('\n')
-      .map((line, i) => {
-        if (line.startsWith('## ')) return <h2 key={i} className="text-2xl font-bold text-slate-900 mt-8 mb-4">{line.slice(3)}</h2>;
-        if (line.startsWith('### ')) return <h3 key={i} className="text-xl font-bold text-slate-800 mt-6 mb-3">{line.slice(4)}</h3>;
-        if (line.startsWith('**') && line.endsWith('**')) return <p key={i} className="font-bold text-slate-800 mb-2">{line.slice(2, -2)}</p>;
-        if (line.startsWith('- ')) return <li key={i} className="ml-6 text-slate-600 mb-1 list-disc">{line.slice(2)}</li>;
-        if (line.startsWith('[') && line.includes('→](/')) {
-          const text = line.match(/\[(.+)\]/)?.[1];
-          const href = line.match(/\(([^)]+)\)/)?.[1];
-          return href ? <div key={i} className="my-6"><Link to={href} className="inline-flex items-center gap-2 bg-emerald-600 text-white font-bold px-6 py-3 rounded-lg hover:bg-emerald-500 transition-colors">{text}</Link></div> : null;
-        }
-        if (line.trim() === '') return <br key={i} />;
-        return <p key={i} className="text-slate-600 mb-4 leading-relaxed">{line}</p>;
-      });
-  };
 
   return (
     <div className="min-h-screen bg-white">
@@ -47,9 +63,30 @@ const BlogPost: React.FC = () => {
       </nav>
 
       <article className="max-w-3xl mx-auto px-6 py-12">
-        <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full">
-          {post.category}
-        </span>
+        {/* Migas de pan */}
+        <nav className="text-sm text-slate-400 mb-4" aria-label="Migas de pan">
+          <Link to="/blog" className="hover:text-emerald-700">Blog</Link>
+          {cluster && (
+            <>
+              <span className="mx-2">/</span>
+              <Link to={`/blog/categoria/${cluster.slug}`} className="hover:text-emerald-700">{cluster.name}</Link>
+            </>
+          )}
+        </nav>
+
+        {cluster ? (
+          <Link
+            to={`/blog/categoria/${cluster.slug}`}
+            className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full hover:bg-emerald-100 transition-colors"
+          >
+            {cluster.name}
+          </Link>
+        ) : (
+          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full">
+            {clusterName(post)}
+          </span>
+        )}
+
         <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 mt-4 mb-4 leading-tight">
           {post.title}
         </h1>
@@ -58,10 +95,32 @@ const BlogPost: React.FC = () => {
           <span className="flex items-center gap-1"><Clock size={14} /> {post.readTime} de lectura</span>
         </div>
 
-        <div className="prose-nortex">
-          {renderContent(post.content)}
-        </div>
+        {/* Cuerpo: renderer Markdown único (lib/markdown.ts). El contenido es
+            first-party (data/blog-posts.ts), no entrada de usuario. */}
+        <div
+          className="prose-nortex"
+          dangerouslySetInnerHTML={{ __html: markdownToHtml(post.content) }}
+        />
 
+        {/* Bloque FAQ (también emitido como FAQPage en JSON-LD) */}
+        {post.faqs && post.faqs.length > 0 && (
+          <section className="mt-12 pt-8 border-t border-slate-100">
+            <h2 className="text-2xl font-bold text-slate-900 mb-6">Preguntas frecuentes</h2>
+            <div className="space-y-4">
+              {post.faqs.map((faq, idx) => (
+                <details key={idx} className="group bg-slate-50 rounded-xl p-5 border border-slate-100">
+                  <summary className="font-bold text-slate-800 cursor-pointer list-none flex items-center justify-between">
+                    {faq.q}
+                    <span className="text-emerald-600 group-open:rotate-45 transition-transform text-xl leading-none">+</span>
+                  </summary>
+                  <p className="text-slate-600 mt-3 leading-relaxed">{faq.a}</p>
+                </details>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* CTA */}
         <div className="mt-12 p-8 bg-slate-900 rounded-2xl text-white text-center">
           <h2 className="text-2xl font-bold mb-3">¿Cansado de hacer esto a mano?</h2>
           <p className="text-slate-300 mb-6">Nortex automatiza nómina, facturas y reportes DGI. Prueba gratis 30 días.</p>
@@ -69,6 +128,30 @@ const BlogPost: React.FC = () => {
             Empezar gratis ahora →
           </Link>
         </div>
+
+        {/* Artículos relacionados (enlazado interno, sin huérfanos) */}
+        {related.length > 0 && (
+          <section className="mt-12 pt-8 border-t border-slate-100">
+            <h2 className="text-xl font-bold text-slate-900 mb-6">Seguí leyendo</h2>
+            <div className="grid sm:grid-cols-2 gap-4">
+              {related.map(r => (
+                <Link
+                  key={r.slug}
+                  to={`/blog/${r.slug}`}
+                  className="block bg-white border border-slate-200 rounded-xl p-5 hover:border-emerald-300 hover:shadow-md transition-all group"
+                >
+                  <span className="text-[11px] font-bold text-emerald-700">{clusterName(r)}</span>
+                  <h3 className="font-bold text-slate-900 mt-1 mb-1 leading-snug group-hover:text-emerald-700 transition-colors">
+                    {r.title}
+                  </h3>
+                  <span className="text-emerald-600 font-medium text-xs flex items-center gap-1 mt-2">
+                    Leer <ArrowRight size={12} />
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
       </article>
     </div>
   );
