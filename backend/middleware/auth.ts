@@ -15,8 +15,31 @@ interface TenantCacheEntry {
 }
 const tenantCache = new NodeCache({ stdTTL: 300, checkperiod: 60 });
 
-// Email autorizado como SUPER_ADMIN
-const SUPER_ADMIN_EMAILS = ['noelpinedaa96@gmail.com'];
+// Emails reservados para SUPER_ADMIN. Se usan SOLO para bloquear su registro/invitación
+// desde otros módulos (server.ts); NUNCA para conceder privilegios. La lista se define por
+// variable de entorno (jamás hardcodeada ni expuesta en el bundle frontend).
+export const SUPER_ADMIN_EMAILS = (process.env.SUPER_ADMIN_EMAILS || '')
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+// El privilegio SUPER_ADMIN NUNCA se deriva del claim `email` del JWT (falsificable vía
+// /api/auth/register, que firma el email elegido por el cliente). La única fuente confiable
+// es el rol PERSISTIDO en la DB. Verificamos contra ella antes de conceder god-mode.
+async function isVerifiedSuperAdmin(userId: string | undefined): Promise<boolean> {
+  if (!userId) return false;
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true, status: true },
+    });
+    return user?.role === 'SUPER_ADMIN' && user?.status === 'ACTIVE';
+  } catch (err) {
+    // Fail-closed: ante un fallo de DB no concedemos el privilegio.
+    console.error('🚨 Verificación de SUPER_ADMIN falló (fail-closed):', err);
+    return false;
+  }
+}
 
 // Rutas que pasan siempre sin importar el estado de suscripción
 const ALWAYS_ALLOWED_PREFIXES = ['/api/billing', '/api/auth', '/api/admin'];
@@ -69,8 +92,9 @@ export const authenticate = async (req: any, res: any, next: any) => {
     req.role = decoded.role;
     req.email = decoded.email;
 
-    // SUPER_ADMIN bypass total
-    if (decoded.role === 'SUPER_ADMIN' || SUPER_ADMIN_EMAILS.includes(decoded.email || '')) {
+    // SUPER_ADMIN bypass total — solo si el rol persistido en la DB lo confirma.
+    // Nunca se concede por el claim `email` del JWT (falsificable vía register).
+    if (decoded.role === 'SUPER_ADMIN' && (await isVerifiedSuperAdmin(decoded.userId))) {
       next();
       return;
     }
@@ -135,7 +159,8 @@ export const authenticate = async (req: any, res: any, next: any) => {
 export const requireSuperAdmin = async (req: any, res: any, next: any) => {
   const authReq = req as AuthRequest;
 
-  if (authReq.role === 'SUPER_ADMIN' || SUPER_ADMIN_EMAILS.includes(authReq.email || '')) {
+  // Verificación contra el rol persistido en la DB; nunca por el email del JWT.
+  if (authReq.role === 'SUPER_ADMIN' && (await isVerifiedSuperAdmin(authReq.userId))) {
     next();
     return;
   }

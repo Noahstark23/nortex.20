@@ -67,9 +67,10 @@ const ResetPassword: React.FC = () => {
             const data = await res.json();
 
             if (res.ok) {
-                // Auto-login
-                localStorage.setItem('token', data.token);
-                localStorage.setItem('user', JSON.stringify(data.user));
+                // Auto-login — usar las MISMAS claves que Login.tsx/RegisterTenant.tsx,
+                // que son las que lee el guard de rutas (App.tsx) y authFetch (utils/auth.ts).
+                localStorage.setItem('nortex_token', data.token);
+                localStorage.setItem('nortex_user', JSON.stringify(data.user));
                 setSuccess(true);
                 setTimeout(() => navigate('/app'), 2000);
             } else {

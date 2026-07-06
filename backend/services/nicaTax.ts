@@ -66,11 +66,12 @@ export async function generateMonthlyReport(
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0, 23, 59, 59);
 
-    // 1. Obtener ventas del mes
+    // 1. Obtener ventas del mes (excluyendo anuladas, igual que el Libro de Ventas / VET)
     const salesResult = await prisma.sale.aggregate({
         where: {
             tenantId,
             createdAt: { gte: startDate, lte: endDate },
+            status: { not: 'VOIDED' },
         },
         _sum: { total: true },
         _count: true,
@@ -195,6 +196,7 @@ export async function generateDMIReport(tenantId: string, month: number, year: n
             tenantId,
             createdAt: { gte: startDate, lte: endDate },
             invoiceNumber: { not: null },
+            status: { not: 'VOIDED' },
         },
         _min: { invoiceNumber: true },
         _max: { invoiceNumber: true },
@@ -356,14 +358,29 @@ export async function generateAnnualIR(tenantId: string, year: number): Promise<
 
     const impuestoEjercicio = Decimal.max(irRenta, pmd).toDecimalPlaces(2);
 
-    // Retenciones IR sufridas del año (crédito) + anticipos enterados en cash.
+    // Retenciones IR sufridas del año (crédito). Siempre son crédito real: un
+    // tercero ya le retuvo el 2% al negocio, esté o no declarado el mes.
     const retAgg = await prisma.retencionSufrida.aggregate({
         where: { tenantId, tipo: 'IR_2', fecha: { gte: start, lte: end } },
         _sum: { amount: true },
     });
     const retencionesIR = new Decimal(retAgg._sum.amount?.toString() ?? '0').toDecimalPlaces(2);
-    // Anticipos mensuales pagados en efectivo = PMD del año neto de retenciones.
-    const anticiposEnterados = Decimal.max(0, pmd.minus(retencionesIR)).toDecimalPlaces(2);
+
+    // Anticipos IR realmente enterados en efectivo: se acreditan SOLO los meses
+    // cuyo Anticipo IR quedó marcado como declarado (ObligationStatus, el mismo
+    // marcador que usa el panel de cierre mensual) y por el monto real pagado en
+    // cash de ese mes (anticipoIRaPagar = anticipo neto de retenciones). NO se
+    // deriva del PMD, para no inflar el crédito con pagos que no ocurrieron.
+    const mesesDeclarados = await prisma.obligationStatus.findMany({
+        where: { tenantId, year, key: 'ANTICIPO_IR', declarado: true },
+        select: { month: true },
+    });
+    let anticiposEnterados = new Decimal(0);
+    for (const { month } of mesesDeclarados) {
+        const mensual = await generateMonthlyReport(tenantId, month, year);
+        anticiposEnterados = anticiposEnterados.plus(mensual.anticipoIRaPagar.toString());
+    }
+    anticiposEnterados = anticiposEnterados.toDecimalPlaces(2);
     const creditos = anticiposEnterados.plus(retencionesIR).toDecimalPlaces(2);
 
     const saldoAPagar = Decimal.max(0, impuestoEjercicio.minus(creditos)).toDecimalPlaces(2);

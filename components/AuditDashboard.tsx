@@ -69,6 +69,7 @@ const AuditDashboard: React.FC = () => {
     const [discounts, setDiscounts] = useState<DiscountAnalysis[]>([]);
     const [loading, setLoading] = useState(true);
     const [expandedVoid, setExpandedVoid] = useState<string | null>(null);
+    const [downloading, setDownloading] = useState<string | null>(null);
 
     // Fiscal tab state
     const now = new Date();
@@ -101,6 +102,34 @@ const AuditDashboard: React.FC = () => {
     };
 
     useEffect(() => { fetchTab(tab); }, [tab]);
+
+    // Descarga fiscal DGI: los endpoints /api/fiscal/* exigen Bearer en el header
+    // (authenticate), por eso no se puede usar un <a href download> nativo — la
+    // navegación del anchor no adjunta el JWT y devuelve 401. Se descarga vía fetch
+    // con la cabecera Authorization y se dispara la descarga con un blob URL.
+    const downloadFiscal = async (url: string, filename: string) => {
+        setDownloading(url);
+        try {
+            const res = await fetch(url, { headers });
+            if (!res.ok) {
+                alert('No se pudo generar la descarga. Verificá tu sesión e intentá de nuevo.');
+                return;
+            }
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+        } catch (e) {
+            alert('No se pudo generar la descarga. Verificá tu conexión e intentá de nuevo.');
+        } finally {
+            setDownloading(null);
+        }
+    };
 
     const formatC = (n: number) => `C$${Math.abs(n).toLocaleString('es-NI', { minimumFractionDigits: 2 })}`;
     const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -198,44 +227,62 @@ const AuditDashboard: React.FC = () => {
 
                     {/* Download cards */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <a
-                            href={`/api/fiscal/libro-ventas/${fiscalMonth}/${fiscalYear}`}
-                            download
-                            className="flex flex-col items-center gap-3 bg-white border border-emerald-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all group"
+                        <button
+                            type="button"
+                            onClick={() => downloadFiscal(
+                                `/api/fiscal/libro-ventas/${fiscalMonth}/${fiscalYear}`,
+                                `libro-ventas-${fiscalYear}-${String(fiscalMonth).padStart(2, '0')}.xlsx`
+                            )}
+                            disabled={downloading === `/api/fiscal/libro-ventas/${fiscalMonth}/${fiscalYear}`}
+                            className="flex flex-col items-center gap-3 bg-white border border-emerald-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
                         >
-                            <FileSpreadsheet size={32} className="text-emerald-500 group-hover:scale-110 transition-transform" />
+                            {downloading === `/api/fiscal/libro-ventas/${fiscalMonth}/${fiscalYear}`
+                                ? <Loader2 size={32} className="text-emerald-500 animate-spin" />
+                                : <FileSpreadsheet size={32} className="text-emerald-500 group-hover:scale-110 transition-transform" />}
                             <div className="text-center">
                                 <p className="font-semibold text-slate-800 text-sm">Libro de Ventas</p>
                                 <p className="text-xs text-slate-500 mt-0.5">Excel (.xlsx) — DGI Nicaragua</p>
                             </div>
                             <span className="text-xs bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full font-medium">Descargar</span>
-                        </a>
+                        </button>
 
-                        <a
-                            href={`/api/fiscal/libro-compras/${fiscalMonth}/${fiscalYear}`}
-                            download
-                            className="flex flex-col items-center gap-3 bg-white border border-blue-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-blue-400 transition-all group"
+                        <button
+                            type="button"
+                            onClick={() => downloadFiscal(
+                                `/api/fiscal/libro-compras/${fiscalMonth}/${fiscalYear}`,
+                                `libro-compras-${fiscalYear}-${String(fiscalMonth).padStart(2, '0')}.xlsx`
+                            )}
+                            disabled={downloading === `/api/fiscal/libro-compras/${fiscalMonth}/${fiscalYear}`}
+                            className="flex flex-col items-center gap-3 bg-white border border-blue-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-blue-400 transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
                         >
-                            <FileSpreadsheet size={32} className="text-blue-500 group-hover:scale-110 transition-transform" />
+                            {downloading === `/api/fiscal/libro-compras/${fiscalMonth}/${fiscalYear}`
+                                ? <Loader2 size={32} className="text-blue-500 animate-spin" />
+                                : <FileSpreadsheet size={32} className="text-blue-500 group-hover:scale-110 transition-transform" />}
                             <div className="text-center">
                                 <p className="font-semibold text-slate-800 text-sm">Libro de Compras</p>
                                 <p className="text-xs text-slate-500 mt-0.5">Excel (.xlsx) — DGI Nicaragua</p>
                             </div>
                             <span className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-medium">Descargar</span>
-                        </a>
+                        </button>
 
-                        <a
-                            href={`/api/fiscal/vet-export/${fiscalMonth}/${fiscalYear}`}
-                            download
-                            className="flex flex-col items-center gap-3 bg-white border border-violet-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-violet-400 transition-all group"
+                        <button
+                            type="button"
+                            onClick={() => downloadFiscal(
+                                `/api/fiscal/vet-export/${fiscalMonth}/${fiscalYear}`,
+                                `VET-${fiscalYear}${String(fiscalMonth).padStart(2, '0')}.txt`
+                            )}
+                            disabled={downloading === `/api/fiscal/vet-export/${fiscalMonth}/${fiscalYear}`}
+                            className="flex flex-col items-center gap-3 bg-white border border-violet-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-violet-400 transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
                         >
-                            <Download size={32} className="text-violet-500 group-hover:scale-110 transition-transform" />
+                            {downloading === `/api/fiscal/vet-export/${fiscalMonth}/${fiscalYear}`
+                                ? <Loader2 size={32} className="text-violet-500 animate-spin" />
+                                : <Download size={32} className="text-violet-500 group-hover:scale-110 transition-transform" />}
                             <div className="text-center">
                                 <p className="font-semibold text-slate-800 text-sm">Archivo VET</p>
                                 <p className="text-xs text-slate-500 mt-0.5">TXT pipe-delimited — DGI VET</p>
                             </div>
                             <span className="text-xs bg-violet-100 text-violet-700 px-3 py-1 rounded-full font-medium">Descargar</span>
-                        </a>
+                        </button>
                     </div>
 
                     {/* Constancias note */}

@@ -46,9 +46,20 @@ export async function processInboundJob(job: InboundJob): Promise<void> {
         inboundId = inbound.id;
     } catch (err) {
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-            return; // ya procesado (reintento de Meta)
+            // Reintento de Meta: el entrante ya se persistió. Solo se descarta si
+            // YA fue respondido; si un intento previo falló antes de enviar
+            // (p. ej. sendText con 5xx transitorio), se reanuda el pipeline para
+            // que el cliente sí reciba respuesta en lugar de un drop silencioso.
+            const existing = await prisma.whatsAppMessage.findUnique({
+                where: { waMessageId: job.waMessageId },
+                select: { id: true, tenantId: true, status: true },
+            });
+            if (!existing || existing.tenantId !== identity.tenantId) return;
+            if (existing.status === 'responded') return; // ya respondido
+            inboundId = existing.id;
+        } else {
+            throw err;
         }
-        throw err;
     }
 
     // Conversación en manos de un humano (handoff) o cerrada → el bot no responde.
@@ -102,6 +113,13 @@ export async function processInboundJob(job: InboundJob): Promise<void> {
                 body: reply.text,
                 status: 'sent',
             },
+        }),
+        // Marca el entrante como respondido en la misma transacción que persiste
+        // la salida: recién aquí un reintento de Meta puede descartarse sin
+        // reenviar (antes de este punto, un reintento reanuda el envío).
+        prisma.whatsAppMessage.update({
+            where: { id: inboundId },
+            data: { status: 'responded' },
         }),
         prisma.whatsAppConversation.update({
             where: { id: identity.conversationId },

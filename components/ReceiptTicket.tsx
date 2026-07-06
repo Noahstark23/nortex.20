@@ -1,4 +1,5 @@
 import React from 'react';
+import Decimal from 'decimal.js';
 import { CartItem } from '../types';
 
 interface ReceiptTicketProps {
@@ -98,7 +99,7 @@ export const ReceiptTicket: React.FC<ReceiptTicketProps> = ({ data }) => {
                                     <td className="align-top py-0.5">{item.quantity}</td>
                                     <td className="align-top py-0.5">{item.name}</td>
                                     <td className="align-top text-right py-0.5">
-                                        {(item.price * item.quantity).toFixed(2)}
+                                        {new Decimal(item.price).mul(item.quantity).toFixed(2)}
                                     </td>
                                 </tr>
                             ))}
