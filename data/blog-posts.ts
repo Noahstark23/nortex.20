@@ -1492,4 +1492,1328 @@ Nortex controla tus créditos, calcula cuotas, clasifica la cartera por atraso y
 [Probá Nortex gratis 30 días →](/register)
 `,
     },
+    {
+        slug: 'constancia-de-retencion-ir-nicaragua',
+        title: 'Constancia de retención IR: qué es y cómo emitirla bien',
+        description: 'Qué debe llevar una constancia de retención IR en Nicaragua, cuándo entregarla al proveedor y los errores que la invalidan ante la DGI.',
+        keyword: 'constancia de retención Nicaragua',
+        cluster: 'Impuestos y Retenciones',
+        category: 'Fiscal',
+        date: '2026-07-01',
+        readTime: '5 min',
+        relatedSlugs: ['retenciones-ir-nicaragua-2026', 'calendario-tributario-dgi-pyme'],
+        faq: [
+            { q: '¿Para qué le sirve la constancia al proveedor?', a: 'Es el comprobante de que el impuesto retenido se enteró a su nombre: con ella el proveedor acredita esa retención como anticipo de su IR anual. Sin constancia, el proveedor pierde ese crédito.' },
+            { q: '¿Cuándo debo entregarla?', a: 'Al momento de efectuar la retención, junto con el pago. Retener sin entregar constancia es uno de los reclamos más comunes de los proveedores y una observación típica de la DGI.' },
+        ],
+        content: `
+Si tu negocio retiene IR en la fuente, cada retención debe ir acompañada de su constancia. Es un documento pequeño con consecuencias grandes: para tu proveedor es dinero.
+
+## Qué es la constancia de retención
+
+Es el comprobante que el **retenedor** (quien paga y retiene) le entrega al **retenido** (el proveedor) documentando que le retuvo un porcentaje del pago y que lo enterará a la DGI a su nombre. Para el proveedor, esa constancia es un **anticipo de su IR anual**: sin ella, pierde el crédito.
+
+## Qué debe llevar
+
+Como mínimo, una constancia debe identificar:
+
+- **Retenedor:** nombre/razón social y RUC.
+- **Retenido:** nombre/razón social y RUC.
+- **Fecha** y número de la factura o documento que origina el pago.
+- **Base** sobre la que se retuvo (sin IVA).
+- **Tasa** aplicada (2%, 5%, 10% según el concepto — ver la [guía de retenciones](/blog/retenciones-ir-nicaragua-2026)).
+- **Monto retenido**.
+
+> Confirmá el formato formal vigente con tu contador: la DGI define los requisitos del documento.
+
+## Ejemplo
+
+Pagás C$20,000 por servicios profesionales:
+
+| Dato | Valor |
+| --- | --- |
+| Base | C$20,000 |
+| Tasa (servicios profesionales) | 10% |
+| Retenido | C$2,000 |
+| Pagado al proveedor | C$18,000 |
+
+La constancia documenta esos C$2,000 que vos enterás a la DGI a nombre del proveedor.
+
+## Errores que la invalidan
+
+1. Calcular la retención **sobre el total con IVA** (siempre sobre la base).
+2. No entregarla al momento del pago.
+3. RUC o datos del proveedor incorrectos.
+4. No cuadrar las constancias emitidas con la declaración del mes.
+
+## Nortex emite las constancias por vos
+
+Cada compra con retención en Nortex genera su constancia con base, tasa y monto correctos, y el reporte mensual queda cuadrado para declarar.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'calendario-tributario-dgi-pyme',
+        title: 'Calendario tributario DGI: qué declara una PyME cada mes',
+        description: 'Las declaraciones que una PyME en régimen general presenta a la DGI: IVA, retenciones, anticipo IR y la anual. Cómo organizarte sin multas.',
+        keyword: 'calendario tributario DGI Nicaragua',
+        cluster: 'Impuestos y Retenciones',
+        category: 'Fiscal',
+        date: '2026-07-02',
+        readTime: '6 min',
+        relatedSlugs: ['retenciones-ir-nicaragua-2026', 'iva-nicaragua-guia-completa', 'anticipo-ir-pago-minimo-nicaragua'],
+        faq: [
+            { q: '¿Qué declara cada mes una PyME en régimen general?', a: 'Típicamente el IVA, las retenciones efectuadas y el anticipo de IR del período, a través de la VET. Las fechas límite exactas las fija el calendario de la DGI según tu tipo de contribuyente: confirmalas con tu contador.' },
+            { q: '¿Qué pasa si declaro tarde?', a: 'Declarar u pagar fuera de plazo genera multas y recargos, incluso si la declaración va en cero. Por eso conviene tener las cifras cuadradas antes de la fecha límite, no el mismo día.' },
+        ],
+        content: `
+La mayoría de las multas de la DGI no vienen de evadir: vienen de declarar tarde o con cifras descuadradas. Tener claro qué toca cada mes es la defensa más barata.
+
+## Las obligaciones mensuales típicas
+
+Una PyME en **régimen general** normalmente presenta cada mes, por la VET:
+
+- **IVA:** débito menos crédito fiscal del período (ver [guía del IVA](/blog/iva-nicaragua-guia-completa)).
+- **Retenciones IR** efectuadas a proveedores (ver [guía de retenciones](/blog/retenciones-ir-nicaragua-2026)).
+- **Anticipo IR / pago mínimo** sobre los ingresos del mes (ver [guía del anticipo](/blog/anticipo-ir-pago-minimo-nicaragua)).
+
+> Las fechas límite dependen de tu tipo de contribuyente y las fija el calendario oficial de la DGI. No las asumás: confirmalas en la VET o con tu contador.
+
+## La obligación anual
+
+Además de lo mensual, cada año se presenta la **declaración anual del IR** sobre la renta del período fiscal. Ahí se liquida el impuesto real y se acreditan los anticipos y retenciones que ya pagaste durante el año.
+
+## Cómo organizarte para no correr
+
+1. **Cerrá el mes** en los primeros días: ventas, compras y retenciones cuadradas.
+2. Prepará las cifras **antes** de la fecha límite, no el mismo día.
+3. Guardá el soporte de cada declaración (la DGI puede pedirlo años después).
+4. Si un mes no hubo movimiento, igual suele corresponder **declarar en cero** — no declarar también genera multa.
+
+## El costo de llegar tarde
+
+| Situación | Consecuencia |
+| --- | --- |
+| Declarar tarde | Multa + recargos |
+| Declarar en cero fuera de plazo | Multa igual |
+| Cifras descuadradas | Observaciones y posibles reparos |
+
+## Nortex te deja las cifras listas
+
+Con Nortex, el IVA, las retenciones y los ingresos del mes salen cuadrados del propio sistema: llegás a la VET con los números listos, no con una caja de facturas por sumar.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'anticipo-ir-pago-minimo-nicaragua',
+        title: 'Anticipo IR y pago mínimo definitivo en Nicaragua: cómo funcionan',
+        description: 'Qué es el anticipo mensual del IR y el pago mínimo definitivo en Nicaragua, sobre qué se calculan y cómo se acreditan en la declaración anual.',
+        keyword: 'anticipo IR pago mínimo definitivo Nicaragua',
+        cluster: 'Impuestos y Retenciones',
+        category: 'Fiscal',
+        date: '2026-07-03',
+        readTime: '6 min',
+        relatedSlugs: ['calendario-tributario-dgi-pyme', 'retenciones-ir-nicaragua-2026', 'contabilidad-basica-pyme-nicaragua'],
+        faq: [
+            { q: '¿Sobre qué se calcula el anticipo mensual de IR?', a: 'Sobre los ingresos brutos del mes. La tasa aplicable depende de tu clasificación como contribuyente según la normativa vigente: confirmá la que te corresponde con tu contador antes de declarar.' },
+            { q: '¿El anticipo es un impuesto adicional?', a: 'No: es un adelanto del IR anual. Al presentar la declaración anual, los anticipos y retenciones que pagaste durante el año se acreditan contra el impuesto que resulte.' },
+        ],
+        content: `
+Cada mes, además del IVA, una PyME en régimen general adelanta una parte de su IR anual. Ese adelanto es el anticipo — y entenderlo evita el susto de "¿por qué pago IR si aún no cierro el año?".
+
+## Qué es el anticipo IR
+
+Es un **pago mensual a cuenta del IR anual**, calculado sobre los **ingresos brutos** del mes. No es un impuesto aparte: es el mismo IR anual pagado en cuotas adelantadas.
+
+## Qué es el pago mínimo definitivo
+
+La ley establece un **piso** de tributación sobre los ingresos brutos del año: aunque tu utilidad sea baja o nula, hay un mínimo que se compara contra el IR calculado sobre la utilidad, y se paga **el mayor** de los dos.
+
+> Las tasas del anticipo y del pago mínimo dependen de tu clasificación como contribuyente y han cambiado con las reformas fiscales. No uses cifras de memoria: confirmá la tasa que te aplica con tu contador o en la DGI.
+
+## Cómo se acredita todo al final del año
+
+En la declaración anual del IR se hace la cuenta completa:
+
+1. Se calcula el IR sobre la **utilidad** del año.
+2. Se compara contra el **pago mínimo** sobre ingresos brutos.
+3. Del mayor de los dos, se **restan** los anticipos pagados y las retenciones que te hicieron (ver [constancias de retención](/blog/constancia-de-retencion-ir-nicaragua)).
+4. El resultado es saldo a pagar o saldo a favor.
+
+## Por qué importa llevar bien los ingresos
+
+Como el anticipo se calcula sobre ingresos brutos, subdeclarar ingresos un mes no "ahorra": descuadra tu anual y te expone a reparos. Y sobredeclarar te hace adelantar de más. La base de todo es un [registro contable ordenado](/blog/contabilidad-basica-pyme-nicaragua).
+
+## Nortex te da los ingresos del mes en un clic
+
+Nortex acumula tus ingresos facturados del período, listos para calcular el anticipo con tu contador, y guarda el historial completo para la declaración anual.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'exenciones-iva-tasa-cero-nicaragua',
+        title: 'Exenciones de IVA y tasa cero en Nicaragua: la diferencia importa',
+        description: 'Qué significa que un producto esté exento de IVA o gravado con tasa 0% en Nicaragua, y cómo afecta tu crédito fiscal. Guía para PyMES.',
+        keyword: 'exenciones IVA Nicaragua',
+        cluster: 'IVA',
+        category: 'Fiscal',
+        date: '2026-07-01',
+        readTime: '5 min',
+        relatedSlugs: ['iva-nicaragua-guia-completa', 'credito-fiscal-iva-nicaragua'],
+        faq: [
+            { q: '¿Exento y tasa cero es lo mismo?', a: 'No. En ambos casos el cliente no paga IVA, pero en tasa cero la operación está gravada (al 0%) y da derecho a acreditar el IVA de las compras asociadas; en exento no hay ese derecho pleno. La diferencia se siente en tu crédito fiscal.' },
+            { q: '¿Cómo sé si mi producto está exento?', a: 'La ley define listas de bienes y servicios exentos (por ejemplo, ciertos productos de la canasta básica y medicamentos). Como las listas se actualizan, confirmá el tratamiento de tu producto específico con tu contador o en la DGI.' },
+        ],
+        content: `
+"Este producto no lleva IVA" puede significar dos cosas distintas — y la diferencia afecta directamente cuánto crédito fiscal podés usar.
+
+## Exento vs. tasa cero
+
+En los dos casos el cliente no paga IVA en la factura, pero tributariamente no son lo mismo:
+
+| Tratamiento | ¿La operación está gravada? | ¿Da crédito fiscal por las compras? |
+| --- | --- | --- |
+| **Tasa 0%** | Sí, al 0% | Sí |
+| **Exento** | No | No pleno |
+
+- **Tasa cero:** la operación está dentro del IVA pero con tasa 0% (típico de ciertas **exportaciones**). Como está gravada, mantiene el derecho a acreditar el IVA de las compras asociadas.
+- **Exento:** la operación está **fuera** del impuesto. El IVA que pagaste en las compras asociadas no se acredita igual: tiende a volverse costo.
+
+## Qué suele estar exento
+
+La ley exime ciertos bienes y servicios — por ejemplo, productos de la **canasta básica** y **medicamentos**, entre otros.
+
+> Las listas y condiciones se actualizan. Antes de vender un producto sin IVA, confirmá su tratamiento exacto con tu contador o en la DGI: facturar mal una exención es un error caro en ambas direcciones.
+
+## Por qué te importa como comerciante
+
+1. Si vendés productos exentos junto a gravados (una pulpería, una farmacia), tu **crédito fiscal** se prorratea: no todo el IVA de tus compras es acreditable.
+2. Cobrar IVA sobre algo exento es cobrarle de más al cliente; no cobrarlo sobre algo gravado es asumir el impuesto de tu bolsillo.
+3. Tu sistema debe distinguir productos **gravados y exentos** por artículo, no por venta. Repasá la [guía del IVA](/blog/iva-nicaragua-guia-completa) y el [crédito fiscal](/blog/credito-fiscal-iva-nicaragua).
+
+## Nortex distingue gravado y exento por producto
+
+En Nortex cada producto se configura como gravado o exento: la factura desglosa bien el IVA y el reporte mensual separa las bases automáticamente.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'como-declarar-iva-vet-nicaragua',
+        title: 'Cómo declarar el IVA en la VET: guía paso a paso',
+        description: 'Los pasos para preparar y presentar tu declaración mensual de IVA en la Ventanilla Electrónica Tributaria (VET) de la DGI sin errores.',
+        keyword: 'cómo declarar IVA VET Nicaragua',
+        cluster: 'IVA',
+        category: 'Fiscal',
+        date: '2026-07-04',
+        readTime: '6 min',
+        relatedSlugs: ['iva-nicaragua-guia-completa', 'credito-fiscal-iva-nicaragua', 'calendario-tributario-dgi-pyme'],
+        faq: [
+            { q: '¿Qué necesito antes de entrar a la VET?', a: 'El total de ventas gravadas y exentas del mes, el IVA cobrado (débito), el IVA pagado en compras (crédito fiscal) y las retenciones del período, todos cuadrados contra tus facturas. La VET es solo el último paso: el trabajo real es tener esas cifras bien.' },
+            { q: '¿Debo declarar si no tuve movimiento?', a: 'Sí: en general corresponde presentar la declaración en cero dentro del plazo. No presentar, aunque no haya movimiento, genera multa.' },
+        ],
+        content: `
+Declarar el IVA no empieza en la VET: empieza en tus registros. Si llegás al portal con las cifras cuadradas, la declaración toma minutos. Esta es la ruta.
+
+## Paso 0: cuadrá el mes
+
+Antes de entrar al portal necesitás cuatro números del período:
+
+1. **Ventas gravadas** (base) y su **IVA cobrado** (débito fiscal).
+2. **Ventas exentas**, si las hay (ver [exenciones](/blog/exenciones-iva-tasa-cero-nicaragua)).
+3. **Compras gravadas** y su **IVA pagado** ([crédito fiscal](/blog/credito-fiscal-iva-nicaragua)).
+4. **Retenciones** de IVA que te hicieron, si aplican.
+
+Todo debe cuadrar contra tus facturas emitidas y recibidas — la DGI puede cruzar la información con tus clientes y proveedores.
+
+## Paso 1: entrá a la VET
+
+La **Ventanilla Electrónica Tributaria** es el portal de la DGI donde se presentan las declaraciones. Ingresás con tu usuario de contribuyente.
+
+## Paso 2: llenā la declaración del período
+
+Seleccioná el impuesto (IVA) y el período. Cargá las bases y los montos: débito, crédito, retenciones. El sistema calcula el saldo:
+
+> IVA a pagar = IVA cobrado − crédito fiscal − retenciones acreditables.
+
+Si el crédito supera al débito, queda **saldo a favor** que se arrastra al período siguiente.
+
+## Paso 3: presentá y pagá dentro del plazo
+
+Presentar la declaración y pagar son dos actos: ambos tienen fecha límite según el [calendario tributario](/blog/calendario-tributario-dgi-pyme). Guardá el comprobante de presentación y el de pago.
+
+## Errores comunes
+
+- Declarar el crédito fiscal de compras **sin factura formal** (la DGI lo rechaza).
+- Olvidar las ventas exentas (descuadra la base).
+- Dejar la declaración para el último día y encontrarse el portal saturado.
+- No declarar un mes "sin movimiento".
+
+## Nortex te entrega el mes cuadrado
+
+El reporte de IVA de Nortex trae débito, crédito y bases separadas por gravado/exento, directo de tus facturas. Llegás a la VET a transcribir, no a calcular.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'notas-de-credito-debito-nicaragua',
+        title: 'Notas de crédito y débito: cómo corregir una factura en regla',
+        description: 'Cuándo usar una nota de crédito o de débito en Nicaragua, cómo afectan el IVA y por qué nunca debés borrar o alterar una factura emitida.',
+        keyword: 'nota de crédito Nicaragua',
+        cluster: 'Facturación DGI',
+        category: 'Facturación',
+        date: '2026-07-02',
+        readTime: '5 min',
+        relatedSlugs: ['facturacion-dgi-nicaragua-guia', 'series-de-facturacion-dgi-nicaragua'],
+        faq: [
+            { q: '¿Cuándo uso nota de crédito y cuándo de débito?', a: 'Nota de crédito cuando el valor de la factura debe bajar (devolución, descuento posterior, error a favor del cliente). Nota de débito cuando debe subir (cargo omitido, interés pactado). La factura original nunca se altera.' },
+            { q: '¿La nota de crédito afecta el IVA?', a: 'Sí: ajusta la base y el IVA de la operación original. Una devolución documentada con nota de crédito reduce tu débito fiscal del período en que se emite.' },
+        ],
+        content: `
+Una factura emitida es un documento fiscal: no se borra, no se edita, no se "desaparece". Cuando algo cambia después de facturar, la herramienta correcta es la nota de crédito o de débito.
+
+## La regla: la factura original no se toca
+
+Alterar o eliminar una factura emitida rompe la correlatividad de tu [serie](/blog/series-de-facturacion-dgi-nicaragua) y descuadra tu declaración — dos señales de alerta clásicas para la DGI. Toda corrección posterior se documenta con un comprobante nuevo que **referencia** a la factura original.
+
+## Nota de crédito: cuando el valor baja
+
+Se emite cuando la operación queda en **menos** que lo facturado:
+
+- Devolución total o parcial de mercadería.
+- Descuento o rebaja concedida después de facturar.
+- Error de precio o cantidad a favor del cliente.
+
+**Efecto en el IVA:** reduce la base y el débito fiscal. Si facturaste C$11,500 (C$10,000 + IVA) y el cliente devuelve la mitad, la nota de crédito por C$5,750 baja tu IVA cobrado en C$750.
+
+## Nota de débito: cuando el valor sube
+
+Se emite cuando corresponde **cobrar más** sobre una operación ya facturada:
+
+- Un cargo omitido (flete, instalación).
+- Intereses pactados por pago tardío.
+- Error de precio en contra tuya.
+
+## Qué debe llevar cada nota
+
+| Dato | Por qué |
+| --- | --- |
+| Referencia a la factura original | Vincula el ajuste a la operación |
+| Motivo del ajuste | Soporta la corrección ante la DGI |
+| Base e IVA del ajuste | Cuadra la declaración del período |
+| Su propia numeración correlativa | Es un comprobante fiscal más |
+
+## Nortex emite las notas vinculadas a la factura
+
+En Nortex, la nota de crédito o débito se genera desde la factura original: hereda la referencia, ajusta el IVA y el inventario (si hay devolución), y todo queda cuadrado para el mes.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'como-inscribirse-dgi-ruc-nicaragua',
+        title: 'Cómo inscribir tu negocio en la DGI y obtener el RUC',
+        description: 'Los pasos para formalizar tu negocio en Nicaragua: inscripción en la DGI, obtención del RUC, elección de régimen y qué sigue después.',
+        keyword: 'cómo sacar el RUC Nicaragua',
+        cluster: 'Facturación DGI',
+        category: 'Facturación',
+        date: '2026-07-05',
+        readTime: '6 min',
+        relatedSlugs: ['regimen-cuota-fija-nicaragua-guia', 'facturacion-dgi-nicaragua-guia', 'cuota-fija-vs-regimen-general'],
+        faq: [
+            { q: '¿Qué es el RUC?', a: 'El Registro Único del Contribuyente: el número que te identifica ante la DGI para declarar, facturar y pagar impuestos. Sin RUC no podés emitir facturas formales ni operar en regla.' },
+            { q: '¿Qué régimen elijo al inscribirme?', a: 'Depende del tamaño del negocio: los pequeños suelen calificar para Cuota Fija y los demás van al régimen general. La elección tiene consecuencias en lo que declarás cada mes — leé la comparación y confirmá con un contador.' },
+        ],
+        content: `
+Formalizarte no es solo "pagar impuestos": es poder facturar a clientes formales, acceder a crédito y crecer sin miedo a una multa. El primer paso es el RUC.
+
+## Qué es el RUC y por qué lo necesitás
+
+El **Registro Único del Contribuyente (RUC)** es tu identidad fiscal ante la DGI. Lo necesitás para:
+
+- Emitir **facturas formales** (los clientes empresariales lo exigen).
+- Declarar y pagar impuestos.
+- Abrir cuentas bancarias empresariales y acceder a financiamiento formal.
+
+## Los pasos generales
+
+1. **Reuní tus documentos:** identificación (cédula), y según el caso, documentos del local y de la actividad. Para personas jurídicas, la documentación de constitución.
+2. **Presentate a la administración de rentas** de la DGI que corresponde a tu domicilio (o usá los canales en línea disponibles).
+3. **Elegí tu régimen:** [Cuota Fija](/blog/regimen-cuota-fija-nicaragua-guia) si calificás como pequeño contribuyente, o régimen general. Compará antes en [Cuota Fija vs. régimen general](/blog/cuota-fija-vs-regimen-general).
+4. **Recibí tu RUC** y tu usuario para los servicios en línea.
+
+> Los requisitos documentales exactos varían según tu situación (persona natural o jurídica, actividad, municipio). Confirmá la lista vigente en la DGI o con un contador antes de ir, para no hacer dos viajes.
+
+## Después del RUC: alcaldía y demás
+
+La DGI no es el único registro. Según tu actividad y municipio, también corresponde la **matrícula municipal** en la alcaldía y, si tenés empleados, la inscripción como **empleador en el INSS**. Cada registro tiene sus propias obligaciones.
+
+## Lo que cambia al estar inscrito
+
+Desde que tenés RUC, tenés **obligaciones periódicas**: declarar en los plazos (aunque sea en cero) y mantener tus datos actualizados. Inscribirse y olvidarse es la receta para acumular multas silenciosas.
+
+## Nortex te acompaña desde el día uno
+
+Formalizaste y ahora hay que facturar en regla: Nortex emite tus facturas con RUC y series correctas, y te deja los números listos para cada declaración. Ver la [guía de facturación DGI](/blog/facturacion-dgi-nicaragua-guia).
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'cuota-fija-vs-regimen-general',
+        title: 'Cuota Fija vs. régimen general: cuál le conviene a tu negocio',
+        description: 'Comparación práctica entre el régimen de Cuota Fija y el régimen general de la DGI: obligaciones, costos administrativos y cuándo cambiarte.',
+        keyword: 'cuota fija vs régimen general Nicaragua',
+        cluster: 'Régimen de Cuota Fija',
+        category: 'Fiscal',
+        date: '2026-07-06',
+        readTime: '6 min',
+        relatedSlugs: ['regimen-cuota-fija-nicaragua-guia', 'como-inscribirse-dgi-ruc-nicaragua', 'iva-nicaragua-guia-completa'],
+        faq: [
+            { q: '¿Puedo pasarme de Cuota Fija al régimen general cuando quiera?', a: 'El traslado procede cuando lo solicitás o cuando dejás de calificar (por superar los topes). El cambio implica nuevas obligaciones desde el traslado: IVA, retenciones y anticipos. Planificalo con tu contador, no lo improvises.' },
+            { q: '¿En Cuota Fija puedo facturar a empresas grandes?', a: 'Podés emitir el comprobante que tu régimen permite, pero muchas empresas formales necesitan factura con IVA desglosado para su crédito fiscal, y por eso prefieren proveedores del régimen general. Si tu meta son clientes corporativos, ese es un factor de peso.' },
+        ],
+        content: `
+No hay un régimen "mejor": hay uno que le queda a tu tamaño y a tus clientes. Esta comparación te ayuda a decidir con cabeza fría.
+
+## La comparación de frente
+
+| Aspecto | Cuota Fija | Régimen general |
+| --- | --- | --- |
+| Pago | Cuota mensual fija por tramo | IVA + anticipo IR + retenciones según movimiento |
+| Declaraciones mensuales | Mínimas | IVA, retenciones, anticipo (VET) |
+| Contabilidad exigida | Básica | Formal |
+| Factura con IVA para clientes | Limitada | Sí |
+| Crédito fiscal por compras | No | Sí |
+| Apto para | Negocio pequeño de barrio | Negocio en crecimiento / clientes formales |
+
+## Cuándo la Cuota Fija gana
+
+- Tu clientela es **consumidor final** (no pide factura con IVA).
+- Tus ingresos e inventario están **bajo los topes** del régimen (ver la [guía de Cuota Fija](/blog/regimen-cuota-fija-nicaragua-guia); confirmá los montos vigentes con tu contador).
+- No querés carga administrativa: una cuota al mes y listo.
+
+## Cuándo conviene el régimen general
+
+- Vendés a **empresas formales** que necesitan IVA desglosado para su crédito fiscal.
+- Tus **compras** llevan mucho IVA que hoy no acreditás (en general, ese IVA es costo puro para vos).
+- Estás **cerca de los topes** — mejor migrar planificado que forzado.
+
+## El error clásico: quedarse por inercia
+
+Muchos negocios crecen y siguen en Cuota Fija "porque es más fácil", perdiendo clientes corporativos y crédito fiscal. Otros saltan al general sin estar listos y se ahogan en declaraciones. La decisión se toma con números: ingresos, IVA de compras y perfil de clientes.
+
+> El traslado de régimen tiene efectos desde la fecha del cambio (nuevas obligaciones mensuales). Hacelo acompañado de un contador.
+
+## Nortex sirve en los dos regímenes
+
+En Cuota Fija, Nortex te ordena ventas e inventario. En régimen general, además te cuadra el [IVA](/blog/iva-nicaragua-guia-completa) y las retenciones. Y si migrás, tu historial ya está en el sistema.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'como-calcular-horas-extras-nicaragua',
+        title: 'Cómo calcular las horas extras en Nicaragua (con ejemplos)',
+        description: 'Recargos de las horas extras según el Código del Trabajo de Nicaragua: 50% en días hábiles, 100% en descanso y feriados. Fórmula y ejemplos.',
+        keyword: 'cómo calcular horas extras Nicaragua',
+        cluster: 'Nómina y Planillas',
+        category: 'Recursos Humanos',
+        date: '2026-07-01',
+        readTime: '5 min',
+        relatedSlugs: ['como-calcular-nomina-nicaragua-2026', 'como-calcular-inss-nicaragua'],
+        faq: [
+            { q: '¿Cuánto se paga la hora extra en Nicaragua?', a: 'La hora extra en día hábil se paga con un 50% de recargo sobre la hora ordinaria (tiempo y medio). En días de descanso y feriados, el recargo es del 100% (doble).' },
+            { q: '¿Las horas extras pagan INSS e IR?', a: 'Sí: forman parte del salario bruto del período, así que entran en la base del INSS laboral y del IR salarial como cualquier otro ingreso ordinario.' },
+        ],
+        content: `
+Las horas extras mal pagadas son una fuente clásica de reclamos laborales — y de multas del MITRAB. La fórmula es simple si partís del valor correcto de la hora ordinaria.
+
+## Primero: el valor de la hora ordinaria
+
+> Hora ordinaria = salario mensual ÷ 30 días ÷ 8 horas = salario ÷ 240.
+
+Para un salario de C$12,000: la hora ordinaria vale 12,000 ÷ 240 = **C$50**.
+
+## Los recargos que manda la ley
+
+Según el Código del Trabajo (Ley 185):
+
+| Cuándo se trabaja la hora extra | Recargo | Valor de la hora |
+| --- | --- | --- |
+| Día hábil | 50% | Hora ordinaria × 1.5 |
+| Día de descanso o feriado | 100% | Hora ordinaria × 2 |
+
+## Ejemplo completo
+
+Salario C$12,000 (hora = C$50). En el mes trabajó 6 horas extras en días hábiles y 4 en domingo:
+
+1. Extras hábiles: 6 × 50 × 1.5 = **C$450**
+2. Extras domingo: 4 × 50 × 2 = **C$400**
+3. Total extras del mes: **C$850**
+
+Ese monto se suma al salario bruto y entra en la base del [INSS](/blog/como-calcular-inss-nicaragua) y del IR salarial.
+
+## Reglas prácticas que evitan reclamos
+
+- Registrá las horas extras **por día y por trabajador**, autorizadas por escrito.
+- Las extras se pagan en el mismo período en que se trabajaron.
+- La jornada extraordinaria tiene límites legales: no la uses como esquema permanente. Confirmá los topes vigentes con un asesor laboral.
+
+## Nortex calcula las extras con su recargo
+
+Registrás las horas y Nortex aplica el recargo correcto (50% o 100%), las suma a la planilla y actualiza INSS e IR. Ver la [guía completa de nómina](/blog/como-calcular-nomina-nicaragua-2026).
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'ir-salarial-nicaragua-como-calcularlo',
+        title: 'IR salarial en Nicaragua: cómo calcularlo paso a paso',
+        description: 'Cómo calcular el IR sobre salarios en Nicaragua con la tabla progresiva: base gravable, anualización y ejemplo completo con INSS incluido.',
+        keyword: 'IR salarial Nicaragua',
+        cluster: 'Nómina y Planillas',
+        category: 'Fiscal',
+        date: '2026-07-03',
+        readTime: '6 min',
+        relatedSlugs: ['como-calcular-nomina-nicaragua-2026', 'como-calcular-inss-nicaragua', 'como-calcular-aguinaldo-nicaragua'],
+        faq: [
+            { q: '¿Desde qué salario se paga IR en Nicaragua?', a: 'La renta anual gravable hasta C$100,000 está exenta. Como la base es el salario menos el INSS laboral, en términos mensuales un salario ronda el umbral cuando su base anualizada supera los C$100,000.' },
+            { q: '¿El aguinaldo entra en el cálculo del IR?', a: 'No: el décimo tercer mes está exento de IR cuando equivale a un mes de salario o menos, así que no se suma a la base gravable anual.' },
+        ],
+        content: `
+El IR salarial es el impuesto que el empleador retiene al trabajador y entera a la DGI. El cálculo tiene tres pasos: base, anualización y tabla. Vamos con cada uno.
+
+## Paso 1: la base gravable
+
+La base del IR no es el salario bruto: es el salario **menos el INSS laboral (7%)**.
+
+> Base mensual = salario bruto − INSS laboral.
+
+## Paso 2: anualizá
+
+La tabla del IR es **anual**, así que la base mensual se multiplica por 12 para ubicar el tramo:
+
+> Base anual = base mensual × 12.
+
+## Paso 3: aplicá la tabla progresiva
+
+| Renta anual gravable (C$) | Tasa marginal |
+| --- | --- |
+| Hasta 100,000 | Exento |
+| 100,001 – 200,000 | 15% sobre el exceso de 100,000 |
+| 200,001 – 350,000 | 20% sobre el exceso de 200,000 |
+| 350,001 – 500,000 | 25% sobre el exceso de 350,000 |
+| Más de 500,000 | 30% sobre el exceso de 500,000 |
+
+La tabla es **progresiva por tramos**: cada tasa aplica solo al exceso del tramo, más el impuesto acumulado de los tramos anteriores.
+
+## Ejemplo completo
+
+Salario bruto C$20,000:
+
+1. INSS laboral: 20,000 × 7% = C$1,400.
+2. Base mensual: C$18,600 → anual: **C$223,200**.
+3. Tramo 200,001–350,000: impuesto = 15,000 (por el tramo de 100k–200k al 15%) + 20% × (223,200 − 200,000) = 15,000 + 4,640 = **C$19,640 anual**.
+4. Retención mensual ≈ 19,640 ÷ 12 = **C$1,637**.
+
+El trabajador recibe: 20,000 − 1,400 − 1,637 = **C$16,963**.
+
+## Detalles que cambian el resultado
+
+- El [aguinaldo](/blog/como-calcular-aguinaldo-nicaragua) está exento: no lo sumés a la base.
+- Salarios variables (comisiones, [horas extra](/blog/como-calcular-horas-extras-nicaragua)) obligan a recalcular la proyección anual cada mes.
+- Si el trabajador entró a mitad de año, la anualización se ajusta al período real.
+
+## Nortex retiene el IR exacto
+
+Nortex anualiza, aplica la tabla por tramos y ajusta cuando el salario varía. La retención sale correcta cada mes, sin hoja de cálculo aparte. Ver la [guía completa de nómina](/blog/como-calcular-nomina-nicaragua-2026).
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'como-calcular-vacaciones-nicaragua',
+        title: 'Cómo calcular las vacaciones en Nicaragua (descansadas o pagadas)',
+        description: 'Cálculo de vacaciones según el Código del Trabajo de Nicaragua: 15 días por año, 1.25 por mes, con ejemplos de goce y de pago en liquidación.',
+        keyword: 'cómo calcular vacaciones Nicaragua',
+        cluster: 'Recursos Humanos',
+        category: 'Recursos Humanos',
+        date: '2026-07-04',
+        readTime: '5 min',
+        relatedSlugs: ['prestaciones-laborales-nicaragua-guia', 'como-calcular-indemnizacion-laboral-nicaragua', 'como-calcular-nomina-nicaragua-2026'],
+        faq: [
+            { q: '¿Cuántos días de vacaciones se acumulan por mes?', a: 'Se acumulan 1.25 días por mes trabajado, lo que equivale a 15 días por año completo, con goce de salario.' },
+            { q: '¿Las vacaciones se pueden pagar en lugar de descansarse?', a: 'La regla general del Código del Trabajo es que las vacaciones se descansan. El pago en efectivo procede en la liquidación final (las acumuladas no gozadas). Evitá hacer del pago la costumbre: confirmá los casos válidos con un asesor laboral.' },
+        ],
+        content: `
+Las vacaciones son de las prestaciones más simples de calcular — y de las más mal llevadas, porque nadie registra cuántos días acumuló cada quien. Acá está la fórmula y cómo llevar el control.
+
+## La regla
+
+El Código del Trabajo reconoce **15 días** de descanso con goce de salario por año trabajado:
+
+> Acumulación = 1.25 días por mes trabajado.
+
+## Cuánto vale un día de vacaciones
+
+> Día de vacaciones = salario mensual ÷ 30.
+
+Para C$15,000 de salario: cada día vale **C$500**.
+
+## Ejemplo 1: goce normal
+
+Trabajador con 8 meses de antigüedad quiere salir de vacaciones:
+
+- Acumulado: 8 × 1.25 = **10 días** disponibles.
+- Sale 7 días: se le pagan con normalidad (su salario no se interrumpe) y le quedan 3 acumulados.
+
+## Ejemplo 2: liquidación final
+
+Salario C$15,000, sale del trabajo con 5 meses sin haber gozado vacaciones:
+
+- Acumulado: 5 × 1.25 = 6.25 días.
+- Pago: 6.25 × 500 = **C$3,125** en la liquidación.
+
+## Control que evita problemas
+
+- Llevá un **saldo de días** por trabajador: acumulados, gozados, pendientes.
+- Programá las vacaciones: acumular años enteros crea pasivos grandes y conflictos.
+- En la [liquidación final](/blog/como-calcular-indemnizacion-laboral-nicaragua), las vacaciones pendientes se pagan siempre.
+
+Las vacaciones conviven con el resto de [prestaciones laborales](/blog/prestaciones-laborales-nicaragua-guia): aguinaldo, indemnización y la planilla mensual.
+
+## Nortex lleva el saldo de cada trabajador
+
+Nortex acumula 1.25 días por mes automáticamente, descuenta los días gozados y valora el saldo para la liquidación. Sin cuaderno, sin discusiones.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'contrato-de-trabajo-nicaragua-requisitos',
+        title: 'Contrato de trabajo en Nicaragua: qué debe tener para protegerte',
+        description: 'Qué debe contener un contrato de trabajo según el Código del Trabajo de Nicaragua, tipos de contrato y errores del empleador que salen caros.',
+        keyword: 'contrato de trabajo Nicaragua',
+        cluster: 'Recursos Humanos',
+        category: 'Recursos Humanos',
+        date: '2026-07-05',
+        readTime: '6 min',
+        relatedSlugs: ['prestaciones-laborales-nicaragua-guia', 'como-calcular-nomina-nicaragua-2026', 'como-calcular-indemnizacion-laboral-nicaragua'],
+        faq: [
+            { q: '¿Si no hay contrato escrito, no hay relación laboral?', a: 'Al contrario: la relación laboral existe por el hecho de la prestación del trabajo, con o sin papel. Sin contrato escrito, en un conflicto se presume lo que el trabajador alegue razonablemente — el papel protege sobre todo al empleador.' },
+            { q: '¿Contrato determinado o indeterminado?', a: 'La regla general es el contrato por tiempo indeterminado; el determinado procede para obras o plazos justificados. Encadenar contratos determinados para evitar antigüedad es una práctica riesgosa que los tribunales suelen reclasificar.' },
+        ],
+        content: `
+El contrato de trabajo no es un trámite: es tu principal defensa en un conflicto laboral. Y el error más caro es no tenerlo por escrito.
+
+## Sin papel también hay relación laboral
+
+En Nicaragua, la relación laboral **existe por el hecho del trabajo**, haya papel o no. Lo que cambia sin contrato escrito es la **prueba**: en un juicio, la falta de documento juega contra el empleador. El contrato escrito te protege a vos.
+
+## Qué debe contener
+
+Como mínimo, el contrato debería fijar:
+
+- **Identificación** de las partes.
+- **Puesto y funciones** (lo más concreto posible).
+- **Salario**, forma y período de pago.
+- **Jornada** y horario.
+- **Lugar** de trabajo.
+- **Tipo y duración** del contrato.
+- **Fecha de inicio**.
+
+> Para cláusulas especiales (confidencialidad, período de prueba, movilidad), asesorate legalmente: una cláusula mal redactada puede ser nula o volverse en tu contra.
+
+## Tipos de contrato
+
+| Tipo | Cuándo procede |
+| --- | --- |
+| Indeterminado | La regla general |
+| Determinado (plazo/obra) | Trabajos con fin previsible y justificado |
+
+Encadenar contratos determinados para "no acumular antigüedad" es una práctica que los tribunales reclasifican como indeterminado — con todas las [prestaciones](/blog/prestaciones-laborales-nicaragua-guia) e [indemnización](/blog/como-calcular-indemnizacion-laboral-nicaragua) acumuladas.
+
+## Lo que el contrato no puede quitar
+
+Ninguna cláusula puede renunciar derechos mínimos del Código del Trabajo: salario mínimo, vacaciones, aguinaldo, INSS. Un contrato que diga lo contrario es nulo en esa parte.
+
+## Del contrato a la planilla
+
+El contrato define el salario; la [planilla](/blog/como-calcular-nomina-nicaragua-2026) lo ejecuta cada mes con sus deducciones y aportes. Que los dos digan lo mismo: pagar distinto de lo pactado es otra fuente clásica de reclamos.
+
+## Nortex conecta contrato y nómina
+
+En Nortex cada empleado tiene su ficha con salario, fecha de ingreso y condiciones — y la planilla se calcula desde esos datos. Coherencia entre lo firmado y lo pagado.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'salario-minimo-nicaragua-como-funciona',
+        title: 'Salario mínimo en Nicaragua: cómo funciona y cómo te afecta',
+        description: 'Cómo se fija el salario mínimo en Nicaragua, por qué varía por sector económico y qué debe revisar un empleador cuando se ajusta.',
+        keyword: 'salario mínimo Nicaragua',
+        cluster: 'Nómina y Planillas',
+        category: 'Recursos Humanos',
+        date: '2026-07-06',
+        readTime: '5 min',
+        relatedSlugs: ['como-calcular-nomina-nicaragua-2026', 'contrato-de-trabajo-nicaragua-requisitos'],
+        faq: [
+            { q: '¿Cuánto es el salario mínimo en Nicaragua?', a: 'No hay un único monto: el salario mínimo se fija por sector económico y se ajusta periódicamente por acuerdo de la comisión tripartita (gobierno, empleadores, sindicatos). Consultá la tabla vigente del MITRAB antes de fijar salarios — no uses cifras de memoria.' },
+            { q: '¿Qué pasa si pago bajo el mínimo?', a: 'Es una infracción laboral: el trabajador puede reclamar la diferencia retroactiva y el MITRAB puede multar. Además, el mínimo arrastra las prestaciones calculadas sobre el salario.' },
+        ],
+        content: `
+El salario mínimo en Nicaragua no es un número único ni fijo: varía por sector y se ajusta periódicamente. Como empleador, lo que necesitás es saber cómo funciona el mecanismo y cuándo revisar tu planilla.
+
+## Cómo se fija
+
+El salario mínimo lo negocia una **comisión tripartita** (gobierno, empleadores y sindicatos) y se publica por **acuerdo ministerial** del MITRAB. Se define **por sector económico** — agropecuario, industria, comercio, servicios, etc. — así que dos negocios distintos pueden tener mínimos distintos.
+
+> Los montos se ajustan periódicamente. No fijes salarios con cifras de memoria o de años anteriores: consultá la tabla vigente publicada por el MITRAB o confirmala con tu contador.
+
+## Qué te obliga como empleador
+
+1. Ningún salario de tu planilla puede estar **bajo el mínimo** de tu sector.
+2. Cuando el mínimo se ajusta, **revisá tu planilla**: los salarios que quedaron bajo el nuevo piso deben subir desde la vigencia del acuerdo.
+3. El mínimo arrastra el resto: INSS, [prestaciones](/blog/prestaciones-laborales-nicaragua-guia) y liquidaciones se calculan sobre el salario real, nunca menos que el mínimo.
+
+## El riesgo de ignorarlo
+
+Pagar bajo el mínimo expone a:
+
+- Reclamo del trabajador por la **diferencia retroactiva** (más sus prestaciones recalculadas).
+- Multas del MITRAB.
+- Un contrato que "pacta" menos del mínimo es **nulo** en esa cláusula (ver [contrato de trabajo](/blog/contrato-de-trabajo-nicaragua-requisitos)).
+
+## Mínimo vs. salario de mercado
+
+El mínimo es el piso legal, no la referencia de mercado. Para retener gente buena, el número que importa es el que paga tu competencia — el mínimo solo te dice desde dónde es legal empezar.
+
+## Nortex te ayuda a mantener la planilla en regla
+
+Con la planilla en Nortex ves todos los salarios de un vistazo y ajustarlos cuando cambia el mínimo toma minutos, con el recálculo de INSS y prestaciones incluido. Ver la [guía de nómina](/blog/como-calcular-nomina-nicaragua-2026).
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'punto-de-equilibrio-negocio-como-calcularlo',
+        title: 'Punto de equilibrio: cuánto tenés que vender para no perder',
+        description: 'Cómo calcular el punto de equilibrio de tu negocio: costos fijos, margen de contribución y la fórmula, con un ejemplo paso a paso.',
+        keyword: 'punto de equilibrio cómo calcularlo',
+        cluster: 'Finanzas y Gestión',
+        category: 'Finanzas',
+        date: '2026-07-02',
+        readTime: '6 min',
+        relatedSlugs: ['como-calcular-margen-de-ganancia-nicaragua', 'flujo-de-caja-pyme-nicaragua', 'presupuesto-pyme-como-armarlo'],
+        faq: [
+            { q: '¿Qué es el punto de equilibrio?', a: 'Es el nivel de ventas en el que no ganás ni perdés: los ingresos cubren exactamente los costos fijos y variables. Por debajo perdés plata; por encima, cada venta adicional deja utilidad.' },
+            { q: '¿Qué es el margen de contribución?', a: 'Es lo que queda de cada córdoba vendido después de pagar el costo variable de esa venta. Es la parte de la venta que contribuye a cubrir los costos fijos y, después del equilibrio, a generar utilidad.' },
+        ],
+        content: `
+"¿Cuánto tengo que vender al mes para no perder?" es la pregunta más importante que un dueño puede hacerse — y tiene una respuesta exacta: el punto de equilibrio.
+
+## Los tres ingredientes
+
+1. **Costos fijos:** lo que pagás venda o no venda — alquiler, planilla base, luz, internet.
+2. **Costos variables:** lo que cuesta cada venta — la mercadería, comisiones.
+3. **Margen de contribución:** el porcentaje de cada venta que queda después del costo variable.
+
+> Margen de contribución % = (Precio − Costo variable) ÷ Precio.
+
+Ojo: es pariente del [margen de ganancia](/blog/como-calcular-margen-de-ganancia-nicaragua), calculado sin IVA.
+
+## La fórmula
+
+> Punto de equilibrio (ventas C$) = Costos fijos ÷ Margen de contribución %.
+
+## Ejemplo
+
+Una tienda con costos fijos de C$30,000 al mes y margen de contribución promedio del 25%:
+
+| Dato | Valor |
+| --- | --- |
+| Costos fijos mensuales | C$30,000 |
+| Margen de contribución | 25% |
+| **Punto de equilibrio** | 30,000 ÷ 0.25 = **C$120,000/mes** |
+
+Traducido: necesita vender **C$4,000 diarios** (mes de 30 días) solo para empatar. Todo lo que venda por encima deja 25 centavos de cada córdoba como utilidad.
+
+## Para qué usarlo
+
+- **Meta diaria de ventas** con base real, no con optimismo.
+- Evaluar un **gasto fijo nuevo** (¿cuánta venta extra exige ese alquiler más caro?).
+- Decidir **promociones**: bajar precios baja el margen de contribución y sube el equilibrio.
+
+## El error común
+
+Calcular el equilibrio una vez y olvidarlo. Cambian el alquiler, los precios de tus proveedores o tu mezcla de productos — y tu punto de equilibrio se movió. Revisalo al armar tu [presupuesto](/blog/presupuesto-pyme-como-armarlo) y cuidá el [flujo de caja](/blog/flujo-de-caja-pyme-nicaragua) mientras llegás a él.
+
+## Nortex te da los números del equilibrio
+
+Nortex conoce tus ventas, costos y márgenes reales por producto: los insumos exactos para calcular tu punto de equilibrio con datos, no con estimaciones.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'presupuesto-pyme-como-armarlo',
+        title: 'Cómo armar el presupuesto de tu negocio (sin ser contador)',
+        description: 'Guía simple para armar un presupuesto mensual de tu PyME: ingresos realistas, gastos fijos y variables, y cómo usarlo de verdad cada mes.',
+        keyword: 'presupuesto para PyME',
+        cluster: 'Finanzas y Gestión',
+        category: 'Finanzas',
+        date: '2026-07-05',
+        readTime: '6 min',
+        relatedSlugs: ['flujo-de-caja-pyme-nicaragua', 'punto-de-equilibrio-negocio-como-calcularlo', 'contabilidad-basica-pyme-nicaragua'],
+        faq: [
+            { q: '¿Cuál es la diferencia entre presupuesto y flujo de caja?', a: 'El presupuesto es el plan (cuánto esperás vender y gastar); el flujo de caja es la realidad del efectivo entrando y saliendo. El presupuesto se compara cada mes contra lo real para corregir a tiempo.' },
+            { q: '¿Cada cuánto reviso el presupuesto?', a: 'Compará presupuesto contra real cada mes. Un presupuesto que no se revisa es una lista de deseos; el valor está en detectar los desvíos y actuar.' },
+        ],
+        content: `
+Un presupuesto no es una hoja para cumplir con el banco: es la herramienta que convierte "espero que el mes salga bien" en un plan con números. Y se arma en una tarde.
+
+## Paso 1: proyectá los ingresos (con los pies en la tierra)
+
+Partí de tus ventas reales de los últimos meses — no de tu mejor mes histórico. Si tenés estacionalidad (diciembre fuerte, septiembre flojo), reflejala. Una proyección inflada arruina todo lo demás.
+
+## Paso 2: listá los gastos fijos
+
+Lo que pagás venda o no venda:
+
+- Alquiler, luz, agua, internet
+- Planilla base + INSS patronal + INATEC
+- Cuotas de préstamos
+- Suscripciones y servicios
+
+## Paso 3: estimá los variables
+
+Los que se mueven con la venta: costo de mercadería (usá tu costo real, ver [margen](/blog/como-calcular-margen-de-ganancia-nicaragua)), comisiones, empaques, fletes. Expresalos como **porcentaje de la venta** para que escalen con la proyección.
+
+## Paso 4: armá el cuadro
+
+| Concepto | Presupuesto (C$) |
+| --- | --- |
+| Ventas proyectadas | 150,000 |
+| Costo variable (65%) | 97,500 |
+| Gastos fijos | 35,000 |
+| **Utilidad esperada** | **17,500** |
+
+Cruzalo con tu [punto de equilibrio](/blog/punto-de-equilibrio-negocio-como-calcularlo): si la venta proyectada apenas lo roza, el plan necesita ajuste antes de empezar el mes.
+
+## Paso 5: compará contra lo real, cada mes
+
+Acá vive el valor del presupuesto. A fin de mes, poné lo real al lado de lo planeado y preguntá por los desvíos: ¿vendí menos? ¿el costo subió? ¿se coló un gasto? Detectar el desvío en el mes uno es corregible; descubrirlo en diciembre no.
+
+## Presupuesto y efectivo no son lo mismo
+
+Podés cumplir el presupuesto y aun así quedarte sin efectivo si vendés a crédito. El presupuesto planifica utilidad; el [flujo de caja](/blog/flujo-de-caja-pyme-nicaragua) cuida la liquidez. Usá los dos.
+
+## Nortex te da el "real" sin esfuerzo
+
+Con Nortex, las ventas, costos y gastos del mes ya están registrados: comparar presupuesto contra realidad toma minutos, no un fin de semana con la calculadora.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'estado-de-resultados-como-leerlo',
+        title: 'Estado de resultados: cómo leerlo para tomar decisiones',
+        description: 'Qué es el estado de resultados, cómo se estructura (ventas, costo, gastos, utilidad) y qué preguntas responde sobre tu negocio.',
+        keyword: 'estado de resultados cómo leerlo',
+        cluster: 'Contabilidad PyME',
+        category: 'Contabilidad',
+        date: '2026-07-03',
+        readTime: '6 min',
+        relatedSlugs: ['contabilidad-basica-pyme-nicaragua', 'como-calcular-margen-de-ganancia-nicaragua', 'flujo-de-caja-pyme-nicaragua'],
+        faq: [
+            { q: '¿Qué diferencia hay entre utilidad bruta y utilidad neta?', a: 'La utilidad bruta es ventas menos el costo de lo vendido; la neta es lo que queda después de restar además los gastos operativos e impuestos. Un negocio puede tener buena utilidad bruta y pésima neta si los gastos se lo comen.' },
+            { q: '¿El estado de resultados muestra mi efectivo?', a: 'No: muestra si ganaste o perdiste en el período, no cuánto efectivo tenés. Una venta a crédito suma utilidad hoy aunque el dinero entre el mes que viene. Para el efectivo está el flujo de caja.' },
+        ],
+        content: `
+El estado de resultados es la película del mes: cuánto vendiste, cuánto te costó y cuánto quedó. Leerlo bien responde la pregunta que importa: ¿el negocio gana o solo se mueve?
+
+## La estructura, de arriba hacia abajo
+
+| Línea | Qué es |
+| --- | --- |
+| Ventas | Todo lo facturado en el período |
+| (−) Costo de ventas | Lo que costó la mercadería vendida |
+| = **Utilidad bruta** | Lo que dejó la venta en sí |
+| (−) Gastos operativos | Alquiler, planilla, luz, transporte |
+| = **Utilidad operativa** | Lo que deja operar el negocio |
+| (−) Intereses e impuestos | Financiamiento y fisco |
+| = **Utilidad neta** | Lo que de verdad quedó |
+
+## Las tres preguntas que responde
+
+**1. ¿Mi margen bruto es sano?** Utilidad bruta ÷ ventas. Si es bajo, el problema está en precios o costo de mercadería (ver [margen de ganancia](/blog/como-calcular-margen-de-ganancia-nicaragua)).
+
+**2. ¿Los gastos se comen la ganancia?** Si la utilidad bruta es buena pero la neta es raquítica, el problema no es vender: son los gastos fijos.
+
+**3. ¿La tendencia mejora o empeora?** Un mes aislado dice poco; tres meses comparados dicen todo. Mirá las líneas como porcentaje de ventas y seguí su evolución.
+
+## Utilidad no es efectivo
+
+La trampa clásica: el estado de resultados dice que ganaste C$20,000, pero la cuenta está vacía. Pasa cuando vendés a crédito o cuando la utilidad se fue a comprar inventario. La utilidad se lee acá; la liquidez, en el [flujo de caja](/blog/flujo-de-caja-pyme-nicaragua). Son dos lentes distintos del mismo negocio ([contabilidad básica](/blog/contabilidad-basica-pyme-nicaragua)).
+
+## Un vicio a evitar
+
+Armar el estado de resultados solo cuando lo pide el banco o la DGI. Es una herramienta de decisión mensual: sin ella, las decisiones de precios, gastos y crecimiento se toman a ciegas.
+
+## Nortex te lo arma solo
+
+Cada venta, compra y gasto registrado en Nortex alimenta tu estado de resultados en tiempo real: margen bruto, gastos y utilidad del mes sin esperar al contador.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'como-hacer-conteo-fisico-inventario',
+        title: 'Cómo hacer un conteo físico de inventario sin cerrar el negocio',
+        description: 'Guía para hacer la toma física de inventario: preparación, conteo por zonas, ajustes de diferencias y conteos cíclicos para no cerrar el negocio.',
+        keyword: 'conteo físico de inventario',
+        cluster: 'Inventario y Kardex',
+        category: 'Inventario',
+        date: '2026-07-01',
+        readTime: '6 min',
+        relatedSlugs: ['control-de-inventario-kardex-nicaragua', 'rotacion-de-inventario-como-calcularla', 'metodos-de-costeo-inventario-peps-promedio'],
+        faq: [
+            { q: '¿Cada cuánto se hace un conteo físico?', a: 'Un conteo general al menos una vez al año, complementado con conteos cíclicos (contar una parte del inventario cada semana o mes) para los productos de más valor o rotación. El cíclico detecta diferencias sin parar el negocio.' },
+            { q: '¿Qué hago con las diferencias que encuentre?', a: 'Investigá primero las grandes (¿venta sin registrar? ¿robo? ¿error de recepción?), luego ajustá el sistema para que refleje la realidad y dejá documentado el ajuste con fecha y responsable.' },
+        ],
+        content: `
+El sistema dice 48 unidades; el estante tiene 43. Esa diferencia es plata perdida — y solo el conteo físico la saca a la luz. Acá va el método para hacerlo bien.
+
+## Por qué contar si "el sistema ya sabe"
+
+El [Kardex](/blog/control-de-inventario-kardex-nicaragua) registra lo que se digita; el estante refleja lo que pasó de verdad: mermas, robo hormiga, errores de recepción, ventas sin registrar. El conteo físico es el careo entre los dos.
+
+## Preparación (la mitad del éxito)
+
+1. **Ordenả antes de contar:** producto agrupado, etiquetado, sin cajas mezcladas.
+2. **Cortá el movimiento:** definí una hora de corte; lo que entre o salga después se registra aparte.
+3. **Dividí en zonas** y asigná responsables por zona.
+4. **Imprimí las hojas de conteo sin cantidades del sistema** (contar "a ciegas" evita que el contador copie el número esperado).
+
+## El conteo
+
+- Contá **todo lo de la zona**, unidad por unidad — no "a ojo".
+- Los productos de alto valor cuéntalos **dos veces con personas distintas**.
+- Anotá también el **estado**: vencido, dañado, sin etiqueta.
+
+## El ajuste
+
+Comparado el conteo contra el sistema:
+
+| Diferencia | Acción |
+| --- | --- |
+| Pequeña y aislada | Ajustar y seguir |
+| Grande en un producto | Investigar antes de ajustar |
+| Patrón repetido en una zona/turno | Investigar proceso o personal |
+
+Todo ajuste queda **documentado**: fecha, responsable, motivo. El ajuste sin registro es la puerta para que las pérdidas se vuelvan invisibles.
+
+## Conteos cíclicos: la alternativa a cerrar
+
+En lugar de un solo conteo anual gigante, contá **una parte cada semana**: los productos A (más valor/rotación, ver [rotación](/blog/rotacion-de-inventario-como-calcularla)) más seguido, los C una vez al año. El negocio nunca cierra y las diferencias se detectan frescas.
+
+## Nortex hace el careo por vos
+
+Nortex genera las hojas de conteo, recibe las cantidades físicas y calcula las diferencias contra el Kardex al instante, con el ajuste documentado.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'rotacion-de-inventario-como-calcularla',
+        title: 'Rotación de inventario: el número que te dice qué comprar',
+        description: 'Cómo calcular la rotación de inventario y los días de inventario, e identificar productos estrella y plata dormida en tu bodega.',
+        keyword: 'rotación de inventario',
+        cluster: 'Inventario y Kardex',
+        category: 'Inventario',
+        date: '2026-07-04',
+        readTime: '5 min',
+        relatedSlugs: ['control-de-inventario-kardex-nicaragua', 'como-hacer-conteo-fisico-inventario', 'flujo-de-caja-pyme-nicaragua'],
+        faq: [
+            { q: '¿Qué es una buena rotación de inventario?', a: 'Depende del giro: los perecederos rotan en días; una ferretería puede rotar su inventario pocas veces al año. Lo útil no es compararte con otros, sino comparar tus productos entre sí y tu tendencia en el tiempo.' },
+            { q: '¿Qué hago con los productos que no rotan?', a: 'Primero dejá de recomprarlos. Luego liquidá lo que tenés (descuento, combo) para recuperar el efectivo: un producto parado pierde valor y ocupa espacio y capital que un producto estrella usaría mejor.' },
+        ],
+        content: `
+Tu bodega es una cuenta bancaria en especie: cada producto es plata guardada. La rotación te dice cuáles depósitos están trabajando y cuáles están dormidos.
+
+## La fórmula
+
+> Rotación = Costo de lo vendido en el período ÷ Inventario promedio (al costo).
+
+Y su hermana, más intuitiva:
+
+> Días de inventario = días del período ÷ rotación.
+
+## Ejemplo
+
+En el año vendiste mercadería que te costó C$600,000 y tu inventario promedio vale C$150,000:
+
+- Rotación = 600,000 ÷ 150,000 = **4 veces al año**.
+- Días de inventario = 365 ÷ 4 ≈ **91 días**: cada córdoba invertido en bodega tarda ~3 meses en volver.
+
+## Leelo por producto, no solo global
+
+El número global esconde los extremos. Clasificá:
+
+| Tipo | Comportamiento | Acción |
+| --- | --- | --- |
+| Estrella | Rota rápido y deja margen | Nunca quedarse sin stock |
+| Vaca lechera | Rota rápido, margen bajo | Negociar costo, comprar eficiente |
+| Dormido | Meses sin moverse | No recomprar, liquidar |
+
+## Rotación y efectivo
+
+Un inventario que rota lento es [flujo de caja](/blog/flujo-de-caja-pyme-nicaragua) congelado: compraste algo que no se convierte en efectivo. Antes de pedir un préstamo "porque falta plata", revisá cuánta plata tenés parada en estantes.
+
+## De dónde salen los datos
+
+Necesitás el costo de ventas y el valor del inventario — es decir, un [Kardex](/blog/control-de-inventario-kardex-nicaragua) al día y [conteos](/blog/como-hacer-conteo-fisico-inventario) que lo mantengan honesto.
+
+## Nortex te muestra la rotación por producto
+
+Nortex calcula la rotación y los días de inventario de cada producto y te señala lo dormido: sabés qué recomprar, qué liquidar y dónde está atrapado tu efectivo.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'antiguedad-de-saldos-como-usarla',
+        title: 'Antigüedad de saldos: el reporte que salva tu cartera',
+        description: 'Cómo leer el reporte de antigüedad de saldos, clasificar tu cartera por días de vencimiento y decidir acciones de cobro con datos.',
+        keyword: 'antigüedad de saldos',
+        cluster: 'Cobranza y Crédito',
+        category: 'Cobranza',
+        date: '2026-07-02',
+        readTime: '5 min',
+        relatedSlugs: ['gestion-de-cobranza-cuentas-por-cobrar', 'como-cobrar-cuentas-morosas-nicaragua', 'politica-de-credito-negocio'],
+        faq: [
+            { q: '¿Qué es el reporte de antigüedad de saldos?', a: 'Es la foto de tu cartera clasificada por cuánto tiempo lleva vencida cada deuda: corriente, 1-30, 31-60, 61-90 y más de 90 días. Muestra dónde está el riesgo y a quién cobrar primero.' },
+            { q: '¿Cada cuánto debo revisarlo?', a: 'Semanal como mínimo. La cobrabilidad cae con cada semana que pasa: una cartera revisada mensualmente ya perdió oportunidades de recuperar deudas cuando aún eran frescas.' },
+        ],
+        content: `
+"¿Cuánto te deben?" es fácil de responder. "¿Cuánto de eso vas a cobrar de verdad?" — eso lo responde la antigüedad de saldos.
+
+## Qué es
+
+Es tu cartera por cobrar **clasificada por tiempo de vencimiento**. La misma deuda total puede ser sana o un desastre según cómo se reparte:
+
+| Tramo | Significado | Cobrabilidad |
+| --- | --- | --- |
+| Corriente | Aún no vence | Alta |
+| 1-30 días | Atraso temprano | Alta si actuás ya |
+| 31-60 días | Mora instalándose | Media |
+| 61-90 días | Mora seria | Baja |
+| +90 días | Riesgo de pérdida | Muy baja |
+
+## Cómo leerlo en 3 preguntas
+
+**1. ¿Dónde está concentrada la plata?** C$80,000 por cobrar con 70% corriente es salud; el mismo monto con 40% en +60 días es una alarma.
+
+**2. ¿Quiénes son los grandes de cada tramo?** Ordenar cada tramo por monto te da la lista de llamadas del día: primero los montos grandes en tramos tempranos (máxima recuperación por llamada).
+
+**3. ¿La foto mejora o empeora?** Compará mes a mes el porcentaje vencido. Si crece, el problema ya no es cobranza: es a quién le estás fiando (ver [política de crédito](/blog/politica-de-credito-negocio)).
+
+## Del reporte a la acción
+
+- **Corriente:** recordatorio antes del vencimiento.
+- **1-30:** contacto inmediato — acá se gana o se pierde la cartera (ver [cómo cobrar morosos](/blog/como-cobrar-cuentas-morosas-nicaragua)).
+- **31-60:** plan de pago documentado.
+- **+60:** decisión — escalar, negociar quita, o suspender crédito.
+
+La antigüedad de saldos convierte la [gestión de cobranza](/blog/gestion-de-cobranza-cuentas-por-cobrar) de "perseguir a todos" en "cobrar con prioridades".
+
+## Nortex te lo da en tiempo real
+
+Cada venta a crédito en Nortex alimenta la antigüedad de saldos automáticamente: abrís el reporte y sabés a quién llamar hoy y cuánto está en riesgo.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'politica-de-credito-negocio',
+        title: 'Política de crédito: las reglas para fiar sin fundirte',
+        description: 'Cómo definir una política de crédito para tu negocio: a quién fiar, cuánto, a qué plazo y qué hacer ante el atraso. Con plantilla de criterios.',
+        keyword: 'política de crédito para clientes',
+        cluster: 'Cobranza y Crédito',
+        category: 'Cobranza',
+        date: '2026-07-06',
+        readTime: '6 min',
+        relatedSlugs: ['gestion-de-cobranza-cuentas-por-cobrar', 'antiguedad-de-saldos-como-usarla', 'flujo-de-caja-pyme-nicaragua'],
+        faq: [
+            { q: '¿Qué debe definir una política de crédito?', a: 'Cuatro cosas: a quién se le da crédito (criterios), cuánto (límite por cliente), a qué plazo, y qué pasa ante el atraso (suspensión del crédito, plan de pago). Escrita y aplicada igual para todos.' },
+            { q: '¿Cómo fijo el límite de crédito de un cliente?', a: 'Empezá bajo (por ejemplo, el equivalente a una compra típica) y subilo con historial de pago puntual. El límite protege: acota cuánto podés perder con un solo cliente.' },
+        ],
+        content: `
+Fiar sin reglas no es generosidad: es rifar tu efectivo. Una política de crédito de una página convierte el "dale, llevátelo" en decisiones que protegen tu negocio.
+
+## Por qué escribirla
+
+Cuando las reglas están solo en tu cabeza, cada excepción se negocia en caliente — y el cliente insistente siempre gana. Con política escrita, el "no" deja de ser personal: es la regla del negocio.
+
+## Los 4 componentes
+
+**1. A quién.** Criterios mínimos: tiempo como cliente, compras previas de contado, referencias. Cliente nuevo = contado; el crédito se gana.
+
+**2. Cuánto.** Límite por cliente. Regla práctica: empezá con el valor de una compra típica y subilo con buen historial. El límite acota tu pérdida máxima por cliente.
+
+**3. A qué plazo.** 15 o 30 días, definido y comunicado en la venta. El plazo que no se dice se vuelve "cuando pueda".
+
+**4. Qué pasa al atraso.** La consecuencia automática más efectiva: **atrasado = crédito suspendido** hasta ponerse al día. Sin excepciones silenciosas.
+
+## Plantilla de arranque
+
+| Regla | Ejemplo |
+| --- | --- |
+| Antigüedad mínima como cliente | 3 meses comprando de contado |
+| Límite inicial | C$2,000 |
+| Aumento de límite | +50% tras 3 créditos pagados puntual |
+| Plazo | 15 días |
+| Atraso | Crédito suspendido hasta pagar |
+
+Ajustá los montos a tu realidad — lo importante es que existan y se cumplan.
+
+## La política se retroalimenta
+
+Tu [antigüedad de saldos](/blog/antiguedad-de-saldos-como-usarla) te dice si la política funciona: si la mora crece, los criterios están flojos. Y cada moroso recurrente es un límite que bajar. Así, la [cobranza](/blog/gestion-de-cobranza-cuentas-por-cobrar) deja de apagar incendios y tu [flujo de caja](/blog/flujo-de-caja-pyme-nicaragua) respira.
+
+## Nortex aplica la política por vos
+
+En Nortex definís el límite por cliente y el sistema lo respeta en caja: si el cliente llegó a su tope o está vencido, la venta a crédito se detiene sola.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'codigo-de-barras-negocio-como-implementarlo',
+        title: 'Código de barras en tu negocio: cómo implementarlo bien',
+        description: 'Cómo implementar código de barras en tu negocio: qué escáner usar, cómo codificar productos sin código y el impacto en caja e inventario.',
+        keyword: 'código de barras punto de venta',
+        cluster: 'Punto de Venta',
+        category: 'Punto de Venta',
+        date: '2026-07-03',
+        readTime: '5 min',
+        relatedSlugs: ['sistema-punto-de-venta-nicaragua-guia', 'control-de-inventario-kardex-nicaragua', 'arqueo-de-caja-paso-a-paso'],
+        faq: [
+            { q: '¿Necesito imprimir códigos para todos mis productos?', a: 'No: la mayoría de productos comerciales ya traen código de fábrica (EAN). Solo generás códigos propios para lo que se vende a granel, fraccionado o sin empaque — y para eso basta una impresora de etiquetas sencilla.' },
+            { q: '¿Qué escáner me conviene?', a: 'Para un mostrador, un escáner láser o de imagen USB básico es suficiente y económico. Si vendés con celular o tablet, la cámara del dispositivo puede escanear directamente en muchos sistemas.' },
+        ],
+        content: `
+Buscar cada producto por nombre en la caja es lento y propenso a errores. El código de barras convierte cada venta en un bip: rápido, exacto y conectado al inventario.
+
+## Qué gana tu negocio
+
+- **Velocidad en caja:** un bip contra escribir y buscar. En hora pico, es la diferencia entre fila y fuga de clientes.
+- **Exactitud:** se cobra el producto correcto al precio correcto — sin "creo que era este".
+- **Inventario confiable:** cada bip descuenta el [Kardex](/blog/control-de-inventario-kardex-nicaragua) sin digitación.
+
+## Lo que ya viene resuelto
+
+La mayoría de productos comerciales trae **código EAN de fábrica**: solo lo registrás una vez en tu sistema asociándolo al producto y su precio. Desde ahí, todo es escanear.
+
+## Lo que codificás vos
+
+Para granel, fraccionados o productos sin empaque, generás **códigos internos** e imprimís etiquetas con una impresora sencilla:
+
+| Caso | Solución |
+| --- | --- |
+| Producto con empaque comercial | Usar su EAN de fábrica |
+| Granel (clavos, arroz por libra) | Código interno por producto |
+| Fraccionado (media pastilla, retazo) | Código interno por presentación |
+
+## El hardware, sin exagerar
+
+Un **escáner USB básico** cuesta poco y funciona como un teclado: se conecta y escanea. Con celular o tablet, muchos sistemas escanean con la **cámara**. No necesitás equipo industrial para un mostrador.
+
+## El proceso de arranque
+
+1. Registrá tus productos con su código (los EAN, escaneándolos una vez).
+2. Etiquetá lo que no trae código.
+3. Entrená a la caja: **todo pasa por el escáner**, sin excepciones "de memoria".
+4. Verificá con el [arqueo](/blog/arqueo-de-caja-paso-a-paso) que ventas y caja cuadran.
+
+Es la mejora de mayor impacto por córdoba invertido en un [punto de venta](/blog/sistema-punto-de-venta-nicaragua-guia).
+
+## Nortex escanea desde el día uno
+
+Nortex registra productos por su código de barras, vende con escáner o cámara y descuenta el inventario en cada bip.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'tabla-de-amortizacion-prestamo-como-leerla',
+        title: 'Tabla de amortización: cómo leerla antes de prestar o pedir prestado',
+        description: 'Qué es una tabla de amortización, cómo se reparte cada cuota entre interés y capital, y qué mirar antes de firmar o de otorgar un préstamo.',
+        keyword: 'tabla de amortización préstamo',
+        cluster: 'Préstamos y Microfinanzas',
+        category: 'Préstamos',
+        date: '2026-07-04',
+        readTime: '6 min',
+        relatedSlugs: ['como-gestionar-prestamos-microfinanzas-nicaragua', 'flujo-de-caja-pyme-nicaragua'],
+        faq: [
+            { q: '¿Por qué al inicio del préstamo casi todo va a intereses?', a: 'Porque el interés de cada cuota se calcula sobre el saldo pendiente, y al inicio el saldo es el más alto. A medida que el capital baja, la porción de interés de cada cuota se achica y la de capital crece.' },
+            { q: '¿Qué pasa si abono a capital?', a: 'Un abono extraordinario reduce el saldo, y con él los intereses futuros: el préstamo se acorta o la cuota baja según lo pactado. Verificá que el contrato permita abonos sin penalidad.' },
+        ],
+        content: `
+Una cuota de préstamo no es un número: es una mezcla de interés y capital que cambia cada mes. La tabla de amortización muestra esa mezcla — y leerla evita sorpresas de los dos lados del mostrador.
+
+## Qué es
+
+Es el calendario del préstamo, cuota por cuota, mostrando cuánto de cada pago va a **interés** y cuánto **amortiza** (reduce) el capital, y el **saldo** que queda.
+
+## La mecánica
+
+En el sistema de cuota fija (el más común):
+
+> Interés del mes = saldo pendiente × tasa del período.
+> Amortización = cuota − interés del mes.
+
+Como el interés se calcula **sobre el saldo**, al inicio (saldo alto) casi toda la cuota es interés; al final, casi toda es capital.
+
+## Ejemplo ilustrativo
+
+Préstamo de C$10,000 a 6 meses, con tasa del 3% mensual sobre saldo (cuota fija ≈ C$1,846):
+
+| Mes | Interés | Amortización | Saldo |
+| --- | --- | --- | --- |
+| 1 | 300 | 1,546 | 8,454 |
+| 2 | 254 | 1,592 | 6,862 |
+| 3 | 206 | 1,640 | 5,222 |
+
+> La tasa del ejemplo es solo ilustrativa para mostrar la mecánica. Las tasas reales que podés cobrar o aceptar tienen marco legal en Nicaragua: confirmalo con un asesor antes de pactar.
+
+## Qué mirar antes de firmar (o de prestar)
+
+1. **El costo total:** sumá todas las cuotas y restá el capital — ese es el precio real del préstamo.
+2. **Sobre qué se calcula el interés:** sobre **saldo** (justo) o sobre el **monto original** todo el plazo (mucho más caro a igual tasa nominal).
+3. **Abonos a capital:** ¿se permiten sin penalidad?
+4. **Cargos extra:** comisiones y seguros que no aparecen en la "tasa".
+
+## Para el que presta
+
+La tabla es tu herramienta de control de cartera: define qué debía entrar cada mes y hace visible el atraso al instante (ver [gestión de préstamos](/blog/como-gestionar-prestamos-microfinanzas-nicaragua)).
+
+## Nortex genera la tabla de cada crédito
+
+Nortex arma la tabla de amortización de cada préstamo, registra los pagos contra ella y te muestra el saldo y el atraso real de cada cliente.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'que-productos-dejan-mas-ganancia-pulperia',
+        title: '¿Qué productos dejan más ganancia en una pulpería?',
+        description: 'Cómo identificar los productos que de verdad dejan ganancia en tu pulpería: margen vs. rotación, la mezcla correcta y errores de surtido.',
+        keyword: 'productos más rentables pulpería',
+        cluster: 'Pulperías y Minoristas',
+        category: 'Pulperías',
+        date: '2026-07-05',
+        readTime: '5 min',
+        relatedSlugs: ['como-administrar-una-pulperia-nicaragua', 'como-calcular-margen-de-ganancia-nicaragua', 'rotacion-de-inventario-como-calcularla'],
+        faq: [
+            { q: '¿Los productos que más se venden son los que más dejan?', a: 'No necesariamente: los de alta rotación (gaseosas, pan) suelen tener margen bajo — atraen clientes. La ganancia real suele estar en lo que se lleva "de paso" con mejor margen. La mezcla de ambos es lo que hace rentable la pulpería.' },
+            { q: '¿Cómo sé el margen real de cada producto?', a: 'Registrando el costo real de compra (con flete y merma) y el precio de venta sin engaños de memoria. Margen = (precio − costo) ÷ precio. Un sistema lo calcula por producto automáticamente.' },
+        ],
+        content: `
+En la pulpería, lo que más se vende no es lo que más deja — y confundir las dos cosas es trabajar mucho para ganar poco. La clave está en la mezcla.
+
+## Dos tipos de producto, dos roles
+
+**Los que atraen (alta rotación, margen bajo):** gaseosas, pan, tortillas, recargas. El cliente viene por ellos todos los días. Casi no dejan margen, pero traen el tráfico.
+
+**Los que dejan (margen alto, venta "de paso"):** productos de limpieza, cuidado personal, golosinas, abarrotes no comparables. El cliente los lleva porque ya está ahí — y ahí vive tu ganancia.
+
+## La pregunta correcta
+
+No es "¿qué se vende más?" sino **"¿cuánto me deja cada córdoba vendido de esto?"** — es decir, el [margen](/blog/como-calcular-margen-de-ganancia-nicaragua) por producto, cruzado con su [rotación](/blog/rotacion-de-inventario-como-calcularla):
+
+| Producto | Rol | Qué hacer |
+| --- | --- | --- |
+| Margen bajo + rota mucho | Imán de clientes | Tenerlo siempre, comprarlo bien |
+| Margen alto + rota bien | La joya | Darle visibilidad, nunca faltar |
+| Margen alto + rota poco | De paso | Ubicarlo junto al mostrador |
+| Margen bajo + rota poco | Peso muerto | No recomprar |
+
+## Trucos de surtido que funcionan
+
+- **Ubicación:** lo de buen margen, a la vista y al alcance del mostrador (la compra impulsiva es tu aliada).
+- **Fraccionar:** vender por unidad o porción suele dejar mejor margen que el paquete completo.
+- **No competir en lo comparable:** en productos que el cliente conoce de memoria (la gaseosa), el precio manda; tu margen se hace en lo que no compara.
+
+## El requisito: conocer tus números
+
+Todo esto exige saber costo y venta **por producto** — no "más o menos". Es el corazón de [administrar bien una pulpería](/blog/como-administrar-una-pulperia-nicaragua).
+
+## Nortex te muestra qué te deja plata
+
+Con Nortex ves el margen y la rotación de cada producto: cuáles son tus joyas, qué es peso muerto y dónde poner el esfuerzo.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'precios-por-mayoreo-ferreteria',
+        title: 'Precios por mayoreo en ferretería: cómo fijarlos sin regalar margen',
+        description: 'Cómo definir precios por mayoreo y escalas de cantidad en tu ferretería sin sacrificar el margen: métodos, ejemplo y errores comunes.',
+        keyword: 'precios por mayoreo ferretería',
+        cluster: 'Ferreterías',
+        category: 'Ferreterías',
+        date: '2026-07-06',
+        readTime: '5 min',
+        relatedSlugs: ['como-administrar-una-ferreteria-nicaragua', 'como-calcular-margen-de-ganancia-nicaragua', 'politica-de-credito-negocio'],
+        faq: [
+            { q: '¿Cuánto descuento dar por mayoreo?', a: 'El que tu margen aguante: partí del margen del producto y decidí cuánto estás dispuesto a ceder a cambio de volumen. Un descuento del 10% sobre un margen del 25% se lleva el 40% de tu ganancia — hacé la cuenta antes de prometer.' },
+            { q: '¿Le doy precio de mayoreo a cualquiera que pida cantidad?', a: 'Definí umbrales claros (por cantidad o monto) y aplicalos parejo. El mayoreo "negociado a ojo" en el mostrador termina regalando margen a quien más presiona, no a quien más compra.' },
+        ],
+        content: `
+El maestro de obra pide precio "por cantidad" y la respuesta improvisada suele regalar margen. El mayoreo bien hecho premia el volumen sin fundir la ganancia — y se define antes, no en el mostrador.
+
+## El principio: el descuento sale del margen
+
+Todo descuento se paga con tu [margen](/blog/como-calcular-margen-de-ganancia-nicaragua). La cuenta que hay que hacer siempre:
+
+> Si un producto deja 25% de margen y das 10% de descuento, tu ganancia baja un 40%.
+
+El volumen tiene que compensar esa cesión — y eso se calcula, no se siente.
+
+## Escalas claras, iguales para todos
+
+Definí umbrales objetivos y publicalos:
+
+| Cantidad | Precio |
+| --- | --- |
+| 1-9 unidades | Precio detalle |
+| 10-49 | −5% |
+| 50+ | −10% |
+
+Las escalas por **monto de compra total** también funcionan (p. ej., descuento a partir de C$10,000). Lo importante: la regla decide, no la insistencia del cliente.
+
+## Dónde sí y dónde no
+
+- **Sí:** productos con margen amplio y costo negociable con tu proveedor por volumen.
+- **Con cuidado:** productos ancla (cemento, varilla) que ya vendés casi al costo — ahí el "mayoreo" puede ser vender a pérdida.
+- **Mejor alternativa a veces:** en lugar de descuento, valor agregado — flete incluido, prioridad de entrega, [crédito con reglas](/blog/politica-de-credito-negocio).
+
+## Mayoreo y crédito: cuentas separadas
+
+El cliente de volumen suele pedir también plazo. Son dos concesiones distintas: descuento **y** crédito juntos es margen cedido dos veces. Decidí cada uno por separado.
+
+## Nortex maneja listas de precios por volumen
+
+En Nortex configurás precios por escala de cantidad o listas por tipo de cliente, y la caja los aplica sola: el mayoreo queda en la regla, no en la negociación. Ver la [guía de ferreterías](/blog/como-administrar-una-ferreteria-nicaragua).
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
 ];
