@@ -36,6 +36,7 @@ import motorizadosRouter from './routes/motorizados';
 import driverRouter from './routes/driver';
 import loanRoutes from './routes/loans';
 import purchaseOrdersRouter from './routes/purchaseOrders';
+import serialsRouter from './routes/serials';
 import syncRoutes from './routes/sync';
 import Decimal from 'decimal.js';
 import {
@@ -201,6 +202,7 @@ app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
 app.use('/api/driver', driverRouter); // Red NORTEX: registro, login PIN, entregas
 app.use('/api/purchase-orders', purchaseOrdersRouter); // Órdenes de Compra (procurement)
+app.use('/api/serials', serialsRouter); // Control de series (números de serie por unidad)
 app.use('/api/loans', loanRoutes);
 app.use('/api/sales/sync', syncRoutes);
 
