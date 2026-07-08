@@ -133,15 +133,43 @@ export async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
                 const endsAt = new Date();
                 endsAt.setDate(endsAt.getDate() + 30);
 
-                await prisma.tenant.update({
+                // Leer estado previo para el asiento de auditoría (before/after)
+                const before = await prisma.tenant.findUnique({
                     where: { id: tenantId },
-                    data: {
-                        subscriptionStatus: 'ACTIVE',
-                        stripeSubscriptionId: session.subscription as string,
-                        subscriptionEndsAt: endsAt,
-                    },
+                    include: { users: { take: 1, orderBy: { createdAt: 'asc' } } },
                 });
-                console.log(`✅ Tenant ${tenantId} ACTIVADO via Stripe Checkout`);
+
+                if (before) {
+                    const subscriptionId = session.subscription as string;
+                    const auditUserId = before.users[0]?.id;
+                    const ops: any[] = [
+                        prisma.tenant.update({
+                            where: { id: tenantId },
+                            data: {
+                                subscriptionStatus: 'ACTIVE',
+                                stripeSubscriptionId: subscriptionId,
+                                subscriptionEndsAt: endsAt,
+                            },
+                        }),
+                    ];
+                    if (auditUserId) {
+                        ops.push(prisma.auditLog.create({
+                            data: {
+                                tenantId,
+                                userId: auditUserId,
+                                action: 'SUBSCRIPTION_ACTIVATED',
+                                details: `Stripe checkout.session.completed (event ${event.id}). ` +
+                                    `subscriptionStatus: ${before.subscriptionStatus} -> ACTIVE. ` +
+                                    `stripeSubscriptionId: ${before.stripeSubscriptionId ?? 'null'} -> ${subscriptionId}. ` +
+                                    `subscriptionEndsAt: ${before.subscriptionEndsAt?.toISOString() ?? 'null'} -> ${endsAt.toISOString()}.`,
+                            },
+                        }));
+                    } else {
+                        console.warn(`⚠️ AuditLog omitido: tenant ${tenantId} sin usuario para atribuir el asiento`);
+                    }
+                    await prisma.$transaction(ops);
+                    console.log(`✅ Tenant ${tenantId} ACTIVADO via Stripe Checkout`);
+                }
             }
             break;
         }
@@ -153,19 +181,38 @@ export async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
             if (subscriptionId) {
                 const tenant = await prisma.tenant.findFirst({
                     where: { stripeSubscriptionId: subscriptionId },
+                    include: { users: { take: 1, orderBy: { createdAt: 'asc' } } },
                 });
 
                 if (tenant) {
                     const endsAt = new Date();
                     endsAt.setDate(endsAt.getDate() + 30);
 
-                    await prisma.tenant.update({
-                        where: { id: tenant.id },
-                        data: {
-                            subscriptionStatus: 'ACTIVE',
-                            subscriptionEndsAt: endsAt,
-                        },
-                    });
+                    const auditUserId = tenant.users[0]?.id;
+                    const ops: any[] = [
+                        prisma.tenant.update({
+                            where: { id: tenant.id },
+                            data: {
+                                subscriptionStatus: 'ACTIVE',
+                                subscriptionEndsAt: endsAt,
+                            },
+                        }),
+                    ];
+                    if (auditUserId) {
+                        ops.push(prisma.auditLog.create({
+                            data: {
+                                tenantId: tenant.id,
+                                userId: auditUserId,
+                                action: 'SUBSCRIPTION_RENEWED',
+                                details: `Stripe invoice.paid (event ${event.id}). ` +
+                                    `subscriptionStatus: ${tenant.subscriptionStatus} -> ACTIVE. ` +
+                                    `subscriptionEndsAt: ${tenant.subscriptionEndsAt?.toISOString() ?? 'null'} -> ${endsAt.toISOString()}.`,
+                            },
+                        }));
+                    } else {
+                        console.warn(`⚠️ AuditLog omitido: tenant ${tenant.id} sin usuario para atribuir el asiento`);
+                    }
+                    await prisma.$transaction(ops);
                     console.log(`💰 Invoice paid - Tenant ${tenant.id} renovado hasta ${endsAt.toISOString()}`);
                 }
             }
@@ -177,14 +224,40 @@ export async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
             const tenantId = subscription.metadata?.tenantId;
 
             if (tenantId) {
-                await prisma.tenant.update({
+                // Leer estado previo para el asiento de auditoría (before/after)
+                const before = await prisma.tenant.findUnique({
                     where: { id: tenantId },
-                    data: {
-                        subscriptionStatus: 'CANCELLED',
-                        stripeSubscriptionId: null,
-                    },
+                    include: { users: { take: 1, orderBy: { createdAt: 'asc' } } },
                 });
-                console.log(`🚫 Tenant ${tenantId} CANCELADO - Suscripción eliminada`);
+
+                if (before) {
+                    const auditUserId = before.users[0]?.id;
+                    const ops: any[] = [
+                        prisma.tenant.update({
+                            where: { id: tenantId },
+                            data: {
+                                subscriptionStatus: 'CANCELLED',
+                                stripeSubscriptionId: null,
+                            },
+                        }),
+                    ];
+                    if (auditUserId) {
+                        ops.push(prisma.auditLog.create({
+                            data: {
+                                tenantId,
+                                userId: auditUserId,
+                                action: 'SUBSCRIPTION_CANCELLED',
+                                details: `Stripe customer.subscription.deleted (event ${event.id}). ` +
+                                    `subscriptionStatus: ${before.subscriptionStatus} -> CANCELLED. ` +
+                                    `stripeSubscriptionId: ${before.stripeSubscriptionId ?? 'null'} -> null.`,
+                            },
+                        }));
+                    } else {
+                        console.warn(`⚠️ AuditLog omitido: tenant ${tenantId} sin usuario para atribuir el asiento`);
+                    }
+                    await prisma.$transaction(ops);
+                    console.log(`🚫 Tenant ${tenantId} CANCELADO - Suscripción eliminada`);
+                }
             }
             break;
         }
@@ -196,13 +269,31 @@ export async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
             if (subscriptionId) {
                 const tenant = await prisma.tenant.findFirst({
                     where: { stripeSubscriptionId: subscriptionId },
+                    include: { users: { take: 1, orderBy: { createdAt: 'asc' } } },
                 });
 
                 if (tenant) {
-                    await prisma.tenant.update({
-                        where: { id: tenant.id },
-                        data: { subscriptionStatus: 'PAST_DUE' },
-                    });
+                    const auditUserId = tenant.users[0]?.id;
+                    const ops: any[] = [
+                        prisma.tenant.update({
+                            where: { id: tenant.id },
+                            data: { subscriptionStatus: 'PAST_DUE' },
+                        }),
+                    ];
+                    if (auditUserId) {
+                        ops.push(prisma.auditLog.create({
+                            data: {
+                                tenantId: tenant.id,
+                                userId: auditUserId,
+                                action: 'SUBSCRIPTION_PAST_DUE',
+                                details: `Stripe invoice.payment_failed (event ${event.id}). ` +
+                                    `subscriptionStatus: ${tenant.subscriptionStatus} -> PAST_DUE.`,
+                            },
+                        }));
+                    } else {
+                        console.warn(`⚠️ AuditLog omitido: tenant ${tenant.id} sin usuario para atribuir el asiento`);
+                    }
+                    await prisma.$transaction(ops);
                     console.log(`⚠️ Pago fallido - Tenant ${tenant.id} marcado como PAST_DUE`);
                 }
             }

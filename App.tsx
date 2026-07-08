@@ -1,3 +1,4 @@
+import React, { Suspense, lazy } from 'react';
 import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
@@ -33,10 +34,15 @@ import HelpCenter from './components/HelpCenter';
 import PublicCatalog from './components/PublicCatalog';
 import TrackPedido from './components/TrackPedido';
 
-// SEO Landing Pages & Blog
+// SEO Landing Pages
 import LandingFerreteria from './components/LandingFerreteria';
 import LandingFarmacia from './components/LandingFarmacia';
 import LandingNicaragua from './components/LandingNicaragua';
+// Blog (lazy: el contenido de los artículos NO entra al bundle inicial del SPA;
+// se carga solo al visitar /blog, /blog/:slug o /blog/categoria/:slug).
+const Blog = lazy(() => import('./components/Blog'));
+const BlogPost = lazy(() => import('./components/BlogPost'));
+const ClusterPage = lazy(() => import('./components/ClusterPage'));
 import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
 
@@ -97,31 +103,33 @@ const ProtectedApp = () => {
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/register" element={<RegisterTenant />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/privacy" element={<PrivacyPolicy />} />
-        <Route path="/terms" element={<TermsOfService />} />
-        <Route path="/ferreterias" element={<LandingFerreteria />} />
-        <Route path="/farmacias" element={<LandingFarmacia />} />
-        <Route path="/nicaragua" element={<LandingNicaragua />} />
-        <Route path="/blog" element={<Suspense fallback={<BlogFallback />}><Blog /></Suspense>} />
-        <Route path="/blog/categoria/:slug" element={<Suspense fallback={<BlogFallback />}><BlogHub /></Suspense>} />
-        <Route path="/blog/:slug" element={<Suspense fallback={<BlogFallback />}><BlogPost /></Suspense>} />
-        <Route path="/admin" element={<SuperAdmin />} />
-        <Route path="/forgot-password" element={<ForgotPassword />} />
-        <Route path="/reset-password/:token" element={<ResetPassword />} />
-        <Route path="/pedidos/:slug" element={<PublicCatalog />} />
-        <Route path="/catalog/:slug" element={<PublicCatalog />} />
-        {/* App del repartidor: login teléfono+PIN. /driver/:id queda por
-            compatibilidad con links viejos — ahora solo muestra el login. */}
-        <Route path="/driver" element={<DriverView />} />
-        <Route path="/track/:pedidoId" element={<TrackPedido />} />
-        <Route path="/driver/:id" element={<DriverView />} />
-        <Route path="/repartidor/registro" element={<RegistroRepartidor />} />
-        <Route path="/app/*" element={<ProtectedApp />} />
-      </Routes>
+      <Suspense fallback={<div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>Cargando…</div>}>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/register" element={<RegisterTenant />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/privacy" element={<PrivacyPolicy />} />
+          <Route path="/terms" element={<TermsOfService />} />
+          <Route path="/ferreterias" element={<LandingFerreteria />} />
+          <Route path="/farmacias" element={<LandingFarmacia />} />
+          <Route path="/nicaragua" element={<LandingNicaragua />} />
+          <Route path="/blog" element={<Blog />} />
+          <Route path="/blog/categoria/:clusterSlug" element={<ClusterPage />} />
+          <Route path="/blog/:slug" element={<BlogPost />} />
+          <Route path="/admin" element={<SuperAdmin />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password/:token" element={<ResetPassword />} />
+          <Route path="/pedidos/:slug" element={<PublicCatalog />} />
+          <Route path="/catalog/:slug" element={<PublicCatalog />} />
+          {/* App del repartidor: login teléfono+PIN. /driver/:id queda por
+              compatibilidad con links viejos — ahora solo muestra el login. */}
+          <Route path="/driver" element={<DriverView />} />
+          <Route path="/track/:pedidoId" element={<TrackPedido />} />
+          <Route path="/driver/:id" element={<DriverView />} />
+          <Route path="/repartidor/registro" element={<RegistroRepartidor />} />
+          <Route path="/app/*" element={<ProtectedApp />} />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   );
 }

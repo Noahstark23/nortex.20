@@ -35,9 +35,9 @@ const Login: React.FC = () => {
       localStorage.setItem('nortex_tenant_id', data.tenant.id);
       localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
 
-      // SUPER_ADMIN redirect
-      const SUPER_ADMIN_EMAILS = ['noelpinedaa96@gmail.com'];
-      if (data.user.role === 'SUPER_ADMIN' || SUPER_ADMIN_EMAILS.includes(data.user.email)) {
+      // SUPER_ADMIN redirect — basado en el rol devuelto por el backend, nunca en un
+      // email hardcodeado en el bundle. El privilegio real lo valida el servidor.
+      if (data.user.role === 'SUPER_ADMIN') {
         navigate('/admin');
       } else {
         navigate('/app/dashboard');

@@ -12,6 +12,7 @@
  */
 
 import { z } from 'zod';
+import Decimal from 'decimal.js';
 import { prisma } from './db';
 import { catalogRetriever } from './rag';
 
@@ -30,7 +31,7 @@ export interface AgentTool {
     run(ctx: ToolContext, rawArgs: unknown): Promise<string>;
 }
 
-const money = (n: number) => `C$${n.toFixed(2)}`;
+const money = (n: Decimal.Value) => `C$${new Decimal(n).toFixed(2)}`;
 
 // ── consultarInventario ──────────────────────────────────────────────────────
 const buscarProducto: AgentTool = {
@@ -75,10 +76,11 @@ const consultarDeuda: AgentTool = {
         });
         if (!customer) return 'No pude encontrar tu cuenta. Contactá a la tienda, por favor.';
 
-        const debt = Number(customer.currentDebt);
-        const limit = Number(customer.creditLimit);
-        const available = Math.max(0, limit - debt);
-        if (debt <= 0) return `${customer.name}, no tenés saldo pendiente. ¡Estás al día! ✅`;
+        const debt = new Decimal(customer.currentDebt.toString());
+        const limit = new Decimal(customer.creditLimit.toString());
+        const availableRaw = limit.minus(debt);
+        const available = availableRaw.lessThan(0) ? new Decimal(0) : availableRaw;
+        if (debt.lessThanOrEqualTo(0)) return `${customer.name}, no tenés saldo pendiente. ¡Estás al día! ✅`;
         const blocked = customer.isBlocked ? '\n⚠️ Tu cuenta está bloqueada por mora; regularizá para seguir comprando a crédito.' : '';
         return `${customer.name}, tu saldo pendiente es ${money(debt)}.\nCrédito disponible: ${money(available)}.${blocked}`;
     },
@@ -99,7 +101,7 @@ const ventasHoy: AgentTool = {
             _sum: { total: true },
             _count: { _all: true },
         });
-        const total = Number(agg._sum.total ?? 0);
+        const total = new Decimal((agg._sum.total ?? 0).toString());
         const count = agg._count._all;
         if (count === 0) return 'Hoy todavía no hay ventas registradas.';
         return `📊 Hoy: ${count} ventas por un total de ${money(total)}.`;

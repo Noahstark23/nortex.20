@@ -1,29 +1,31 @@
-import React from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { allPostsSorted, clustersWithPosts, clusterName } from '../data/blog-taxonomy';
-import { ArrowRight, Clock, Layers } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { blogPosts } from '../data/blog-posts';
+import { blogClusters } from '../data/blog-clusters';
+import { ArrowRight, Clock } from 'lucide-react';
 
-const PAGE_SIZE = 12;
+const PER_PAGE = 12;
 
 const Blog: React.FC = () => {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [active, setActive] = useState<string>('all');
+  const [page, setPage] = useState<number>(1);
 
-  const posts = allPostsSorted();
-  const clusters = clustersWithPosts();
+  // Clústeres que efectivamente tienen artículos, en el orden de la taxonomía.
+  const clusters = useMemo(
+    () => blogClusters.filter((c) => blogPosts.some((p) => p.cluster === c.name)),
+    []
+  );
 
-  const totalPages = Math.max(1, Math.ceil(posts.length / PAGE_SIZE));
-  const requested = parseInt(searchParams.get('page') ?? '1', 10);
-  const page = Number.isFinite(requested) ? Math.min(Math.max(1, requested), totalPages) : 1;
-  const start = (page - 1) * PAGE_SIZE;
-  const pagePosts = posts.slice(start, start + PAGE_SIZE);
+  const filtered = useMemo(() => {
+    const list = active === 'all' ? blogPosts : blogPosts.filter((p) => p.cluster === active);
+    return [...list].sort((a, b) => (a.date < b.date ? 1 : -1));
+  }, [active]);
 
-  const goToPage = (p: number) => {
-    const next = new URLSearchParams(searchParams);
-    if (p <= 1) next.delete('page');
-    else next.set('page', String(p));
-    setSearchParams(next);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+  const safePage = Math.min(page, totalPages);
+  const visible = filtered.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
+
+  const selectCluster = (name: string): void => { setActive(name); setPage(1); };
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -34,7 +36,7 @@ const Blog: React.FC = () => {
             <span className="font-bold text-slate-900">NORTEX</span>
             <span className="text-slate-400 ml-2">/ Blog</span>
           </Link>
-          <Link to="/register" className="text-sm font-bold bg-slate-900 text-white px-4 py-2 rounded-lg">
+          <Link to="/register" className="text-sm font-bold bg-slate-900 text-white px-4 py-2 rounded-lg focus-visible:ring-2 focus-visible:ring-emerald-500">
             Prueba Gratis
           </Link>
         </div>
@@ -45,33 +47,38 @@ const Blog: React.FC = () => {
           Recursos para negocios en Nicaragua
         </h1>
         <p className="text-slate-500 mb-8">
-          Guías de nómina, facturación DGI, impuestos, inventario y gestión de negocios para PyMES nicaragüenses.
+          Guías de inventario, facturación DGI, nómina, impuestos y gestión para PyMES nicaragüenses.
         </p>
 
-        {/* Filtro por clúster → hubs por categoría */}
-        {clusters.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-10">
-            <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-400 px-1">
-              <Layers size={14} /> Temas:
-            </span>
-            {clusters.map(c => (
-              <Link
-                key={c.slug}
-                to={`/blog/categoria/${c.slug}`}
-                className="text-xs font-semibold text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-full hover:border-emerald-300 hover:text-emerald-700 transition-colors"
-              >
-                {c.name}
-              </Link>
-            ))}
-          </div>
-        )}
+        {/* Filtro por clúster temático */}
+        <div className="flex flex-wrap gap-2 mb-10" role="group" aria-label="Filtrar por categoría">
+          <button
+            type="button"
+            onClick={() => selectCluster('all')}
+            aria-pressed={active === 'all'}
+            className={`text-sm font-medium px-4 py-2 rounded-full border transition-colors focus-visible:ring-2 focus-visible:ring-emerald-500 ${active === 'all' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300'}`}
+          >
+            Todos
+          </button>
+          {clusters.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => selectCluster(c.name)}
+              aria-pressed={active === c.name}
+              className={`text-sm font-medium px-4 py-2 rounded-full border transition-colors focus-visible:ring-2 focus-visible:ring-emerald-500 ${active === c.name ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300'}`}
+            >
+              {c.name}
+            </button>
+          ))}
+        </div>
 
         <div className="grid md:grid-cols-2 gap-6">
-          {pagePosts.map(post => (
+          {visible.map((post) => (
             <Link
               key={post.slug}
               to={`/blog/${post.slug}`}
-              className="block bg-white border border-slate-200 rounded-xl p-6 hover:border-emerald-300 hover:shadow-md transition-all group"
+              className="block bg-white border border-slate-200 rounded-xl p-6 hover:border-emerald-300 hover:shadow-md transition-all group focus-visible:ring-2 focus-visible:ring-emerald-500"
             >
               <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full">
                 {clusterName(post)}
@@ -94,34 +101,22 @@ const Blog: React.FC = () => {
           ))}
         </div>
 
-        {/* Paginación */}
         {totalPages > 1 && (
-          <nav className="flex items-center justify-center gap-2 mt-12" aria-label="Paginación del blog">
+          <nav className="flex items-center justify-center gap-2 mt-12" aria-label="Paginación">
             <button
-              onClick={() => goToPage(page - 1)}
-              disabled={page === 1}
-              className="text-sm font-semibold px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:border-emerald-300"
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={safePage === 1}
+              className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 hover:border-emerald-300 focus-visible:ring-2 focus-visible:ring-emerald-500"
             >
               Anterior
             </button>
-            {Array.from({ length: totalPages }, (_, idx) => idx + 1).map(p => (
-              <button
-                key={p}
-                onClick={() => goToPage(p)}
-                aria-current={p === page ? 'page' : undefined}
-                className={`text-sm font-semibold w-9 h-9 rounded-lg border transition-colors ${
-                  p === page
-                    ? 'bg-slate-900 text-white border-slate-900'
-                    : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300'
-                }`}
-              >
-                {p}
-              </button>
-            ))}
+            <span className="text-sm text-slate-500">Página {safePage} de {totalPages}</span>
             <button
-              onClick={() => goToPage(page + 1)}
-              disabled={page === totalPages}
-              className="text-sm font-semibold px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:border-emerald-300"
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={safePage === totalPages}
+              className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 hover:border-emerald-300 focus-visible:ring-2 focus-visible:ring-emerald-500"
             >
               Siguiente
             </button>

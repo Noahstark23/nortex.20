@@ -64,6 +64,8 @@ model Tenant {
   cashMovements    CashMovement[]
   productReturns   ProductReturn[]
   serialNumbers    SerialNumber[]
+  warehouses       Warehouse[]
+  productStocks    ProductStock[]
   accounts         Account[]
   journalEntries   JournalEntry[]
   fiscalRetentions FiscalRetention[]
@@ -790,6 +792,7 @@ model Product {
   stockCountItems StockCountItem[]
   purchaseOrderItems PurchaseOrderItem[]
   serialNumbers   SerialNumber[]
+  productStocks   ProductStock[]
   defaultSupplier Supplier?        @relation("DefaultSupplier", fields: [defaultSupplierId], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, sku])
@@ -829,12 +832,57 @@ model KardexMovement {
   user    User          @relation(fields: [userId], references: [id])
   batchId String?
   batch   ProductBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  // Bodega del movimiento (null = anterior a multi-bodega / no especificada)
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
 
   @@index([productId])
   @@index([tenantId])
   @@index([date])
   @@index([type])
   @@index([batchId])
+  @@index([warehouseId])
+}
+
+// ==========================================
+// MULTI-BODEGA (Fase 2: fundación)
+// Product.stock sigue siendo el AGREGADO autoritativo (Σ bodegas); ProductStock
+// es el desglose por bodega. El backfill es perezoso: la bodega default absorbe
+// el total legado la primera vez que se toca (ver stockService).
+// ==========================================
+
+model Warehouse {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  address   String?
+  isDefault Boolean  @default(false) // bodega principal (recibe los flujos sin bodega explícita)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  productStocks   ProductStock[]
+  kardexMovements KardexMovement[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model ProductStock {
+  id          String @id @default(cuid())
+  tenantId    String
+  productId   String
+  warehouseId String
+  stock       Float  @default(0)
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, warehouseId])
+  @@index([tenantId])
+  @@index([warehouseId])
+  @@index([productId])
 }
 
 // ==========================================
