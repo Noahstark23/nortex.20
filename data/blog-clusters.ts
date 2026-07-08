@@ -1,142 +1,50 @@
-/**
- * NORTEX — taxonomía de clústeres del blog (arquitectura de contenido SEO).
- *
- * Cada artículo (`BlogPost.cluster`) referencia un clúster por su `name` EXACTO.
- * Cada clúster tiene un artículo pilar (`pillarSlug`) que es el hub temático; el
- * resto son artículos de soporte que enlazan al pilar y entre sí.
- *
- * Los hubs se publican en /blog/categoria/:slug (ver components/ClusterPage.tsx).
- */
-
+// data/blog-clusters.ts
+// Taxonomía de clústeres temáticos del blog (modelo pillar + cluster).
+// Cada artículo de data/blog-posts.ts declara `cluster` con el `name` de uno
+// de estos clústeres. El hub vive en /blog/categoria/:slug (ver ClusterPage).
 export interface BlogCluster {
-    /** slug del hub: /blog/categoria/<slug> */
-    slug: string;
-    /** nombre EXACTO usado en BlogPost.cluster */
-    name: string;
-    /** subtítulo/descripción del hub (también meta description del hub) */
-    description: string;
-    /** slug del artículo pilar del clúster */
-    pillarSlug: string;
-    /** emoji corto para el chip/hub (sin dependencias de íconos extra) */
-    emoji: string;
+  id: string;
+  name: string;        // debe coincidir EXACTO con BlogPost.cluster
+  slug: string;        // /blog/categoria/<slug>
+  description: string;
+  pillarSlug: string;  // slug del artículo pilar (vacío si el clúster no tiene uno único)
 }
 
 export const blogClusters: BlogCluster[] = [
-    {
-        slug: 'facturacion-dgi',
-        name: 'Facturación DGI',
-        description: 'Cómo facturar cumpliendo la DGI en Nicaragua: series, requisitos, facturación electrónica y comprobantes.',
-        pillarSlug: 'facturacion-dgi-nicaragua-guia',
-        emoji: '🧾',
-    },
-    {
-        slug: 'impuestos-retenciones',
-        name: 'Impuestos y Retenciones',
-        description: 'Retenciones IR en la fuente, anticipos y obligaciones tributarias mensuales ante la DGI.',
-        pillarSlug: 'retenciones-ir-nicaragua-2026',
-        emoji: '📊',
-    },
-    {
-        slug: 'iva',
-        name: 'IVA',
-        description: 'IVA en Nicaragua: tasa, base gravable, exenciones, crédito fiscal y declaración mensual.',
-        pillarSlug: 'iva-nicaragua-guia-completa',
-        emoji: '💵',
-    },
-    {
-        slug: 'nomina-planillas',
-        name: 'Nómina y Planillas',
-        description: 'Cálculo de nómina, INSS, INATEC e IR salarial según el Código del Trabajo de Nicaragua.',
-        pillarSlug: 'como-calcular-nomina-nicaragua-2026',
-        emoji: '👷',
-    },
-    {
-        slug: 'recursos-humanos',
-        name: 'Recursos Humanos',
-        description: 'Prestaciones laborales, contratos, vacaciones, aguinaldo e indemnización en Nicaragua.',
-        pillarSlug: 'prestaciones-laborales-nicaragua-guia',
-        emoji: '🤝',
-    },
-    {
-        slug: 'inventario-kardex',
-        name: 'Inventario y Kardex',
-        description: 'Control de inventario, método Kardex, costeo y rotación de stock para PyMES.',
-        pillarSlug: 'control-de-inventario-kardex-nicaragua',
-        emoji: '📦',
-    },
-    {
-        slug: 'punto-de-venta',
-        name: 'Punto de Venta',
-        description: 'Sistemas de punto de venta (POS) para negocios en Nicaragua: qué buscar y cómo elegir.',
-        pillarSlug: 'sistema-punto-de-venta-nicaragua-guia',
-        emoji: '🛒',
-    },
-    {
-        slug: 'contabilidad-pyme',
-        name: 'Contabilidad PyME',
-        description: 'Contabilidad básica para pequeños negocios: cuentas, estados financieros y obligaciones.',
-        pillarSlug: 'contabilidad-basica-pyme-nicaragua',
-        emoji: '📒',
-    },
-    {
-        slug: 'cobranza-credito',
-        name: 'Cobranza y Crédito',
-        description: 'Gestión de cuentas por cobrar, crédito a clientes y recuperación de cartera.',
-        pillarSlug: 'gestion-de-cobranza-cuentas-por-cobrar',
-        emoji: '📥',
-    },
-    {
-        slug: 'cuota-fija',
-        name: 'Régimen de Cuota Fija',
-        description: 'El régimen simplificado de Cuota Fija de la DGI: quién aplica, cuánto se paga y obligaciones.',
-        pillarSlug: 'regimen-cuota-fija-nicaragua-guia',
-        emoji: '🪙',
-    },
-    {
-        slug: 'ferreterias',
-        name: 'Ferreterías',
-        description: 'Gestión, inventario y facturación para ferreterías en Nicaragua.',
-        pillarSlug: 'como-administrar-una-ferreteria-nicaragua',
-        emoji: '🔧',
-    },
-    {
-        slug: 'farmacias',
-        name: 'Farmacias',
-        description: 'Control de lotes, caducidad y facturación para farmacias en Nicaragua.',
-        pillarSlug: 'como-administrar-una-farmacia-nicaragua',
-        emoji: '💊',
-    },
-    {
-        slug: 'pulperias-minoristas',
-        name: 'Pulperías y Minoristas',
-        description: 'Administración de pulperías, mini-súper y negocios minoristas de barrio.',
-        pillarSlug: 'como-administrar-una-pulperia-nicaragua',
-        emoji: '🏪',
-    },
-    {
-        slug: 'prestamos-microfinanzas',
-        name: 'Préstamos y Microfinanzas',
-        description: 'Gestión de préstamos, intereses y cartera para prestamistas y microfinancieras.',
-        pillarSlug: 'como-gestionar-prestamos-microfinanzas-nicaragua',
-        emoji: '🏦',
-    },
-    {
-        slug: 'finanzas-gestion',
-        name: 'Finanzas y Gestión',
-        description: 'Flujo de caja, márgenes, costos y decisiones financieras para hacer crecer tu negocio.',
-        pillarSlug: 'flujo-de-caja-pyme-nicaragua',
-        emoji: '📈',
-    },
+  { id: 'INV', name: 'Inventarios', slug: 'inventarios', pillarSlug: 'control-de-inventario',
+    description: 'Control de inventario, Kardex, costeo y bodega para PyMES de Nicaragua.' },
+  { id: 'FAC', name: 'Facturación', slug: 'facturacion', pillarSlug: 'como-facturar-en-nicaragua',
+    description: 'Facturación que cumple la DGI: tipos de factura, notas, crédito fiscal y errores.' },
+  { id: 'POS', name: 'Punto de Venta (POS)', slug: 'pos', pillarSlug: 'que-es-un-pos',
+    description: 'Sistemas de punto de venta para vender más rápido y cuadrar la caja.' },
+  { id: 'ADM', name: 'Administración y ERP', slug: 'administracion', pillarSlug: 'que-es-un-erp',
+    description: 'ERP, indicadores, flujo de caja y márgenes para administrar con números.' },
+  { id: 'COM', name: 'Compras', slug: 'compras', pillarSlug: 'como-comprar-para-un-negocio',
+    description: 'Compras, proveedores, órdenes y recepción para cuidar tu margen.' },
+  { id: 'VEN', name: 'Ventas', slug: 'ventas', pillarSlug: 'como-aumentar-las-ventas',
+    description: 'Tácticas para vender más: ticket promedio, cross/up selling y fidelización.' },
+  { id: 'RH', name: 'Recursos Humanos y Nómina', slug: 'recursos-humanos', pillarSlug: 'como-calcular-nomina-nicaragua-2026',
+    description: 'Nómina, INSS, INATEC, vacaciones, aguinaldo y liquidaciones (Ley 185).' },
+  { id: 'CON', name: 'Contabilidad', slug: 'contabilidad', pillarSlug: 'contabilidad-para-pymes-nicaragua',
+    description: 'Estados financieros, asientos y NIIF para PyMES, explicado simple.' },
+  { id: 'IMP', name: 'Impuestos Nicaragua', slug: 'impuestos-nicaragua', pillarSlug: 'impuestos-en-nicaragua',
+    description: 'IVA, IR, retenciones, cuota fija y calendario tributario de la DGI.' },
+  { id: 'EMP', name: 'Emprendimiento', slug: 'emprendimiento', pillarSlug: 'como-abrir-un-negocio-en-nicaragua',
+    description: 'De la idea al negocio formal: abrir, administrar y hacer crecer una PyME.' },
+  { id: 'TEC', name: 'Tecnología', slug: 'tecnologia', pillarSlug: 'tecnologia-para-pymes',
+    description: 'SaaS, nube, seguridad, backups y código de barras para negocios.' },
+  { id: 'IA', name: 'Inteligencia Artificial', slug: 'ia-negocios', pillarSlug: 'ia-para-negocios',
+    description: 'IA aplicada a inventario, ventas, atención al cliente y reportes.' },
+  { id: 'CAS', name: 'Casos reales', slug: 'casos', pillarSlug: '',
+    description: 'Cómo negocios reales de Nicaragua resolvieron sus problemas con Nortex.' },
+  { id: 'CMP', name: 'Comparativas', slug: 'comparativas', pillarSlug: '',
+    description: 'Comparaciones honestas: ERP vs Excel, POS vs caja, Nortex vs alternativas.' },
+  { id: 'IND', name: 'Guías por industria', slug: 'guias', pillarSlug: '',
+    description: 'Guías completas por rubro: ferreterías, farmacias, pulperías, restaurantes y más.' },
 ];
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+export const clusterBySlug = (slug: string): BlogCluster | undefined =>
+  blogClusters.find((c) => c.slug === slug);
 
-const clustersByName: Record<string, BlogCluster> = Object.fromEntries(
-    blogClusters.map(c => [c.name, c]),
-);
-const clustersBySlug: Record<string, BlogCluster> = Object.fromEntries(
-    blogClusters.map(c => [c.slug, c]),
-);
-
-export const getClusterByName = (name: string): BlogCluster | undefined => clustersByName[name];
-export const getClusterBySlug = (slug: string): BlogCluster | undefined => clustersBySlug[slug];
+export const clusterByName = (name: string): BlogCluster | undefined =>
+  blogClusters.find((c) => c.name === name);
