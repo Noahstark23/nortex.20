@@ -63,6 +63,7 @@ model Tenant {
   invitations      Invitation[]
   cashMovements    CashMovement[]
   productReturns   ProductReturn[]
+  serialNumbers    SerialNumber[]
   warehouses       Warehouse[]
   productStocks    ProductStock[]
   accounts         Account[]
@@ -222,6 +223,7 @@ model Purchase {
   supplier      Supplier       @relation(fields: [supplierId], references: [id])
   items         PurchaseItem[]
   capitalLoan   CapitalLoan?
+  serialNumbers SerialNumber[]
   purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
 
   @@index([tenantId])
@@ -520,6 +522,7 @@ model Sale {
   items          SaleItem[]
   payments       Payment[]
   productReturns ProductReturn[]
+  serialNumbers  SerialNumber[]
   pedidos        Pedido[]
 
   @@index([tenantId])
@@ -772,6 +775,8 @@ model Product {
 
   // Control de Lotes
   requiresBatchTracking Boolean @default(false)
+  // Control de Series (números de serie / IMEI / VIN, por unidad)
+  requiresSerialTracking Boolean @default(false)
 
   // Auditoría
   createdAt DateTime @default(now())
@@ -786,6 +791,7 @@ model Product {
   batches         ProductBatch[]
   stockCountItems StockCountItem[]
   purchaseOrderItems PurchaseOrderItem[]
+  serialNumbers   SerialNumber[]
   productStocks   ProductStock[]
   defaultSupplier Supplier?        @relation("DefaultSupplier", fields: [defaultSupplierId], references: [id], onDelete: SetNull)
 
@@ -900,6 +906,34 @@ model ProductBatch {
   @@index([tenantId])
   @@index([productId])
   @@index([expiryDate])
+}
+
+// ==========================================
+// CONTROL DE SERIES (números de serie por unidad)
+// ==========================================
+
+model SerialNumber {
+  id         String   @id @default(cuid())
+  tenantId   String
+  productId  String
+  serial     String // número de serie / IMEI / VIN
+  status     String   @default("IN_STOCK") // IN_STOCK | SOLD | RETURNED | VOID
+  saleId     String? // venta donde salió la unidad
+  purchaseId String? // compra/recepción donde entró
+  notes      String?  @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product  Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sale     Sale?     @relation(fields: [saleId], references: [id])
+  purchase Purchase? @relation(fields: [purchaseId], references: [id])
+
+  @@unique([productId, serial])
+  @@index([tenantId])
+  @@index([productId])
+  @@index([status])
+  @@index([serial])
 }
 
 // ==========================================
