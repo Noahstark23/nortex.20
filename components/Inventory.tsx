@@ -35,6 +35,8 @@ interface Product {
     reorderPoint?: number;
     maxStock?: number;
     defaultSupplierId?: string | null;
+    wholesalePrice?: number | null;
+    wholesaleMinQty?: number | null;
 }
 
 interface ProductBatch {
@@ -168,7 +170,7 @@ export default function Inventory() {
 
     // Edit form (solo datos cosméticos/comerciales — sin stock para no disparar Kardex)
     const [editForm, setEditForm] = useState({
-        name: '', description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: '', defaultSupplierId: ''
+        name: '', description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: '', defaultSupplierId: '', wholesalePrice: '', wholesaleMinQty: ''
     });
     const [editSubmitting, setEditSubmitting] = useState(false);
     const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
@@ -176,7 +178,8 @@ export default function Inventory() {
     // Create form
     const [formData, setFormData] = useState({
         name: '', sku: '', description: '', category: '',
-        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: ''
+        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: '',
+        wholesalePrice: '', wholesaleMinQty: ''
     });
 
     const token = localStorage.getItem('nortex_token');
@@ -547,7 +550,9 @@ export default function Inventory() {
             imageUrl: product.imageUrl || '',
             reorderPoint: product.reorderPoint ? String(product.reorderPoint) : '',
             maxStock: product.maxStock ? String(product.maxStock) : '',
-            defaultSupplierId: product.defaultSupplierId || ''
+            defaultSupplierId: product.defaultSupplierId || '',
+            wholesalePrice: product.wholesalePrice ? String(product.wholesalePrice) : '',
+            wholesaleMinQty: product.wholesaleMinQty ? String(product.wholesaleMinQty) : ''
         });
         setShowEditModal(true);
     };
@@ -568,7 +573,9 @@ export default function Inventory() {
                     imageUrl: editForm.imageUrl,
                     reorderPoint: editForm.reorderPoint === '' ? 0 : parseFloat(editForm.reorderPoint),
                     maxStock: editForm.maxStock === '' ? 0 : parseFloat(editForm.maxStock),
-                    defaultSupplierId: editForm.defaultSupplierId || null
+                    defaultSupplierId: editForm.defaultSupplierId || null,
+                    wholesalePrice: editForm.wholesalePrice, // '' limpia el mayoreo (backend → null)
+                    wholesaleMinQty: editForm.wholesaleMinQty
                     // ⚠️ stock, cost, minStock y unit EXCLUIDOS intencionalmente
                     //    para no disparar el Kardex ni el sistema antirobo
                 })
@@ -654,7 +661,7 @@ export default function Inventory() {
 
             if (res.ok) {
                 setShowCreateModal(false);
-                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: '' });
+                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: '', wholesalePrice: '', wholesaleMinQty: '' });
                 reload();
                 alert('Producto creado exitosamente');
             } else {
@@ -1635,6 +1642,32 @@ export default function Inventory() {
                                 />
                             </div>
 
+                            {/* Venta por mayor (distribuidora/miscelánea) */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Precio Mayoreo</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editForm.wholesalePrice}
+                                        onChange={(e) => setEditForm({ ...editForm, wholesalePrice: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="Vacío = sin mayoreo"
+                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Cant. mínima mayoreo</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editForm.wholesaleMinQty}
+                                        onChange={(e) => setEditForm({ ...editForm, wholesaleMinQty: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="Ej: 12 (docena)"
+                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    />
+                                </div>
+                            </div>
+
                             {/* Reposición (B2) */}
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
@@ -1809,6 +1842,28 @@ export default function Inventory() {
                                         inputMode="decimal"
                                         value={formData.cost}
                                         onChange={(e) => setFormData({ ...formData, cost: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Precio Mayoreo</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={formData.wholesalePrice}
+                                        onChange={(e) => setFormData({ ...formData, wholesalePrice: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="Vacío = sin mayoreo"
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Cant. mínima mayoreo</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={formData.wholesaleMinQty}
+                                        onChange={(e) => setFormData({ ...formData, wholesaleMinQty: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="Ej: 12 (docena)"
                                         className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
                                     />
                                 </div>

@@ -10,6 +10,7 @@ interface Customer {
     creditLimit: number;
     currentDebt: number;
     isBlocked: boolean;
+    isWholesale?: boolean; // cliente mayorista → el POS le aplica precio de mayoreo
 }
 
 const Clients: React.FC = () => {
@@ -77,6 +78,19 @@ const Clients: React.FC = () => {
                 body: JSON.stringify({ isBlocked: !currentStatus })
             });
             setCustomers(prev => prev.map(c => c.id === id ? { ...c, isBlocked: !currentStatus } : c));
+        } catch (e) { alert("Error"); }
+    };
+
+    // Cliente mayorista ↔ detalle (el POS le aplica precio de mayoreo desde la unidad 1).
+    const toggleWholesale = async (id: string, currentStatus: boolean) => {
+        try {
+            const token = localStorage.getItem('nortex_token');
+            await fetch(`/api/customers/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ isWholesale: !currentStatus })
+            });
+            setCustomers(prev => prev.map(c => c.id === id ? { ...c, isWholesale: !currentStatus } : c));
         } catch (e) { alert("Error"); }
     };
 
@@ -190,13 +204,22 @@ const Clients: React.FC = () => {
                                         {isOverLimit && <div className="text-[10px] text-red-600 font-bold mt-1 flex items-center gap-1"><AlertCircle size={10} /> Excede Límite</div>}
                                     </td>
                                     <td className="p-4">
-                                        <button
-                                            onClick={() => toggleBlock(c.id, c.isBlocked)}
-                                            className={`p-2 rounded-lg transition-colors ${c.isBlocked ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}
-                                            title={c.isBlocked ? "Desbloquear Crédito" : "Bloquear Crédito"}
-                                        >
-                                            {c.isBlocked ? <CheckCircle size={16} /> : <Ban size={16} />}
-                                        </button>
+                                        <div className="flex items-center gap-1.5">
+                                            <button
+                                                onClick={() => toggleWholesale(c.id, Boolean(c.isWholesale))}
+                                                className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-colors ${c.isWholesale ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-400 hover:text-indigo-600'}`}
+                                                title={c.isWholesale ? "Quitar precio de mayoreo" : "Marcar como cliente mayorista (precio de mayoreo desde la unidad 1)"}
+                                            >
+                                                MAYORISTA
+                                            </button>
+                                            <button
+                                                onClick={() => toggleBlock(c.id, c.isBlocked)}
+                                                className={`p-2 rounded-lg transition-colors ${c.isBlocked ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}
+                                                title={c.isBlocked ? "Desbloquear Crédito" : "Bloquear Crédito"}
+                                            >
+                                                {c.isBlocked ? <CheckCircle size={16} /> : <Ban size={16} />}
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
                             );

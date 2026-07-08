@@ -8,6 +8,9 @@ export interface Product {
   sku: string;
   category: string;
   requiresBatchTracking?: boolean; // Control de lotes
+  // Venta por mayor (distribuidora/miscelánea)
+  wholesalePrice?: number | null;  // precio de mayoreo (null = sin mayoreo)
+  wholesaleMinQty?: number | null; // cantidad mínima a partir de la cual aplica
 }
 
 export interface ProductBatch {

@@ -12,7 +12,33 @@ import Decimal from 'decimal.js';
 
 // ── Utilidades financieras del POS (string controlado + Decimal.js) ──────────
 // CartItem no modela discount/unit; se anotan en runtime → tipo local (sin `any`).
-type CartLine = CartItem & { discount?: number; unit?: string };
+// basePrice preserva el precio de DETALLE original de la línea: item.price es el
+// precio cobrado (puede pasar a mayoreo y volver al bajar la cantidad).
+type CartLine = CartItem & { discount?: number; unit?: string; basePrice?: number };
+
+// ── Venta por mayor (distribuidora/miscelánea) ────────────────────────────────
+// Regla: cliente mayorista → precio de mayoreo desde la unidad 1; si no, aplica
+// al alcanzar la cantidad mínima del producto. Sin wholesalePrice → detalle.
+const effectiveUnitPrice = (
+    p: { basePrice: number; wholesalePrice?: number | null; wholesaleMinQty?: number | null },
+    qty: number,
+    wholesaleCustomer: boolean
+): number => {
+    const wp = p.wholesalePrice;
+    if (wp == null || wp <= 0) return p.basePrice;
+    if (wholesaleCustomer) return wp;
+    const minQty = p.wholesaleMinQty;
+    if (minQty != null && minQty > 0 && qty >= minQty) return wp;
+    return p.basePrice;
+};
+
+// ¿La línea está cobrándose a precio de mayoreo? (para el badge del carrito)
+const isWholesaleLine = (item: CartLine, wholesaleCustomer: boolean): boolean => {
+    const wp = item.wholesalePrice;
+    if (wp == null || wp <= 0) return false;
+    if (wholesaleCustomer) return true;
+    return item.wholesaleMinQty != null && item.wholesaleMinQty > 0 && item.quantity >= item.wholesaleMinQty;
+};
 
 // Sanitiza la entrada cruda de un input de dinero/cantidad a un string decimal
 // seguro: solo dígitos y UN punto. Nunca usamos type="number" (quirks de float y
@@ -83,6 +109,7 @@ interface Customer {
     creditLimit: number;
     currentDebt: number;
     isBlocked: boolean;
+    isWholesale?: boolean; // cliente mayorista → mayoreo desde la unidad 1
 }
 
 interface HeldCart {
@@ -603,12 +630,22 @@ const POS: React.FC = () => {
 
     const addToCart = useCallback((product: Product) => {
         if (!currentShift) { setShowOpenShift(true); return; }
+        const wholesaleCustomer = Boolean(selectedCustomer?.isWholesale);
         setCart(prev => {
-            const existing = prev.find(item => item.id === product.id);
-            if (existing) return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
-            return [...prev, { ...product, quantity: 1 }];
+            const existing = prev.find(item => item.id === product.id) as CartLine | undefined;
+            if (existing) {
+                return prev.map(item => {
+                    if (item.id !== product.id) return item;
+                    const line = item as CartLine;
+                    const newQty = item.quantity + 1;
+                    const base = line.basePrice ?? item.price;
+                    return { ...item, quantity: newQty, basePrice: base, price: effectiveUnitPrice({ basePrice: base, wholesalePrice: line.wholesalePrice, wholesaleMinQty: line.wholesaleMinQty }, newQty, wholesaleCustomer) };
+                });
+            }
+            const price = effectiveUnitPrice({ basePrice: product.price, wholesalePrice: product.wholesalePrice, wholesaleMinQty: product.wholesaleMinQty }, 1, wholesaleCustomer);
+            return [...prev, { ...product, quantity: 1, basePrice: product.price, price }];
         });
-    }, [currentShift]);
+    }, [currentShift, selectedCustomer]);
 
     // GLOBAL SCANNER LISTENER (Independent of focus)
     // Moved here to strictly follow React ordering (addToCart must be defined)
@@ -666,11 +703,23 @@ const POS: React.FC = () => {
 
     const removeFromCart = (id: string) => setCart(prev => prev.filter(item => item.id !== id));
 
+    // Reprecia una línea al cambiar su cantidad (mayoreo entra/sale según el umbral).
+    const repricedLine = (item: CartItem, newQty: number): CartItem => {
+        const line = item as CartLine;
+        const base = line.basePrice ?? item.price;
+        const price = effectiveUnitPrice(
+            { basePrice: base, wholesalePrice: line.wholesalePrice, wholesaleMinQty: line.wholesaleMinQty },
+            newQty,
+            Boolean(selectedCustomer?.isWholesale)
+        );
+        return { ...item, quantity: newQty, basePrice: base, price } as CartItem;
+    };
+
     const updateQuantity = (id: string, delta: number) => {
         setCart(prev => prev.map(item => {
             if (item.id === id) {
                 const newQty = Math.max(0.01, Math.round((item.quantity + delta) * 100) / 100);
-                return { ...item, quantity: newQty };
+                return repricedLine(item, newQty);
             }
             return item;
         }));
@@ -679,11 +728,26 @@ const POS: React.FC = () => {
     const setQuantity = (id: string, qty: number) => {
         setCart(prev => prev.map(item => {
             if (item.id === id) {
-                return { ...item, quantity: Math.max(0.01, qty) };
+                return repricedLine(item, Math.max(0.01, qty));
             }
             return item;
         }));
     };
+
+    // Al cambiar el cliente (mayorista ↔ detalle), repreciar TODO el carrito.
+    useEffect(() => {
+        const wholesaleCustomer = Boolean(selectedCustomer?.isWholesale);
+        setCart(prev => prev.map(item => {
+            const line = item as CartLine;
+            const base = line.basePrice ?? item.price;
+            const price = effectiveUnitPrice(
+                { basePrice: base, wholesalePrice: line.wholesalePrice, wholesaleMinQty: line.wholesaleMinQty },
+                item.quantity,
+                wholesaleCustomer
+            );
+            return price === item.price ? item : ({ ...item, basePrice: base, price } as CartItem);
+        }));
+    }, [selectedCustomer?.id, selectedCustomer?.isWholesale]);
 
     // Per-item discount
     const setItemDiscount = (id: string, discount: number) => {
@@ -2227,7 +2291,12 @@ const POS: React.FC = () => {
                                     <div className="flex items-center gap-3">
                                         <div className="flex-1 min-w-0">
                                             <h4 className="text-sm font-medium text-slate-800 line-clamp-1">{item.name}</h4>
-                                            <div className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums">C$ {item.price.toFixed(2)} / {(item as CartLine).unit || 'und'}</div>
+                                            <div className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums flex items-center gap-1.5">
+                                                <span>C$ {item.price.toFixed(2)} / {(item as CartLine).unit || 'und'}</span>
+                                                {isWholesaleLine(item as CartLine, Boolean(selectedCustomer?.isWholesale)) && (
+                                                    <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded text-[9px] font-bold tracking-wide">MAYOREO</span>
+                                                )}
+                                            </div>
                                         </div>
                                         <div className="flex items-center gap-1 bg-white rounded border border-slate-200 p-1 text-slate-800">
                                             <button onClick={() => updateQuantity(item.id, -0.5)} className="p-1 hover:bg-slate-100 rounded text-slate-600"><Minus size={14} /></button>

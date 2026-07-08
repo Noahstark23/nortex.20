@@ -1323,16 +1323,18 @@ const CreateCustomerSchema = z.object({
     address: z.string().optional(),
     email: z.string().optional(),
     creditLimit: CustomerCreditLimit.optional(),
+    isWholesale: z.boolean().optional(),
 });
 
 const UpdateCustomerSchema = z.object({
     creditLimit: CustomerCreditLimit.optional(),
     isBlocked: z.boolean().optional(),
+    isWholesale: z.boolean().optional(),
 });
 
 app.post('/api/customers', authenticate, validate(CreateCustomerSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, taxId, phone, address, creditLimit, email } = req.body;
+    const { name, taxId, phone, address, creditLimit, email, isWholesale } = req.body;
 
     try {
         const customer = await prisma.customer.create({
@@ -1345,7 +1347,8 @@ app.post('/api/customers', authenticate, validate(CreateCustomerSchema), async (
                 address,
                 creditLimit: creditLimit !== undefined ? new Decimal(creditLimit).toDecimalPlaces(2).toString() : 0,
                 currentDebt: 0,
-                isBlocked: false
+                isBlocked: false,
+                isWholesale: Boolean(isWholesale)
             }
         });
         res.json(customer);
@@ -1380,7 +1383,7 @@ app.get('/api/customers', authenticate, async (req: any, res: any) => {
 app.put('/api/customers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), validate(UpdateCustomerSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { creditLimit, isBlocked } = req.body;
+    const { creditLimit, isBlocked, isWholesale } = req.body;
 
     try {
         await prisma.$transaction(async (tx: any) => {
@@ -1391,6 +1394,7 @@ app.put('/api/customers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), valid
             const data: any = {};
             if (creditLimit !== undefined) data.creditLimit = new Decimal(creditLimit).toDecimalPlaces(2).toString();
             if (isBlocked !== undefined) data.isBlocked = Boolean(isBlocked);
+            if (isWholesale !== undefined) data.isWholesale = Boolean(isWholesale);
 
             if (Object.keys(data).length === 0) return;
 
@@ -2767,7 +2771,14 @@ app.get('/api/products/categories', authenticate, async (req: any, res: any) => 
 // POST /api/products - Crear producto (OWNER o ADMIN)
 app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking, reorderPoint, maxStock, defaultSupplierId } = req.body;
+    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking, reorderPoint, maxStock, defaultSupplierId, wholesalePrice, wholesaleMinQty } = req.body;
+
+    // Venta por mayor: si vienen, deben ser números > 0 (null/'' = sin mayoreo).
+    const wp = wholesalePrice !== undefined && wholesalePrice !== null && wholesalePrice !== '' ? parseFloat(wholesalePrice) : null;
+    const wq = wholesaleMinQty !== undefined && wholesaleMinQty !== null && wholesaleMinQty !== '' ? parseFloat(wholesaleMinQty) : null;
+    if ((wp !== null && (!Number.isFinite(wp) || wp <= 0)) || (wq !== null && (!Number.isFinite(wq) || wq <= 0))) {
+        return res.status(400).json({ error: 'Precio de mayoreo y cantidad mínima deben ser números mayores a 0' });
+    }
 
     try {
         // Verificar que SKU no exista
@@ -2803,6 +2814,8 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (re
                 reorderPoint: parseFloat(reorderPoint) || 0,
                 maxStock: parseFloat(maxStock) || 0,
                 defaultSupplierId: defaultSupplierId || null,
+                wholesalePrice: wp,
+                wholesaleMinQty: wq,
                 createdBy: authReq.userId!
             }
         });
@@ -2978,7 +2991,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
 app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { name, description, category, price, cost, stock, minStock, unit, imageUrl, reorderPoint, maxStock, defaultSupplierId } = req.body;
+    const { name, description, category, price, cost, stock, minStock, unit, imageUrl, reorderPoint, maxStock, defaultSupplierId, wholesalePrice, wholesaleMinQty } = req.body;
 
     try {
         const existing = await prisma.product.findFirst({
@@ -3003,6 +3016,21 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
         if (reorderPoint !== undefined) updates.reorderPoint = parseFloat(reorderPoint) || 0;
         if (maxStock !== undefined) updates.maxStock = parseFloat(maxStock) || 0;
         if (defaultSupplierId !== undefined) updates.defaultSupplierId = defaultSupplierId || null;
+        // Venta por mayor: '' o null limpian el mayoreo; si viene valor, debe ser > 0.
+        if (wholesalePrice !== undefined) {
+            const wp = wholesalePrice === null || wholesalePrice === '' ? null : parseFloat(wholesalePrice);
+            if (wp !== null && (!Number.isFinite(wp) || wp <= 0)) {
+                return res.status(400).json({ error: 'El precio de mayoreo debe ser un número mayor a 0' });
+            }
+            updates.wholesalePrice = wp;
+        }
+        if (wholesaleMinQty !== undefined) {
+            const wq = wholesaleMinQty === null || wholesaleMinQty === '' ? null : parseFloat(wholesaleMinQty);
+            if (wq !== null && (!Number.isFinite(wq) || wq <= 0)) {
+                return res.status(400).json({ error: 'La cantidad mínima de mayoreo debe ser mayor a 0' });
+            }
+            updates.wholesaleMinQty = wq;
+        }
 
         // Kardex (ledger inmutable) + product.update + auditoría deben cuadrar o
         // revertirse juntos: se ejecutan dentro de una única $transaction. El ajuste
