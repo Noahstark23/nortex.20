@@ -17,27 +17,52 @@ import Decimal from 'decimal.js';
 type CartLine = CartItem & { discount?: number; unit?: string; basePrice?: number };
 
 // ── Venta por mayor (distribuidora/miscelánea) ────────────────────────────────
-// Regla: cliente mayorista → precio de mayoreo desde la unidad 1; si no, aplica
-// al alcanzar la cantidad mínima del producto. Sin wholesalePrice → detalle.
-const effectiveUnitPrice = (
-    p: { basePrice: number; wholesalePrice?: number | null; wholesaleMinQty?: number | null },
-    qty: number,
-    wholesaleCustomer: boolean
-): number => {
+// Niveles de precio por cantidad: detalle (base) → mayoreo (desde wholesaleMinQty;
+// cliente mayorista lo lleva desde la unidad 1) → empaque (desde packSize, a
+// packPrice/packSize por unidad). Gana el nivel de MAYOR umbral alcanzado; a
+// igual umbral, el empaque (precio explícito de caja) manda sobre el mayoreo.
+interface PriceTierInput {
+    basePrice: number;
+    wholesalePrice?: number | null;
+    wholesaleMinQty?: number | null;
+    packSize?: number | null;
+    packPrice?: number | null;
+}
+
+type TierKind = 'DETALLE' | 'MAYOREO' | 'EMPAQUE';
+
+const effectiveTier = (p: PriceTierInput, qty: number, wholesaleCustomer: boolean): { unitPrice: number; kind: TierKind } => {
+    let unitPrice = p.basePrice;
+    let kind: TierKind = 'DETALLE';
+    let threshold = 0;
+
     const wp = p.wholesalePrice;
-    if (wp == null || wp <= 0) return p.basePrice;
-    if (wholesaleCustomer) return wp;
-    const minQty = p.wholesaleMinQty;
-    if (minQty != null && minQty > 0 && qty >= minQty) return wp;
-    return p.basePrice;
+    if (wp != null && wp > 0) {
+        const t = wholesaleCustomer ? 0 : (p.wholesaleMinQty != null && p.wholesaleMinQty > 0 ? p.wholesaleMinQty : null);
+        if (t != null && qty >= t && t >= threshold) {
+            unitPrice = wp; kind = 'MAYOREO'; threshold = t;
+        }
+    }
+    if (p.packPrice != null && p.packPrice > 0 && p.packSize != null && p.packSize > 0 && qty >= p.packSize && p.packSize >= threshold) {
+        unitPrice = p.packPrice / p.packSize; kind = 'EMPAQUE';
+    }
+    return { unitPrice, kind };
 };
 
-// ¿La línea está cobrándose a precio de mayoreo? (para el badge del carrito)
-const isWholesaleLine = (item: CartLine, wholesaleCustomer: boolean): boolean => {
-    const wp = item.wholesalePrice;
-    if (wp == null || wp <= 0) return false;
-    if (wholesaleCustomer) return true;
-    return item.wholesaleMinQty != null && item.wholesaleMinQty > 0 && item.quantity >= item.wholesaleMinQty;
+const effectiveUnitPrice = (p: PriceTierInput, qty: number, wholesaleCustomer: boolean): number =>
+    effectiveTier(p, qty, wholesaleCustomer).unitPrice;
+
+// Etiqueta del nivel activo de una línea (para el badge del carrito).
+const lineTierBadge = (item: CartLine, wholesaleCustomer: boolean): string | null => {
+    const base = item.basePrice ?? item.price;
+    const { kind } = effectiveTier(
+        { basePrice: base, wholesalePrice: item.wholesalePrice, wholesaleMinQty: item.wholesaleMinQty, packSize: item.packSize, packPrice: item.packPrice },
+        item.quantity,
+        wholesaleCustomer
+    );
+    if (kind === 'MAYOREO') return 'MAYOREO';
+    if (kind === 'EMPAQUE') return (item.packUnit || 'EMPAQUE').toUpperCase();
+    return null;
 };
 
 // Sanitiza la entrada cruda de un input de dinero/cantidad a un string decimal
@@ -639,10 +664,10 @@ const POS: React.FC = () => {
                     const line = item as CartLine;
                     const newQty = item.quantity + 1;
                     const base = line.basePrice ?? item.price;
-                    return { ...item, quantity: newQty, basePrice: base, price: effectiveUnitPrice({ basePrice: base, wholesalePrice: line.wholesalePrice, wholesaleMinQty: line.wholesaleMinQty }, newQty, wholesaleCustomer) };
+                    return { ...item, quantity: newQty, basePrice: base, price: effectiveUnitPrice({ basePrice: base, wholesalePrice: line.wholesalePrice, wholesaleMinQty: line.wholesaleMinQty, packSize: line.packSize, packPrice: line.packPrice }, newQty, wholesaleCustomer) };
                 });
             }
-            const price = effectiveUnitPrice({ basePrice: product.price, wholesalePrice: product.wholesalePrice, wholesaleMinQty: product.wholesaleMinQty }, 1, wholesaleCustomer);
+            const price = effectiveUnitPrice({ basePrice: product.price, wholesalePrice: product.wholesalePrice, wholesaleMinQty: product.wholesaleMinQty, packSize: product.packSize, packPrice: product.packPrice }, 1, wholesaleCustomer);
             return [...prev, { ...product, quantity: 1, basePrice: product.price, price }];
         });
     }, [currentShift, selectedCustomer]);
@@ -708,7 +733,7 @@ const POS: React.FC = () => {
         const line = item as CartLine;
         const base = line.basePrice ?? item.price;
         const price = effectiveUnitPrice(
-            { basePrice: base, wholesalePrice: line.wholesalePrice, wholesaleMinQty: line.wholesaleMinQty },
+            { basePrice: base, wholesalePrice: line.wholesalePrice, wholesaleMinQty: line.wholesaleMinQty, packSize: line.packSize, packPrice: line.packPrice },
             newQty,
             Boolean(selectedCustomer?.isWholesale)
         );
@@ -741,7 +766,7 @@ const POS: React.FC = () => {
             const line = item as CartLine;
             const base = line.basePrice ?? item.price;
             const price = effectiveUnitPrice(
-                { basePrice: base, wholesalePrice: line.wholesalePrice, wholesaleMinQty: line.wholesaleMinQty },
+                { basePrice: base, wholesalePrice: line.wholesalePrice, wholesaleMinQty: line.wholesaleMinQty, packSize: line.packSize, packPrice: line.packPrice },
                 item.quantity,
                 wholesaleCustomer
             );
@@ -2286,15 +2311,27 @@ const POS: React.FC = () => {
                             const lineDiscount = (item as CartLine).discount ?? 0;
                             const lineDiscountD = toDecimal(lineDiscount);
                             const lineTotalD = toDecimal(item.price).mul(item.quantity).mul(new Decimal(1).minus(lineDiscountD.div(100)));
+                            const tierBadge = lineTierBadge(item as CartLine, Boolean(selectedCustomer?.isWholesale));
+                            const packSize = (item as CartLine).packSize;
+                            const packLabel = ((item as CartLine).packUnit || 'caja').toLowerCase();
                             return (
                                 <div key={item.id} className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-slate-800">
                                     <div className="flex items-center gap-3">
                                         <div className="flex-1 min-w-0">
                                             <h4 className="text-sm font-medium text-slate-800 line-clamp-1">{item.name}</h4>
-                                            <div className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums flex items-center gap-1.5">
+                                            <div className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums flex items-center gap-1.5 flex-wrap">
                                                 <span>C$ {item.price.toFixed(2)} / {(item as CartLine).unit || 'und'}</span>
-                                                {isWholesaleLine(item as CartLine, Boolean(selectedCustomer?.isWholesale)) && (
-                                                    <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded text-[9px] font-bold tracking-wide">MAYOREO</span>
+                                                {tierBadge && (
+                                                    <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded text-[9px] font-bold tracking-wide">{tierBadge}</span>
+                                                )}
+                                                {packSize != null && packSize > 0 && (
+                                                    <button
+                                                        onClick={() => updateQuantity(item.id, packSize)}
+                                                        className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 rounded text-[9px] font-bold tracking-wide transition-colors"
+                                                        title={`Agregar 1 ${packLabel} (${packSize} ${(item as CartLine).unit || 'und'})`}
+                                                    >
+                                                        +1 {packLabel.toUpperCase()} ({packSize})
+                                                    </button>
                                                 )}
                                             </div>
                                         </div>
