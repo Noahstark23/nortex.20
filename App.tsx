@@ -33,7 +33,7 @@ import HelpCenter from './components/HelpCenter';
 import PublicCatalog from './components/PublicCatalog';
 import TrackPedido from './components/TrackPedido';
 
-// SEO Landing Pages & Blog
+// SEO Landing Pages
 import LandingFerreteria from './components/LandingFerreteria';
 import LandingFarmacia from './components/LandingFarmacia';
 import LandingNicaragua from './components/LandingNicaragua';

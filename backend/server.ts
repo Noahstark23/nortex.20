@@ -4641,78 +4641,77 @@ app.post('/api/admin/motorizados/:id/wallet/payout', authenticate, requireSuperA
     }
 });
 
-// GET /api/admin/stats - KPIs globales de la plataforma
-app.get('/api/admin/stats', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+// ── Command Center: contrato de métricas globales (tipado estricto) ──
+// Todos los montos viajan como string con precisión Decimal(18,4): cero float en el cable.
+interface AdminMetricsResponse {
+    totalTenants: number;
+    activeTenants: number;
+    morosos: number;
+    activeUsers: number;
+    monthlyTransactions: number;
+    totalDebtLent: string;   // Capital asignado vigente
+    totalWallet: string;     // Suma de wallets de los tenants
+    monthlySales: string;    // Ventas del mes en curso
+    platformFee: string;     // 2% sobre ventas
+    interestIncome: string;  // 5% de retención sobre capital
+    monthlyRevenue: string;  // platformFee + interestIncome
+}
+
+// GET /api/admin/metrics - KPIs globales de la plataforma (Decimal-safe, sin mock)
+app.get('/api/admin/metrics', authenticate, requireSuperAdmin, async (_req: express.Request, res: express.Response) => {
     try {
-        // Queries independientes para que si una falla no mate todo
-        let tenants: any[] = [];
-        let totalLoans = { _sum: { total: null }, _count: 0 };
-        let allSales = { _sum: { total: null }, _count: 0 };
-        let activeUsers = 0;
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-        try {
-            tenants = await prisma.tenant.findMany({
-                select: { id: true, subscriptionStatus: true, walletBalance: true, creditScore: true }
-            });
-        } catch (e) { console.error('Stats: tenants query failed', e); }
-
-        try {
-            totalLoans = await prisma.b2BOrder.aggregate({
+        // Una sola ronda de queries reales; si la BD cae, el endpoint falla (el panel lo refleja).
+        const [tenants, loanAgg, salesAgg, activeUsers] = await Promise.all([
+            prisma.tenant.findMany({ select: { subscriptionStatus: true, walletBalance: true } }),
+            prisma.b2BOrder.aggregate({
                 where: { status: { in: ['PENDING', 'APPROVED', 'DELIVERED'] } },
                 _sum: { total: true },
-                _count: true,
-            }) as any;
-        } catch (e) { console.error('Stats: b2bOrder query failed', e); }
-
-        try {
-            allSales = await prisma.sale.aggregate({
-                where: {
-                    createdAt: {
-                        gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-                    }
-                },
+            }),
+            prisma.sale.aggregate({
+                where: { createdAt: { gte: monthStart } },
                 _sum: { total: true },
                 _count: true,
-            }) as any;
-        } catch (e) { console.error('Stats: sales query failed', e); }
+            }),
+            prisma.user.count(),
+        ]);
 
-        try {
-            activeUsers = await prisma.user.count();
-        } catch (e) { console.error('Stats: user count failed', e); }
+        const morosos = tenants.filter(t => t.subscriptionStatus === 'PAST_DUE' || t.subscriptionStatus === 'CANCELLED').length;
 
-        const activeTenants = tenants.filter((t: any) => !t.subscriptionStatus || (t.subscriptionStatus !== 'PAST_DUE' && t.subscriptionStatus !== 'CANCELLED')).length;
-        const morosos = tenants.filter((t: any) => t.subscriptionStatus === 'PAST_DUE' || t.subscriptionStatus === 'CANCELLED').length;
-        const totalWallet = tenants.reduce((s: number, t: any) => s + Number(t.walletBalance || 0), 0);
-        const totalDebtLent = Number((totalLoans._sum as any)?.total || 0);
-        const monthlySales = Number(allSales._sum?.total || 0);
+        // ── Todo el dinero con Decimal.js, extraído de columnas Decimal(18,4) ──
+        const totalWallet    = tenants.reduce((acc, t) => acc.plus(new Decimal(t.walletBalance.toString())), new Decimal(0));
+        const capitalLent    = new Decimal((loanAgg._sum.total ?? 0).toString());
+        const monthlySales   = new Decimal((salesAgg._sum.total ?? 0).toString());
+        const platformFee    = monthlySales.mul('0.02');   // 2% sobre ventas del mes
+        const retentionFee   = capitalLent.mul('0.05');    // 5% de retención sobre el capital asignado
+        const monthlyRevenue = platformFee.plus(retentionFee);
 
-        // MRR: 2% de ventas mensuales como fee de plataforma
-        const platformFee = Math.round(monthlySales * 0.02 * 100) / 100;
-        // Intereses: 5% mensual sobre deuda prestada
-        const interestIncome = Math.round(totalDebtLent * 0.05 * 100) / 100;
-        const monthlyRevenue = Math.round((platformFee + interestIncome) * 100) / 100;
+        const money = (d: Decimal): string => d.toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toFixed(4);
 
-        res.json({
-            totalTenants: tenants.length,
-            activeTenants,
+        const body: AdminMetricsResponse = {
+            totalTenants:        tenants.length,
+            activeTenants:       tenants.length - morosos,
             morosos,
             activeUsers,
-            totalDebtLent,
-            totalWallet,
-            monthlySales,
-            monthlyTransactions: allSales._count || 0,
-            platformFee,
-            interestIncome,
-            monthlyRevenue,
-        });
+            monthlyTransactions: salesAgg._count,
+            totalDebtLent:       money(capitalLent),
+            totalWallet:         money(totalWallet),
+            monthlySales:        money(monthlySales),
+            platformFee:         money(platformFee),
+            interestIncome:      money(retentionFee),
+            monthlyRevenue:      money(monthlyRevenue),
+        };
+        res.json(body);
     } catch (error) {
-        console.error('Admin stats error:', error);
-        res.status(500).json({ error: 'Error al obtener estadísticas' });
+        console.error('Admin metrics error:', error);
+        res.status(500).json({ error: 'Error al obtener métricas' });
     }
 });
 
 // GET /api/admin/tenants - Lista completa de empresas
-app.get('/api/admin/tenants', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+app.get('/api/admin/tenants', authenticate, requireSuperAdmin, async (_req: express.Request, res: express.Response) => {
     try {
         const tenants = await prisma.tenant.findMany({
             include: {
@@ -4728,12 +4727,12 @@ app.get('/api/admin/tenants', authenticate, requireSuperAdmin, async (req: any, 
             orderBy: { createdAt: 'desc' }
         });
 
-        const tenantsWithOwner = tenants.map((t: any) => ({
+        const tenantsWithOwner = tenants.map(t => ({
             id: t.id,
             businessName: t.businessName,
             taxId: t.taxId,
-            walletBalance: Number(t.walletBalance),
-            creditLimit: Number(t.creditLimit),
+            walletBalance: new Decimal(t.walletBalance.toString()).toFixed(4),
+            creditLimit: new Decimal(t.creditLimit.toString()).toFixed(4),
             creditScore: t.creditScore,
             subscriptionStatus: t.subscriptionStatus || 'ACTIVE',
             createdAt: t.createdAt,
@@ -4814,7 +4813,7 @@ app.post('/api/admin/tenants/:id/reactivate', authenticate, requireSuperAdmin, a
 });
 
 // GET /api/admin/loan-requests - Solicitudes de crédito pendientes
-app.get('/api/admin/loan-requests', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+app.get('/api/admin/loan-requests', authenticate, requireSuperAdmin, async (_req: express.Request, res: express.Response) => {
     try {
         const requests = await prisma.b2BOrder.findMany({
             where: { status: 'PENDING' },
@@ -4826,7 +4825,22 @@ app.get('/api/admin/loan-requests', authenticate, requireSuperAdmin, async (req:
             orderBy: { createdAt: 'desc' }
         });
 
-        res.json(requests);
+        // Forma normalizada y tipada: montos Decimal(18,4) como string.
+        const body = requests.map(r => ({
+            id: r.id,
+            tenantId: r.tenantId,
+            total: new Decimal(r.total.toString()).toFixed(4),
+            status: r.status,
+            createdAt: r.createdAt,
+            tenant: {
+                businessName: r.tenant.businessName,
+                creditScore: r.tenant.creditScore,
+                walletBalance: new Decimal(r.tenant.walletBalance.toString()).toFixed(4),
+                creditLimit: new Decimal(r.tenant.creditLimit.toString()).toFixed(4),
+            },
+        }));
+
+        res.json(body);
     } catch (error) {
         res.status(500).json({ error: 'Error al obtener solicitudes' });
     }
@@ -5005,14 +5019,17 @@ app.get('/api/billing/manual-status', authenticate, async (req: any, res: any) =
 });
 
 // GET /api/admin/manual-payments - Lista pagos manuales (SUPER_ADMIN)
-app.get('/api/admin/manual-payments', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+app.get('/api/admin/manual-payments', authenticate, requireSuperAdmin, async (_req: express.Request, res: express.Response) => {
     try {
         const payments = await prisma.manualPayment.findMany({
             include: {
                 tenant: {
-                    select: { businessName: true, subscriptionStatus: true },
-                    include: { users: { select: { email: true, name: true }, take: 1, orderBy: { createdAt: 'asc' as any } } }
-                }
+                    select: {
+                        businessName: true,
+                        subscriptionStatus: true,
+                        users: { select: { email: true, name: true }, take: 1, orderBy: { createdAt: 'asc' } },
+                    },
+                },
             },
             orderBy: { createdAt: 'desc' },
         });
