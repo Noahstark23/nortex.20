@@ -52,7 +52,30 @@ const BlogPost: React.FC = () => {
     return [...bySlug, ...sameCluster].slice(0, 3);
   }, [post]);
 
-  if (!post) return <Navigate to="/blog" replace />;
+    // Datos estructurados: Article + BreadcrumbList (+ FAQPage si hay FAQs).
+    // El prerender ya inyecta lo mismo en el HTML estático para crawlers; esto
+    // cubre la navegación en cliente (SPA) sin duplicar al volver a montar.
+    const blocks: Record<string, unknown>[] = [
+      articleJsonLd(post),
+      breadcrumbJsonLd([
+        { name: 'Blog', path: '/blog' },
+        ...(cluster ? [{ name: cluster.name, path: `/blog/categoria/${cluster.slug}` }] : []),
+        { name: post.title, path: `/blog/${post.slug}` },
+      ]),
+    ];
+    const faq = faqJsonLd(post.faqs);
+    if (faq) blocks.push(faq);
+
+    const nodes = blocks.map(block => {
+      const el = document.createElement('script');
+      el.type = 'application/ld+json';
+      el.dataset.blogJsonld = 'post';
+      el.text = JSON.stringify(block);
+      document.head.appendChild(el);
+      return el;
+    });
+    return () => { nodes.forEach(n => n.remove()); };
+  }, [post, cluster]);
 
   const cluster = post.cluster ? clusterByName(post.cluster) : undefined;
   const crumbs = [
@@ -123,6 +146,25 @@ const BlogPost: React.FC = () => {
           </section>
         )}
 
+        {/* Bloque FAQ (también emitido como FAQPage en JSON-LD) */}
+        {post.faqs && post.faqs.length > 0 && (
+          <section className="mt-12 pt-8 border-t border-slate-100">
+            <h2 className="text-2xl font-bold text-slate-900 mb-6">Preguntas frecuentes</h2>
+            <div className="space-y-4">
+              {post.faqs.map((faq, idx) => (
+                <details key={idx} className="group bg-slate-50 rounded-xl p-5 border border-slate-100">
+                  <summary className="font-bold text-slate-800 cursor-pointer list-none flex items-center justify-between">
+                    {faq.q}
+                    <span className="text-emerald-600 group-open:rotate-45 transition-transform text-xl leading-none">+</span>
+                  </summary>
+                  <p className="text-slate-600 mt-3 leading-relaxed">{faq.a}</p>
+                </details>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* CTA */}
         <div className="mt-12 p-8 bg-slate-900 rounded-2xl text-white text-center">
           <h2 className="text-2xl font-bold mb-3">¿Cansado de hacer esto a mano?</h2>
           <p className="text-slate-300 mb-6">Nortex automatiza nómina, facturas y reportes DGI. Prueba gratis 30 días.</p>

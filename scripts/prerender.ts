@@ -5,21 +5,29 @@
 // misma description y canonical apuntando a la home) para TODAS las rutas, así
 // que Google las veía como duplicados de la home y no las indexaba.
 //
-// QUÉ HACE: genera un HTML estático por ruta de marketing, por HUB de clúster
-// (/blog/categoria/:slug) y por artículo (dist/<ruta>/index.html) con título,
-// descripción y canonical AUTO-REFERENTE únicos, Open Graph, JSON-LD
-// (Article/Breadcrumb/FAQ) y contenido VISIBLE para los crawlers. React
-// reemplaza ese contenido al montar en #root (createRoot, no hydrateRoot).
-// Además GENERA dist/sitemap.xml con todas las rutas, artículos y hubs.
+// QUÉ HACE: genera un HTML estático por ruta de marketing (dist/<ruta>/index.html)
+// con título, descripción y canonical AUTO-REFERENTE únicos, Open Graph, datos
+// estructurados (JSON-LD) y contenido VISIBLE (no oculto) para los crawlers.
+// React reemplaza ese contenido al montar en #root (la app usa createRoot, no
+// hydrateRoot → sin mismatch).
 import fs from 'fs';
 import path from 'path';
 import { blogPosts } from '../data/blog-posts';
-import { blogClusters } from '../data/blog-clusters';
-import { mdToHtml } from '../utils/markdown';
-import { articleJsonLd, breadcrumbJsonLd, faqJsonLd, type JsonLd } from '../utils/seo';
+import {
+    SITE_ORIGIN,
+    clustersWithPosts,
+    postsByCluster,
+    getPillar,
+    getCluster,
+    clusterName,
+    articleJsonLd,
+    breadcrumbJsonLd,
+    faqJsonLd,
+} from '../data/blog-taxonomy';
+import { markdownToHtml, escapeHtml as esc } from '../lib/markdown';
 
 const DIST = path.join(process.cwd(), 'dist');
-const ORIGIN = 'https://somosnortex.com';
+const ORIGIN = SITE_ORIGIN;
 
 const shell = fs.readFileSync(path.join(DIST, 'index.html'), 'utf-8');
 
@@ -28,17 +36,9 @@ interface RouteSEO {
     title: string;
     description: string;
     h1: string;
-    body: string;            // HTML visible del bloque SEO
-    jsonLd?: JsonLd[];       // datos estructurados a inyectar en <head>
-    lastmod?: string;        // YYYY-MM-DD para el sitemap
-    changefreq?: string;
-    priority?: number;
+    body: string;        // HTML visible del bloque SEO
+    jsonLd?: Record<string, unknown>[]; // datos estructurados a inyectar en <head>
 }
-
-const esc = (s: string): string =>
-    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-const TODAY = new Date().toISOString().slice(0, 10);
 
 // ── Rutas de marketing (landings de nicho + institucionales) ──
 // La home ('/') NO va aquí: se sirve desde landing.html (estático aparte).
@@ -107,11 +107,16 @@ const routes: RouteSEO[] = [
     },
     {
         path: '/blog',
-        title: 'Blog Nortex | Inventario, Facturación DGI, Nómina e Impuestos en Nicaragua',
-        description: 'Guías prácticas sobre control de inventario, facturación DGI, nómina (Ley 185), IVA, IR y gestión de PyMES en Nicaragua.',
+        title: 'Blog Nortex | Facturación DGI, Nómina y Gestión de PyMES en Nicaragua',
+        description: 'Guías prácticas sobre facturación DGI, nómina según la Ley 185, retenciones IR e IVA, inventario y gestión de PyMES en Nicaragua.',
         h1: 'Blog de Nortex: guías para PyMES de Nicaragua',
         body: `
-      <p>Recursos prácticos sobre inventario, facturación, impuestos y gestión de negocios en Nicaragua.</p>
+      <p>Recursos prácticos sobre facturación, impuestos, inventario y gestión de negocios en Nicaragua.</p>
+      <h2>Temas</h2>
+      <ul>
+        ${clustersWithPosts().map(c => `<li><a href="/blog/categoria/${c.slug}">${esc(c.name)}</a> — ${esc(c.description)}</li>`).join('\n        ')}
+      </ul>
+      <h2>Artículos recientes</h2>
       <ul>
         ${blogClusters.map(c => `<li><a href="/blog/categoria/${c.slug}">${esc(c.name)}</a></li>`).join('\n        ')}
       </ul>`,

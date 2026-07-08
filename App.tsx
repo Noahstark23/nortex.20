@@ -49,6 +49,19 @@ import ResetPassword from './components/ResetPassword';
 import PrivacyPolicy from './components/PrivacyPolicy';
 import TermsOfService from './components/TermsOfService';
 
+// Blog: cargado en diferido (lazy) para que su contenido NO entre al bundle
+// inicial del POS ni de la landing. El chunk del blog solo se descarga al
+// visitar /blog, /blog/categoria/:slug o /blog/:slug.
+const Blog = lazy(() => import('./components/Blog'));
+const BlogPost = lazy(() => import('./components/BlogPost'));
+const BlogHub = lazy(() => import('./components/BlogHub'));
+
+const BlogFallback = () => (
+  <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400 text-sm">
+    Cargando…
+  </div>
+);
+
 const ProtectedApp = () => {
   const token = localStorage.getItem('nortex_token');
   if (!token) return <Navigate to="/login" replace />;

@@ -81,7 +81,7 @@ const Blog: React.FC = () => {
               className="block bg-white border border-slate-200 rounded-xl p-6 hover:border-emerald-300 hover:shadow-md transition-all group focus-visible:ring-2 focus-visible:ring-emerald-500"
             >
               <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full">
-                {post.category}
+                {clusterName(post)}
               </span>
               <h2 className="font-bold text-slate-900 mt-3 mb-2 text-lg leading-snug group-hover:text-emerald-700 transition-colors">
                 {post.title}

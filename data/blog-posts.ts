@@ -1,16 +1,26 @@
+export interface BlogFaq {
+  q: string;
+  a: string;
+}
+
 export interface BlogPost {
   slug: string;
   title: string;
   description: string;
-  date: string;
-  updated?: string;                 // fecha de última actualización (SEO: dateModified)
+  date: string;          // fecha de publicación (YYYY-MM-DD)
   readTime: string;
-  category: string;                 // badge visible
-  cluster?: string;                 // clúster temático (matchea data/blog-clusters.ts -> name)
-  keyword?: string;                 // keyword objetivo principal
-  relatedSlugs?: string[];          // enlazado interno explícito (pillar/cluster)
-  faq?: { q: string; a: string }[]; // bloque FAQ -> FAQPage JSON-LD
-  content: string;
+  category: string;      // etiqueta visible corta (badge)
+  content: string;       // cuerpo en Markdown (ver lib/markdown.ts)
+
+  // ── Taxonomía y SEO (modelo pillar/cluster, ver data/blog-taxonomy.ts) ──
+  cluster: string;          // slug del clúster al que pertenece
+  pillar?: boolean;         // true si es el artículo pilar del clúster
+  updated?: string;         // última actualización (YYYY-MM-DD) → dateModified / lastmod
+  keyword?: string;         // keyword objetivo (informativo)
+  intent?: 'informacional' | 'comercial' | 'comparativa' | 'caso';
+  relatedSlugs?: string[];  // enlazado interno explícito (se completa con hermanos)
+  faqs?: BlogFaq[];         // bloque FAQ → FAQPage JSON-LD + featured snippets
+  image?: string;           // imagen destacada (ruta o URL absoluta), opcional
 }
 
 export const blogPosts: BlogPost[] = [
@@ -28,6 +38,26 @@ export const blogPosts: BlogPost[] = [
     faq: [
       { q: '¿Cuánto es el INSS laboral en Nicaragua?', a: 'El INSS laboral (cuota del trabajador) es el 7% del salario bruto, con un techo cotizable que se actualiza cada año.' },
       { q: '¿Cuánto paga el empleador de INSS?', a: 'El INSS patronal es 21.5% para empleadores con menos de 50 trabajadores y 22.5% para los de 50 o más, más 2% de INATEC.' },
+    category: 'Nómina y RR.HH.',
+    readTime: '8 min',
+    cluster: 'nomina-rrhh',
+    pillar: true,
+    keyword: 'cómo calcular la nómina en Nicaragua',
+    intent: 'informacional',
+    relatedSlugs: ['retenciones-ir-nicaragua-2026'],
+    faqs: [
+      {
+        q: '¿Las horas extra en Nicaragua se pagan al 50%?',
+        a: 'No. Las horas extra se pagan al doble del valor de la hora ordinaria (un 100% de recargo), sin importar si es día hábil, según el Art. 62 de la Ley 185. El recargo del 100% por día feriado trabajado (Art. 68) es un concepto distinto.',
+      },
+      {
+        q: '¿Cuántos días de vacaciones corresponden por año en Nicaragua?',
+        a: 'Corresponden 15 días de descanso por cada 6 meses de trabajo continuo, equivalente a 2.5 días por mes o 30 días al año (Art. 76 de la Ley 185).',
+      },
+      {
+        q: '¿Qué porcentaje es el INSS patronal en 2026?',
+        a: 'El INSS patronal es 21.5% del salario bruto para empleadores con menos de 50 trabajadores y 22.5% para 50 o más (Ley 539), más un 2% de INATEC.',
+      },
     ],
     content: `
 ## Cómo calcular la nómina en Nicaragua 2026
@@ -59,6 +89,22 @@ El salario bruto de un trabajador en Nicaragua incluye:
 **INATEC:** 2% del salario bruto.
 
 **Ejemplo para salario de C$15,000 (PyME con menos de 50 empleados):**
+**IR sobre salarios:** se calcula sobre la renta neta anual (después de restar el INSS laboral) con la tabla progresiva de la DGI. Cada tramo paga un impuesto base más un porcentaje sobre el exceso:
+
+| Renta neta anual (C$) | Impuesto base (C$) | % sobre el exceso |
+| --- | --- | --- |
+| 0 – 100,000 | exento | 0% |
+| 100,000.01 – 200,000 | 0 | 15% |
+| 200,000.01 – 350,000 | 15,000 | 20% |
+| 350,000.01 – 500,000 | 45,000 | 25% |
+| 500,000.01 a más | 82,500 | 30% |
+
+### 3. Aportes patronales
+
+**INSS Patronal:** 21.5% del salario bruto para empleadores con menos de 50 trabajadores; 22.5% para 50 o más (Ley 539)
+**INATEC:** 2% del salario bruto
+
+**Ejemplo para salario de C$15,000 (negocio con menos de 50 empleados):**
 - INSS Patronal (21.5%): C$3,225
 - INATEC (2%): C$300
 - **Costo total para el empleador: C$18,525**
@@ -72,6 +118,13 @@ Valor: salario_diario × días acumulados.
 Se paga en los primeros diez días de diciembre.
 
 **Indemnización por antigüedad (Art. 45):** 1 mes de salario por cada uno de los primeros 3 años y 20 días por cada año a partir del cuarto, con un máximo de 5 meses. Aplica en despido o mutuo acuerdo, no en renuncia.
+**Vacaciones:** 15 días de descanso por cada 6 meses de trabajo continuo, es decir **2.5 días por mes** (30 días al año) — Art. 76 de la Ley 185
+Valor del saldo acumulado: salario_diario × días acumulados
+
+**Décimo tercer mes (Aguinaldo):** 1/12 del salario por mes trabajado
+Se paga la primera quincena de diciembre.
+
+**Indemnización por antigüedad (Art. 45):** 1 mes de salario por cada uno de los primeros 3 años trabajados y 20 días por cada año a partir del cuarto. Mínimo 1 mes, máximo 5 meses. Aplica en despido o mutuo acuerdo, no en renuncia.
 
 ### 5. Automatiza este proceso con Nortex
 
@@ -94,6 +147,25 @@ Nortex calcula automáticamente todos estos valores. Solo ingresás el salario b
     faq: [
       { q: '¿Cuál es la tasa de retención por compra de bienes?', a: 'La retención en la fuente por compra de bienes y servicios generales es del 2% sobre la base gravable (sin IVA).' },
       { q: '¿Cuándo se declaran las retenciones IR?', a: 'Las retenciones se enteran a la DGI dentro de los primeros 15 días del mes siguiente, a través de la Ventanilla Electrónica Tributaria (VET).' },
+    category: 'Impuestos',
+    readTime: '6 min',
+    cluster: 'impuestos',
+    keyword: 'retenciones IR Nicaragua',
+    intent: 'informacional',
+    relatedSlugs: ['como-calcular-nomina-nicaragua-2026'],
+    faqs: [
+      {
+        q: '¿Se retiene IR sobre el IVA?',
+        a: 'No. La retención en la fuente se aplica únicamente sobre la base gravable (el valor de los bienes o servicios), nunca sobre el IVA.',
+      },
+      {
+        q: '¿Cuándo se declaran las retenciones IR en Nicaragua?',
+        a: 'Se declaran en la Ventanilla Electrónica Tributaria (VET) antes del día 10 del mes siguiente al que se efectuaron.',
+      },
+      {
+        q: '¿Desde qué monto se aplica la retención?',
+        a: 'Cuando una empresa compra bienes o servicios por un valor mayor a C$1,000 debe retener el porcentaje correspondiente.',
+      },
     ],
     content: `
 ## Retenciones IR Nicaragua 2026
@@ -106,6 +178,12 @@ Las retenciones en la fuente son un mecanismo de la DGI donde el comprador retie
 **Retención por servicios generales:** 2%
 **Retención por servicios profesionales (personas naturales):** 10%
 **Arrendamientos:** la tasa depende de si el ingreso es renta de actividad económica o renta de capital; confirmá el caso con tu contador.
+| Concepto | Tasa de retención |
+| --- | --- |
+| Compra de bienes | 2% |
+| Servicios generales | 2% |
+| Servicios profesionales | 10% |
+| Arrendamiento | 5% |
 
 ### ¿Cuándo aplicar retención?
 
