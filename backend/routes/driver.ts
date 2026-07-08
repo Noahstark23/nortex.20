@@ -22,6 +22,7 @@ import bcrypt from 'bcryptjs';
 // @ts-ignore
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
+import Decimal from 'decimal.js';
 import { signDriverToken, verifyDriverToken } from '../services/secrets';
 import { recordSale } from '../services/accounting';
 import { appendDriverWalletMovement } from '../services/ledger';
@@ -206,18 +207,19 @@ router.get('/me/orders', authenticateDriver, async (req: any, res: any) => {
             where: { motorizadoId, estado: 'entregado', entregadoAt: { gte: todayStart } }
         });
 
-        let totalCobradoEfectivo = 0;
-        let totalComisiones = 0;
+        let totalCobradoEfectivo = new Decimal(0);
+        let totalComisiones = new Decimal(0);
         for (const p of hoyPedidos) {
-            totalCobradoEfectivo += Number(p.total);
-            totalComisiones += Number(p.costoEntrega);
+            totalCobradoEfectivo = totalCobradoEfectivo.plus(new Decimal(p.total.toString()));
+            totalComisiones = totalComisiones.plus(new Decimal(p.costoEntrega.toString()));
         }
+        const netoADepositar = totalCobradoEfectivo.minus(totalComisiones);
 
         const liquidacionDiaria = {
             pedidosEntregados: hoyPedidos.length,
-            totalCobrado: totalCobradoEfectivo,
-            comisionesGanadas: totalComisiones,
-            netoADepositarA_Tienda: totalCobradoEfectivo - totalComisiones > 0 ? totalCobradoEfectivo - totalComisiones : 0
+            totalCobrado: totalCobradoEfectivo.toDecimalPlaces(2).toNumber(),
+            comisionesGanadas: totalComisiones.toDecimalPlaces(2).toNumber(),
+            netoADepositarA_Tienda: (netoADepositar.gt(0) ? netoADepositar : new Decimal(0)).toDecimalPlaces(2).toNumber()
         };
 
         res.json({
@@ -292,18 +294,18 @@ router.patch('/me/orders/:orderId/deliver', authenticateDriver, async (req: any,
             }
 
             if (!pedido.facturaId) {
-                let costTotal = 0;
+                let costTotal = new Decimal(0);
                 const saleItemsData = [];
                 for (const item of pedido.items) {
                     const prod = await tx.product.findUnique({ where: { id: item.productoId } });
                     if (prod) {
-                        const unitCost = Number(prod.cost || 0);
-                        costTotal += (unitCost * item.cantidad);
+                        const unitCost = new Decimal(prod.cost?.toString() ?? '0');
+                        costTotal = costTotal.plus(unitCost.mul(item.cantidad));
                         saleItemsData.push({
                             productId: item.productoId,
                             quantity: item.cantidad,
                             priceAtSale: item.precioUnitario,
-                            costAtSale: unitCost,
+                            costAtSale: unitCost.toDecimalPlaces(4).toNumber(),
                             discount: 0
                         });
                     }
@@ -329,11 +331,35 @@ router.patch('/me/orders/:orderId/deliver', authenticateDriver, async (req: any,
                     }
                 });
 
-                await recordSale(tx, pedido.tenantId, motorizadoId ?? null, sale.id, Number(pedido.total), costTotal, 'CASH');
+                await recordSale(tx, pedido.tenantId, motorizadoId ?? null, sale.id, Number(pedido.total), costTotal.toDecimalPlaces(4).toNumber(), 'CASH');
 
                 await tx.pedido.update({
                     where: { id: orderId },
                     data: { facturaId: sale.id }
+                });
+
+                // Capa 3 — asiento inmutable de la venta. La entrega vía Driver App
+                // cierra una venta en efectivo cobrada por un tercero externo
+                // (collectedBy=motorizadoId): debe dejar el mismo rastro SALE_CREATED
+                // que el POS canónico (salesService.executeSale), dentro de la misma
+                // $transaction. userId='SYSTEM' (misma convención que el GPS_AUDIT_ALERT
+                // de esta ruta); el actor real queda en details.collectedBy.
+                await tx.auditLog.create({
+                    data: {
+                        tenantId: pedido.tenantId,
+                        userId: 'SYSTEM',
+                        action: 'SALE_CREATED',
+                        details: JSON.stringify({
+                            pedidoId: orderId,
+                            saleId: sale.id,
+                            total: pedido.total.toString(),
+                            paymentMethod: 'CASH',
+                            source: 'DRIVER_APP',
+                            collectedBy: `driver:${motorizadoId}`,
+                            before: { estado: pedido.estado, facturaId: null },
+                            after: { estado: 'entregado', facturaId: sale.id },
+                        }),
+                    }
                 });
             }
 

@@ -44,18 +44,15 @@ export default defineConfig(({ mode }) => {
             // El resto de rutas (/login, /app/*, etc.) siguen usando el fallback al SPA.
             navigateFallback: '/index.html',
             navigateFallbackDenylist: [/^\/$/, /^\/landing\.html$/],
-            runtimeCaching: [
-              {
-                // API calls: network-first, fallback a cache 10 min
-                urlPattern: /^https?:\/\/.*\/api\//,
-                handler: 'NetworkFirst',
-                options: {
-                  cacheName: 'nortex-api-cache',
-                  networkTimeoutSeconds: 5,
-                  expiration: { maxEntries: 50, maxAgeSeconds: 600 },
-                },
-              },
-            ],
+            // NO cacheamos en runtime las respuestas de /api/. Antes un
+            // NetworkFirst guardaba respuestas AUTENTICADAS de negocio en un
+            // Cache Storage compartido por origen, sin partición por tenant/sesión
+            // ni purga en logout: en una terminal POS compartida, el usuario B
+            // podía recibir datos del tenant del usuario A desde caché dentro de
+            // la ventana de expiración si la red estaba lenta/offline. Los datos
+            // de negocio deben venir siempre de la red (o de la cola offline en
+            // IndexedDB para ventas), nunca de un caché HTTP compartido.
+            runtimeCaching: [],
           },
         }),
       ],

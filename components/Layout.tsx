@@ -90,6 +90,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     localStorage.removeItem('nortex_token');
     localStorage.removeItem('nortex_user');
     localStorage.removeItem('nortex_tenant_id');
+    // Purgar el caché de /api/ del SW para que el próximo usuario de una
+    // terminal compartida no reciba datos de negocio del usuario anterior.
+    if (typeof caches !== 'undefined') {
+      caches.delete('nortex-api-cache').catch(() => {});
+    }
     navigate('/login');
   };
 

@@ -7,6 +7,7 @@ import { z } from 'zod';
 import Decimal from 'decimal.js';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { recordSale } from '../services/accounting';
+import { applyStockDelta, StockError } from '../services/stockService';
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -279,34 +280,41 @@ router.patch('/:id/estado', authenticate, async (req: any, res: any) => {
                 });
 
                 if (existingReservas === 0) {
+                    // Política de stock negativo del tenant: por defecto se exige
+                    // suficiencia; si el tenant la permite, la reserva puede dejar
+                    // el stock negativo (backorder) y el Kardex refleja la realidad.
+                    const tenantCfg = await tx.tenant.findUnique({
+                        where: { id: authReq.tenantId },
+                        select: { allowNegativeStock: true }
+                    });
+                    const enforceStock = !(tenantCfg?.allowNegativeStock ?? false);
+
                     for (const item of pedido.items) {
-                        const prod = await tx.product.findUnique({ where: { id: item.productoId } });
-                        if (prod) {
-                            const stockBefore = Number(prod.stock);
-                            const stockAfter = stockBefore - item.cantidad;
+                        // Decremento ATÓMICO y con filtro de tenant: la suficiencia
+                        // y la escritura son el mismo UPDATE (WHERE stock >= qty),
+                        // sin ventana para sobreventa por lost-update.
+                        const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                            tenantId: authReq.tenantId,
+                            productId: item.productoId,
+                            delta: -item.cantidad,
+                            enforceSufficient: enforceStock,
+                        });
 
-                            // 1. Decrementar físicamente para que no se venda en mostrador
-                            await tx.product.update({
-                                where: { id: item.productoId },
-                                data: { stock: stockAfter }
-                            });
-
-                            // 2. Registrar en Kardex
-                            await tx.kardexMovement.create({
-                                data: {
-                                    tenantId: authReq.tenantId,
-                                    productId: item.productoId,
-                                    type: 'OUT',
-                                    quantity: -item.cantidad,
-                                    stockBefore,
-                                    stockAfter,
-                                    referenceId: id,
-                                    referenceType: 'PEDIDO_RESERVA',
-                                    reason: `Reserva para envío. Pedido: ${id}`,
-                                    userId: authReq.userId
-                                }
-                            });
-                        }
+                        // Registrar en Kardex
+                        await tx.kardexMovement.create({
+                            data: {
+                                tenantId: authReq.tenantId,
+                                productId: item.productoId,
+                                type: 'OUT',
+                                quantity: -item.cantidad,
+                                stockBefore,
+                                stockAfter,
+                                referenceId: id,
+                                referenceType: 'PEDIDO_RESERVA',
+                                reason: `Reserva para envío. Pedido: ${id}`,
+                                userId: authReq.userId
+                            }
+                        });
                     }
                 }
             }
@@ -334,29 +342,73 @@ router.patch('/:id/estado', authenticate, async (req: any, res: any) => {
             // FASE 2: Integración de Facturación
             // Si el estado pasa a "entregado" y no tiene factura asociada, procedemos a facturar.
             if (estado === 'entregado' && !pedido.facturaId) {
-                // 1. Calcular costos para contabilidad
-                let costTotal = 0;
+                // ¿El stock ya se descontó al reservar en 'preparando'? Si el pedido
+                // nunca pasó por esa fase (p. ej. se asignó saltando a 'en_camino' o
+                // un admin marcó 'entregado' directo), hay que descontarlo ahora al
+                // facturar la venta, de forma IDEMPOTENTE (referenceType PEDIDO_VENTA)
+                // para no duplicar el egreso si ya hubo reserva o venta previa.
+                const yaReservado = await tx.kardexMovement.count({
+                    where: { referenceId: id, referenceType: 'PEDIDO_RESERVA' }
+                });
+                const yaVendido = await tx.kardexMovement.count({
+                    where: { referenceId: id, referenceType: 'PEDIDO_VENTA' }
+                });
+                const descontarStock = yaReservado === 0 && yaVendido === 0;
+
+                let enforceStock = true;
+                if (descontarStock) {
+                    const tenantCfg = await tx.tenant.findUnique({
+                        where: { id: authReq.tenantId },
+                        select: { allowNegativeStock: true }
+                    });
+                    enforceStock = !(tenantCfg?.allowNegativeStock ?? false);
+                }
+
+                // 1. Calcular costos para contabilidad (COGS con decimal.js, cero float)
+                let costTotal = new Decimal(0);
                 const saleItemsData = [];
 
                 for (const item of pedido.items) {
-                    const prod = await tx.product.findUnique({ where: { id: item.productoId } });
+                    const prod = await tx.product.findFirst({
+                        where: { id: item.productoId, tenantId: authReq.tenantId }
+                    });
                     if (prod) {
-                        const unitCost = Number(prod.cost || 0);
-                        costTotal += (unitCost * item.cantidad);
+                        const unitCost = new Decimal(prod.cost || 0);
+                        costTotal = costTotal.plus(unitCost.mul(item.cantidad));
 
                         saleItemsData.push({
                             productId: item.productoId,
                             quantity: item.cantidad,
                             priceAtSale: item.precioUnitario,
-                            costAtSale: unitCost,
+                            costAtSale: unitCost.toNumber(),
                             discount: 0
                         });
 
-                        // Opcional: Descontar stock (Kardex)
-                        // await tx.product.update({
-                        //     where: { id: item.productoId },
-                        //     data: { stock: { decrement: item.cantidad } }
-                        // });
+                        // Descontar stock + Kardex si la venta no reservó antes:
+                        // decremento ATÓMICO (WHERE stock >= qty) con filtro de tenant.
+                        if (descontarStock) {
+                            const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                                tenantId: authReq.tenantId,
+                                productId: item.productoId,
+                                delta: -item.cantidad,
+                                enforceSufficient: enforceStock,
+                            });
+
+                            await tx.kardexMovement.create({
+                                data: {
+                                    tenantId: authReq.tenantId,
+                                    productId: item.productoId,
+                                    type: 'OUT',
+                                    quantity: -item.cantidad,
+                                    stockBefore,
+                                    stockAfter,
+                                    referenceId: id,
+                                    referenceType: 'PEDIDO_VENTA',
+                                    reason: `Venta por entrega. Pedido: ${id}`,
+                                    userId: authReq.userId
+                                }
+                            });
+                        }
                     }
                 }
 
@@ -385,12 +437,31 @@ router.patch('/:id/estado', authenticate, async (req: any, res: any) => {
                 });
 
                 // 4. Registrar en contabilidad mediante el motor (recordSale)
-                await recordSale(tx, authReq.tenantId, authReq.userId, sale.id, Number(pedido.total), costTotal, 'CASH');
+                await recordSale(tx, authReq.tenantId, authReq.userId, sale.id, Number(pedido.total), costTotal.toDecimalPlaces(4).toNumber(), 'CASH');
 
                 // 5. Vincular la factura al pedido
                 await tx.pedido.update({
                     where: { id },
                     data: { facturaId: sale.id }
+                });
+
+                // 6. AuditLog inmutable de la venta, DENTRO de la misma $transaction
+                //    (paridad con el POS canónico: toda venta deja asiento SALE_CREATED
+                //    con atribución y before/after).
+                await tx.auditLog.create({
+                    data: {
+                        tenantId: authReq.tenantId,
+                        userId: authReq.userId,
+                        action: 'SALE_CREATED',
+                        details: JSON.stringify({
+                            pedidoId: id,
+                            saleId: sale.id,
+                            total: pedido.total.toString(),
+                            paymentMethod: 'CASH',
+                            before: { estado: pedido.estado, facturaId: null },
+                            after: { estado: 'entregado', facturaId: sale.id }
+                        })
+                    }
                 });
             }
 
@@ -399,6 +470,12 @@ router.patch('/:id/estado', authenticate, async (req: any, res: any) => {
 
         res.json({ message: `Estado actualizado a ${estado}`, pedido: updated });
     } catch (error) {
+        // Stock insuficiente / producto inexistente: la transacción abortó por el
+        // decremento atómico. Devolvemos un estado claro en vez de un 500 genérico.
+        if (error instanceof StockError) {
+            const status = error.code === 'PRODUCT_NOT_FOUND' ? 404 : 422;
+            return res.status(status).json({ error: error.message });
+        }
         console.error('Patch Estado Error:', error);
         res.status(500).json({ error: 'Error al actualizar el estado.' });
     }

@@ -38,6 +38,7 @@ import loanRoutes from './routes/loans';
 import purchaseOrdersRouter from './routes/purchaseOrders';
 import syncRoutes from './routes/sync';
 import Decimal from 'decimal.js';
+import { z } from 'zod';
 import {
     validate,
     CreateReturnSchema,
@@ -132,20 +133,36 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }) as an
     try {
         let event: Stripe.Event;
 
-        if (STRIPE_WEBHOOK_SECRET && STRIPE_WEBHOOK_SECRET !== 'whsec_REEMPLAZAR_CON_TU_WEBHOOK_SECRET') {
-            event = stripe.webhooks.constructEvent(req.body, sig!, STRIPE_WEBHOOK_SECRET);
-        } else {
-            // Modo desarrollo: confiar en el evento sin verificar firma
-            event = JSON.parse(req.body.toString());
-            console.warn('⚠️ Webhook sin verificación de firma (dev mode)');
+        // La firma HMAC del webhook DEBE verificarse siempre: sin un secret real no hay
+        // forma de validar el origen del evento y un atacante podría activar o cancelar
+        // tenants falsificando el body. Nunca confiar en eventos sin firma.
+        if (!STRIPE_WEBHOOK_SECRET || STRIPE_WEBHOOK_SECRET === 'whsec_REEMPLAZAR_CON_TU_WEBHOOK_SECRET') {
+            console.error('❌ STRIPE_WEBHOOK_SECRET no configurado: webhook rechazado');
+            return res.status(500).json({ error: 'Webhook no configurado correctamente' });
         }
+
+        if (!sig) {
+            return res.status(400).json({ error: 'Falta la firma del webhook' });
+        }
+
+        event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
 
         console.log(`📬 Stripe Webhook: ${event.type}`);
         await handleWebhookEvent(event);
 
-        // Invalidar caché del tenant afectado
+        // Invalidar caché del tenant afectado.
+        // Los objetos Invoice (invoice.paid / invoice.payment_failed) NO heredan
+        // metadata.tenantId — solo lo llevan checkout.session y subscription —, así que
+        // en esos casos resolvemos el tenant por su stripeSubscriptionId.
         const obj = event.data.object as any;
-        const tenantId = obj.metadata?.tenantId;
+        let tenantId: string | undefined = obj.metadata?.tenantId;
+        if (!tenantId && obj.subscription) {
+            const affectedTenant = await prisma.tenant.findFirst({
+                where: { stripeSubscriptionId: obj.subscription as string },
+                select: { id: true },
+            });
+            tenantId = affectedTenant?.id;
+        }
         if (tenantId) invalidateTenantCache(tenantId);
 
         res.json({ received: true });
@@ -224,6 +241,18 @@ app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: a
     const { companyName, email, password, type } = req.body;
 
     try {
+        // 0. Reservar los emails con privilegio SUPER_ADMIN: no pueden auto-registrarse
+        //    por vía pública (se provisionan por seed controlado). Defensa en profundidad
+        //    ante una BD fresca/restaurada donde la cuenta aún no exista. Se responde con
+        //    el mismo mensaje genérico para no revelar qué correos están reservados.
+        const reservedSuperAdminEmails = (process.env.SUPER_ADMIN_EMAILS || 'noelpinedaa96@gmail.com')
+            .split(',')
+            .map((e: string) => e.trim().toLowerCase())
+            .filter(Boolean);
+        if (reservedSuperAdminEmails.includes((email || '').toLowerCase())) {
+            return res.status(400).json({ error: 'Email ya registrado' });
+        }
+
         // 1. Check if user already exists
         const existingUser = await prisma.user.findUnique({ where: { email } });
         if (existingUser) {
@@ -271,6 +300,17 @@ app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: a
                     pin: '1234',
                     baseSalary: 0,
                     commissionRate: 0,
+                }
+            });
+
+            // Asiento de auditoría del crédito de génesis (walletBalance/creditLimit)
+            // acreditado al crear la cuenta, para trazabilidad forense (Capa 3).
+            await tx.auditLog.create({
+                data: {
+                    tenantId: tenant.id,
+                    userId: user.id,
+                    action: 'TENANT_GENESIS_CREDIT',
+                    details: `Crédito de génesis al registrar: walletBalance 0 -> 10000, creditLimit 0 -> 5000`,
                 }
             });
 
@@ -716,7 +756,24 @@ app.delete('/api/team/invite/:invitationId', authenticate, async (req: any, res:
             return res.status(404).json({ error: 'Invitación no encontrada.' });
         }
 
-        await prisma.invitation.delete({ where: { id: invitationId } });
+        // Soft-cancel + auditoría, en línea con el endpoint hermano DELETE /api/team/:userId.
+        // La propiedad ya se verificó arriba con findFirst por tenantId. No borrar físicamente:
+        // se pierde la forensia de accesos (quién invitó/revocó a qué email con qué rol).
+        await prisma.$transaction(async (tx: any) => {
+            await tx.invitation.update({
+                where: { id: invitationId },
+                data: { status: 'CANCELLED' }
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'CANCEL_INVITATION',
+                    details: `Canceló invitación de ${invitation.email} (${invitation.role})`,
+                }
+            });
+        });
 
         res.json({ success: true, message: 'Invitación cancelada.' });
     } catch (error) {
@@ -785,9 +842,13 @@ app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req: any, re
         const emailSent = await sendPasswordResetEmail(user.email, resetLink, user.name);
 
         if (!emailSent) {
+            // No revelar al cliente que el envío falló: diferenciar la respuesta según el
+            // usuario exista o no crea un oráculo de enumeración de cuentas (el caso "email
+            // inexistente" ya responde 200 genericMsg). Registrar el fallo solo del lado del
+            // servidor y devolver el mismo mensaje genérico.
             console.error(`❌ FAILED TO SEND RESET EMAIL to ${user.email}`);
             console.log(`🔗 Reset link (fallback): ${resetLink}`);
-            return res.status(500).json({ error: 'Error interno: No se pudo enviar el correo. Revisa los logs del servidor.' });
+            return res.json({ message: genericMsg });
         }
 
         res.json({ message: genericMsg });
@@ -1010,12 +1071,12 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             d.setDate(d.getDate() - (6 - i));
             const dayName = days[d.getDay()];
 
-            // Filter sales for this day
+            // Filter sales for this day (suma con decimal.js)
             const dayTotal = recentSales
                 .filter((s: any) => new Date(s.createdAt).toDateString() === d.toDateString())
-                .reduce((sum: number, s: any) => sum + Number(s.total), 0);
+                .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
 
-            return { name: dayName, sales: dayTotal };
+            return { name: dayName, sales: dayTotal.toNumber() };
         });
 
         // 3. Calculate Today's Expenses (Gastos operativos del día)
@@ -1028,15 +1089,15 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
                 createdAt: { gte: todayStart }
             }
         });
-        const totalExpensesToday = todayExpenses.reduce((sum: number, e: any) => sum + Number(e.amount), 0);
+        const totalExpensesToday = todayExpenses.reduce((sum: Decimal, e: any) => sum.plus(new Decimal(e.amount.toString())), new Decimal(0));
 
         // 4. Calculate Today's Sales
         const totalSalesToday = recentSales
             .filter((s: any) => new Date(s.createdAt).toDateString() === new Date().toDateString())
-            .reduce((sum: number, s: any) => sum + Number(s.total), 0);
+            .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
 
-        // 5. Net Profit = Ventas Brutas - Gastos Operativos
-        const netProfitToday = totalSalesToday - totalExpensesToday;
+        // 5. Net Profit = Ventas Brutas - Gastos Operativos (resta con decimal.js)
+        const netProfitToday = totalSalesToday.minus(totalExpensesToday);
 
         // 6. Recent Theft/Surplus Alerts (últimos 7 días)
         const recentAlerts = await prisma.auditLog.findMany({
@@ -1082,9 +1143,9 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             tenant: tenant,
             chartData: chartData,
             todayStats: {
-                totalSales: totalSalesToday,
-                totalExpenses: totalExpensesToday,
-                netProfit: netProfitToday,
+                totalSales: totalSalesToday.toNumber(),
+                totalExpenses: totalExpensesToday.toNumber(),
+                netProfit: netProfitToday.toNumber(),
             },
             alerts: recentAlerts.map((a: any) => ({
                 id: a.id,
@@ -1101,7 +1162,7 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
     }
 });
 
-app.get('/api/fintech/score', authenticate, async (req: any, res: any) => {
+app.get('/api/fintech/score', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const riskAnalysis = await calculateTenantScore(authReq.tenantId!);
@@ -1116,21 +1177,68 @@ app.get('/api/fintech/score', authenticate, async (req: any, res: any) => {
     }
 });
 
-app.post('/api/loans/request', authenticate, async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { amount } = req.body;
-    try {
-        const tenant = await prisma.tenant.findUnique({ where: { id: authReq.tenantId } });
-        if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
-        if (Number(amount) > Number(tenant.creditLimit)) return res.status(400).json({ error: `RIESGO ALTO` });
+// Schema Zod inline (evita colisión en schemas.ts): monto positivo finito.
+const LoanRequestSchema = z.object({
+    amount: z
+        .union([z.string(), z.number()])
+        .transform((v) => String(v))
+        .refine((v) => !isNaN(parseFloat(v)) && parseFloat(v) > 0, {
+            message: 'El monto debe ser mayor que cero',
+        }),
+});
 
-        const updated = await prisma.tenant.update({
-            where: { id: authReq.tenantId },
-            data: { walletBalance: { increment: Number(amount) }, creditLimit: { decrement: Number(amount) } }
+app.post('/api/loans/request', authenticate, checkRole(['OWNER', 'ADMIN']), validate(LoanRequestSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const amount = new Decimal(req.body.amount);
+    try {
+        const updated = await prisma.$transaction(async (tx: any) => {
+            const tenant = await tx.tenant.findUnique({ where: { id: authReq.tenantId } });
+            if (!tenant) throw new Error('TENANT_NOT_FOUND');
+
+            const walletBefore = new Decimal(tenant.walletBalance.toString());
+            const creditLimitBefore = new Decimal(tenant.creditLimit.toString());
+
+            if (amount.greaterThan(creditLimitBefore)) throw new Error('RIESGO_ALTO');
+
+            // Decremento atómico condicionado: solo aplica si la línea de crédito
+            // sigue alcanzando (evita doble-giro/TOCTOU bajo concurrencia).
+            const applied = await tx.tenant.updateMany({
+                where: { id: authReq.tenantId, creditLimit: { gte: amount.toString() } },
+                data: {
+                    walletBalance: { increment: amount.toString() },
+                    creditLimit: { decrement: amount.toString() },
+                },
+            });
+            if (applied.count === 0) throw new Error('RIESGO_ALTO');
+
+            const result = await tx.tenant.findUnique({ where: { id: authReq.tenantId } });
+
+            // Asiento inmutable del desembolso a wallet, con before/after, dentro de la tx.
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    userId: authReq.userId,
+                    action: 'LOAN_WALLET_DISBURSED',
+                    details: JSON.stringify({
+                        amount: amount.toString(),
+                        before: { walletBalance: walletBefore.toString(), creditLimit: creditLimitBefore.toString() },
+                        after: {
+                            walletBalance: new Decimal(result.walletBalance.toString()).toString(),
+                            creditLimit: new Decimal(result.creditLimit.toString()).toString(),
+                        },
+                    }),
+                },
+            });
+
+            return result;
         });
-        await prisma.auditLog.create({ data: { tenantId: authReq.tenantId, userId: authReq.userId, action: 'SURPLUS_ALERT', details: `Préstamo: $${amount}` } });
         res.json(updated);
-    } catch (error) { res.status(500).json({ error: 'Error' }); }
+    } catch (error: any) {
+        if (error.message === 'TENANT_NOT_FOUND') return res.status(404).json({ error: 'Tenant not found' });
+        if (error.message === 'RIESGO_ALTO') return res.status(400).json({ error: 'RIESGO ALTO' });
+        console.error(error);
+        res.status(500).json({ error: 'Error' });
+    }
 });
 
 // ==========================================
@@ -1196,7 +1304,29 @@ app.post('/api/b2b/order', authenticate, async (req: any, res: any) => {
 // 👥 CRM: CLIENTES (Risk & Profile)
 // ==========================================
 
-app.post('/api/customers', authenticate, async (req: any, res: any) => {
+// Schemas Zod inline para clientes (definidos aquí para evitar colisión en schemas.ts).
+const CustomerCreditLimit = z
+    .union([z.string(), z.number()])
+    .transform((v) => String(v))
+    .refine((v) => !isNaN(parseFloat(v)) && parseFloat(v) >= 0, {
+        message: 'El límite de crédito debe ser un número mayor o igual a 0',
+    });
+
+const CreateCustomerSchema = z.object({
+    name: z.string().min(1, 'El nombre es requerido'),
+    taxId: z.string().optional(),
+    phone: z.string().optional(),
+    address: z.string().optional(),
+    email: z.string().optional(),
+    creditLimit: CustomerCreditLimit.optional(),
+});
+
+const UpdateCustomerSchema = z.object({
+    creditLimit: CustomerCreditLimit.optional(),
+    isBlocked: z.boolean().optional(),
+});
+
+app.post('/api/customers', authenticate, validate(CreateCustomerSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { name, taxId, phone, address, creditLimit, email } = req.body;
 
@@ -1209,7 +1339,7 @@ app.post('/api/customers', authenticate, async (req: any, res: any) => {
                 phone,
                 email,
                 address,
-                creditLimit: creditLimit || 0,
+                creditLimit: creditLimit !== undefined ? new Decimal(creditLimit).toDecimalPlaces(2).toString() : 0,
                 currentDebt: 0,
                 isBlocked: false
             }
@@ -1243,21 +1373,45 @@ app.get('/api/customers', authenticate, async (req: any, res: any) => {
     }
 });
 
-app.put('/api/customers/:id', authenticate, async (req: any, res: any) => {
+app.put('/api/customers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), validate(UpdateCustomerSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
     const { creditLimit, isBlocked } = req.body;
 
     try {
-        const updated = await prisma.customer.updateMany({
-            where: { id, tenantId: authReq.tenantId },
-            data: {
-                creditLimit: creditLimit !== undefined ? Number(creditLimit) : undefined,
-                isBlocked: isBlocked !== undefined ? Boolean(isBlocked) : undefined
-            }
+        await prisma.$transaction(async (tx: any) => {
+            // Verificar propiedad dentro del tenant (patrón de /api/suppliers PUT).
+            const existing = await tx.customer.findFirst({ where: { id, tenantId: authReq.tenantId } });
+            if (!existing) throw new Error('CUSTOMER_NOT_FOUND');
+
+            const data: any = {};
+            if (creditLimit !== undefined) data.creditLimit = new Decimal(creditLimit).toDecimalPlaces(2).toString();
+            if (isBlocked !== undefined) data.isBlocked = Boolean(isBlocked);
+
+            if (Object.keys(data).length === 0) return;
+
+            const updated = await tx.customer.update({ where: { id }, data });
+
+            // Auditoría de controles de crédito sensibles (límite / bloqueo).
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    userId: authReq.userId,
+                    action: 'CUSTOMER_CREDIT_UPDATED',
+                    details: JSON.stringify({
+                        customerId: id,
+                        before: { creditLimit: existing.creditLimit.toString(), isBlocked: existing.isBlocked },
+                        after: { creditLimit: updated.creditLimit.toString(), isBlocked: updated.isBlocked },
+                    }),
+                },
+            });
         });
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: 'Error' }); }
+    } catch (e: any) {
+        if (e.message === 'CUSTOMER_NOT_FOUND') return res.status(404).json({ error: 'Cliente no encontrado' });
+        console.error(e);
+        res.status(500).json({ error: 'Error' });
+    }
 });
 
 // ==========================================
@@ -1275,7 +1429,18 @@ app.get('/api/suppliers', authenticate, async (req: any, res: any) => {
     } catch (error) { res.status(500).json({ error: 'Error' }); }
 });
 
-app.post('/api/suppliers', authenticate, async (req: any, res: any) => {
+// Schema Zod inline para creación de proveedor (definido aquí para evitar colisión en schemas.ts).
+const CreateSupplierSchema = z.object({
+    name: z.string().trim().min(1, 'El nombre es requerido'),
+    ruc: z.string().trim().optional(),
+    contactName: z.string().trim().optional(),
+    phone: z.string().trim().optional(),
+    email: z.string().trim().email('Email inválido').optional().or(z.literal('')),
+    address: z.string().trim().optional(),
+    category: z.string().trim().optional(),
+});
+
+app.post('/api/suppliers', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateSupplierSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { name, ruc, contactName, phone, email, address, category } = req.body;
     try {
@@ -1339,7 +1504,7 @@ app.delete('/api/suppliers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), as
 // 👔 RRHH: EMPLEADOS & NÓMINA (LÓGICA REAL AGREGADA)
 // ==========================================
 
-app.get('/api/employees', authenticate, async (req: any, res: any) => {
+app.get('/api/employees', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', 'ACCOUNTANT']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const now = new Date();
@@ -1367,8 +1532,10 @@ app.get('/api/employees', authenticate, async (req: any, res: any) => {
         // 3. Map Results
         const employeesWithSales = employees.map((emp: any) => {
             const stat = salesStats.find((s: any) => s.employeeId === emp.id);
+            // Omitir credenciales/PII sensible (PIN de asistencia y cuenta bancaria) de la respuesta.
+            const { pin, bankAccount, ...safeEmp } = emp;
             return {
-                ...emp,
+                ...safeEmp,
                 salesMonthToDate: stat?._sum.total ? Number(stat._sum.total) : 0
             };
         });
@@ -1380,7 +1547,26 @@ app.get('/api/employees', authenticate, async (req: any, res: any) => {
     }
 });
 
-app.post('/api/employees', authenticate, async (req: any, res: any) => {
+// Schema Zod inline para creación de empleado (definido aquí para evitar colisión en schemas.ts).
+const EmployeeNumericNonNeg = z
+    .union([z.string(), z.number()])
+    .transform((v) => Number(v))
+    .refine((v) => !isNaN(v) && v >= 0, { message: 'Debe ser un número mayor o igual a 0' });
+
+const CreateEmployeeSchema = z.object({
+    firstName: z.string().trim().min(1, 'El nombre es requerido'),
+    lastName: z.string().trim().min(1, 'El apellido es requerido'),
+    role: z.string().trim().min(1, 'El rol es requerido'),
+    baseSalary: EmployeeNumericNonNeg,
+    commissionRate: EmployeeNumericNonNeg.optional().default(0),
+    phone: z.string().trim().optional(),
+    pin: z.union([z.string(), z.number()]).optional(),
+    cedula: z.string().trim().optional(),
+    inss: z.string().trim().optional(),
+    jornada: z.string().trim().optional(),
+});
+
+app.post('/api/employees', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), validate(CreateEmployeeSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { firstName, lastName, role, baseSalary, commissionRate, phone, pin, cedula, inss, jornada } = req.body;
 
@@ -1419,7 +1605,7 @@ app.post('/api/employees', authenticate, async (req: any, res: any) => {
 });
 
 // PATCH /api/employees/:id/pin — Cambiar PIN de empleado
-app.patch('/api/employees/:id/pin', authenticate, async (req: any, res: any) => {
+app.patch('/api/employees/:id/pin', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
     const { pin } = req.body;
@@ -1504,22 +1690,80 @@ app.get('/api/sales/search', authenticate, async (req: any, res: any) => {
 });
 
 // Process return
-app.post('/api/returns', authenticate, validate(CreateReturnSchema), async (req: any, res: any) => {
+app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateReturnSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { saleId, items, reason } = req.body;
-    // items: [{productId, name, quantity, price}]
+    // items: [{productId, quantity, price}] — price/quantity del cliente NO son de confianza.
 
     try {
         const sale = await prisma.sale.findFirst({
             where: { id: saleId, tenantId: authReq.tenantId },
-            include: { items: { select: { productId: true, costAtSale: true } } },
+            // Cargar cantidad, precio y costo REALES de la venta (fijados por el servidor).
+            include: { items: { select: { productId: true, quantity: true, priceAtSale: true, costAtSale: true } } },
         });
         if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
 
-        const returnTotal = items.reduce((sum: number, item: any) => sum + Number(item.price) * Number(item.quantity), 0);
-        // Costo de lo devuelto: reversa el costo REAL que la venta registró
-        // (SaleItem.costAtSale, fijado por el servidor), no una aproximación.
-        const costByProduct = new Map(sale.items.map(it => [it.productId, new Decimal(it.costAtSale.toString())]));
+        // Índices por producto tomados de la venta ORIGINAL (fuente de verdad del servidor).
+        const soldQtyByProduct = new Map<string, Decimal>();
+        const priceByProduct = new Map<string, Decimal>();
+        const costByProduct = new Map<string, Decimal>();
+        for (const it of sale.items) {
+            soldQtyByProduct.set(it.productId, new Decimal(it.quantity.toString()));
+            priceByProduct.set(it.productId, new Decimal(it.priceAtSale.toString()));
+            costByProduct.set(it.productId, new Decimal(it.costAtSale.toString()));
+        }
+
+        // Devoluciones previas de esta venta: acumular cantidad ya devuelta por producto
+        // para impedir devolver más de lo vendido a través de múltiples notas de crédito.
+        const previousReturns = await prisma.productReturn.findMany({
+            where: { saleId, tenantId: authReq.tenantId },
+            select: { items: true },
+        });
+        const returnedQtyByProduct = new Map<string, Decimal>();
+        for (const pr of previousReturns) {
+            const prevItems = Array.isArray(pr.items) ? (pr.items as any[]) : [];
+            for (const pi of prevItems) {
+                const pid = String(pi.productId);
+                const q = new Decimal(Number(pi.quantity) || 0);
+                returnedQtyByProduct.set(pid, (returnedQtyByProduct.get(pid) ?? new Decimal(0)).plus(q));
+            }
+        }
+
+        // Validar cada ítem contra la venta y construir la lista saneada (precio del servidor).
+        const validatedItems: { productId: string; quantity: Decimal; price: Decimal }[] = [];
+        for (const item of items) {
+            const pid = String(item.productId);
+            const soldQty = soldQtyByProduct.get(pid);
+            const unitPrice = priceByProduct.get(pid);
+            // (a) el producto debe pertenecer a la venta original.
+            if (soldQty === undefined || unitPrice === undefined) {
+                return res.status(400).json({ error: `El producto ${pid} no pertenece a la venta.` });
+            }
+            // (b) cantidad solicitada <= vendida - ya devuelta.
+            const reqQty = new Decimal(Number(item.quantity) || 0);
+            const alreadyReturned = returnedQtyByProduct.get(pid) ?? new Decimal(0);
+            const remaining = soldQty.minus(alreadyReturned);
+            if (reqQty.lessThanOrEqualTo(0) || reqQty.greaterThan(remaining)) {
+                return res.status(400).json({
+                    error: `Cantidad a devolver inválida para el producto ${pid} (disponible: ${remaining.toString()}).`,
+                });
+            }
+            // (c) usar el precio de la venta (no el del cliente).
+            validatedItems.push({ productId: pid, quantity: reqQty, price: unitPrice });
+        }
+
+        // returnTotal con el precio REAL de la venta, en decimal.js (Capa 4).
+        const returnTotalDec = validatedItems
+            .reduce((acc, it) => acc.plus(it.price.mul(it.quantity)), new Decimal(0))
+            .toDecimalPlaces(2);
+        const returnTotal = returnTotalDec.toNumber();
+
+        // Persistir los ítems saneados (cantidad y precio del servidor, no los del cliente).
+        const persistItems = validatedItems.map((it) => ({
+            productId: it.productId,
+            quantity: it.quantity.toNumber(),
+            price: it.price.toNumber(),
+        }));
 
         const result = await prisma.$transaction(async (tx: any) => {
             // 1. Create return record
@@ -1529,20 +1773,21 @@ app.post('/api/returns', authenticate, validate(CreateReturnSchema), async (req:
                     saleId,
                     total: returnTotal,
                     reason: reason || 'Devolución de producto',
-                    items: items,
+                    items: persistItems,
                     createdBy: authReq.userId,
                 }
             });
 
             // 2. Restore stock for each returned item (incremento atómico —
             //    stockBefore/After salen del row-lock, no de una lectura previa)
-            for (const item of items) {
+            for (const item of validatedItems) {
+                const qty = item.quantity.toNumber();
                 let stockResult;
                 try {
                     stockResult = await applyStockDelta(tx, {
                         tenantId: authReq.tenantId,
                         productId: item.productId,
-                        delta: Number(item.quantity),
+                        delta: qty,
                         enforceSufficient: false,
                     });
                 } catch (err) {
@@ -1556,7 +1801,7 @@ app.post('/api/returns', authenticate, validate(CreateReturnSchema), async (req:
                         tenantId: authReq.tenantId,
                         productId: item.productId,
                         type: 'RETURN',
-                        quantity: Number(item.quantity),
+                        quantity: qty,
                         stockBefore: stockResult.stockBefore,
                         stockAfter: stockResult.stockAfter,
                         referenceId: productReturn.id,
@@ -1568,22 +1813,50 @@ app.post('/api/returns', authenticate, validate(CreateReturnSchema), async (req:
             }
 
             // 3. Update customer debt if credit sale
+            let debtBefore: string | null = null;
+            let debtAfter: string | null = null;
             if (sale.customerId && sale.paymentMethod === 'CREDIT') {
-                await tx.customer.update({
-                    where: { id: sale.customerId },
+                // Capturar saldo previo del cliente (before) antes del decremento, para el AuditLog.
+                const prevCustomer = await tx.customer.findFirst({
+                    where: { id: sale.customerId, tenantId: authReq.tenantId },
+                    select: { currentDebt: true },
+                });
+                debtBefore = prevCustomer ? String(prevCustomer.currentDebt) : null;
+                const updatedCustomer = await tx.customer.update({
+                    where: { id: sale.customerId, tenantId: authReq.tenantId },  // tenant isolation
                     data: { currentDebt: { decrement: returnTotal } }
                 });
+                debtAfter = String(updatedCustomer.currentDebt);
             }
 
             // 📊 MOTOR CONTABLE: Registrar devolución
-            const costTotal = items.reduce(
-                (sum: Decimal, item: { productId?: unknown; quantity?: unknown }) =>
-                    sum.plus((costByProduct.get(String(item.productId)) ?? new Decimal(0)).mul(Number(item.quantity) || 0)),
+            // Costo de lo devuelto: reversa el costo REAL que la venta registró
+            // (SaleItem.costAtSale, fijado por el servidor), no una aproximación.
+            const costTotal = validatedItems.reduce(
+                (sum, item) => sum.plus((costByProduct.get(item.productId) ?? new Decimal(0)).mul(item.quantity)),
                 new Decimal(0)
-            ).toNumber();
+            ).toDecimalPlaces(2).toNumber();
             try {
                 await recordReturn(tx, authReq.tenantId!, authReq.userId!, productReturn.id, returnTotal, costTotal);
             } catch (accErr) { console.warn('⚠️ Accounting hook failed (return continues):', accErr); }
+
+            // 📝 AUDITORÍA INMUTABLE: la devolución mueve dinero e inventario (Capa 3).
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'RETURN_CREATED',
+                    details: JSON.stringify({
+                        saleId,
+                        returnId: productReturn.id,
+                        total: String(returnTotal),
+                        costTotal: String(costTotal),
+                        items: persistItems,
+                        debtBefore,
+                        debtAfter,
+                    }),
+                },
+            });
 
             return productReturn;
         });
@@ -1611,28 +1884,95 @@ app.post('/api/payments', authenticate, validate(CreatePaymentSchema), async (re
         });
         if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
 
+        // Solo se cobran ventas a crédito con saldo pendiente. Bloquear ventas
+        // CASH/CARD (aunque tengan customerId) y sobrepagos que dejarían el balance
+        // y la deuda del cliente en negativo. Validación autoritativa se re-hace bajo
+        // lock dentro de la transacción; esta pre-validación da un 400 limpio.
+        if (sale.status !== 'CREDIT_PENDING' || new Decimal(sale.balance.toString()).lessThanOrEqualTo(0)) {
+            return res.status(400).json({ error: 'La venta no tiene saldo de crédito pendiente' });
+        }
+        if (new Decimal(amount).greaterThan(new Decimal(sale.balance.toString()))) {
+            return res.status(400).json({ error: 'El monto excede el saldo pendiente de la venta' });
+        }
+
         const result = await prisma.$transaction(async (tx: any) => {
+            // Bloqueo pesimista de la fila de venta (FOR UPDATE): el balance autoritativo
+            // se lee bajo lock DENTRO de la transacción para evitar lost-update entre pagos
+            // concurrentes. La consulta va parametrizada (tagged template) contra inyección.
+            const locked: Array<{ balance: any; status: string }> = await tx.$queryRaw`
+                SELECT balance, status FROM "Sale"
+                WHERE id = ${saleId} AND "tenantId" = ${authReq.tenantId}
+                FOR UPDATE`;
+            if (locked.length === 0) throw new Error('Venta no encontrada');
+            const balanceBefore = new Decimal(locked[0].balance.toString());
+            const statusBefore = locked[0].status;
+            // Re-validación bajo lock (race-safe): solo crédito pendiente y sin sobrepago.
+            if (statusBefore !== 'CREDIT_PENDING' || balanceBefore.lessThanOrEqualTo(0)) {
+                throw new Error('La venta no tiene saldo de crédito pendiente');
+            }
+            if (new Decimal(amount).greaterThan(balanceBefore)) {
+                throw new Error('El monto excede el saldo pendiente de la venta');
+            }
+            const balanceAfter = balanceBefore.minus(paymentAmount).toDecimalPlaces(2);
+            const newStatus = balanceAfter.lessThanOrEqualTo(0.01) ? 'PAID' : 'CREDIT_PENDING';
+
             const payment = await tx.payment.create({
                 data: { saleId: sale.id, amount: paymentAmount, method: method || 'CASH', collectedBy: authReq.userId }
             });
-            const newBalance = new Decimal(sale.balance.toString()).minus(paymentAmount).toNumber();
-            const newStatus = newBalance <= 0.01 ? 'PAID' : 'CREDIT_PENDING';
 
+            // Decremento relativo atómico del balance; el status se recomputa desde el
+            // balance resultante (calculado sobre la lectura bloqueada), sin escribir absolutos.
             await tx.sale.update({
                 where: { id: saleId, tenantId: authReq.tenantId },  // tenant isolation en update
-                data: { balance: newBalance, status: newStatus }
+                data: { balance: { decrement: paymentAmount }, status: newStatus }
             });
 
+            let debtBefore: string | null = null;
+            let debtAfter: string | null = null;
             if (sale.customerId) {
-                await tx.customer.update({
+                const prevCustomer = await tx.customer.findFirst({
+                    where: { id: sale.customerId, tenantId: authReq.tenantId },
+                    select: { currentDebt: true },
+                });
+                debtBefore = prevCustomer ? String(prevCustomer.currentDebt) : null;
+                const updatedCustomer = await tx.customer.update({
                     where: { id: sale.customerId, tenantId: authReq.tenantId },  // tenant isolation
                     data: { currentDebt: { decrement: paymentAmount } }
                 });
+                debtAfter = String(updatedCustomer.currentDebt);
             }
+
+            // 📊 MOTOR CONTABLE: Debe Caja (1.1.1) / Haber CxC (1.1.3). Antes nunca se invocaba.
+            await recordPayment(tx, authReq.tenantId!, authReq.userId!, payment.id, paymentAmount);
+
+            // 📝 AUDITORÍA INMUTABLE del cobro (Capa 3): before/after de balance/status/deuda.
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'PAYMENT_RECEIVED',
+                    details: JSON.stringify({
+                        saleId,
+                        paymentId: payment.id,
+                        amount: String(paymentAmount),
+                        balanceBefore: String(balanceBefore),
+                        balanceAfter: String(balanceAfter),
+                        statusBefore,
+                        statusAfter: newStatus,
+                        method: method ?? 'CASH',
+                        debtBefore,
+                        debtAfter,
+                    }),
+                },
+            });
+
             return payment;
         });
         res.json(result);
-    } catch (error) { res.status(500).json({ error: 'Error' }); }
+    } catch (error: any) {
+        console.error('Error procesando pago:', error);
+        res.status(500).json({ error: error.message || 'Error procesando pago' });
+    }
 });
 
 // --- OPERATIONAL CONTROL (SHIFTS & AUDITS) - Preserved ---
@@ -1651,7 +1991,17 @@ app.get('/api/shifts/current', authenticate, async (req: any, res: any) => {
         res.json(shift);
     } catch (error) { res.status(500).json({ error: 'Error' }); }
 });
-app.post('/api/shifts/open', authenticate, validate(OpenShiftSchema), async (req: any, res: any) => {
+// Rate limit estricto para apertura de caja: el PIN de 4 dígitos se coteja contra la
+// BD, así que sin límite dedicado se puede enumerar el PIN de un compañero bajo el
+// globalLimiter. 10 intentos/hora por IP corta la fuerza bruta (mismo patrón loginLimiter).
+const shiftOpenLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    message: { error: '🔒 Demasiados intentos de apertura de caja. Espera 1 hora.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+app.post('/api/shifts/open', shiftOpenLimiter as any, authenticate, validate(OpenShiftSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { initialCash, employeePin } = req.body;
 
@@ -1673,19 +2023,44 @@ app.post('/api/shifts/open', authenticate, validate(OpenShiftSchema), async (req
             return res.status(400).json({ error: 'Ya tienes una caja abierta. Ciérrala primero.' });
         }
 
-        const shift = await prisma.shift.create({
-            data: {
-                tenantId: authReq.tenantId,
-                userId: authReq.userId,
-                employeeId: employee.id,
-                initialCash,
-                status: 'OPEN'
-            },
-            include: {
-                employee: {
-                    select: { id: true, firstName: true, lastName: true, role: true }
+        // Apertura + asiento de auditoría inmutable en la MISMA transacción: el
+        // initialCash fija el baseline del arqueo, así que su declaración debe quedar
+        // registrada (before/after) igual que SHIFT_CLOSED, para poder desmentir un fondo
+        // subdeclarado que se embolse al cierre.
+        const shift = await prisma.$transaction(async (tx: any) => {
+            const created = await tx.shift.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    userId: authReq.userId,
+                    employeeId: employee.id,
+                    initialCash,
+                    status: 'OPEN'
+                },
+                include: {
+                    employee: {
+                        select: { id: true, firstName: true, lastName: true, role: true }
+                    }
                 }
-            }
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    userId: authReq.userId,
+                    action: 'SHIFT_OPENED',
+                    details: JSON.stringify({
+                        before: null,
+                        after: {
+                            shiftId: created.id,
+                            initialCash: String(created.initialCash),
+                            employeeId: employee.id,
+                            cajero: `${employee.firstName} ${employee.lastName}`,
+                        },
+                    }),
+                },
+            });
+
+            return created;
         });
         res.json(shift);
     } catch (e: any) {
@@ -1707,6 +2082,14 @@ app.post('/api/shifts/close', authenticate, validate(CloseShiftSchema), async (r
             }
         });
         if (!shift) return res.status(404).json({ error: 'Turno no encontrado o no pertenece a tu empresa' });
+
+        // Autorización: solo el dueño del turno puede cerrarlo, o un rol administrativo
+        // (force-close). Evita que un cajero cierre el turno de un colega con cifras
+        // fabricadas e incrimine con auditoría inmutable. Mismo patrón inline que /monitor.
+        const isAdminRole = ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(authReq.role || '');
+        if (shift.userId !== authReq.userId && !isAdminRole) {
+            return res.status(403).json({ error: 'No autorizado a cerrar este turno.' });
+        }
 
         // ARQUEO DINÁMICO: initialCash + cashSales + manualINs - manualOUTs = expectedCash
         const cashSales = shift.sales.filter((s: any) => s.paymentMethod === 'CASH').reduce((sum: number, s: any) => sum + Number(s.total), 0);
@@ -1985,7 +2368,7 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
     }
 });
 
-app.get('/api/audit-logs', authenticate, async (req: any, res: any) => {
+app.get('/api/audit-logs', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const logs = await prisma.auditLog.findMany({ where: { tenantId: authReq.tenantId }, orderBy: { createdAt: 'desc' }, take: 50 });
@@ -2018,29 +2401,60 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
         }
 
         // B. VALIDACIÓN DE SALDO PARA SALIDAS — CERO TOLERANCIA A SALIDAS FANTASMA
+        // Pre-chequeo con decimal.js (respuesta 400 limpia). La validación autoritativa
+        // race-safe se re-hace bajo lock DENTRO de la transacción (ver más abajo).
         if (type === 'OUT') {
             const cashSalesTotal = currentShift.sales
                 .filter((s: any) => s.paymentMethod === 'CASH')
-                .reduce((sum: number, s: any) => sum + Number(s.total), 0);
+                .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
             const totalINs = currentShift.cashMovements
                 .filter((m: any) => m.type === 'IN')
-                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+                .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
             const totalOUTs = currentShift.cashMovements
                 .filter((m: any) => m.type === 'OUT')
-                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+                .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
 
-            const availableCash = Number(currentShift.initialCash) + cashSalesTotal + totalINs - totalOUTs;
+            const availableCash = new Decimal(currentShift.initialCash.toString())
+                .plus(cashSalesTotal).plus(totalINs).minus(totalOUTs);
 
-            if (Number(amount) > availableCash) {
+            if (new Decimal(amount).greaterThan(availableCash)) {
                 return res.status(400).json({
-                    error: `Saldo insuficiente. Efectivo disponible: C$${availableCash.toFixed(2)}. Intentas sacar: C$${Number(amount).toFixed(2)}`,
-                    availableCash
+                    error: `Saldo insuficiente. Efectivo disponible: C$${availableCash.toFixed(2)}. Intentas sacar: C$${new Decimal(amount).toFixed(2)}`,
+                    availableCash: availableCash.toNumber()
                 });
             }
         }
 
         // C. TRANSACCIÓN: crear movimiento + auto-crear Expense si es salida
         const result = await prisma.$transaction(async (tx: any) => {
+            // Revalidación race-safe del saldo para salidas: se bloquea la fila del turno
+            // (FOR UPDATE) y se recalcula el efectivo disponible con decimal.js DENTRO de la
+            // transacción, cerrando el TOCTOU de dos OUT concurrentes que sobregiran la caja.
+            if (type === 'OUT') {
+                await tx.$queryRaw`SELECT id FROM "Shift" WHERE id = ${currentShift.id} AND "tenantId" = ${authReq.tenantId} FOR UPDATE`;
+                const freshSales: Array<{ total: any }> = await tx.sale.findMany({
+                    where: { shiftId: currentShift.id, paymentMethod: 'CASH' },
+                    select: { total: true },
+                });
+                const freshMovements: Array<{ type: string; amount: any }> = await tx.cashMovement.findMany({
+                    where: { shiftId: currentShift.id, isVoided: false },
+                    select: { type: true, amount: true },
+                });
+                const cashSalesTotal = freshSales
+                    .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
+                const totalINs = freshMovements
+                    .filter((m) => m.type === 'IN')
+                    .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
+                const totalOUTs = freshMovements
+                    .filter((m) => m.type === 'OUT')
+                    .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
+                const availableCash = new Decimal(currentShift.initialCash.toString())
+                    .plus(cashSalesTotal).plus(totalINs).minus(totalOUTs);
+                if (new Decimal(amount).greaterThan(availableCash)) {
+                    throw new Error(`Saldo insuficiente. Efectivo disponible: C$${availableCash.toFixed(2)}`);
+                }
+            }
+
             let expenseId = null;
 
             // Auto-crear Expense para salidas operativas
@@ -2209,6 +2623,26 @@ app.post('/api/cash-movements/:id/void', authenticate, async (req: any, res: any
         }
 
         const result = await prisma.$transaction(async (tx: any) => {
+            // Revertir el Expense auto-creado enlazado: si el movimiento OUT generó
+            // un gasto (expenseId), al anular el movimiento hay que revertir también el
+            // gasto para que no quede contabilizado como gasto fantasma en el P&L.
+            // Verificamos propiedad por tenant antes de tocarlo. Liberamos primero la FK
+            // (expenseId=null) para no depender de la acción onDelete del enlace @unique.
+            let expenseRevertido: { id: string; amount: number; description: string; category: string } | null = null;
+            if (movement.expenseId) {
+                const expense = await tx.expense.findFirst({
+                    where: { id: movement.expenseId, tenantId: authReq.tenantId }
+                });
+                if (expense) {
+                    expenseRevertido = {
+                        id: expense.id,
+                        amount: new Decimal(expense.amount.toString()).toNumber(),
+                        description: expense.description,
+                        category: expense.category,
+                    };
+                }
+            }
+
             const voided = await tx.cashMovement.update({
                 where: { id },
                 data: {
@@ -2216,8 +2650,13 @@ app.post('/api/cash-movements/:id/void', authenticate, async (req: any, res: any
                     voidReason: reason.trim(),
                     voidedAt: new Date(),
                     voidedBy: authReq.userId,
+                    ...(expenseRevertido ? { expenseId: null } : {}),
                 }
             });
+
+            if (expenseRevertido) {
+                await tx.expense.delete({ where: { id: expenseRevertido.id } });
+            }
 
             await tx.auditLog.create({
                 data: {
@@ -2227,8 +2666,9 @@ app.post('/api/cash-movements/:id/void', authenticate, async (req: any, res: any
                     details: JSON.stringify({
                         movimientoId: id,
                         tipoOriginal: movement.type,
-                        montoOriginal: Number(movement.amount),
+                        montoOriginal: new Decimal(movement.amount.toString()).toNumber(),
                         razon: reason.trim(),
+                        expenseRevertido,
                     })
                 }
             });
@@ -2350,8 +2790,8 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (re
                 category,
                 price: parseFloat(price),
                 cost: parseFloat(cost),
-                stock: parseInt(stock) || 0,
-                minStock: parseInt(minStock) || 0,
+                stock: parseFloat(stock) || 0,
+                minStock: parseFloat(minStock) || 0,
                 unit: unit || 'unidad',
                 isPublished: Boolean(isPublished),
                 imageUrl: imageUrl || null,
@@ -2417,8 +2857,8 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
                         const name = String(item.name || item.nombre || '').trim();
                         const price = parseFloat(item.price || item.precio || 0);
                         const cost = parseFloat(item.cost || item.costo || item.costPrice || 0);
-                        const stock = parseInt(item.stock || 0) || 0;
-                        const minStock = parseInt(item.minStock || 5) || 5;
+                        const stock = parseFloat(item.stock || 0) || 0;
+                        const minStock = parseFloat(item.minStock || 5) || 5;
                         const category = String(item.category || item.categoria || 'General').trim();
                         const unit = String(item.unit || item.unidad || 'unidad').trim();
 
@@ -2443,6 +2883,28 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
                                 where: { id: existing.id },
                                 data: { name, price, cost, stock, minStock, category, unit }
                             });
+
+                            // Auditoría de cambio de precio/costo en carga masiva: el PUT
+                            // unitario deja rastro PRICE_CHANGED; sin esto el bulk sería una
+                            // vía de evasión para reescribir la base de valuación (cost) y el
+                            // precio sin asiento inmutable before/after.
+                            const priceChanged = Number(existing.price) !== Number(price);
+                            const costChanged  = Number(existing.cost)  !== Number(cost);
+                            if (priceChanged || costChanged) {
+                                await tx.auditLog.create({
+                                    data: {
+                                        tenantId: authReq.tenantId!,
+                                        userId: authReq.userId!,
+                                        action: 'PRICE_CHANGED',
+                                        details: JSON.stringify({
+                                            productId: existing.id,
+                                            priceBefore: String(existing.price), priceAfter: String(price),
+                                            costBefore: String(existing.cost), costAfter: String(cost),
+                                            origen: 'BULK_IMPORT',
+                                        }),
+                                    }
+                                });
+                            }
 
                             // Kardex para el cambio de stock
                             if (stockDiff !== 0) {
@@ -2529,58 +2991,74 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
         if (category !== undefined) updates.category = category;
         if (price !== undefined) updates.price = parseFloat(price);
         if (cost !== undefined) updates.cost = parseFloat(cost);
-        if (minStock !== undefined) updates.minStock = parseInt(minStock);
+        // Stock/minStock son Float (admiten unidades fraccionables kg/litro/metro):
+        // parseFloat preserva la fracción; parseInt truncaba y perdía inventario.
+        if (minStock !== undefined) updates.minStock = parseFloat(minStock);
         if (unit !== undefined) updates.unit = unit;
         if (imageUrl !== undefined) updates.imageUrl = imageUrl;
         if (reorderPoint !== undefined) updates.reorderPoint = parseFloat(reorderPoint) || 0;
         if (maxStock !== undefined) updates.maxStock = parseFloat(maxStock) || 0;
         if (defaultSupplierId !== undefined) updates.defaultSupplierId = defaultSupplierId || null;
 
-        // Si se cambia el stock, crear registro en Kardex
-        if (stock !== undefined) {
-            const newStock = parseInt(stock);
-            const stockDiff = newStock - existing.stock;
+        // Kardex (ledger inmutable) + product.update + auditoría deben cuadrar o
+        // revertirse juntos: se ejecutan dentro de una única $transaction. El ajuste
+        // de stock se hace con applyStockDelta (UPDATE relativo con row-lock), de modo
+        // que stockBefore/stockAfter salen sin condición de carrera y el Kardex solo
+        // se escribe si el stock realmente cambió (delta != 0, sin truncar).
+        const updated = await prisma.$transaction(async (tx: any) => {
+            if (stock !== undefined) {
+                const newStock = parseFloat(stock);
+                const stockDiff = newStock - Number(existing.stock);
 
-            updates.stock = newStock;
-
-            // Registrar movimiento
-            await prisma.kardexMovement.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    productId: id,
-                    type: 'ADJUSTMENT',
-                    quantity: stockDiff,
-                    stockBefore: existing.stock,
-                    stockAfter: newStock,
-                    referenceType: 'ADJUSTMENT',
-                    reason: 'Ajuste manual de inventario',
-                    userId: authReq.userId!
-                }
-            });
-        }
-
-        const updated = await prisma.product.update({
-            where: { id },
-            data: updates
-        });
-
-        // Auditoría de cambio de precio/costo (antes no quedaba rastro de quién lo cambió).
-        const priceChanged = price !== undefined && Number(existing.price) !== Number(updated.price);
-        const costChanged  = cost  !== undefined && Number(existing.cost)  !== Number(updated.cost);
-        if (priceChanged || costChanged) {
-            await prisma.auditLog.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    userId: authReq.userId!,
-                    action: 'PRICE_CHANGED',
-                    details: JSON.stringify({
+                if (stockDiff !== 0) {
+                    const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                        tenantId: authReq.tenantId!,
                         productId: id,
-                        priceBefore: String(existing.price), priceAfter: String(updated.price),
-                        costBefore: String(existing.cost), costAfter: String(updated.cost),
-                    }),
-                },
+                        delta: stockDiff,
+                        enforceSufficient: false,
+                    });
+
+                    await tx.kardexMovement.create({
+                        data: {
+                            tenantId: authReq.tenantId!,
+                            productId: id,
+                            type: 'ADJUSTMENT',
+                            quantity: stockDiff,
+                            stockBefore,
+                            stockAfter,
+                            referenceType: 'ADJUSTMENT',
+                            reason: 'Ajuste manual de inventario',
+                            userId: authReq.userId!
+                        }
+                    });
+                }
+            }
+
+            const result = await tx.product.update({
+                where: { id },
+                data: updates
             });
-        }
+
+            // Auditoría de cambio de precio/costo (antes no quedaba rastro de quién lo cambió).
+            const priceChanged = price !== undefined && Number(existing.price) !== Number(result.price);
+            const costChanged  = cost  !== undefined && Number(existing.cost)  !== Number(result.cost);
+            if (priceChanged || costChanged) {
+                await tx.auditLog.create({
+                    data: {
+                        tenantId: authReq.tenantId!,
+                        userId: authReq.userId!,
+                        action: 'PRICE_CHANGED',
+                        details: JSON.stringify({
+                            productId: id,
+                            priceBefore: String(existing.price), priceAfter: String(result.price),
+                            costBefore: String(existing.cost), costAfter: String(result.cost),
+                        }),
+                    },
+                });
+            }
+
+            return result;
+        });
 
         res.json(updated);
     } catch (error) {
@@ -2623,33 +3101,54 @@ app.patch('/api/products/bulk-edit', authenticate, checkRole(['OWNER', 'ADMIN'])
 
     try {
         let count = 0;
+        // before/after por producto → asiento reconstruible ante disputa/reversión.
+        const priceChanges: { id: string; priceBefore: string; priceAfter: string }[] = [];
 
         if (priceMode === 'pct') {
             // Ajuste porcentual: requiere leer cada precio → recalcular → redondear.
-            const factor = 1 + priceValue / 100;
+            // Dinero: se calcula con decimal.js (half-up a 2 decimales), no con
+            // aritmética Float nativa que arrastra errores de ±1 centavo.
+            const factor = new Decimal(1).plus(new Decimal(priceValue).div(100));
             count = await prisma.$transaction(async (tx: any) => {
                 const prods = await tx.product.findMany({
                     where: { id: { in: ids }, tenantId: authReq.tenantId! },
                     select: { id: true, price: true },
                 });
                 for (const p of prods) {
-                    const newPrice = Math.max(0, Math.round(Number(p.price) * factor * 100) / 100);
-                    const data: any = { price: newPrice };
+                    const priceBefore = new Decimal(p.price.toString());
+                    let newPrice = priceBefore.mul(factor).toDecimalPlaces(2);
+                    if (newPrice.isNegative()) newPrice = new Decimal(0);
+                    const data: any = { price: newPrice.toNumber() };
                     if (category !== undefined) data.category = category;
                     await tx.product.update({ where: { id: p.id }, data });
+                    priceChanges.push({ id: p.id, priceBefore: priceBefore.toFixed(2), priceAfter: newPrice.toFixed(2) });
                 }
                 return prods.length;
             });
         } else {
-            // 'set' y/o categoría → un solo updateMany atómico.
-            const data: any = {};
-            if (category !== undefined) data.category = category;
-            if (priceMode === 'set') data.price = Math.round(priceValue * 100) / 100;
-            const result = await prisma.product.updateMany({
-                where: { id: { in: ids }, tenantId: authReq.tenantId! },
-                data,
+            // 'set' y/o categoría. El precio 'set' se normaliza con decimal.js.
+            const newPriceSet = priceMode === 'set' ? new Decimal(priceValue).toDecimalPlaces(2) : null;
+            count = await prisma.$transaction(async (tx: any) => {
+                // En modo 'set' leemos los precios previos antes del updateMany para
+                // registrar before/after por producto en la auditoría.
+                if (newPriceSet) {
+                    const prods = await tx.product.findMany({
+                        where: { id: { in: ids }, tenantId: authReq.tenantId! },
+                        select: { id: true, price: true },
+                    });
+                    for (const p of prods) {
+                        priceChanges.push({ id: p.id, priceBefore: new Decimal(p.price.toString()).toFixed(2), priceAfter: newPriceSet.toFixed(2) });
+                    }
+                }
+                const data: any = {};
+                if (category !== undefined) data.category = category;
+                if (newPriceSet) data.price = newPriceSet.toNumber();
+                const result = await tx.product.updateMany({
+                    where: { id: { in: ids }, tenantId: authReq.tenantId! },
+                    data,
+                });
+                return result.count;
             });
-            count = result.count;
         }
 
         // Rastro de auditoría: una mutación masiva de precios/categoría debe quedar registrada.
@@ -2664,6 +3163,7 @@ app.patch('/api/products/bulk-edit', authenticate, checkRole(['OWNER', 'ADMIN'])
                     category: category ?? null,
                     priceMode: priceMode ?? null,
                     priceValue: priceValue ?? null,
+                    priceChanges,
                     timestamp: new Date().toISOString(),
                 }),
             },
@@ -2723,7 +3223,38 @@ app.delete('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), asy
             });
         }
 
-        await prisma.product.delete({ where: { id } });
+        // Asiento inmutable ANTES de borrar (Capa 3): deja rastro de quién eliminó el
+        // producto con un snapshot `before` completo, dentro de la misma transacción que
+        // el borrado para que ambos cuadren o se reviertan juntos.
+        // NOTA: el soft-delete (deletedAt) y el corte de las cascadas onDelete sobre
+        // KardexMovement/ProductBatch/StockCountItem requieren migración de esquema y
+        // quedan fuera del alcance de este archivo.
+        await prisma.$transaction(async (tx: any) => {
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'PRODUCT_DELETED',
+                    details: JSON.stringify({
+                        productId: product.id,
+                        before: {
+                            id: product.id,
+                            name: product.name,
+                            sku: product.sku,
+                            category: product.category,
+                            price: Number(product.price),
+                            cost: Number(product.cost),
+                            stock: Number(product.stock),
+                            minStock: Number(product.minStock),
+                            unit: product.unit,
+                        },
+                        timestamp: new Date().toISOString(),
+                    }),
+                },
+            });
+            // Propiedad ya verificada (findFirst con tenantId); borramos por id propio.
+            await tx.product.delete({ where: { id: product.id } });
+        });
 
         res.json({ message: 'Producto eliminado exitosamente' });
     } catch (error) {
@@ -2828,26 +3359,26 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN']), v
     try {
         // TRANSACCIÓN ACID
         const result = await prisma.$transaction(async (tx: any) => {
-            // 1. Leer stock actual CON LOCK (serializable en la transacción)
+            // 1. Verificar propiedad del producto (tenant) y traer datos para Kardex/auditoría.
             const product = await tx.product.findFirst({
-                where: { id: productId, tenantId: authReq.tenantId! }
+                where: { id: productId, tenantId: authReq.tenantId! },
+                select: { name: true, sku: true }
             });
 
             if (!product) {
                 throw new Error('Producto no encontrado en tu inventario.');
             }
 
-            const currentStock = product.stock;
-            const newStock = currentStock + adjustQty;
-
-            if (newStock < 0) {
-                throw new Error(`Stock insuficiente. Actual: ${currentStock}, Ajuste: ${adjustQty}`);
-            }
-
-            // 2. Actualizar stock del producto
-            await tx.product.update({
-                where: { id: productId },
-                data: { stock: newStock }
+            // 2. Mutar el stock de forma ATÓMICA (UPDATE condicional con row-lock).
+            //    El patrón anterior leía el stock con findFirst (lectura no bloqueante) y
+            //    escribía un valor ABSOLUTO, pisando cualquier venta concurrente (lost
+            //    update). applyStockDelta aplica el delta relativo con lock de fila y, en
+            //    pérdidas (delta<0), rechaza si el stock no alcanza.
+            const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                tenantId: authReq.tenantId!,
+                productId,
+                delta: adjustQty,
+                enforceSufficient: adjustQty < 0,
             });
 
             // 3. Crear registro Kardex inmutable
@@ -2857,36 +3388,37 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN']), v
                     productId,
                     type: movementType,
                     quantity: adjustQty,
-                    stockBefore: currentStock,
-                    stockAfter: newStock,
+                    stockBefore,
+                    stockAfter,
                     referenceType: 'ADJUSTMENT',
                     reason: reason?.trim() || `Ajuste manual: ${movementType}`,
                     userId: authReq.userId!
                 }
             });
 
-            // 4. Si es una pérdida, registrar en auditoría
-            if (movementType === 'ADJUST_LOSS') {
-                await tx.auditLog.create({
-                    data: {
-                        tenantId: authReq.tenantId!,
-                        userId: authReq.userId!,
-                        action: 'INVENTORY_LOSS',
-                        details: JSON.stringify({
-                            productId,
-                            productName: product.name,
-                            sku: product.sku,
-                            quantity: adjustQty,
-                            stockBefore: currentStock,
-                            stockAfter: newStock,
-                            reason: reason?.trim(),
-                            timestamp: new Date().toISOString()
-                        })
-                    }
-                });
-            }
+            // 4. Auditar TODO ajuste manual (pérdida Y ganancia): un ADJUST_GAIN infla el
+            //    inventario valorizado y también debe dejar asiento inmutable before/after.
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'INVENTORY_ADJUSTMENT',
+                    details: JSON.stringify({
+                        productId,
+                        productName: product.name,
+                        sku: product.sku,
+                        movementType,
+                        direction: adjustQty < 0 ? 'LOSS' : 'GAIN',
+                        quantity: adjustQty,
+                        stockBefore,
+                        stockAfter,
+                        reason: reason?.trim() || null,
+                        timestamp: new Date().toISOString()
+                    })
+                }
+            });
 
-            return { movement, newStock, productName: product.name };
+            return { movement, newStock: stockAfter, productName: product.name };
         });
 
         res.json({
@@ -3286,7 +3818,17 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
                 // compras ya contabilizadas (que movieron el libro entre snapshot y cierre)
                 // NO se cuentan como merma — solo la diferencia inexplicada cuadra el stock
                 // al conteo físico y evita re-contabilizar COGS como pérdida.
-                const currentBook = Number(it.product.stock);
+                // Se relee el libro BAJO LOCK (FOR UPDATE) justo antes de calcular el delta:
+                // el snapshot del findMany inicial pudo quedar obsoleto por una venta
+                // commiteada en medio, dejando el libro final distinto del conteo físico.
+                // El row-lock se mantiene hasta el COMMIT, de modo que applyStockDelta escribe
+                // sobre el mismo valor leído y el libro queda EXACTAMENTE en el conteo.
+                const lockedRows: Array<{ stock: any }> = await tx.$queryRaw`
+                    SELECT stock FROM "Product"
+                    WHERE id = ${it.productId} AND "tenantId" = ${authReq.tenantId!}
+                    FOR UPDATE`;
+                if (lockedRows.length === 0) continue;
+                const currentBook = Number(lockedRows[0].stock);
                 const delta = counted - currentBook;
                 if (delta === 0) continue;
 
@@ -3326,6 +3868,26 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
             const closed = await tx.stockCount.update({
                 where: { id },
                 data: { status: 'CLOSED', closedAt: new Date(), closedBy: authReq.userId! },
+            });
+
+            // Asiento inmutable del cierre (Capa 3): el cierre aplica merma/sobrante
+            // valorizado; sin este AuditLog solo quedaba el Kardex, sin traza de quién
+            // cerró la toma ni del resumen de ajustes/valores.
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'STOCK_COUNT_CLOSED',
+                    details: JSON.stringify({
+                        countId: id,
+                        adjusted,
+                        countedItems,
+                        uncounted: items.length - countedItems,
+                        lossValue: lossValue.toDecimalPlaces(2).toNumber(),
+                        gainValue: gainValue.toDecimalPlaces(2).toNumber(),
+                        timestamp: new Date().toISOString(),
+                    }),
+                },
             });
 
             return {
@@ -3373,23 +3935,25 @@ app.post('/api/kardex/record', authenticate, checkRole(['OWNER', 'ADMIN']), vali
 
     try {
         const result = await prisma.$transaction(async (tx: any) => {
+            // Verificar propiedad del producto (tenant) para datos de auditoría.
             const product = await tx.product.findFirst({
-                where: { id: productId, tenantId: authReq.tenantId! }
+                where: { id: productId, tenantId: authReq.tenantId! },
+                select: { name: true, sku: true }
             });
 
             if (!product) {
                 throw new Error('Producto no encontrado');
             }
 
-            const newStock = product.stock + quantity;
-
-            if (newStock < 0) {
-                throw new Error('Stock insuficiente');
-            }
-
-            await tx.product.update({
-                where: { id: productId },
-                data: { stock: newStock }
+            // Mutación ATÓMICA (UPDATE condicional con row-lock): el patrón anterior
+            // leía el stock sin bloqueo y escribía un valor ABSOLUTO, pisando decrementos
+            // concurrentes (venta POS) → lost update. applyStockDelta aplica el delta
+            // relativo con lock y, en salidas (quantity<0), rechaza si el stock no alcanza.
+            const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                tenantId: authReq.tenantId!,
+                productId,
+                delta: quantity,
+                enforceSufficient: quantity < 0,
             });
 
             const movement = await tx.kardexMovement.create({
@@ -3398,8 +3962,8 @@ app.post('/api/kardex/record', authenticate, checkRole(['OWNER', 'ADMIN']), vali
                     productId,
                     type,
                     quantity,
-                    stockBefore: product.stock,
-                    stockAfter: newStock,
+                    stockBefore,
+                    stockAfter,
                     referenceId,
                     referenceType,
                     reason,
@@ -3407,7 +3971,31 @@ app.post('/api/kardex/record', authenticate, checkRole(['OWNER', 'ADMIN']), vali
                 }
             });
 
-            return { movement, newStock };
+            // Asiento inmutable (Capa 3): este endpoint mueve inventario valorizado y
+            // antes no dejaba AuditLog. Se registra before/after con userId/tenantId dentro
+            // de la misma transacción.
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'KARDEX_RECORD',
+                    details: JSON.stringify({
+                        productId,
+                        productName: product.name,
+                        sku: product.sku,
+                        type,
+                        quantity,
+                        stockBefore,
+                        stockAfter,
+                        referenceId: referenceId || null,
+                        referenceType: referenceType || null,
+                        reason: reason || null,
+                        timestamp: new Date().toISOString()
+                    })
+                }
+            });
+
+            return { movement, newStock: stockAfter };
         });
 
         res.json(result);
@@ -3577,17 +4165,24 @@ app.get('/api/reports/expenses', authenticate, async (req: any, res: any) => {
             orderBy: { createdAt: 'desc' }
         });
 
-        const totalExpenses = expenses.reduce((sum: number, e: any) => sum + Number(e.amount), 0);
-
-        // Group by category
-        const byCategory: Record<string, number> = {};
+        // Acumular montos con decimal.js (cero aritmética float sobre dinero).
+        let totalExpenses = new Decimal(0);
+        const byCategoryDec: Record<string, Decimal> = {};
         expenses.forEach((e: any) => {
+            const amount = new Decimal(e.amount.toString());
+            totalExpenses = totalExpenses.plus(amount);
             const cat = e.category || 'OTROS';
-            byCategory[cat] = (byCategory[cat] || 0) + Number(e.amount);
+            byCategoryDec[cat] = (byCategoryDec[cat] || new Decimal(0)).plus(amount);
         });
 
+        // Serializar a number sólo al responder.
+        const byCategory: Record<string, number> = {};
+        for (const [cat, val] of Object.entries(byCategoryDec)) {
+            byCategory[cat] = val.toDecimalPlaces(2).toNumber();
+        }
+
         res.json({
-            totalExpenses: Math.round(totalExpenses * 100) / 100,
+            totalExpenses: totalExpenses.toDecimalPlaces(2).toNumber(),
             count: expenses.length,
             byCategory,
         });
@@ -3622,13 +4217,30 @@ app.get('/api/purchases', authenticate, async (req: any, res: any) => {
 });
 
 // POST /api/purchases - Registrar compra (Transacción ACID)
-app.post('/api/purchases', authenticate, validate(CreatePurchaseSchema), async (req: any, res: any) => {
+app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), validate(CreatePurchaseSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { supplierId, invoiceNumber, dueDate, paymentMethod, notes, items } = req.body;
     // Validaciones de formato ya realizadas por Zod
 
     try {
         const result = await prisma.$transaction(async (tx: any) => {
+            // Verificar propiedad del proveedor: nunca confiar en supplierId del body sin
+            // scoping por tenant. Sin esto, el include: { supplier: true } filtraría PII
+            // del proveedor de otro tenant (fuga cross-tenant).
+            const supplier = await tx.supplier.findFirst({
+                where: { id: supplierId, tenantId: authReq.tenantId! }
+            });
+            if (!supplier) {
+                throw new Error('Proveedor no encontrado');
+            }
+
+            // Snapshot del saldo de billetera para el asiento de auditoría (before/after).
+            const tenantBefore = await tx.tenant.findUnique({
+                where: { id: authReq.tenantId! },
+                select: { walletBalance: true }
+            });
+            const walletBefore = new Decimal(tenantBefore?.walletBalance?.toString() ?? '0');
+
             // 1. Calcular totales
             let subtotal = 0;
             const processedItems: any[] = [];
@@ -3685,6 +4297,7 @@ app.post('/api/purchases', authenticate, validate(CreatePurchaseSchema), async (
             });
 
             // 3. Actualizar inventario + Kardex + Costo promedio ponderado
+            const costChanges: any[] = []; // before/after de stock y costo valorizado por producto
             for (const item of processedItems) {
                 const product = await tx.product.findUnique({ where: { id: item.productId } });
                 if (!product) continue;
@@ -3705,6 +4318,14 @@ app.post('/api/purchases', authenticate, validate(CreatePurchaseSchema), async (
                         stock: newStock,
                         cost: newAvgCost  // ya redondeado a 4 d.p. por Decimal
                     }
+                });
+
+                costChanges.push({
+                    productId: item.productId,
+                    stockBefore: oldStock,
+                    stockAfter: newStock,
+                    costBefore: new Decimal(product.cost.toString()).toNumber(),
+                    costAfter: newAvgCost
                 });
 
                 // Control de Lotes
@@ -3774,6 +4395,31 @@ app.post('/api/purchases', authenticate, validate(CreatePurchaseSchema), async (
             }
             // Si es CREDIT, no se descuenta dinero - queda como cuenta por pagar
 
+            // Asiento inmutable de auditoría (Capa 3): la compra mueve dinero (billetera
+            // + gasto) e inventario valorizado (stock + costo promedio). Registrar
+            // before/after de billetera y de costo/stock por producto.
+            const walletAfter = paymentMethod === 'CASH' ? walletBefore.minus(total) : walletBefore;
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'PURCHASE_CREATED',
+                    details: JSON.stringify({
+                        purchaseId: purchase.id,
+                        supplierId,
+                        invoiceNumber,
+                        paymentMethod,
+                        subtotal,
+                        tax,
+                        total,
+                        walletBefore: walletBefore.toNumber(),
+                        walletAfter: walletAfter.toNumber(),
+                        productChanges: costChanges,
+                        timestamp: new Date().toISOString()
+                    })
+                }
+            });
+
             return purchase;
         });
 
@@ -3785,7 +4431,8 @@ app.post('/api/purchases', authenticate, validate(CreatePurchaseSchema), async (
     } catch (error: any) {
         console.error('Error registrando compra:', error);
         const insufficient = error?.message?.includes('SALDO_INSUFICIENTE');
-        res.status(insufficient ? 400 : 500).json({ error: error.message || 'Error al procesar la compra' });
+        const notFound = error?.message?.includes('no encontrado');
+        res.status(insufficient ? 400 : notFound ? 404 : 500).json({ error: error.message || 'Error al procesar la compra' });
     }
 });
 
@@ -3794,7 +4441,7 @@ function processedItemsCount(items: any[]) {
 }
 
 // POST /api/purchases/:id/pay - Pagar cuenta pendiente
-app.post('/api/purchases/:id/pay', authenticate, async (req: any, res: any) => {
+app.post('/api/purchases/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
 
@@ -3813,17 +4460,35 @@ app.post('/api/purchases/:id/pay', authenticate, async (req: any, res: any) => {
         }
 
         await prisma.$transaction(async (tx: any) => {
-            // Actualizar estado
-            await tx.purchase.update({
-                where: { id },
+            // Guard atómico de estado + idempotencia: solo transiciona si la compra
+            // sigue en PENDING_PAYMENT. Dos pagos concurrentes / doble-click: únicamente
+            // uno marca COMPLETED (count===1); el otro aborta y NO vuelve a debitar la
+            // billetera (evita el doble débito por TOCTOU).
+            const marked = await tx.purchase.updateMany({
+                where: { id, tenantId: authReq.tenantId, status: 'PENDING_PAYMENT' },
                 data: { status: 'COMPLETED' }
             });
+            if (marked.count === 0) {
+                throw new Error('PAGO_NO_APLICABLE: la compra ya fue pagada o no está pendiente de pago.');
+            }
 
-            // Descontar de wallet
-            await tx.tenant.update({
-                where: { id: authReq.tenantId },
+            // Snapshot del saldo de billetera para el asiento de auditoría (before/after).
+            const tenantBefore = await tx.tenant.findUnique({
+                where: { id: authReq.tenantId! },
+                select: { walletBalance: true }
+            });
+            const walletBefore = new Decimal(tenantBefore?.walletBalance?.toString() ?? '0');
+
+            // Débito ATÓMICO: decrementa solo si hay saldo suficiente. El guard de
+            // suficiencia y la escritura son el MISMO UPDATE condicional (row-lock),
+            // de modo que el pago no puede dejar la billetera en negativo (TOCTOU).
+            const debited = await tx.tenant.updateMany({
+                where: { id: authReq.tenantId, walletBalance: { gte: purchase.total } },
                 data: { walletBalance: { decrement: purchase.total } }
             });
+            if (debited.count === 0) {
+                throw new Error(`SALDO_INSUFICIENTE: disponible C$ ${walletBefore.toFixed(2)}, requerido C$ ${new Decimal(purchase.total.toString()).toFixed(2)}. Recarga tu billetera.`);
+            }
 
             // Crear gasto
             await tx.expense.create({
@@ -3834,13 +4499,36 @@ app.post('/api/purchases/:id/pay', authenticate, async (req: any, res: any) => {
                     category: 'PAGO_PROVEEDOR'
                 }
             });
+
+            // Asiento inmutable de auditoría (Capa 3): el pago mueve dinero (billetera +
+            // gasto). Registrar quién autorizó y el before/after de saldo y estado.
+            const walletAfter = walletBefore.minus(new Decimal(purchase.total.toString()));
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'PURCHASE_PAID',
+                    details: JSON.stringify({
+                        purchaseId: purchase.id,
+                        invoiceNumber: purchase.invoiceNumber,
+                        total: new Decimal(purchase.total.toString()).toNumber(),
+                        statusBefore: 'PENDING_PAYMENT',
+                        statusAfter: 'COMPLETED',
+                        walletBefore: walletBefore.toNumber(),
+                        walletAfter: walletAfter.toNumber(),
+                        timestamp: new Date().toISOString()
+                    })
+                }
+            });
         });
 
         res.json({ message: `Factura #${purchase.invoiceNumber} pagada exitosamente` });
 
-    } catch (error) {
+    } catch (error: any) {
         console.error('Error pagando compra:', error);
-        res.status(500).json({ error: 'Error al procesar el pago' });
+        const insufficient = error?.message?.includes('SALDO_INSUFICIENTE');
+        const notApplicable = error?.message?.includes('PAGO_NO_APLICABLE');
+        res.status(insufficient ? 400 : notApplicable ? 409 : 500).json({ error: error.message || 'Error al procesar el pago' });
     }
 });
 
@@ -4002,11 +4690,21 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
         for (const emp of employees) {
             const baseSalary = Number(emp.baseSalary);
             const ventasMes = salesMap.get(emp.id) || 0;
-            const comisiones = ventasMes * Number(emp.commissionRate);
+            // Comisión con decimal.js (Capa 4): la base gravable no puede arrastrar
+            // error binario hacia INSS/IR/neto declarado al SIE.
+            const comisiones = new Decimal(ventasMes.toString())
+                .mul(new Decimal(emp.commissionRate.toString()))
+                .toDecimalPlaces(4)
+                .toNumber();
             const overtimeHours = overtimeMap.get(emp.id) || 0;
             const holidayDays = holidayDaysByEmp.get(emp.id) || 0;
             const diasAusencia = Math.min(30, absenceDaysByEmployee.get(emp.id) || 0);
-            const absenceDeduction = (baseSalary / 30) * diasAusencia;
+            // Deducción por ausencias sin goce con decimal.js (Capa 4): (base / 30) · días.
+            const absenceDeduction = new Decimal(baseSalary.toString())
+                .div(30)
+                .mul(diasAusencia)
+                .toDecimalPlaces(4)
+                .toNumber();
 
             const existing = await prisma.payroll.findUnique({
                 where: { employeeId_month_year: { employeeId: emp.id, month: Number(month), year: Number(year) } },
@@ -4046,22 +4744,26 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
 
             // Aplicar los adelantos en orden, solo hasta agotar el disponible (nunca
             // dejar el neto negativo). Los que no caben se difieren al mes siguiente.
-            const disponible = calc.netSalary;
+            // Todo con decimal.js (Capa 4): el neto que
+            // se persiste, se paga y se asienta debe salir íntegro del motor Decimal,
+            // no de aritmética flotante (sin el parche del epsilon 0.001).
+            const disponible = new Decimal(calc.netSalary.toString());
             let restante = disponible;
-            let advanceApplied = 0;
+            let advanceApplied = new Decimal(0);
             const aplicados: string[] = [];
             for (const adv of advances) {
-                const monto = Number(adv.amount) + Number(adv.fee);
-                // Epsilon mínimo (< medio centavo) solo para evitar falsos negativos
-                // por la representación binaria; no permite sobre-aplicar un centavo.
-                if (monto <= restante + 0.001) {
-                    advanceApplied = Number((advanceApplied + monto).toFixed(2));
-                    restante = Number((restante - monto).toFixed(2));
+                const monto = new Decimal(adv.amount.toString()).plus(adv.fee.toString());
+                // Solo se aplica si el adelanto cabe íntegro en el disponible restante
+                // (nunca deja el neto negativo). Los que no caben se difieren.
+                if (monto.lessThanOrEqualTo(restante)) {
+                    advanceApplied = advanceApplied.plus(monto).toDecimalPlaces(2);
+                    restante = restante.minus(monto).toDecimalPlaces(2);
                     aplicados.push(adv.id);
                 }
             }
+            const advanceAppliedNum = advanceApplied.toNumber();
             // Clamp de seguridad: el neto nunca queda negativo.
-            const netFinal = Math.max(0, Number((disponible - advanceApplied).toFixed(2)));
+            const netFinal = Decimal.max(0, disponible.minus(advanceApplied)).toDecimalPlaces(2).toNumber();
 
             const data = {
                 grossSalary: calc.grossSalary,
@@ -4074,7 +4776,7 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
                 inssLaboral: calc.inssLaboral,
                 irLaboral: calc.irLaboral,
                 totalDeductions: calc.totalDeductions,
-                advanceDeduction: advanceApplied,
+                advanceDeduction: advanceAppliedNum,
                 absenceDeduction: calc.absenceDeduction,
                 diasAusencia,
                 judicialDeduction: calc.judicialDeduction,
@@ -4083,23 +4785,33 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
                 inatec: calc.inatec,
             };
 
-            const payroll = await prisma.payroll.upsert({
-                where: {
-                    employeeId_month_year: { employeeId: emp.id, month: Number(month), year: Number(year) },
-                },
-                update: data,
-                create: { tenantId: authReq.tenantId!, employeeId: emp.id, month: Number(month), year: Number(year), ...data },
-            });
+            // Atomicidad (correctitud): el upsert de la nómina (que ya resta
+            // advanceApplied del neto) y la marca DEDUCTED / diferido de los adelantos
+            // deben confirmarse juntos. Sin la $transaction, un corte entre el upsert y
+            // el updateMany dejaría el neto ya descontado con el SalaryAdvance aún en
+            // APPROVED/payrollId null → el mismo adelanto se vuelve a tomar en la
+            // siguiente corrida (doble descuento al trabajador).
+            const payroll = await prisma.$transaction(async (tx: any) => {
+                const upserted = await tx.payroll.upsert({
+                    where: {
+                        employeeId_month_year: { employeeId: emp.id, month: Number(month), year: Number(year) },
+                    },
+                    update: data,
+                    create: { tenantId: authReq.tenantId!, employeeId: emp.id, month: Number(month), year: Number(year), ...data },
+                });
 
-            // Marcar como descontados solo los adelantos aplicados; los que no
-            // cupieron y estaban enlazados a esta nómina, devolverlos a APPROVED.
-            if (aplicados.length > 0) {
-                await prisma.salaryAdvance.updateMany({ where: { id: { in: aplicados } }, data: { status: 'DEDUCTED', payrollId: payroll.id } });
-            }
-            const diferidos = advances.filter(a => !aplicados.includes(a.id)).map(a => a.id);
-            if (diferidos.length > 0) {
-                await prisma.salaryAdvance.updateMany({ where: { id: { in: diferidos }, payrollId: payroll.id }, data: { status: 'APPROVED', payrollId: null } });
-            }
+                // Marcar como descontados solo los adelantos aplicados; los que no
+                // cupieron y estaban enlazados a esta nómina, devolverlos a APPROVED.
+                if (aplicados.length > 0) {
+                    await tx.salaryAdvance.updateMany({ where: { id: { in: aplicados } }, data: { status: 'DEDUCTED', payrollId: upserted.id } });
+                }
+                const diferidos = advances.filter(a => !aplicados.includes(a.id)).map(a => a.id);
+                if (diferidos.length > 0) {
+                    await tx.salaryAdvance.updateMany({ where: { id: { in: diferidos }, payrollId: upserted.id }, data: { status: 'APPROVED', payrollId: null } });
+                }
+
+                return upserted;
+            });
 
             payrolls.push({
                 ...payroll,
@@ -4119,7 +4831,7 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
 });
 
 // GET /api/payroll/:month/:year - Obtener nómina existente
-app.get('/api/payroll/:month/:year', authenticate, async (req: any, res: any) => {
+app.get('/api/payroll/:month/:year', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT', 'MANAGER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { month, year } = req.params;
 
@@ -4147,7 +4859,7 @@ app.get('/api/payroll/:month/:year', authenticate, async (req: any, res: any) =>
 
 // GET /api/payroll/sie/:month/:year — Reporte INSS/SIE consolidado del mes (B5)
 // Datos por empleado listos para declarar al SIE del INSS (+ INATEC aparte).
-app.get('/api/payroll/sie/:month/:year', authenticate, async (req: any, res: any) => {
+app.get('/api/payroll/sie/:month/:year', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT', 'MANAGER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const month = Number(req.params.month);
     const year = Number(req.params.year);
@@ -4218,6 +4930,13 @@ app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'ACC
         // Asegura que el catálogo tenga las cuentas de prestaciones (auto-sanable).
         await seedChartOfAccounts(authReq.tenantId!);
 
+        // Trazas de asientos de partida doble omitidos (fail-soft): el pago se
+        // confirma igual, pero la omisión ya no queda silenciosa (se audita y se
+        // devuelve una advertencia explícita para no dejar el mayor descuadrado sin
+        // aviso al operador).
+        let asientoNominaOmitido: string | null = null;
+        let provisionOmitida: string | null = null;
+
         const payroll = await prisma.$transaction(async (tx: any) => {
             const updated = await tx.payroll.update({
                 where: { id: owned.id },
@@ -4239,7 +4958,8 @@ app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'ACC
             // en el Flujo de Caja, el Balance y el Estado de Resultados. Fail-soft.
             try {
                 await recordPayroll(tx, authReq.tenantId!, authReq.userId!, updated.id, Number(updated.netSalary), Number(updated.inssLaboral), Number(updated.irLaboral), Number(updated.inssPatronal), Number(updated.inatec));
-            } catch (payErr) {
+            } catch (payErr: any) {
+                asientoNominaOmitido = payErr?.message || String(payErr);
                 console.warn('⚠️ Asiento de nómina omitido (la nómina se paga igual):', payErr);
             }
 
@@ -4248,10 +4968,11 @@ app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'ACC
             // El cálculo fino se hace al pagar el aguinaldo (B2) y en la
             // liquidación (B3); esto es la provisión contable del mes. Fail-soft:
             // la nómina se paga aunque el período esté cerrado.
-            const cuota = Number(owned.grossSalary) / 12;
+            const cuota = new Decimal(owned.grossSalary.toString()).div(12).toDecimalPlaces(2).toNumber();
             try {
                 await recordLaborProvision(tx, authReq.tenantId!, authReq.userId!, owned.id, cuota, cuota, cuota);
-            } catch (provErr) {
+            } catch (provErr: any) {
+                provisionOmitida = provErr?.message || String(provErr);
                 console.warn('⚠️ Provisión de prestaciones omitida (la nómina se paga igual):', provErr);
             }
 
@@ -4261,8 +4982,64 @@ app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'ACC
                 data: { vacationDays: { increment: 2.5 } },
             });
 
+            // Asiento de auditoría inmutable (Capa 3): el pago de nómina mueve
+            // efectivo, así que dentro de la misma $transaction dejamos before/after
+            // del estado y los montos con userId/tenantId.
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'PAYROLL_PAID',
+                    details: JSON.stringify({
+                        payrollId: owned.id,
+                        employeeId: owned.employeeId,
+                        month: owned.month,
+                        year: owned.year,
+                        before: { status: owned.status },
+                        after: {
+                            status: updated.status,
+                            netSalary: updated.netSalary.toString(),
+                            inssLaboral: updated.inssLaboral.toString(),
+                            irLaboral: updated.irLaboral.toString(),
+                            inssPatronal: updated.inssPatronal.toString(),
+                            inatec: updated.inatec.toString(),
+                        },
+                        timestamp: new Date().toISOString(),
+                    }),
+                },
+            });
+
             return updated;
         });
+
+        // Si algún asiento de partida doble se omitió (fail-soft), dejar traza
+        // inmutable de la omisión: el pago quedó confirmado pero el mayor puede estar
+        // descuadrado, por lo que además se avisa explícitamente al operador.
+        if (asientoNominaOmitido || provisionOmitida) {
+            await prisma.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'PAYROLL_JOURNAL_SKIPPED',
+                    details: JSON.stringify({
+                        payrollId: owned.id,
+                        employeeId: owned.employeeId,
+                        month: owned.month,
+                        year: owned.year,
+                        asientoNominaOmitido,
+                        provisionOmitida,
+                        timestamp: new Date().toISOString(),
+                    }),
+                },
+            });
+        }
+
+        if (asientoNominaOmitido || provisionOmitida) {
+            return res.json({
+                ...payroll,
+                advertencia: 'La nómina se pagó, pero el asiento contable no se registró (período cerrado o cuentas faltantes). Revíselo: el mayor puede quedar descuadrado.',
+            });
+        }
 
         res.json(payroll);
     } catch (error) {
@@ -4287,7 +5064,12 @@ function computeAguinaldo(baseSalary: number, hireDate: Date, year: number, toda
     if (effectiveEnd >= start) {
         dias = Math.min(360, Math.floor((effectiveEnd.getTime() - start.getTime()) / 86400000) + 1);
     }
-    const monto = Number((baseSalary * Math.min(1, dias / 360)).toFixed(2));
+    // Precisión financiera (Capa 4): salario × min(1, días/360) con decimal.js para
+    // no divergir del motor Decimal de la liquidación (nicaLabor) al conciliar.
+    const monto = new Decimal(baseSalary.toString())
+        .mul(Decimal.min(1, new Decimal(dias).div(360)))
+        .toDecimalPlaces(2)
+        .toNumber();
     return { dias, monto };
 }
 
@@ -4363,6 +5145,25 @@ app.post('/api/payroll/aguinaldo/:year/run', authenticate, checkRole(['OWNER', '
                     } catch (accErr) {
                         console.warn('⚠️ Asiento de aguinaldo omitido:', accErr);
                     }
+                    // Asiento de auditoría inmutable (Capa 3): la corrida mueve efectivo
+                    // por empleado, así que dentro de la misma $transaction dejamos userId,
+                    // tenantId y los montos del pago de aguinaldo.
+                    await tx.auditLog.create({
+                        data: {
+                            tenantId,
+                            userId: authReq.userId!,
+                            action: 'AGUINALDO_PAID',
+                            details: JSON.stringify({
+                                aguinaldoId: ag.id,
+                                employeeId: emp.id,
+                                year,
+                                diasLaborados: dias,
+                                baseSalary: base,
+                                monto,
+                                timestamp: new Date().toISOString(),
+                            }),
+                        },
+                    });
                 });
                 pagados++;
                 total += monto;
@@ -4600,9 +5401,18 @@ app.get('/api/admin/motorizados/:id/wallet', authenticate, requireSuperAdmin, as
 // sobregiro). El dinero físico se mueve fuera; aquí queda el rastro inmutable.
 app.post('/api/admin/motorizados/:id/wallet/payout', authenticate, requireSuperAdmin, async (req: any, res: any) => {
     try {
+        const authReq = req as AuthRequest;
         const { amount, nota } = req.body ?? {};
-        const monto = Number(amount);
-        if (!Number.isFinite(monto) || monto <= 0) {
+        // Dinero con decimal.js (Capa 4): el monto y el chequeo de sobregiro se
+        // calculan en Decimal —nunca en float—, redondeando a 2 decimales igual que
+        // la columna Decimal(12,2), para que el control valide EXACTAMENTE lo que se debita.
+        let monto: Decimal;
+        try {
+            monto = new Decimal(String(amount)).toDecimalPlaces(2);
+        } catch {
+            return res.status(400).json({ error: 'amount debe ser un número > 0' });
+        }
+        if (!monto.isFinite() || monto.lte(0)) {
             return res.status(400).json({ error: 'amount debe ser un número > 0' });
         }
 
@@ -4614,21 +5424,40 @@ app.post('/api/admin/motorizados/:id/wallet/payout', authenticate, requireSuperA
                 select: { id: true, nombre: true, walletBalance: true },
             });
             if (!driver) throw new Error('DRIVER_NOT_FOUND');
-            if (Number(driver.walletBalance) < monto) throw new Error('SALDO_INSUFICIENTE');
+            if (new Decimal(driver.walletBalance.toString()).lt(monto)) throw new Error('SALDO_INSUFICIENTE');
 
-            return appendDriverWalletMovement(tx, {
+            const mov = await appendDriverWalletMovement(tx, {
                 motorizadoId: driver.id,
                 tenantId: null,
                 pedidoId: null,
                 type: 'PAGO_NORTEX',
-                amount: -monto,
+                amount: monto.negated().toNumber(),
                 descripcion: typeof nota === 'string' && nota.trim()
                     ? `Pago Nortex: ${nota.trim()}`
                     : 'Pago de comisiones Nortex al repartidor',
             });
+
+            // Auditoría inmutable (Capa 3): el payout saca dinero real, así que dentro
+            // de la MISMA $transaction dejamos el actor (SUPER_ADMIN) y el monto.
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'DRIVER_PAYOUT',
+                    details: JSON.stringify({
+                        movementId: mov.id,
+                        motorizadoId: driver.id,
+                        nombre: driver.nombre,
+                        monto: monto.toFixed(2),
+                        timestamp: new Date().toISOString(),
+                    }),
+                },
+            });
+
+            return mov;
         });
 
-        res.json({ message: 'Pago registrado en el libro del repartidor.', movementId: movement.id, amount: -monto });
+        res.json({ message: 'Pago registrado en el libro del repartidor.', movementId: movement.id, amount: monto.negated().toNumber() });
     } catch (error: unknown) {
         if (error instanceof Error && error.message === 'DRIVER_NOT_FOUND') {
             return res.status(404).json({ error: 'Motorizado no encontrado' });
@@ -4846,27 +5675,51 @@ app.get('/api/admin/loan-requests', authenticate, requireSuperAdmin, async (_req
     }
 });
 
-// POST /api/admin/loans/approve - Aprobar préstamo
-app.post('/api/admin/loans/approve', authenticate, requireSuperAdmin, async (req: any, res: any) => {
-    const { orderId, amount } = req.body;
+// Validación estricta del body (Capa 5). Definido INLINE para no colisionar con
+// backend/schemas.ts. amount debe ser decimal > 0 (se valida con decimal.js, sin float).
+const ApproveLoanSchema = z.object({
+    orderId: z.string().min(1, 'Se requiere orderId'),
+    amount: z
+        .union([z.string(), z.number()])
+        .transform((v) => String(v))
+        .refine((v) => {
+            try {
+                const d = new Decimal(v);
+                return d.isFinite() && d.gt(0);
+            } catch {
+                return false;
+            }
+        }, { message: 'El monto debe ser mayor que cero' }),
+});
 
-    if (!orderId || !amount) {
-        return res.status(400).json({ error: 'Se requiere orderId y amount' });
-    }
+// POST /api/admin/loans/approve - Aprobar préstamo
+app.post('/api/admin/loans/approve', authenticate, requireSuperAdmin, validate(ApproveLoanSchema), async (req: any, res: any) => {
+    const { orderId, amount } = req.body;
 
     try {
         await prisma.$transaction(async (tx: any) => {
-            // Actualizar orden
-            const order = await tx.b2bOrder.update({
-                where: { id: orderId },
+            // Idempotencia + concurrencia: aprobar SOLO si la orden sigue PENDING.
+            // El updateMany condicional toma el row-lock; si count===0 la orden ya no
+            // estaba pendiente (doble clic/reintento) y abortamos sin re-desembolsar.
+            const approved = await tx.b2BOrder.updateMany({
+                where: { id: orderId, status: 'PENDING' },
                 data: { status: 'APPROVED' },
+            });
+            if (approved.count === 0) throw new Error('ORDER_NOT_PENDING');
+
+            // Delegate correcto: b2BOrder (el modelo es B2BOrder). El typo previo
+            // (b2bOrder) era undefined y hacía fallar toda la aprobación.
+            const order = await tx.b2BOrder.findUnique({
+                where: { id: orderId },
                 include: { tenant: true }
             });
+            if (!order) throw new Error('ORDER_NOT_FOUND');
 
-            // Desembolsar fondos al wallet del tenant
+            // Desembolsar fondos al wallet del tenant (Capa 4: decimal.js estricto,
+            // nada de Number sobre dinero; escala 2 al acreditar el saldo gastable).
             await tx.tenant.update({
                 where: { id: order.tenantId },
-                data: { walletBalance: { increment: Number(amount) } }
+                data: { walletBalance: { increment: new Decimal(String(amount)).toDecimalPlaces(2) } }
             });
 
             // Registrar auditoría
@@ -4882,6 +5735,12 @@ app.post('/api/admin/loans/approve', authenticate, requireSuperAdmin, async (req
 
         res.json({ message: `Préstamo de $${amount} aprobado y desembolsado.` });
     } catch (error) {
+        if (error instanceof Error && error.message === 'ORDER_NOT_PENDING') {
+            return res.status(409).json({ error: 'La solicitud ya no está pendiente (ya fue aprobada o rechazada).' });
+        }
+        if (error instanceof Error && error.message === 'ORDER_NOT_FOUND') {
+            return res.status(404).json({ error: 'Solicitud no encontrada' });
+        }
         console.error('Loan approval error:', error);
         res.status(500).json({ error: 'Error al aprobar préstamo' });
     }
@@ -4966,14 +5825,31 @@ app.get('/api/billing/status', authenticate, async (req: any, res: any) => {
 // 🏦 PAGOS MANUALES (DEPÓSITO / TRANSFERENCIA)
 // ==========================================
 
+// Validación del pago manual reportado por el cliente (Capa 5): monto positivo y
+// finito, banco y referencia no vacíos, moneda de un catálogo cerrado. Definido
+// inline en este archivo para no colisionar con edición paralela de schemas.ts.
+const ReportManualPaymentSchema = z.object({
+    amount: z.coerce.number().finite().positive('El monto debe ser mayor a cero'),
+    currency: z.enum(['USD', 'NIO']).optional(),
+    bank: z.string().trim().min(1, 'El banco es requerido'),
+    referenceNumber: z.string().trim().min(1, 'El número de referencia es requerido'),
+    proofUrl: z.string().trim().optional(),
+    notes: z.string().trim().optional(),
+});
+
 // POST /api/billing/report-manual - Cliente reporta pago manual
 app.post('/api/billing/report-manual', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { amount, currency, bank, referenceNumber, proofUrl, notes } = req.body;
 
-    if (!amount || !bank || !referenceNumber) {
-        return res.status(400).json({ error: 'Monto, banco y número de referencia son requeridos.' });
+    // Capa 5: validar el cuerpo con Zod antes de tocar la BD (rechaza montos
+    // negativos, NaN, strings no numéricos y campos vacíos).
+    const parsed = ReportManualPaymentSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Datos de pago inválidos.' });
     }
+    const { amount, currency, bank, referenceNumber, proofUrl, notes } = parsed.data;
+    // Capa 4: el monto se persiste como Decimal con escala 2, nunca como Number.
+    const monto = new Decimal(String(amount)).toDecimalPlaces(2);
 
     try {
         // Verificar que no tenga un pago pendiente
@@ -4987,7 +5863,7 @@ app.post('/api/billing/report-manual', authenticate, async (req: any, res: any) 
         const payment = await prisma.manualPayment.create({
             data: {
                 tenantId: authReq.tenantId!,
-                amount: Number(amount),
+                amount: monto,
                 currency: currency || 'USD',
                 bank,
                 referenceNumber: String(referenceNumber),
@@ -5051,33 +5927,43 @@ app.post('/api/admin/manual-payments/:id/approve', authenticate, requireSuperAdm
         const endsAt = new Date();
         endsAt.setDate(endsAt.getDate() + 30);
 
-        await prisma.$transaction([
-            // Aprobar pago
-            prisma.manualPayment.update({
-                where: { id: req.params.id },
-                data: { status: 'APPROVED', reviewedBy: authReq.userId, reviewedAt: new Date() }
-            }),
+        await prisma.$transaction(async (tx: any) => {
+            // Concurrencia (TOCTOU): el chequeo status==='PENDING' de arriba está FUERA
+            // de la transacción, así que dos aprobaciones simultáneas del mismo pago
+            // pasarían ambas. Aquí aprobamos con un updateMany condicional que toma el
+            // row-lock; si count===0 otra request ya lo aprobó (doble clic) y abortamos
+            // para no duplicar el AuditLog ni reactivar la suscripción dos veces.
+            const approved = await tx.manualPayment.updateMany({
+                where: { id: req.params.id, status: 'PENDING' },
+                data: { status: 'APPROVED', reviewedBy: authReq.userId, reviewedAt: new Date() },
+            });
+            if (approved.count === 0) throw new Error('PAYMENT_NOT_PENDING');
+
             // Activar tenant
-            prisma.tenant.update({
+            await tx.tenant.update({
                 where: { id: payment.tenantId },
                 data: { subscriptionStatus: 'ACTIVE', subscriptionEndsAt: endsAt }
-            }),
+            });
+
             // Audit log
-            prisma.auditLog.create({
+            await tx.auditLog.create({
                 data: {
                     tenantId: payment.tenantId,
                     userId: authReq.userId!,
                     action: 'MANUAL_PAYMENT_APPROVED',
                     details: `Pago manual de $${payment.amount} ${payment.currency} aprobado. Ref: ${payment.referenceNumber}`
                 }
-            })
-        ]);
+            });
+        });
 
         // Invalidar caché del tenant
         invalidateTenantCache(payment.tenantId);
 
         res.json({ message: `Pago aprobado. Suscripción activada hasta ${endsAt.toLocaleDateString()}.` });
     } catch (error) {
+        if (error instanceof Error && error.message === 'PAYMENT_NOT_PENDING') {
+            return res.status(409).json({ error: 'Este pago ya fue procesado por otra sesión.' });
+        }
         console.error('Approve manual payment error:', error);
         res.status(500).json({ error: 'Error al aprobar pago' });
     }
@@ -5366,26 +6252,50 @@ app.post('/api/credits/payment', authenticate, validate(CreatePaymentSchema), as
             const sale = await tx.sale.findFirst({ where: { id: saleId, tenantId: authReq.tenantId } });
             if (!sale) throw new Error('Venta no encontrada');
 
-            const newBalance = Number(sale.balance) - Number(amount);
-            if (newBalance < -0.01) throw new Error('El abono excede el saldo pendiente');
+            // Capa 4: dinero con decimal.js (nada de Number). Saldo previo y monto del
+            // abono a escala 2; el saldo nuevo es una resta exacta.
+            const saldoPrevio = new Decimal(sale.balance.toString());
+            const monto = new Decimal(String(amount)).toDecimalPlaces(2);
+            const newBalance = saldoPrevio.minus(monto).toDecimalPlaces(2);
+            // Tolerancia de 1 centavo por redondeo, igual que el hermano /api/payments.
+            if (newBalance.lessThan(new Decimal('-0.01'))) throw new Error('El abono excede el saldo pendiente');
 
-            // 1. Crear Pago
+            // 1. Crear Pago (monto persistido como Decimal, sin float).
             await tx.payment.create({
                 data: {
                     saleId,
-                    amount: Number(amount),
+                    amount: monto,
                     method: method || 'CASH',
                     collectedBy: authReq.userId!
                 }
             });
 
-            // 2. Actualizar Venta
-            const updatedSale = await tx.sale.update({
-                where: { id: saleId },
+            // 2. Actualizar Venta con decremento condicionado (anti lost-update): el
+            // where exige que el saldo siga siendo EXACTAMENTE el que leímos, tomando el
+            // row-lock; si count===0 otra transacción concurrente (doble clic/reintento)
+            // ya movió el saldo y abortamos para no aplicar dos veces el mismo abono.
+            const completada = newBalance.lessThanOrEqualTo(new Decimal('0.01'));
+            const applied = await tx.sale.updateMany({
+                where: { id: saleId, tenantId: authReq.tenantId, balance: sale.balance },
                 data: {
-                    balance: newBalance,
-                    status: newBalance <= 0.01 ? 'COMPLETED' : 'PENDING' // Update status if fully paid
+                    balance: { decrement: monto },
+                    status: completada ? 'COMPLETED' : 'PENDING' // Update status if fully paid
                 },
+            });
+            if (applied.count === 0) throw new Error('El saldo de la venta cambió; reintente el abono');
+
+            // 3. Bajar la deuda del cliente (Capa correctitud): sin esto currentDebt
+            // queda inflado y bloquea ventas a crédito legítimas. Clamp a 0 como el
+            // castigo de incobrables (writeoff), con decimal.js.
+            if (sale.customerId) {
+                const cust = await tx.customer.findUnique({ where: { id: sale.customerId }, select: { currentDebt: true } });
+                const newDebt = Decimal.max(new Decimal(0), new Decimal((cust?.currentDebt ?? 0).toString()).minus(monto)).toDecimalPlaces(2);
+                await tx.customer.update({ where: { id: sale.customerId }, data: { currentDebt: newDebt } });
+            }
+
+            // Releer la venta ya actualizada para armar la respuesta.
+            const updatedSale = await tx.sale.findUnique({
+                where: { id: saleId },
                 include: {
                     payments: { orderBy: { createdAt: 'desc' } },
                     customer: { select: { name: true } }
@@ -5399,9 +6309,10 @@ app.post('/api/credits/payment', authenticate, validate(CreatePaymentSchema), as
                     action: 'CREDIT_PAYMENT',
                     details: JSON.stringify({
                         saleId,
-                        amount: String(amount),
-                        balanceBefore: String(sale.balance),
-                        balanceAfter: String(newBalance),
+                        customerId: sale.customerId,
+                        amount: monto.toString(),
+                        balanceBefore: saldoPrevio.toString(),
+                        balanceAfter: newBalance.toString(),
                         method: method ?? 'CASH',
                     }),
                 },
@@ -6097,11 +7008,67 @@ app.post('/api/accounting/fixed-assets', authenticate, checkRole(['OWNER', 'ADMI
 app.patch('/api/accounting/fixed-assets/:id/baja', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        const owned = await prisma.fixedAsset.findFirst({ where: { id: req.params.id, tenantId: authReq.tenantId! }, select: { id: true } });
-        if (!owned) return res.status(404).json({ error: 'Activo no encontrado.' });
-        await prisma.fixedAsset.update({ where: { id: owned.id }, data: { estado: 'BAJA' } });
+        const asset = await prisma.fixedAsset.findFirst({ where: { id: req.params.id, tenantId: authReq.tenantId! } });
+        if (!asset) return res.status(404).json({ error: 'Activo no encontrado.' });
+        if (asset.estado === 'BAJA') return res.status(409).json({ error: 'El activo ya está dado de baja.' });
+
+        // Valor en libros = costo − depreciación acumulada (todo con Decimal).
+        const costo = new Decimal(asset.costo.toString());
+        const depAcum = new Decimal(asset.depreciacionAcumulada.toString());
+        const valorEnLibros = costo.minus(depAcum);
+
+        await prisma.$transaction(async (tx) => {
+            // Flip atómico: solo si sigue ACTIVO → evita doble baja/derecognición en carrera.
+            const flip = await tx.fixedAsset.updateMany({
+                where: { id: asset.id, tenantId: authReq.tenantId!, estado: 'ACTIVO' },
+                data: { estado: 'BAJA' },
+            });
+            if (flip.count === 0) throw new Error('BAJA_CONFLICT'); // otra baja ganó la carrera → abortar tx
+
+            // Asiento de derecognición: Debe 1.2.2 (dep. acum.) + Debe 5.2.1 (pérdida por
+            // valor en libros) / Haber 1.2.1 (costo). Saca el activo del Balance General.
+            await createJournalEntry(
+                tx as Parameters<typeof createJournalEntry>[0],
+                authReq.tenantId!,
+                `Baja de activo fijo — ${asset.nombre}`,
+                asset.id, 'FIXED_ASSET_DISPOSAL', authReq.userId!,
+                [
+                    { accountCode: '1.2.2', debit: depAcum.toNumber(), credit: 0 },
+                    { accountCode: '5.2.1', debit: valorEnLibros.toNumber(), credit: 0 },
+                    { accountCode: '1.2.1', debit: 0, credit: costo.toNumber() },
+                ],
+                { isAutomatic: false, date: new Date() }
+            );
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'FIXED_ASSET_DISPOSAL',
+                    details: JSON.stringify({
+                        assetId: asset.id,
+                        nombre: asset.nombre,
+                        categoria: asset.categoria,
+                        before: { estado: asset.estado },
+                        after: { estado: 'BAJA' },
+                        costo: costo.toNumber(),
+                        depreciacionAcumulada: depAcum.toNumber(),
+                        valorEnLibros: valorEnLibros.toNumber(),
+                    }),
+                },
+            });
+        });
         res.json({ message: 'Activo dado de baja.' });
-    } catch { res.status(500).json({ error: 'Error al dar de baja.' }); }
+    } catch (error) {
+        if (error instanceof Error && error.message === 'BAJA_CONFLICT') {
+            return res.status(409).json({ error: 'El activo ya está dado de baja.' });
+        }
+        if (error instanceof PeriodLockedError) {
+            return res.status(409).json({ error: error.message });
+        }
+        console.error('Fixed asset disposal error:', error);
+        res.status(500).json({ error: 'Error al dar de baja.' });
+    }
 });
 
 // POST correr depreciación (manual; el cron hace lo mismo mensual)
@@ -6616,6 +7583,20 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
         // 2. Transacción atómica: Purchase + CapitalLoan + JournalEntry
         const result = await prisma.$transaction(async (tx: any) => {
 
+            // Aislamiento multi-tenant: el proveedor y TODOS los productos deben ser del
+            // tenant del JWT. No confiar en los ids del body (cross-tenant); abortar si no.
+            const supplier = await tx.supplier.findFirst({
+                where: { id: supplierId, tenantId: authReq.tenantId! },
+                select: { id: true },
+            });
+            if (!supplier) throw new Error('SUPPLIER_NOT_FOUND');
+
+            const productIds: string[] = [...new Set(items.map((i: any) => i.productId))];
+            const ownedProducts = await tx.product.count({
+                where: { id: { in: productIds }, tenantId: authReq.tenantId! },
+            });
+            if (ownedProducts !== productIds.length) throw new Error('PRODUCT_NOT_FOUND');
+
             // a) Crear la compra al proveedor con estado PENDING_PAYMENT
             const purchase = await tx.purchase.create({
                 data: {
@@ -6691,6 +7672,12 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
             }
         });
     } catch (error) {
+        if (error instanceof Error && error.message === 'SUPPLIER_NOT_FOUND') {
+            return res.status(404).json({ error: 'Proveedor no encontrado.' });
+        }
+        if (error instanceof Error && error.message === 'PRODUCT_NOT_FOUND') {
+            return res.status(404).json({ error: 'Uno o más productos no pertenecen a tu negocio.' });
+        }
         console.error('Capital Finance Error:', error);
         res.status(500).json({ error: 'Error procesando el financiamiento' });
     }
@@ -6712,19 +7699,27 @@ app.get('/api/financial-health', authenticate, async (req: any, res: any) => {
         const estado = await getEstadoResultados(authReq.tenantId!);
         const score = await calculateTenantScore(authReq.tenantId!);
 
-        // Punto de equilibrio: Gastos fijos / (1 - (Costo Ventas / Ventas))
+        // Punto de equilibrio: Gastos fijos / (1 - (Costo Ventas / Ventas)) — bases en Decimal.
         const revenue = estado.revenue.total || 1;
-        const cogsRatio = estado.costOfSales / revenue;
-        const breakEven = cogsRatio < 1 ? estado.operatingExpenses.total / (1 - cogsRatio) : 0;
+        const cogsRatioD = new Decimal(estado.costOfSales).div(revenue);
+        const opExpTotal = new Decimal(estado.operatingExpenses.total);
+        const breakEven = cogsRatioD.lessThan(1)
+            ? opExpTotal.div(new Decimal(1).minus(cogsRatioD)).toDecimalPlaces(2).toNumber()
+            : 0;
 
         // Margen de utilidad real
-        const profitMargin = revenue > 0 ? ((estado.netIncome / revenue) * 100) : 0;
+        const profitMargin = revenue > 0
+            ? new Decimal(estado.netIncome).div(revenue).mul(100).toDecimalPlaces(2).toNumber()
+            : 0;
+
+        // EBITDA = utilidad bruta − gastos operativos (Decimal, sin resta float).
+        const ebitda = new Decimal(estado.grossProfit).minus(opExpTotal).toDecimalPlaces(2).toNumber();
 
         res.json({
             kpis: {
-                profitMargin: Math.round(profitMargin * 100) / 100,
-                breakEven: Math.round(breakEven * 100) / 100,
-                ebitda: Math.round((estado.grossProfit - estado.operatingExpenses.total) * 100) / 100,
+                profitMargin,
+                breakEven,
+                ebitda,
                 liquidityRatio: score.financialRatios?.liquidityRatio || 0,
                 debtToEquity: score.financialRatios?.debtToEquity || 0,
                 netMargin: score.financialRatios?.netMargin || 0,
@@ -6744,8 +7739,15 @@ app.get('/api/financial-health', authenticate, async (req: any, res: any) => {
     }
 });
 
+// Query de rango de fechas para los reportes forenses. z.coerce.date rechaza
+// strings inválidos (Invalid Date) → 400 claro en vez de un 500 desde Prisma.
+const AuditDateRangeQuerySchema = z.object({
+    startDate: z.coerce.date().optional(),
+    endDate: z.coerce.date().optional(),
+});
+
 // GET /api/audit/feed — Feed de alertas forenses (últimas 50)
-app.get('/api/audit/feed', authenticate, async (req: any, res: any) => {
+app.get('/api/audit/feed', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const { getAuditFeed } = await import('./services/audit');
@@ -6758,12 +7760,13 @@ app.get('/api/audit/feed', authenticate, async (req: any, res: any) => {
 });
 
 // GET /api/audit/kardex-suspicious — Movimientos de kardex sospechosos
-app.get('/api/audit/kardex-suspicious', authenticate, async (req: any, res: any) => {
+app.get('/api/audit/kardex-suspicious', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
+    const parsed = AuditDateRangeQuerySchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: 'Fechas inválidas.', details: parsed.error.flatten().fieldErrors });
     try {
         const { detectSuspiciousKardex } = await import('./services/audit');
-        const startDate = req.query.startDate ? new Date(req.query.startDate) : undefined;
-        const endDate = req.query.endDate ? new Date(req.query.endDate) : undefined;
+        const { startDate, endDate } = parsed.data;
         const results = await detectSuspiciousKardex(authReq.tenantId!, startDate, endDate);
         res.json(results);
     } catch (error) {
@@ -6773,12 +7776,13 @@ app.get('/api/audit/kardex-suspicious', authenticate, async (req: any, res: any)
 });
 
 // GET /api/audit/voided-movements — Análisis de anulaciones por usuario
-app.get('/api/audit/voided-movements', authenticate, async (req: any, res: any) => {
+app.get('/api/audit/voided-movements', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
+    const parsed = AuditDateRangeQuerySchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: 'Fechas inválidas.', details: parsed.error.flatten().fieldErrors });
     try {
         const { analyzeVoidedMovements } = await import('./services/audit');
-        const startDate = req.query.startDate ? new Date(req.query.startDate) : undefined;
-        const endDate = req.query.endDate ? new Date(req.query.endDate) : undefined;
+        const { startDate, endDate } = parsed.data;
         const results = await analyzeVoidedMovements(authReq.tenantId!, startDate, endDate);
         res.json(results);
     } catch (error) {
@@ -6788,12 +7792,13 @@ app.get('/api/audit/voided-movements', authenticate, async (req: any, res: any) 
 });
 
 // GET /api/audit/discounts — Reporte de descuentos por cajero
-app.get('/api/audit/discounts', authenticate, async (req: any, res: any) => {
+app.get('/api/audit/discounts', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
+    const parsed = AuditDateRangeQuerySchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: 'Fechas inválidas.', details: parsed.error.flatten().fieldErrors });
     try {
         const { analyzeDiscounts } = await import('./services/audit');
-        const startDate = req.query.startDate ? new Date(req.query.startDate) : undefined;
-        const endDate = req.query.endDate ? new Date(req.query.endDate) : undefined;
+        const { startDate, endDate } = parsed.data;
         const results = await analyzeDiscounts(authReq.tenantId!, startDate, endDate);
         res.json(results);
     } catch (error) {
@@ -6802,11 +7807,18 @@ app.get('/api/audit/discounts', authenticate, async (req: any, res: any) => {
     }
 });
 
+// Body {month, year} para operaciones contables sensibles (retenciones, cierre fiscal).
+const AccountingPeriodBodySchema = z.object({
+    month: z.coerce.number().int().min(1).max(12),
+    year: z.coerce.number().int().min(2000).max(2100),
+});
+
 // POST /api/accounting/retentions — Generar retenciones DGI del mes
-app.post('/api/accounting/retentions', authenticate, async (req: any, res: any) => {
+app.post('/api/accounting/retentions', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { month, year } = req.body;
-    if (!month || !year) return res.status(400).json({ error: 'month y year son requeridos' });
+    const parsed = AccountingPeriodBodySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'month y year inválidos', details: parsed.error.flatten().fieldErrors });
+    const { month, year } = parsed.data;
 
     try {
         const { generateRetentions } = await import('./services/accounting');
@@ -6850,10 +7862,12 @@ app.get('/api/accounting/retentions/:period', authenticate, async (req: any, res
 });
 
 // POST /api/accounting/fiscal-close — Cierre fiscal mensual
-app.post('/api/accounting/fiscal-close', authenticate, async (req: any, res: any) => {
+// Solo OWNER puede CERRAR (bloquear) el período, igual que su inverso (reopen).
+app.post('/api/accounting/fiscal-close', authenticate, checkRole(['OWNER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { month, year } = req.body;
-    if (!month || !year) return res.status(400).json({ error: 'month y year son requeridos' });
+    const parsed = AccountingPeriodBodySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'month y year inválidos', details: parsed.error.flatten().fieldErrors });
+    const { month, year } = parsed.data;
 
     try {
         const { fiscalClose } = await import('./services/accounting');
@@ -6986,6 +8000,26 @@ app.post('/api/hrm/settlement/:employeeId', authenticate, checkRole(['OWNER', 'A
             await tx.salaryAdvance.updateMany({
                 where: { tenantId, employeeId: employee.id, status: 'PENDING' },
                 data: { status: 'REJECTED' },
+            });
+            // Asiento inmutable de auditoría: liquidación mueve dinero y termina al empleado.
+            await tx.auditLog.create({
+                data: {
+                    tenantId,
+                    userId: authReq.userId!,
+                    action: 'SETTLEMENT_PROCESSED',
+                    details: JSON.stringify({
+                        settlementId: created.id,
+                        employeeId: employee.id,
+                        reason,
+                        aguinaldo: s.aguinaldo,
+                        vacaciones: s.vacaciones,
+                        indemnizacion: s.indemnizacion,
+                        total: s.total,
+                        salarioMensual,
+                        before: { status: employee.status, vacationDays: Number(employee.vacationDays || 0) },
+                        after: { status: 'TERMINATED', vacationDays: 0 },
+                    }),
+                },
             });
             return created;
         });
@@ -7160,17 +8194,18 @@ app.post('/api/me/leave', authenticate, async (req: any, res: any) => {
 // POST /api/me/advance — el colaborador solicita un adelanto (queda PENDING)
 app.post('/api/me/advance', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const monto = Number(req.body?.amount);
-    if (!monto || monto <= 0) return res.status(400).json({ error: 'Monto inválido.' });
+    let monto: Decimal;
+    try { monto = new Decimal(String(req.body?.amount ?? '')); } catch { return res.status(400).json({ error: 'Monto inválido.' }); }
+    if (monto.isNaN() || monto.lessThanOrEqualTo(0)) return res.status(400).json({ error: 'Monto inválido.' });
     try {
         const emp = await findMyEmployee(authReq);
         if (!emp) return res.status(404).json({ error: 'Tu usuario no está vinculado a un expediente.' });
-        const max = Number(emp.baseSalary) * 0.30;
-        if (monto > max) return res.status(400).json({ error: `El monto excede tu límite permitido de C$ ${max.toFixed(2)} (30% del salario).` });
+        const max = new Decimal(emp.baseSalary.toString()).times('0.30');
+        if (monto.greaterThan(max)) return res.status(400).json({ error: `El monto excede tu límite permitido de C$ ${max.toFixed(2)} (30% del salario).` });
         const pendiente = await prisma.salaryAdvance.findFirst({ where: { tenantId: authReq.tenantId!, employeeId: emp.id, status: 'PENDING' }, select: { id: true } });
         if (pendiente) return res.status(400).json({ error: 'Ya tenés un adelanto pendiente de aprobación.' });
         const advance = await prisma.salaryAdvance.create({
-            data: { tenantId: authReq.tenantId!, employeeId: emp.id, amount: monto, fee: monto * 0.05, status: 'PENDING' },
+            data: { tenantId: authReq.tenantId!, employeeId: emp.id, amount: monto.toDecimalPlaces(2).toNumber(), fee: monto.times('0.05').toDecimalPlaces(2).toNumber(), status: 'PENDING' },
         });
         res.json({ message: 'Solicitud de adelanto enviada.', advance });
     } catch (error) {
@@ -7286,7 +8321,7 @@ app.get('/api/tenant/info', authenticate, async (req: any, res: any) => {
 });
 
 // PUT /api/tenant/slug — Configurar slug (INMUTABLE una vez creado)
-app.put('/api/tenant/slug', authenticate, async (req: any, res: any) => {
+app.put('/api/tenant/slug', authenticate, checkRole(['ADMIN', 'OWNER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { slug } = req.body;
 
@@ -7376,7 +8411,8 @@ app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) =
         }
 
         // 🔒 BLINDAJE: select explícito — NUNCA usar findMany sin select en endpoint público
-        let products = await prisma.product.findMany({
+        // 🔒 Solo productos publicados: JAMÁS exponer inventario interno/borrador.
+        const products = await prisma.product.findMany({
             where: { tenantId: tenant.id, isPublished: true },
             select: {
                 id: true, name: true, price: true, description: true,
@@ -7384,19 +8420,6 @@ app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) =
             },
             orderBy: { name: 'asc' }
         });
-
-        // Si el tenant no ha publicado ningún producto aún, mostramos TODO el catálogo
-        // para que el cliente vea algo en lugar de una página vacía
-        if (products.length === 0) {
-            products = await prisma.product.findMany({
-                where: { tenantId: tenant.id },
-                select: {
-                    id: true, name: true, price: true, description: true,
-                    imageUrl: true, category: true, unit: true,
-                },
-                orderBy: { name: 'asc' }
-            });
-        }
 
         res.json({
             business: {
@@ -7406,6 +8429,8 @@ app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) =
                 phone: tenant.phone,
             },
             products,
+            // Si el tenant no ha publicado productos, se devuelve lista vacía (nunca el catálogo interno).
+            message: products.length === 0 ? 'Catálogo en construcción.' : undefined,
         });
 
     } catch (error) {
@@ -7421,17 +8446,24 @@ const orderLimiter = rateLimit({
     message: { error: 'Demasiados pedidos. Intenta en unos minutos.' }
 });
 
+// Validación del pedido público: el cliente NUNCA fija precios (se resuelven de la BD).
+const PublicOrderSchema = z.object({
+    slug: z.string().min(1, 'slug requerido'),
+    customerName: z.string().trim().min(1, 'Nombre requerido').max(200),
+    customerPhone: z.string().trim().max(20).optional(),
+    items: z.array(z.object({
+        productId: z.string().min(1).max(50),
+        quantity: z.number().positive().max(9999),
+    })).min(1, 'Se requiere al menos 1 producto').max(50, 'Máximo 50 productos por pedido'),
+});
+
 app.post('/api/public/orders', orderLimiter, async (req: any, res: any) => {
-    const { slug, customerName, customerPhone, items } = req.body;
-
-    if (!slug || !customerName || !items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: 'Faltan datos: slug, customerName y items son requeridos' });
+    const parsed = PublicOrderSchema.safeParse(req.body);
+    if (!parsed.success) {
+        const msg = parsed.error.issues.map(i => i.message).join(' | ');
+        return res.status(400).json({ error: msg || 'Datos del pedido inválidos.' });
     }
-
-    // 🔒 Anti-abuso: máximo 50 items por pedido
-    if (items.length > 50) {
-        return res.status(400).json({ error: 'Máximo 50 productos por pedido' });
-    }
+    const { slug, customerName, customerPhone, items } = parsed.data;
 
     // 🔒 Validar teléfono Nicaragua (8 dígitos) si se proporciona
     if (customerPhone) {
@@ -7444,27 +8476,37 @@ app.post('/api/public/orders', orderLimiter, async (req: any, res: any) => {
 
     try {
         // Buscar tenant por slug
-        const tenant = await prisma.tenant.findUnique({ where: { slug } });
+        const tenant = await prisma.tenant.findUnique({ where: { slug }, select: { id: true } });
         if (!tenant) {
             return res.status(404).json({ error: 'Negocio no encontrado' });
         }
 
-        // Sanitizar items — snapshot con precios congelados al momento del pedido
-        const sanitizedItems = items.map((item: any) => {
-            const price = Math.min(Math.max(Number(item.price) || 0, 0), 999999); // Techo de precio
-            const quantity = Math.min(Math.max(Number(item.quantity) || 1, 0.01), 9999); // Techo de cantidad
+        // 🔒 El precio SIEMPRE sale de la BD (productos del tenant y publicados);
+        // el cliente no puede fijar precios en el snapshot del pedido.
+        const productIds = items.map(i => i.productId);
+        const productsDB = await prisma.product.findMany({
+            where: { tenantId: tenant.id, id: { in: productIds }, isPublished: true },
+            select: { id: true, name: true, price: true },
+        });
+        if (productsDB.length !== items.length) {
+            return res.status(400).json({ error: 'Algunos productos no fueron encontrados o no están disponibles.' });
+        }
+
+        // Snapshot con precios congelados desde la BD (nunca del body)
+        const sanitizedItems = items.map(item => {
+            const prod = productsDB.find(p => p.id === item.productId)!;
             return {
-                productId: String(item.productId || item.id).substring(0, 50),
-                name: String(item.name).substring(0, 200),
-                quantity,
-                price, // 🔒 SNAPSHOT: precio congelado al momento del pedido
+                productId: prod.id,
+                name: prod.name,
+                quantity: item.quantity,
+                price: new Decimal(prod.price.toString()).toDecimalPlaces(2).toNumber(), // 🔒 SNAPSHOT server-side
             };
         });
 
         const order = await prisma.publicOrder.create({
             data: {
                 tenantId: tenant.id,
-                customerName: String(customerName).substring(0, 200),
+                customerName: customerName.substring(0, 200),
                 customerPhone: customerPhone ? String(customerPhone).replace(/\D/g, '').substring(0, 15) : null,
                 items: sanitizedItems,
             }
@@ -7510,20 +8552,25 @@ app.patch('/api/public-orders/:id/convert', authenticate, async (req: any, res: 
 
         const items = order.items as any[];
 
-        // Calcular totales
-        let subtotal = 0;
+        // Calcular totales con decimal.js (cero aritmética float sobre dinero)
+        let subtotalD = new Decimal(0);
         const formattedItems = items.map((item: any) => {
-            const total = Number(item.price) * Number(item.quantity);
-            subtotal += total;
+            const precio = new Decimal(String(item.price)).toDecimalPlaces(2);
+            const cantidad = new Decimal(String(item.quantity));
+            subtotalD = subtotalD.plus(precio.mul(cantidad));
             return {
                 productId: item.productId,
                 name: item.name,
-                price: Number(item.price),
-                quantity: Number(item.quantity),
+                price: precio.toNumber(),
+                quantity: cantidad.toNumber(),
             };
         });
-        const tax = subtotal * 0.15;
-        const total = subtotal + tax;
+        subtotalD = subtotalD.toDecimalPlaces(2);
+        const taxD = subtotalD.mul('0.15').toDecimalPlaces(2);
+        const totalD = subtotalD.plus(taxD).toDecimalPlaces(2);
+        const subtotal = subtotalD.toNumber();
+        const tax = taxD.toNumber();
+        const total = totalD.toNumber();
 
         // Transacción: crear Quotation + marcar PublicOrder como CONVERTED
         const result = await prisma.$transaction(async (tx: any) => {
@@ -7574,7 +8621,7 @@ app.patch('/api/public-orders/:id/convert', authenticate, async (req: any, res: 
 
 // GET /api/fiscal/constancia-retencion/:purchaseId
 // Devuelve HTML listo para imprimir como PDF via window.print()
-app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, async (req: any, res: any) => {
+app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { purchaseId } = req.params;
 
@@ -7599,14 +8646,18 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, async (req
             orderBy: { type: 'asc' },
         });
 
-        // Si no hay retenciones registradas, calcularlas al vuelo
-        const baseAmount = Number(purchase.subtotal);
+        // Si no hay retenciones registradas, calcularlas al vuelo (documento fiscal
+        // legal → precisión Decimal, sin float ni Math.round sobre montos).
+        const baseAmountD = new Decimal(purchase.subtotal.toString());
+        const baseAmount = baseAmountD.toNumber();
         const computedRetentions = retentions.length > 0 ? retentions : [
-            { type: 'IR_2PCT',  amount: Math.round(baseAmount * 0.02 * 100) / 100, baseAmount },
-            { type: 'IMI_1PCT', amount: Math.round(baseAmount * 0.01 * 100) / 100, baseAmount },
+            { type: 'IR_2PCT',  amount: baseAmountD.mul('0.02').toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(), baseAmount },
+            { type: 'IMI_1PCT', amount: baseAmountD.mul('0.01').toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(), baseAmount },
         ];
 
-        const totalRetenido = computedRetentions.reduce((s, r) => s + Number(r.amount), 0);
+        const totalRetenido = computedRetentions
+            .reduce((s, r) => s.plus(r.amount.toString()), new Decimal(0))
+            .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
         const fecha = new Date(purchase.createdAt).toLocaleDateString('es-NI', {
             day: '2-digit', month: 'long', year: 'numeric'
         });
@@ -7724,7 +8775,7 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, async (req
   <div class="grid">
     <div class="field"><label>Fecha de Emisión</label><span>${fecha}</span></div>
     <div class="field"><label>Monto Total Factura</label><span>C$ ${Number(purchase.total).toFixed(2)}</span></div>
-    <div class="field"><label>Neto a Pagar al Proveedor</label><span style="color:#1a56a0;font-size:13px;">C$ ${(Number(purchase.total) - totalRetenido).toFixed(2)}</span></div>
+    <div class="field"><label>Neto a Pagar al Proveedor</label><span style="color:#1a56a0;font-size:13px;">C$ ${new Decimal(purchase.total.toString()).minus(totalRetenido).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2)}</span></div>
   </div>
 </div>
 
@@ -7762,16 +8813,22 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, async (req
 // 📊 SPRINT A — EXPORTACIONES FISCALES DGI
 // ==========================================
 
-// Helper: rango de fechas para un mes/año
+// Helper: rango de fechas para un mes/año.
+// El servidor puede correr en UTC (Docker/Coolify) → pineamos el rango a la zona de
+// Nicaragua (America/Managua = UTC-6 todo el año, sin horario de verano) para no correr
+// ventas de borde de mes a otro período, y usamos límite superior EXCLUSIVO (inicio del
+// mes siguiente, con `lt`) para no perder el último sub-segundo del último día.
+const MANAGUA_UTC_OFFSET_HOURS = 6; // UTC-6 fijo (Nicaragua no aplica DST)
 function fiscalMonthRange(month: number, year: number) {
-    const start = new Date(year, month - 1, 1, 0, 0, 0);
-    const end   = new Date(year, month, 0, 23, 59, 59);
+    // Medianoche de Managua expresada en UTC = 06:00 UTC del mismo día calendario.
+    const start = new Date(Date.UTC(year, month - 1, 1, MANAGUA_UTC_OFFSET_HOURS, 0, 0));
+    const end   = new Date(Date.UTC(year, month, 1, MANAGUA_UTC_OFFSET_HOURS, 0, 0)); // inicio del mes siguiente (exclusivo)
     return { start, end };
 }
 
 // ── A1: LIBRO DE VENTAS (Excel) ─────────────────────────────────────────────
 // GET /api/fiscal/libro-ventas/:month/:year
-app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, async (req: any, res: any) => {
+app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const month = parseInt(req.params.month);
     const year  = parseInt(req.params.year);
@@ -7784,16 +8841,17 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, async (req: any, 
         const XLSX = await import('xlsx');
 
         const sales = await prisma.sale.findMany({
-            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lte: end }, status: { not: 'VOIDED' } },
+            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: 'VOIDED' } },
             include: { customer: true },
             orderBy: { createdAt: 'asc' },
         });
 
-        const IVA_RATE = 0.15;
+        // Precisión fiscal: derivar subtotal/IVA y totalizar con decimal.js (cero float).
+        const IVA_RATE = new Decimal('0.15');
         const rows = sales.map((s, i) => {
-            const total    = Number(s.total);
-            const subtotal = parseFloat((total / (1 + IVA_RATE)).toFixed(2));
-            const iva      = parseFloat((total - subtotal).toFixed(2));
+            const totalD    = new Decimal(s.total.toString());
+            const subtotalD = totalD.div(new Decimal(1).plus(IVA_RATE)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            const ivaD      = totalD.minus(subtotalD).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
             return {
                 'N°':            i + 1,
                 'Fecha':         new Date(s.createdAt).toLocaleDateString('es-NI'),
@@ -7801,19 +8859,19 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, async (req: any, 
                 'Cliente':       s.customerName || s.customer?.name || 'Consumidor Final',
                 'RUC/Cédula':    s.customer?.taxId || '---',
                 'Método Pago':   s.paymentMethod,
-                'Subtotal C$':   subtotal,
-                'IVA 15% C$':    iva,
-                'Total C$':      total,
+                'Subtotal C$':   subtotalD.toNumber(),
+                'IVA 15% C$':    ivaD.toNumber(),
+                'Total C$':      totalD.toNumber(),
             };
         });
 
-        // Totales
+        // Totales (acumulados con Decimal; se convierten a number solo al escribir la celda)
         const totals = {
             'N°': '', 'Fecha': '', 'N° Factura': '', 'Cliente': 'TOTALES',
             'RUC/Cédula': '', 'Método Pago': '',
-            'Subtotal C$': rows.reduce((s, r) => s + r['Subtotal C$'], 0),
-            'IVA 15% C$':  rows.reduce((s, r) => s + r['IVA 15% C$'], 0),
-            'Total C$':    rows.reduce((s, r) => s + r['Total C$'], 0),
+            'Subtotal C$': rows.reduce((s, r) => s.plus(r['Subtotal C$']), new Decimal(0)).toNumber(),
+            'IVA 15% C$':  rows.reduce((s, r) => s.plus(r['IVA 15% C$']), new Decimal(0)).toNumber(),
+            'Total C$':    rows.reduce((s, r) => s.plus(r['Total C$']), new Decimal(0)).toNumber(),
         };
         rows.push(totals as any);
 
@@ -7835,7 +8893,7 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, async (req: any, 
 
 // ── A2: LIBRO DE COMPRAS (Excel) ─────────────────────────────────────────────
 // GET /api/fiscal/libro-compras/:month/:year
-app.get('/api/fiscal/libro-compras/:month/:year', authenticate, async (req: any, res: any) => {
+app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const month = parseInt(req.params.month);
     const year  = parseInt(req.params.year);
@@ -7847,53 +8905,61 @@ app.get('/api/fiscal/libro-compras/:month/:year', authenticate, async (req: any,
         const { start, end } = fiscalMonthRange(month, year);
         const XLSX = await import('xlsx');
 
+        // Mismo criterio que generateMonthlyReport (nicaTax.ts): filtrar por `date` y por
+        // estado válido de compra, para que el Libro reconcilie con el crédito fiscal del
+        // reporte mensual y no infle el IVA acreditable con compras no válidas.
         const purchases = await prisma.purchase.findMany({
-            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lte: end } },
+            where: {
+                tenantId: authReq.tenantId!,
+                date: { gte: start, lt: end },
+                status: { in: ['COMPLETED', 'PENDING_PAYMENT'] },
+            },
             include: { supplier: true },
             orderBy: { createdAt: 'asc' },
         });
 
-        // Retenciones del período para cruzar con compras
+        // Retenciones del período para cruzar con compras (acumuladas con Decimal).
         const retentions = await prisma.fiscalRetention.findMany({
             where: { tenantId: authReq.tenantId!, period: `${year}-${String(month).padStart(2,'0')}` },
         });
-        const irByPurchase = new Map<string, number>();
-        const imiByPurchase = new Map<string, number>();
+        const irByPurchase = new Map<string, Decimal>();
+        const imiByPurchase = new Map<string, Decimal>();
         retentions.forEach(r => {
             if (!r.purchaseId) return;
-            if (r.type === 'IR_2PCT')  irByPurchase.set(r.purchaseId,  (irByPurchase.get(r.purchaseId)  || 0) + Number(r.amount));
-            if (r.type === 'IMI_1PCT') imiByPurchase.set(r.purchaseId, (imiByPurchase.get(r.purchaseId) || 0) + Number(r.amount));
+            if (r.type === 'IR_2PCT')  irByPurchase.set(r.purchaseId,  (irByPurchase.get(r.purchaseId)  || new Decimal(0)).plus(r.amount.toString()));
+            if (r.type === 'IMI_1PCT') imiByPurchase.set(r.purchaseId, (imiByPurchase.get(r.purchaseId) || new Decimal(0)).plus(r.amount.toString()));
         });
 
         const rows = purchases.map((p, i) => {
-            const subtotal = Number(p.subtotal);
-            const iva      = Number(p.tax);
-            const total    = Number(p.total);
-            const ir       = irByPurchase.get(p.id)  || 0;
-            const imi      = imiByPurchase.get(p.id) || 0;
+            const subtotalD = new Decimal(p.subtotal.toString());
+            const ivaD      = new Decimal(p.tax.toString());
+            const totalD    = new Decimal(p.total.toString());
+            const irD       = irByPurchase.get(p.id)  || new Decimal(0);
+            const imiD      = imiByPurchase.get(p.id) || new Decimal(0);
+            const netoD     = totalD.minus(irD).minus(imiD).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
             return {
                 'N°':              i + 1,
                 'Fecha':           new Date(p.createdAt).toLocaleDateString('es-NI'),
                 'N° Factura Prov.': p.invoiceNumber,
                 'Proveedor':       p.supplier.name,
                 'RUC Proveedor':   (p.supplier as any).ruc || '---',
-                'Subtotal C$':     subtotal,
-                'IVA Crédito C$':  iva,
-                'IR Ret. 2% C$':   ir,
-                'IMI Ret. 1% C$':  imi,
-                'Neto Pagado C$':  parseFloat((total - ir - imi).toFixed(2)),
-                'Total Factura C$': total,
+                'Subtotal C$':     subtotalD.toNumber(),
+                'IVA Crédito C$':  ivaD.toNumber(),
+                'IR Ret. 2% C$':   irD.toNumber(),
+                'IMI Ret. 1% C$':  imiD.toNumber(),
+                'Neto Pagado C$':  netoD.toNumber(),
+                'Total Factura C$': totalD.toNumber(),
             };
         });
 
         const totals: any = {
             'N°': '', 'Fecha': '', 'N° Factura Prov.': '', 'Proveedor': 'TOTALES', 'RUC Proveedor': '',
-            'Subtotal C$':     rows.reduce((s, r) => s + r['Subtotal C$'], 0),
-            'IVA Crédito C$':  rows.reduce((s, r) => s + r['IVA Crédito C$'], 0),
-            'IR Ret. 2% C$':   rows.reduce((s, r) => s + r['IR Ret. 2% C$'], 0),
-            'IMI Ret. 1% C$':  rows.reduce((s, r) => s + r['IMI Ret. 1% C$'], 0),
-            'Neto Pagado C$':  rows.reduce((s, r) => s + r['Neto Pagado C$'], 0),
-            'Total Factura C$': rows.reduce((s, r) => s + r['Total Factura C$'], 0),
+            'Subtotal C$':     rows.reduce((s, r) => s.plus(r['Subtotal C$']), new Decimal(0)).toNumber(),
+            'IVA Crédito C$':  rows.reduce((s, r) => s.plus(r['IVA Crédito C$']), new Decimal(0)).toNumber(),
+            'IR Ret. 2% C$':   rows.reduce((s, r) => s.plus(r['IR Ret. 2% C$']), new Decimal(0)).toNumber(),
+            'IMI Ret. 1% C$':  rows.reduce((s, r) => s.plus(r['IMI Ret. 1% C$']), new Decimal(0)).toNumber(),
+            'Neto Pagado C$':  rows.reduce((s, r) => s.plus(r['Neto Pagado C$']), new Decimal(0)).toNumber(),
+            'Total Factura C$': rows.reduce((s, r) => s.plus(r['Total Factura C$']), new Decimal(0)).toNumber(),
         };
         rows.push(totals);
 
@@ -7916,7 +8982,7 @@ app.get('/api/fiscal/libro-compras/:month/:year', authenticate, async (req: any,
 // ── A3: ARCHIVO VET DGI (.TXT pipe-delimitado) ──────────────────────────────
 // GET /api/fiscal/vet-export/:month/:year
 // Formato: TIPO|FECHA|N_FACTURA|RUC_CLIENTE|NOMBRE|SUBTOTAL|IVA|TOTAL
-app.get('/api/fiscal/vet-export/:month/:year', authenticate, async (req: any, res: any) => {
+app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const month = parseInt(req.params.month);
     const year  = parseInt(req.params.year);
@@ -7926,19 +8992,23 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, async (req: any, re
 
     try {
         const { start, end } = fiscalMonthRange(month, year);
-        const IVA_RATE = 0.15;
+        const IVA_RATE = new Decimal('0.15');
         const period = `${year}${String(month).padStart(2, '0')}`;
 
         // Ventas
         const sales = await prisma.sale.findMany({
-            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lte: end }, status: { not: 'VOIDED' } },
+            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: 'VOIDED' } },
             include: { customer: true },
             orderBy: { createdAt: 'asc' },
         });
 
-        // Compras
+        // Compras — mismo criterio que generateMonthlyReport (nicaTax.ts): `date` + estado válido.
         const purchases = await prisma.purchase.findMany({
-            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lte: end } },
+            where: {
+                tenantId: authReq.tenantId!,
+                date: { gte: start, lt: end },
+                status: { in: ['COMPLETED', 'PENDING_PAYMENT'] },
+            },
             include: { supplier: true },
             orderBy: { createdAt: 'asc' },
         });
@@ -7950,29 +9020,29 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, async (req: any, re
         lines.push('## LIBRO DE VENTAS');
 
         for (const s of sales) {
-            const total    = Number(s.total);
-            const subtotal = parseFloat((total / (1 + IVA_RATE)).toFixed(2));
-            const iva      = parseFloat((total - subtotal).toFixed(2));
+            const totalD    = new Decimal(s.total.toString());
+            const subtotalD = totalD.div(new Decimal(1).plus(IVA_RATE)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            const ivaD      = totalD.minus(subtotalD).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
             const fecha    = new Date(s.createdAt).toISOString().slice(0,10).replace(/-/g,'');
             const factura  = s.invoiceNumber
                 ? `${s.invoiceSeries || 'A'}${String(s.invoiceNumber).padStart(6,'0')}`
                 : 'CF';
             const nombre   = (s.customerName || s.customer?.name || 'CONSUMIDOR FINAL').toUpperCase().substring(0, 60);
             const rucV     = s.customer?.taxId || '000-000000-0000X';
-            lines.push(`V|${fecha}|${factura}|${rucV}|${nombre}|${subtotal.toFixed(2)}|${iva.toFixed(2)}|${total.toFixed(2)}`);
+            lines.push(`V|${fecha}|${factura}|${rucV}|${nombre}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
         }
 
         lines.push('');
         lines.push('## LIBRO DE COMPRAS');
 
         for (const p of purchases) {
-            const subtotal = Number(p.subtotal);
-            const iva      = Number(p.tax);
-            const total    = Number(p.total);
+            const subtotalD = new Decimal(p.subtotal.toString());
+            const ivaD      = new Decimal(p.tax.toString());
+            const totalD    = new Decimal(p.total.toString());
             const fecha    = new Date(p.createdAt).toISOString().slice(0,10).replace(/-/g,'');
             const nombre   = p.supplier.name.toUpperCase().substring(0, 60);
             const rucC     = (p.supplier as any).ruc || '000-000000-0000X';
-            lines.push(`C|${fecha}|${p.invoiceNumber}|${rucC}|${nombre}|${subtotal.toFixed(2)}|${iva.toFixed(2)}|${total.toFixed(2)}`);
+            lines.push(`C|${fecha}|${p.invoiceNumber}|${rucC}|${nombre}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
         }
 
         const content = lines.join('\r\n'); // CRLF como exige la VET
