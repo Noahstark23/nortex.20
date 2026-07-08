@@ -30,6 +30,14 @@ export const blogPosts: BlogPost[] = [
     description: 'Guía paso a paso para calcular salarios, INSS, INATEC, IR, vacaciones y aguinaldo según el Código del Trabajo de Nicaragua. Con ejemplos reales.',
     date: '2026-03-01',
     updated: '2026-06-30',
+    readTime: '8 min',
+    category: 'Recursos Humanos',
+    cluster: 'Recursos Humanos y Nómina',
+    keyword: 'como calcular nomina nicaragua',
+    relatedSlugs: ['inss-nicaragua', 'aguinaldo-nicaragua', 'vacaciones-nicaragua'],
+    faq: [
+      { q: '¿Cuánto es el INSS laboral en Nicaragua?', a: 'El INSS laboral (cuota del trabajador) es el 7% del salario bruto, con un techo cotizable que se actualiza cada año.' },
+      { q: '¿Cuánto paga el empleador de INSS?', a: 'El INSS patronal es 21.5% para empleadores con menos de 50 trabajadores y 22.5% para los de 50 o más, más 2% de INATEC.' },
     category: 'Nómina y RR.HH.',
     readTime: '8 min',
     cluster: 'nomina-rrhh',
@@ -54,14 +62,13 @@ export const blogPosts: BlogPost[] = [
     content: `
 ## Cómo calcular la nómina en Nicaragua 2026
 
-Calcular correctamente la nómina es una de las obligaciones más importantes para cualquier negocio en Nicaragua. El Código del Trabajo (Ley 185) establece los requisitos mínimos que todo empleador debe cumplir.
+Calcular correctamente la nómina es una de las obligaciones más importantes para cualquier negocio en Nicaragua. El Código del Trabajo (Ley 185) y la Ley de Seguridad Social (Ley 539) establecen los requisitos mínimos que todo empleador debe cumplir.
 
 ### 1. Componentes del salario
 
 El salario bruto de un trabajador en Nicaragua incluye:
 - Salario base
-- Horas extra: se pagan al **doble** de la hora ordinaria (100% de recargo), sin importar el día de la semana — Art. 62 de la Ley 185. La hora ordinaria equivale al salario mensual dividido entre 240 (30 días × 8 horas).
-- Recargo por día feriado trabajado: 100% adicional sobre el día — Art. 68 de la Ley 185
+- Horas extras: se pagan al **doble** de la hora ordinaria (Art. 62 Ley 185)
 - Comisiones (si aplica)
 
 ### 2. Deducciones del trabajador
@@ -69,6 +76,19 @@ El salario bruto de un trabajador en Nicaragua incluye:
 **INSS Laboral:** 7% del salario bruto
 - Si el salario es C$10,000: INSS = C$700
 
+**IR sobre salarios:** Aplica la tabla progresiva anual de la DGI sobre la renta neta de INSS:
+- Hasta C$100,000 anuales: exento
+- C$100,000.01 - C$200,000: 15% sobre el exceso
+- C$200,000.01 - C$350,000: C$15,000 + 20% sobre el exceso
+- C$350,000.01 - C$500,000: C$45,000 + 25% sobre el exceso
+- Más de C$500,000: C$82,500 + 30% sobre el exceso
+
+### 3. Aportes patronales
+
+**INSS Patronal:** 21.5% del salario bruto para empleadores con menos de 50 trabajadores (22.5% si tiene 50 o más).
+**INATEC:** 2% del salario bruto.
+
+**Ejemplo para salario de C$15,000 (PyME con menos de 50 empleados):**
 **IR sobre salarios:** se calcula sobre la renta neta anual (después de restar el INSS laboral) con la tabla progresiva de la DGI. Cada tramo paga un impuesto base más un porcentaje sobre el exceso:
 
 | Renta neta anual (C$) | Impuesto base (C$) | % sobre el exceso |
@@ -91,6 +111,13 @@ El salario bruto de un trabajador en Nicaragua incluye:
 
 ### 4. Prestaciones sociales
 
+**Vacaciones:** 15 días por cada 6 meses trabajados, es decir 2.5 días por mes (30 días al año), Art. 76.
+Valor: salario_diario × días acumulados.
+
+**Décimo tercer mes (Aguinaldo):** 1/12 del salario por mes trabajado.
+Se paga en los primeros diez días de diciembre.
+
+**Indemnización por antigüedad (Art. 45):** 1 mes de salario por cada uno de los primeros 3 años y 20 días por cada año a partir del cuarto, con un máximo de 5 meses. Aplica en despido o mutuo acuerdo, no en renuncia.
 **Vacaciones:** 15 días de descanso por cada 6 meses de trabajo continuo, es decir **2.5 días por mes** (30 días al año) — Art. 76 de la Ley 185
 Valor del saldo acumulado: salario_diario × días acumulados
 
@@ -112,6 +139,14 @@ Nortex calcula automáticamente todos estos valores. Solo ingresás el salario b
     description: 'Todo lo que necesitás saber sobre retenciones en la fuente IR en Nicaragua. Tasas, comprobantes, declaración mensual y errores que generan multas DGI.',
     date: '2026-03-05',
     updated: '2026-06-30',
+    readTime: '6 min',
+    category: 'Fiscal',
+    cluster: 'Impuestos Nicaragua',
+    keyword: 'retenciones ir nicaragua',
+    relatedSlugs: ['iva-en-nicaragua', 'ir-en-nicaragua', 'impuestos-en-nicaragua'],
+    faq: [
+      { q: '¿Cuál es la tasa de retención por compra de bienes?', a: 'La retención en la fuente por compra de bienes y servicios generales es del 2% sobre la base gravable (sin IVA).' },
+      { q: '¿Cuándo se declaran las retenciones IR?', a: 'Las retenciones se enteran a la DGI dentro de los primeros 15 días del mes siguiente, a través de la Ventanilla Electrónica Tributaria (VET).' },
     category: 'Impuestos',
     readTime: '6 min',
     cluster: 'impuestos',
@@ -139,6 +174,10 @@ Las retenciones en la fuente son un mecanismo de la DGI donde el comprador retie
 
 ### Tasas de retención vigentes 2026
 
+**Retención por compra de bienes:** 2%
+**Retención por servicios generales:** 2%
+**Retención por servicios profesionales (personas naturales):** 10%
+**Arrendamientos:** la tasa depende de si el ingreso es renta de actividad económica o renta de capital; confirmá el caso con tu contador.
 | Concepto | Tasa de retención |
 | --- | --- |
 | Compra de bienes | 2% |
@@ -153,20 +192,20 @@ Cuando una empresa compra bienes o servicios por un valor **mayor a C$1,000**, d
 **Ejemplo:** Comprás mercadería por C$50,000 + IVA
 - IVA 15% = C$7,500
 - Total factura = C$57,500
-- Retención 2% sobre C$50,000 = C$1,000
+- Retención 2% sobre C$50,000 (base sin IVA) = C$1,000
 - **Pagas al proveedor: C$56,500**
 - **Entregás a DGI: C$1,000**
 
 ### Errores comunes que generan multas
 
 1. No emitir constancia de retención
-2. Declarar fuera del plazo (10 del mes siguiente)
+2. Declarar fuera del plazo (primeros 15 días del mes siguiente)
 3. Retener sobre el IVA (solo se retiene sobre la base gravable)
 4. No llevar registro de retenciones efectuadas
 
 ### Declaración mensual
 
-Las retenciones se declaran en la **VET (Ventanilla Electrónica Tributaria)** antes del día 10 de cada mes.
+Las retenciones se declaran en la **VET (Ventanilla Electrónica Tributaria)** dentro de los primeros 15 días de cada mes, junto con la Declaración Mensual de Impuestos (DMI).
 
 Nortex genera automáticamente el reporte de retenciones listo para declarar en la VET.
 
