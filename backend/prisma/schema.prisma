@@ -18,7 +18,7 @@ datasource db {
 model Tenant {
   id                   String    @id @default(cuid())
   businessName         String
-  type                 String    @default("FERRETERIA") // FERRETERIA | PULPERIA | LENDER | RETAIL
+  type                 String    @default("FERRETERIA") // FERRETERIA | PULPERIA | LENDER | RETAIL | DISTRIBUIDORA | MISCELANEA
   taxId                String    @unique
   slug                 String?   @unique // URL amigable para catálogo público (ej: "ferreteria-jose")
   walletBalance        Decimal   @default(0) @db.Decimal(18, 4)
@@ -167,6 +167,8 @@ model Customer {
   creditLimit Decimal  @default(0) @db.Decimal(10, 2)
   currentDebt Decimal  @default(0) @db.Decimal(10, 2)
   isBlocked   Boolean  @default(false)
+  // Cliente mayorista: el POS le aplica el precio de mayoreo desde la unidad 1.
+  isWholesale Boolean  @default(false)
   createdAt   DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
@@ -754,8 +756,13 @@ model Product {
   category    String?
 
   // Precios
-  price Float // Precio de venta
+  price Float // Precio de venta (detalle)
   cost  Float // Costo de compra
+  // Venta por mayor (distribuidora/miscelánea): precio de mayoreo y cantidad
+  // mínima a partir de la cual aplica. Float para calzar con price/cost — los
+  // tres migran juntos a Decimal(18,4) en el sweep de precisión pendiente.
+  wholesalePrice  Float? // Precio de mayoreo (null = producto sin mayoreo)
+  wholesaleMinQty Float? // Cantidad mínima para mayoreo (ej: 12 = docena)
 
   // Inventario
   stock    Float  @default(0)
