@@ -7,8 +7,7 @@
     "start": "tsx backend/server.ts",
     "dev": "vite",
     "build": "vite build",
-    "sitemap": "tsx scripts/gen-sitemap.ts",
-    "build:seo": "tsx scripts/gen-sitemap.ts && vite build && tsx scripts/prerender.ts",
+    "build:seo": "vite build && tsx scripts/prerender.ts",
     "preview": "vite preview"
   },
   "dependencies": {
