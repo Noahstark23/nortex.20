@@ -11,6 +11,10 @@ export interface Product {
   // Venta por mayor (distribuidora/miscelánea)
   wholesalePrice?: number | null;  // precio de mayoreo (null = sin mayoreo)
   wholesaleMinQty?: number | null; // cantidad mínima a partir de la cual aplica
+  // Unidad de empaque (caja/fardo): atajo de cantidad + tercer nivel de precio
+  packUnit?: string | null;  // nombre del empaque (caja, fardo, docena)
+  packSize?: number | null;  // unidades base por empaque (ej: 12)
+  packPrice?: number | null; // precio del empaque completo (null = solo atajo)
 }
 
 export interface ProductBatch {

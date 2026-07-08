@@ -2771,13 +2771,23 @@ app.get('/api/products/categories', authenticate, async (req: any, res: any) => 
 // POST /api/products - Crear producto (OWNER o ADMIN)
 app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking, reorderPoint, maxStock, defaultSupplierId, wholesalePrice, wholesaleMinQty } = req.body;
+    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking, reorderPoint, maxStock, defaultSupplierId, wholesalePrice, wholesaleMinQty, packUnit, packSize, packPrice } = req.body;
 
     // Venta por mayor: si vienen, deben ser números > 0 (null/'' = sin mayoreo).
     const wp = wholesalePrice !== undefined && wholesalePrice !== null && wholesalePrice !== '' ? parseFloat(wholesalePrice) : null;
     const wq = wholesaleMinQty !== undefined && wholesaleMinQty !== null && wholesaleMinQty !== '' ? parseFloat(wholesaleMinQty) : null;
     if ((wp !== null && (!Number.isFinite(wp) || wp <= 0)) || (wq !== null && (!Number.isFinite(wq) || wq <= 0))) {
         return res.status(400).json({ error: 'Precio de mayoreo y cantidad mínima deben ser números mayores a 0' });
+    }
+    // Empaque (Fase B): packSize/packPrice > 0 si vienen; packPrice exige packSize.
+    const pUnit = typeof packUnit === 'string' && packUnit.trim() !== '' ? packUnit.trim() : null;
+    const pSize = packSize !== undefined && packSize !== null && packSize !== '' ? parseFloat(packSize) : null;
+    const pPrice = packPrice !== undefined && packPrice !== null && packPrice !== '' ? parseFloat(packPrice) : null;
+    if ((pSize !== null && (!Number.isFinite(pSize) || pSize <= 0)) || (pPrice !== null && (!Number.isFinite(pPrice) || pPrice <= 0))) {
+        return res.status(400).json({ error: 'Tamaño y precio del empaque deben ser números mayores a 0' });
+    }
+    if (pPrice !== null && pSize === null) {
+        return res.status(400).json({ error: 'El precio de empaque requiere definir el tamaño del empaque (unidades por caja/fardo)' });
     }
 
     try {
@@ -2816,6 +2826,9 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (re
                 defaultSupplierId: defaultSupplierId || null,
                 wholesalePrice: wp,
                 wholesaleMinQty: wq,
+                packUnit: pUnit,
+                packSize: pSize,
+                packPrice: pPrice,
                 createdBy: authReq.userId!
             }
         });
@@ -2991,7 +3004,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
 app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { name, description, category, price, cost, stock, minStock, unit, imageUrl, reorderPoint, maxStock, defaultSupplierId, wholesalePrice, wholesaleMinQty } = req.body;
+    const { name, description, category, price, cost, stock, minStock, unit, imageUrl, reorderPoint, maxStock, defaultSupplierId, wholesalePrice, wholesaleMinQty, packUnit, packSize, packPrice } = req.body;
 
     try {
         const existing = await prisma.product.findFirst({
@@ -3030,6 +3043,32 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
                 return res.status(400).json({ error: 'La cantidad mínima de mayoreo debe ser mayor a 0' });
             }
             updates.wholesaleMinQty = wq;
+        }
+        // Empaque (Fase B): '' o null limpian; valores > 0. La validación cruzada
+        // (packPrice exige packSize) se hace sobre el ESTADO FINAL (update parcial).
+        if (packUnit !== undefined) {
+            updates.packUnit = typeof packUnit === 'string' && packUnit.trim() !== '' ? packUnit.trim() : null;
+        }
+        if (packSize !== undefined) {
+            const ps = packSize === null || packSize === '' ? null : parseFloat(packSize);
+            if (ps !== null && (!Number.isFinite(ps) || ps <= 0)) {
+                return res.status(400).json({ error: 'El tamaño del empaque debe ser mayor a 0' });
+            }
+            updates.packSize = ps;
+        }
+        if (packPrice !== undefined) {
+            const pp = packPrice === null || packPrice === '' ? null : parseFloat(packPrice);
+            if (pp !== null && (!Number.isFinite(pp) || pp <= 0)) {
+                return res.status(400).json({ error: 'El precio del empaque debe ser mayor a 0' });
+            }
+            updates.packPrice = pp;
+        }
+        {
+            const finalSize = updates.packSize !== undefined ? updates.packSize : existing.packSize;
+            const finalPackPrice = updates.packPrice !== undefined ? updates.packPrice : existing.packPrice;
+            if (finalPackPrice != null && finalSize == null) {
+                return res.status(400).json({ error: 'El precio de empaque requiere un tamaño de empaque definido' });
+            }
         }
 
         // Kardex (ledger inmutable) + product.update + auditoría deben cuadrar o

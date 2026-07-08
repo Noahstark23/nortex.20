@@ -763,6 +763,12 @@ model Product {
   // tres migran juntos a Decimal(18,4) en el sweep de precisión pendiente.
   wholesalePrice  Float? // Precio de mayoreo (null = producto sin mayoreo)
   wholesaleMinQty Float? // Cantidad mínima para mayoreo (ej: 12 = docena)
+  // Unidad de empaque (Fase B): "caja de 12 a C$90". El POS vende el empaque
+  // como atajo de cantidad (unidades base) y packPrice actúa como tercer nivel
+  // de precio a partir de packSize. El stock/Kardex siguen en unidades base.
+  packUnit  String? // nombre del empaque (caja, fardo, docena)
+  packSize  Float? // unidades base por empaque (ej: 12)
+  packPrice Float? // precio del empaque completo (null = solo atajo de cantidad)
 
   // Inventario
   stock    Float  @default(0)
