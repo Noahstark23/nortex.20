@@ -31,6 +31,12 @@ el core → schema/migración/backend/frontend → **rondas de QA** (tsc+validat
 de lógica pura en `.cjs`, aislamiento por tenant, build+regresión) → **PR en draft**
 con la QA documentada. Los hallazgos de QA **se corrigen antes del push**, no se anotan.
 
+Skills especializadas (en `.claude/skills/`): **nortex-qa** (rondas de QA sobre
+código existente/diffs) · **nortex-migration** (schema/BD: MySQL + db push aditivo)
+· **nortex-security-audit** (barrido por clases de bug reales, hallazgos S-n) ·
+**nortex-seo** (landing/blog/prerender) · **nortex-deploy** (release, env vars,
+smoke tests).
+
 ---
 
 ## 🔐 Security & Integrity Loop (OBLIGATORIO antes de entregar código)
