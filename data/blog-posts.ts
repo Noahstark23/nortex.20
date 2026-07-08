@@ -64,17 +64,16 @@ export const blogPosts: BlogPost[] = [
 
 Calcular correctamente la nómina es una de las obligaciones más importantes para cualquier negocio en Nicaragua. El Código del Trabajo (Ley 185) y la Ley de Seguridad Social (Ley 539) establecen los requisitos mínimos que todo empleador debe cumplir.
 
-### 1. Componentes del salario
+**Los que atraen (alta rotación, margen bajo):** gaseosas, pan, tortillas, recargas. El cliente viene por ellos todos los días. Casi no dejan margen, pero traen el tráfico.
 
 El salario bruto de un trabajador en Nicaragua incluye:
 - Salario base
 - Horas extras: se pagan al **doble** de la hora ordinaria (Art. 62 Ley 185)
 - Comisiones (si aplica)
 
-### 2. Deducciones del trabajador
+## La pregunta correcta
 
-**INSS Laboral:** 7% del salario bruto
-- Si el salario es C$10,000: INSS = C$700
+No es "¿qué se vende más?" sino **"¿cuánto me deja cada córdoba vendido de esto?"** — es decir, el [margen](/blog/como-calcular-margen-de-ganancia-nicaragua) por producto, cruzado con su [rotación](/blog/rotacion-de-inventario-como-calcularla):
 
 **IR sobre salarios:** Aplica la tabla progresiva anual de la DGI sobre la renta neta de INSS:
 - Hasta C$100,000 anuales: exento
@@ -83,8 +82,13 @@ El salario bruto de un trabajador en Nicaragua incluye:
 - C$350,000.01 - C$500,000: C$45,000 + 25% sobre el exceso
 - Más de C$500,000: C$82,500 + 30% sobre el exceso
 
-### 3. Aportes patronales
+## Trucos de surtido que funcionan
 
+- **Ubicación:** lo de buen margen, a la vista y al alcance del mostrador (la compra impulsiva es tu aliada).
+- **Fraccionar:** vender por unidad o porción suele dejar mejor margen que el paquete completo.
+- **No competir en lo comparable:** en productos que el cliente conoce de memoria (la gaseosa), el precio manda; tu margen se hace en lo que no compara.
+
+## El requisito: conocer tus números
 **INSS Patronal:** 21.5% del salario bruto para empleadores con menos de 50 trabajadores (22.5% si tiene 50 o más).
 **INATEC:** 2% del salario bruto.
 
@@ -109,8 +113,31 @@ El salario bruto de un trabajador en Nicaragua incluye:
 - INATEC (2%): C$300
 - **Costo total para el empleador: C$18,525**
 
-### 4. Prestaciones sociales
+Todo esto exige saber costo y venta **por producto** — no "más o menos". Es el corazón de [administrar bien una pulpería](/blog/como-administrar-una-pulperia-nicaragua).
 
+## Nortex te muestra qué te deja plata
+
+Con Nortex ves el margen y la rotación de cada producto: cuáles son tus joyas, qué es peso muerto y dónde poner el esfuerzo.
+
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
+    {
+        slug: 'precios-por-mayoreo-ferreteria',
+        title: 'Precios por mayoreo en ferretería: cómo fijarlos sin regalar margen',
+        description: 'Cómo definir precios por mayoreo y escalas de cantidad en tu ferretería sin sacrificar el margen: métodos, ejemplo y errores comunes.',
+        keyword: 'precios por mayoreo ferretería',
+        cluster: 'Ferreterías',
+        category: 'Ferreterías',
+        date: '2026-07-06',
+        readTime: '5 min',
+        relatedSlugs: ['como-administrar-una-ferreteria-nicaragua', 'como-calcular-margen-de-ganancia-nicaragua', 'politica-de-credito-negocio'],
+        faq: [
+            { q: '¿Cuánto descuento dar por mayoreo?', a: 'El que tu margen aguante: partí del margen del producto y decidí cuánto estás dispuesto a ceder a cambio de volumen. Un descuento del 10% sobre un margen del 25% se lleva el 40% de tu ganancia — hacé la cuenta antes de prometer.' },
+            { q: '¿Le doy precio de mayoreo a cualquiera que pida cantidad?', a: 'Definí umbrales claros (por cantidad o monto) y aplicalos parejo. El mayoreo "negociado a ojo" en el mostrador termina regalando margen a quien más presiona, no a quien más compra.' },
+        ],
+        content: `
+El maestro de obra pide precio "por cantidad" y la respuesta improvisada suele regalar margen. El mayoreo bien hecho premia el volumen sin fundir la ganancia — y se define antes, no en el mostrador.
 **Vacaciones:** 15 días por cada 6 meses trabajados, es decir 2.5 días por mes (30 días al año), Art. 76.
 Valor: salario_diario × días acumulados.
 
@@ -126,10 +153,11 @@ Se paga la primera quincena de diciembre.
 
 **Indemnización por antigüedad (Art. 45):** 1 mes de salario por cada uno de los primeros 3 años trabajados y 20 días por cada año a partir del cuarto. Mínimo 1 mes, máximo 5 meses. Aplica en despido o mutuo acuerdo, no en renuncia.
 
-### 5. Automatiza este proceso con Nortex
+## El principio: el descuento sale del margen
 
-Nortex calcula automáticamente todos estos valores. Solo ingresás el salario base de cada empleado y el sistema hace el resto: INSS, INATEC, IR, vacaciones y aguinaldo en segundos.
+Todo descuento se paga con tu [margen](/blog/como-calcular-margen-de-ganancia-nicaragua). La cuenta que hay que hacer siempre:
 
+> Si un producto deja 25% de margen y das 10% de descuento, tu ganancia baja un 40%.
 [Prueba Nortex gratis 30 días →](/register)
     `
   },
@@ -170,10 +198,11 @@ Nortex calcula automáticamente todos estos valores. Solo ingresás el salario b
     content: `
 ## Retenciones IR Nicaragua 2026
 
-Las retenciones en la fuente son un mecanismo de la DGI donde el comprador retiene un porcentaje del pago al proveedor y lo entrega directamente al fisco.
+El volumen tiene que compensar esa cesión — y eso se calcula, no se siente.
 
-### Tasas de retención vigentes 2026
+## Escalas claras, iguales para todos
 
+Definí umbrales objetivos y publicalos:
 **Retención por compra de bienes:** 2%
 **Retención por servicios generales:** 2%
 **Retención por servicios profesionales (personas naturales):** 10%
@@ -185,10 +214,15 @@ Las retenciones en la fuente son un mecanismo de la DGI donde el comprador retie
 | Servicios profesionales | 10% |
 | Arrendamiento | 5% |
 
-### ¿Cuándo aplicar retención?
+| Cantidad | Precio |
+| --- | --- |
+| 1-9 unidades | Precio detalle |
+| 10-49 | −5% |
+| 50+ | −10% |
 
-Cuando una empresa compra bienes o servicios por un valor **mayor a C$1,000**, debe retener el porcentaje correspondiente.
+Las escalas por **monto de compra total** también funcionan (p. ej., descuento a partir de C$10,000). Lo importante: la regla decide, no la insistencia del cliente.
 
+## Dónde sí y dónde no
 **Ejemplo:** Comprás mercadería por C$50,000 + IVA
 - IVA 15% = C$7,500
 - Total factura = C$57,500
@@ -196,20 +230,24 @@ Cuando una empresa compra bienes o servicios por un valor **mayor a C$1,000**, d
 - **Pagas al proveedor: C$56,500**
 - **Entregás a DGI: C$1,000**
 
-### Errores comunes que generan multas
+- **Sí:** productos con margen amplio y costo negociable con tu proveedor por volumen.
+- **Con cuidado:** productos ancla (cemento, varilla) que ya vendés casi al costo — ahí el "mayoreo" puede ser vender a pérdida.
+- **Mejor alternativa a veces:** en lugar de descuento, valor agregado — flete incluido, prioridad de entrega, [crédito con reglas](/blog/politica-de-credito-negocio).
 
+## Mayoreo y crédito: cuentas separadas
 1. No emitir constancia de retención
 2. Declarar fuera del plazo (primeros 15 días del mes siguiente)
 3. Retener sobre el IVA (solo se retiene sobre la base gravable)
 4. No llevar registro de retenciones efectuadas
 
-### Declaración mensual
+El cliente de volumen suele pedir también plazo. Son dos concesiones distintas: descuento **y** crédito juntos es margen cedido dos veces. Decidí cada uno por separado.
 
+## Nortex maneja listas de precios por volumen
 Las retenciones se declaran en la **VET (Ventanilla Electrónica Tributaria)** dentro de los primeros 15 días de cada mes, junto con la Declaración Mensual de Impuestos (DMI).
 
-Nortex genera automáticamente el reporte de retenciones listo para declarar en la VET.
+En Nortex configurás precios por escala de cantidad o listas por tipo de cliente, y la caja los aplica sola: el mayoreo queda en la regla, no en la negociación. Ver la [guía de ferreterías](/blog/como-administrar-una-ferreteria-nicaragua).
 
-[Ver cómo funciona →](/register)
-    `
-  }
+[Probá Nortex gratis 30 días →](/register)
+`,
+    },
 ];
