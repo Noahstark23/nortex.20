@@ -204,7 +204,7 @@ export const TaxReportSchema = PayrollCalculateSchema;
 // ============================================================
 // AUTH
 // ============================================================
-const businessType = z.enum(['FERRETERIA', 'PULPERIA', 'FARMACIA', 'BOUTIQUE', 'RETAIL', 'LENDER']);
+const businessType = z.enum(['FERRETERIA', 'PULPERIA', 'FARMACIA', 'BOUTIQUE', 'RETAIL', 'LENDER', 'DISTRIBUIDORA', 'MISCELANEA']);
 
 // POST /api/auth/register
 export const RegisterSchema = z.object({
