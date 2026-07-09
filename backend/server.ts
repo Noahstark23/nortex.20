@@ -4373,10 +4373,20 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 const product = await tx.product.findUnique({ where: { id: item.productId } });
                 if (!product) continue;
 
-                const oldStock = product.stock;
-                const newStock = oldStock + item.quantity;
+                // Stock por applyStockDelta: incremento ATÓMICO (sin lost-update del
+                // patrón leer→escribir absoluto) + doble escritura del desglose por
+                // bodega (invariante multi-bodega: Σ bodegas == agregado).
+                const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                    tenantId: authReq.tenantId!,
+                    productId: item.productId,
+                    delta: item.quantity,
+                    enforceSufficient: false,
+                });
+                const oldStock = stockBefore;
+                const newStock = stockAfter;
 
-                // Costo promedio ponderado: (stockViejo*costoViejo + cantidadNueva*costoNuevo) / stockTotal
+                // Costo promedio ponderado con el stockBefore autoritativo (post-lock):
+                // (stockViejo*costoViejo + cantidadNueva*costoNuevo) / stockTotal
                 const oldTotalCost = new Decimal(oldStock).mul(product.cost.toString());
                 const newTotalCost = new Decimal(item.quantity).mul(item.unitCost.toString());
                 const newAvgCost   = newStock > 0
@@ -4386,7 +4396,6 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 await tx.product.update({
                     where: { id: item.productId },
                     data: {
-                        stock: newStock,
                         cost: newAvgCost  // ya redondeado a 4 d.p. por Decimal
                     }
                 });

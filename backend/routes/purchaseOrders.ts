@@ -17,6 +17,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import Decimal from 'decimal.js';
 import { authenticate } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
+import { applyStockDelta } from '../services/stockService';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -62,28 +63,34 @@ async function applyGoodsReceipt(
 
         const product = await tx.product.findFirst({
             where: { id: item.productId, tenantId },
-            select: { id: true, stock: true, cost: true, requiresBatchTracking: true },
+            select: { id: true, cost: true, requiresBatchTracking: true },
         });
         if (!product) throw new Error(`Producto no encontrado: ${item.productId}`);
 
+        // Stock por applyStockDelta: incremento ATÓMICO + doble escritura del
+        // desglose por bodega (invariante multi-bodega: Σ bodegas == agregado).
+        // El stockBefore que devuelve (post-lock) es el autoritativo para el costo.
+        const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+            tenantId,
+            productId: product.id,
+            delta: recv,
+            enforceSufficient: false,
+        });
+
         // Costo promedio ponderado con el costo de la OC.
-        const oldStock = new Decimal(product.stock.toString());
+        const oldStock = new Decimal(stockBefore);
         const oldCost = new Decimal(product.cost.toString());
         const unitCost = new Decimal(item.unitCost.toString());
         const recvD = new Decimal(recv);
-        const newStock = oldStock.plus(recvD);
+        const newStock = new Decimal(stockAfter);
         const newAvgCostD = newStock.gt(0)
             ? oldStock.mul(oldCost).plus(recvD.mul(unitCost)).dividedBy(newStock).toDecimalPlaces(4)
             : unitCost;
 
-        // Stock: incremento ATÓMICO (sin lost-update); read-back para el Kardex.
-        const updated = await tx.product.update({
+        await tx.product.update({
             where: { id: product.id },
-            data: { stock: { increment: recv }, cost: newAvgCostD.toNumber() },
-            select: { stock: true },
+            data: { cost: newAvgCostD.toNumber() },
         });
-        const stockAfter = Number(updated.stock);
-        const stockBefore = stockAfter - recv;
 
         // Control de lotes (FEFO/alertas) si el producto lo requiere y vino lote+vencimiento.
         let batchId: string | null = null;
