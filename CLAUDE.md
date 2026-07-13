@@ -66,7 +66,9 @@ fallidos; entregar solo el resultado que pasa el loop, y confirmar al final:
 5. **Auth y entradas.** Validar `req.body` con **Zod** en rutas de dinero. Sin
    secretos hardcodeados (JWT por keyring `JWT_SECRETS`, ver
    `backend/services/secrets.ts`). Auth con **rate limit** (ya activo: login,
-   register, reset + limiter global). Endpoints sensibles con `authenticate` + `checkRole`.
+   register, reset + limiter global — pero `MemoryStore`, per-proceso: no protege
+   con >1 instancia, ver `docs/SCALING_AUDIT.md` A1). Endpoints sensibles con
+   `authenticate` + `checkRole`.
 
 **DevOps y resiliencia**
 6. **Backups.** Si tocás config de BD/Docker/Coolify, garantizar **backup automático
@@ -75,7 +77,40 @@ fallidos; entregar solo el resultado que pasa el loop, y confirmar al final:
 
 ---
 
-## ⚠️ Estado actual (ver `docs/SECURITY_AUDIT.md` para el detalle S1–S28)
+## 🚀 Escalabilidad — guardrails (OBLIGATORIO al tocar backend/BD)
+
+Nortex hoy corre como **UN proceso** (single instance): el rate-limit, el caché de
+paywall (`node-cache`) y la cola de WhatsApp (`InMemoryQueue`) viven en memoria y
+funcionan solo con 1 instancia. Detalle, ubicaciones y prioridades en
+`docs/SCALING_AUDIT.md`. Al escribir código nuevo, respetá estas reglas para no armar
+la bomba (revisadas junto al Security Loop):
+
+1. **Un solo cliente Prisma.** NO crear `new PrismaClient()` nuevos (ya hay ~21, uno
+   por módulo → agotan conexiones al escalar). Importar el cliente compartido.
+   Consolidación a `lib/prisma.ts` pendiente (SCALING_AUDIT A2).
+2. **Listados con límite.** Prohibido `findMany` sin `take`/paginación sobre tablas de
+   negocio (`Sale`, `KardexMovement`, `AuditLog`, `Product`, `Payment`, `Expense`,
+   `JournalEntry`). Reportes/dashboards: agregá en la BD (`groupBy`/`aggregate`), NO
+   traigas filas y sumes en JS.
+3. **Índices con cada query.** Si agregás una query que filtra u ordena por un campo,
+   agregá el `@@index` (compuesto, p. ej. `[tenantId, createdAt]`) en el MISMO cambio.
+4. **Transacciones cortas.** Dentro de `$transaction`: nada de N+1 (usá `createMany`/
+   `updateMany` + lecturas consolidadas), no tomar el lock del correlativo/hot-row al
+   inicio de una tx larga, y CERO llamadas externas (LLM/email/Stripe) dentro de la tx.
+5. **Nada pesado síncrono en el handler.** XLSX/PDF/CSV grandes bloquean el event loop
+   → background/stream, nunca inline en la request.
+6. **No sembrar en lecturas.** Nada de `createMany`/seed en un endpoint GET (p. ej. el
+   catálogo contable) — amplificación de escritura.
+7. **Estado en memoria = per-proceso.** Rate-limit, caché de paywall y colas NO se
+   comparten entre instancias; no asumas multi-instancia sin store compartido
+   (Redis/BullMQ).
+8. **Schema estrictamente aditivo.** El deploy corre `db push --accept-data-loss`: un
+   cambio NO aditivo (drop/rename/narrow) borra datos de prod en el arranque. Nunca
+   introducir cambios destructivos (SCALING_AUDIT C).
+
+---
+
+## ⚠️ Estado actual (ver `docs/SECURITY_AUDIT.md` para seguridad S1–S28 · `docs/SCALING_AUDIT.md` para escalado)
 
 **Ya cumplido (no re-hacer):** hotfixes cross-tenant (S1–S4) · Zod + rate-limits en
 rutas de dinero y auth · AuditLog before/after en mutaciones de dinero (S8–S12:
@@ -87,6 +122,11 @@ libro firmado de caja · keyring JWT rotable.
 - **Capa 4:** `Product.price/cost` (Float) y varios campos `Decimal(12,2)/(10,2)`;
   el sweep a `Decimal(18,4)` es una migración pendiente (los montos del Command
   Center ya están en 18,4).
+- **Escalabilidad (ver `docs/SCALING_AUDIT.md`):** hoy single-instance. Bombas
+  pendientes: `db push --accept-data-loss` en el deploy (riesgo de pérdida de datos),
+  índices faltantes en `Sale`/`AuditLog`/`KardexMovement`/`Expense`/`Purchase`/`Payment`,
+  ~21 `new PrismaClient()`, rate-limit/caché/cola en memoria, N+1 en la venta,
+  reportes/XLSX sin paginar. No asumir que escala horizontal sin estos arreglos.
 - Al tocar estas áreas: corregí lo que toques al estándar del loop, y no declares
   "superado" a nivel sistema sin respaldo del informe de auditoría.
 
