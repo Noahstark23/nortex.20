@@ -163,6 +163,41 @@ async function applyWarehouseDelta(
     }
 }
 
+
+/**
+ * Materializa la fila ProductStock de una bodega si aún no existe (backfill
+ * perezoso, misma semántica que applyWarehouseDelta): la default nace con
+ * agregado − Σ otras filas (SUM con FOR UPDATE); una no-default nace en 0.
+ * Race-safe: P2002 = otro request la creó → no-op. La usan las transferencias
+ * para poder debitar una bodega cuyo stock era implícito.
+ */
+export async function materializeWarehouseRow(
+    tx: Prisma.TransactionClient,
+    params: { tenantId: string; productId: string; warehouseId: string; isDefault: boolean }
+): Promise<void> {
+    const { tenantId, productId, warehouseId, isDefault } = params;
+    const existing = await tx.productStock.findFirst({ where: { productId, warehouseId, tenantId }, select: { id: true } });
+    if (existing) return;
+
+    let seed = 0;
+    if (isDefault) {
+        const prod = await tx.product.findFirstOrThrow({ where: { id: productId, tenantId }, select: { stock: true } });
+        const rows = await tx.$queryRaw<{ total: number | null }[]>(Prisma.sql`
+            SELECT COALESCE(SUM(stock), 0) AS total
+            FROM \`ProductStock\`
+            WHERE productId = ${productId} AND tenantId = ${tenantId} AND warehouseId <> ${warehouseId}
+            FOR UPDATE
+        `);
+        seed = Number(prod.stock) - Number(rows[0]?.total ?? 0);
+    }
+    try {
+        await tx.productStock.create({ data: { tenantId, productId, warehouseId, stock: seed } });
+    } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return;
+        throw err;
+    }
+}
+
 export async function applyStockDelta(
     tx: Prisma.TransactionClient,
     params: {
