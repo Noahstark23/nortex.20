@@ -26,4 +26,8 @@ RUN NODE_OPTIONS="--max-old-space-size=3072" npm run build:seo
 EXPOSE 3000
 
 # 9. Comando para arrancar en producción (con migración automática)
-CMD ["sh", "-c", "npx prisma db push --schema=backend/prisma/schema.prisma --accept-data-loss && NODE_ENV=production npm run start"]
+# db push SIN --accept-data-loss: un cambio destructivo del schema (drop/rename/
+# narrow) hace FALLAR el arranque en vez de borrar datos de producción — la
+# instancia vieja sigue sirviendo. Cambios destructivos requieren migración
+# planificada con backup previo (ver .claude/skills/nortex-migration).
+CMD ["sh", "-c", "npx prisma db push --schema=backend/prisma/schema.prisma && NODE_ENV=production npm run start"]

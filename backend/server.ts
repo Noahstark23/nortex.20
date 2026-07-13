@@ -23,6 +23,7 @@ import { executeSale, SaleError } from './services/salesService';
 import { applyStockDelta, StockError } from './services/stockService';
 import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger, appendDriverWalletMovement, verifyDriverLedger } from './services/ledger';
 import { signAuthToken } from './services/secrets';
+import { initObservability, errorTelemetry } from './services/observability';
 import { isWhatsAppEnabled } from './services/whatsapp/config';
 import { verifyHandler as whatsappVerify, webhookHandler as whatsappWebhook } from './services/whatsapp/webhook';
 import { encryptField } from './services/crypto';
@@ -9218,6 +9219,11 @@ setInterval(runMonthlyDepreciationAllTenants, 24 * 60 * 60 * 1000); // cada 24h
 // ==========================================
 // 🚀 START SERVER
 // ==========================================
+
+initObservability();
+
+// Middleware de errores: registra estructurado (y a Sentry si hay DSN) — SIEMPRE al final.
+app.use(errorTelemetry);
 
 const PORT = process.env.PORT || 3000;
 app.listen(Number(PORT), '0.0.0.0', () => console.log(`🚀 Nortex Banking Core Ready :${PORT}`));
