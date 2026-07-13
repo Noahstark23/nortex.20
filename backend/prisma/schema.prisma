@@ -233,6 +233,7 @@ model Purchase {
   @@index([purchaseOrderId])
   @@index([supplierId])
   @@index([status])
+  @@index([tenantId, createdAt])
 }
 
 model PurchaseItem {
@@ -532,6 +533,7 @@ model Sale {
   @@index([customerId])
   @@index([employeeId])
   @@index([shiftId])
+  @@index([tenantId, createdAt])
 }
 
 model SaleItem {
@@ -603,6 +605,7 @@ model Expense {
 
   @@index([tenantId])
   @@index([category])
+  @@index([tenantId, createdAt])
 }
 
 // ==========================================
@@ -740,6 +743,7 @@ model AuditLog {
 
   @@index([tenantId])
   @@index([userId])
+  @@index([tenantId, createdAt])
 }
 
 // ==========================================
@@ -856,6 +860,7 @@ model KardexMovement {
   @@index([type])
   @@index([batchId])
   @@index([warehouseId])
+  @@index([tenantId, date])
 }
 
 // ==========================================
