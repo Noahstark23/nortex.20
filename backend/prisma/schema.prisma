@@ -66,6 +66,7 @@ model Tenant {
   serialNumbers    SerialNumber[]
   warehouses       Warehouse[]
   productStocks    ProductStock[]
+  stockTransfers   StockTransfer[]
   accounts         Account[]
   journalEntries   JournalEntry[]
   fiscalRetentions FiscalRetention[]
@@ -876,6 +877,8 @@ model Warehouse {
   tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   productStocks   ProductStock[]
   kardexMovements KardexMovement[]
+  transfersFrom   StockTransfer[]  @relation("TransferFrom")
+  transfersTo     StockTransfer[]  @relation("TransferTo")
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -896,6 +899,28 @@ model ProductStock {
   @@index([tenantId])
   @@index([warehouseId])
   @@index([productId])
+}
+
+// Transferencia entre bodegas (Fase 3): mueve existencias origen→destino de forma
+// atómica. NO cambia Product.stock (el agregado no se mueve); items en Json
+// (patrón de B2BOrder/ProductReturn). Ejecución inmediata (sin IN_TRANSIT en v1).
+model StockTransfer {
+  id              String   @id @default(cuid())
+  tenantId        String
+  fromWarehouseId String
+  toWarehouseId   String
+  notes           String?  @db.Text
+  items           Json // [{productId, name, quantity}]
+  createdBy       String
+  createdAt       DateTime @default(now())
+
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fromWarehouse Warehouse @relation("TransferFrom", fields: [fromWarehouseId], references: [id])
+  toWarehouse   Warehouse @relation("TransferTo", fields: [toWarehouseId], references: [id])
+
+  @@index([tenantId])
+  @@index([fromWarehouseId])
+  @@index([toWarehouseId])
 }
 
 // ==========================================

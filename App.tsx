@@ -20,6 +20,7 @@ import DeliveryManager from './components/DeliveryManager';
 import DriverView from './components/DriverView';
 import RegistroRepartidor from './components/RegistroRepartidor';
 import Inventory from './components/Inventory';
+import Warehouses from './components/Warehouses';
 import StockCount from './components/StockCount';
 import SmartPurchases from './components/SmartPurchases';
 import CashRegisters from './components/CashRegisters';
@@ -69,6 +70,7 @@ const ProtectedApp = () => {
         <Route path="blueprint" element={<BlueprintViewer />} />
         <Route path="delivery" element={<DeliveryManager />} />
         <Route path="inventory" element={<Inventory />} />
+        <Route path="warehouses" element={<Warehouses />} />
         <Route path="inventory-count" element={<StockCount />} />
         {/* ── Rutas registradas para evitar redirección silenciosa ── */}
         <Route path="cash-registers" element={<CashRegisters />} />
