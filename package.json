@@ -7,6 +7,7 @@
     "start": "tsx backend/server.ts",
     "dev": "vite",
     "build": "vite build",
+    "test": "vitest run",
     "build:seo": "vite build && tsx scripts/prerender.ts",
     "preview": "vite preview"
   },
@@ -14,6 +15,7 @@
     "@anthropic-ai/sdk": "^0.97.1",
     "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^6.4.1",
+    "@sentry/node": "^10.65.0",
     "bcryptjs": "^3.0.3",
     "browser-image-compression": "^2.0.2",
     "compression": "^1.8.0",
@@ -52,6 +54,7 @@
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
     "vite-plugin-pwa": "^1.2.0",
+    "vitest": "^4.1.10",
     "workbox-window": "^7.4.0"
   }
 }
