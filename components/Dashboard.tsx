@@ -217,29 +217,11 @@ const RetailDashboard: React.FC = () => {
         throw new Error(data.error);
       }
 
-      // Optimistic Update
-      const interest = amount * 0.05;
-      const totalDue = amount + interest;
-
-      const newLoan: Loan = {
-        id: `loan_${Date.now()}`,
-        amount,
-        interest,
-        totalDue,
-        status: 'ACTIVE',
-        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        createdAt: new Date().toISOString()
-      };
-
-      const updatedTenant = {
-        ...tenantData,
-        walletBalance: tenantData.walletBalance + amount,
-        creditLimit: tenantData.creditLimit - amount
-      };
-
-      setTenantData(updatedTenant);
-      setActiveLoans(prev => [newLoan, ...prev]);
-      localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
+      // Verdad del server: el endpoint devuelve el tenant ya actualizado
+      // (wallet acreditado + línea decrementada, atómico y auditado). NO
+      // recalculamos el saldo en el cliente — eso era el número fantasma.
+      setTenantData(data);
+      localStorage.setItem('nortex_tenant_data', JSON.stringify(data));
 
       setShowLoanModal(false);
       setLoanAmount('');
@@ -488,21 +470,27 @@ const RetailDashboard: React.FC = () => {
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Nortex Score</p>
-              <h3 className="text-2xl font-bold text-blue-600">{tenantData.creditScore} <span className="text-sm text-slate-400 font-normal">/ 850</span></h3>
+              {tenantData.creditScore != null ? (
+                <h3 className="text-2xl font-bold text-blue-600">{tenantData.creditScore} <span className="text-sm text-slate-400 font-normal">/ 850</span></h3>
+              ) : (
+                <h3 className="text-lg font-bold text-slate-400">Sin datos</h3>
+              )}
             </div>
             <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
               <Activity size={20} />
             </div>
           </div>
           <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mb-2">
-            <div className="bg-blue-500 h-full rounded-full transition-all duration-1000" style={{ width: `${(tenantData.creditScore / 850) * 100}%` }}></div>
+            <div className="bg-blue-500 h-full rounded-full transition-all duration-1000" style={{ width: `${((tenantData.creditScore ?? 0) / 850) * 100}%` }}></div>
           </div>
-          {scoreFactors.length > 0 ? (
+          {tenantData.creditScore == null ? (
+            <p className="text-xs text-slate-400">Sin historial suficiente para calcular tu score</p>
+          ) : scoreFactors.length > 0 ? (
             <p className="text-[10px] text-slate-500 truncate" title={scoreFactors.join(', ')}>
               Factores: {scoreFactors[0]} {scoreFactors.length > 1 && `+${scoreFactors.length - 1}`}
             </p>
           ) : (
-            <p className="text-xs text-slate-400">Sin historial suficiente</p>
+            <p className="text-xs text-slate-400">Actualizá para calcular tu score</p>
           )}
         </div>
 
@@ -521,11 +509,11 @@ const RetailDashboard: React.FC = () => {
           </div>
           <button
             onClick={() => setShowLoanModal(true)}
-            disabled={tenantData.creditLimit <= 100 || tenantData.creditScore < 500}
+            disabled={tenantData.creditLimit <= 100 || (tenantData.creditScore ?? 0) < 500}
             className="relative z-10 w-full py-2 bg-nortex-accent hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-nortex-900 text-sm font-bold rounded transition-colors flex items-center justify-center gap-2"
           >
-            {tenantData.creditScore < 500 ? <Lock size={16} /> : <Banknote size={16} />}
-            {tenantData.creditScore < 500 ? 'MEJORA TU SCORE' : 'SOLICITAR DESEMBOLSO'}
+            {(tenantData.creditScore ?? 0) < 500 ? <Lock size={16} /> : <Banknote size={16} />}
+            {tenantData.creditScore == null ? 'GENERÁ HISTORIAL' : tenantData.creditScore < 500 ? 'MEJORA TU SCORE' : 'SOLICITAR DESEMBOLSO'}
           </button>
         </div>
 

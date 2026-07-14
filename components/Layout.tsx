@@ -172,7 +172,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
           ? [{ path: '/app/smart-purchases', label: 'Compras Inteligentes', shortLabel: 'Smart', group: 'Compras', icon: Zap }]
           : []),
-        { path: '/app/marketplace', label: 'Mercado B2B',           shortLabel: 'B2B',       group: 'Compras', icon: ShoppingBag  },
+        // Mercado B2B oculto del nav hasta tener catálogo real (no mock que
+        // debite el wallet). La ruta sigue existiendo con un placeholder.
 
         // ── FINANZAS ────────────────────────────────────
         { path: '/app/dashboard',   label: 'Finanzas',       shortLabel: 'Finanzas', group: 'Finanzas', icon: LayoutGrid },

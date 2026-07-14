@@ -14,7 +14,6 @@ import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, fl
 import { sendPasswordResetEmail } from './services/email';
 import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
-import { MOCK_CATALOG, MOCK_WHOLESALERS } from '../constants';
 import { calculateTenantScore } from './services/scoring';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
@@ -278,9 +277,10 @@ app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: a
                     businessName: companyName,
                     type: type || 'FERRETERIA',
                     taxId: `TAX-${Date.now()}`,
-                    walletBalance: 10000,
-                    creditLimit: 5000,
-                    creditScore: 750,
+                    // Sin números fantasma: el wallet arranca en 0 (solo sube con un
+                    // desembolso real auditado o aprobación admin), la línea de crédito
+                    // en 0 y el score en NULL ("sin datos") hasta que el motor real lo
+                    // calcule desde historial. Los defaults del schema ya son 0/null.
                     subscriptionStatus: 'TRIAL',
                     trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 días
                 }
@@ -308,17 +308,6 @@ app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: a
                     pin: '1234',
                     baseSalary: 0,
                     commissionRate: 0,
-                }
-            });
-
-            // Asiento de auditoría del crédito de génesis (walletBalance/creditLimit)
-            // acreditado al crear la cuenta, para trazabilidad forense (Capa 3).
-            await tx.auditLog.create({
-                data: {
-                    tenantId: tenant.id,
-                    userId: user.id,
-                    action: 'TENANT_GENESIS_CREDIT',
-                    details: `Crédito de génesis al registrar: walletBalance 0 -> 10000, creditLimit 0 -> 5000`,
                 }
             });
 

@@ -23,7 +23,10 @@ model Tenant {
   slug                 String?   @unique // URL amigable para catálogo público (ej: "ferreteria-jose")
   walletBalance        Decimal   @default(0) @db.Decimal(18, 4)
   creditLimit          Decimal   @default(0) @db.Decimal(18, 4)
-  creditScore          Int       @default(0)
+  // NULL = "sin datos suficientes": un tenant nuevo NO tiene score hasta que
+  // el motor real (services/scoring.ts) lo calcula desde historial operativo.
+  // Nunca sembrar un valor fantasma; el número solo existe si hay con qué.
+  creditScore          Int?
   subscriptionStatus   String    @default("TRIAL") // TRIAL | ACTIVE | PAST_DUE | CANCELLED
   stripeCustomerId     String? // Stripe Customer ID (cus_xxx)
   stripeSubscriptionId String? // Stripe Subscription ID (sub_xxx)
