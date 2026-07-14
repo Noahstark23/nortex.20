@@ -57,6 +57,7 @@ import {
     OpenShiftSchema,
     CloseShiftSchema,
     CreateExpenseSchema,
+    B2BOrderSchema,
     PayrollCalculateSchema,
     TaxReportSchema,
     RegisterSchema,
@@ -1252,44 +1253,60 @@ app.post('/api/loans/request', authenticate, checkRole(['OWNER', 'ADMIN']), vali
 // 🌍 B2B MARKETPLACE (ACID TRANSACTIONS + EXPENSE TRACKING)
 // ==========================================
 
-app.post('/api/b2b/order', authenticate, async (req: any, res: any) => {
+app.post('/api/b2b/order', authenticate, checkRole(['OWNER', 'ADMIN']), validate(B2BOrderSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { items, total } = req.body;
-    const orderTotal = Number(total);
+    // Zod ya garantizó total > 0 y finito; Decimal evita floats intermedios.
+    const orderTotal = new Decimal(total);
 
     try {
-        // Transaction: Check Balance -> Deduct -> Create Order -> Register Expense
         const result = await prisma.$transaction(async (tx: any) => {
-            // 1. Lock & Fetch Tenant
-            const tenant = await tx.tenant.findUnique({ where: { id: authReq.tenantId } });
-
-            if (Number(tenant.walletBalance) < orderTotal) {
+            // 1. Débito CONDICIONAL atómico: la suficiencia de saldo y el decremento
+            //    son la MISMA sentencia (sin ventana entre chequeo y escritura: ni
+            //    sobregiro por concurrencia ni montos negativos que "acrediten").
+            const debited = await tx.tenant.updateMany({
+                where: { id: authReq.tenantId, walletBalance: { gte: orderTotal.toFixed(4) } },
+                data: { walletBalance: { decrement: orderTotal.toFixed(4) } }
+            });
+            if (debited.count === 0) {
                 throw new Error('SALDO_INSUFICIENTE');
             }
+            const updatedTenant = await tx.tenant.findUnique({ where: { id: authReq.tenantId } });
 
-            // 2. Deduct Balance
-            const updatedTenant = await tx.tenant.update({
-                where: { id: authReq.tenantId },
-                data: { walletBalance: { decrement: orderTotal } }
-            });
-
-            // 3. Create Marketplace Order Record
+            // 2. Create Marketplace Order Record
             const order = await tx.b2BOrder.create({
                 data: {
                     tenantId: authReq.tenantId,
-                    total: orderTotal,
+                    total: orderTotal.toFixed(4),
                     items: items, // Stored as JSON
                     status: 'PENDING'
                 }
             });
 
-            // 4. Register Expense (Accounting)
+            // 3. Register Expense (Accounting)
             await tx.expense.create({
                 data: {
                     tenantId: authReq.tenantId,
-                    amount: orderTotal,
+                    amount: orderTotal.toFixed(2),
                     description: `Orden B2B #${order.id.slice(0, 8)}`,
                     category: 'INVENTORY'
+                }
+            });
+
+            // 4. AuditLog inmutable del movimiento de wallet, en la MISMA tx
+            //    (before derivado del after bajo el row-lock del débito).
+            const walletAfter = new Decimal(updatedTenant.walletBalance.toString());
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    userId: authReq.userId,
+                    action: 'B2B_ORDER',
+                    details: JSON.stringify({
+                        orderId: order.id,
+                        total: orderTotal.toFixed(4),
+                        walletBefore: walletAfter.plus(orderTotal).toFixed(4),
+                        walletAfter: walletAfter.toFixed(4)
+                    })
                 }
             });
 
@@ -4379,7 +4396,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 // Stock por applyStockDelta: incremento ATÓMICO (sin lost-update del
                 // patrón leer→escribir absoluto) + doble escritura del desglose por
                 // bodega (invariante multi-bodega: Σ bodegas == agregado).
-                const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                const { stockBefore, stockAfter, warehouseId: purchaseWarehouseId } = await applyStockDelta(tx, {
                     tenantId: authReq.tenantId!,
                     productId: item.productId,
                     delta: item.quantity,
@@ -4443,7 +4460,10 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                         referenceType: 'PURCHASE',
                         reason: `Compra Factura #${invoiceNumber}`,
                         userId: authReq.userId!,
-                        batchId: batchId
+                        batchId: batchId,
+                        // Bodega real del movimiento (la default hoy): sin esto la
+                        // reconstrucción del stock por bodega desde Kardex queda coja.
+                        warehouseId: purchaseWarehouseId
                     }
                 });
             }

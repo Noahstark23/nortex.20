@@ -6,6 +6,15 @@
 
 ---
 
+> **Actualización 2026-07-14:** **C corregido** — el Dockerfile ya no lleva
+> `--accept-data-loss` (un cambio destructivo ahora falla el arranque en vez de
+> borrar datos). **B1 corregido** — migración `20260714_b1_composite_indexes`
+> agrega los compuestos de `Sale`, `AuditLog`, `KardexMovement`, `Expense`,
+> `Purchase`, `Payment`, `StockTransfer`. **A2 iniciado** — existe el singleton
+> `backend/lib/prisma.ts`; `stockTransfers.ts` es su primer consumidor (faltan
+> ~21 módulos legacy). El resto del bloque A (Redis para rate-limit/caché/cola,
+> crons fuera del proceso) y B2–B6 siguen abiertos.
+
 ## Veredicto
 
 **No hay una bomba encendida hoy, pero sí armada.** Producción corre como **un solo proceso** (`tsx backend/server.ts`, un contenedor, sin cluster/PM2, sin Redis), así que todo el estado en memoria funciona *ahora*. Los problemas se agrupan en tres clases:

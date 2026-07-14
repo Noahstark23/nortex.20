@@ -233,6 +233,8 @@ model Purchase {
   @@index([purchaseOrderId])
   @@index([supplierId])
   @@index([status])
+  // B1: libros de compras DGI y reportes filtran tenant+fecha de factura.
+  @@index([tenantId, date])
 }
 
 model PurchaseItem {
@@ -532,6 +534,10 @@ model Sale {
   @@index([customerId])
   @@index([employeeId])
   @@index([shiftId])
+  // B1 (SCALING_AUDIT): reportes/libros DGI filtran tenant+fecha; cobranza
+  // filtra tenant+método+saldo. Sin estos compuestos, filesort por tenant.
+  @@index([tenantId, createdAt])
+  @@index([tenantId, paymentMethod, balance])
 }
 
 model SaleItem {
@@ -560,6 +566,9 @@ model Payment {
   user User @relation(fields: [collectedBy], references: [id])
 
   @@index([saleId])
+  // B1: el agregado de cobros del día recorre pagos por fecha (el tenant
+  // viene por el join a Sale, que ya tiene su compuesto).
+  @@index([createdAt])
 }
 
 model Shift {
@@ -603,6 +612,8 @@ model Expense {
 
   @@index([tenantId])
   @@index([category])
+  // B1: reportes de gastos por período filtran tenant+fecha.
+  @@index([tenantId, createdAt])
 }
 
 // ==========================================
@@ -740,6 +751,10 @@ model AuditLog {
 
   @@index([tenantId])
   @@index([userId])
+  // B1: la tabla que más rápido crece (1 fila por venta/ajuste/pago/cierre);
+  // la bitácora y los filtros por acción necesitan tenant+fecha.
+  @@index([tenantId, createdAt])
+  @@index([tenantId, action, createdAt])
 }
 
 // ==========================================
@@ -856,6 +871,10 @@ model KardexMovement {
   @@index([type])
   @@index([batchId])
   @@index([warehouseId])
+  // B1: el Kardex se consulta por tenant+tipo+fecha (mermas, reportes) y por
+  // tenant+producto+fecha (historial de un producto) — compuestos dedicados.
+  @@index([tenantId, type, date])
+  @@index([tenantId, productId, date])
 }
 
 // ==========================================
@@ -921,6 +940,8 @@ model StockTransfer {
   @@index([tenantId])
   @@index([fromWarehouseId])
   @@index([toWarehouseId])
+  // El listado ordena por tenant+createdAt desc (guardrail 3: índice con la query).
+  @@index([tenantId, createdAt])
 }
 
 // ==========================================

@@ -6,12 +6,13 @@ description: Cambios de schema Prisma / base de datos en Nortex (agregar modelos
 # Migraciones en Nortex (MySQL 8 + `db push`)
 
 ## Realidad del deploy (dicta todo lo demás)
-El Dockerfile arranca con `npx prisma db push --accept-data-loss` → **aplica el
-schema como DDL y NUNCA ejecuta DML**. Consecuencias:
+El Dockerfile arranca con `npx prisma db push` (sin `--accept-data-loss`, ya se
+quitó) → **aplica el schema como DDL y NUNCA ejecuta DML**. Consecuencias:
 - Los backfills de datos **van en la aplicación** (patrón perezoso), no en SQL.
-- `--accept-data-loss` significa que un rename/tipo incompatible **puede borrar
-  datos en producción** → los cambios deben ser **ADITIVOS** (agregar columna/tabla
-  nullable o con default). Rename = agregar nueva + migrar en app + deprecar.
+- Sin el flag, un rename/tipo incompatible **hace fallar el arranque** (la instancia
+  vieja sigue viva) en vez de borrar datos → los cambios deben ser **ADITIVOS**
+  igual (agregar columna/tabla nullable o con default). Rename = agregar nueva +
+  migrar en app + deprecar.
 - Igual se escribe el SQL en `backend/prisma/migrations/<YYYYMMDD>_<nombre>/migration.sql`
   (documentación + `migrate deploy` futuro). **Sintaxis MySQL**: backticks,
   `VARCHAR(191)`, `DATETIME(3)`, `DOUBLE`, `BOOLEAN`, `DECIMAL(18,4)`.

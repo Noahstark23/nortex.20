@@ -103,6 +103,34 @@ export const CreatePaymentSchema = z.object({
     method: paymentMethod.optional(),
 });
 
+// POST /api/b2b/order — orden del marketplace pagada con el wallet del tenant.
+// El total debe ser positivo y FINITO (parseFloat('Infinity') pasa moneyAmountPositive);
+// la suficiencia de saldo la garantiza el débito condicional atómico del handler.
+export const B2BOrderSchema = z.object({
+    items: z.array(z.unknown()).min(1, 'Se requiere al menos 1 ítem').max(200),
+    total: moneyAmountPositive.refine((v) => Number.isFinite(parseFloat(v)), {
+        message: 'El monto debe ser un número finito',
+    }),
+});
+
+// POST /api/stock-transfers — transferencia entre bodegas (mueve inventario).
+// Tope de ítems: cada ítem ejecuta ~7 queries dentro de la $transaction; sin
+// límite, un POST grande sostiene row-locks calientes hasta el timeout de la tx.
+export const StockTransferSchema = z.object({
+    fromWarehouseId: z.string().min(1, 'Bodega de origen requerida'),
+    toWarehouseId:   z.string().min(1, 'Bodega de destino requerida'),
+    notes:           z.string().max(500).optional().nullable(),
+    items: z
+        .array(z.object({
+            productId: z.string().min(1, 'productId requerido'),
+            quantity:  numeric.refine((v) => Number.isFinite(v) && v > 0, {
+                message: 'quantity debe ser un número > 0',
+            }),
+        }))
+        .min(1, 'Se requiere al menos un ítem')
+        .max(50, 'Máximo 50 ítems por transferencia'),
+});
+
 // POST /api/purchases
 export const PurchaseItemSchema = z.object({
     productId:   z.string().min(1),

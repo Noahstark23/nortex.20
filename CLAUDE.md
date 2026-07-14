@@ -104,9 +104,10 @@ la bomba (revisadas junto al Security Loop):
 7. **Estado en memoria = per-proceso.** Rate-limit, caché de paywall y colas NO se
    comparten entre instancias; no asumas multi-instancia sin store compartido
    (Redis/BullMQ).
-8. **Schema estrictamente aditivo.** El deploy corre `db push --accept-data-loss`: un
-   cambio NO aditivo (drop/rename/narrow) borra datos de prod en el arranque. Nunca
-   introducir cambios destructivos (SCALING_AUDIT C).
+8. **Schema estrictamente aditivo.** El deploy corre `db push` **sin**
+   `--accept-data-loss` (ya se quitó): un cambio NO aditivo (drop/rename/narrow)
+   hace **fallar el arranque** (la instancia vieja sigue sirviendo) en vez de
+   borrar datos de prod. Igual: nunca introducir cambios destructivos (SCALING_AUDIT C).
 
 ---
 
@@ -122,11 +123,13 @@ libro firmado de caja · keyring JWT rotable.
 - **Capa 4:** `Product.price/cost` (Float) y varios campos `Decimal(12,2)/(10,2)`;
   el sweep a `Decimal(18,4)` es una migración pendiente (los montos del Command
   Center ya están en 18,4).
-- **Escalabilidad (ver `docs/SCALING_AUDIT.md`):** hoy single-instance. Bombas
-  pendientes: `db push --accept-data-loss` en el deploy (riesgo de pérdida de datos),
-  índices faltantes en `Sale`/`AuditLog`/`KardexMovement`/`Expense`/`Purchase`/`Payment`,
-  ~21 `new PrismaClient()`, rate-limit/caché/cola en memoria, N+1 en la venta,
-  reportes/XLSX sin paginar. No asumir que escala horizontal sin estos arreglos.
+- **Escalabilidad (ver `docs/SCALING_AUDIT.md`):** hoy single-instance. Ya
+  corregido: `--accept-data-loss` fuera del deploy (el `db push` ahora falla ante
+  un cambio destructivo en vez de borrar prod) e índices compuestos B1 en
+  `Sale`/`AuditLog`/`KardexMovement`/`Expense`/`Purchase`/`Payment`/`StockTransfer`.
+  Bombas pendientes: ~21 `new PrismaClient()` (existe el singleton `backend/lib/prisma.ts`
+  pero falta migrar los módulos legacy), rate-limit/caché/cola en memoria, N+1 en la
+  venta, reportes/XLSX sin paginar. No asumir que escala horizontal sin estos arreglos.
 - Al tocar estas áreas: corregí lo que toques al estándar del loop, y no declares
   "superado" a nivel sistema sin respaldo del informe de auditoría.
 
