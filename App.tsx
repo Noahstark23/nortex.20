@@ -1,6 +1,7 @@
 import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
+import { homePathFor } from './utils/navigation';
 import POS from './components/POS';
 import Dashboard from './components/Dashboard';
 import BlueprintViewer from './components/BlueprintViewer';
@@ -54,6 +55,14 @@ const ProtectedApp = () => {
   const token = localStorage.getItem('nortex_token');
   if (!token) return <Navigate to="/login" replace />;
 
+  // Aterrizaje por rol (Fase A UX): el cajero empieza en el POS y el contador
+  // en Contabilidad — no en un dashboard que no es su pantalla de trabajo.
+  let homePath = '/app/dashboard';
+  try {
+    const role: string = JSON.parse(atob(token.split('.')[1])).role || '';
+    homePath = homePathFor(role);
+  } catch { /* token ilegible → dashboard */ }
+
   return (
     <Layout>
       <Routes>
@@ -82,7 +91,7 @@ const ProtectedApp = () => {
         <Route path="billing" element={<Billing />} />
         <Route path="team" element={<TeamManagement />} />
         <Route path="ayuda" element={<HelpCenter />} />
-        <Route path="*" element={<Navigate to="dashboard" replace />} />
+        <Route path="*" element={<Navigate to={homePath} replace />} />
       </Routes>
     </Layout>
   );

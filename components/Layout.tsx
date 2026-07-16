@@ -1,8 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle, ChevronDown, SlidersHorizontal } from 'lucide-react';
 import { PinPadClock } from './PinPadClock';
 import OnboardingHub from './OnboardingHub';
+import { buildNavigation, resolveUiMode, UI_MODE_KEY, type NavEntry, type UiMode } from '../utils/navigation';
+
+// Mapa iconKey → componente lucide (los íconos viven acá para que
+// utils/navigation.ts sea un módulo puro y testeable sin React).
+const NAV_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
+  layoutGrid: LayoutGrid, shoppingCart: ShoppingCart, code2: Code2, wallet: Wallet,
+  shoppingBag: ShoppingBag, pieChart: PieChart, fileText: FileText, users: Users,
+  truck: Truck, briefcase: Briefcase, package: Package, clipboardList: ClipboardList,
+  creditCard: CreditCard, userPlus: UserPlus, monitor: Monitor, barChart3: BarChart3,
+  shield: Shield, zap: Zap, bookOpen: BookOpen, userCircle: UserCircle,
+};
+const navIcon = (key: string) => NAV_ICONS[key] ?? Package;
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -101,6 +113,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   // Decode JWT to get user role for sidebar gating
   const token = localStorage.getItem('nortex_token');
   let userRole = '';
+  let tenantType = '';
   try {
     if (token) {
       const payload = JSON.parse(atob(token.split('.')[1]));
@@ -110,13 +123,27 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         const userStr = localStorage.getItem('nortex_user');
         if (userStr) {
           const user = JSON.parse(userStr);
-          if (user.tenant?.type === 'LENDER') {
+          tenantType = user.tenant?.type || '';
+          if (tenantType === 'LENDER') {
             userRole = `LENDER_${userRole}`; // Prefix to distinguish in layout
           }
         }
       } catch (e) { }
     }
   } catch (e) { /* ignore decode errors */ }
+
+  // ── Modo simple / completo (Fase A UX) ────────────────────────────────────
+  // Simple = menú corto según el giro del negocio + "Más opciones" plegado.
+  // Persistido por dispositivo; solo la pulpería arranca en simple por defecto.
+  const [uiMode, setUiMode] = useState<UiMode>(() =>
+    resolveUiMode(tenantType, localStorage.getItem(UI_MODE_KEY)));
+  const [showMore, setShowMore] = useState(false);
+  const toggleUiMode = () => {
+    const next: UiMode = uiMode === 'simple' ? 'full' : 'simple';
+    localStorage.setItem(UI_MODE_KEY, next);
+    setShowMore(false);
+    setUiMode(next);
+  };
 
   if (userRole === 'LENDER_COLLECTOR' || userRole === 'COLLECTOR') {
     // Retorna ÚNICAMENTE la vista del motorizado sin menú lateral completo
@@ -127,77 +154,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     );
   }
 
-  type NavItem = {
-    path: string;
-    label: string;
-    shortLabel: string;
-    group: string;
-    icon: React.ComponentType<{ size?: number; className?: string }>;
-  };
-
-  const navItems: NavItem[] = [
-    // --- LENDER TENANT MODO ---
-    ...(userRole.startsWith('LENDER_')
-      ? [
-        { path: '/app/dashboard', label: 'Dashboard Financiero', shortLabel: 'Finanzas', group: 'Finanzas',       icon: Wallet   },
-        { path: '/app/clients',   label: 'Cartera de Clientes',  shortLabel: 'Clientes', group: 'Clientes',       icon: Users    },
-        { path: '/app/reports',   label: 'Reportes de Cobro',    shortLabel: 'Reportes', group: 'Reportes',       icon: PieChart },
-        { path: '/app/team',      label: 'Cobradores',           shortLabel: 'Equipo',   group: 'Administración', icon: UserPlus },
-      ]
-      : userRole === 'ACCOUNTANT'
-      ? [
-        // ── CONTADOR — vista reducida ────────────────────
-        { path: '/app/accounting', label: 'Contabilidad',      shortLabel: 'Contab.',    group: 'Fiscal',    icon: BookOpen },
-        { path: '/app/reports',   label: 'Reportes / Fiscal', shortLabel: 'Fiscal',     group: 'Fiscal',    icon: PieChart },
-        { path: '/app/purchases', label: 'Compras',           shortLabel: 'Compras',    group: 'Fiscal',    icon: Truck    },
-        { path: '/app/audit',     label: 'Auditoría',         shortLabel: 'Auditoría',  group: 'Fiscal',    icon: Shield   },
-      ]
-      : [
-        // ── VENTAS ──────────────────────────────────────
-        { path: '/app/pos',         label: 'Punto de Venta',  shortLabel: 'POS',      group: 'Ventas', icon: ShoppingCart },
-        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(userRole)
-          ? [{ path: '/app/cash-registers', label: 'Cajas y Arqueos', shortLabel: 'Cajas', group: 'Ventas', icon: Monitor }]
-          : []),
-        { path: '/app/inventory',   label: 'Inventario',      shortLabel: 'Stock',    group: 'Ventas', icon: Package  },
-        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
-          ? [{ path: '/app/inventory-count', label: 'Toma Física', shortLabel: 'Conteo', group: 'Ventas', icon: ClipboardList }]
-          : []),
-        { path: '/app/delivery',    label: 'Entregas',        shortLabel: 'Entregas', group: 'Ventas', icon: Truck    },
-        { path: '/app/quotations',  label: 'Cotizaciones',    shortLabel: 'Cotiz.',   group: 'Ventas', icon: FileText },
-        { path: '/app/clients',     label: 'Clientes (CRM)',  shortLabel: 'Clientes', group: 'Ventas', icon: Users    },
-
-        // ── COMPRAS ─────────────────────────────────────
-        { path: '/app/purchases',   label: 'Compras',                shortLabel: 'Compras',   group: 'Compras', icon: Truck        },
-        { path: '/app/suppliers',   label: 'Proveedores',            shortLabel: 'Proveed.',  group: 'Compras', icon: ClipboardList},
-        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
-          ? [{ path: '/app/smart-purchases', label: 'Compras Inteligentes', shortLabel: 'Smart', group: 'Compras', icon: Zap }]
-          : []),
-        { path: '/app/marketplace', label: 'Mercado B2B',           shortLabel: 'B2B',       group: 'Compras', icon: ShoppingBag  },
-
-        // ── FINANZAS ────────────────────────────────────
-        { path: '/app/dashboard',   label: 'Finanzas',       shortLabel: 'Finanzas', group: 'Finanzas', icon: LayoutGrid },
-        { path: '/app/receivables', label: 'Cobranza',       shortLabel: 'Cobros',   group: 'Finanzas', icon: Wallet     },
-        { path: '/app/billing',     label: 'Facturación',    shortLabel: 'Facturas', group: 'Finanzas', icon: CreditCard },
-        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
-          ? [{ path: '/app/accounting', label: 'Contabilidad', shortLabel: 'Contab.', group: 'Finanzas', icon: BookOpen }]
-          : []),
-        { path: '/app/reports',     label: 'Reportes',       shortLabel: 'Reportes', group: 'Finanzas', icon: PieChart   },
-        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
-          ? [
-            { path: '/app/financial-health', label: 'Salud Financiera', shortLabel: 'Salud',    group: 'Finanzas',       icon: BarChart3 },
-            { path: '/app/audit',            label: 'Auditoría',        shortLabel: 'Auditoría',group: 'Finanzas',       icon: Shield    },
-          ]
-          : []),
-
-        // ── PERSONAL ────────────────────────────────────
-        { path: '/app/mi-espacio', label: 'Mi Espacio',       shortLabel: 'Mi Espacio', group: 'Personal', icon: UserCircle },
-
-        // ── ADMINISTRACIÓN ──────────────────────────────
-        { path: '/app/hr',        label: 'Recursos Humanos', shortLabel: 'RRHH',   group: 'Administración', icon: Briefcase },
-        { path: '/app/team',      label: 'Mi Equipo',        shortLabel: 'Equipo', group: 'Administración', icon: UserPlus  },
-        { path: '/app/blueprint', label: 'Panel Admin',      shortLabel: 'Admin',  group: 'Administración', icon: Code2     },
-      ])
-  ];
+  // Navegación por giro + rol + modo (la lógica vive en utils/navigation.ts,
+  // que es un módulo puro con QA propia). primary ∪ more = menú completo del rol.
+  const { primary, more } = buildNavigation({ tenantType, role: userRole, simple: uiMode === 'simple' });
+  const canToggleMode = !userRole.startsWith('LENDER_') && userRole !== 'ACCOUNTANT';
 
   return (
     <div className="flex h-screen w-screen bg-surface-950 overflow-hidden">
@@ -212,8 +172,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
 
           <nav className="p-4 space-y-1 mt-4 overflow-y-auto max-h-[calc(100vh-160px)] custom-scrollbar">
-            {navItems.map((item) => {
-              const Icon = item.icon;
+            {primary.map((item) => {
+              const Icon = navIcon(item.iconKey);
               return (
                 <NavLink
                   key={item.path}
@@ -230,10 +190,51 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 </NavLink>
               );
             })}
+
+            {/* Modo simple: el resto de módulos queda plegado en "Más opciones" */}
+            {more.length > 0 && (
+              <>
+                <button
+                  onClick={() => setShowMore(v => !v)}
+                  className="w-full flex items-center justify-start gap-3 px-3 py-2.5 rounded-xl text-slate-500 hover:bg-white/[0.04] hover:text-slate-300 transition-all"
+                >
+                  <ChevronDown size={20} className={`transition-transform ${showMore ? 'rotate-180' : ''}`} />
+                  <span className="font-medium text-sm">{showMore ? 'Menos opciones' : 'Más opciones'}</span>
+                </button>
+                {showMore && more.map((item) => {
+                  const Icon = navIcon(item.iconKey);
+                  return (
+                    <NavLink
+                      key={item.path}
+                      to={item.path}
+                      className={({ isActive }) => `
+                        w-full flex items-center justify-start gap-3 pl-6 pr-3 py-2 rounded-xl transition-all duration-200 group active:scale-[0.98]
+                        ${isActive
+                          ? 'bg-brand text-white shadow-glow shadow-brand/25'
+                          : 'text-slate-500 hover:bg-white/[0.04] hover:text-white'}
+                      `}
+                    >
+                      <Icon size={18} />
+                      <span className="font-medium text-[13px]">{item.label}</span>
+                    </NavLink>
+                  );
+                })}
+              </>
+            )}
           </nav>
         </div >
 
         <div className="p-4 border-t border-white/[0.06]">
+          {canToggleMode && (
+            <button
+              onClick={toggleUiMode}
+              title={uiMode === 'simple' ? 'Mostrar todos los módulos' : 'Mostrar solo lo esencial de tu negocio'}
+              className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-2.5 rounded-xl text-slate-500 hover:bg-white/[0.06] hover:text-white transition-colors"
+            >
+              <SlidersHorizontal size={18} />
+              <span className="font-medium text-sm">{uiMode === 'simple' ? 'Ver menú completo' : 'Ver menú simple'}</span>
+            </button>
+          )}
           <button
             onClick={() => setShowClock(true)}
             className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-3 rounded-xl bg-brand/10 text-brand-300 hover:bg-brand/20 hover:text-brand-200 transition-all active:scale-[0.98] border border-brand/20 shadow-glow shadow-brand/10"
@@ -260,8 +261,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
       {/* MOBILE BOTTOM NAV */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-surface-950/90 backdrop-blur-md border-t border-white/[0.06] flex items-center justify-around z-40 px-1 pb-safe">
-        {navItems.slice(0, 4).map((item) => {
-          const Icon = item.icon;
+        {primary.slice(0, 4).map((item) => {
+          const Icon = navIcon(item.iconKey);
           return (
             <NavLink
               key={item.path}
@@ -309,13 +310,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 custom-scrollbar pb-24">
-            {/* Agrupar items por grupo y renderizar con headers */}
+            {/* Agrupar items por grupo y renderizar con headers.
+                En modo simple: lo esencial arriba ("Tu día a día") y el resto
+                agrupado abajo — nada desaparece, solo se ordena por prioridad. */}
             {(() => {
-              const groups = navItems.reduce<Record<string, NavItem[]>>((acc, item) => {
-                if (!acc[item.group]) acc[item.group] = [];
-                acc[item.group].push(item);
-                return acc;
-              }, {});
+              const groups: Record<string, NavEntry[]> = {};
+              if (more.length > 0) groups['Tu día a día'] = primary;
+              const rest = more.length > 0 ? more : primary;
+              for (const item of rest) {
+                if (!groups[item.group]) groups[item.group] = [];
+                groups[item.group].push(item);
+              }
               return Object.entries(groups).map(([groupName, items]) => (
                 <div key={groupName} className="mb-5">
                   <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1 mb-2">
@@ -323,7 +328,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   </p>
                   <div className="grid grid-cols-3 gap-2">
                     {items.map((item) => {
-                      const Icon = item.icon;
+                      const Icon = navIcon(item.iconKey);
                       return (
                         <NavLink
                           key={item.path}
@@ -348,6 +353,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
 
           <div className="flex-none p-4 pt-2 border-t border-slate-800 space-y-2">
+            {canToggleMode && (
+              <button
+                onClick={toggleUiMode}
+                className="w-full flex items-center justify-center gap-3 py-3 rounded-xl bg-white/[0.04] text-slate-400 font-bold border border-white/[0.08]"
+              >
+                <SlidersHorizontal size={18} />
+                {uiMode === 'simple' ? 'Ver menú completo' : 'Ver menú simple'}
+              </button>
+            )}
             <button
               onClick={() => { setShowMobileMenu(false); setShowClock(true); }}
               className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-indigo-500/10 text-indigo-400 font-bold border border-indigo-500/20"
