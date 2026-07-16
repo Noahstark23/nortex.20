@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { maybeAutostartTour } from '../utils/tours';
 import { DollarSign, Calendar, User, CheckCircle, Clock, Wallet, MessageCircle, AlertTriangle, Printer, FileText, RefreshCw, Loader2 } from 'lucide-react';
 
 // ==========================================
@@ -82,6 +83,9 @@ const AccountsReceivable: React.FC = () => {
   }, [headers]);
 
   useEffect(() => { fetchWorklist(); }, [fetchWorklist]);
+
+  // Tutorial guiado: si entran con ?tour=fiado (desde Ayuda).
+  useEffect(() => { maybeAutostartTour(); }, []);
 
   const openDetail = async (it: WorklistItem) => {
     setSelected(it);

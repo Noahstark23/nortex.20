@@ -154,6 +154,42 @@ const HelpCenter: React.FC = () => {
               Iniciar tutorial <ArrowRight size={16} />
             </span>
           </button>
+
+          <button
+            onClick={() => navigate('/app/receivables?tour=fiado')}
+            className="text-left bg-white border border-slate-200 hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
+          >
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center">
+                <HandCoins size={20} />
+              </div>
+              <h3 className="font-bold text-slate-800">Cómo cobrar el fiado</h3>
+            </div>
+            <p className="text-sm text-slate-500 mb-3">
+              Quién te debe, qué cobrar primero y cómo registrar los abonos.
+            </p>
+            <span className="text-sm font-bold text-nortex-900 flex items-center gap-1 group-hover:gap-2 transition-all">
+              Iniciar tutorial <ArrowRight size={16} />
+            </span>
+          </button>
+
+          <button
+            onClick={() => navigate('/app/purchases?tour=compras')}
+            className="text-left bg-white border border-slate-200 hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
+          >
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center">
+                <Truck size={20} />
+              </div>
+              <h3 className="font-bold text-slate-800">Cómo registrar compras</h3>
+            </div>
+            <p className="text-sm text-slate-500 mb-3">
+              Registrá la mercadería que entra para conocer tu ganancia real.
+            </p>
+            <span className="text-sm font-bold text-nortex-900 flex items-center gap-1 group-hover:gap-2 transition-all">
+              Iniciar tutorial <ArrowRight size={16} />
+            </span>
+          </button>
         </div>
       </section>
 
