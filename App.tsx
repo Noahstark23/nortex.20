@@ -1,7 +1,8 @@
 import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
-import { homePathFor } from './utils/navigation';
+import { homePathFor, resolveUiMode, UI_MODE_KEY } from './utils/navigation';
+import MiNegocio from './components/MiNegocio';
 import POS from './components/POS';
 import Dashboard from './components/Dashboard';
 import BlueprintViewer from './components/BlueprintViewer';
@@ -58,16 +59,21 @@ const ProtectedApp = () => {
   if (!token) return <Navigate to="/login" replace />;
 
   // Aterrizaje por rol (Fase A UX): el cajero empieza en el POS y el contador
-  // en Contabilidad — no en un dashboard que no es su pantalla de trabajo.
+  // en Contabilidad. En modo simple (Fase B), quien administra aterriza en
+  // "Mi Negocio"; en modo completo se conserva el dashboard de siempre.
   let homePath = '/app/dashboard';
   try {
     const role: string = JSON.parse(atob(token.split('.')[1])).role || '';
-    homePath = homePathFor(role);
+    let tenantType = '';
+    try { tenantType = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.tenant?.type || ''; } catch { }
+    const uiMode = resolveUiMode(tenantType, localStorage.getItem(UI_MODE_KEY));
+    homePath = homePathFor(role, uiMode);
   } catch { /* token ilegible → dashboard */ }
 
   return (
     <Layout>
       <Routes>
+        <Route path="inicio" element={<MiNegocio />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="pos" element={<POS />} />
         <Route path="clients" element={<Clients />} />
