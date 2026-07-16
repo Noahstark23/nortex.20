@@ -5,6 +5,7 @@ import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
 import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff } from 'lucide-react';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
+import { resolveUiMode, UI_MODE_KEY } from '../utils/navigation';
 import { ReceiptTicket } from './ReceiptTicket';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import * as XLSX from 'xlsx';
@@ -169,6 +170,22 @@ const POS: React.FC = () => {
     // 🅿️ PARQUEO DE VENTAS STATE
     const [heldCarts, setHeldCarts] = useState<HeldCart[]>([]);
     const [showHeldCarts, setShowHeldCarts] = useState(false);
+
+    // ── Modo simple (Fase C-2 UX): esconde acciones avanzadas del POS ──
+    // Mismo criterio que el menú (utils/navigation.ts); se lee una vez al montar.
+    const [simpleMode] = useState<boolean>(() => {
+        try {
+            const type = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.tenant?.type || '';
+            return resolveUiMode(type, localStorage.getItem(UI_MODE_KEY)) === 'simple';
+        } catch { return false; }
+    });
+    // Solo Dueño/Admin ven el hint del PIN inicial en la apertura de caja.
+    const [isOwnerAdmin] = useState<boolean>(() => {
+        try {
+            const role = JSON.parse(atob((localStorage.getItem('nortex_token') || '').split('.')[1])).role || '';
+            return ['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(role);
+        } catch { return false; }
+    });
 
     // 🔴 FIADO INTELIGENTE STATE
     const [showCreditPanel, setShowCreditPanel] = useState(false);
@@ -1317,7 +1334,7 @@ const POS: React.FC = () => {
 
                 <div className="flex items-center gap-2 flex-1 min-w-0 justify-end overflow-x-auto custom-scrollbar whitespace-nowrap pl-4 pb-2 pt-2 lg:pb-0 lg:pt-0 lg:overflow-visible">
                     {/* 🖨️ TIQUETERA BT/USB */}
-                    <button
+                    {!simpleMode && <button
                         onClick={async () => {
                             if (!thermalConnected) {
                                 const success = await thermalPrinter.connect();
@@ -1329,7 +1346,7 @@ const POS: React.FC = () => {
                     >
                         <Printer size={14} />
                         <span className="hidden lg:inline">{thermalConnected ? 'Tiquetera lista' : 'Vincular Tiquetera'}</span>
-                    </button>
+                    </button>}
 
                     {/* 📶 OFFLINE INDICATOR */}
                     {!isOnline && (
@@ -1354,7 +1371,7 @@ const POS: React.FC = () => {
                     )}
 
                     {/* 🅿️ PARQUEO BADGE */}
-                    {currentShift && (
+                    {currentShift && !simpleMode && (
                         <button
                             onClick={() => setShowHeldCarts(!showHeldCarts)}
                             className={`relative flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg transition-all shadow-sm ${heldCarts.length > 0 ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200'}`}
@@ -1404,7 +1421,7 @@ const POS: React.FC = () => {
                     )}
 
                     {/* 🔄 QUICK ACTION: DEVOLUCIÓN */}
-                    {currentShift && (
+                    {currentShift && !simpleMode && (
                         <button
                             onClick={() => setShowReturnModal(true)}
                             className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-all shadow-sm"
@@ -1416,7 +1433,7 @@ const POS: React.FC = () => {
                     )}
 
                     {/* Scanner indicator */}
-                    <button
+                    {!simpleMode && <button
                         onClick={() => setScannerActive(!scannerActive)}
                         className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full transition-all ${scannerActive
                             ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
@@ -1427,7 +1444,7 @@ const POS: React.FC = () => {
                         <ScanBarcode size={14} />
                         {scannerActive ? <Volume2 size={12} /> : <VolumeX size={12} />}
                         <span className="hidden xl:inline">{scannerActive ? 'Escáner ON' : 'Escáner OFF'}</span>
-                    </button>
+                    </button>}
 
                     {currentShift ? (
                         <button onClick={() => setShowCloseShift(true)} className="text-xs font-bold text-red-500 hover:bg-red-50 px-3 py-1.5 rounded transition-colors flex items-center gap-1">
@@ -1653,6 +1670,11 @@ const POS: React.FC = () => {
                         </div>
                         <h2 className="text-2xl font-bold text-slate-800 mb-2">Apertura de Caja</h2>
                         <p className="text-slate-500 text-sm mb-6">Ingresa tu PIN de empleado y el fondo inicial.</p>
+                        {isOwnerAdmin && (
+                            <p className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg px-3 py-2 mb-4">
+                                ¿Primera vez? Tu PIN inicial de dueño es <strong>1234</strong> — cambialo después en <strong>Mi Personal</strong>.
+                            </p>
+                        )}
                         <form onSubmit={handleOpenShift} className="space-y-5">
                             {/* PIN Input */}
                             <div>
@@ -2071,24 +2093,24 @@ const POS: React.FC = () => {
                         className="bg-gradient-to-r from-amber-500 to-orange-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-amber-600 hover:to-orange-600 shadow-md transition-all"
                         title="Producto Rápido"
                     >
-                        <Zap size={18} /> Rápido
+                        <Zap size={18} /> {simpleMode ? 'Agregar' : 'Rápido'}
                     </button>
                     {/* Full Create */}
-                    <button
+                    {!simpleMode && <button
                         onClick={() => setShowAddModal(true)}
                         className="bg-nortex-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-medium text-sm hover:bg-nortex-600 transition-all"
                         title="Crear producto completo"
                     >
                         <Plus size={18} /> Nuevo
-                    </button>
+                    </button>}
                     {/* Import */}
-                    <button
+                    {!simpleMode && <button
                         onClick={() => setShowImportModal(true)}
                         className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-blue-700 hover:to-indigo-700 shadow-md transition-all"
                         title="Importar desde Excel"
                     >
                         <Upload size={18} /> Excel
-                    </button>
+                    </button>}
                 </div>
 
                 {/* TOP SELLERS QUICK ACCESS */}
@@ -2203,7 +2225,7 @@ const POS: React.FC = () => {
                 {/* 👑 SMART CUSTOMER SEARCH - GOD-TIER SELECTOR */}
                 <div className="px-4 pt-4 relative">
                     <label className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
-                        <User size={12} /> CLIENTE PARA SCORING
+                        <User size={12} /> {simpleMode ? 'CLIENTE (OPCIONAL)' : 'CLIENTE PARA SCORING'}
                     </label>
                     <div className="relative">
                         <div className="absolute left-4 top-1/2 -translate-y-1/2 w-9 h-9 bg-indigo-100 rounded-full flex items-center justify-center">
@@ -2339,8 +2361,8 @@ const POS: React.FC = () => {
                     )}
                 </div>
                 <div className="p-5 border-t border-slate-100 bg-slate-50 text-slate-800">
-                    {/* 💸 Global Discount */}
-                    <div className="flex items-center gap-2 mb-2">
+                    {/* 💸 Global Discount (oculto en modo simple para no invitar al error) */}
+                    {!simpleMode && <div className="flex items-center gap-2 mb-2">
                         <Percent size={14} className="text-slate-400" />
                         <span className="text-xs text-slate-500 font-bold">Descuento Global</span>
                         <input
@@ -2356,7 +2378,7 @@ const POS: React.FC = () => {
                         {globalDiscountD.greaterThan(0) && (
                             <span className="text-xs text-red-500 font-bold ml-auto">-C${totalD.mul(globalDiscountD).div(100).toFixed(2)}</span>
                         )}
-                    </div>
+                    </div>}
                     <div className="flex justify-between text-sm text-slate-500 mb-1"><span>Subtotal</span><span className="font-mono tabular-nums">C$ {total.toFixed(2)}</span></div>
                     {globalDiscountD.greaterThan(0) && <div className="flex justify-between text-sm text-red-500 mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="font-mono tabular-nums">-C$ {totalD.mul(globalDiscountD).div(100).toFixed(2)}</span></div>}
                     <div className="flex justify-between text-sm text-slate-500 mb-1"><span>IVA (15%)</span><span className="font-mono tabular-nums">C$ {tax.toFixed(2)}</span></div>
