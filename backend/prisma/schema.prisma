@@ -537,10 +537,7 @@ model Sale {
   @@index([customerId])
   @@index([employeeId])
   @@index([shiftId])
-  // B1 (SCALING_AUDIT): reportes/libros DGI filtran tenant+fecha; cobranza
-  // filtra tenant+método+saldo. Sin estos compuestos, filesort por tenant.
   @@index([tenantId, createdAt])
-  @@index([tenantId, paymentMethod, balance])
 }
 
 model SaleItem {

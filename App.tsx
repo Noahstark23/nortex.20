@@ -1,6 +1,7 @@
 import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
+import { homePathFor } from './utils/navigation';
 import POS from './components/POS';
 import Dashboard from './components/Dashboard';
 import BlueprintViewer from './components/BlueprintViewer';
@@ -21,6 +22,8 @@ import DriverView from './components/DriverView';
 import RegistroRepartidor from './components/RegistroRepartidor';
 import Inventory from './components/Inventory';
 import Warehouses from './components/Warehouses';
+import PurchaseOrders from './components/PurchaseOrders';
+import Serials from './components/Serials';
 import StockCount from './components/StockCount';
 import SmartPurchases from './components/SmartPurchases';
 import CashRegisters from './components/CashRegisters';
@@ -54,6 +57,14 @@ const ProtectedApp = () => {
   const token = localStorage.getItem('nortex_token');
   if (!token) return <Navigate to="/login" replace />;
 
+  // Aterrizaje por rol (Fase A UX): el cajero empieza en el POS y el contador
+  // en Contabilidad — no en un dashboard que no es su pantalla de trabajo.
+  let homePath = '/app/dashboard';
+  try {
+    const role: string = JSON.parse(atob(token.split('.')[1])).role || '';
+    homePath = homePathFor(role);
+  } catch { /* token ilegible → dashboard */ }
+
   return (
     <Layout>
       <Routes>
@@ -71,6 +82,8 @@ const ProtectedApp = () => {
         <Route path="delivery" element={<DeliveryManager />} />
         <Route path="inventory" element={<Inventory />} />
         <Route path="warehouses" element={<Warehouses />} />
+        <Route path="purchase-orders" element={<PurchaseOrders />} />
+        <Route path="serials" element={<Serials />} />
         <Route path="inventory-count" element={<StockCount />} />
         {/* ── Rutas registradas para evitar redirección silenciosa ── */}
         <Route path="cash-registers" element={<CashRegisters />} />
@@ -82,7 +95,7 @@ const ProtectedApp = () => {
         <Route path="billing" element={<Billing />} />
         <Route path="team" element={<TeamManagement />} />
         <Route path="ayuda" element={<HelpCenter />} />
-        <Route path="*" element={<Navigate to="dashboard" replace />} />
+        <Route path="*" element={<Navigate to={homePath} replace />} />
       </Routes>
     </Layout>
   );
