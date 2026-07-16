@@ -327,6 +327,16 @@ export default function Inventory() {
     // Tutorial guiado: si entran con ?tour=inv (desde Ayuda o el checklist).
     useEffect(() => { maybeAutostartTour(); }, []);
 
+    // Alta rápida directa: si entran con ?quick=1 (botón "Agregar producto" del
+    // home Mi Negocio), se abre el modal de 3 campos sin pasos intermedios.
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('quick') === '1') {
+            setQuickAddSKU('');
+            setShowQuickAddModal(true);
+        }
+    }, []);
+
     // ==========================================
     // SCAN DETECTION
     // ==========================================
