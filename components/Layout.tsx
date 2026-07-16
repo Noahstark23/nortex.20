@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle, ChevronDown, SlidersHorizontal } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle, ChevronDown, SlidersHorizontal, Home } from 'lucide-react';
 import { PinPadClock } from './PinPadClock';
 import OnboardingHub from './OnboardingHub';
 import { buildNavigation, resolveUiMode, UI_MODE_KEY, type NavEntry, type UiMode } from '../utils/navigation';
@@ -12,7 +12,7 @@ const NAV_ICONS: Record<string, React.ComponentType<{ size?: number; className?:
   shoppingBag: ShoppingBag, pieChart: PieChart, fileText: FileText, users: Users,
   truck: Truck, briefcase: Briefcase, package: Package, clipboardList: ClipboardList,
   creditCard: CreditCard, userPlus: UserPlus, monitor: Monitor, barChart3: BarChart3,
-  shield: Shield, zap: Zap, bookOpen: BookOpen, userCircle: UserCircle,
+  shield: Shield, zap: Zap, bookOpen: BookOpen, userCircle: UserCircle, home: Home,
 };
 const navIcon = (key: string) => NAV_ICONS[key] ?? Package;
 
