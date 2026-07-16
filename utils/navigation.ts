@@ -74,6 +74,8 @@ interface CatalogEntry extends NavEntry {
 }
 
 const RETAIL_CATALOG: CatalogEntry[] = [
+    // ── INICIO ── (Fase B: home de acciones para quien administra)
+    { path: '/app/inicio', label: 'Mi Negocio', shortLabel: 'Inicio', group: 'Inicio', iconKey: 'home', roles: GATE_MANAGER },
     // ── VENTAS ──
     { path: '/app/pos', label: 'Vender', shortLabel: 'Vender', group: 'Ventas', iconKey: 'shoppingCart' },
     { path: '/app/cash-registers', label: 'Caja y Arqueos', shortLabel: 'Caja', group: 'Ventas', iconKey: 'monitor', roles: GATE_MANAGER },
@@ -107,15 +109,17 @@ const RETAIL_CATALOG: CatalogEntry[] = [
 // ── Sets simples por giro (rutas; el orden ES el orden del menú) ─────────────
 // La 1.ª posición es la acción principal del día; en móvil se ven las primeras 4.
 
+// "Mi Negocio" (/app/inicio) va primero para roles administradores; para roles
+// sin acceso (p. ej. CASHIER) simplemente se filtra por el gating del catálogo.
 const SIMPLE_SETS: Record<string, string[]> = {
-    PULPERIA: ['/app/pos', '/app/receivables', '/app/inventory', '/app/dashboard'],
-    FERRETERIA: ['/app/pos', '/app/receivables', '/app/inventory', '/app/quotations', '/app/purchases', '/app/dashboard'],
-    FARMACIA: ['/app/pos', '/app/inventory', '/app/purchases', '/app/receivables', '/app/dashboard'],
-    DISTRIBUIDORA: ['/app/pos', '/app/quotations', '/app/inventory', '/app/purchases', '/app/receivables', '/app/delivery', '/app/dashboard'],
+    PULPERIA: ['/app/inicio', '/app/pos', '/app/receivables', '/app/inventory', '/app/dashboard'],
+    FERRETERIA: ['/app/inicio', '/app/pos', '/app/receivables', '/app/inventory', '/app/quotations', '/app/purchases', '/app/dashboard'],
+    FARMACIA: ['/app/inicio', '/app/pos', '/app/inventory', '/app/purchases', '/app/receivables', '/app/dashboard'],
+    DISTRIBUIDORA: ['/app/inicio', '/app/pos', '/app/quotations', '/app/inventory', '/app/purchases', '/app/receivables', '/app/delivery', '/app/dashboard'],
 };
 
 /** Set simple por defecto para giros sin set propio (RETAIL, BOUTIQUE, MISCELANEA…). */
-const SIMPLE_DEFAULT: string[] = ['/app/pos', '/app/receivables', '/app/inventory', '/app/purchases', '/app/dashboard'];
+const SIMPLE_DEFAULT: string[] = ['/app/inicio', '/app/pos', '/app/receivables', '/app/inventory', '/app/purchases', '/app/dashboard'];
 
 // ── API ──────────────────────────────────────────────────────────────────────
 
@@ -142,7 +146,7 @@ export function buildNavigation(ctx: NavContext): Navigation {
     }
 
     const all = retailItemsForRole(role);
-    const homePath = homePathFor(role);
+    const homePath = homePathFor(role, simple ? 'simple' : 'full');
 
     if (!simple) {
         return { primary: all, more: [], homePath };
@@ -159,10 +163,15 @@ export function buildNavigation(ctx: NavContext): Navigation {
     return { primary, more, homePath };
 }
 
-/** Ruta de aterrizaje al entrar a /app: cada rol empieza en SU pantalla. */
-export function homePathFor(role: string): string {
+/**
+ * Ruta de aterrizaje al entrar a /app: cada rol empieza en SU pantalla.
+ * En modo simple, quien administra aterriza en "Mi Negocio" (/app/inicio);
+ * en modo completo se conserva el dashboard de siempre (sin cambio de conducta).
+ */
+export function homePathFor(role: string, uiMode: UiMode = 'full'): string {
     if (role === 'CASHIER') return '/app/pos';
     if (role === 'ACCOUNTANT') return '/app/accounting';
+    if (uiMode === 'simple' && GATE_MANAGER.includes(role)) return '/app/inicio';
     return '/app/dashboard';
 }
 

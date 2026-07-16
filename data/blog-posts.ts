@@ -55,7 +55,7 @@ export const blogPosts: BlogPost[] = [
         relatedSlugs: ['como-calcular-inss-nicaragua', 'como-calcular-aguinaldo-nicaragua', 'prestaciones-laborales-nicaragua-guia'],
         faq: [
             { q: '¿Cuánto se descuenta de INSS laboral en Nicaragua?', a: 'Al trabajador se le retiene el 7% de su salario bruto en concepto de INSS laboral. Ese monto lo descontás de la planilla y lo enterás al INSS junto con el aporte patronal.' },
-            { q: '¿Qué aporta el patrono además del salario?', a: 'Sobre el salario bruto el empleador aporta INSS patronal (21.5%) e INATEC (2%). Por eso el costo real de un trabajador es mayor que su salario base. Confirmá la tasa patronal vigente con el INSS, ya que puede variar según el tamaño de la empresa.' },
+            { q: '¿Qué aporta el patrono además del salario?', a: 'Sobre el salario bruto el empleador aporta INSS patronal (21.5% si tiene menos de 50 trabajadores; 22.5% si tiene 50 o más) e INATEC (2%). Por eso el costo real de un trabajador es mayor que su salario base.' },
             { q: '¿El aguinaldo paga INSS o IR?', a: 'El décimo tercer mes (aguinaldo) está exento de IR y no genera cotización al INSS cuando equivale a un mes de salario o menos, según el Código del Trabajo. Confirmá casos especiales con tu contador.' },
         ],
         content: `
@@ -66,7 +66,7 @@ Calcular bien la nómina es una de las obligaciones más importantes de cualquie
 El salario bruto de un trabajador incluye:
 
 - Salario base acordado en el contrato
-- Horas extra (50% adicional en días hábiles; 100% en domingos y feriados)
+- Horas extra (se pagan al doble: 100% de recargo, Art. 62 de la Ley 185)
 - Comisiones e incentivos, si aplican
 
 El salario bruto es la base sobre la que se calculan las cotizaciones y, en parte, los impuestos.
@@ -95,7 +95,7 @@ La base del IR es el salario menos el INSS laboral. Si tu sistema de nómina lo 
 
 Además del salario, el empleador paga sobre el salario bruto:
 
-- **INSS patronal: 21.5%** (confirmá la tasa vigente con el INSS según el tamaño de tu empresa)
+- **INSS patronal: 21.5%** para empleadores con menos de 50 trabajadores (**22.5%** con 50 o más)
 - **INATEC: 2%**
 
 **Ejemplo para un salario de C$15,000:**
@@ -113,8 +113,8 @@ Ese costo total es el número que realmente debés presupuestar por cada emplead
 
 El Código del Trabajo obliga a reconocer:
 
-- **Vacaciones:** 15 días de descanso por año trabajado (se acumulan 1.25 días por mes). Valor = salario diario × 15.
-- **Décimo tercer mes (aguinaldo):** equivale a un mes de salario por año completo; se acumula 1/12 por mes. Se paga en la primera quincena de diciembre.
+- **Vacaciones:** 15 días de descanso por cada 6 meses de trabajo continuo (Art. 76) — se acumulan 2.5 días por mes, 30 días al año.
+- **Décimo tercer mes (aguinaldo):** equivale a un mes de salario por año completo; se acumula 1/12 por mes. Se paga en los primeros diez días de diciembre (Art. 93).
 - **Indemnización por antigüedad:** según el Art. 45, hasta un mes de salario por cada uno de los primeros tres años y veinte días por año a partir del cuarto, con un tope. Confirmá el cálculo exacto con tu contador.
 
 ## 5. Ejemplo integral mensual
@@ -500,8 +500,8 @@ Estés en Cuota Fija o en régimen general, Nortex ordena tus ventas, compras e 
         readTime: '9 min',
         relatedSlugs: ['como-calcular-aguinaldo-nicaragua', 'como-calcular-indemnizacion-laboral-nicaragua', 'como-calcular-nomina-nicaragua-2026'],
         faq: [
-            { q: '¿Cuántos días de vacaciones corresponden por ley?', a: 'El Código del Trabajo reconoce 15 días de descanso con goce de salario por cada año trabajado, que se acumulan a razón de 1.25 días por mes.' },
-            { q: '¿El aguinaldo es obligatorio?', a: 'Sí. El décimo tercer mes equivale a un mes de salario por año trabajado (proporcional si es menos) y se paga en la primera quincena de diciembre. Es un derecho irrenunciable.' },
+            { q: '¿Cuántos días de vacaciones corresponden por ley?', a: 'El Código del Trabajo (Art. 76) reconoce 15 días de descanso con goce de salario por cada 6 meses de trabajo continuo — es decir, 2.5 días por mes, 30 días al año.' },
+            { q: '¿El aguinaldo es obligatorio?', a: 'Sí. El décimo tercer mes equivale a un mes de salario por año trabajado (proporcional si es menos) y se paga en los primeros diez días de diciembre (Art. 93). Es un derecho irrenunciable.' },
             { q: '¿Qué prestaciones se pagan al terminar el contrato?', a: 'Al finalizar la relación se liquidan las vacaciones y el aguinaldo proporcionales no pagados, y según la causa de terminación, la indemnización por antigüedad del Art. 45. Confirmá el cálculo con tu contador.' },
         ],
         content: `
@@ -518,13 +518,13 @@ Todo trabajador con relación laboral tiene derecho, como mínimo, a:
 
 ## Vacaciones
 
-Corresponden **15 días** de descanso con goce de salario por cada año trabajado, acumulables a razón de **1.25 días por mes**. Si el trabajador sale antes del año, se le pagan las vacaciones proporcionales acumuladas.
+Corresponden **15 días** de descanso con goce de salario por cada **6 meses** de trabajo continuo (Art. 76) — es decir, **2.5 días por mes**, 30 días al año. Si el trabajador sale antes, se le pagan las vacaciones proporcionales acumuladas.
 
 > Valor de un día de vacaciones = salario mensual ÷ 30.
 
 ## Décimo tercer mes (aguinaldo)
 
-Equivale a **un mes de salario por año** trabajado, proporcional si es menos. Se paga en la **primera quincena de diciembre** y está exento de IR e INSS cuando equivale a un mes o menos. Te lo explicamos paso a paso en la [guía del aguinaldo](/blog/como-calcular-aguinaldo-nicaragua).
+Equivale a **un mes de salario por año** trabajado, proporcional si es menos. Se paga en los **primeros diez días de diciembre** (Art. 93) y está exento de IR e INSS cuando equivale a un mes o menos. Te lo explicamos paso a paso en la [guía del aguinaldo](/blog/como-calcular-aguinaldo-nicaragua).
 
 ## Indemnización por antigüedad (Art. 45)
 
@@ -532,9 +532,9 @@ Cuando termina la relación por ciertas causas, corresponde indemnización: como
 
 ## Horas extra, séptimo día y feriados
 
-- **Horas extra:** se pagan con 50% de recargo en días hábiles y 100% en días de descanso y feriados.
+- **Horas extra:** se pagan al doble de la hora ordinaria — 100% de recargo (Art. 62).
 - **Séptimo día:** el descanso semanal es remunerado.
-- **Feriados nacionales:** trabajarlos se paga con recargo.
+- **Feriados nacionales:** son de descanso obligatorio con goce de salario; si se trabajan, se pagan con recargo adicional (Art. 68).
 
 ## Cuánto cuesta realmente un trabajador
 
@@ -542,9 +542,9 @@ El salario base es solo una parte. Sumá INSS patronal, INATEC y la provisión d
 
 | Concepto | Cómo se acumula |
 | --- | --- |
-| Vacaciones | 1.25 días por mes |
+| Vacaciones | 2.5 días por mes (Art. 76) |
 | Aguinaldo | 1/12 de salario por mes |
-| INSS patronal | 21.5% del salario (confirmar con INSS) |
+| INSS patronal | 21.5% del salario (22.5% con 50+ trabajadores) |
 | INATEC | 2% del salario |
 
 ## Nortex calcula las prestaciones por vos
@@ -566,7 +566,7 @@ Nortex acumula vacaciones y aguinaldo mes a mes, calcula horas extra y arma la l
         relatedSlugs: ['como-calcular-nomina-nicaragua-2026', 'como-calcular-aguinaldo-nicaragua'],
         faq: [
             { q: '¿Cuánto es el INSS laboral?', a: 'El INSS laboral es el 7% del salario bruto y se le descuenta directamente al trabajador en la planilla.' },
-            { q: '¿Cuánto aporta el patrono al INSS?', a: 'El INSS patronal ronda el 21.5% del salario bruto, pero puede variar según el tamaño de la empresa y la normativa vigente. Confirmá la tasa que te aplica con el INSS.' },
+            { q: '¿Cuánto aporta el patrono al INSS?', a: 'El INSS patronal es el 21.5% del salario bruto para empleadores con menos de 50 trabajadores, y 22.5% para los de 50 o más, según la reforma de la Ley de Seguridad Social.' },
         ],
         content: `
 El INSS es uno de los descuentos y aportes obligatorios de toda planilla en Nicaragua. Calcularlo bien evita diferencias y multas. Acá te lo explicamos simple.
@@ -576,7 +576,7 @@ El INSS es uno de los descuentos y aportes obligatorios de toda planilla en Nica
 El INSS tiene dos componentes que se calculan sobre el **salario bruto**:
 
 - **INSS laboral (7%):** se le **descuenta al trabajador**.
-- **INSS patronal (21.5%):** lo **paga la empresa** además del salario (confirmá la tasa vigente según el tamaño de tu empresa con el INSS).
+- **INSS patronal:** lo **paga la empresa** además del salario — **21.5%** con menos de 50 trabajadores, **22.5%** con 50 o más.
 
 ## Ejemplo
 
@@ -639,7 +639,7 @@ Salario de C$15,000, trabajó 7 meses:
 
 ## ¿Cuándo se paga?
 
-Se paga en la **primera quincena de diciembre**. Si la relación termina antes, se liquida la parte proporcional acumulada.
+Se paga en los **primeros diez días de diciembre** (Art. 93). Si la relación termina antes, se liquida la parte proporcional acumulada.
 
 ## ¿Paga impuestos?
 
@@ -1919,7 +1919,7 @@ En Cuota Fija, Nortex te ordena ventas e inventario. En régimen general, ademá
     {
         slug: 'como-calcular-horas-extras-nicaragua',
         title: 'Cómo calcular las horas extras en Nicaragua (con ejemplos)',
-        description: 'Recargos de las horas extras según el Código del Trabajo de Nicaragua: 50% en días hábiles, 100% en descanso y feriados. Fórmula y ejemplos.',
+        description: 'Las horas extras en Nicaragua se pagan al doble (100% de recargo, Art. 62 Ley 185). Fórmula, límites legales y ejemplos paso a paso.',
         keyword: 'cómo calcular horas extras Nicaragua',
         cluster: 'Nómina y Planillas',
         category: 'Recursos Humanos',
@@ -1927,7 +1927,8 @@ En Cuota Fija, Nortex te ordena ventas e inventario. En régimen general, ademá
         readTime: '5 min',
         relatedSlugs: ['como-calcular-nomina-nicaragua-2026', 'como-calcular-inss-nicaragua'],
         faq: [
-            { q: '¿Cuánto se paga la hora extra en Nicaragua?', a: 'La hora extra en día hábil se paga con un 50% de recargo sobre la hora ordinaria (tiempo y medio). En días de descanso y feriados, el recargo es del 100% (doble).' },
+            { q: '¿Cuánto se paga la hora extra en Nicaragua?', a: 'Toda hora extra se paga al doble de la hora ordinaria: un 100% de recargo, según el Art. 62 del Código del Trabajo. Aplica también a las horas trabajadas en el día de descanso o compensatorio.' },
+            { q: '¿Cuántas horas extras se pueden trabajar por ley?', a: 'El Art. 58 del Código del Trabajo limita la jornada extraordinaria a un máximo de 3 horas diarias y 9 semanales. No puede usarse como esquema permanente.' },
             { q: '¿Las horas extras pagan INSS e IR?', a: 'Sí: forman parte del salario bruto del período, así que entran en la base del INSS laboral y del IR salarial como cualquier otro ingreso ordinario.' },
         ],
         content: `
@@ -1939,30 +1940,37 @@ Las horas extras mal pagadas son una fuente clásica de reclamos laborales — y
 
 Para un salario de C$12,000: la hora ordinaria vale 12,000 ÷ 240 = **C$50**.
 
-## Los recargos que manda la ley
+## El recargo que manda la ley: 100%
 
-Según el Código del Trabajo (Ley 185):
+Según el **Art. 62** del Código del Trabajo (Ley 185), las horas extraordinarias — y las trabajadas en el día de descanso o compensatorio — se pagan con **un cien por ciento más** que la hora ordinaria:
 
-| Cuándo se trabaja la hora extra | Recargo | Valor de la hora |
-| --- | --- | --- |
-| Día hábil | 50% | Hora ordinaria × 1.5 |
-| Día de descanso o feriado | 100% | Hora ordinaria × 2 |
+> Hora extra = hora ordinaria × 2.
+
+No existe la "hora extra al 50%" en Nicaragua: ese esquema es de otros países. Acá toda hora extra vale doble.
+
+## No confundir con el feriado trabajado
+
+El **feriado nacional** es descanso obligatorio **con goce de salario**. Si el trabajador labora un feriado, recibe además el recargo correspondiente (Art. 68) — es un concepto distinto de la hora extra de un día normal, y se calcula sobre el día, no solo la hora.
 
 ## Ejemplo completo
 
-Salario C$12,000 (hora = C$50). En el mes trabajó 6 horas extras en días hábiles y 4 en domingo:
+Salario C$12,000 (hora ordinaria = C$50). En el mes trabajó 6 horas extras en días hábiles y 4 en su día de descanso:
 
-1. Extras hábiles: 6 × 50 × 1.5 = **C$450**
-2. Extras domingo: 4 × 50 × 2 = **C$400**
-3. Total extras del mes: **C$850**
+1. Extras en días hábiles: 6 × 50 × 2 = **C$600**
+2. Extras en día de descanso: 4 × 50 × 2 = **C$400**
+3. Total extras del mes: **C$1,000**
 
 Ese monto se suma al salario bruto y entra en la base del [INSS](/blog/como-calcular-inss-nicaragua) y del IR salarial.
+
+## Los límites legales
+
+El **Art. 58** limita la jornada extraordinaria a **3 horas diarias y 9 semanales** como máximo. Las extras son para picos de trabajo, no un esquema permanente.
 
 ## Reglas prácticas que evitan reclamos
 
 - Registrá las horas extras **por día y por trabajador**, autorizadas por escrito.
 - Las extras se pagan en el mismo período en que se trabajaron.
-- La jornada extraordinaria tiene límites legales: no la uses como esquema permanente. Confirmá los topes vigentes con un asesor laboral.
+- Respetá los topes del Art. 58: excederlos sistemáticamente es una infracción laboral.
 
 ## Nortex calcula las extras con su recargo
 
@@ -2039,7 +2047,7 @@ Nortex anualiza, aplica la tabla por tramos y ajusta cuando el salario varía. L
     {
         slug: 'como-calcular-vacaciones-nicaragua',
         title: 'Cómo calcular las vacaciones en Nicaragua (descansadas o pagadas)',
-        description: 'Cálculo de vacaciones según el Código del Trabajo de Nicaragua: 15 días por año, 1.25 por mes, con ejemplos de goce y de pago en liquidación.',
+        description: 'Cálculo de vacaciones según el Art. 76 de la Ley 185: 15 días por semestre (2.5 por mes), con ejemplos de goce y de pago en liquidación.',
         keyword: 'cómo calcular vacaciones Nicaragua',
         cluster: 'Recursos Humanos',
         category: 'Recursos Humanos',
@@ -2047,7 +2055,7 @@ Nortex anualiza, aplica la tabla por tramos y ajusta cuando el salario varía. L
         readTime: '5 min',
         relatedSlugs: ['prestaciones-laborales-nicaragua-guia', 'como-calcular-indemnizacion-laboral-nicaragua', 'como-calcular-nomina-nicaragua-2026'],
         faq: [
-            { q: '¿Cuántos días de vacaciones se acumulan por mes?', a: 'Se acumulan 1.25 días por mes trabajado, lo que equivale a 15 días por año completo, con goce de salario.' },
+            { q: '¿Cuántos días de vacaciones se acumulan por mes?', a: 'Se acumulan 2.5 días por mes trabajado: el Art. 76 del Código del Trabajo reconoce 15 días de descanso remunerado por cada 6 meses de trabajo continuo (30 días al año).' },
             { q: '¿Las vacaciones se pueden pagar en lugar de descansarse?', a: 'La regla general del Código del Trabajo es que las vacaciones se descansan. El pago en efectivo procede en la liquidación final (las acumuladas no gozadas). Evitá hacer del pago la costumbre: confirmá los casos válidos con un asesor laboral.' },
         ],
         content: `
@@ -2055,9 +2063,9 @@ Las vacaciones son de las prestaciones más simples de calcular — y de las má
 
 ## La regla
 
-El Código del Trabajo reconoce **15 días** de descanso con goce de salario por año trabajado:
+El Código del Trabajo (**Art. 76**) reconoce **15 días** de descanso continuo y remunerado por cada **6 meses** de trabajo ininterrumpido — 30 días al año:
 
-> Acumulación = 1.25 días por mes trabajado.
+> Acumulación = 2.5 días por mes trabajado.
 
 ## Cuánto vale un día de vacaciones
 
@@ -2069,15 +2077,15 @@ Para C$15,000 de salario: cada día vale **C$500**.
 
 Trabajador con 8 meses de antigüedad quiere salir de vacaciones:
 
-- Acumulado: 8 × 1.25 = **10 días** disponibles.
-- Sale 7 días: se le pagan con normalidad (su salario no se interrumpe) y le quedan 3 acumulados.
+- Acumulado: 8 × 2.5 = **20 días** disponibles.
+- Sale 7 días: se le pagan con normalidad (su salario no se interrumpe) y le quedan 13 acumulados.
 
 ## Ejemplo 2: liquidación final
 
 Salario C$15,000, sale del trabajo con 5 meses sin haber gozado vacaciones:
 
-- Acumulado: 5 × 1.25 = 6.25 días.
-- Pago: 6.25 × 500 = **C$3,125** en la liquidación.
+- Acumulado: 5 × 2.5 = 12.5 días.
+- Pago: 12.5 × 500 = **C$6,250** en la liquidación.
 
 ## Control que evita problemas
 
@@ -2089,7 +2097,7 @@ Las vacaciones conviven con el resto de [prestaciones laborales](/blog/prestacio
 
 ## Nortex lleva el saldo de cada trabajador
 
-Nortex acumula 1.25 días por mes automáticamente, descuenta los días gozados y valora el saldo para la liquidación. Sin cuaderno, sin discusiones.
+Nortex acumula 2.5 días por mes automáticamente, descuenta los días gozados y valora el saldo para la liquidación. Sin cuaderno, sin discusiones.
 
 [Probá Nortex gratis 30 días →](/register)
 `,
