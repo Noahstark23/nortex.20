@@ -19,6 +19,7 @@ import { ShoppingCart, Wallet, PackagePlus, LayoutGrid, ArrowRight } from 'lucid
 interface DayNumbers {
     vendiHoy: number | null;
     meDeben: number | null;
+    enCaja: number | null;
     gananciaHoy: number | null;
 }
 
@@ -29,7 +30,7 @@ const formatCordobas = (n: number | null): string => {
 
 const MiNegocio: React.FC = () => {
     const navigate = useNavigate();
-    const [nums, setNums] = useState<DayNumbers>({ vendiHoy: null, meDeben: null, gananciaHoy: null });
+    const [nums, setNums] = useState<DayNumbers>({ vendiHoy: null, meDeben: null, enCaja: null, gananciaHoy: null });
     const [businessName, setBusinessName] = useState('');
 
     useEffect(() => {
@@ -61,6 +62,23 @@ const MiNegocio: React.FC = () => {
 
         (async () => {
             try {
+                // "En caja": suma del efectivo estimado de los turnos abiertos.
+                // Mismo gate de rol que esta pantalla (OWNER/ADMIN/MANAGER); si
+                // igual devuelve 403 o falla, el número queda en "—".
+                const res = await fetch('/api/shifts/monitor', { headers });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data.activeShifts)) {
+                        const total = data.activeShifts.reduce(
+                            (sum: number, s: { estimatedPhysicalCash?: number }) => sum + Number(s.estimatedPhysicalCash ?? 0), 0);
+                        setNums(prev => ({ ...prev, enCaja: total }));
+                    }
+                }
+            } catch { /* sin red — se queda en "—" */ }
+        })();
+
+        (async () => {
+            try {
                 const res = await fetch('/api/collections/worklist?dueSoonDays=7', { headers });
                 if (res.ok) {
                     const data = await res.json();
@@ -77,7 +95,7 @@ const MiNegocio: React.FC = () => {
     const acciones = [
         { label: 'Vender', desc: 'Cobrar en caja', path: '/app/pos', icon: ShoppingCart, principal: true },
         { label: 'Cobrar fiado', desc: 'Quién te debe', path: '/app/receivables', icon: Wallet, principal: false },
-        { label: 'Agregar producto', desc: 'Meter mercadería', path: '/app/inventory', icon: PackagePlus, principal: false },
+        { label: 'Agregar producto', desc: 'Meter mercadería', path: '/app/inventory?quick=1', icon: PackagePlus, principal: false },
         { label: 'Mi plata', desc: 'Cómo va el negocio', path: '/app/dashboard', icon: LayoutGrid, principal: false },
     ];
 
@@ -93,7 +111,7 @@ const MiNegocio: React.FC = () => {
                 </header>
 
                 {/* El día en 3 números */}
-                <section aria-label="Resumen del día" className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-8">
+                <section aria-label="Resumen del día" className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
                     <div className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5">
                         <p className="text-slate-400 text-sm font-medium">Hoy vendí</p>
                         <p className="text-2xl font-extrabold text-emerald-400 mt-1">{formatCordobas(nums.vendiHoy)}</p>
@@ -105,6 +123,10 @@ const MiNegocio: React.FC = () => {
                         <p className="text-slate-400 text-sm font-medium">Me deben (fiado)</p>
                         <p className="text-2xl font-extrabold text-amber-400 mt-1">{formatCordobas(nums.meDeben)}</p>
                     </button>
+                    <div className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5">
+                        <p className="text-slate-400 text-sm font-medium">En caja</p>
+                        <p className="text-2xl font-extrabold text-sky-400 mt-1">{formatCordobas(nums.enCaja)}</p>
+                    </div>
                     <div className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5">
                         <p className="text-slate-400 text-sm font-medium">Ganancia de hoy</p>
                         <p className="text-2xl font-extrabold text-white mt-1">{formatCordobas(nums.gananciaHoy)}</p>
