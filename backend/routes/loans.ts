@@ -12,6 +12,13 @@ import {
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
+// ── Política de roles (Fase 0 blindaje) ──────────────────────────────────────
+// Solo el DUEÑO gestiona dinero y cartera: originar, refinanciar, multar,
+// asignar cobrador, bloquear cliente/límite y recibir en bóveda.
+// El COLLECTOR (motorizado) SOLO puede: registrar abonos y gastos de ruta.
+// checkRole deja pasar siempre a OWNER/ADMIN/SUPER_ADMIN; a COLLECTOR lo bloquea.
+const LENDER_MANAGER = checkRole(['OWNER', 'ADMIN']);
+
 const router = express.Router();
 const prisma = new PrismaClient();
 
@@ -28,7 +35,7 @@ const CreateCollectorSchema = z.object({
 });
 
 // 1. ORIGINAR UN CRÉDITO (Desembolso) — Motor Dual
-router.post('/', authenticate, validate(OriginateLoanSchema), async (req: any, res: any) => {
+router.post('/', authenticate, LENDER_MANAGER, validate(OriginateLoanSchema), async (req: any, res: any) => {
     try {
         const { clientName, clientPhone, clientAddress, principalAmount, interestRate, installments, frequency, type } = req.body;
         const lenderId = req.tenantId;
@@ -388,7 +395,7 @@ router.get('/clients', authenticate, async (req: any, res: any) => {
 });
 
 // 8. ACTUALIZAR CLIENTE (Bloquear / Cambiar Límite)
-router.patch('/clients/:clientId', authenticate, validate(UpdateClientSchema), async (req: any, res: any) => {
+router.patch('/clients/:clientId', authenticate, LENDER_MANAGER, validate(UpdateClientSchema), async (req: any, res: any) => {
     try {
         const { clientId } = req.params;
         const { isBlocked, creditLimit } = req.body;
@@ -466,7 +473,7 @@ router.get('/route-expenses', authenticate, async (req: any, res: any) => {
 });
 
 // 6. REFINANCIAR PRÉSTAMO (El botón de oro del Jefe)
-router.post('/:id/refinance', authenticate, validate(RefinanceLoanSchema), async (req: any, res: any) => {
+router.post('/:id/refinance', authenticate, LENDER_MANAGER, validate(RefinanceLoanSchema), async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { newPrincipal, interestRate, installments, frequency, type } = req.body;
@@ -573,7 +580,7 @@ router.post('/:id/refinance', authenticate, validate(RefinanceLoanSchema), async
 });
 
 // APLICAR PENALIDAD A UN PRÉSTAMO
-router.post('/:id/penalty', authenticate, validate(PenaltySchema), async (req: any, res: any) => {
+router.post('/:id/penalty', authenticate, LENDER_MANAGER, validate(PenaltySchema), async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { penaltyAmount, reason } = req.body;
@@ -664,7 +671,7 @@ router.post('/collectors', authenticate, checkRole(['OWNER', 'ADMIN']), validate
 });
 
 // 9. ASIGNAR COBRADOR A UN PRÉSTAMO (Cobranza A3 — botón del dashboard que hoy falla)
-router.patch('/:id/assign', authenticate, async (req: any, res: any) => {
+router.patch('/:id/assign', authenticate, LENDER_MANAGER, async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { assignedToId } = req.body;
@@ -694,7 +701,7 @@ router.patch('/:id/assign', authenticate, async (req: any, res: any) => {
 });
 
 // 10. DEPÓSITO A BÓVEDA (Cobranza A3 — entrega de efectivo del cobrador; botón que hoy falla)
-router.post('/vault/deposit', authenticate, validate(VaultDepositSchema), async (req: any, res: any) => {
+router.post('/vault/deposit', authenticate, LENDER_MANAGER, validate(VaultDepositSchema), async (req: any, res: any) => {
     try {
         const { collectorId, amount, notes } = req.body;
         const lenderId = req.tenantId;
