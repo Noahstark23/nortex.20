@@ -670,6 +670,23 @@ router.post('/collectors', authenticate, checkRole(['OWNER', 'ADMIN']), validate
     }
 });
 
+// 9.B LISTAR COBRADORES (Fase 2 H5 — el dropdown de asignación lo llamaba y no existía)
+router.get('/collectors', authenticate, LENDER_MANAGER, async (req: any, res: any) => {
+    try {
+        const lenderId = req.tenantId;
+        // Solo usuarios COLLECTOR de este prestamista (aislamiento por tenant).
+        const collectors = await prisma.user.findMany({
+            where: { tenantId: lenderId, role: 'COLLECTOR' },
+            select: { id: true, name: true },
+            orderBy: { name: 'asc' },
+        });
+        res.json({ success: true, data: collectors });
+    } catch (error) {
+        console.error('Error listando cobradores:', error);
+        res.status(500).json({ success: false, error: 'Error obteniendo los cobradores' });
+    }
+});
+
 // 9. ASIGNAR COBRADOR A UN PRÉSTAMO (Cobranza A3 — botón del dashboard que hoy falla)
 router.patch('/:id/assign', authenticate, LENDER_MANAGER, async (req: any, res: any) => {
     try {

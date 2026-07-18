@@ -13,6 +13,9 @@ const LenderDashboard: React.FC = () => {
     const [collectors, setCollectors] = useState<any[]>([]);
     const [showPenaltyModal, setShowPenaltyModal] = useState(false);
     const [penaltyData, setPenaltyData] = useState({ loanId: '', clientName: '', amount: '', reason: 'Multa por atraso' });
+    // Abono manual del dueño (pago en el local, no en ruta) — Fase 2 H6.
+    const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [paymentData, setPaymentData] = useState({ loanId: '', clientName: '', balance: 0, amount: '' });
     const [showRefiModal, setShowRefiModal] = useState(false);
     const [refiLoan, setRefiLoan] = useState<any>(null);
     const [refiData, setRefiData] = useState({ newPrincipal: '', interestRate: '', installments: '', frequency: 'DAILY', type: 'INFORMAL_FLAT' });
@@ -222,6 +225,33 @@ const LenderDashboard: React.FC = () => {
             }
         } catch (error) {
             alert("Error de conexión al aplicar multa.");
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    // Abono manual del dueño: usa el MISMO endpoint atómico que el cobrador
+    // (POST /:id/repayments), con su guarda anti-sobrepago y su AuditLog.
+    const handleRegisterPayment = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setSubmitting(true);
+        try {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/${paymentData.loanId}/repayments`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
+                body: JSON.stringify({ amountPaid: paymentData.amount, collectedBy: 'Caja (dueño)', notes: 'Abono registrado en el local' })
+            });
+            const data = await response.json();
+            if (data.success) {
+                setShowPaymentModal(false);
+                setPaymentData({ loanId: '', clientName: '', balance: 0, amount: '' });
+                alert(`¡Abono registrado! Se aplicó $${paymentData.amount} al crédito.`);
+                fetchPortfolio();
+            } else {
+                alert('Error registrando el abono: ' + data.error);
+            }
+        } catch (error) {
+            alert('Error de conexión al registrar el abono.');
         } finally {
             setSubmitting(false);
         }
@@ -485,6 +515,17 @@ const LenderDashboard: React.FC = () => {
                                                                             Saldo: <span className="font-bold text-white text-lg">${Number(loan.balanceRemaining).toFixed(2)}</span>
                                                                         </div>
                                                                         <div className="flex gap-3">
+                                                                            <button
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    setPaymentData({ loanId: loan.id, clientName: loan.clientName, balance: Number(loan.balanceRemaining), amount: '' });
+                                                                                    setShowPaymentModal(true);
+                                                                                }}
+                                                                                className="px-4 py-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-lg font-bold text-xs hover:bg-emerald-500 hover:text-white transition-colors flex items-center gap-2"
+                                                                            >
+                                                                                <Banknote size={14} />
+                                                                                REGISTRAR ABONO
+                                                                            </button>
                                                                             <button
                                                                                 onClick={(e) => {
                                                                                     e.stopPropagation();
@@ -1065,6 +1106,50 @@ const LenderDashboard: React.FC = () => {
                                 className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl mt-2 transition-all disabled:opacity-50"
                             >
                                 {submitting ? 'CARGANDO...' : 'CARGAR MULTA AL SALDO'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal de Abono Manual (Fase 2 H6) — pago en el local */}
+            {showPaymentModal && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-emerald-500/50 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl">
+                        <div className="p-6 border-b border-emerald-500/30 flex justify-between items-center bg-emerald-500/10">
+                            <div>
+                                <h2 className="text-xl font-bold text-emerald-400">Registrar Abono</h2>
+                                <p className="text-sm text-slate-300 mt-1">{paymentData.clientName}</p>
+                            </div>
+                            <button onClick={() => setShowPaymentModal(false)} className="text-emerald-400 hover:text-white transition-colors">
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <form onSubmit={handleRegisterPayment} className="p-6 space-y-4">
+                            <div className="flex justify-between text-sm bg-slate-800/50 p-3 rounded-lg">
+                                <span className="text-slate-400">Saldo pendiente:</span>
+                                <span className="text-white font-bold font-mono">${paymentData.balance.toFixed(2)}</span>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Monto del abono ($)</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    required
+                                    autoFocus
+                                    value={paymentData.amount}
+                                    onChange={(e) => setPaymentData({ ...paymentData, amount: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-emerald-400 outline-none font-mono text-lg"
+                                    placeholder="Ej: 30.00"
+                                />
+                                <p className="text-[11px] text-slate-500 mt-1">No puede exceder el saldo pendiente.</p>
+                            </div>
+                            <button
+                                type="submit"
+                                disabled={submitting || !paymentData.amount}
+                                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl mt-2 transition-all disabled:opacity-50"
+                            >
+                                {submitting ? 'REGISTRANDO...' : 'REGISTRAR ABONO'}
                             </button>
                         </form>
                     </div>
