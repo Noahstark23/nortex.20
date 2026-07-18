@@ -1659,6 +1659,12 @@ model Loan {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Índices (Fase 0 blindaje): la cartera filtra por lenderId y ordena por
+  // createdAt; el cobrador filtra por assignedToId; los reportes por estado.
+  @@index([lenderId, createdAt])
+  @@index([lenderId, status])
+  @@index([assignedToId])
 }
 
 // Cuota del plan de pago de un préstamo (Cobranza B2)
@@ -1690,6 +1696,10 @@ model Repayment {
 
   notes     String?  @db.Text
   createdAt DateTime @default(now())
+
+  // Índices (Fase 0 blindaje): la cartera trae los pagos de hoy por préstamo,
+  // filtrando por loanId + rango de paymentDate.
+  @@index([loanId, paymentDate])
 }
 
 model RouteExpense {

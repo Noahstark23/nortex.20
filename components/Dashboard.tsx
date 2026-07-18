@@ -4,12 +4,22 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { Loan, Tenant } from '../types';
 import { useNavigate } from 'react-router-dom';
 import LenderDashboard from './LenderMode/LenderDashboard';
+import MotorizadosPanel from './LenderMode/MotorizadosPanel';
 
 /** Lee el tipo de tenant del usuario guardado (LENDER = prestamista). */
 function getTenantType(): string {
   try {
     const u = localStorage.getItem('nortex_user');
     if (u) return JSON.parse(u)?.tenant?.type || '';
+  } catch { /* ignore */ }
+  return '';
+}
+
+/** Lee el rol del JWT (fuente autoritativa; el backend lo re-verifica). */
+function getUserRole(): string {
+  try {
+    const t = localStorage.getItem('nortex_token');
+    if (t) return JSON.parse(atob(t.split('.')[1]))?.role || '';
   } catch { /* ignore */ }
   return '';
 }
@@ -824,12 +834,18 @@ const RetailDashboard: React.FC = () => {
 };
 
 /**
- * Enrutador del dashboard: el prestamista (tenant LENDER) ve la cartera de
- * préstamos (LenderDashboard, antes huérfano); el resto, el dashboard retail.
+ * Enrutador del dashboard.
+ *  - Tenant LENDER + rol COLLECTOR (motorizado) → SOLO su pantalla de ruta de
+ *    cobro (MotorizadosPanel). Nunca ve capital, CRM ni bóveda del inversor
+ *    (Fase 0 blindaje H1). El backend además le niega esos endpoints (H2).
+ *  - Tenant LENDER (dueño/admin) → cartera de préstamos (LenderDashboard).
+ *  - Resto → dashboard retail.
  * Wrapper sin hooks → no rompe las Reglas de Hooks. [Cobranza A3]
  */
 const Dashboard: React.FC = () => {
-  if (getTenantType() === 'LENDER') return <LenderDashboard />;
+  if (getTenantType() === 'LENDER') {
+    return getUserRole() === 'COLLECTOR' ? <MotorizadosPanel /> : <LenderDashboard />;
+  }
   return <RetailDashboard />;
 };
 
