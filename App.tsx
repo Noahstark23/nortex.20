@@ -100,6 +100,12 @@ const ProtectedApp = () => {
         <Route path="accounting" element={<Contabilidad />} />
         <Route path="billing" element={<Billing />} />
         <Route path="team" element={<TeamManagement />} />
+        {/* Rutas del prestamista (Fase 2 H7): cada item del menú LENDER llega a
+            su tab real del panel (LenderDashboard vía <Dashboard/>), en vez de
+            caer en las pantallas de retail. */}
+        <Route path="cartera" element={<Dashboard />} />
+        <Route path="cobros" element={<Dashboard />} />
+        <Route path="cobradores" element={<Dashboard />} />
         <Route path="ayuda" element={<HelpCenter />} />
         <Route path="*" element={<Navigate to={homePath} replace />} />
       </Routes>
