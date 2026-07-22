@@ -41,6 +41,7 @@ import serialsRouter from './routes/serials';
 import warehousesRouter from './routes/warehouses';
 import stockTransfersRouter from './routes/stockTransfers';
 import syncRoutes from './routes/sync';
+import agentBankingRouter from './routes/agentBanking';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 import {
@@ -227,6 +228,7 @@ app.use('/api/warehouses', warehousesRouter); // Multi-bodega (Fase 2: fundació
 app.use('/api/stock-transfers', stockTransfersRouter); // Transferencias entre bodegas (Fase 3)
 app.use('/api/loans', loanRoutes);
 app.use('/api/sales/sync', syncRoutes);
+app.use('/api/agent-banking', agentBankingRouter); // Agente bancario (corresponsalía en caja)
 
 // Response time header (para monitoreo)
 app.use((req: any, res: any, next: any) => {
