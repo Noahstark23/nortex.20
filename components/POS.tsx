@@ -222,6 +222,8 @@ const POS: React.FC = () => {
     const [initialCash, setInitialCash] = useState('');
     const [employeePin, setEmployeePin] = useState('');
     const [declaredCash, setDeclaredCash] = useState('');
+    // Fase D: dólares contados al cierre (solo se manda si hay algo que declarar)
+    const [declaredCashUsd, setDeclaredCashUsd] = useState('');
     const [shiftReport, setShiftReport] = useState<{ expected: number, diff: number } | null>(null);
     const [shiftLoading, setShiftLoading] = useState(true);
 
@@ -272,7 +274,7 @@ const POS: React.FC = () => {
     // 🏦 Agente bancario (corresponsalía): el negocio es Agente Banpro/Rapibac/etc.
     const [showAgentModal, setShowAgentModal] = useState(false);
     const [agentAgreements, setAgentAgreements] = useState<any[]>([]);
-    const [agentData, setAgentData] = useState({ agreementId: '', operation: 'DEPOSITO', amount: '', commission: '', externalRef: '', customerRef: '' });
+    const [agentData, setAgentData] = useState({ agreementId: '', operation: 'DEPOSITO', amount: '', commission: '', externalRef: '', customerRef: '', currency: 'NIO', exchangeRate: localStorage.getItem('nortex_tc_usd') || '36.62' });
     const [agentLoading, setAgentLoading] = useState(false);
     const [newAgreementName, setNewAgreementName] = useState('');
     const [newAgreementKind, setNewAgreementKind] = useState('BANCO');
@@ -552,10 +554,12 @@ const POS: React.FC = () => {
 
     // Vista previa de la comisión pactada del convenio (el server recalcula
     // igual si no se manda — esto solo pre-llena el campo).
-    const previewAgentCommission = (agreementId: string, operation: string, amount: string): string => {
+    const previewAgentCommission = (agreementId: string, operation: string, amount: string, currency: string, exchangeRate: string): string => {
         const agreement = agentAgreements.find(a => a.id === agreementId);
         const entry = agreement?.commissionConfig?.[operation];
-        const monto = parseFloat(amount);
+        const tc = currency === 'USD' ? parseFloat(exchangeRate) : 1;
+        // La comisión del contrato está en C$ → se calcula sobre el equivalente.
+        const monto = parseFloat(amount) * (isFinite(tc) && tc > 0 ? tc : 1);
         if (!entry || !isFinite(monto) || monto <= 0) return '';
         const fija = isFinite(Number(entry.fija)) && Number(entry.fija) > 0 ? Number(entry.fija) : 0;
         const pct = isFinite(Number(entry.pct)) && Number(entry.pct) > 0 ? Number(entry.pct) : 0;
@@ -567,8 +571,8 @@ const POS: React.FC = () => {
         setAgentData(prev => {
             const next = { ...prev, ...patch };
             // Recalcular la comisión sugerida cuando cambia convenio/operación/monto.
-            if (patch.agreementId !== undefined || patch.operation !== undefined || patch.amount !== undefined) {
-                next.commission = previewAgentCommission(next.agreementId, next.operation, next.amount);
+            if (patch.agreementId !== undefined || patch.operation !== undefined || patch.amount !== undefined || patch.currency !== undefined || patch.exchangeRate !== undefined) {
+                next.commission = previewAgentCommission(next.agreementId, next.operation, next.amount, next.currency, next.exchangeRate);
             }
             return next;
         });
@@ -607,7 +611,8 @@ const POS: React.FC = () => {
                     agreementId: agentData.agreementId,
                     operation: agentData.operation,
                     amount: parseFloat(agentData.amount),
-                    currency: 'NIO',
+                    currency: agentData.currency,
+                    ...(agentData.currency === 'USD' ? { exchangeRate: parseFloat(agentData.exchangeRate) } : {}),
                     ...(agentData.commission !== '' ? { commission: parseFloat(agentData.commission) } : {}),
                     ...(agentData.externalRef.trim() ? { externalRef: agentData.externalRef.trim() } : {}),
                     ...(agentData.customerRef.trim() ? { customerRef: agentData.customerRef.trim() } : {}),
@@ -617,7 +622,8 @@ const POS: React.FC = () => {
             if (!res.ok || !data.success) throw new Error(data.error || 'Error registrando la operación');
 
             setShowAgentModal(false);
-            setAgentData({ agreementId: agentData.agreementId, operation: 'DEPOSITO', amount: '', commission: '', externalRef: '', customerRef: '' });
+            if (agentData.currency === 'USD') localStorage.setItem('nortex_tc_usd', agentData.exchangeRate);
+            setAgentData({ agreementId: agentData.agreementId, operation: 'DEPOSITO', amount: '', commission: '', externalRef: '', customerRef: '', currency: 'NIO', exchangeRate: agentData.exchangeRate });
             fetchCashBalance();
             fetchCashMovements();
             fetchAgentAgreements();
@@ -732,7 +738,11 @@ const POS: React.FC = () => {
             const res = await fetch('/api/shifts/close', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ shiftId: currentShift.id, declaredCash: parseFloat(declaredCash) })
+                body: JSON.stringify({
+                    shiftId: currentShift.id,
+                    declaredCash: parseFloat(declaredCash),
+                    ...(declaredCashUsd.trim() !== '' ? { declaredCashUsd: parseFloat(declaredCashUsd) } : {}),
+                })
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
@@ -1778,9 +1788,30 @@ const POS: React.FC = () => {
                                     </div>
                                 </div>
 
+                                {/* Moneda (Fase D: gaveta multi-moneda) */}
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Moneda</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => updateAgentData({ currency: 'NIO' })}
+                                            className={`text-sm px-3 py-2 rounded-lg border-2 font-bold transition-all ${agentData.currency === 'NIO' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                                        >
+                                            C$ Córdobas
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => updateAgentData({ currency: 'USD' })}
+                                            className={`text-sm px-3 py-2 rounded-lg border-2 font-bold transition-all ${agentData.currency === 'USD' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                                        >
+                                            US$ Dólares
+                                        </button>
+                                    </div>
+                                </div>
+
                                 {/* Monto */}
                                 <div>
-                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Monto (C$)</label>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Monto ({agentData.currency === 'USD' ? 'US$' : 'C$'})</label>
                                     <input
                                         type="text"
                                         inputMode="decimal"
@@ -1790,10 +1821,29 @@ const POS: React.FC = () => {
                                         className="w-full text-2xl font-bold text-center border-2 border-slate-300 rounded-xl p-4 focus:border-sky-500 outline-none text-slate-800 bg-slate-50 font-mono tabular-nums"
                                         required
                                     />
-                                    {agentOps.find(o => o.value === agentData.operation)?.dir === 'OUT' && cashBalance !== null && (
+                                    {agentOps.find(o => o.value === agentData.operation)?.dir === 'OUT' && cashBalance !== null && agentData.currency === 'NIO' && (
                                         <p className="text-xs text-slate-500 mt-1">Efectivo disponible en gaveta: <span className="font-bold text-slate-700">C${cashBalance.toFixed(2)}</span></p>
                                     )}
                                 </div>
+
+                                {/* Tipo de cambio (solo USD) */}
+                                {agentData.currency === 'USD' && (
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Tipo de cambio (C$ por US$)</label>
+                                        <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={agentData.exchangeRate}
+                                            onChange={e => updateAgentData({ exchangeRate: sanitizeDecimalInput(e.target.value) })}
+                                            placeholder="36.62"
+                                            className="w-full border-2 border-slate-200 rounded-lg px-4 py-3 text-sm focus:border-emerald-500 outline-none text-slate-700 font-mono"
+                                            required
+                                        />
+                                        {parseFloat(agentData.amount) > 0 && parseFloat(agentData.exchangeRate) > 0 && (
+                                            <p className="text-xs text-slate-500 mt-1">Equivale a <span className="font-bold text-slate-700">C${(parseFloat(agentData.amount) * parseFloat(agentData.exchangeRate)).toFixed(2)}</span> — así se asienta en tu contabilidad.</p>
+                                        )}
+                                    </div>
+                                )}
 
                                 {/* Comisión + Referencia */}
                                 <div className="grid grid-cols-2 gap-3">
@@ -2034,6 +2084,18 @@ const POS: React.FC = () => {
                                             value={declaredCash}
                                             onChange={e => setDeclaredCash(sanitizeDecimalInput(e.target.value))}
                                             required
+                                        />
+                                    </div>
+                                    {/* Fase D: dólares contados (solo si manejaste US$ en el turno) */}
+                                    <div className="mb-4">
+                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Dólares contados (US$) — opcional</label>
+                                        <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={declaredCashUsd}
+                                            onChange={e => setDeclaredCashUsd(sanitizeDecimalInput(e.target.value))}
+                                            placeholder="Solo si manejaste dólares (agente bancario)"
+                                            className="w-full border-2 border-slate-200 rounded-lg px-4 py-3 text-sm focus:border-emerald-500 outline-none text-slate-700 font-mono"
                                         />
                                     </div>
                                     <div className="flex gap-3">

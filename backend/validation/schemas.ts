@@ -182,6 +182,8 @@ export const RecordCountSchema = z.object({
 // POST /api/shifts/open
 export const OpenShiftSchema = z.object({
     initialCash: moneyAmount,
+    // Fase D (gaveta multi-moneda): fondo inicial en dólares, opcional.
+    initialCashUsd: moneyAmount.optional(),
     employeePin: z.string().regex(/^\d{4}$/, 'El PIN debe ser exactamente 4 dígitos numéricos'),
 });
 
@@ -189,6 +191,9 @@ export const OpenShiftSchema = z.object({
 export const CloseShiftSchema = z.object({
     shiftId:      z.string().min(1, 'shiftId requerido'),
     declaredCash: moneyAmount,
+    // Fase D: dólares contados al cierre (opcional; si no viene y hubo
+    // movimiento USD, la diferencia USD se calcula contra 0 declarado).
+    declaredCashUsd: moneyAmount.optional(),
     auditNotes:   z.string().max(500).optional(),
 });
 
@@ -373,10 +378,17 @@ export const CreateAgentTxSchema = z.object({
     operation:   agentOperation,
     amount:      moneyAmountPositive,
     currency:    z.enum(['NIO', 'USD']).default('NIO'),
-    // Si no viene, se calcula del commissionConfig del convenio.
+    // Fase D: tipo de cambio C$/US$ de la transacción — obligatorio en USD.
+    exchangeRate: moneyAmountPositive.refine((v) => parseFloat(v) >= 1 && parseFloat(v) <= 1000, {
+        message: 'Tipo de cambio fuera de rango (1–1000)',
+    }).optional(),
+    // Si no viene, se calcula del commissionConfig del convenio (en C$).
     commission:  moneyAmount.optional(),
     externalRef: z.string().trim().max(120).optional(),
     customerRef: z.string().trim().max(160).optional(),
+}).refine((d) => d.currency !== 'USD' || d.exchangeRate !== undefined, {
+    message: 'El tipo de cambio es obligatorio para operaciones en dólares',
+    path: ['exchangeRate'],
 });
 
 // ============================================================

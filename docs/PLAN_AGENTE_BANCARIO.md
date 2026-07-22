@@ -156,12 +156,21 @@ OWNER/ADMIN, el modal permite crear el primero (nombre + tipo).
   agregado en SQL (`groupBy` convenio × operación × estado), para cotejar
   contra el reporte del banco/red.
 
-### Fase D — moneda extranjera y escala (pendiente)
-- **USD con tipo de cambio por transacción**: requiere gaveta multi-moneda
-  (arqueo y `CashMovement` hoy suman montos sin mirar `currency` — es una
-  limitación del módulo de caja completo, no solo del agente). No se simula
-  convirtiendo: se hace bien o no se hace.
-- Billetera móvil (depósito/retiro), multi-caja avanzado.
+### Fase D — gaveta multi-moneda (en implementación)
+- **Arqueo por moneda**: el bug histórico de sumar C$ y US$ como la misma
+  unidad se corrige en cierre de turno, balance, panóptico y guards de
+  salida. `Shift` gana conteo USD (`initialCashUsd`, esperado/declarado/
+  diferencia USD, solo persistido si hubo dólares).
+- **Operaciones de agente en USD**: `exchangeRate` obligatorio por
+  transacción; el valor contable (`amountNio`), el saldo con el banco, las
+  comisiones y los límites diarios van en C$ (moneda funcional, NIIF);
+  el efectivo físico va en US$ a la gaveta USD. Cuenta nueva
+  `1.1.8 Caja Moneda Extranjera`. Las reversas devuelven la misma moneda
+  al mismo tipo de cambio (cancelación exacta, sin diferencial cambiario).
+- UI: selector C$/US$ + tipo de cambio en el modal del POS (persistido),
+  dólares contados en ambos cierres de caja, gaveta USD en el panóptico.
+- Pendiente para después: revaluación cambiaria periódica de 1.1.8,
+  billetera móvil, multi-caja avanzado.
 
 ## 6. Fuera de alcance (explícito)
 - Integración en línea con APIs de bancos (no existen públicas para agentes).

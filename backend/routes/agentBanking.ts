@@ -121,25 +121,32 @@ export function tieneLimiteDiario(config: unknown, operation: string): boolean {
  * con decimal.js. Sirve con el cliente global (lectura) o con una tx (frescura
  * bajo lock). La fórmula es la misma del arqueo.
  */
-async function calcularGaveta(client: any, shift: { id: string; initialCash: any }): Promise<Decimal> {
-    const freshSales: Array<{ total: any }> = await client.sale.findMany({
-        where: { shiftId: shift.id, paymentMethod: 'CASH' },
-        select: { total: true },
-    });
-    const freshMovements: Array<{ type: string; amount: any }> = await client.cashMovement.findMany({
+async function calcularGaveta(client: any, shift: { id: string; initialCash: any; initialCashUsd?: any }, moneda: 'NIO' | 'USD' = 'NIO'): Promise<Decimal> {
+    // Fase D: la gaveta es POR MONEDA. Ventas solo aplican a C$ (el POS vende
+    // en córdobas); el fondo inicial USD vive en Shift.initialCashUsd.
+    const freshSales: Array<{ total: any }> = moneda === 'NIO'
+        ? await client.sale.findMany({
+            where: { shiftId: shift.id, paymentMethod: 'CASH' },
+            select: { total: true },
+        })
+        : [];
+    const freshMovements: Array<{ type: string; amount: any; currency: string | null }> = await client.cashMovement.findMany({
         where: { shiftId: shift.id, isVoided: false },
-        select: { type: true, amount: true },
+        select: { type: true, amount: true, currency: true },
     });
+    const mismaMoneda = (m: any) => (m.currency || 'NIO') === moneda;
     const cashSalesTotal = freshSales
         .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
     const totalINs = freshMovements
-        .filter((m) => m.type === 'IN')
+        .filter((m) => m.type === 'IN' && mismaMoneda(m))
         .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
     const totalOUTs = freshMovements
-        .filter((m) => m.type === 'OUT')
+        .filter((m) => m.type === 'OUT' && mismaMoneda(m))
         .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
-    return new Decimal(shift.initialCash.toString())
-        .plus(cashSalesTotal).plus(totalINs).minus(totalOUTs);
+    const fondo = moneda === 'NIO'
+        ? new Decimal(shift.initialCash.toString())
+        : new Decimal((shift.initialCashUsd ?? 0).toString());
+    return fondo.plus(cashSalesTotal).plus(totalINs).minus(totalOUTs);
 }
 
 /**
@@ -148,11 +155,12 @@ async function calcularGaveta(client: any, shift: { id: string; initialCash: any
  * frescos DENTRO de la transacción (cierra el TOCTOU de dos OUT concurrentes).
  * Lanza si la gaveta no alcanza. DEBE llamarse dentro de una $transaction.
  */
-async function assertGavetaAlcanza(tx: any, shift: { id: string; initialCash: any }, tenantId: string, monto: Decimal): Promise<void> {
+async function assertGavetaAlcanza(tx: any, shift: { id: string; initialCash: any; initialCashUsd?: any }, tenantId: string, monto: Decimal, moneda: 'NIO' | 'USD' = 'NIO'): Promise<void> {
     await tx.$queryRaw`SELECT id FROM \`Shift\` WHERE id = ${shift.id} AND \`tenantId\` = ${tenantId} FOR UPDATE`;
-    const availableCash = await calcularGaveta(tx, shift);
+    const availableCash = await calcularGaveta(tx, shift, moneda);
+    const simbolo = moneda === 'NIO' ? 'C$' : 'US$';
     if (monto.greaterThan(availableCash)) {
-        throw new Error(`Efectivo insuficiente en la gaveta para pagar esta operación. Disponible: C$${availableCash.toFixed(2)}`);
+        throw new Error(`Efectivo insuficiente en la gaveta para pagar esta operación. Disponible: ${simbolo}${availableCash.toFixed(2)}`);
     }
 }
 
@@ -271,13 +279,7 @@ router.patch('/agreements/:id', authenticate, AGENT_MANAGER, validate(UpdateAgen
 // Registrar una operación de mostrador (cajero con caja abierta).
 router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async (req: any, res: any) => {
     try {
-        const { agreementId, operation, amount, currency, commission, externalRef, customerRef } = req.body;
-
-        // Fase A: solo córdobas. USD requiere tipo de cambio por transacción
-        // (Fase C) — mezclar monedas corrompería settlementBalance y el arqueo.
-        if (currency !== 'NIO') {
-            return res.status(400).json({ success: false, error: 'Por ahora las operaciones de agente se registran solo en córdobas (C$).' });
-        }
+        const { agreementId, operation, amount, currency, exchangeRate, commission, externalRef, customerRef } = req.body;
 
         const direction = AGENT_OPERATION_DIRECTION[operation];
         if (!direction) {
@@ -308,13 +310,18 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
         }
 
         const dAmount = new Decimal(amount);
-        // Comisión: manual si viene en el body; si no, la del contrato del convenio.
-        // Los traslados de efectivo (LIQUIDACION_*) nunca devengan comisión.
+        // Fase D: valor contable en C$ (moneda funcional). USD: amount × tipo
+        // de cambio de la transacción (Zod ya exige exchangeRate en USD).
+        const dRate = currency === 'USD' ? new Decimal(exchangeRate) : null;
+        const dAmountNio = dRate ? dAmount.mul(dRate).toDecimalPlaces(4) : dAmount;
+        // Comisión (en C$): manual si viene en el body; si no, la del contrato
+        // aplicada sobre el EQUIVALENTE en córdobas. Los traslados de efectivo
+        // (LIQUIDACION_*) nunca devengan comisión.
         const dCommission = isLiquidacion
             ? new Decimal(0)
             : commission !== undefined
                 ? new Decimal(commission).toDecimalPlaces(4)
-                : calcAgentCommission(agreement.commissionConfig, operation, dAmount);
+                : calcAgentCommission(agreement.commissionConfig, operation, dAmountNio);
 
         // Límites del contrato (Fase C): chequeo rápido del tope por transacción
         // antes de abrir la tx (respuesta 400 limpia). El límite DIARIO se
@@ -322,7 +329,8 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
         // traslados internos (LIQUIDACION_*) no son operaciones del banco →
         // sin límites de contrato.
         if (!isLiquidacion) {
-            const limErrRapido = validarLimites(agreement.limitsConfig, operation, dAmount, new Decimal(0));
+            // Los límites del contrato están en C$ → comparar el equivalente.
+            const limErrRapido = validarLimites(agreement.limitsConfig, operation, dAmountNio, new Decimal(0));
             if (limErrRapido) {
                 return res.status(400).json({ success: false, error: limErrRapido });
             }
@@ -344,7 +352,7 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
             // al banco): el tope real de retiro lo pone la gaveta (Banpro lo
             // delega al comercio). Row-lock + recálculo fresco dentro de la tx.
             if (direction === 'OUT') {
-                await assertGavetaAlcanza(tx, currentShift, req.tenantId, dAmount);
+                await assertGavetaAlcanza(tx, currentShift, req.tenantId, dAmount, currency === 'USD' ? 'USD' : 'NIO');
             }
 
             // Límite DIARIO del contrato (Fase C): lock de la fila del convenio
@@ -354,12 +362,15 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
                 await tx.$queryRaw`SELECT id FROM \`AgentAgreement\` WHERE id = ${agreement.id} FOR UPDATE`;
                 const hoy0 = new Date();
                 hoy0.setHours(0, 0, 0, 0);
-                const agg = await tx.agentTransaction.aggregate({
-                    where: { agreementId: agreement.id, operation, status: 'COMPLETED', createdAt: { gte: hoy0 } },
-                    _sum: { amount: true },
-                });
-                const acumuladoHoy = new Decimal(agg._sum.amount?.toString() ?? 0);
-                const limErr = validarLimites(agreement.limitsConfig, operation, dAmount, acumuladoHoy);
+                // Suma del día en C$: COALESCE(amountNio, amount) — las filas
+                // anteriores a Fase D no tienen amountNio pero son NIO puras.
+                const aggRows: Array<{ total: any }> = await tx.$queryRaw`
+                    SELECT COALESCE(SUM(COALESCE(\`amountNio\`, \`amount\`)), 0) AS total
+                    FROM \`AgentTransaction\`
+                    WHERE \`agreementId\` = ${agreement.id} AND \`operation\` = ${operation}
+                      AND \`status\` = 'COMPLETED' AND \`createdAt\` >= ${hoy0}`;
+                const acumuladoHoy = new Decimal((aggRows[0]?.total ?? 0).toString());
+                const limErr = validarLimites(agreement.limitsConfig, operation, dAmountNio, acumuladoHoy);
                 if (limErr) throw new Error(`LIMITE: ${limErr}`);
             }
 
@@ -370,9 +381,9 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
                 userId: req.userId,
                 type: direction,
                 amount: dAmount.toNumber(),
-                currency: 'NIO',
+                currency: currency === 'USD' ? 'USD' : 'NIO',
                 category: 'AGENTE_BANCARIO',
-                description: `[${agreement.name}] ${operation}${externalRef ? ` · ref ${externalRef}` : ''}`,
+                description: `[${agreement.name}] ${operation}${currency === 'USD' ? ` US$${dAmount.toFixed(2)} @ ${dRate!.toFixed(4)}` : ''}${externalRef ? ` · ref ${externalRef}` : ''}`,
                 expenseId: null,
             });
 
@@ -387,7 +398,9 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
                     operation,
                     direction,
                     amount: dAmount.toNumber(),
-                    currency: 'NIO',
+                    currency: currency === 'USD' ? 'USD' : 'NIO',
+                    exchangeRate: dRate ? dRate.toNumber() : null,
+                    amountNio: dAmountNio.toNumber(),
                     commission: dCommission.toNumber(),
                     externalRef: externalRef || null,
                     customerRef: customerRef || null,
@@ -397,8 +410,10 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
             // 3. Saldos espejo del convenio (proyección atómica en la misma tx):
             // IN  → el negocio captó efectivo del banco ⇒ debe más (+).
             // OUT → el negocio pagó efectivo por el banco ⇒ el banco le debe (−).
+            // El saldo con el banco se lleva en C$ (moneda funcional): USD
+            // entra por su equivalente al tipo de cambio de la transacción.
             const balanceBefore = new Decimal(agreement.settlementBalance.toString());
-            const delta = direction === 'IN' ? dAmount : dAmount.negated();
+            const delta = direction === 'IN' ? dAmountNio : dAmountNio.negated();
             await tx.agentAgreement.update({
                 where: { id: agreement.id },
                 data: {
@@ -407,11 +422,12 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
                 },
             });
 
-            // 4. Asiento de partida doble (Caja ↔ 2.1.12; comisión 1.1.7 ↔ 4.1.4).
+            // 4. Asiento de partida doble en C$ (USD mueve 1.1.8 Caja M/E).
             await recordAgentTransaction(
                 tx, req.tenantId, req.userId, agentTx.id, direction,
-                dAmount.toNumber(), dCommission.toNumber(),
-                `${agreement.name} ${operation}${externalRef ? ` ref ${externalRef}` : ''}`
+                dAmountNio.toNumber(), dCommission.toNumber(),
+                `${agreement.name} ${operation}${currency === 'USD' ? ` US$${dAmount.toFixed(2)} @ ${dRate!.toFixed(4)}` : ''}${externalRef ? ` ref ${externalRef}` : ''}`,
+                currency === 'USD' ? '1.1.8' : '1.1.1'
             );
 
             // 5. AuditLog inmutable con before/after del saldo del convenio.
@@ -426,6 +442,9 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
                         convenio: agreement.name,
                         operacion: operation,
                         monto: dAmount.toNumber(),
+                        moneda: currency === 'USD' ? 'USD' : 'NIO',
+                        tipoCambio: dRate ? dRate.toNumber() : null,
+                        montoNio: dAmountNio.toNumber(),
                         comision: dCommission.toNumber(),
                         referencia: externalRef || null,
                         turnoId: currentShift.id,
@@ -482,13 +501,19 @@ router.post('/transactions/:id/reverse', authenticate, checkRole(['OWNER', 'ADMI
 
         const dAmount = new Decimal(original.amount.toString());
         const dCommission = new Decimal(original.commission.toString());
+        // Fase D: la contrapartida devuelve la MISMA moneda física; el valor
+        // contable usa el amountNio del registro original (mismo tipo de
+        // cambio → la reversa cancela exacto, sin diferencial cambiario).
+        // Filas anteriores a Fase D no tienen amountNio pero son NIO puras.
+        const monedaOriginal: 'NIO' | 'USD' = original.currency === 'USD' ? 'USD' : 'NIO';
+        const dAmountNio = new Decimal((original.amountNio ?? original.amount).toString());
         // La contrapartida va en dirección opuesta: reversar un depósito (IN)
         // significa DEVOLVER el efectivo al cliente (OUT), y viceversa.
         const compensatingDirection: 'IN' | 'OUT' = original.direction === 'IN' ? 'OUT' : 'IN';
 
         const result = await prisma.$transaction(async (tx: any) => {
             if (compensatingDirection === 'OUT') {
-                await assertGavetaAlcanza(tx, currentShift, req.tenantId, dAmount);
+                await assertGavetaAlcanza(tx, currentShift, req.tenantId, dAmount, monedaOriginal);
             }
 
             // Guard atómico contra doble reversa concurrente: solo gana quien
@@ -506,15 +531,15 @@ router.post('/transactions/:id/reverse', authenticate, checkRole(['OWNER', 'ADMI
                 userId: req.userId,
                 type: compensatingDirection,
                 amount: dAmount.toNumber(),
-                currency: 'NIO',
+                currency: monedaOriginal,
                 category: 'AGENTE_BANCARIO',
-                description: `[REVERSA] [${original.agreement.name}] ${original.operation}${original.externalRef ? ` · ref ${original.externalRef}` : ''} · ${reason}`,
+                description: `[REVERSA] [${original.agreement.name}] ${original.operation}${monedaOriginal === 'USD' ? ` US$${dAmount.toFixed(2)}` : ''}${original.externalRef ? ` · ref ${original.externalRef}` : ''} · ${reason}`,
                 expenseId: null,
             });
 
             // Deshacer los saldos espejo del convenio (delta opuesto al original).
             const balanceBefore = new Decimal(original.agreement.settlementBalance.toString());
-            const delta = original.direction === 'IN' ? dAmount.negated() : dAmount;
+            const delta = original.direction === 'IN' ? dAmountNio.negated() : dAmountNio;
             await tx.agentAgreement.update({
                 where: { id: original.agreementId },
                 data: {
@@ -527,8 +552,9 @@ router.post('/transactions/:id/reverse', authenticate, checkRole(['OWNER', 'ADMI
             // Las cuentas ya existen: la operación original las sembró.
             await recordAgentReversal(
                 tx, req.tenantId, req.userId, original.id, original.direction as 'IN' | 'OUT',
-                dAmount.toNumber(), dCommission.toNumber(),
-                `${original.agreement.name} ${original.operation}`
+                dAmountNio.toNumber(), dCommission.toNumber(),
+                `${original.agreement.name} ${original.operation}`,
+                monedaOriginal === 'USD' ? '1.1.8' : '1.1.1'
             );
 
             await tx.auditLog.create({
