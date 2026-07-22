@@ -42,11 +42,6 @@ import TrackPedido from './components/TrackPedido';
 import LandingFerreteria from './components/LandingFerreteria';
 import LandingFarmacia from './components/LandingFarmacia';
 import LandingNicaragua from './components/LandingNicaragua';
-// Blog (lazy: el contenido de los artículos NO entra al bundle inicial del SPA;
-// se carga solo al visitar /blog, /blog/:slug o /blog/categoria/:slug).
-const Blog = lazy(() => import('./components/Blog'));
-const BlogPost = lazy(() => import('./components/BlogPost'));
-const ClusterPage = lazy(() => import('./components/ClusterPage'));
 import ForgotPassword from './components/ForgotPassword';
 import ResetPassword from './components/ResetPassword';
 

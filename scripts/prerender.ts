@@ -32,6 +32,8 @@ const OG_IMAGE = `${ORIGIN}/og-image.svg`;
 
 const shell = fs.readFileSync(path.join(DIST, 'index.html'), 'utf-8');
 
+const esc = escapeHtml;
+
 interface RouteSEO {
     path: string;        // p.ej. '/ferreterias'
     title: string;
@@ -183,6 +185,7 @@ for (const cluster of blogClusters) {
 
 // ── Artículos del blog (uno por slug en data/blog-posts.ts) ──
 for (const post of blogPosts) {
+    const cluster = getCluster(post.cluster);
     const cluster = blogClusters.find(c => c.name === post.cluster);
     const breadcrumb = [
         { name: 'Blog', url: '/blog' },

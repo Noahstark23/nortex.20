@@ -2825,3 +2825,46 @@ En Nortex configurás precios por escala de cantidad o listas por tipo de client
 `,
     },
 ];
+
+const postBySlug: Record<string, BlogPost> = Object.fromEntries(
+  blogPosts.map((p) => [p.slug, p]),
+);
+
+/** Devuelve un post por su slug, o undefined si no existe. */
+export function getPost(slug: string | undefined): BlogPost | undefined {
+  return slug ? postBySlug[slug] : undefined;
+}
+
+/** Posts de un clúster, con el pilar primero y el resto por fecha descendente. */
+export function postsByCluster(clusterSlug: string): BlogPost[] {
+  return blogPosts
+    .filter((p) => p.cluster === clusterSlug)
+    .sort((a, b) => {
+      if (a.isPillar && !b.isPillar) return -1;
+      if (b.isPillar && !a.isPillar) return 1;
+      return b.date.localeCompare(a.date);
+    });
+}
+
+/**
+ * Artículos relacionados de un post: usa relatedSlugs si está definido; si no,
+ * deriva hasta `limit` hermanos del mismo clúster (incluyendo el pilar).
+ */
+export function relatedPosts(post: BlogPost, limit = 3): BlogPost[] {
+  const explicit = (post.relatedSlugs ?? [])
+    .map((s) => postBySlug[s])
+    .filter((p): p is BlogPost => Boolean(p) && p!.slug !== post.slug);
+
+  if (explicit.length >= limit) return explicit.slice(0, limit);
+
+  const siblings = postsByCluster(post.cluster).filter(
+    (p) => p.slug !== post.slug && !explicit.some((e) => e.slug === p.slug),
+  );
+
+  return [...explicit, ...siblings].slice(0, limit);
+}
+
+/** Posts ordenados para el índice del blog (más recientes primero). */
+export function postsByDate(): BlogPost[] {
+  return [...blogPosts].sort((a, b) => b.date.localeCompare(a.date));
+}
