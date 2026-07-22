@@ -44,7 +44,7 @@ const Serials: React.FC = () => {
         if (list.length === 0) { alert('Pegá al menos una serie'); return; }
         const r = await fetch('/api/serials', { method: 'POST', headers: H(), body: JSON.stringify({ productId: product.id, serials: list }) });
         const d = await r.json();
-        if (r.ok) { alert(`✓ ${d.registered} registradas${d.skipped ? ` · ${d.skipped} ya existían` : ''}`); setShowAdd(false); setBulk(''); setProduct(null); load(); }
+        if (r.ok) { alert(`${d.registered} registradas${d.skipped ? ` · ${d.skipped} ya existían` : ''}`); setShowAdd(false); setBulk(''); setProduct(null); load(); }
         else alert(d.error);
     };
 

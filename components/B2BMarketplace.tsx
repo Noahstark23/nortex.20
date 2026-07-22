@@ -5,11 +5,11 @@ import { MOCK_CATALOG } from '../constants';
 
 const SECTORS = [
   { id: 'ALL', label: 'Todo el Mercado' },
-  { id: 'ABARROTES', label: '🛒 Abarrotes' },
-  { id: 'FARMACIA', label: '💊 Farmacia' },
-  { id: 'FERRETERIA', label: '🔨 Ferretería' },
-  { id: 'MODA', label: '👕 Moda' },
-  { id: 'TECNOLOGIA', label: '💻 Tecnología' },
+  { id: 'ABARROTES', label: 'Abarrotes' },
+  { id: 'FARMACIA', label: 'Farmacia' },
+  { id: 'FERRETERIA', label: 'Ferretería' },
+  { id: 'MODA', label: 'Moda' },
+  { id: 'TECNOLOGIA', label: 'Tecnología' },
 ];
 
 const B2BMarketplace: React.FC = () => {
@@ -99,17 +99,17 @@ const B2BMarketplace: React.FC = () => {
               setTenantData(data.tenant);
               localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
               
-              alert("✅ Pago confirmado con Wallet. Envío en proceso.");
+              alert("Pago confirmado con Wallet. Envío en proceso.");
           } else {
               // BNPL Logic (Simulation for now, backend endpoint not requested explicitly for BNPL logic yet)
-              alert("🚀 ¡Crédito Aprobado! La orden ha sido procesada. Pagarás la primera cuota en 30 días.");
+              alert("¡Crédito Aprobado! La orden ha sido procesada. Pagarás la primera cuota en 30 días.");
           }
           
           setCart([]);
           setShowFinanceModal(false);
 
       } catch (error: any) {
-          alert(`❌ ${error.message}`);
+          alert(`${error.message}`);
       } finally {
           setProcessingOrder(false);
       }
@@ -194,7 +194,7 @@ const B2BMarketplace: React.FC = () => {
                             {/* FINTECH UPSELL */}
                             <div className="mt-2 text-center">
                                 <span className="text-[10px] text-nortex-accent font-bold tracking-wider">
-                                    ⚡ FINÁNCIALO CON NORTEX
+                                    FINÁNCIALO CON NORTEX
                                 </span>
                             </div>
                         </div>

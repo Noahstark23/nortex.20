@@ -14,13 +14,16 @@ export default defineConfig(({ mode }) => {
         react(),
         VitePWA({
           registerType: 'autoUpdate',
-          includeAssets: ['icon-192.svg', 'robots.txt'],
+          includeAssets: ['icon-192.svg', 'favicon.svg', 'robots.txt'],
           manifest: {
-            name: 'Nortex POS',
+            name: 'Nortex — Punto de venta e inventario',
             short_name: 'Nortex',
-            description: 'Sistema de Punto de Venta Nortex',
-            theme_color: '#1e293b',
-            background_color: '#0f172a',
+            description: 'El sistema del negocio nica: ventas, inventario, caja y fiado.',
+            // Fase 1 rediseño: colores de la identidad Obsidian real (antes
+            // quedaban los slate azulados viejos, contradiciendo index.html).
+            theme_color: '#0c0c0e',
+            background_color: '#09090b',
+            lang: 'es',
             display: 'standalone',
             start_url: '/',
             icons: [

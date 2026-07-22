@@ -120,6 +120,19 @@
            bg-red-500/10 text-red-400 border border-red-500/20;
   }
 
+  /* ── Modal canónico (Fase 1 rediseño) ─────────────────────────────────
+     LA forma de todo modal nuevo (y destino de la migración de los ~70
+     existentes, que hoy tienen ~10 backdrops distintos):
+       <div class="modal-backdrop"><div class="modal-panel">…</div></div> */
+  .modal-backdrop {
+    @apply fixed inset-0 z-50 bg-black/70 backdrop-blur-sm
+           flex items-center justify-center p-4;
+  }
+  .modal-panel {
+    @apply bg-surface-900 border border-white/[0.08] rounded-2xl shadow-premium
+           w-full max-w-md max-h-[90vh] overflow-y-auto;
+  }
+
   /* Tablas densas: solo divisores horizontales tenues, números en mono */
   .table-premium th {
     @apply text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 pb-3;

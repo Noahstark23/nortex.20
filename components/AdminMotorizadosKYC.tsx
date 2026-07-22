@@ -86,7 +86,7 @@ const AdminMotorizadosKYC: React.FC = () => {
             });
             const d = await res.json();
             if (!res.ok) return alert(d.error || 'Error registrando el pago');
-            alert(`✅ Pago de C$${monto.toFixed(2)} registrado y firmado en el libro.`);
+            alert(`Pago de C$${monto.toFixed(2)} registrado y firmado en el libro.`);
             await fetchMotorizados();
         } catch { alert('Error de conexión'); }
         finally { setWalletActionId(null); }
@@ -102,9 +102,9 @@ const AdminMotorizadosKYC: React.FC = () => {
             if (res.status === 404) return alert(d.error || 'No encontrado');
             const v = d.verification;
             if (v?.ok) {
-                alert(`🔐 Cadena ÍNTEGRA\n\nMovimientos verificados: ${v.checked}\nSin firmar (legacy): ${v.unsigned}\nSaldo libro: C$${v.computedBalance}\nSaldo proyección: C$${v.storedBalance} ✓`);
+                alert(`Cadena ÍNTEGRA\n\nMovimientos verificados: ${v.checked}\nSin firmar (legacy): ${v.unsigned}\nSaldo libro: C$${v.computedBalance}\nSaldo proyección: C$${v.storedBalance} `);
             } else {
-                alert(`🚨 CADENA COMPROMETIDA\n\n${v?.reason ?? 'desconocido'}\nRoto en seq: ${v?.brokenAtSeq ?? '—'}\nSaldo libro: C$${v?.computedBalance} vs proyección: C$${v?.storedBalance}`);
+                alert(`CADENA COMPROMETIDA\n\n${v?.reason ?? 'desconocido'}\nRoto en seq: ${v?.brokenAtSeq ?? '—'}\nSaldo libro: C$${v?.computedBalance} vs proyección: C$${v?.storedBalance}`);
             }
         } catch { alert('Error de conexión'); }
         finally { setWalletActionId(null); }
@@ -152,11 +152,11 @@ const AdminMotorizadosKYC: React.FC = () => {
                                     </div>
                                     <div className="flex gap-3 mt-2">
                                         {m.fotoCedulaUrl
-                                            ? <a href={m.fotoCedulaUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-1">📄 Ver cédula <ExternalLink size={10} /></a>
-                                            : <span className="text-[11px] text-red-400/70">📄 Sin foto de cédula</span>}
+                                            ? <a href={m.fotoCedulaUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-1">Ver cédula <ExternalLink size={10} /></a>
+                                            : <span className="text-[11px] text-red-400/70">Sin foto de cédula</span>}
                                         {m.fotoVehiculoUrl
-                                            ? <a href={m.fotoVehiculoUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-1">🛵 Ver moto <ExternalLink size={10} /></a>
-                                            : <span className="text-[11px] text-red-400/70">🛵 Sin foto de moto</span>}
+                                            ? <a href={m.fotoVehiculoUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-1">Ver moto <ExternalLink size={10} /></a>
+                                            : <span className="text-[11px] text-red-400/70">Sin foto de moto</span>}
                                     </div>
                                 </div>
 

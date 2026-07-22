@@ -54,7 +54,7 @@ const Warehouses: React.FC = () => {
             body: JSON.stringify({ fromWarehouseId: selected.id, toWarehouseId: transfer.toId, items: [{ productId: transfer.productId, quantity: qty }] }),
         });
         const d = await res.json();
-        if (res.ok) { setMsg('✓ Transferencia realizada'); setTransfer(null); loadStock(selected); setTimeout(() => setMsg(''), 3000); }
+        if (res.ok) { setMsg('Transferencia realizada'); setTransfer(null); loadStock(selected); setTimeout(() => setMsg(''), 3000); }
         else alert(d.error);
     };
 

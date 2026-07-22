@@ -180,7 +180,7 @@ const RetailDashboard: React.FC = () => {
       setTenantData(updatedTenant);
       localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
 
-      alert("✅ ¡Cuenta Reactivada! El sistema está operativo.");
+      alert("¡Cuenta Reactivada! El sistema está operativo.");
 
     } catch (e) {
       alert("Error al procesar la suscripción.");
@@ -221,7 +221,7 @@ const RetailDashboard: React.FC = () => {
 
       if (!res.ok) {
         if (res.status === 402) {
-          alert("⛔ BLOQUEADO: Suscripción vencida. Pague para continuar.");
+          alert("BLOQUEADO: Suscripción vencida. Pague para continuar.");
           return;
         }
         throw new Error(data.error);
@@ -253,7 +253,7 @@ const RetailDashboard: React.FC = () => {
 
       setShowLoanModal(false);
       setLoanAmount('');
-      alert("🚀 ¡Fondos desembolsados exitosamente!");
+      alert("¡Fondos desembolsados exitosamente!");
 
     } catch (error: any) {
       alert(error.message || "Error al procesar el préstamo");
@@ -282,7 +282,7 @@ const RetailDashboard: React.FC = () => {
       setTenantData(updatedTenant);
       localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
       setShowFiscalModal(false);
-      alert('✅ Configuración Fiscal (DGI) actualizada correctamente.');
+      alert('Configuración Fiscal (DGI) actualizada correctamente.');
     } catch (error: any) {
       alert(error.message);
     } finally {
@@ -383,7 +383,7 @@ const RetailDashboard: React.FC = () => {
               <ShieldAlert size={20} />
             </div>
             <div>
-              <h3 className="font-bold text-red-700">⚠️ Alerta de Auditoría</h3>
+              <h3 className="font-bold text-red-700">Alerta de Auditoría</h3>
               <p className="text-xs text-red-500">{theftAlerts.length} discrepancia(s) detectada(s) en los últimos 7 días</p>
             </div>
           </div>
@@ -406,7 +406,7 @@ const RetailDashboard: React.FC = () => {
               <Timer size={20} />
             </div>
             <div>
-              <h3 className="font-bold text-orange-700">⚠️ Alerta de Vencimiento</h3>
+              <h3 className="font-bold text-orange-700">Alerta de Vencimiento</h3>
               <p className="text-xs text-orange-500">{expiringBatches.length} lote(s) próximo(s) a vencer (≤ 90 días)</p>
             </div>
           </div>

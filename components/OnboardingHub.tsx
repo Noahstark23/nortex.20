@@ -121,8 +121,7 @@ const OnboardingHub: React.FC = () => {
                   <Rocket size={28} />
                 </div>
                 <h2 className="text-2xl font-bold text-white">
-                  ¡Bienvenido a Nortex{businessName ? `, ${businessName}` : ''}! 🎉
-                </h2>
+                  ¡Bienvenido a Nortex{businessName ? `, ${businessName}` : ''}!                 </h2>
                 <p className="text-slate-300 mt-2 text-sm leading-relaxed">
                   Te preparamos una guía de <span className="text-white font-semibold">primeros pasos</span> para
                   que pongas tu negocio a funcionar en minutos. Se va completando sola a medida que usás el sistema.

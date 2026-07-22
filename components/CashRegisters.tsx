@@ -475,8 +475,8 @@ const CashRegisters: React.FC = () => {
                                     <div className="bg-slate-50 px-4 py-3 border-t border-slate-100 flex items-center justify-between">
                                         <div className="text-[10px] text-slate-400">
                                             <span className="flex items-center gap-1 mb-1">
-                                                {shift.vaultCardSales > 0 && <span>💳 C${shift.vaultCardSales.toFixed(0)}</span>}
-                                                {shift.vaultCreditSales > 0 && <span> · 📝 C${shift.vaultCreditSales.toFixed(0)} crédito</span>}
+                                                {shift.vaultCardSales > 0 && <span>C${shift.vaultCardSales.toFixed(0)}</span>}
+                                                {shift.vaultCreditSales > 0 && <span> · C${shift.vaultCreditSales.toFixed(0)} crédito</span>}
                                             </span>
                                             <span>{shift.lastSaleAt ? `Última venta: ${timeAgo(shift.lastSaleAt)}` : 'Sin ventas'}</span>
                                         </div>
@@ -759,7 +759,7 @@ const CashRegisters: React.FC = () => {
                                                 <td className="px-4 py-3 text-center">
                                                     {shift.status === 'PERFECT' && <span className="inline-flex items-center gap-1 text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold"><CheckCircle size={10} /> OK</span>}
                                                     {shift.status === 'WARNING' && <span className="inline-flex items-center gap-1 text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold"><AlertTriangle size={10} /> Rev</span>}
-                                                    {shift.status === 'ALERT' && <span className="inline-flex items-center gap-1 text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold animate-pulse"><AlertTriangle size={10} /> ⚠️</span>}
+                                                    {shift.status === 'ALERT' && <span className="inline-flex items-center gap-1 text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold animate-pulse"><AlertTriangle size={10} /> </span>}
                                                 </td>
                                             </tr>
                                         ))}
@@ -807,7 +807,7 @@ const CashRegisters: React.FC = () => {
                                     {selectedShift.difference > 0 ? '+' : ''}C${selectedShift.difference.toFixed(2)}
                                 </p>
                                 {selectedShift.status === 'ALERT' && (
-                                    <p className="text-xs text-red-500 mt-2 font-medium">⚠️ Excede umbral de C${theftThreshold.toFixed(2)}</p>
+                                    <p className="text-xs text-red-500 mt-2 font-medium">Excede umbral de C${theftThreshold.toFixed(2)}</p>
                                 )}
                             </div>
 

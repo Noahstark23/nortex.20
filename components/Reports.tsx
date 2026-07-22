@@ -765,7 +765,7 @@ const Reports: React.FC = () => {
                                             const diffColor = diff < 0 ? 'text-red-600' : diff > 0 ? 'text-amber-600' : 'text-emerald-600';
                                             const diffBg = diff < 0 ? 'bg-red-50' : diff > 0 ? 'bg-amber-50' : 'bg-emerald-50';
                                             const statusLabel = diff < 0 ? 'FALTANTE' : diff > 0 ? 'SOBRANTE' : 'CUADRADO';
-                                            const statusIcon = diff < 0 ? '🔴' : diff > 0 ? '🟡' : '🟢';
+                                            const statusIcon = diff < 0 ? '' : diff > 0 ? '' : '';
 
                                             return (
                                                 <tr key={s.id} className="hover:bg-slate-50 transition-colors">
@@ -896,7 +896,7 @@ const Reports: React.FC = () => {
                                             </div>
                                             <div>
                                                 <p className={`font-bold ${balanceGeneral.totals.isBalanced ? 'text-emerald-800' : 'text-red-800'}`}>
-                                                    {balanceGeneral.totals.isBalanced ? '✅ Balance Cuadrado' : '⚠️ Balance Descuadrado'}
+                                                    {balanceGeneral.totals.isBalanced ? 'Balance Cuadrado' : 'Balance Descuadrado'}
                                                 </p>
                                                 <p className="text-xs text-slate-500">Activos = Pasivos + Capital + Utilidad</p>
                                             </div>

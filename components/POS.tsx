@@ -514,16 +514,16 @@ const POS: React.FC = () => {
     };
 
     const inCategories = [
-        { value: 'INYECCION_CAPITAL', label: '💵 Inyección de Capital' },
-        { value: 'CAMBIO', label: '🔄 Cambio de Billete' },
-        { value: 'AJUSTE', label: '📋 Ajuste' },
+        { value: 'INYECCION_CAPITAL', label: 'Inyección de Capital' },
+        { value: 'CAMBIO', label: 'Cambio de Billete' },
+        { value: 'AJUSTE', label: 'Ajuste' },
     ];
     const outCategories = [
-        { value: 'GASTO_OPERATIVO', label: '🧊 Gasto Operativo' },
-        { value: 'PAGO_PROVEEDOR', label: '🚚 Pago a Proveedor' },
-        { value: 'RETIRO_PERSONAL', label: '👤 Retiro Personal' },
-        { value: 'CAMBIO', label: '🔄 Cambio' },
-        { value: 'AJUSTE', label: '📋 Ajuste' },
+        { value: 'GASTO_OPERATIVO', label: 'Gasto Operativo' },
+        { value: 'PAGO_PROVEEDOR', label: 'Pago a Proveedor' },
+        { value: 'RETIRO_PERSONAL', label: 'Retiro Personal' },
+        { value: 'CAMBIO', label: 'Cambio' },
+        { value: 'AJUSTE', label: 'Ajuste' },
     ];
 
     // ==========================================
@@ -532,14 +532,14 @@ const POS: React.FC = () => {
     // Operaciones y dirección del efectivo (espejo de AGENT_OPERATION_DIRECTION
     // del backend, que es la fuente autoritativa).
     const agentOps = [
-        { value: 'DEPOSITO', label: '💳 Depósito a cuenta', dir: 'IN' },
-        { value: 'RETIRO', label: '💵 Retiro de efectivo', dir: 'OUT' },
-        { value: 'PAGO_TARJETA', label: '💳 Pago de tarjeta', dir: 'IN' },
-        { value: 'PAGO_PRESTAMO', label: '🏦 Pago de préstamo', dir: 'IN' },
-        { value: 'PAGO_SERVICIO', label: '💡 Pago de servicio', dir: 'IN' },
-        { value: 'RECARGA', label: '📱 Recarga', dir: 'IN' },
-        { value: 'REMESA_ENVIO', label: '📤 Remesa: envío', dir: 'IN' },
-        { value: 'REMESA_COBRO', label: '📥 Remesa: pago', dir: 'OUT' },
+        { value: 'DEPOSITO', label: 'Depósito a cuenta', dir: 'IN' },
+        { value: 'RETIRO', label: 'Retiro de efectivo', dir: 'OUT' },
+        { value: 'PAGO_TARJETA', label: 'Pago de tarjeta', dir: 'IN' },
+        { value: 'PAGO_PRESTAMO', label: 'Pago de préstamo', dir: 'IN' },
+        { value: 'PAGO_SERVICIO', label: 'Pago de servicio', dir: 'IN' },
+        { value: 'RECARGA', label: 'Recarga', dir: 'IN' },
+        { value: 'REMESA_ENVIO', label: 'Remesa: envío', dir: 'IN' },
+        { value: 'REMESA_COBRO', label: 'Remesa: pago', dir: 'OUT' },
     ];
 
     const fetchAgentAgreements = useCallback(async () => {
@@ -1933,7 +1933,7 @@ const POS: React.FC = () => {
                         <div className="p-8 text-center">
                             <ParkingCircle size={32} className="text-slate-300 mx-auto mb-2" />
                             <p className="text-sm text-slate-400">Sin carritos aparcados</p>
-                            <p className="text-[10px] text-slate-300 mt-1">Usa F4 o el botón 🅿️ para aparcar el carrito actual</p>
+                            <p className="text-[10px] text-slate-300 mt-1">Usa F4 o el botón 🅿para aparcar el carrito actual</p>
                         </div>
                     ) : (
                         <div className="divide-y divide-slate-100">
@@ -2573,7 +2573,7 @@ const POS: React.FC = () => {
                         </div>
                         <input
                             type="text"
-                            placeholder="🔍 Buscar o seleccionar cliente..."
+                            placeholder="Buscar o seleccionar cliente..."
                             className="w-full pl-16 pr-10 py-4 text-base font-bold border-2 border-indigo-500 rounded-xl outline-none focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20 bg-indigo-50/50 text-slate-800 placeholder:text-indigo-300 placeholder:font-medium transition-all shadow-sm"
                             value={selectedCustomer ? selectedCustomer.name : customerSearch}
                             onChange={(e) => {
@@ -2617,7 +2617,7 @@ const POS: React.FC = () => {
                     {selectedCustomer && (
                         <div className={`mt-2.5 p-3 rounded-xl text-xs border-2 ${selectedCustomer.isBlocked ? 'bg-red-50 border-red-300 text-red-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
                             <div className="flex justify-between font-bold mb-1.5">
-                                <span className="flex items-center gap-1">{selectedCustomer.isBlocked ? '🔴 BLOQUEADO' : '🟢 Linea Disponible:'}</span>
+                                <span className="flex items-center gap-1">{selectedCustomer.isBlocked ? 'BLOQUEADO' : 'Linea Disponible:'}</span>
                                 {!selectedCustomer.isBlocked && <span className="text-sm">C${(selectedCustomer.creditLimit - selectedCustomer.currentDebt).toFixed(2)}</span>}
                             </div>
                             {!selectedCustomer.isBlocked && (
@@ -2746,7 +2746,7 @@ const POS: React.FC = () => {
                         </button>
                     </div>
                     {isCreditBlocked && selectedCustomer && (
-                        <p className="text-xs text-center text-red-500 font-bold mb-1">🔴 Credito no disponible: Limite excedido o cliente bloqueado.</p>
+                        <p className="text-xs text-center text-red-500 font-bold mb-1">Credito no disponible: Limite excedido o cliente bloqueado.</p>
                     )}
                 </div>
             </div>
@@ -2880,7 +2880,7 @@ const POS: React.FC = () => {
                                                         });
                                                         const data = await res.json();
                                                         if (!res.ok) throw new Error(data.error);
-                                                        alert('✅ Devolución procesada. Stock restaurado.');
+                                                        alert('Devolución procesada. Stock restaurado.');
                                                         setShowReturnModal(false);
                                                         setReturnSaleData(null);
                                                         setReturnItems([]);
@@ -2915,7 +2915,7 @@ const POS: React.FC = () => {
                                 'bg-gradient-to-r from-emerald-500 to-green-600'
                             }`}>
                             <h3 className="text-lg font-bold text-white flex items-center justify-center gap-2">
-                                {creditInfo.color === 'red' ? '🔴' : creditInfo.color === 'yellow' ? '🟡' : '🟢'} SEMÁFORO DE CRÉDITO
+                                {creditInfo.color === 'red' ? '' : creditInfo.color === 'yellow' ? '' : ''} SEMÁFORO DE CRÉDITO
                             </h3>
                         </div>
                         <div className="p-5 space-y-4">
@@ -2953,7 +2953,7 @@ const POS: React.FC = () => {
                             {/* Override PIN */}
                             {isCreditBlocked && !creditOverrideAuthorized && (
                                 <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 space-y-3">
-                                    <p className="text-sm font-bold text-red-700 text-center">🔴 CRÉDITO DENEGADO</p>
+                                    <p className="text-sm font-bold text-red-700 text-center">CRÉDITO DENEGADO</p>
                                     <p className="text-xs text-red-600 text-center">PIN del Dueño/Gerente requerido para autorizar</p>
                                     <div className="flex justify-center gap-2">
                                         {[0, 1, 2, 3].map(i => (
@@ -3034,7 +3034,7 @@ const POS: React.FC = () => {
                                     onClick={() => { setPayingInUSD(!payingInUSD); setUsdAmount(''); setCashReceived(''); }}
                                     className={`text-[10px] font-bold px-2 py-1 rounded-full border transition-all ${payingInUSD ? 'bg-blue-500 text-white border-blue-500' : 'bg-slate-100 text-slate-500 border-slate-200 hover:border-blue-300'}`}
                                 >
-                                    💱 {payingInUSD ? 'USD ✔' : 'Paga en USD?'}
+                                    {payingInUSD ? 'USD ' : 'Paga en USD?'}
                                 </button>
                             </div>
 

@@ -243,9 +243,9 @@ export function sendToWhatsApp(data: InvoiceData, phone?: string) {
     const payLabel = data.paymentMethod === 'CREDIT' ? 'PENDIENTE' : 'PAGADO';
 
     const message = [
-        `🧾 *RECIBO NORTEX*`,
-        `📅 Fecha: ${data.date}`,
-        `📍 *${data.tenantName}*`,
+        `*RECIBO NORTEX*`,
+        `Fecha: ${data.date}`,
+        `*${data.tenantName}*`,
         `--------------------------------`,
         `Cliente: ${data.customerName}`,
         `--------------------------------`,
@@ -253,8 +253,8 @@ export function sendToWhatsApp(data: InvoiceData, phone?: string) {
         `--------------------------------`,
         `   Subtotal: C$ ${data.subtotal.toFixed(2)}`,
         `   IVA 15%:  C$ ${data.tax.toFixed(2)}`,
-        `💰 *TOTAL: C$ ${data.grandTotal.toFixed(2)}*`,
-        `✅ Estado: ${payLabel}`,
+        `*TOTAL: C$ ${data.grandTotal.toFixed(2)}*`,
+        `Estado: ${payLabel}`,
         `--------------------------------`,
         `¡Gracias por su compra! 🇳🇮`,
     ].join('\n');

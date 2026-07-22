@@ -68,7 +68,7 @@ const LandingPage: React.FC = () => {
                                 ].map((item, i) => (
                                     <li key={i} className="flex items-start gap-4">
                                         <div className="mt-1 flex-shrink-0 w-6 h-6 rounded-full bg-red-50 border border-red-100 flex items-center justify-center shadow-sm">
-                                            <span className="text-red-500 font-bold text-xs">✕</span>
+                                            <span className="text-red-500 font-bold text-xs"></span>
                                         </div>
                                         <span className="text-slate-700 font-medium leading-relaxed">{item}</span>
                                     </li>

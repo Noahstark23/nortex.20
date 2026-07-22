@@ -183,11 +183,11 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
             const data = await res.json();
 
             if (res.ok) {
-                alert(`✅ Importación exitosa!\n\n✅ Creados: ${data.created}\n🔄 Actualizados: ${data.updated}\n❌ Errores: ${data.errors?.length || 0}`);
+                alert(`Importación exitosa!\n\nCreados: ${data.created}\nActualizados: ${data.updated}\nErrores: ${data.errors?.length || 0}`);
                 onSuccess();
                 onClose();
             } else {
-                alert(`❌ Error: ${data.error}`);
+                alert(`Error: ${data.error}`);
             }
         } catch (error) {
             alert('Error de conexión al servidor');
@@ -340,7 +340,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                             {errorCount} {errorCount === 1 ? 'producto tiene' : 'productos tienen'} errores
                                         </p>
                                         <p className="text-xs text-amber-400/80 mt-1">
-                                            Solo se importarán los productos válidos. Pasa el mouse sobre ⚠️ para ver detalles del error.
+                                            Solo se importarán los productos válidos. Pasa el mouse sobre para ver detalles del error.
                                         </p>
                                     </div>
                                 </div>

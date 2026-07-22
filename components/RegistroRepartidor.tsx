@@ -100,8 +100,7 @@ const RegistroRepartidor: React.FC = () => {
                     </div>
                     <h1 className="text-3xl font-bold text-white tracking-tight">Unite a la Red Nortex</h1>
                     <p className="text-slate-400 text-sm mt-2">
-                        Repartí para los negocios de tu zona y ganá por cada entrega. 🛵
-                    </p>
+                        Repartí para los negocios de tu zona y ganá por cada entrega.                     </p>
                 </div>
 
                 <form onSubmit={handleSubmit} className="panel-premium p-6 space-y-4">
@@ -129,11 +128,11 @@ const RegistroRepartidor: React.FC = () => {
                     {/* KYC: fotos */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
                         <div>
-                            <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">📄 Foto de tu cédula</label>
+                            <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Foto de tu cédula</label>
                             <ImageUploader value={fotoCedulaUrl} onChange={setFotoCedulaUrl} />
                         </div>
                         <div>
-                            <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">🛵 Foto de la moto (placa visible)</label>
+                            <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Foto de la moto (placa visible)</label>
                             <ImageUploader value={fotoVehiculoUrl} onChange={setFotoVehiculoUrl} />
                         </div>
                     </div>

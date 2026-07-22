@@ -62,7 +62,7 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
       localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
       localStorage.setItem('nortex_onboarding_pin', '1234');
 
-      alert('¡Cuenta creada con éxito! 🚀\n\nTu PIN de apertura de caja es: 1234\n(Podrás cambiarlo en Recursos Humanos → Directorio de Personal).');
+      alert('¡Cuenta creada con éxito! \n\nTu PIN de apertura de caja es: 1234\n(Podrás cambiarlo en Recursos Humanos → Directorio de Personal).');
 
       if (initialCart && initialCart.length > 0) {
         const persistentCart = initialCart.map(i => ({

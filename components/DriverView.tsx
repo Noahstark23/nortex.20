@@ -425,10 +425,10 @@ const DriverView: React.FC = () => {
                     <div className="flex-1 min-w-0">
                         <h1 className="font-black text-lg leading-tight text-white truncate">{driver.nombre}</h1>
                         <p className="text-slate-400 text-xs">
-                            {driver.tipoFlota === 'NORTEX' ? '⚡ Flota Nortex' : '🛵 Flota Propia'}
+                            {driver.tipoFlota === 'NORTEX' ? 'Flota Nortex' : 'Flota Propia'}
                             {pendingCount > 0
                                 ? <> &nbsp;·&nbsp; <span className="text-amber-400 font-semibold">{pendingCount} entrega{pendingCount !== 1 ? 's' : ''} pendiente{pendingCount !== 1 ? 's' : ''}</span></>
-                                : <> &nbsp;·&nbsp; <span className="text-emerald-400 font-semibold">Todo al día ✓</span></>
+                                : <> &nbsp;·&nbsp; <span className="text-emerald-400 font-semibold">Todo al día </span></>
                             }
                         </p>
                     </div>
@@ -527,7 +527,7 @@ const DriverView: React.FC = () => {
                                             {order.notas && (
                                                 <div className="mt-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
                                                     <p className="text-xs font-semibold text-amber-700">
-                                                        ⚠️ Nota: {order.notas}
+                                                        Nota: {order.notas}
                                                     </p>
                                                 </div>
                                             )}
@@ -682,7 +682,7 @@ const DriverView: React.FC = () => {
                                 </p>
                             )}
                             <p className="text-[11px] text-slate-500 mt-2">
-                                🔐 Cada movimiento queda firmado en tu libro — nadie puede alterarlo.
+                                Cada movimiento queda firmado en tu libro — nadie puede alterarlo.
                             </p>
                         </div>
 
@@ -697,7 +697,7 @@ const DriverView: React.FC = () => {
                                     <div className="min-w-0">
                                         <p className="text-sm text-slate-200 font-semibold truncate">{m.descripcion}</p>
                                         <p className="text-[10px] text-slate-500 mt-0.5">
-                                            {new Date(m.createdAt).toLocaleString()} {m.firmado && '· 🔏 firmado'}
+                                            {new Date(m.createdAt).toLocaleString()} {m.firmado && '· firmado'}
                                         </p>
                                     </div>
                                     <span className={`font-black text-lg flex-shrink-0 ${m.amount >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>

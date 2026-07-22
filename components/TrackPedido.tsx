@@ -96,7 +96,7 @@ const TrackPedido: React.FC = () => {
                     </h1>
                     {!cancelado && (
                         <p className="text-slate-500 text-sm mt-1">
-                            {data.estado === 'entregado' ? 'Tu pedido fue entregado. ¡Gracias por tu compra! 🎉' : 'Aquí podés seguir tu pedido en tiempo real.'}
+                            {data.estado === 'entregado' ? 'Tu pedido fue entregado. ¡Gracias por tu compra! ' : 'Aquí podés seguir tu pedido en tiempo real.'}
                         </p>
                     )}
                 </div>

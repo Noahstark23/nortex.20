@@ -25,7 +25,7 @@ const LandingNicaragua: React.FC = () => {
 
       <section className="py-16 px-6 max-w-4xl mx-auto text-center">
         <div className="inline-flex items-center gap-2 bg-emerald-50 text-emerald-700 text-sm font-medium px-4 py-2 rounded-full mb-6 border border-emerald-200">
-          ⚡ Sistema POS #1 para PyMES en Nicaragua
+          Sistema POS #1 para PyMES en Nicaragua
         </div>
         
         <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 mb-6 leading-tight">
@@ -61,7 +61,7 @@ const LandingNicaragua: React.FC = () => {
           <div className="flex flex-wrap justify-center gap-8 text-center">
             {[
               { n: "500+", l: "negocios en Nicaragua" },
-              { n: "4.8★", l: "calificación promedio" },
+              { n: "4.8", l: "calificación promedio" },
               { n: "2 min", l: "tiempo de configuración" },
               { n: "99.5%", l: "disponibilidad del sistema" }
             ].map((s, i) => (
