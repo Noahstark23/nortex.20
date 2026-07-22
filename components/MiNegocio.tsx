@@ -82,8 +82,10 @@ const MiNegocio: React.FC = () => {
                 const res = await fetch('/api/collections/worklist?dueSoonDays=7', { headers });
                 if (res.ok) {
                     const data = await res.json();
-                    if (typeof data.totalReceivable === 'number') {
-                        setNums(prev => ({ ...prev, meDeben: data.totalReceivable }));
+                    // El worklist responde { summary: { totalReceivable, ... }, items }.
+                    const total = data?.summary?.totalReceivable ?? data?.totalReceivable;
+                    if (typeof total === 'number') {
+                        setNums(prev => ({ ...prev, meDeben: total }));
                     }
                 }
             } catch { /* sin red — se queda en "—" */ }

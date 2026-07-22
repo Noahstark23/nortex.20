@@ -35,7 +35,8 @@ Skills especializadas (en `.claude/skills/`): **nortex-qa** (rondas de QA sobre
 código existente/diffs) · **nortex-migration** (schema/BD: MySQL + db push aditivo)
 · **nortex-security-audit** (barrido por clases de bug reales, hallazgos S-n) ·
 **nortex-seo** (landing/blog/prerender) · **nortex-deploy** (release, env vars,
-smoke tests).
+smoke tests) · **nortex-rag** (agente WhatsApp: retrieval, tools, cerebro LLM,
+simulador de conversaciones) · **run-nortex** (levantar la app real y probarla).
 
 ---
 

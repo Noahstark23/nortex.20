@@ -210,6 +210,8 @@ export const RecordCountSchema = z.object({
 // POST /api/shifts/open
 export const OpenShiftSchema = z.object({
     initialCash: moneyAmount,
+    // Fase D (gaveta multi-moneda): fondo inicial en dólares, opcional.
+    initialCashUsd: moneyAmount.optional(),
     employeePin: z.string().regex(/^\d{4}$/, 'El PIN debe ser exactamente 4 dígitos numéricos'),
 });
 
@@ -217,6 +219,9 @@ export const OpenShiftSchema = z.object({
 export const CloseShiftSchema = z.object({
     shiftId:      z.string().min(1, 'shiftId requerido'),
     declaredCash: moneyAmount,
+    // Fase D: dólares contados al cierre (opcional; si no viene y hubo
+    // movimiento USD, la diferencia USD se calcula contra 0 declarado).
+    declaredCashUsd: moneyAmount.optional(),
     auditNotes:   z.string().max(500).optional(),
 });
 
@@ -314,6 +319,104 @@ export const RouteExpenseSchema = z.object({
     amount:      moneyAmountPositive,
     description: z.string().trim().min(1, 'La descripción es obligatoria').max(300),
     collectedBy: z.string().trim().max(120).optional(),
+});
+
+// ============================================================
+// AGENTE BANCARIO (corresponsalía) — ver docs/PLAN_AGENTE_BANCARIO.md
+// ============================================================
+
+/** Operaciones de mostrador del agente (define la dirección del efectivo). */
+export const agentOperation = z.enum([
+    'DEPOSITO', 'PAGO_TARJETA', 'PAGO_PRESTAMO', 'PAGO_SERVICIO', 'RECARGA',
+    'REMESA_ENVIO', // cliente envía dinero → entrega efectivo (IN)
+    'RETIRO', 'REMESA_COBRO', // el negocio paga efectivo (OUT)
+    // Fase B — traslado de efectivo con el banco (solo manager, comisión 0):
+    'LIQUIDACION_ENTREGA', // llevás el efectivo captado al banco (OUT, baja la deuda)
+    'LIQUIDACION_FONDEO',  // traés efectivo del banco para fondear retiros (IN, sube la deuda)
+]);
+
+/** Config de comisión por operación: monto fijo y/o porcentaje (pactado en contrato). */
+const commissionEntry = z.object({
+    fija: numeric.refine((v) => v >= 0, { message: 'Comisión fija inválida' }).optional(),
+    pct:  numeric.refine((v) => v >= 0 && v <= 100, { message: 'Porcentaje de comisión fuera de rango' }).optional(),
+});
+
+// z.record con clave enum exige TODAS las claves (exhaustivo) en esta versión
+// de Zod → clave string + refine de pertenencia, para aceptar configs parciales
+// ({ DEPOSITO: {...} } sin las otras 7 operaciones).
+const commissionConfigSchema = z.record(z.string(), commissionEntry).refine(
+    (cfg) => Object.keys(cfg).every((k) => (agentOperation.options as string[]).includes(k)),
+    { message: 'Operación desconocida en la configuración de comisiones' },
+);
+
+/** Límites por operación del convenio (Fase C): por transacción y/o por día. */
+const limitEntry = z.object({
+    maxTx:  numeric.refine((v) => v > 0, { message: 'Límite por transacción inválido' }).optional(),
+    maxDia: numeric.refine((v) => v > 0, { message: 'Límite diario inválido' }).optional(),
+});
+const limitsConfigSchema = z.record(z.string(), limitEntry).refine(
+    (cfg) => Object.keys(cfg).every((k) => (agentOperation.options as string[]).includes(k)),
+    { message: 'Operación desconocida en la configuración de límites' },
+);
+
+// PATCH /api/agent-banking/settings — umbrales de alerta de gaveta del tenant.
+// null limpia el umbral; validación cruzada min < max sobre el estado enviado.
+export const AgentSettingsSchema = z.object({
+    agentCashMin: moneyAmountPositive.nullable().optional(),
+    agentCashMax: moneyAmountPositive.nullable().optional(),
+}).refine((d) => d.agentCashMin !== undefined || d.agentCashMax !== undefined, {
+    message: 'Indicá al menos un umbral',
+}).refine((d) => {
+    if (d.agentCashMin == null || d.agentCashMax == null) return true;
+    return parseFloat(d.agentCashMin) < parseFloat(d.agentCashMax);
+}, { message: 'El mínimo debe ser menor que el máximo' });
+
+// POST /api/agent-banking/agreements
+export const CreateAgentAgreementSchema = z.object({
+    name: z.string().trim().min(1, 'El nombre del convenio es obligatorio').max(120),
+    kind: z.enum(['BANCO', 'RED_RECAUDADORA', 'REMESERA']).default('BANCO'),
+    commissionConfig: commissionConfigSchema.optional(),
+    limitsConfig: limitsConfigSchema.optional(),
+});
+
+// PATCH /api/agent-banking/agreements/:id
+export const UpdateAgentAgreementSchema = z.object({
+    name:   z.string().trim().min(1).max(120).optional(),
+    active: z.boolean().optional(),
+    commissionConfig: commissionConfigSchema.optional(),
+    limitsConfig: limitsConfigSchema.optional(),
+}).refine((d) => d.name !== undefined || d.active !== undefined || d.commissionConfig !== undefined || d.limitsConfig !== undefined, {
+    message: 'Indicá al menos un cambio',
+});
+
+// POST /api/agent-banking/transactions/:id/reverse
+export const ReverseAgentTxSchema = z.object({
+    reason: z.string().trim().min(3, 'Indicá el motivo de la reversa').max(300),
+});
+
+// POST /api/agent-banking/agreements/:id/settle-commissions
+export const SettleCommissionsSchema = z.object({
+    // Sin monto = liquidar TODO lo devengado.
+    amount: moneyAmountPositive.optional(),
+});
+
+// POST /api/agent-banking/transactions
+export const CreateAgentTxSchema = z.object({
+    agreementId: z.string().min(1, 'agreementId requerido'),
+    operation:   agentOperation,
+    amount:      moneyAmountPositive,
+    currency:    z.enum(['NIO', 'USD']).default('NIO'),
+    // Fase D: tipo de cambio C$/US$ de la transacción — obligatorio en USD.
+    exchangeRate: moneyAmountPositive.refine((v) => parseFloat(v) >= 1 && parseFloat(v) <= 1000, {
+        message: 'Tipo de cambio fuera de rango (1–1000)',
+    }).optional(),
+    // Si no viene, se calcula del commissionConfig del convenio (en C$).
+    commission:  moneyAmount.optional(),
+    externalRef: z.string().trim().max(120).optional(),
+    customerRef: z.string().trim().max(160).optional(),
+}).refine((d) => d.currency !== 'USD' || d.exchangeRate !== undefined, {
+    message: 'El tipo de cambio es obligatorio para operaciones en dólares',
+    path: ['exchangeRate'],
 });
 
 // ============================================================

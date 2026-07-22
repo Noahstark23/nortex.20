@@ -29,6 +29,12 @@ const CHART_OF_ACCOUNTS = [
     { code: '1.1.4', name: 'Inventario de Mercancías', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.1.5', name: 'IVA Crédito Fiscal', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.1.6', name: 'Anticipo IR (Retenciones Sufridas)', type: 'ASSET', subtype: 'CURRENT_ASSET' },
+    // Agente bancario (corresponsalía): comisiones devengadas que el banco/red
+    // liquida después (típicamente mensual) — ver docs/PLAN_AGENTE_BANCARIO.md.
+    { code: '1.1.7', name: 'Comisiones por Cobrar Corresponsalía', type: 'ASSET', subtype: 'CURRENT_ASSET' },
+    // Fase D: dólares físicos en gaveta, valuados en C$ al tipo de cambio de
+    // cada transacción (moneda funcional = córdoba, NIIF Nicaragua).
+    { code: '1.1.8', name: 'Caja Moneda Extranjera', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.2.1', name: 'Mobiliario y Equipo', type: 'ASSET', subtype: 'FIXED_ASSET' },
     { code: '1.2.2', name: 'Depreciación Acumulada', type: 'ASSET', subtype: 'FIXED_ASSET' },
     // PASIVOS (2.x.x)
@@ -43,6 +49,9 @@ const CHART_OF_ACCOUNTS = [
     { code: '2.1.9', name: 'Aguinaldo por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     { code: '2.1.10', name: 'Vacaciones por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     { code: '2.1.11', name: 'Indemnización por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    // Agente bancario: efectivo captado por cuenta del banco (depósitos, pagos
+    // de servicios...) — es del banco, NO ingreso del negocio.
+    { code: '2.1.12', name: 'Corresponsalía Bancaria por Liquidar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     // CAPITAL (3.x.x)
     { code: '3.1.1', name: 'Capital Social', type: 'EQUITY', subtype: null },
     { code: '3.1.2', name: 'Utilidades Retenidas', type: 'EQUITY', subtype: null },
@@ -51,6 +60,8 @@ const CHART_OF_ACCOUNTS = [
     { code: '4.1.1', name: 'Ventas', type: 'REVENUE', subtype: null },
     { code: '4.1.2', name: 'Devoluciones sobre Ventas', type: 'REVENUE', subtype: null },
     { code: '4.1.3', name: 'Sobrantes de Inventario', type: 'REVENUE', subtype: null },
+    // Agente bancario: la comisión SÍ es ingreso del negocio (el monto principal no).
+    { code: '4.1.4', name: 'Comisiones por Corresponsalía', type: 'REVENUE', subtype: null },
     // GASTOS (5.x.x)
     { code: '5.1.1', name: 'Costo de Ventas', type: 'EXPENSE', subtype: null },
     { code: '5.1.2', name: 'Pérdida por Merma de Inventario', type: 'EXPENSE', subtype: null },
@@ -158,10 +169,15 @@ export async function createJournalEntry(
         throw new Error(`ASIENTO DESCUADRADO: Debe=${new Decimal(totalDebit).toFixed(2)} Haber=${new Decimal(totalCredit).toFixed(2)}`);
     }
 
-    // Resolve account IDs
-    const accounts = await Promise.all(
-        lines.map(l => getAccount(tenantId, l.accountCode))
-    );
+    // Resolve account IDs — SECUENCIAL a propósito: getAccount auto-siembra el
+    // catálogo cuando falta una cuenta, y dos seedChartOfAccounts (createMany
+    // skipDuplicates) concurrentes sobre el mismo tenant se deadlockean (P2034).
+    // Con 2+ cuentas nuevas del catálogo en un MISMO asiento, el Promise.all
+    // anterior disparaba esos seeds en paralelo y el asiento moría.
+    const accounts: Awaited<ReturnType<typeof getAccount>>[] = [];
+    for (const l of lines) {
+        accounts.push(await getAccount(tenantId, l.accountCode));
+    }
 
     const entry = await tx.journalEntry.create({
         data: {
@@ -320,6 +336,103 @@ export async function recordCashIn(
     await createJournalEntry(tx, tenantId, `Entrada: ${description}`, movementId, 'CASH_IN', userId, [
         { accountCode: '1.1.1', debit: amount, credit: 0 },
         { accountCode: '3.1.1', debit: 0, credit: amount },
+    ]);
+}
+
+/**
+ * OPERACIÓN DE AGENTE BANCARIO (corresponsalía) — un solo asiento balanceado.
+ * El monto principal NO es ingreso (es efectivo por cuenta del banco):
+ *   IN  (depósito/pago servicio/remesa enviada):  Debe Caja (1.1.1) / Haber Corresponsalía por Liquidar (2.1.12)
+ *   OUT (retiro/remesa pagada):                   Debe 2.1.12 / Haber Caja (1.1.1)
+ * La comisión SÍ es ingreso, devengada (el banco la paga después):
+ *   Debe Comisiones por Cobrar (1.1.7) / Haber Comisiones por Corresponsalía (4.1.4)
+ * Ver docs/PLAN_AGENTE_BANCARIO.md.
+ */
+export async function recordAgentTransaction(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    agentTxId: string,
+    direction: 'IN' | 'OUT',
+    amount: number,
+    commission: number,
+    description: string,
+    // Fase D: operaciones en USD mueven '1.1.8 Caja Moneda Extranjera' (los
+    // montos ya vienen en C$ al tipo de cambio de la transacción).
+    cashAccount: '1.1.1' | '1.1.8' = '1.1.1'
+) {
+    const lines = direction === 'IN'
+        ? [
+            { accountCode: cashAccount, debit: amount, credit: 0 },
+            { accountCode: '2.1.12', debit: 0, credit: amount },
+        ]
+        : [
+            { accountCode: '2.1.12', debit: amount, credit: 0 },
+            { accountCode: cashAccount, debit: 0, credit: amount },
+        ];
+    if (commission > 0) {
+        lines.push(
+            { accountCode: '1.1.7', debit: commission, credit: 0 },
+            { accountCode: '4.1.4', debit: 0, credit: commission },
+        );
+    }
+    await createJournalEntry(tx, tenantId, `Agente bancario: ${description}`, agentTxId, 'AGENT_TX', userId, lines);
+}
+
+/**
+ * REVERSA de una operación de agente (Fase B): asiento espejo exacto del
+ * original — deshace el movimiento principal Y la comisión devengada.
+ * `direction` es la dirección de la operación ORIGINAL.
+ */
+export async function recordAgentReversal(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    agentTxId: string,
+    originalDirection: 'IN' | 'OUT',
+    amount: number,
+    commission: number,
+    description: string,
+    cashAccount: '1.1.1' | '1.1.8' = '1.1.1'
+) {
+    // Espejo: si el original fue IN (Debe Caja / Haber 2.1.12), la reversa es
+    // Debe 2.1.12 / Haber Caja — y viceversa. Misma cuenta de caja (y mismo
+    // tipo de cambio implícito: montos C$ del registro original).
+    const lines = originalDirection === 'IN'
+        ? [
+            { accountCode: '2.1.12', debit: amount, credit: 0 },
+            { accountCode: cashAccount, debit: 0, credit: amount },
+        ]
+        : [
+            { accountCode: cashAccount, debit: amount, credit: 0 },
+            { accountCode: '2.1.12', debit: 0, credit: amount },
+        ];
+    if (commission > 0) {
+        lines.push(
+            { accountCode: '4.1.4', debit: commission, credit: 0 },
+            { accountCode: '1.1.7', debit: 0, credit: commission },
+        );
+    }
+    await createJournalEntry(tx, tenantId, `Reversa agente: ${description}`, agentTxId, 'AGENT_TX_REVERSAL', userId, lines);
+}
+
+/**
+ * LIQUIDACIÓN DE COMISIONES (Fase B): el banco/red paga a la cuenta bancaria
+ * del negocio las comisiones devengadas.
+ *   Debe: Bancos (1.1.2) / Haber: Comisiones por Cobrar Corresponsalía (1.1.7)
+ * No toca la gaveta (va a cuenta bancaria, no a efectivo).
+ */
+export async function recordAgentCommissionSettlement(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    agreementId: string,
+    amount: number,
+    description: string
+) {
+    await createJournalEntry(tx, tenantId, `Liquidación comisiones: ${description}`, agreementId, 'AGENT_COMMISSION_SETTLEMENT', userId, [
+        { accountCode: '1.1.2', debit: amount, credit: 0 },
+        { accountCode: '1.1.7', debit: 0, credit: amount },
     ]);
 }
 

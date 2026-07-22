@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Monitor, RefreshCw, Clock, ShoppingCart, ArrowDownCircle, ArrowUpCircle, DollarSign, AlertTriangle, CheckCircle, X, Printer, User, TrendingUp, Banknote, Lock, Calculator, Loader2 } from 'lucide-react';
+import { Monitor, RefreshCw, Clock, ShoppingCart, ArrowDownCircle, ArrowUpCircle, DollarSign, AlertTriangle, CheckCircle, X, Printer, User, TrendingUp, Banknote, Lock, Calculator, Loader2, Landmark, Undo2 } from 'lucide-react';
 
 interface LiveShift {
     id: string;
@@ -12,7 +12,12 @@ interface LiveShift {
     vaultCreditSales: number;
     vaultManualINs: number;
     vaultManualOUTs: number;
+    // Fase B: operaciones de agente bancario (corresponsalía) separadas
+    vaultAgentINs: number;
+    vaultAgentOUTs: number;
     estimatedPhysicalCash: number;
+    // Fase D: gaveta USD (dólares físicos del agente)
+    estimatedPhysicalUsd?: number;
     salesCount: number;
     movementsCount: number;
     lastSaleAt: string | null;
@@ -58,6 +63,7 @@ const CashRegisters: React.FC = () => {
     const [shiftToClose, setShiftToClose] = useState<LiveShift | null>(null);
     const [closing, setClosing] = useState(false);
     const [auditNotes, setAuditNotes] = useState('');
+    const [declaredUsdForce, setDeclaredUsdForce] = useState('');
     const [denominations, setDenominations] = useState({
         1000: 0, 500: 0, 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0
     });
@@ -88,6 +94,7 @@ const CashRegisters: React.FC = () => {
                 body: JSON.stringify({
                     shiftId: shiftToClose.id,
                     declaredCash: finalCashDeclared,
+                    ...(declaredUsdForce.trim() !== '' ? { declaredCashUsd: parseFloat(declaredUsdForce) } : {}),
                     auditNotes
                 })
             });
@@ -96,6 +103,7 @@ const CashRegisters: React.FC = () => {
                 setShiftToClose(null);
                 setDenominations({ 1000: 0, 500: 0, 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 });
                 setAuditNotes('');
+                setDeclaredUsdForce('');
                 fetchMonitor();
             } else {
                 const data = await res.json();
@@ -110,6 +118,155 @@ const CashRegisters: React.FC = () => {
 
     const token = localStorage.getItem('nortex_token');
     const headers = { 'Authorization': `Bearer ${token}` };
+
+    // ── 🏦 Agente Bancario — conciliación (Fase B) ──
+    const [agentAgreements, setAgentAgreements] = useState<any[]>([]);
+    const [agentTxs, setAgentTxs] = useState<any[]>([]);
+    const [agentBusy, setAgentBusy] = useState(false);
+    // Fase C: umbrales de gaveta + reporte agregado
+    const [agentThresholds, setAgentThresholds] = useState<{ min: string; max: string }>({ min: '', max: '' });
+    const [agentReport, setAgentReport] = useState<any | null>(null);
+
+    const fetchAgentData = useCallback(async () => {
+        try {
+            const [ra, rt, rs, rr] = await Promise.all([
+                fetch('/api/agent-banking/agreements', { headers }),
+                fetch('/api/agent-banking/transactions?take=15', { headers }),
+                fetch('/api/agent-banking/settings', { headers }),
+                fetch('/api/agent-banking/report?days=30', { headers }),
+            ]);
+            if (ra.ok) {
+                const da = await ra.json();
+                if (da.success) setAgentAgreements(da.data);
+            }
+            if (rt.ok) {
+                const dt = await rt.json();
+                if (dt.success) setAgentTxs(dt.data);
+            }
+            if (rs.ok) {
+                const ds = await rs.json();
+                if (ds.success) setAgentThresholds({
+                    min: ds.data.agentCashMin != null ? String(ds.data.agentCashMin) : '',
+                    max: ds.data.agentCashMax != null ? String(ds.data.agentCashMax) : '',
+                });
+            }
+            if (rr.ok) {
+                const dr = await rr.json();
+                if (dr.success) setAgentReport(dr.data);
+            }
+        } catch (e) { /* sección opcional: si falla, simplemente no se muestra */ }
+    }, [token]);
+
+    // Guardar umbrales de alerta de gaveta ('' limpia el umbral).
+    const handleSaveThresholds = async () => {
+        setAgentBusy(true);
+        try {
+            const res = await fetch('/api/agent-banking/settings', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', ...headers },
+                body: JSON.stringify({
+                    agentCashMin: agentThresholds.min.trim() === '' ? null : parseFloat(agentThresholds.min),
+                    agentCashMax: agentThresholds.max.trim() === '' ? null : parseFloat(agentThresholds.max),
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Error guardando umbrales');
+            fetchMonitor();
+        } catch (e: any) { alert(e.message); } finally { setAgentBusy(false); }
+    };
+
+    // Liquidar comisiones devengadas del convenio (el banco paga a la cuenta).
+    const handleSettleCommissions = async (agreement: any) => {
+        const accrued = Number(agreement.commissionAccrued);
+        if (!(accrued > 0)) { alert('No hay comisiones por liquidar en este convenio.'); return; }
+        if (!confirm(`¿Registrar que ${agreement.name} liquidó C$${accrued.toFixed(2)} de comisiones a tu cuenta bancaria?`)) return;
+        setAgentBusy(true);
+        try {
+            const res = await fetch(`/api/agent-banking/agreements/${agreement.id}/settle-commissions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...headers },
+                body: JSON.stringify({}),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Error liquidando comisiones');
+            fetchAgentData();
+        } catch (e: any) { alert(e.message); } finally { setAgentBusy(false); }
+    };
+
+    // Traslado de efectivo con el banco (entrega de lo captado / fondeo de gaveta).
+    const handleCashSettlement = async (agreement: any, operation: 'LIQUIDACION_ENTREGA' | 'LIQUIDACION_FONDEO') => {
+        const label = operation === 'LIQUIDACION_ENTREGA'
+            ? '¿Cuánto efectivo ENTREGÁS al banco? (sale de tu gaveta abierta)'
+            : '¿Cuánto efectivo traés del banco para FONDEAR la gaveta? (entra a tu gaveta abierta)';
+        const raw = prompt(label);
+        if (raw === null) return;
+        const monto = parseFloat(raw);
+        if (!isFinite(monto) || monto <= 0) { alert('Monto inválido.'); return; }
+        setAgentBusy(true);
+        try {
+            const res = await fetch('/api/agent-banking/transactions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...headers },
+                body: JSON.stringify({ agreementId: agreement.id, operation, amount: monto, currency: 'NIO' }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Error registrando el traslado');
+            fetchAgentData();
+            fetchMonitor();
+        } catch (e: any) { alert(e.message); } finally { setAgentBusy(false); }
+    };
+
+    // Configurar límites del contrato por operación (Fase C).
+    const handleConfigureLimits = async (agreement: any) => {
+        const OPS = ['DEPOSITO', 'RETIRO', 'PAGO_TARJETA', 'PAGO_PRESTAMO', 'PAGO_SERVICIO', 'RECARGA', 'REMESA_ENVIO', 'REMESA_COBRO'];
+        const op = prompt(`¿Qué operación querés limitar en ${agreement.name}?\n(${OPS.join(', ')})`)?.trim().toUpperCase();
+        if (!op) return;
+        if (!OPS.includes(op)) { alert('Operación desconocida.'); return; }
+        const actual = agreement.limitsConfig?.[op];
+        const rawTx = prompt(`Límite POR TRANSACCIÓN para ${op} (C$). Vacío = sin límite.`, actual?.maxTx != null ? String(actual.maxTx) : '');
+        if (rawTx === null) return;
+        const rawDia = prompt(`Límite POR DÍA para ${op} (C$). Vacío = sin límite.`, actual?.maxDia != null ? String(actual.maxDia) : '');
+        if (rawDia === null) return;
+        const maxTx = rawTx.trim() === '' ? undefined : parseFloat(rawTx);
+        const maxDia = rawDia.trim() === '' ? undefined : parseFloat(rawDia);
+        if ((maxTx !== undefined && !(maxTx > 0)) || (maxDia !== undefined && !(maxDia > 0))) { alert('Los límites deben ser mayores que cero.'); return; }
+        const limitsConfig = { ...(agreement.limitsConfig || {}) };
+        if (maxTx === undefined && maxDia === undefined) {
+            delete limitsConfig[op];
+        } else {
+            limitsConfig[op] = { ...(maxTx !== undefined ? { maxTx } : {}), ...(maxDia !== undefined ? { maxDia } : {}) };
+        }
+        setAgentBusy(true);
+        try {
+            const res = await fetch(`/api/agent-banking/agreements/${agreement.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', ...headers },
+                body: JSON.stringify({ limitsConfig }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Error guardando límites');
+            fetchAgentData();
+        } catch (e: any) { alert(e.message); } finally { setAgentBusy(false); }
+    };
+
+    // Reversar una operación (falló/se anuló en el dispositivo del banco).
+    const handleReverseTx = async (txItem: any) => {
+        const reason = prompt(`Motivo de la reversa de ${txItem.operation} C$${Number(txItem.amount).toFixed(2)} (${txItem.agreement?.name || ''}):`);
+        if (reason === null) return;
+        if (reason.trim().length < 3) { alert('Indicá un motivo (mínimo 3 caracteres).'); return; }
+        setAgentBusy(true);
+        try {
+            const res = await fetch(`/api/agent-banking/transactions/${txItem.id}/reverse`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...headers },
+                body: JSON.stringify({ reason: reason.trim() }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Error reversando la operación');
+            fetchAgentData();
+            fetchMonitor();
+        } catch (e: any) { alert(e.message); } finally { setAgentBusy(false); }
+    };
 
     const fetchMonitor = useCallback(async () => {
         try {
@@ -134,9 +291,10 @@ const CashRegisters: React.FC = () => {
     // Initial load + auto-refresh every 15 seconds
     useEffect(() => {
         fetchMonitor();
-        const interval = setInterval(fetchMonitor, 15000);
+        fetchAgentData();
+        const interval = setInterval(() => { fetchMonitor(); fetchAgentData(); }, 15000);
         return () => clearInterval(interval);
-    }, [fetchMonitor]);
+    }, [fetchMonitor, fetchAgentData]);
 
     const timeAgo = (dateStr: string) => {
         const diff = Date.now() - new Date(dateStr).getTime();
@@ -269,6 +427,19 @@ const CashRegisters: React.FC = () => {
                                             <span className="font-bold text-amber-600">-C${shift.vaultManualOUTs.toFixed(2)}</span>
                                         </div>
 
+                                        {/* Vault: Agente Bancario (Fase B) — plata del banco, separada */}
+                                        {((shift.vaultAgentINs ?? 0) > 0 || (shift.vaultAgentOUTs ?? 0) > 0) && (
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2 text-sm text-slate-600">
+                                                    <Landmark size={14} className="text-sky-500" />
+                                                    <span>Agente Bancario</span>
+                                                </div>
+                                                <span className="font-bold text-sky-600">
+                                                    +C${(shift.vaultAgentINs ?? 0).toFixed(2)} / -C${(shift.vaultAgentOUTs ?? 0).toFixed(2)}
+                                                </span>
+                                            </div>
+                                        )}
+
                                         {/* Divider */}
                                         <div className="border-t border-dashed border-slate-200 pt-3">
                                             <div className="flex items-center justify-between">
@@ -279,6 +450,24 @@ const CashRegisters: React.FC = () => {
                                                 <span className="text-xl font-black text-nortex-900">C${shift.estimatedPhysicalCash.toFixed(2)}</span>
                                             </div>
                                             <p className="text-[10px] text-slate-400 mt-1">Fondo: C${shift.initialCash.toFixed(2)} · {shift.salesCount} ventas · {shift.movementsCount} movimientos</p>
+                                            {/* Alertas de gaveta del agente (Fase C) */}
+                                            {agentThresholds.min !== '' && shift.estimatedPhysicalCash < parseFloat(agentThresholds.min) && (
+                                                <p className="mt-2 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 flex items-center gap-1">
+                                                    <AlertTriangle size={12} /> Gaveta baja: podrías no poder pagar retiros. Considerá fondear.
+                                                </p>
+                                            )}
+                                            {agentThresholds.max !== '' && shift.estimatedPhysicalCash > parseFloat(agentThresholds.max) && (
+                                                <p className="mt-2 text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1 flex items-center gap-1">
+                                                    <AlertTriangle size={12} /> Exceso de efectivo (riesgo de robo). Considerá entregar al banco.
+                                                </p>
+                                            )}
+                                            {/* Gaveta USD (Fase D) */}
+                                            {(shift.estimatedPhysicalUsd ?? 0) !== 0 && (
+                                                <div className="mt-2 flex items-center justify-between text-sm">
+                                                    <span className="text-slate-500 flex items-center gap-1"><DollarSign size={13} className="text-emerald-500" /> Dólares en gaveta</span>
+                                                    <span className="font-bold text-emerald-700 font-mono">US${(shift.estimatedPhysicalUsd ?? 0).toFixed(2)}</span>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 
@@ -303,6 +492,213 @@ const CashRegisters: React.FC = () => {
                         </div>
                     )}
                 </section>
+
+                {/* ====== ZONA 1.5: AGENTE BANCARIO — CONCILIACIÓN (Fase B) ====== */}
+                {agentAgreements.length > 0 && (
+                    <section>
+                        <div className="flex items-center gap-2 mb-4">
+                            <Landmark size={18} className="text-sky-600" />
+                            <h2 className="text-lg font-bold text-slate-800">Agente Bancario — Conciliación</h2>
+                        </div>
+
+                        {/* Umbrales de alerta de gaveta (Fase C) */}
+                        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 mb-4 flex flex-wrap items-end gap-3">
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Alerta gaveta mínima (C$)</label>
+                                <input
+                                    type="number" min="0" step="0.01"
+                                    value={agentThresholds.min}
+                                    onChange={e => setAgentThresholds(prev => ({ ...prev, min: e.target.value }))}
+                                    placeholder="Sin alerta"
+                                    className="w-36 border-2 border-slate-200 rounded-lg px-3 py-2 text-sm focus:border-sky-500 outline-none text-slate-700 font-mono"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Alerta gaveta máxima (C$)</label>
+                                <input
+                                    type="number" min="0" step="0.01"
+                                    value={agentThresholds.max}
+                                    onChange={e => setAgentThresholds(prev => ({ ...prev, max: e.target.value }))}
+                                    placeholder="Sin alerta"
+                                    className="w-36 border-2 border-slate-200 rounded-lg px-3 py-2 text-sm focus:border-sky-500 outline-none text-slate-700 font-mono"
+                                />
+                            </div>
+                            <button
+                                onClick={handleSaveThresholds}
+                                disabled={agentBusy}
+                                className="text-xs font-bold px-4 py-2.5 rounded-lg bg-sky-600 text-white hover:bg-sky-700 transition-colors disabled:opacity-50"
+                            >
+                                Guardar umbrales
+                            </button>
+                            <p className="text-[10px] text-slate-400 basis-full">Bajo el mínimo: aviso de que no vas a poder pagar retiros. Sobre el máximo: aviso de exceso de efectivo (entregá al banco). Vacío = sin alerta.</p>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-4">
+                            {agentAgreements.map((a: any) => {
+                                const saldo = Number(a.settlementBalance);
+                                const comisiones = Number(a.commissionAccrued);
+                                return (
+                                    <div key={a.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+                                        <div className="flex items-center justify-between mb-3">
+                                            <div>
+                                                <p className="font-bold text-slate-800">{a.name}</p>
+                                                <p className="text-[10px] text-slate-400">{a.kind === 'BANCO' ? 'Banco' : a.kind === 'RED_RECAUDADORA' ? 'Red de pagos' : 'Remesera'}{!a.active && ' · INACTIVO'}</p>
+                                            </div>
+                                            <Landmark size={20} className="text-sky-500" />
+                                        </div>
+                                        <div className="space-y-2 text-sm">
+                                            <div className="flex justify-between">
+                                                <span className="text-slate-500">{saldo >= 0 ? 'Le debés al banco:' : 'El banco te debe:'}</span>
+                                                <span className={`font-bold font-mono ${saldo >= 0 ? 'text-amber-600' : 'text-emerald-600'}`}>C${Math.abs(saldo).toFixed(2)}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-slate-500">Comisiones por cobrar:</span>
+                                                <span className="font-bold font-mono text-sky-600">C${comisiones.toFixed(2)}</span>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 mt-4">
+                                            <button
+                                                onClick={() => handleCashSettlement(a, 'LIQUIDACION_ENTREGA')}
+                                                disabled={agentBusy}
+                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                                                title="Llevar el efectivo captado al banco (sale de tu gaveta)"
+                                            >
+                                                Entregar al banco
+                                            </button>
+                                            <button
+                                                onClick={() => handleCashSettlement(a, 'LIQUIDACION_FONDEO')}
+                                                disabled={agentBusy}
+                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors disabled:opacity-50"
+                                                title="Traer efectivo del banco para pagar retiros (entra a tu gaveta)"
+                                            >
+                                                Fondear gaveta
+                                            </button>
+                                            <button
+                                                onClick={() => handleSettleCommissions(a)}
+                                                disabled={agentBusy || !(comisiones > 0)}
+                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition-colors disabled:opacity-50"
+                                                title="El banco pagó las comisiones a tu cuenta bancaria"
+                                            >
+                                                Liquidar comisiones
+                                            </button>
+                                            <button
+                                                onClick={() => handleConfigureLimits(a)}
+                                                disabled={agentBusy}
+                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100 transition-colors disabled:opacity-50"
+                                                title="Límites del contrato por operación (por transacción y por día)"
+                                            >
+                                                Límites
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* Reporte de conciliación 30 días (Fase C, agregado en SQL) */}
+                        {agentReport && agentReport.breakdown?.length > 0 && (
+                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+                                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                                    <h3 className="text-sm font-bold text-slate-700">Resumen últimos {agentReport.days} días</h3>
+                                    <span className="text-[10px] text-slate-400">para conciliar contra el reporte del banco/red</span>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-slate-50 text-slate-500 text-xs">
+                                            <tr>
+                                                <th className="px-4 py-2 text-left font-medium">Convenio</th>
+                                                <th className="px-4 py-2 text-left font-medium">Operación</th>
+                                                <th className="px-4 py-2 text-right font-medium"># Ops</th>
+                                                <th className="px-4 py-2 text-right font-medium">Volumen</th>
+                                                <th className="px-4 py-2 text-right font-medium">Comisiones</th>
+                                                <th className="px-4 py-2 text-center font-medium">Estado</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {agentReport.breakdown.map((b: any, i: number) => {
+                                                const agr = agentReport.agreements.find((a: any) => a.id === b.agreementId);
+                                                return (
+                                                    <tr key={i} className="border-t border-slate-100">
+                                                        <td className="px-4 py-2 text-slate-700">{agr?.name || '—'}</td>
+                                                        <td className="px-4 py-2 text-slate-600 text-xs">{b.operation.replace(/_/g, ' ')}</td>
+                                                        <td className="px-4 py-2 text-right font-mono text-slate-700">{b.count}</td>
+                                                        <td className="px-4 py-2 text-right font-mono font-bold text-slate-800">C${b.totalAmount.toFixed(2)}</td>
+                                                        <td className="px-4 py-2 text-right font-mono text-sky-600">C${b.totalCommission.toFixed(2)}</td>
+                                                        <td className="px-4 py-2 text-center">
+                                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${b.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                                                                {b.status === 'COMPLETED' ? 'OK' : 'REVERSADAS'}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Últimas operaciones con botón de reversa */}
+                        {agentTxs.length > 0 && (
+                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                                <div className="px-4 py-3 border-b border-slate-100">
+                                    <h3 className="text-sm font-bold text-slate-700">Últimas operaciones de agente</h3>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-slate-50 text-slate-500 text-xs">
+                                            <tr>
+                                                <th className="px-4 py-2 text-left font-medium">Fecha</th>
+                                                <th className="px-4 py-2 text-left font-medium">Convenio</th>
+                                                <th className="px-4 py-2 text-left font-medium">Operación</th>
+                                                <th className="px-4 py-2 text-right font-medium">Monto</th>
+                                                <th className="px-4 py-2 text-right font-medium">Comisión</th>
+                                                <th className="px-4 py-2 text-left font-medium">Ref.</th>
+                                                <th className="px-4 py-2 text-center font-medium">Estado</th>
+                                                <th className="px-4 py-2"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {agentTxs.map((t: any) => (
+                                                <tr key={t.id} className="border-t border-slate-100">
+                                                    <td className="px-4 py-2 text-slate-500 text-xs">{new Date(t.createdAt).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+                                                    <td className="px-4 py-2 text-slate-700">{t.agreement?.name}</td>
+                                                    <td className="px-4 py-2">
+                                                        <span className={`text-xs font-bold ${t.direction === 'IN' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                                            {t.operation.replace(/_/g, ' ')}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-2 text-right font-mono font-bold text-slate-800">
+                                                        {t.direction === 'IN' ? '+' : '-'}C${Number(t.amount).toFixed(2)}
+                                                    </td>
+                                                    <td className="px-4 py-2 text-right font-mono text-sky-600">C${Number(t.commission).toFixed(2)}</td>
+                                                    <td className="px-4 py-2 text-slate-400 text-xs">{t.externalRef || '—'}</td>
+                                                    <td className="px-4 py-2 text-center">
+                                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${t.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                                                            {t.status === 'COMPLETED' ? 'OK' : 'REVERSADA'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-2 text-right">
+                                                        {t.status === 'COMPLETED' && (
+                                                            <button
+                                                                onClick={() => handleReverseTx(t)}
+                                                                disabled={agentBusy}
+                                                                className="flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded bg-red-50 text-red-600 border border-red-100 hover:bg-red-100 transition-colors disabled:opacity-50"
+                                                                title="Reversar (la transacción falló o se anuló en el equipo del banco)"
+                                                            >
+                                                                <Undo2 size={12} /> Reversar
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </section>
+                )}
 
                 {/* ====== ZONA 2: HISTORIAL DE CIERRES (AUDITORÍA) ====== */}
                 <section>
@@ -569,6 +965,23 @@ const CashRegisters: React.FC = () => {
                                         <span className="text-xs font-bold text-slate-500 uppercase">Aprox. Sistema</span>
                                         <span className="font-bold text-slate-800">C${shiftToClose.estimatedPhysicalCash.toFixed(2)}</span>
                                     </div>
+
+                                    {/* Gaveta USD (Fase D): solo si el turno manejó dólares */}
+                                    {(shiftToClose.estimatedPhysicalUsd ?? 0) !== 0 && (
+                                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 shadow-sm space-y-2">
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-xs font-bold text-emerald-700 uppercase">Dólares esperados</span>
+                                                <span className="font-bold text-emerald-800">US${(shiftToClose.estimatedPhysicalUsd ?? 0).toFixed(2)}</span>
+                                            </div>
+                                            <input
+                                                type="number" min="0" step="0.01"
+                                                value={declaredUsdForce}
+                                                onChange={(e) => setDeclaredUsdForce(e.target.value)}
+                                                placeholder="Dólares contados (US$)"
+                                                className="w-full bg-white border border-emerald-200 rounded-xl px-3 py-2 text-sm text-slate-700 focus:outline-none focus:border-emerald-500 font-mono"
+                                            />
+                                        </div>
+                                    )}
 
                                     {/* Notas de Auditoría */}
                                     <div>

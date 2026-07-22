@@ -40,6 +40,7 @@ import serialsRouter from './routes/serials';
 import warehousesRouter from './routes/warehouses';
 import stockTransfersRouter from './routes/stockTransfers';
 import syncRoutes from './routes/sync';
+import agentBankingRouter from './routes/agentBanking';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 import {
@@ -227,6 +228,7 @@ app.use('/api/warehouses', warehousesRouter); // Multi-bodega (Fase 2: fundació
 app.use('/api/stock-transfers', stockTransfersRouter); // Transferencias entre bodegas (Fase 3)
 app.use('/api/loans', loanRoutes);
 app.use('/api/sales/sync', syncRoutes);
+app.use('/api/agent-banking', agentBankingRouter); // Agente bancario (corresponsalía en caja)
 
 // Response time header (para monitoreo)
 app.use((req: any, res: any, next: any) => {
@@ -2020,7 +2022,7 @@ const shiftOpenLimiter = rateLimit({
 });
 app.post('/api/shifts/open', shiftOpenLimiter as any, authenticate, validate(OpenShiftSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { initialCash, employeePin } = req.body;
+    const { initialCash, initialCashUsd, employeePin } = req.body;
 
     try {
         // PIN ya validado por Zod (regex \d{4})
@@ -2051,6 +2053,7 @@ app.post('/api/shifts/open', shiftOpenLimiter as any, authenticate, validate(Ope
                     userId: authReq.userId,
                     employeeId: employee.id,
                     initialCash,
+                    initialCashUsd: initialCashUsd !== undefined ? initialCashUsd : 0,
                     status: 'OPEN'
                 },
                 include: {
@@ -2087,7 +2090,7 @@ app.post('/api/shifts/open', shiftOpenLimiter as any, authenticate, validate(Ope
 });
 app.post('/api/shifts/close', authenticate, validate(CloseShiftSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { declaredCash, shiftId, auditNotes } = req.body;
+    const { declaredCash, declaredCashUsd, shiftId, auditNotes } = req.body;
     try {
         // Tenant isolation: shift debe pertenecer al tenant del token
         const shift = await prisma.shift.findFirst({
@@ -2108,13 +2111,24 @@ app.post('/api/shifts/close', authenticate, validate(CloseShiftSchema), async (r
             return res.status(403).json({ error: 'No autorizado a cerrar este turno.' });
         }
 
-        // ARQUEO DINÁMICO: initialCash + cashSales + manualINs - manualOUTs = expectedCash
+        // ARQUEO DINÁMICO por moneda (Fase D): las ventas son siempre C$; los
+        // movimientos de caja se separan por currency. Antes se sumaban C$ y
+        // US$ como si fueran la misma unidad — eso era un bug de arqueo.
         const cashSales = shift.sales.filter((s: any) => s.paymentMethod === 'CASH').reduce((sum: number, s: any) => sum + Number(s.total), 0);
         const cardSales = shift.sales.filter((s: any) => s.paymentMethod !== 'CASH' && s.paymentMethod !== 'CREDIT').reduce((sum: number, s: any) => sum + Number(s.total), 0);
-        const manualINs = shift.cashMovements.filter((m: any) => m.type === 'IN').reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-        const manualOUTs = shift.cashMovements.filter((m: any) => m.type === 'OUT').reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+        const esNio = (m: any) => (m.currency || 'NIO') === 'NIO';
+        const manualINs = shift.cashMovements.filter((m: any) => m.type === 'IN' && esNio(m)).reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+        const manualOUTs = shift.cashMovements.filter((m: any) => m.type === 'OUT' && esNio(m)).reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+        const usdINs = shift.cashMovements.filter((m: any) => m.type === 'IN' && !esNio(m)).reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+        const usdOUTs = shift.cashMovements.filter((m: any) => m.type === 'OUT' && !esNio(m)).reduce((sum: number, m: any) => sum + Number(m.amount), 0);
         const expectedCash = Number(shift.initialCash) + cashSales + manualINs - manualOUTs;
         const difference = Number(declaredCash) - expectedCash;
+        const expectedUsd = Number(shift.initialCashUsd || 0) + usdINs - usdOUTs;
+        // Si no declaró dólares pero hubo movimiento USD, la diferencia se
+        // calcula contra 0 (faltante completo visible, no oculto).
+        const declaredUsd = declaredCashUsd !== undefined ? Number(declaredCashUsd) : 0;
+        const differenceUsd = declaredUsd - expectedUsd;
+        const huboUsd = expectedUsd !== 0 || declaredUsd !== 0 || Number(shift.initialCashUsd || 0) !== 0;
 
         const cajeroName = shift.employee ? `${shift.employee.firstName} ${shift.employee.lastName}` : 'Sin asignar';
 
@@ -2131,7 +2145,13 @@ app.post('/api/shifts/close', authenticate, validate(CloseShiftSchema), async (r
                     status: 'CLOSED',
                     finalCashDeclared: declaredCash,
                     systemExpectedCash: expectedCash,
-                    difference: difference
+                    difference: difference,
+                    // Gaveta USD (Fase D): solo se persiste si hubo dólares.
+                    ...(huboUsd ? {
+                        finalCashDeclaredUsd: declaredUsd,
+                        systemExpectedUsd: expectedUsd,
+                        differenceUsd: differenceUsd,
+                    } : {}),
                 },
                 include: {
                     employee: { select: { id: true, firstName: true, lastName: true, role: true } }
@@ -2154,6 +2174,10 @@ app.post('/api/shifts/close', authenticate, validate(CloseShiftSchema), async (r
                         entradasManuales: manualINs,
                         salidasManuales: manualOUTs,
                         fondoInicial: Number(shift.initialCash),
+                        // Gaveta USD (Fase D):
+                        ...(huboUsd ? {
+                            usd: { esperado: expectedUsd, declarado: declaredUsd, diferencia: differenceUsd, fondoInicial: Number(shift.initialCashUsd || 0) },
+                        } : {}),
                         totalVentas: shift.sales.length,
                         totalMovimientos: shift.cashMovements.length,
                         notasRevisor: auditNotes || 'Sin notas.'
@@ -2261,7 +2285,7 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
                 employee: { select: { id: true, firstName: true, lastName: true, role: true } },
                 user: { select: { id: true, name: true, email: true } },
                 sales: { select: { id: true, total: true, paymentMethod: true, createdAt: true } },
-                cashMovements: { where: { isVoided: false }, select: { id: true, type: true, amount: true, category: true, description: true, createdAt: true } }
+                cashMovements: { where: { isVoided: false }, select: { id: true, type: true, amount: true, currency: true, category: true, description: true, createdAt: true } }
             },
             orderBy: { startTime: 'asc' }
         });
@@ -2280,18 +2304,41 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
                 .filter((s: any) => s.paymentMethod === 'CREDIT')
                 .reduce((sum: number, s: any) => sum + Number(s.total), 0);
 
-            // Bóveda 2: Entradas manuales
+            // Fase D: todas las bóvedas son POR MONEDA — lo de abajo es C$;
+            // los dólares llevan su propio conteo (gaveta USD).
+            const esNioMov = (m: any) => (m.currency || 'NIO') === 'NIO';
+
+            // Bóveda 4 (Fase B): operaciones de agente bancario (corresponsalía)
+            // separadas de los movimientos manuales — es plata del banco, no del
+            // negocio, y el dueño necesita verla aparte para conciliar.
+            const agentINs = shift.cashMovements
+                .filter((m: any) => m.type === 'IN' && m.category === 'AGENTE_BANCARIO' && esNioMov(m))
+                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+            const agentOUTs = shift.cashMovements
+                .filter((m: any) => m.type === 'OUT' && m.category === 'AGENTE_BANCARIO' && esNioMov(m))
+                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+
+            // Bóveda 2: Entradas manuales (sin agente)
             const manualINs = shift.cashMovements
-                .filter((m: any) => m.type === 'IN')
+                .filter((m: any) => m.type === 'IN' && m.category !== 'AGENTE_BANCARIO' && esNioMov(m))
                 .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
 
-            // Bóveda 3: Salidas manuales
+            // Bóveda 3: Salidas manuales (sin agente)
             const manualOUTs = shift.cashMovements
-                .filter((m: any) => m.type === 'OUT')
+                .filter((m: any) => m.type === 'OUT' && m.category !== 'AGENTE_BANCARIO' && esNioMov(m))
                 .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
 
-            // EL NÚMERO SAGRADO: Efectivo físico estimado en la gaveta
-            const estimatedPhysicalCash = Number(shift.initialCash) + cashSales + manualINs - manualOUTs;
+            // Gaveta USD (Fase D): fondo + entradas − salidas en dólares.
+            const usdINs = shift.cashMovements
+                .filter((m: any) => m.type === 'IN' && !esNioMov(m))
+                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+            const usdOUTs = shift.cashMovements
+                .filter((m: any) => m.type === 'OUT' && !esNioMov(m))
+                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+            const estimatedPhysicalUsd = Number(shift.initialCashUsd || 0) + usdINs - usdOUTs;
+
+            // EL NÚMERO SAGRADO (C$): manual + agente = todos los movimientos NIO.
+            const estimatedPhysicalCash = Number(shift.initialCash) + cashSales + manualINs + agentINs - manualOUTs - agentOUTs;
 
             // Última venta
             const sortedSales = shift.sales.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -2321,8 +2368,13 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
                 vaultCreditSales: creditSales,
                 vaultManualINs: manualINs,
                 vaultManualOUTs: manualOUTs,
+                // Bóveda agente bancario (Fase B):
+                vaultAgentINs: agentINs,
+                vaultAgentOUTs: agentOUTs,
                 // El Número Sagrado:
                 estimatedPhysicalCash,
+                // Gaveta USD (Fase D):
+                estimatedPhysicalUsd,
                 // Meta:
                 salesCount: shift.sales.length,
                 movementsCount: shift.cashMovements.length,
@@ -2377,6 +2429,9 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
             activeShifts: liveCards,
             closedShifts: closedHistory,
             theftThreshold,
+            // Umbrales de alerta de gaveta del agente bancario (Fase C):
+            agentCashMin: tenant?.agentCashMin != null ? Number(tenant.agentCashMin) : null,
+            agentCashMax: tenant?.agentCashMax != null ? Number(tenant.agentCashMax) : null,
         });
 
     } catch (e: any) {
@@ -2421,22 +2476,31 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
         // Pre-chequeo con decimal.js (respuesta 400 limpia). La validación autoritativa
         // race-safe se re-hace bajo lock DENTRO de la transacción (ver más abajo).
         if (type === 'OUT') {
-            const cashSalesTotal = currentShift.sales
-                .filter((s: any) => s.paymentMethod === 'CASH')
-                .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
+            // Fase D: el guard es POR MONEDA — una salida en US$ se valida
+            // contra los dólares de la gaveta (las ventas son siempre C$).
+            const movCurrency = currency || 'NIO';
+            const mismaMoneda = (m: any) => (m.currency || 'NIO') === movCurrency;
+            const cashSalesTotal = movCurrency === 'NIO'
+                ? currentShift.sales
+                    .filter((s: any) => s.paymentMethod === 'CASH')
+                    .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0))
+                : new Decimal(0);
+            const fondo = movCurrency === 'NIO'
+                ? new Decimal(currentShift.initialCash.toString())
+                : new Decimal((currentShift.initialCashUsd ?? 0).toString());
             const totalINs = currentShift.cashMovements
-                .filter((m: any) => m.type === 'IN')
+                .filter((m: any) => m.type === 'IN' && mismaMoneda(m))
                 .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
             const totalOUTs = currentShift.cashMovements
-                .filter((m: any) => m.type === 'OUT')
+                .filter((m: any) => m.type === 'OUT' && mismaMoneda(m))
                 .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
 
-            const availableCash = new Decimal(currentShift.initialCash.toString())
-                .plus(cashSalesTotal).plus(totalINs).minus(totalOUTs);
+            const availableCash = fondo.plus(cashSalesTotal).plus(totalINs).minus(totalOUTs);
+            const simbolo = movCurrency === 'NIO' ? 'C$' : 'US$';
 
             if (new Decimal(amount).greaterThan(availableCash)) {
                 return res.status(400).json({
-                    error: `Saldo insuficiente. Efectivo disponible: C$${availableCash.toFixed(2)}. Intentas sacar: C$${new Decimal(amount).toFixed(2)}`,
+                    error: `Saldo insuficiente. Efectivo disponible: ${simbolo}${availableCash.toFixed(2)}. Intentas sacar: ${simbolo}${new Decimal(amount).toFixed(2)}`,
                     availableCash: availableCash.toNumber()
                 });
             }
@@ -2448,27 +2512,36 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
             // (FOR UPDATE) y se recalcula el efectivo disponible con decimal.js DENTRO de la
             // transacción, cerrando el TOCTOU de dos OUT concurrentes que sobregiran la caja.
             if (type === 'OUT') {
-                await tx.$queryRaw`SELECT id FROM "Shift" WHERE id = ${currentShift.id} AND "tenantId" = ${authReq.tenantId} FOR UPDATE`;
-                const freshSales: Array<{ total: any }> = await tx.sale.findMany({
-                    where: { shiftId: currentShift.id, paymentMethod: 'CASH' },
-                    select: { total: true },
-                });
-                const freshMovements: Array<{ type: string; amount: any }> = await tx.cashMovement.findMany({
+                // Fase D: revalidación race-safe POR MONEDA (backticks MySQL —
+                // el raw anterior usaba comillas dobles estilo PostgreSQL).
+                await tx.$queryRaw`SELECT id FROM \`Shift\` WHERE id = ${currentShift.id} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
+                const movCurrency = currency || 'NIO';
+                const freshSales: Array<{ total: any }> = movCurrency === 'NIO'
+                    ? await tx.sale.findMany({
+                        where: { shiftId: currentShift.id, paymentMethod: 'CASH' },
+                        select: { total: true },
+                    })
+                    : [];
+                const freshMovements: Array<{ type: string; amount: any; currency: string | null }> = await tx.cashMovement.findMany({
                     where: { shiftId: currentShift.id, isVoided: false },
-                    select: { type: true, amount: true },
+                    select: { type: true, amount: true, currency: true },
                 });
+                const mismaMoneda = (m: any) => (m.currency || 'NIO') === movCurrency;
                 const cashSalesTotal = freshSales
                     .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
+                const fondo = movCurrency === 'NIO'
+                    ? new Decimal(currentShift.initialCash.toString())
+                    : new Decimal((currentShift.initialCashUsd ?? 0).toString());
                 const totalINs = freshMovements
-                    .filter((m) => m.type === 'IN')
+                    .filter((m) => m.type === 'IN' && mismaMoneda(m))
                     .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
                 const totalOUTs = freshMovements
-                    .filter((m) => m.type === 'OUT')
+                    .filter((m) => m.type === 'OUT' && mismaMoneda(m))
                     .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
-                const availableCash = new Decimal(currentShift.initialCash.toString())
-                    .plus(cashSalesTotal).plus(totalINs).minus(totalOUTs);
+                const availableCash = fondo.plus(cashSalesTotal).plus(totalINs).minus(totalOUTs);
+                const simbolo = movCurrency === 'NIO' ? 'C$' : 'US$';
                 if (new Decimal(amount).greaterThan(availableCash)) {
-                    throw new Error(`Saldo insuficiente. Efectivo disponible: C$${availableCash.toFixed(2)}`);
+                    throw new Error(`Saldo insuficiente. Efectivo disponible: ${simbolo}${availableCash.toFixed(2)}`);
                 }
             }
 
@@ -2583,26 +2656,39 @@ app.get('/api/cash-movements/balance', authenticate, async (req: any, res: any) 
             return res.json({ balance: 0, hasOpenShift: false });
         }
 
+        // Fase D: saldo POR MONEDA — C$ y US$ son unidades distintas.
+        const esNio = (m: any) => (m.currency || 'NIO') === 'NIO';
         const cashSales = currentShift.sales
             .filter((s: any) => s.paymentMethod === 'CASH')
             .reduce((sum: number, s: any) => sum + Number(s.total), 0);
         const totalINs = currentShift.cashMovements
-            .filter((m: any) => m.type === 'IN')
+            .filter((m: any) => m.type === 'IN' && esNio(m))
             .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
         const totalOUTs = currentShift.cashMovements
-            .filter((m: any) => m.type === 'OUT')
+            .filter((m: any) => m.type === 'OUT' && esNio(m))
+            .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+        const usdINs = currentShift.cashMovements
+            .filter((m: any) => m.type === 'IN' && !esNio(m))
+            .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+        const usdOUTs = currentShift.cashMovements
+            .filter((m: any) => m.type === 'OUT' && !esNio(m))
             .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
 
         const balance = Number(currentShift.initialCash) + cashSales + totalINs - totalOUTs;
+        const balanceUsd = Number(currentShift.initialCashUsd || 0) + usdINs - usdOUTs;
 
         res.json({
             balance,
+            balanceUsd,
             hasOpenShift: true,
             breakdown: {
                 initialCash: Number(currentShift.initialCash),
                 cashSales,
                 manualINs: totalINs,
-                manualOUTs: totalOUTs
+                manualOUTs: totalOUTs,
+                initialCashUsd: Number(currentShift.initialCashUsd || 0),
+                usdINs,
+                usdOUTs
             }
         });
     } catch (error) {

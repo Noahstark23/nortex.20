@@ -50,11 +50,15 @@ export interface NavContext {
 
 // ── Catálogo completo (labels de mostrador; mismas rutas de siempre) ─────────
 
+// Rutas propias del prestamista (Fase 2 H7): antes 3 de 4 items apuntaban a
+// /app/clients · /app/reports · /app/team → pantallas de RETAIL (endpoints de
+// ventas, no /api/loans/*). Ahora cada item llega a su tab real del panel del
+// prestamista (LenderDashboard), vía rutas dedicadas que no chocan con retail.
 const LENDER_ITEMS: NavEntry[] = [
     { path: '/app/dashboard', label: 'Dashboard Financiero', shortLabel: 'Finanzas', group: 'Finanzas', iconKey: 'wallet' },
-    { path: '/app/clients', label: 'Cartera de Clientes', shortLabel: 'Clientes', group: 'Clientes', iconKey: 'users' },
-    { path: '/app/reports', label: 'Reportes de Cobro', shortLabel: 'Reportes', group: 'Reportes', iconKey: 'pieChart' },
-    { path: '/app/team', label: 'Cobradores', shortLabel: 'Equipo', group: 'Administración', iconKey: 'userPlus' },
+    { path: '/app/cartera', label: 'Cartera de Clientes', shortLabel: 'Clientes', group: 'Clientes', iconKey: 'users' },
+    { path: '/app/cobros', label: 'Reportes de Cobro', shortLabel: 'Reportes', group: 'Reportes', iconKey: 'pieChart' },
+    { path: '/app/cobradores', label: 'Cobradores', shortLabel: 'Equipo', group: 'Administración', iconKey: 'userPlus' },
 ];
 
 const ACCOUNTANT_ITEMS: NavEntry[] = [

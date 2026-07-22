@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { maybeAutostartTour } from '../utils/tours';
 import {
     Truck, Plus, Search, FileText, CreditCard, DollarSign, Package,
     Calendar, Hash, X, Check, AlertTriangle, Clock, ArrowRight, Trash2,
@@ -123,6 +124,9 @@ export default function Purchases() {
     }, [headers]);
 
     useEffect(() => { fetchAll(); }, []);
+
+    // Tutorial guiado: si entran con ?tour=compras (desde Ayuda).
+    useEffect(() => { maybeAutostartTour(); }, []);
 
     // ==========================================
     // CART LOGIC

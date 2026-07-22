@@ -33,6 +33,11 @@ model Tenant {
   subscriptionEndsAt   DateTime? // Fecha de vencimiento de la suscripción activa
   trialEndsAt          DateTime? // Fecha límite del trial gratuito (14 días desde registro)
   theftAlertThreshold  Decimal   @default(500) @db.Decimal(10, 2)
+  // Alertas de gaveta del agente bancario (Fase C, nullable = sin alerta):
+  // mínimo = no poder pagar retiros/remesas; máximo = exceso de efectivo
+  // (riesgo de robo → sugerir entrega al banco).
+  agentCashMin         Decimal?  @db.Decimal(18, 4)
+  agentCashMax         Decimal?  @db.Decimal(18, 4)
   // Costo de entrega plano del catálogo público (lo fija el negocio; el
   // cliente NUNCA lo manda — se calcula server-side al crear el Pedido).
   deliveryFee          Decimal   @default(0) @db.Decimal(10, 2)
@@ -580,6 +585,12 @@ model Shift {
   finalCashDeclared  Decimal?  @db.Decimal(10, 2)
   systemExpectedCash Decimal?  @db.Decimal(10, 2)
   difference         Decimal?  @db.Decimal(10, 2)
+  // Gaveta multi-moneda (Fase D agente bancario): conteo físico de DÓLARES
+  // separado del de córdobas. Los campos NIO de arriba quedan intactos.
+  initialCashUsd        Decimal  @default(0) @db.Decimal(18, 4)
+  finalCashDeclaredUsd  Decimal? @db.Decimal(18, 4)
+  systemExpectedUsd     Decimal? @db.Decimal(18, 4)
+  differenceUsd         Decimal? @db.Decimal(18, 4)
   regularHours       Float     @default(0)
   overtimeHours      Float     @default(0)
   nightHours         Float     @default(0)
@@ -663,6 +674,88 @@ model LedgerHead {
   lastSeq   Int      @default(0)
   lastHash  String   @default("GENESIS")
   updatedAt DateTime @updatedAt
+}
+
+// ==========================================
+// 🏦 AGENTE BANCARIO (corresponsalía no bancaria)
+// El negocio opera como Agente Banpro / Rapibac / ServiRED / Puntoxpress, etc.
+// Nortex registra en paralelo lo que pasa por el dispositivo del banco para
+// cuadrar la caja (shadow ledger): cada operación genera un CashMovement
+// firmado (category AGENTE_BANCARIO) + una AgentTransaction con el detalle.
+// tenantId como escalar (sin relación) para no tocar el bloque de relaciones
+// de Tenant (mismo patrón que WhatsApp); el aislamiento se aplica por query.
+// Ver docs/PLAN_AGENTE_BANCARIO.md.
+// ==========================================
+
+model AgentAgreement {
+  id       String  @id @default(cuid())
+  tenantId String
+  name     String // "Agente Banpro", "Rapibac", "Puntoxpress"...
+  kind     String  @default("BANCO") // BANCO | RED_RECAUDADORA | REMESERA
+  active   Boolean @default(true)
+
+  // Comisiones por tipo de operación, pactadas en el contrato (no son públicas
+  // en Nicaragua → SIEMPRE configurables): { "DEPOSITO": {"fija": 5, "pct": 0}, ... }
+  commissionConfig Json?
+
+  // Límites por operación (Fase C), también del contrato — p. ej. Banpro
+  // publica retiros máx US$3,000 y 3 depósitos/día, pero cada convenio pacta
+  // lo suyo: { "RETIRO": {"maxTx": 10000, "maxDia": 50000}, ... }
+  limitsConfig Json?
+
+  // Saldos espejo del convenio (proyección, se actualiza en la misma tx que
+  // cada operación — patrón Motorizado.walletBalance):
+  // settlementBalance: cuánto le DEBE el negocio al banco por efectivo captado
+  // (+ con depósitos/pagos; − con retiros/remesas pagadas = el banco nos debe).
+  settlementBalance Decimal @default(0) @db.Decimal(18, 4)
+  // Comisiones devengadas aún no liquidadas por el banco (ingreso por cobrar).
+  commissionAccrued Decimal @default(0) @db.Decimal(18, 4)
+
+  createdAt DateTime @default(now())
+
+  transactions AgentTransaction[]
+
+  @@index([tenantId])
+}
+
+model AgentTransaction {
+  id          String @id @default(cuid())
+  tenantId    String
+  agreementId String
+  // 1:1 con el movimiento de caja firmado que la respalda (libro encadenado).
+  cashMovementId String @unique
+  shiftId     String
+  userId      String
+
+  // DEPOSITO | RETIRO | PAGO_TARJETA | PAGO_PRESTAMO | PAGO_SERVICIO |
+  // RECARGA | REMESA_ENVIO | REMESA_COBRO
+  operation String
+  direction String // IN | OUT (espejo del CashMovement.type)
+  amount    Decimal @db.Decimal(18, 4)
+  currency  String  @default("NIO") // NIO | USD
+  // Multi-moneda (Fase D): tipo de cambio de la transacción (solo USD) y
+  // valor contable en córdobas (USD: amount×rate; NIO: = amount). La
+  // contabilidad, el settlementBalance y los límites diarios usan amountNio.
+  exchangeRate Decimal? @db.Decimal(12, 6)
+  amountNio    Decimal? @db.Decimal(18, 4)
+  // Comisión devengada en C$ (NO es efectivo: el banco la liquida después a cuenta).
+  commission Decimal @default(0) @db.Decimal(18, 4)
+
+  // Folio/voucher del dispositivo del banco — el comprobante válido y la
+  // clave de conciliación contra el reporte del banco/red.
+  externalRef String?
+  customerRef String? // referencia opcional del cliente (nombre/teléfono)
+
+  status     String    @default("COMPLETED") // COMPLETED | REVERSED (Fase B)
+  reversedAt DateTime?
+  reversedBy String?
+  createdAt  DateTime  @default(now())
+
+  agreement AgentAgreement @relation(fields: [agreementId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([agreementId, createdAt])
+  @@index([shiftId])
 }
 
 // ==========================================
@@ -1675,6 +1768,12 @@ model Loan {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Índices (Fase 0 blindaje): la cartera filtra por lenderId y ordena por
+  // createdAt; el cobrador filtra por assignedToId; los reportes por estado.
+  @@index([lenderId, createdAt])
+  @@index([lenderId, status])
+  @@index([assignedToId])
 }
 
 // Cuota del plan de pago de un préstamo (Cobranza B2)
@@ -1706,6 +1805,10 @@ model Repayment {
 
   notes     String?  @db.Text
   createdAt DateTime @default(now())
+
+  // Índices (Fase 0 blindaje): la cartera trae los pagos de hoy por préstamo,
+  // filtrando por loanId + rango de paymentDate.
+  @@index([loanId, paymentDate])
 }
 
 model RouteExpense {

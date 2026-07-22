@@ -2,9 +2,10 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
-import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark } from 'lucide-react';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
+import { resolveUiMode, UI_MODE_KEY } from '../utils/navigation';
 import { ReceiptTicket } from './ReceiptTicket';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import * as XLSX from 'xlsx';
@@ -170,6 +171,22 @@ const POS: React.FC = () => {
     const [heldCarts, setHeldCarts] = useState<HeldCart[]>([]);
     const [showHeldCarts, setShowHeldCarts] = useState(false);
 
+    // ── Modo simple (Fase C-2 UX): esconde acciones avanzadas del POS ──
+    // Mismo criterio que el menú (utils/navigation.ts); se lee una vez al montar.
+    const [simpleMode] = useState<boolean>(() => {
+        try {
+            const type = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.tenant?.type || '';
+            return resolveUiMode(type, localStorage.getItem(UI_MODE_KEY)) === 'simple';
+        } catch { return false; }
+    });
+    // Solo Dueño/Admin ven el hint del PIN inicial en la apertura de caja.
+    const [isOwnerAdmin] = useState<boolean>(() => {
+        try {
+            const role = JSON.parse(atob((localStorage.getItem('nortex_token') || '').split('.')[1])).role || '';
+            return ['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(role);
+        } catch { return false; }
+    });
+
     // 🔴 FIADO INTELIGENTE STATE
     const [showCreditPanel, setShowCreditPanel] = useState(false);
     const [creditOverridePin, setCreditOverridePin] = useState('');
@@ -205,6 +222,8 @@ const POS: React.FC = () => {
     const [initialCash, setInitialCash] = useState('');
     const [employeePin, setEmployeePin] = useState('');
     const [declaredCash, setDeclaredCash] = useState('');
+    // Fase D: dólares contados al cierre (solo se manda si hay algo que declarar)
+    const [declaredCashUsd, setDeclaredCashUsd] = useState('');
     const [shiftReport, setShiftReport] = useState<{ expected: number, diff: number } | null>(null);
     const [shiftLoading, setShiftLoading] = useState(true);
 
@@ -252,6 +271,13 @@ const POS: React.FC = () => {
     const [cashCategory, setCashCategory] = useState('');
     const [cashDescription, setCashDescription] = useState('');
     const [cashMovementLoading, setCashMovementLoading] = useState(false);
+    // 🏦 Agente bancario (corresponsalía): el negocio es Agente Banpro/Rapibac/etc.
+    const [showAgentModal, setShowAgentModal] = useState(false);
+    const [agentAgreements, setAgentAgreements] = useState<any[]>([]);
+    const [agentData, setAgentData] = useState({ agreementId: '', operation: 'DEPOSITO', amount: '', commission: '', externalRef: '', customerRef: '', currency: 'NIO', exchangeRate: localStorage.getItem('nortex_tc_usd') || '36.62' });
+    const [agentLoading, setAgentLoading] = useState(false);
+    const [newAgreementName, setNewAgreementName] = useState('');
+    const [newAgreementKind, setNewAgreementKind] = useState('BANCO');
     const [cashBalance, setCashBalance] = useState<number | null>(null);
     const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
     const [showMovementsList, setShowMovementsList] = useState(false);
@@ -501,6 +527,119 @@ const POS: React.FC = () => {
     ];
 
     // ==========================================
+    // 🏦 AGENTE BANCARIO (corresponsalía)
+    // ==========================================
+    // Operaciones y dirección del efectivo (espejo de AGENT_OPERATION_DIRECTION
+    // del backend, que es la fuente autoritativa).
+    const agentOps = [
+        { value: 'DEPOSITO', label: '💳 Depósito a cuenta', dir: 'IN' },
+        { value: 'RETIRO', label: '💵 Retiro de efectivo', dir: 'OUT' },
+        { value: 'PAGO_TARJETA', label: '💳 Pago de tarjeta', dir: 'IN' },
+        { value: 'PAGO_PRESTAMO', label: '🏦 Pago de préstamo', dir: 'IN' },
+        { value: 'PAGO_SERVICIO', label: '💡 Pago de servicio', dir: 'IN' },
+        { value: 'RECARGA', label: '📱 Recarga', dir: 'IN' },
+        { value: 'REMESA_ENVIO', label: '📤 Remesa: envío', dir: 'IN' },
+        { value: 'REMESA_COBRO', label: '📥 Remesa: pago', dir: 'OUT' },
+    ];
+
+    const fetchAgentAgreements = useCallback(async () => {
+        try {
+            const res = await fetch('/api/agent-banking/agreements', { headers });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.success) setAgentAgreements(data.data.filter((a: any) => a.active));
+            }
+        } catch (e) { /* silently fail */ }
+    }, [headers]);
+
+    // Vista previa de la comisión pactada del convenio (el server recalcula
+    // igual si no se manda — esto solo pre-llena el campo).
+    const previewAgentCommission = (agreementId: string, operation: string, amount: string, currency: string, exchangeRate: string): string => {
+        const agreement = agentAgreements.find(a => a.id === agreementId);
+        const entry = agreement?.commissionConfig?.[operation];
+        const tc = currency === 'USD' ? parseFloat(exchangeRate) : 1;
+        // La comisión del contrato está en C$ → se calcula sobre el equivalente.
+        const monto = parseFloat(amount) * (isFinite(tc) && tc > 0 ? tc : 1);
+        if (!entry || !isFinite(monto) || monto <= 0) return '';
+        const fija = isFinite(Number(entry.fija)) && Number(entry.fija) > 0 ? Number(entry.fija) : 0;
+        const pct = isFinite(Number(entry.pct)) && Number(entry.pct) > 0 ? Number(entry.pct) : 0;
+        const total = fija + (monto * pct) / 100;
+        return total > 0 ? total.toFixed(2) : '';
+    };
+
+    const updateAgentData = (patch: Partial<typeof agentData>) => {
+        setAgentData(prev => {
+            const next = { ...prev, ...patch };
+            // Recalcular la comisión sugerida cuando cambia convenio/operación/monto.
+            if (patch.agreementId !== undefined || patch.operation !== undefined || patch.amount !== undefined || patch.currency !== undefined || patch.exchangeRate !== undefined) {
+                next.commission = previewAgentCommission(next.agreementId, next.operation, next.amount, next.currency, next.exchangeRate);
+            }
+            return next;
+        });
+    };
+
+    const handleCreateAgreement = async () => {
+        if (!newAgreementName.trim()) return;
+        setAgentLoading(true);
+        try {
+            const res = await fetch('/api/agent-banking/agreements', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ name: newAgreementName.trim(), kind: newAgreementKind })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'No se pudo crear el convenio');
+            setAgentAgreements(prev => [...prev, data.data]);
+            setAgentData(prev => ({ ...prev, agreementId: data.data.id }));
+            setNewAgreementName('');
+        } catch (error: any) {
+            alert(error.message);
+        } finally {
+            setAgentLoading(false);
+        }
+    };
+
+    const handleAgentTx = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!agentData.agreementId || !agentData.amount) return;
+        setAgentLoading(true);
+        try {
+            const res = await fetch('/api/agent-banking/transactions', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    agreementId: agentData.agreementId,
+                    operation: agentData.operation,
+                    amount: parseFloat(agentData.amount),
+                    currency: agentData.currency,
+                    ...(agentData.currency === 'USD' ? { exchangeRate: parseFloat(agentData.exchangeRate) } : {}),
+                    ...(agentData.commission !== '' ? { commission: parseFloat(agentData.commission) } : {}),
+                    ...(agentData.externalRef.trim() ? { externalRef: agentData.externalRef.trim() } : {}),
+                    ...(agentData.customerRef.trim() ? { customerRef: agentData.customerRef.trim() } : {}),
+                })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Error registrando la operación');
+
+            setShowAgentModal(false);
+            if (agentData.currency === 'USD') localStorage.setItem('nortex_tc_usd', agentData.exchangeRate);
+            setAgentData({ agreementId: agentData.agreementId, operation: 'DEPOSITO', amount: '', commission: '', externalRef: '', customerRef: '', currency: 'NIO', exchangeRate: agentData.exchangeRate });
+            fetchCashBalance();
+            fetchCashMovements();
+            fetchAgentAgreements();
+            // Alertas de gaveta (Fase C): mínimo (sin efectivo para retiros) /
+            // máximo (exceso → entregar al banco).
+            if (Array.isArray(data.data?.alerts) && data.data.alerts.length > 0) {
+                alert(data.data.alerts.join('\n\n'));
+            }
+        } catch (error: any) {
+            alert(error.message);
+        } finally {
+            setAgentLoading(false);
+        }
+    };
+
+    // ==========================================
     // BARCODE SCANNER (Global keydown listener)
     // ==========================================
     useEffect(() => {
@@ -599,7 +738,11 @@ const POS: React.FC = () => {
             const res = await fetch('/api/shifts/close', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ shiftId: currentShift.id, declaredCash: parseFloat(declaredCash) })
+                body: JSON.stringify({
+                    shiftId: currentShift.id,
+                    declaredCash: parseFloat(declaredCash),
+                    ...(declaredCashUsd.trim() !== '' ? { declaredCashUsd: parseFloat(declaredCashUsd) } : {}),
+                })
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
@@ -1317,7 +1460,7 @@ const POS: React.FC = () => {
 
                 <div className="flex items-center gap-2 flex-1 min-w-0 justify-end overflow-x-auto custom-scrollbar whitespace-nowrap pl-4 pb-2 pt-2 lg:pb-0 lg:pt-0 lg:overflow-visible">
                     {/* 🖨️ TIQUETERA BT/USB */}
-                    <button
+                    {!simpleMode && <button
                         onClick={async () => {
                             if (!thermalConnected) {
                                 const success = await thermalPrinter.connect();
@@ -1329,7 +1472,7 @@ const POS: React.FC = () => {
                     >
                         <Printer size={14} />
                         <span className="hidden lg:inline">{thermalConnected ? 'Tiquetera lista' : 'Vincular Tiquetera'}</span>
-                    </button>
+                    </button>}
 
                     {/* 📶 OFFLINE INDICATOR */}
                     {!isOnline && (
@@ -1354,7 +1497,7 @@ const POS: React.FC = () => {
                     )}
 
                     {/* 🅿️ PARQUEO BADGE */}
-                    {currentShift && (
+                    {currentShift && !simpleMode && (
                         <button
                             onClick={() => setShowHeldCarts(!showHeldCarts)}
                             className={`relative flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg transition-all shadow-sm ${heldCarts.length > 0 ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200'}`}
@@ -1403,8 +1546,20 @@ const POS: React.FC = () => {
                         </button>
                     )}
 
-                    {/* 🔄 QUICK ACTION: DEVOLUCIÓN */}
+                    {/* 🏦 QUICK ACTION: AGENTE BANCARIO (corresponsalía) */}
                     {currentShift && (
+                        <button
+                            onClick={() => { setShowAgentModal(true); fetchAgentAgreements(); }}
+                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-sky-600 text-white hover:bg-sky-700 transition-all shadow-sm"
+                            title="Operación de agente bancario (Banpro, BAC, Lafise, Puntoxpress...)"
+                        >
+                            <Landmark size={14} />
+                            Agente
+                        </button>
+                    )}
+
+                    {/* 🔄 QUICK ACTION: DEVOLUCIÓN */}
+                    {currentShift && !simpleMode && (
                         <button
                             onClick={() => setShowReturnModal(true)}
                             className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-all shadow-sm"
@@ -1416,7 +1571,7 @@ const POS: React.FC = () => {
                     )}
 
                     {/* Scanner indicator */}
-                    <button
+                    {!simpleMode && <button
                         onClick={() => setScannerActive(!scannerActive)}
                         className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full transition-all ${scannerActive
                             ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
@@ -1427,7 +1582,7 @@ const POS: React.FC = () => {
                         <ScanBarcode size={14} />
                         {scannerActive ? <Volume2 size={12} /> : <VolumeX size={12} />}
                         <span className="hidden xl:inline">{scannerActive ? 'Escáner ON' : 'Escáner OFF'}</span>
-                    </button>
+                    </button>}
 
                     {currentShift ? (
                         <button onClick={() => setShowCloseShift(true)} className="text-xs font-bold text-red-500 hover:bg-red-50 px-3 py-1.5 rounded transition-colors flex items-center gap-1">
@@ -1543,6 +1698,196 @@ const POS: React.FC = () => {
                 </div>
             )}
 
+            {/* --- 🏦 AGENTE BANCARIO MODAL --- */}
+            {showAgentModal && (
+                <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between mb-5">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full flex items-center justify-center bg-sky-100 text-sky-600">
+                                    <Landmark size={24} />
+                                </div>
+                                <div>
+                                    <h2 className="text-lg font-bold text-slate-800">Agente Bancario</h2>
+                                    <p className="text-xs text-slate-500">La transacción se hace en el equipo del banco; acá queda registrada para cuadrar tu caja.</p>
+                                </div>
+                            </div>
+                            <button onClick={() => setShowAgentModal(false)} className="text-slate-400 hover:text-slate-600 p-1">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        {agentAgreements.length === 0 ? (
+                            <div className="space-y-3">
+                                <p className="text-sm text-slate-600">Todavía no tenés convenios registrados. Agregá el primero (ej: <span className="font-bold">Agente Banpro</span>, <span className="font-bold">Rapibac</span>, <span className="font-bold">Puntoxpress</span>).</p>
+                                <input
+                                    type="text"
+                                    value={newAgreementName}
+                                    onChange={e => setNewAgreementName(e.target.value)}
+                                    placeholder="Nombre del convenio (ej: Agente Banpro)"
+                                    className="w-full border-2 border-slate-200 rounded-lg px-4 py-3 text-sm focus:border-sky-500 outline-none text-slate-700"
+                                />
+                                <select
+                                    value={newAgreementKind}
+                                    onChange={e => setNewAgreementKind(e.target.value)}
+                                    className="w-full border-2 border-slate-200 rounded-lg px-4 py-3 text-sm focus:border-sky-500 outline-none text-slate-700 bg-white"
+                                >
+                                    <option value="BANCO">Banco (Banpro, BAC, Lafise...)</option>
+                                    <option value="RED_RECAUDADORA">Red de pagos (Puntoxpress, Punto Fácil)</option>
+                                    <option value="REMESERA">Remesera (AirPak/Western Union...)</option>
+                                </select>
+                                <button
+                                    onClick={handleCreateAgreement}
+                                    disabled={agentLoading || !newAgreementName.trim()}
+                                    className="w-full py-3 rounded-xl font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:bg-sky-300 transition-all"
+                                >
+                                    {agentLoading ? 'Creando...' : 'Crear convenio'}
+                                </button>
+                                <p className="text-[11px] text-slate-400">Solo el dueño o un admin puede crear convenios.</p>
+                            </div>
+                        ) : (
+                            <form onSubmit={handleAgentTx} className="space-y-4">
+                                {/* Convenio */}
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Convenio</label>
+                                    <select
+                                        value={agentData.agreementId}
+                                        onChange={e => updateAgentData({ agreementId: e.target.value })}
+                                        className="w-full border-2 border-slate-200 rounded-lg px-4 py-3 text-sm focus:border-sky-500 outline-none text-slate-700 bg-white"
+                                        required
+                                    >
+                                        <option value="">— Elegí el convenio —</option>
+                                        {agentAgreements.map(a => (
+                                            <option key={a.id} value={a.id}>{a.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {/* Operación */}
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Operación</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {agentOps.map(op => (
+                                            <button
+                                                key={op.value}
+                                                type="button"
+                                                onClick={() => updateAgentData({ operation: op.value })}
+                                                className={`text-left text-sm px-3 py-2.5 rounded-lg border-2 transition-all ${agentData.operation === op.value
+                                                    ? op.dir === 'IN'
+                                                        ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-bold'
+                                                        : 'border-amber-500 bg-amber-50 text-amber-700 font-bold'
+                                                    : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                                                    }`}
+                                            >
+                                                {op.label}
+                                                <span className={`block text-[10px] font-normal ${op.dir === 'IN' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                                    {op.dir === 'IN' ? 'entra efectivo' : 'sale efectivo'}
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Moneda (Fase D: gaveta multi-moneda) */}
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Moneda</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => updateAgentData({ currency: 'NIO' })}
+                                            className={`text-sm px-3 py-2 rounded-lg border-2 font-bold transition-all ${agentData.currency === 'NIO' ? 'border-sky-500 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                                        >
+                                            C$ Córdobas
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => updateAgentData({ currency: 'USD' })}
+                                            className={`text-sm px-3 py-2 rounded-lg border-2 font-bold transition-all ${agentData.currency === 'USD' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}
+                                        >
+                                            US$ Dólares
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Monto */}
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Monto ({agentData.currency === 'USD' ? 'US$' : 'C$'})</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={agentData.amount}
+                                        onChange={e => updateAgentData({ amount: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="0.00"
+                                        className="w-full text-2xl font-bold text-center border-2 border-slate-300 rounded-xl p-4 focus:border-sky-500 outline-none text-slate-800 bg-slate-50 font-mono tabular-nums"
+                                        required
+                                    />
+                                    {agentOps.find(o => o.value === agentData.operation)?.dir === 'OUT' && cashBalance !== null && agentData.currency === 'NIO' && (
+                                        <p className="text-xs text-slate-500 mt-1">Efectivo disponible en gaveta: <span className="font-bold text-slate-700">C${cashBalance.toFixed(2)}</span></p>
+                                    )}
+                                </div>
+
+                                {/* Tipo de cambio (solo USD) */}
+                                {agentData.currency === 'USD' && (
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Tipo de cambio (C$ por US$)</label>
+                                        <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={agentData.exchangeRate}
+                                            onChange={e => updateAgentData({ exchangeRate: sanitizeDecimalInput(e.target.value) })}
+                                            placeholder="36.62"
+                                            className="w-full border-2 border-slate-200 rounded-lg px-4 py-3 text-sm focus:border-emerald-500 outline-none text-slate-700 font-mono"
+                                            required
+                                        />
+                                        {parseFloat(agentData.amount) > 0 && parseFloat(agentData.exchangeRate) > 0 && (
+                                            <p className="text-xs text-slate-500 mt-1">Equivale a <span className="font-bold text-slate-700">C${(parseFloat(agentData.amount) * parseFloat(agentData.exchangeRate)).toFixed(2)}</span> — así se asienta en tu contabilidad.</p>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Comisión + Referencia */}
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Comisión (C$)</label>
+                                        <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={agentData.commission}
+                                            onChange={e => setAgentData(prev => ({ ...prev, commission: sanitizeDecimalInput(e.target.value) }))}
+                                            placeholder="0.00"
+                                            className="w-full border-2 border-slate-200 rounded-lg px-3 py-3 text-sm focus:border-sky-500 outline-none text-slate-700 font-mono"
+                                        />
+                                        <p className="text-[10px] text-slate-400 mt-0.5">Lo que te paga el banco (no es efectivo de hoy).</p>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Ref. del voucher</label>
+                                        <input
+                                            type="text"
+                                            value={agentData.externalRef}
+                                            onChange={e => setAgentData(prev => ({ ...prev, externalRef: e.target.value }))}
+                                            placeholder="Folio del equipo del banco"
+                                            className="w-full border-2 border-slate-200 rounded-lg px-3 py-3 text-sm focus:border-sky-500 outline-none text-slate-700"
+                                        />
+                                    </div>
+                                </div>
+
+                                <button
+                                    type="submit"
+                                    disabled={agentLoading || !agentData.agreementId || !agentData.amount}
+                                    className="w-full py-3.5 rounded-xl font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:bg-sky-300 transition-all flex items-center justify-center gap-2"
+                                >
+                                    {agentLoading ? (
+                                        <><Loader2 className="animate-spin" size={18} /> Registrando...</>
+                                    ) : (
+                                        <><Landmark size={18} /> Registrar operación</>
+                                    )}
+                                </button>
+                            </form>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* --- MOVEMENTS LIST DROPDOWN --- */}
             {showMovementsList && currentShift && (
                 <div className="absolute top-14 right-4 z-40 w-80 bg-white rounded-xl shadow-2xl border border-slate-200 max-h-80 overflow-y-auto animate-in slide-in-from-top duration-200">
@@ -1653,6 +1998,11 @@ const POS: React.FC = () => {
                         </div>
                         <h2 className="text-2xl font-bold text-slate-800 mb-2">Apertura de Caja</h2>
                         <p className="text-slate-500 text-sm mb-6">Ingresa tu PIN de empleado y el fondo inicial.</p>
+                        {isOwnerAdmin && (
+                            <p className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg px-3 py-2 mb-4">
+                                ¿Primera vez? Tu PIN inicial de dueño es <strong>1234</strong> — cambialo después en <strong>Mi Personal</strong>.
+                            </p>
+                        )}
                         <form onSubmit={handleOpenShift} className="space-y-5">
                             {/* PIN Input */}
                             <div>
@@ -1734,6 +2084,18 @@ const POS: React.FC = () => {
                                             value={declaredCash}
                                             onChange={e => setDeclaredCash(sanitizeDecimalInput(e.target.value))}
                                             required
+                                        />
+                                    </div>
+                                    {/* Fase D: dólares contados (solo si manejaste US$ en el turno) */}
+                                    <div className="mb-4">
+                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Dólares contados (US$) — opcional</label>
+                                        <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={declaredCashUsd}
+                                            onChange={e => setDeclaredCashUsd(sanitizeDecimalInput(e.target.value))}
+                                            placeholder="Solo si manejaste dólares (agente bancario)"
+                                            className="w-full border-2 border-slate-200 rounded-lg px-4 py-3 text-sm focus:border-emerald-500 outline-none text-slate-700 font-mono"
                                         />
                                     </div>
                                     <div className="flex gap-3">
@@ -2071,24 +2433,24 @@ const POS: React.FC = () => {
                         className="bg-gradient-to-r from-amber-500 to-orange-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-amber-600 hover:to-orange-600 shadow-md transition-all"
                         title="Producto Rápido"
                     >
-                        <Zap size={18} /> Rápido
+                        <Zap size={18} /> {simpleMode ? 'Agregar' : 'Rápido'}
                     </button>
                     {/* Full Create */}
-                    <button
+                    {!simpleMode && <button
                         onClick={() => setShowAddModal(true)}
                         className="bg-nortex-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-medium text-sm hover:bg-nortex-600 transition-all"
                         title="Crear producto completo"
                     >
                         <Plus size={18} /> Nuevo
-                    </button>
+                    </button>}
                     {/* Import */}
-                    <button
+                    {!simpleMode && <button
                         onClick={() => setShowImportModal(true)}
                         className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-blue-700 hover:to-indigo-700 shadow-md transition-all"
                         title="Importar desde Excel"
                     >
                         <Upload size={18} /> Excel
-                    </button>
+                    </button>}
                 </div>
 
                 {/* TOP SELLERS QUICK ACCESS */}
@@ -2203,7 +2565,7 @@ const POS: React.FC = () => {
                 {/* 👑 SMART CUSTOMER SEARCH - GOD-TIER SELECTOR */}
                 <div className="px-4 pt-4 relative">
                     <label className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
-                        <User size={12} /> CLIENTE PARA SCORING
+                        <User size={12} /> {simpleMode ? 'CLIENTE (OPCIONAL)' : 'CLIENTE PARA SCORING'}
                     </label>
                     <div className="relative">
                         <div className="absolute left-4 top-1/2 -translate-y-1/2 w-9 h-9 bg-indigo-100 rounded-full flex items-center justify-center">
@@ -2339,8 +2701,8 @@ const POS: React.FC = () => {
                     )}
                 </div>
                 <div className="p-5 border-t border-slate-100 bg-slate-50 text-slate-800">
-                    {/* 💸 Global Discount */}
-                    <div className="flex items-center gap-2 mb-2">
+                    {/* 💸 Global Discount (oculto en modo simple para no invitar al error) */}
+                    {!simpleMode && <div className="flex items-center gap-2 mb-2">
                         <Percent size={14} className="text-slate-400" />
                         <span className="text-xs text-slate-500 font-bold">Descuento Global</span>
                         <input
@@ -2356,7 +2718,7 @@ const POS: React.FC = () => {
                         {globalDiscountD.greaterThan(0) && (
                             <span className="text-xs text-red-500 font-bold ml-auto">-C${totalD.mul(globalDiscountD).div(100).toFixed(2)}</span>
                         )}
-                    </div>
+                    </div>}
                     <div className="flex justify-between text-sm text-slate-500 mb-1"><span>Subtotal</span><span className="font-mono tabular-nums">C$ {total.toFixed(2)}</span></div>
                     {globalDiscountD.greaterThan(0) && <div className="flex justify-between text-sm text-red-500 mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="font-mono tabular-nums">-C$ {totalD.mul(globalDiscountD).div(100).toFixed(2)}</span></div>}
                     <div className="flex justify-between text-sm text-slate-500 mb-1"><span>IVA (15%)</span><span className="font-mono tabular-nums">C$ {tax.toFixed(2)}</span></div>
