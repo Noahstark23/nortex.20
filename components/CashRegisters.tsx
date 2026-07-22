@@ -16,6 +16,8 @@ interface LiveShift {
     vaultAgentINs: number;
     vaultAgentOUTs: number;
     estimatedPhysicalCash: number;
+    // Fase D: gaveta USD (dólares físicos del agente)
+    estimatedPhysicalUsd?: number;
     salesCount: number;
     movementsCount: number;
     lastSaleAt: string | null;
@@ -61,6 +63,7 @@ const CashRegisters: React.FC = () => {
     const [shiftToClose, setShiftToClose] = useState<LiveShift | null>(null);
     const [closing, setClosing] = useState(false);
     const [auditNotes, setAuditNotes] = useState('');
+    const [declaredUsdForce, setDeclaredUsdForce] = useState('');
     const [denominations, setDenominations] = useState({
         1000: 0, 500: 0, 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0
     });
@@ -91,6 +94,7 @@ const CashRegisters: React.FC = () => {
                 body: JSON.stringify({
                     shiftId: shiftToClose.id,
                     declaredCash: finalCashDeclared,
+                    ...(declaredUsdForce.trim() !== '' ? { declaredCashUsd: parseFloat(declaredUsdForce) } : {}),
                     auditNotes
                 })
             });
@@ -99,6 +103,7 @@ const CashRegisters: React.FC = () => {
                 setShiftToClose(null);
                 setDenominations({ 1000: 0, 500: 0, 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 });
                 setAuditNotes('');
+                setDeclaredUsdForce('');
                 fetchMonitor();
             } else {
                 const data = await res.json();
@@ -455,6 +460,13 @@ const CashRegisters: React.FC = () => {
                                                 <p className="mt-2 text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1 flex items-center gap-1">
                                                     <AlertTriangle size={12} /> Exceso de efectivo (riesgo de robo). Considerá entregar al banco.
                                                 </p>
+                                            )}
+                                            {/* Gaveta USD (Fase D) */}
+                                            {(shift.estimatedPhysicalUsd ?? 0) !== 0 && (
+                                                <div className="mt-2 flex items-center justify-between text-sm">
+                                                    <span className="text-slate-500 flex items-center gap-1"><DollarSign size={13} className="text-emerald-500" /> Dólares en gaveta</span>
+                                                    <span className="font-bold text-emerald-700 font-mono">US${(shift.estimatedPhysicalUsd ?? 0).toFixed(2)}</span>
+                                                </div>
                                             )}
                                         </div>
                                     </div>
@@ -953,6 +965,23 @@ const CashRegisters: React.FC = () => {
                                         <span className="text-xs font-bold text-slate-500 uppercase">Aprox. Sistema</span>
                                         <span className="font-bold text-slate-800">C${shiftToClose.estimatedPhysicalCash.toFixed(2)}</span>
                                     </div>
+
+                                    {/* Gaveta USD (Fase D): solo si el turno manejó dólares */}
+                                    {(shiftToClose.estimatedPhysicalUsd ?? 0) !== 0 && (
+                                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 shadow-sm space-y-2">
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-xs font-bold text-emerald-700 uppercase">Dólares esperados</span>
+                                                <span className="font-bold text-emerald-800">US${(shiftToClose.estimatedPhysicalUsd ?? 0).toFixed(2)}</span>
+                                            </div>
+                                            <input
+                                                type="number" min="0" step="0.01"
+                                                value={declaredUsdForce}
+                                                onChange={(e) => setDeclaredUsdForce(e.target.value)}
+                                                placeholder="Dólares contados (US$)"
+                                                className="w-full bg-white border border-emerald-200 rounded-xl px-3 py-2 text-sm text-slate-700 focus:outline-none focus:border-emerald-500 font-mono"
+                                            />
+                                        </div>
+                                    )}
 
                                     {/* Notas de Auditoría */}
                                     <div>

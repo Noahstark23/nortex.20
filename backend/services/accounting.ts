@@ -32,6 +32,9 @@ const CHART_OF_ACCOUNTS = [
     // Agente bancario (corresponsalía): comisiones devengadas que el banco/red
     // liquida después (típicamente mensual) — ver docs/PLAN_AGENTE_BANCARIO.md.
     { code: '1.1.7', name: 'Comisiones por Cobrar Corresponsalía', type: 'ASSET', subtype: 'CURRENT_ASSET' },
+    // Fase D: dólares físicos en gaveta, valuados en C$ al tipo de cambio de
+    // cada transacción (moneda funcional = córdoba, NIIF Nicaragua).
+    { code: '1.1.8', name: 'Caja Moneda Extranjera', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.2.1', name: 'Mobiliario y Equipo', type: 'ASSET', subtype: 'FIXED_ASSET' },
     { code: '1.2.2', name: 'Depreciación Acumulada', type: 'ASSET', subtype: 'FIXED_ASSET' },
     // PASIVOS (2.x.x)
@@ -353,16 +356,19 @@ export async function recordAgentTransaction(
     direction: 'IN' | 'OUT',
     amount: number,
     commission: number,
-    description: string
+    description: string,
+    // Fase D: operaciones en USD mueven '1.1.8 Caja Moneda Extranjera' (los
+    // montos ya vienen en C$ al tipo de cambio de la transacción).
+    cashAccount: '1.1.1' | '1.1.8' = '1.1.1'
 ) {
     const lines = direction === 'IN'
         ? [
-            { accountCode: '1.1.1', debit: amount, credit: 0 },
+            { accountCode: cashAccount, debit: amount, credit: 0 },
             { accountCode: '2.1.12', debit: 0, credit: amount },
         ]
         : [
             { accountCode: '2.1.12', debit: amount, credit: 0 },
-            { accountCode: '1.1.1', debit: 0, credit: amount },
+            { accountCode: cashAccount, debit: 0, credit: amount },
         ];
     if (commission > 0) {
         lines.push(
@@ -386,17 +392,19 @@ export async function recordAgentReversal(
     originalDirection: 'IN' | 'OUT',
     amount: number,
     commission: number,
-    description: string
+    description: string,
+    cashAccount: '1.1.1' | '1.1.8' = '1.1.1'
 ) {
     // Espejo: si el original fue IN (Debe Caja / Haber 2.1.12), la reversa es
-    // Debe 2.1.12 / Haber Caja — y viceversa.
+    // Debe 2.1.12 / Haber Caja — y viceversa. Misma cuenta de caja (y mismo
+    // tipo de cambio implícito: montos C$ del registro original).
     const lines = originalDirection === 'IN'
         ? [
             { accountCode: '2.1.12', debit: amount, credit: 0 },
-            { accountCode: '1.1.1', debit: 0, credit: amount },
+            { accountCode: cashAccount, debit: 0, credit: amount },
         ]
         : [
-            { accountCode: '1.1.1', debit: amount, credit: 0 },
+            { accountCode: cashAccount, debit: amount, credit: 0 },
             { accountCode: '2.1.12', debit: 0, credit: amount },
         ];
     if (commission > 0) {

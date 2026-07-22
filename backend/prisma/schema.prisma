@@ -578,6 +578,12 @@ model Shift {
   finalCashDeclared  Decimal?  @db.Decimal(10, 2)
   systemExpectedCash Decimal?  @db.Decimal(10, 2)
   difference         Decimal?  @db.Decimal(10, 2)
+  // Gaveta multi-moneda (Fase D agente bancario): conteo físico de DÓLARES
+  // separado del de córdobas. Los campos NIO de arriba quedan intactos.
+  initialCashUsd        Decimal  @default(0) @db.Decimal(18, 4)
+  finalCashDeclaredUsd  Decimal? @db.Decimal(18, 4)
+  systemExpectedUsd     Decimal? @db.Decimal(18, 4)
+  differenceUsd         Decimal? @db.Decimal(18, 4)
   regularHours       Float     @default(0)
   overtimeHours      Float     @default(0)
   nightHours         Float     @default(0)
@@ -719,7 +725,12 @@ model AgentTransaction {
   direction String // IN | OUT (espejo del CashMovement.type)
   amount    Decimal @db.Decimal(18, 4)
   currency  String  @default("NIO") // NIO | USD
-  // Comisión devengada (NO es efectivo: el banco la liquida después a cuenta).
+  // Multi-moneda (Fase D): tipo de cambio de la transacción (solo USD) y
+  // valor contable en córdobas (USD: amount×rate; NIO: = amount). La
+  // contabilidad, el settlementBalance y los límites diarios usan amountNio.
+  exchangeRate Decimal? @db.Decimal(12, 6)
+  amountNio    Decimal? @db.Decimal(18, 4)
+  // Comisión devengada en C$ (NO es efectivo: el banco la liquida después a cuenta).
   commission Decimal @default(0) @db.Decimal(18, 4)
 
   // Folio/voucher del dispositivo del banco — el comprobante válido y la
