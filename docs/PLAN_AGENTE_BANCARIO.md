@@ -143,13 +143,25 @@ OWNER/ADMIN, el modal permite crear el primero (nombre + tipo).
 - (Las alertas de gaveta mín/máx se mueven a Fase C: requieren umbrales
   configurables por tenant, que van junto a los límites por operación.)
 
-### Fase C — límites, alertas, reportes y escala
-- Límites configurables por convenio × operación (por transacción / por día).
-- Alertas de gaveta: mínimo (no poder pagar retiros) y máximo (riesgo de robo,
-  sugerir entrega al banco) — umbrales configurables por tenant.
-- Reporte de corresponsalía (por convenio: volumen, comisiones, conciliación
-  contra liquidación mensual del banco) — agregado en SQL.
-- Tipo de cambio por transacción para USD; billetera móvil; multi-caja.
+### Fase C — límites, alertas y reporte (en implementación)
+- Límites por convenio × operación (`AgentAgreement.limitsConfig`): por
+  transacción (chequeo rápido pre-tx) y por día (revalidado dentro de la tx
+  bajo lock del convenio + agregado SQL del día). Los traslados internos
+  (LIQUIDACION_*) no llevan límites de contrato.
+- Alertas de gaveta (`Tenant.agentCashMin/agentCashMax`, nullable = sin
+  alerta): tras cada operación el POS avisa si la gaveta quedó bajo el mínimo
+  (no poder pagar retiros) o sobre el máximo (exceso → entregar al banco);
+  el panóptico marca las cajas vivas. Config en el panel de conciliación.
+- Reporte de conciliación `GET /api/agent-banking/report?days=` — TODO
+  agregado en SQL (`groupBy` convenio × operación × estado), para cotejar
+  contra el reporte del banco/red.
+
+### Fase D — moneda extranjera y escala (pendiente)
+- **USD con tipo de cambio por transacción**: requiere gaveta multi-moneda
+  (arqueo y `CashMovement` hoy suman montos sin mirar `currency` — es una
+  limitación del módulo de caja completo, no solo del agente). No se simula
+  convirtiendo: se hace bien o no se hace.
+- Billetera móvil (depósito/retiro), multi-caja avanzado.
 
 ## 6. Fuera de alcance (explícito)
 - Integración en línea con APIs de bancos (no existen públicas para agentes).

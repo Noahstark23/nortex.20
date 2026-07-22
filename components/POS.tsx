@@ -621,6 +621,11 @@ const POS: React.FC = () => {
             fetchCashBalance();
             fetchCashMovements();
             fetchAgentAgreements();
+            // Alertas de gaveta (Fase C): mínimo (sin efectivo para retiros) /
+            // máximo (exceso → entregar al banco).
+            if (Array.isArray(data.data?.alerts) && data.data.alerts.length > 0) {
+                alert(data.data.alerts.join('\n\n'));
+            }
         } catch (error: any) {
             alert(error.message);
         } finally {
