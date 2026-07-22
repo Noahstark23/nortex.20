@@ -35,6 +35,7 @@ import {
     CreateAgentTxSchema,
     ReverseAgentTxSchema,
     SettleCommissionsSchema,
+    AgentSettingsSchema,
 } from '../validation/schemas';
 
 const router = express.Router();
@@ -87,18 +88,45 @@ export function calcAgentCommission(config: unknown, operation: string, amount: 
 }
 
 /**
- * Guarda anti-sobregiro para salidas de efectivo: bloquea la fila del turno
- * (FOR UPDATE, backticks MySQL) y recalcula el efectivo disponible con datos
- * frescos DENTRO de la transacción (cierra el TOCTOU de dos OUT concurrentes).
- * Lanza si la gaveta no alcanza. DEBE llamarse dentro de una $transaction.
+ * Límites del contrato por operación (Fase C): por transacción (maxTx) y por
+ * día (maxDia). Devuelve el mensaje de error o null si pasa. Config ausente o
+ * corrupta ⇒ sin límite (el registro no puede caerse por una config mala).
  */
-async function assertGavetaAlcanza(tx: any, shift: { id: string; initialCash: any }, tenantId: string, monto: Decimal): Promise<void> {
-    await tx.$queryRaw`SELECT id FROM \`Shift\` WHERE id = ${shift.id} AND \`tenantId\` = ${tenantId} FOR UPDATE`;
-    const freshSales: Array<{ total: any }> = await tx.sale.findMany({
+export function validarLimites(config: unknown, operation: string, amount: Decimal, acumuladoHoy: Decimal): string | null {
+    if (!config || typeof config !== 'object') return null;
+    const entry = (config as Record<string, any>)[operation];
+    if (!entry || typeof entry !== 'object') return null;
+    const opLabel = operation.replace(/_/g, ' ').toLowerCase();
+    const maxTxN = Number(entry.maxTx);
+    if (entry.maxTx != null && isFinite(maxTxN) && maxTxN > 0 && amount.greaterThan(maxTxN)) {
+        return `El monto excede el límite por transacción de ${opLabel} del convenio (C$${maxTxN.toFixed(2)}).`;
+    }
+    const maxDiaN = Number(entry.maxDia);
+    if (entry.maxDia != null && isFinite(maxDiaN) && maxDiaN > 0 && acumuladoHoy.plus(amount).greaterThan(maxDiaN)) {
+        return `Con esta operación superás el límite diario de ${opLabel} del convenio (C$${maxDiaN.toFixed(2)}; llevás C$${acumuladoHoy.toFixed(2)} hoy).`;
+    }
+    return null;
+}
+
+/** ¿El contrato define límite diario para esta operación? (decide si hay que agregar/lockear) */
+export function tieneLimiteDiario(config: unknown, operation: string): boolean {
+    if (!config || typeof config !== 'object') return false;
+    const entry = (config as Record<string, any>)[operation];
+    const maxDiaN = Number(entry?.maxDia);
+    return entry?.maxDia != null && isFinite(maxDiaN) && maxDiaN > 0;
+}
+
+/**
+ * Efectivo disponible en la gaveta del turno (fondo + ventas CASH + INs − OUTs),
+ * con decimal.js. Sirve con el cliente global (lectura) o con una tx (frescura
+ * bajo lock). La fórmula es la misma del arqueo.
+ */
+async function calcularGaveta(client: any, shift: { id: string; initialCash: any }): Promise<Decimal> {
+    const freshSales: Array<{ total: any }> = await client.sale.findMany({
         where: { shiftId: shift.id, paymentMethod: 'CASH' },
         select: { total: true },
     });
-    const freshMovements: Array<{ type: string; amount: any }> = await tx.cashMovement.findMany({
+    const freshMovements: Array<{ type: string; amount: any }> = await client.cashMovement.findMany({
         where: { shiftId: shift.id, isVoided: false },
         select: { type: true, amount: true },
     });
@@ -110,11 +138,46 @@ async function assertGavetaAlcanza(tx: any, shift: { id: string; initialCash: an
     const totalOUTs = freshMovements
         .filter((m) => m.type === 'OUT')
         .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
-    const availableCash = new Decimal(shift.initialCash.toString())
+    return new Decimal(shift.initialCash.toString())
         .plus(cashSalesTotal).plus(totalINs).minus(totalOUTs);
+}
+
+/**
+ * Guarda anti-sobregiro para salidas de efectivo: bloquea la fila del turno
+ * (FOR UPDATE, backticks MySQL) y recalcula el efectivo disponible con datos
+ * frescos DENTRO de la transacción (cierra el TOCTOU de dos OUT concurrentes).
+ * Lanza si la gaveta no alcanza. DEBE llamarse dentro de una $transaction.
+ */
+async function assertGavetaAlcanza(tx: any, shift: { id: string; initialCash: any }, tenantId: string, monto: Decimal): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM \`Shift\` WHERE id = ${shift.id} AND \`tenantId\` = ${tenantId} FOR UPDATE`;
+    const availableCash = await calcularGaveta(tx, shift);
     if (monto.greaterThan(availableCash)) {
         throw new Error(`Efectivo insuficiente en la gaveta para pagar esta operación. Disponible: C$${availableCash.toFixed(2)}`);
     }
+}
+
+/**
+ * Alertas de gaveta (Fase C) — best effort tras la operación: umbral mínimo
+ * (no poder pagar retiros) y máximo (exceso de efectivo → sugerir entrega al
+ * banco). Nunca lanza: una alerta no puede romper el registro.
+ */
+async function alertasDeGaveta(tenantId: string, shift: { id: string; initialCash: any }): Promise<string[]> {
+    const alerts: string[] = [];
+    try {
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: tenantId },
+            select: { agentCashMin: true, agentCashMax: true },
+        });
+        if (!tenant || (tenant.agentCashMin == null && tenant.agentCashMax == null)) return alerts;
+        const gaveta = await calcularGaveta(prisma, shift);
+        if (tenant.agentCashMin != null && gaveta.lessThan(new Decimal(tenant.agentCashMin.toString()))) {
+            alerts.push(`⚠️ Gaveta baja: C$${gaveta.toFixed(2)} (mínimo C$${Number(tenant.agentCashMin).toFixed(2)}). Podés quedarte sin efectivo para pagar retiros — considerá fondear la gaveta.`);
+        }
+        if (tenant.agentCashMax != null && gaveta.greaterThan(new Decimal(tenant.agentCashMax.toString()))) {
+            alerts.push(`⚠️ Exceso de efectivo: C$${gaveta.toFixed(2)} (máximo C$${Number(tenant.agentCashMax).toFixed(2)}). Riesgo de robo — considerá entregar efectivo al banco.`);
+        }
+    } catch { /* best effort */ }
+    return alerts;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,13 +202,14 @@ router.get('/agreements', authenticate, async (req: any, res: any) => {
 // Crear convenio (dueño/admin — es firmar un contrato con el banco/red).
 router.post('/agreements', authenticate, AGENT_MANAGER, validate(CreateAgentAgreementSchema), async (req: any, res: any) => {
     try {
-        const { name, kind, commissionConfig } = req.body;
+        const { name, kind, commissionConfig, limitsConfig } = req.body;
         const agreement = await prisma.agentAgreement.create({
             data: {
                 tenantId: req.tenantId,
                 name,
                 kind,
                 commissionConfig: commissionConfig ?? undefined,
+                limitsConfig: limitsConfig ?? undefined,
             },
         });
         await prisma.auditLog.create({
@@ -171,13 +235,14 @@ router.patch('/agreements/:id', authenticate, AGENT_MANAGER, validate(UpdateAgen
         const existing = await prisma.agentAgreement.findFirst({ where: { id, tenantId: req.tenantId } });
         if (!existing) return res.status(404).json({ success: false, error: 'Convenio no encontrado' });
 
-        const { name, active, commissionConfig } = req.body;
+        const { name, active, commissionConfig, limitsConfig } = req.body;
         const updated = await prisma.agentAgreement.update({
             where: { id: existing.id },
             data: {
                 ...(name !== undefined ? { name } : {}),
                 ...(active !== undefined ? { active } : {}),
                 ...(commissionConfig !== undefined ? { commissionConfig } : {}),
+                ...(limitsConfig !== undefined ? { limitsConfig } : {}),
             },
         });
         await prisma.auditLog.create({
@@ -251,6 +316,18 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
                 ? new Decimal(commission).toDecimalPlaces(4)
                 : calcAgentCommission(agreement.commissionConfig, operation, dAmount);
 
+        // Límites del contrato (Fase C): chequeo rápido del tope por transacción
+        // antes de abrir la tx (respuesta 400 limpia). El límite DIARIO se
+        // revalida DENTRO de la tx bajo lock del convenio (race-safe). Los
+        // traslados internos (LIQUIDACION_*) no son operaciones del banco →
+        // sin límites de contrato.
+        if (!isLiquidacion) {
+            const limErrRapido = validarLimites(agreement.limitsConfig, operation, dAmount, new Decimal(0));
+            if (limErrRapido) {
+                return res.status(400).json({ success: false, error: limErrRapido });
+            }
+        }
+
         // Garantizar el catálogo contable ANTES de abrir la transacción: el
         // auto-seed perezoso de getAccount corre con el cliente global, y el
         // snapshot REPEATABLE READ de la tx (fijado en su primera lectura) no
@@ -268,6 +345,22 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
             // delega al comercio). Row-lock + recálculo fresco dentro de la tx.
             if (direction === 'OUT') {
                 await assertGavetaAlcanza(tx, currentShift, req.tenantId, dAmount);
+            }
+
+            // Límite DIARIO del contrato (Fase C): lock de la fila del convenio
+            // (serializa las operaciones del convenio entre cajas) + agregado
+            // fresco del día en SQL. Día calendario del server.
+            if (!isLiquidacion && tieneLimiteDiario(agreement.limitsConfig, operation)) {
+                await tx.$queryRaw`SELECT id FROM \`AgentAgreement\` WHERE id = ${agreement.id} FOR UPDATE`;
+                const hoy0 = new Date();
+                hoy0.setHours(0, 0, 0, 0);
+                const agg = await tx.agentTransaction.aggregate({
+                    where: { agreementId: agreement.id, operation, status: 'COMPLETED', createdAt: { gte: hoy0 } },
+                    _sum: { amount: true },
+                });
+                const acumuladoHoy = new Decimal(agg._sum.amount?.toString() ?? 0);
+                const limErr = validarLimites(agreement.limitsConfig, operation, dAmount, acumuladoHoy);
+                if (limErr) throw new Error(`LIMITE: ${limErr}`);
             }
 
             // 1. Movimiento de caja FIRMADO (entra al arqueo y al libro encadenado).
@@ -345,13 +438,19 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
             return { agentTx, movement, settlementBalance: balanceBefore.plus(delta).toNumber() };
         });
 
-        res.json({ success: true, data: result });
+        // Alertas de gaveta (Fase C) — tras el commit, best effort.
+        const alerts = await alertasDeGaveta(req.tenantId, currentShift);
+
+        res.json({ success: true, data: { ...result, alerts } });
     } catch (error: any) {
         console.error('Error registrando operación de agente:', error);
-        const msg = error?.message?.startsWith('Efectivo insuficiente')
-            ? error.message
-            : 'Error registrando la operación de agente';
-        res.status(error?.message?.startsWith('Efectivo insuficiente') ? 400 : 500).json({ success: false, error: msg });
+        if (error?.message?.startsWith('Efectivo insuficiente')) {
+            return res.status(400).json({ success: false, error: error.message });
+        }
+        if (error?.message?.startsWith('LIMITE: ')) {
+            return res.status(400).json({ success: false, error: error.message.slice('LIMITE: '.length) });
+        }
+        res.status(500).json({ success: false, error: 'Error registrando la operación de agente' });
     }
 });
 
@@ -524,6 +623,135 @@ router.post('/agreements/:id/settle-commissions', authenticate, checkRole(['OWNE
         console.error('Error liquidando comisiones:', error);
         const known = error?.message?.includes('comisiones devengadas cambiaron');
         res.status(known ? 409 : 500).json({ success: false, error: known ? error.message : 'Error liquidando las comisiones' });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SETTINGS Y REPORTE (Fase C)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Umbrales de alerta de gaveta del tenant.
+router.get('/settings', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), async (req: any, res: any) => {
+    try {
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: req.tenantId },
+            select: { agentCashMin: true, agentCashMax: true },
+        });
+        res.json({
+            success: true,
+            data: {
+                agentCashMin: tenant?.agentCashMin != null ? Number(tenant.agentCashMin) : null,
+                agentCashMax: tenant?.agentCashMax != null ? Number(tenant.agentCashMax) : null,
+            },
+        });
+    } catch (error) {
+        console.error('Error leyendo settings de agente:', error);
+        res.status(500).json({ success: false, error: 'Error obteniendo la configuración' });
+    }
+});
+
+router.patch('/settings', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), validate(AgentSettingsSchema), async (req: any, res: any) => {
+    try {
+        const { agentCashMin, agentCashMax } = req.body;
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: req.tenantId },
+            select: { agentCashMin: true, agentCashMax: true },
+        });
+        if (!tenant) return res.status(404).json({ success: false, error: 'Negocio no encontrado' });
+
+        // Validación cruzada sobre el ESTADO FINAL (update parcial: el otro
+        // umbral puede venir de la BD).
+        const finalMin = agentCashMin !== undefined
+            ? (agentCashMin === null ? null : parseFloat(agentCashMin))
+            : (tenant.agentCashMin != null ? Number(tenant.agentCashMin) : null);
+        const finalMax = agentCashMax !== undefined
+            ? (agentCashMax === null ? null : parseFloat(agentCashMax))
+            : (tenant.agentCashMax != null ? Number(tenant.agentCashMax) : null);
+        if (finalMin != null && finalMax != null && finalMin >= finalMax) {
+            return res.status(400).json({ success: false, error: 'El umbral mínimo debe ser menor que el máximo.' });
+        }
+
+        const updated = await prisma.tenant.update({
+            where: { id: req.tenantId },
+            data: {
+                ...(agentCashMin !== undefined ? { agentCashMin: agentCashMin === null ? null : parseFloat(agentCashMin) } : {}),
+                ...(agentCashMax !== undefined ? { agentCashMax: agentCashMax === null ? null : parseFloat(agentCashMax) } : {}),
+            },
+            select: { agentCashMin: true, agentCashMax: true },
+        });
+        await prisma.auditLog.create({
+            data: {
+                tenantId: req.tenantId,
+                userId: req.userId,
+                action: 'AGENT_SETTINGS_UPDATED',
+                details: JSON.stringify({
+                    before: { agentCashMin: tenant.agentCashMin != null ? Number(tenant.agentCashMin) : null, agentCashMax: tenant.agentCashMax != null ? Number(tenant.agentCashMax) : null },
+                    after: { agentCashMin: updated.agentCashMin != null ? Number(updated.agentCashMin) : null, agentCashMax: updated.agentCashMax != null ? Number(updated.agentCashMax) : null },
+                }),
+            },
+        });
+        res.json({
+            success: true,
+            data: {
+                agentCashMin: updated.agentCashMin != null ? Number(updated.agentCashMin) : null,
+                agentCashMax: updated.agentCashMax != null ? Number(updated.agentCashMax) : null,
+            },
+        });
+    } catch (error) {
+        console.error('Error actualizando settings de agente:', error);
+        res.status(500).json({ success: false, error: 'Error guardando la configuración' });
+    }
+});
+
+// Reporte de conciliación: TODO agregado en SQL (groupBy convenio × operación
+// × estado) — nada de traer filas y sumar en JS (guardrail de escalabilidad).
+router.get('/report', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), async (req: any, res: any) => {
+    try {
+        const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 365);
+        const desde = new Date();
+        desde.setDate(desde.getDate() - days);
+        desde.setHours(0, 0, 0, 0);
+
+        const [agreements, grouped] = await Promise.all([
+            prisma.agentAgreement.findMany({
+                where: { tenantId: req.tenantId },
+                select: { id: true, name: true, kind: true, active: true, settlementBalance: true, commissionAccrued: true },
+                orderBy: { createdAt: 'asc' },
+                take: 100,
+            }),
+            prisma.agentTransaction.groupBy({
+                by: ['agreementId', 'operation', 'status'],
+                where: { tenantId: req.tenantId, createdAt: { gte: desde } },
+                _count: { _all: true },
+                _sum: { amount: true, commission: true },
+            }),
+        ]);
+
+        const breakdown = grouped.map((g: any) => ({
+            agreementId: g.agreementId,
+            operation: g.operation,
+            status: g.status,
+            count: g._count._all,
+            totalAmount: Number(g._sum.amount ?? 0),
+            totalCommission: Number(g._sum.commission ?? 0),
+        }));
+
+        res.json({
+            success: true,
+            data: {
+                days,
+                desde,
+                agreements: agreements.map((a: any) => ({
+                    ...a,
+                    settlementBalance: Number(a.settlementBalance),
+                    commissionAccrued: Number(a.commissionAccrued),
+                })),
+                breakdown,
+            },
+        });
+    } catch (error) {
+        console.error('Error generando reporte de agente:', error);
+        res.status(500).json({ success: false, error: 'Error generando el reporte' });
     }
 });
 

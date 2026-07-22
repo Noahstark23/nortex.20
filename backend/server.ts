@@ -2387,6 +2387,9 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
             activeShifts: liveCards,
             closedShifts: closedHistory,
             theftThreshold,
+            // Umbrales de alerta de gaveta del agente bancario (Fase C):
+            agentCashMin: tenant?.agentCashMin != null ? Number(tenant.agentCashMin) : null,
+            agentCashMax: tenant?.agentCashMax != null ? Number(tenant.agentCashMax) : null,
         });
 
     } catch (e: any) {

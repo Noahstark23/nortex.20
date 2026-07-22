@@ -30,6 +30,11 @@ model Tenant {
   subscriptionEndsAt   DateTime? // Fecha de vencimiento de la suscripción activa
   trialEndsAt          DateTime? // Fecha límite del trial gratuito (14 días desde registro)
   theftAlertThreshold  Decimal   @default(500) @db.Decimal(10, 2)
+  // Alertas de gaveta del agente bancario (Fase C, nullable = sin alerta):
+  // mínimo = no poder pagar retiros/remesas; máximo = exceso de efectivo
+  // (riesgo de robo → sugerir entrega al banco).
+  agentCashMin         Decimal?  @db.Decimal(18, 4)
+  agentCashMax         Decimal?  @db.Decimal(18, 4)
   // Costo de entrega plano del catálogo público (lo fija el negocio; el
   // cliente NUNCA lo manda — se calcula server-side al crear el Pedido).
   deliveryFee          Decimal   @default(0) @db.Decimal(10, 2)
@@ -678,6 +683,11 @@ model AgentAgreement {
   // Comisiones por tipo de operación, pactadas en el contrato (no son públicas
   // en Nicaragua → SIEMPRE configurables): { "DEPOSITO": {"fija": 5, "pct": 0}, ... }
   commissionConfig Json?
+
+  // Límites por operación (Fase C), también del contrato — p. ej. Banpro
+  // publica retiros máx US$3,000 y 3 depósitos/día, pero cada convenio pacta
+  // lo suyo: { "RETIRO": {"maxTx": 10000, "maxDia": 50000}, ... }
+  limitsConfig Json?
 
   // Saldos espejo del convenio (proyección, se actualiza en la misma tx que
   // cada operación — patrón Motorizado.walletBalance):

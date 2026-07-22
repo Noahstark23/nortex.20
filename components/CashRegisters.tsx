@@ -118,12 +118,17 @@ const CashRegisters: React.FC = () => {
     const [agentAgreements, setAgentAgreements] = useState<any[]>([]);
     const [agentTxs, setAgentTxs] = useState<any[]>([]);
     const [agentBusy, setAgentBusy] = useState(false);
+    // Fase C: umbrales de gaveta + reporte agregado
+    const [agentThresholds, setAgentThresholds] = useState<{ min: string; max: string }>({ min: '', max: '' });
+    const [agentReport, setAgentReport] = useState<any | null>(null);
 
     const fetchAgentData = useCallback(async () => {
         try {
-            const [ra, rt] = await Promise.all([
+            const [ra, rt, rs, rr] = await Promise.all([
                 fetch('/api/agent-banking/agreements', { headers }),
                 fetch('/api/agent-banking/transactions?take=15', { headers }),
+                fetch('/api/agent-banking/settings', { headers }),
+                fetch('/api/agent-banking/report?days=30', { headers }),
             ]);
             if (ra.ok) {
                 const da = await ra.json();
@@ -133,8 +138,37 @@ const CashRegisters: React.FC = () => {
                 const dt = await rt.json();
                 if (dt.success) setAgentTxs(dt.data);
             }
+            if (rs.ok) {
+                const ds = await rs.json();
+                if (ds.success) setAgentThresholds({
+                    min: ds.data.agentCashMin != null ? String(ds.data.agentCashMin) : '',
+                    max: ds.data.agentCashMax != null ? String(ds.data.agentCashMax) : '',
+                });
+            }
+            if (rr.ok) {
+                const dr = await rr.json();
+                if (dr.success) setAgentReport(dr.data);
+            }
         } catch (e) { /* sección opcional: si falla, simplemente no se muestra */ }
     }, [token]);
+
+    // Guardar umbrales de alerta de gaveta ('' limpia el umbral).
+    const handleSaveThresholds = async () => {
+        setAgentBusy(true);
+        try {
+            const res = await fetch('/api/agent-banking/settings', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', ...headers },
+                body: JSON.stringify({
+                    agentCashMin: agentThresholds.min.trim() === '' ? null : parseFloat(agentThresholds.min),
+                    agentCashMax: agentThresholds.max.trim() === '' ? null : parseFloat(agentThresholds.max),
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Error guardando umbrales');
+            fetchMonitor();
+        } catch (e: any) { alert(e.message); } finally { setAgentBusy(false); }
+    };
 
     // Liquidar comisiones devengadas del convenio (el banco paga a la cuenta).
     const handleSettleCommissions = async (agreement: any) => {
@@ -174,6 +208,39 @@ const CashRegisters: React.FC = () => {
             if (!res.ok || !data.success) throw new Error(data.error || 'Error registrando el traslado');
             fetchAgentData();
             fetchMonitor();
+        } catch (e: any) { alert(e.message); } finally { setAgentBusy(false); }
+    };
+
+    // Configurar límites del contrato por operación (Fase C).
+    const handleConfigureLimits = async (agreement: any) => {
+        const OPS = ['DEPOSITO', 'RETIRO', 'PAGO_TARJETA', 'PAGO_PRESTAMO', 'PAGO_SERVICIO', 'RECARGA', 'REMESA_ENVIO', 'REMESA_COBRO'];
+        const op = prompt(`¿Qué operación querés limitar en ${agreement.name}?\n(${OPS.join(', ')})`)?.trim().toUpperCase();
+        if (!op) return;
+        if (!OPS.includes(op)) { alert('Operación desconocida.'); return; }
+        const actual = agreement.limitsConfig?.[op];
+        const rawTx = prompt(`Límite POR TRANSACCIÓN para ${op} (C$). Vacío = sin límite.`, actual?.maxTx != null ? String(actual.maxTx) : '');
+        if (rawTx === null) return;
+        const rawDia = prompt(`Límite POR DÍA para ${op} (C$). Vacío = sin límite.`, actual?.maxDia != null ? String(actual.maxDia) : '');
+        if (rawDia === null) return;
+        const maxTx = rawTx.trim() === '' ? undefined : parseFloat(rawTx);
+        const maxDia = rawDia.trim() === '' ? undefined : parseFloat(rawDia);
+        if ((maxTx !== undefined && !(maxTx > 0)) || (maxDia !== undefined && !(maxDia > 0))) { alert('Los límites deben ser mayores que cero.'); return; }
+        const limitsConfig = { ...(agreement.limitsConfig || {}) };
+        if (maxTx === undefined && maxDia === undefined) {
+            delete limitsConfig[op];
+        } else {
+            limitsConfig[op] = { ...(maxTx !== undefined ? { maxTx } : {}), ...(maxDia !== undefined ? { maxDia } : {}) };
+        }
+        setAgentBusy(true);
+        try {
+            const res = await fetch(`/api/agent-banking/agreements/${agreement.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', ...headers },
+                body: JSON.stringify({ limitsConfig }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Error guardando límites');
+            fetchAgentData();
         } catch (e: any) { alert(e.message); } finally { setAgentBusy(false); }
     };
 
@@ -378,6 +445,17 @@ const CashRegisters: React.FC = () => {
                                                 <span className="text-xl font-black text-nortex-900">C${shift.estimatedPhysicalCash.toFixed(2)}</span>
                                             </div>
                                             <p className="text-[10px] text-slate-400 mt-1">Fondo: C${shift.initialCash.toFixed(2)} · {shift.salesCount} ventas · {shift.movementsCount} movimientos</p>
+                                            {/* Alertas de gaveta del agente (Fase C) */}
+                                            {agentThresholds.min !== '' && shift.estimatedPhysicalCash < parseFloat(agentThresholds.min) && (
+                                                <p className="mt-2 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 flex items-center gap-1">
+                                                    <AlertTriangle size={12} /> Gaveta baja: podrías no poder pagar retiros. Considerá fondear.
+                                                </p>
+                                            )}
+                                            {agentThresholds.max !== '' && shift.estimatedPhysicalCash > parseFloat(agentThresholds.max) && (
+                                                <p className="mt-2 text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1 flex items-center gap-1">
+                                                    <AlertTriangle size={12} /> Exceso de efectivo (riesgo de robo). Considerá entregar al banco.
+                                                </p>
+                                            )}
                                         </div>
                                     </div>
 
@@ -411,6 +489,38 @@ const CashRegisters: React.FC = () => {
                             <h2 className="text-lg font-bold text-slate-800">Agente Bancario — Conciliación</h2>
                         </div>
 
+                        {/* Umbrales de alerta de gaveta (Fase C) */}
+                        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 mb-4 flex flex-wrap items-end gap-3">
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Alerta gaveta mínima (C$)</label>
+                                <input
+                                    type="number" min="0" step="0.01"
+                                    value={agentThresholds.min}
+                                    onChange={e => setAgentThresholds(prev => ({ ...prev, min: e.target.value }))}
+                                    placeholder="Sin alerta"
+                                    className="w-36 border-2 border-slate-200 rounded-lg px-3 py-2 text-sm focus:border-sky-500 outline-none text-slate-700 font-mono"
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Alerta gaveta máxima (C$)</label>
+                                <input
+                                    type="number" min="0" step="0.01"
+                                    value={agentThresholds.max}
+                                    onChange={e => setAgentThresholds(prev => ({ ...prev, max: e.target.value }))}
+                                    placeholder="Sin alerta"
+                                    className="w-36 border-2 border-slate-200 rounded-lg px-3 py-2 text-sm focus:border-sky-500 outline-none text-slate-700 font-mono"
+                                />
+                            </div>
+                            <button
+                                onClick={handleSaveThresholds}
+                                disabled={agentBusy}
+                                className="text-xs font-bold px-4 py-2.5 rounded-lg bg-sky-600 text-white hover:bg-sky-700 transition-colors disabled:opacity-50"
+                            >
+                                Guardar umbrales
+                            </button>
+                            <p className="text-[10px] text-slate-400 basis-full">Bajo el mínimo: aviso de que no vas a poder pagar retiros. Sobre el máximo: aviso de exceso de efectivo (entregá al banco). Vacío = sin alerta.</p>
+                        </div>
+
                         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-4">
                             {agentAgreements.map((a: any) => {
                                 const saldo = Number(a.settlementBalance);
@@ -434,7 +544,7 @@ const CashRegisters: React.FC = () => {
                                                 <span className="font-bold font-mono text-sky-600">C${comisiones.toFixed(2)}</span>
                                             </div>
                                         </div>
-                                        <div className="grid grid-cols-3 gap-2 mt-4">
+                                        <div className="grid grid-cols-2 gap-2 mt-4">
                                             <button
                                                 onClick={() => handleCashSettlement(a, 'LIQUIDACION_ENTREGA')}
                                                 disabled={agentBusy}
@@ -459,11 +569,62 @@ const CashRegisters: React.FC = () => {
                                             >
                                                 Liquidar comisiones
                                             </button>
+                                            <button
+                                                onClick={() => handleConfigureLimits(a)}
+                                                disabled={agentBusy}
+                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100 transition-colors disabled:opacity-50"
+                                                title="Límites del contrato por operación (por transacción y por día)"
+                                            >
+                                                Límites
+                                            </button>
                                         </div>
                                     </div>
                                 );
                             })}
                         </div>
+
+                        {/* Reporte de conciliación 30 días (Fase C, agregado en SQL) */}
+                        {agentReport && agentReport.breakdown?.length > 0 && (
+                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
+                                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                                    <h3 className="text-sm font-bold text-slate-700">Resumen últimos {agentReport.days} días</h3>
+                                    <span className="text-[10px] text-slate-400">para conciliar contra el reporte del banco/red</span>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-slate-50 text-slate-500 text-xs">
+                                            <tr>
+                                                <th className="px-4 py-2 text-left font-medium">Convenio</th>
+                                                <th className="px-4 py-2 text-left font-medium">Operación</th>
+                                                <th className="px-4 py-2 text-right font-medium"># Ops</th>
+                                                <th className="px-4 py-2 text-right font-medium">Volumen</th>
+                                                <th className="px-4 py-2 text-right font-medium">Comisiones</th>
+                                                <th className="px-4 py-2 text-center font-medium">Estado</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {agentReport.breakdown.map((b: any, i: number) => {
+                                                const agr = agentReport.agreements.find((a: any) => a.id === b.agreementId);
+                                                return (
+                                                    <tr key={i} className="border-t border-slate-100">
+                                                        <td className="px-4 py-2 text-slate-700">{agr?.name || '—'}</td>
+                                                        <td className="px-4 py-2 text-slate-600 text-xs">{b.operation.replace(/_/g, ' ')}</td>
+                                                        <td className="px-4 py-2 text-right font-mono text-slate-700">{b.count}</td>
+                                                        <td className="px-4 py-2 text-right font-mono font-bold text-slate-800">C${b.totalAmount.toFixed(2)}</td>
+                                                        <td className="px-4 py-2 text-right font-mono text-sky-600">C${b.totalCommission.toFixed(2)}</td>
+                                                        <td className="px-4 py-2 text-center">
+                                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${b.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                                                                {b.status === 'COMPLETED' ? 'OK' : 'REVERSADAS'}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Últimas operaciones con botón de reversa */}
                         {agentTxs.length > 0 && (

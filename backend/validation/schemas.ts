@@ -316,11 +316,34 @@ const commissionConfigSchema = z.record(z.string(), commissionEntry).refine(
     { message: 'Operación desconocida en la configuración de comisiones' },
 );
 
+/** Límites por operación del convenio (Fase C): por transacción y/o por día. */
+const limitEntry = z.object({
+    maxTx:  numeric.refine((v) => v > 0, { message: 'Límite por transacción inválido' }).optional(),
+    maxDia: numeric.refine((v) => v > 0, { message: 'Límite diario inválido' }).optional(),
+});
+const limitsConfigSchema = z.record(z.string(), limitEntry).refine(
+    (cfg) => Object.keys(cfg).every((k) => (agentOperation.options as string[]).includes(k)),
+    { message: 'Operación desconocida en la configuración de límites' },
+);
+
+// PATCH /api/agent-banking/settings — umbrales de alerta de gaveta del tenant.
+// null limpia el umbral; validación cruzada min < max sobre el estado enviado.
+export const AgentSettingsSchema = z.object({
+    agentCashMin: moneyAmountPositive.nullable().optional(),
+    agentCashMax: moneyAmountPositive.nullable().optional(),
+}).refine((d) => d.agentCashMin !== undefined || d.agentCashMax !== undefined, {
+    message: 'Indicá al menos un umbral',
+}).refine((d) => {
+    if (d.agentCashMin == null || d.agentCashMax == null) return true;
+    return parseFloat(d.agentCashMin) < parseFloat(d.agentCashMax);
+}, { message: 'El mínimo debe ser menor que el máximo' });
+
 // POST /api/agent-banking/agreements
 export const CreateAgentAgreementSchema = z.object({
     name: z.string().trim().min(1, 'El nombre del convenio es obligatorio').max(120),
     kind: z.enum(['BANCO', 'RED_RECAUDADORA', 'REMESERA']).default('BANCO'),
     commissionConfig: commissionConfigSchema.optional(),
+    limitsConfig: limitsConfigSchema.optional(),
 });
 
 // PATCH /api/agent-banking/agreements/:id
@@ -328,7 +351,8 @@ export const UpdateAgentAgreementSchema = z.object({
     name:   z.string().trim().min(1).max(120).optional(),
     active: z.boolean().optional(),
     commissionConfig: commissionConfigSchema.optional(),
-}).refine((d) => d.name !== undefined || d.active !== undefined || d.commissionConfig !== undefined, {
+    limitsConfig: limitsConfigSchema.optional(),
+}).refine((d) => d.name !== undefined || d.active !== undefined || d.commissionConfig !== undefined || d.limitsConfig !== undefined, {
     message: 'Indicá al menos un cambio',
 });
 
