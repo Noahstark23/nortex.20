@@ -132,16 +132,21 @@ OWNER/ADMIN, el modal permite crear el primero (nombre + tipo).
 - QA loop: tsc/validate/generate · casos puros en `.cjs` (dirección, comisión,
   saldo espejo) · aislamiento por tenant · build + regresión · prueba en vivo.
 
-### Fase B — conciliar y proteger
-- Reversa de operación (estado REVERSED + contrapartida en caja, saldos y asiento).
+### Fase B — conciliar y proteger (en implementación)
+- Reversa de operación (estado REVERSED + contrapartida FIRMADA en el turno
+  abierto actual — el registro original es inmutable — + saldos y asiento espejo).
 - Liquidación de comisiones (el banco paga → `1.1.2 Bancos` contra `1.1.7`).
-- Vault "Operaciones de agente" separado en el panóptico (`/api/shifts/monitor` +
-  `CashRegisters.tsx`) y en el corte de caja.
-- Alertas de gaveta: mínimo (no poder pagar retiros) y máximo (riesgo de robo,
-  sugerir descarga al banco); registro del traslado caja→banco.
+- Traslado de efectivo caja↔banco como operaciones `LIQUIDACION_ENTREGA` /
+  `LIQUIDACION_FONDEO` (solo manager, comisión 0, mismo motor de transacciones).
+- Vault "Agente Bancario" separado en el panóptico (`/api/shifts/monitor` +
+  `CashRegisters.tsx`) + panel de conciliación con saldos por convenio.
+- (Las alertas de gaveta mín/máx se mueven a Fase C: requieren umbrales
+  configurables por tenant, que van junto a los límites por operación.)
 
-### Fase C — límites, reportes y escala
+### Fase C — límites, alertas, reportes y escala
 - Límites configurables por convenio × operación (por transacción / por día).
+- Alertas de gaveta: mínimo (no poder pagar retiros) y máximo (riesgo de robo,
+  sugerir entrega al banco) — umbrales configurables por tenant.
 - Reporte de corresponsalía (por convenio: volumen, comisiones, conciliación
   contra liquidación mensual del banco) — agregado en SQL.
 - Tipo de cambio por transacción para USD; billetera móvil; multi-caja.

@@ -374,6 +374,61 @@ export async function recordAgentTransaction(
 }
 
 /**
+ * REVERSA de una operación de agente (Fase B): asiento espejo exacto del
+ * original — deshace el movimiento principal Y la comisión devengada.
+ * `direction` es la dirección de la operación ORIGINAL.
+ */
+export async function recordAgentReversal(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    agentTxId: string,
+    originalDirection: 'IN' | 'OUT',
+    amount: number,
+    commission: number,
+    description: string
+) {
+    // Espejo: si el original fue IN (Debe Caja / Haber 2.1.12), la reversa es
+    // Debe 2.1.12 / Haber Caja — y viceversa.
+    const lines = originalDirection === 'IN'
+        ? [
+            { accountCode: '2.1.12', debit: amount, credit: 0 },
+            { accountCode: '1.1.1', debit: 0, credit: amount },
+        ]
+        : [
+            { accountCode: '1.1.1', debit: amount, credit: 0 },
+            { accountCode: '2.1.12', debit: 0, credit: amount },
+        ];
+    if (commission > 0) {
+        lines.push(
+            { accountCode: '4.1.4', debit: commission, credit: 0 },
+            { accountCode: '1.1.7', debit: 0, credit: commission },
+        );
+    }
+    await createJournalEntry(tx, tenantId, `Reversa agente: ${description}`, agentTxId, 'AGENT_TX_REVERSAL', userId, lines);
+}
+
+/**
+ * LIQUIDACIÓN DE COMISIONES (Fase B): el banco/red paga a la cuenta bancaria
+ * del negocio las comisiones devengadas.
+ *   Debe: Bancos (1.1.2) / Haber: Comisiones por Cobrar Corresponsalía (1.1.7)
+ * No toca la gaveta (va a cuenta bancaria, no a efectivo).
+ */
+export async function recordAgentCommissionSettlement(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    agreementId: string,
+    amount: number,
+    description: string
+) {
+    await createJournalEntry(tx, tenantId, `Liquidación comisiones: ${description}`, agreementId, 'AGENT_COMMISSION_SETTLEMENT', userId, [
+        { accountCode: '1.1.2', debit: amount, credit: 0 },
+        { accountCode: '1.1.7', debit: 0, credit: amount },
+    ]);
+}
+
+/**
  * DEVOLUCIÓN:
  *   Debe: Devoluciones sobre Ventas (4.1.2) + Inventario (1.1.4)
  *   Haber: Caja (1.1.1) + Costo de Ventas (5.1.1)

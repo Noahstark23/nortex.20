@@ -297,6 +297,9 @@ export const agentOperation = z.enum([
     'DEPOSITO', 'PAGO_TARJETA', 'PAGO_PRESTAMO', 'PAGO_SERVICIO', 'RECARGA',
     'REMESA_ENVIO', // cliente envía dinero → entrega efectivo (IN)
     'RETIRO', 'REMESA_COBRO', // el negocio paga efectivo (OUT)
+    // Fase B — traslado de efectivo con el banco (solo manager, comisión 0):
+    'LIQUIDACION_ENTREGA', // llevás el efectivo captado al banco (OUT, baja la deuda)
+    'LIQUIDACION_FONDEO',  // traés efectivo del banco para fondear retiros (IN, sube la deuda)
 ]);
 
 /** Config de comisión por operación: monto fijo y/o porcentaje (pactado en contrato). */
@@ -327,6 +330,17 @@ export const UpdateAgentAgreementSchema = z.object({
     commissionConfig: commissionConfigSchema.optional(),
 }).refine((d) => d.name !== undefined || d.active !== undefined || d.commissionConfig !== undefined, {
     message: 'Indicá al menos un cambio',
+});
+
+// POST /api/agent-banking/transactions/:id/reverse
+export const ReverseAgentTxSchema = z.object({
+    reason: z.string().trim().min(3, 'Indicá el motivo de la reversa').max(300),
+});
+
+// POST /api/agent-banking/agreements/:id/settle-commissions
+export const SettleCommissionsSchema = z.object({
+    // Sin monto = liquidar TODO lo devengado.
+    amount: moneyAmountPositive.optional(),
 });
 
 // POST /api/agent-banking/transactions

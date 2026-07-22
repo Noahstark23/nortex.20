@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Monitor, RefreshCw, Clock, ShoppingCart, ArrowDownCircle, ArrowUpCircle, DollarSign, AlertTriangle, CheckCircle, X, Printer, User, TrendingUp, Banknote, Lock, Calculator, Loader2 } from 'lucide-react';
+import { Monitor, RefreshCw, Clock, ShoppingCart, ArrowDownCircle, ArrowUpCircle, DollarSign, AlertTriangle, CheckCircle, X, Printer, User, TrendingUp, Banknote, Lock, Calculator, Loader2, Landmark, Undo2 } from 'lucide-react';
 
 interface LiveShift {
     id: string;
@@ -12,6 +12,9 @@ interface LiveShift {
     vaultCreditSales: number;
     vaultManualINs: number;
     vaultManualOUTs: number;
+    // Fase B: operaciones de agente bancario (corresponsalía) separadas
+    vaultAgentINs: number;
+    vaultAgentOUTs: number;
     estimatedPhysicalCash: number;
     salesCount: number;
     movementsCount: number;
@@ -111,6 +114,88 @@ const CashRegisters: React.FC = () => {
     const token = localStorage.getItem('nortex_token');
     const headers = { 'Authorization': `Bearer ${token}` };
 
+    // ── 🏦 Agente Bancario — conciliación (Fase B) ──
+    const [agentAgreements, setAgentAgreements] = useState<any[]>([]);
+    const [agentTxs, setAgentTxs] = useState<any[]>([]);
+    const [agentBusy, setAgentBusy] = useState(false);
+
+    const fetchAgentData = useCallback(async () => {
+        try {
+            const [ra, rt] = await Promise.all([
+                fetch('/api/agent-banking/agreements', { headers }),
+                fetch('/api/agent-banking/transactions?take=15', { headers }),
+            ]);
+            if (ra.ok) {
+                const da = await ra.json();
+                if (da.success) setAgentAgreements(da.data);
+            }
+            if (rt.ok) {
+                const dt = await rt.json();
+                if (dt.success) setAgentTxs(dt.data);
+            }
+        } catch (e) { /* sección opcional: si falla, simplemente no se muestra */ }
+    }, [token]);
+
+    // Liquidar comisiones devengadas del convenio (el banco paga a la cuenta).
+    const handleSettleCommissions = async (agreement: any) => {
+        const accrued = Number(agreement.commissionAccrued);
+        if (!(accrued > 0)) { alert('No hay comisiones por liquidar en este convenio.'); return; }
+        if (!confirm(`¿Registrar que ${agreement.name} liquidó C$${accrued.toFixed(2)} de comisiones a tu cuenta bancaria?`)) return;
+        setAgentBusy(true);
+        try {
+            const res = await fetch(`/api/agent-banking/agreements/${agreement.id}/settle-commissions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...headers },
+                body: JSON.stringify({}),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Error liquidando comisiones');
+            fetchAgentData();
+        } catch (e: any) { alert(e.message); } finally { setAgentBusy(false); }
+    };
+
+    // Traslado de efectivo con el banco (entrega de lo captado / fondeo de gaveta).
+    const handleCashSettlement = async (agreement: any, operation: 'LIQUIDACION_ENTREGA' | 'LIQUIDACION_FONDEO') => {
+        const label = operation === 'LIQUIDACION_ENTREGA'
+            ? '¿Cuánto efectivo ENTREGÁS al banco? (sale de tu gaveta abierta)'
+            : '¿Cuánto efectivo traés del banco para FONDEAR la gaveta? (entra a tu gaveta abierta)';
+        const raw = prompt(label);
+        if (raw === null) return;
+        const monto = parseFloat(raw);
+        if (!isFinite(monto) || monto <= 0) { alert('Monto inválido.'); return; }
+        setAgentBusy(true);
+        try {
+            const res = await fetch('/api/agent-banking/transactions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...headers },
+                body: JSON.stringify({ agreementId: agreement.id, operation, amount: monto, currency: 'NIO' }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Error registrando el traslado');
+            fetchAgentData();
+            fetchMonitor();
+        } catch (e: any) { alert(e.message); } finally { setAgentBusy(false); }
+    };
+
+    // Reversar una operación (falló/se anuló en el dispositivo del banco).
+    const handleReverseTx = async (txItem: any) => {
+        const reason = prompt(`Motivo de la reversa de ${txItem.operation} C$${Number(txItem.amount).toFixed(2)} (${txItem.agreement?.name || ''}):`);
+        if (reason === null) return;
+        if (reason.trim().length < 3) { alert('Indicá un motivo (mínimo 3 caracteres).'); return; }
+        setAgentBusy(true);
+        try {
+            const res = await fetch(`/api/agent-banking/transactions/${txItem.id}/reverse`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...headers },
+                body: JSON.stringify({ reason: reason.trim() }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || 'Error reversando la operación');
+            fetchAgentData();
+            fetchMonitor();
+        } catch (e: any) { alert(e.message); } finally { setAgentBusy(false); }
+    };
+
     const fetchMonitor = useCallback(async () => {
         try {
             const res = await fetch('/api/shifts/monitor', { headers });
@@ -134,9 +219,10 @@ const CashRegisters: React.FC = () => {
     // Initial load + auto-refresh every 15 seconds
     useEffect(() => {
         fetchMonitor();
-        const interval = setInterval(fetchMonitor, 15000);
+        fetchAgentData();
+        const interval = setInterval(() => { fetchMonitor(); fetchAgentData(); }, 15000);
         return () => clearInterval(interval);
-    }, [fetchMonitor]);
+    }, [fetchMonitor, fetchAgentData]);
 
     const timeAgo = (dateStr: string) => {
         const diff = Date.now() - new Date(dateStr).getTime();
@@ -269,6 +355,19 @@ const CashRegisters: React.FC = () => {
                                             <span className="font-bold text-amber-600">-C${shift.vaultManualOUTs.toFixed(2)}</span>
                                         </div>
 
+                                        {/* Vault: Agente Bancario (Fase B) — plata del banco, separada */}
+                                        {((shift.vaultAgentINs ?? 0) > 0 || (shift.vaultAgentOUTs ?? 0) > 0) && (
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2 text-sm text-slate-600">
+                                                    <Landmark size={14} className="text-sky-500" />
+                                                    <span>Agente Bancario</span>
+                                                </div>
+                                                <span className="font-bold text-sky-600">
+                                                    +C${(shift.vaultAgentINs ?? 0).toFixed(2)} / -C${(shift.vaultAgentOUTs ?? 0).toFixed(2)}
+                                                </span>
+                                            </div>
+                                        )}
+
                                         {/* Divider */}
                                         <div className="border-t border-dashed border-slate-200 pt-3">
                                             <div className="flex items-center justify-between">
@@ -303,6 +402,130 @@ const CashRegisters: React.FC = () => {
                         </div>
                     )}
                 </section>
+
+                {/* ====== ZONA 1.5: AGENTE BANCARIO — CONCILIACIÓN (Fase B) ====== */}
+                {agentAgreements.length > 0 && (
+                    <section>
+                        <div className="flex items-center gap-2 mb-4">
+                            <Landmark size={18} className="text-sky-600" />
+                            <h2 className="text-lg font-bold text-slate-800">Agente Bancario — Conciliación</h2>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-4">
+                            {agentAgreements.map((a: any) => {
+                                const saldo = Number(a.settlementBalance);
+                                const comisiones = Number(a.commissionAccrued);
+                                return (
+                                    <div key={a.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+                                        <div className="flex items-center justify-between mb-3">
+                                            <div>
+                                                <p className="font-bold text-slate-800">{a.name}</p>
+                                                <p className="text-[10px] text-slate-400">{a.kind === 'BANCO' ? 'Banco' : a.kind === 'RED_RECAUDADORA' ? 'Red de pagos' : 'Remesera'}{!a.active && ' · INACTIVO'}</p>
+                                            </div>
+                                            <Landmark size={20} className="text-sky-500" />
+                                        </div>
+                                        <div className="space-y-2 text-sm">
+                                            <div className="flex justify-between">
+                                                <span className="text-slate-500">{saldo >= 0 ? 'Le debés al banco:' : 'El banco te debe:'}</span>
+                                                <span className={`font-bold font-mono ${saldo >= 0 ? 'text-amber-600' : 'text-emerald-600'}`}>C${Math.abs(saldo).toFixed(2)}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-slate-500">Comisiones por cobrar:</span>
+                                                <span className="font-bold font-mono text-sky-600">C${comisiones.toFixed(2)}</span>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-2 mt-4">
+                                            <button
+                                                onClick={() => handleCashSettlement(a, 'LIQUIDACION_ENTREGA')}
+                                                disabled={agentBusy}
+                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                                                title="Llevar el efectivo captado al banco (sale de tu gaveta)"
+                                            >
+                                                Entregar al banco
+                                            </button>
+                                            <button
+                                                onClick={() => handleCashSettlement(a, 'LIQUIDACION_FONDEO')}
+                                                disabled={agentBusy}
+                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors disabled:opacity-50"
+                                                title="Traer efectivo del banco para pagar retiros (entra a tu gaveta)"
+                                            >
+                                                Fondear gaveta
+                                            </button>
+                                            <button
+                                                onClick={() => handleSettleCommissions(a)}
+                                                disabled={agentBusy || !(comisiones > 0)}
+                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition-colors disabled:opacity-50"
+                                                title="El banco pagó las comisiones a tu cuenta bancaria"
+                                            >
+                                                Liquidar comisiones
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* Últimas operaciones con botón de reversa */}
+                        {agentTxs.length > 0 && (
+                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                                <div className="px-4 py-3 border-b border-slate-100">
+                                    <h3 className="text-sm font-bold text-slate-700">Últimas operaciones de agente</h3>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-slate-50 text-slate-500 text-xs">
+                                            <tr>
+                                                <th className="px-4 py-2 text-left font-medium">Fecha</th>
+                                                <th className="px-4 py-2 text-left font-medium">Convenio</th>
+                                                <th className="px-4 py-2 text-left font-medium">Operación</th>
+                                                <th className="px-4 py-2 text-right font-medium">Monto</th>
+                                                <th className="px-4 py-2 text-right font-medium">Comisión</th>
+                                                <th className="px-4 py-2 text-left font-medium">Ref.</th>
+                                                <th className="px-4 py-2 text-center font-medium">Estado</th>
+                                                <th className="px-4 py-2"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {agentTxs.map((t: any) => (
+                                                <tr key={t.id} className="border-t border-slate-100">
+                                                    <td className="px-4 py-2 text-slate-500 text-xs">{new Date(t.createdAt).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+                                                    <td className="px-4 py-2 text-slate-700">{t.agreement?.name}</td>
+                                                    <td className="px-4 py-2">
+                                                        <span className={`text-xs font-bold ${t.direction === 'IN' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                                            {t.operation.replace(/_/g, ' ')}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-2 text-right font-mono font-bold text-slate-800">
+                                                        {t.direction === 'IN' ? '+' : '-'}C${Number(t.amount).toFixed(2)}
+                                                    </td>
+                                                    <td className="px-4 py-2 text-right font-mono text-sky-600">C${Number(t.commission).toFixed(2)}</td>
+                                                    <td className="px-4 py-2 text-slate-400 text-xs">{t.externalRef || '—'}</td>
+                                                    <td className="px-4 py-2 text-center">
+                                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${t.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                                                            {t.status === 'COMPLETED' ? 'OK' : 'REVERSADA'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-2 text-right">
+                                                        {t.status === 'COMPLETED' && (
+                                                            <button
+                                                                onClick={() => handleReverseTx(t)}
+                                                                disabled={agentBusy}
+                                                                className="flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded bg-red-50 text-red-600 border border-red-100 hover:bg-red-100 transition-colors disabled:opacity-50"
+                                                                title="Reversar (la transacción falló o se anuló en el equipo del banco)"
+                                                            >
+                                                                <Undo2 size={12} /> Reversar
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </section>
+                )}
 
                 {/* ====== ZONA 2: HISTORIAL DE CIERRES (AUDITORÍA) ====== */}
                 <section>

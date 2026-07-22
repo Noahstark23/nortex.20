@@ -22,12 +22,19 @@ import { prisma } from '../lib/prisma';
 import { authenticate } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
 import { appendSignedCashMovement } from '../services/ledger';
-import { recordAgentTransaction, seedChartOfAccounts } from '../services/accounting';
+import {
+    recordAgentTransaction,
+    recordAgentReversal,
+    recordAgentCommissionSettlement,
+    seedChartOfAccounts,
+} from '../services/accounting';
 import {
     validate,
     CreateAgentAgreementSchema,
     UpdateAgentAgreementSchema,
     CreateAgentTxSchema,
+    ReverseAgentTxSchema,
+    SettleCommissionsSchema,
 } from '../validation/schemas';
 
 const router = express.Router();
@@ -53,7 +60,14 @@ export const AGENT_OPERATION_DIRECTION: Record<string, 'IN' | 'OUT'> = {
     REMESA_ENVIO: 'IN',
     RETIRO: 'OUT',
     REMESA_COBRO: 'OUT',
+    // Fase B — traslado de efectivo con el banco (manager, comisión 0). Mismo
+    // delta de saldo que las demás: ENTREGA baja la deuda (−), FONDEO la sube (+).
+    LIQUIDACION_ENTREGA: 'OUT',
+    LIQUIDACION_FONDEO: 'IN',
 };
+
+/** Roles que pueden conciliar (liquidaciones y reversas) — espejo del gate del panóptico. */
+const MANAGER_ROLES = ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'];
 
 /**
  * Comisión devengada por operación según el contrato del convenio:
@@ -70,6 +84,37 @@ export function calcAgentCommission(config: unknown, operation: string, amount: 
     const fija = entry.fija != null && isFinite(fijaNum) && fijaNum > 0 ? new Decimal(fijaNum) : new Decimal(0);
     const pct = entry.pct != null && isFinite(pctNum) && pctNum > 0 ? new Decimal(pctNum) : new Decimal(0);
     return fija.plus(amount.mul(pct).dividedBy(100)).toDecimalPlaces(4);
+}
+
+/**
+ * Guarda anti-sobregiro para salidas de efectivo: bloquea la fila del turno
+ * (FOR UPDATE, backticks MySQL) y recalcula el efectivo disponible con datos
+ * frescos DENTRO de la transacción (cierra el TOCTOU de dos OUT concurrentes).
+ * Lanza si la gaveta no alcanza. DEBE llamarse dentro de una $transaction.
+ */
+async function assertGavetaAlcanza(tx: any, shift: { id: string; initialCash: any }, tenantId: string, monto: Decimal): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM \`Shift\` WHERE id = ${shift.id} AND \`tenantId\` = ${tenantId} FOR UPDATE`;
+    const freshSales: Array<{ total: any }> = await tx.sale.findMany({
+        where: { shiftId: shift.id, paymentMethod: 'CASH' },
+        select: { total: true },
+    });
+    const freshMovements: Array<{ type: string; amount: any }> = await tx.cashMovement.findMany({
+        where: { shiftId: shift.id, isVoided: false },
+        select: { type: true, amount: true },
+    });
+    const cashSalesTotal = freshSales
+        .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
+    const totalINs = freshMovements
+        .filter((m) => m.type === 'IN')
+        .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
+    const totalOUTs = freshMovements
+        .filter((m) => m.type === 'OUT')
+        .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
+    const availableCash = new Decimal(shift.initialCash.toString())
+        .plus(cashSalesTotal).plus(totalINs).minus(totalOUTs);
+    if (monto.greaterThan(availableCash)) {
+        throw new Error(`Efectivo insuficiente en la gaveta para pagar esta operación. Disponible: C$${availableCash.toFixed(2)}`);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,6 +219,13 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
             return res.status(400).json({ success: false, error: 'Operación de agente no soportada' });
         }
 
+        // Traslados de efectivo con el banco (Fase B): decisión de conciliación,
+        // no de mostrador → solo managers, y nunca devengan comisión.
+        const isLiquidacion = operation.startsWith('LIQUIDACION');
+        if (isLiquidacion && !MANAGER_ROLES.includes(req.role || '')) {
+            return res.status(403).json({ success: false, error: 'Solo un administrador puede registrar traslados de efectivo con el banco.' });
+        }
+
         // Convenio del MISMO tenant, activo.
         const agreement = await prisma.agentAgreement.findFirst({
             where: { id: agreementId, tenantId: req.tenantId, active: true },
@@ -192,9 +244,12 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
 
         const dAmount = new Decimal(amount);
         // Comisión: manual si viene en el body; si no, la del contrato del convenio.
-        const dCommission = commission !== undefined
-            ? new Decimal(commission).toDecimalPlaces(4)
-            : calcAgentCommission(agreement.commissionConfig, operation, dAmount);
+        // Los traslados de efectivo (LIQUIDACION_*) nunca devengan comisión.
+        const dCommission = isLiquidacion
+            ? new Decimal(0)
+            : commission !== undefined
+                ? new Decimal(commission).toDecimalPlaces(4)
+                : calcAgentCommission(agreement.commissionConfig, operation, dAmount);
 
         // Garantizar el catálogo contable ANTES de abrir la transacción: el
         // auto-seed perezoso de getAccount corre con el cliente global, y el
@@ -208,33 +263,11 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
         if (!anchorAccount) await seedChartOfAccounts(req.tenantId);
 
         const result = await prisma.$transaction(async (tx: any) => {
-            // Guarda anti-sobregiro para salidas (retiros/remesas pagadas):
-            // el tope real de retiro lo pone la gaveta (Banpro lo delega al
-            // comercio). Revalidación race-safe bajo row-lock del turno,
-            // mismo patrón que /api/cash-movements pero con backticks MySQL.
+            // Guarda anti-sobregiro para salidas (retiros/remesas pagadas/entregas
+            // al banco): el tope real de retiro lo pone la gaveta (Banpro lo
+            // delega al comercio). Row-lock + recálculo fresco dentro de la tx.
             if (direction === 'OUT') {
-                await tx.$queryRaw`SELECT id FROM \`Shift\` WHERE id = ${currentShift.id} AND \`tenantId\` = ${req.tenantId} FOR UPDATE`;
-                const freshSales: Array<{ total: any }> = await tx.sale.findMany({
-                    where: { shiftId: currentShift.id, paymentMethod: 'CASH' },
-                    select: { total: true },
-                });
-                const freshMovements: Array<{ type: string; amount: any }> = await tx.cashMovement.findMany({
-                    where: { shiftId: currentShift.id, isVoided: false },
-                    select: { type: true, amount: true },
-                });
-                const cashSalesTotal = freshSales
-                    .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
-                const totalINs = freshMovements
-                    .filter((m) => m.type === 'IN')
-                    .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
-                const totalOUTs = freshMovements
-                    .filter((m) => m.type === 'OUT')
-                    .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
-                const availableCash = new Decimal(currentShift.initialCash.toString())
-                    .plus(cashSalesTotal).plus(totalINs).minus(totalOUTs);
-                if (dAmount.greaterThan(availableCash)) {
-                    throw new Error(`Efectivo insuficiente en la gaveta para pagar esta operación. Disponible: C$${availableCash.toFixed(2)}`);
-                }
+                await assertGavetaAlcanza(tx, currentShift, req.tenantId, dAmount);
             }
 
             // 1. Movimiento de caja FIRMADO (entra al arqueo y al libro encadenado).
@@ -319,6 +352,178 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
             ? error.message
             : 'Error registrando la operación de agente';
         res.status(error?.message?.startsWith('Efectivo insuficiente') ? 400 : 500).json({ success: false, error: msg });
+    }
+});
+
+// Reversar una operación (Fase B): la transacción falló o se anuló en el
+// dispositivo del banco. El registro original es INMUTABLE (libro firmado):
+// se crea una CONTRAPARTIDA firmada en el turno abierto de quien reversa
+// (el efectivo vuelve/sale HOY, no en el turno histórico), se deshacen los
+// saldos del convenio y el asiento, y la operación queda REVERSED.
+router.post('/transactions/:id/reverse', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), validate(ReverseAgentTxSchema), async (req: any, res: any) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body;
+
+        const original = await prisma.agentTransaction.findFirst({
+            where: { id, tenantId: req.tenantId },
+            include: { agreement: true },
+        });
+        if (!original) return res.status(404).json({ success: false, error: 'Operación no encontrada' });
+        if (original.status !== 'COMPLETED') {
+            return res.status(400).json({ success: false, error: 'Esta operación ya fue reversada.' });
+        }
+
+        const currentShift = await prisma.shift.findFirst({
+            where: { userId: req.userId, status: 'OPEN' },
+        });
+        if (!currentShift) {
+            return res.status(400).json({ success: false, error: 'Abrí una caja primero: la reversa mueve efectivo de la gaveta actual.' });
+        }
+
+        const dAmount = new Decimal(original.amount.toString());
+        const dCommission = new Decimal(original.commission.toString());
+        // La contrapartida va en dirección opuesta: reversar un depósito (IN)
+        // significa DEVOLVER el efectivo al cliente (OUT), y viceversa.
+        const compensatingDirection: 'IN' | 'OUT' = original.direction === 'IN' ? 'OUT' : 'IN';
+
+        const result = await prisma.$transaction(async (tx: any) => {
+            if (compensatingDirection === 'OUT') {
+                await assertGavetaAlcanza(tx, currentShift, req.tenantId, dAmount);
+            }
+
+            // Guard atómico contra doble reversa concurrente: solo gana quien
+            // encuentre la fila todavía COMPLETED.
+            const marked = await tx.agentTransaction.updateMany({
+                where: { id: original.id, tenantId: req.tenantId, status: 'COMPLETED' },
+                data: { status: 'REVERSED', reversedAt: new Date(), reversedBy: req.userId },
+            });
+            if (marked.count !== 1) throw new Error('Esta operación ya fue reversada.');
+
+            // Contrapartida firmada — entra al arqueo del turno ACTUAL.
+            const movement = await appendSignedCashMovement(tx, {
+                tenantId: req.tenantId,
+                shiftId: currentShift.id,
+                userId: req.userId,
+                type: compensatingDirection,
+                amount: dAmount.toNumber(),
+                currency: 'NIO',
+                category: 'AGENTE_BANCARIO',
+                description: `[REVERSA] [${original.agreement.name}] ${original.operation}${original.externalRef ? ` · ref ${original.externalRef}` : ''} · ${reason}`,
+                expenseId: null,
+            });
+
+            // Deshacer los saldos espejo del convenio (delta opuesto al original).
+            const balanceBefore = new Decimal(original.agreement.settlementBalance.toString());
+            const delta = original.direction === 'IN' ? dAmount.negated() : dAmount;
+            await tx.agentAgreement.update({
+                where: { id: original.agreementId },
+                data: {
+                    settlementBalance: { increment: delta.toNumber() },
+                    commissionAccrued: { decrement: dCommission.toNumber() },
+                },
+            });
+
+            // Asiento espejo (deshace monto principal + comisión devengada).
+            // Las cuentas ya existen: la operación original las sembró.
+            await recordAgentReversal(
+                tx, req.tenantId, req.userId, original.id, original.direction as 'IN' | 'OUT',
+                dAmount.toNumber(), dCommission.toNumber(),
+                `${original.agreement.name} ${original.operation}`
+            );
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: req.tenantId,
+                    userId: req.userId,
+                    action: 'AGENT_TX_REVERSED',
+                    details: JSON.stringify({
+                        agentTxId: original.id,
+                        contrapartidaId: movement.id,
+                        convenio: original.agreement.name,
+                        operacion: original.operation,
+                        monto: dAmount.toNumber(),
+                        comisionRevertida: dCommission.toNumber(),
+                        motivo: reason,
+                        turnoId: currentShift.id,
+                        before: { settlementBalance: balanceBefore.toNumber(), status: 'COMPLETED' },
+                        after: { settlementBalance: balanceBefore.plus(delta).toNumber(), status: 'REVERSED' },
+                    }),
+                },
+            });
+
+            return {
+                reversedId: original.id,
+                compensatingMovementId: movement.id,
+                settlementBalance: balanceBefore.plus(delta).toNumber(),
+            };
+        });
+
+        res.json({ success: true, data: result });
+    } catch (error: any) {
+        console.error('Error reversando operación de agente:', error);
+        const known = error?.message?.startsWith('Efectivo insuficiente') || error?.message?.includes('ya fue reversada');
+        res.status(known ? 400 : 500).json({ success: false, error: known ? error.message : 'Error reversando la operación' });
+    }
+});
+
+// Liquidar comisiones devengadas (Fase B): el banco/red las paga a la CUENTA
+// BANCARIA del negocio (no toca la gaveta). Sin monto = liquidar todo.
+router.post('/agreements/:id/settle-commissions', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), validate(SettleCommissionsSchema), async (req: any, res: any) => {
+    try {
+        const { id } = req.params;
+        const agreement = await prisma.agentAgreement.findFirst({ where: { id, tenantId: req.tenantId } });
+        if (!agreement) return res.status(404).json({ success: false, error: 'Convenio no encontrado' });
+
+        const accrued = new Decimal(agreement.commissionAccrued.toString());
+        const dAmount = req.body.amount !== undefined
+            ? new Decimal(req.body.amount).toDecimalPlaces(4)
+            : accrued;
+        if (dAmount.lessThanOrEqualTo(0)) {
+            return res.status(400).json({ success: false, error: 'No hay comisiones por liquidar en este convenio.' });
+        }
+        if (dAmount.greaterThan(accrued)) {
+            return res.status(400).json({ success: false, error: `Solo hay C$${accrued.toFixed(2)} en comisiones devengadas.` });
+        }
+
+        const result = await prisma.$transaction(async (tx: any) => {
+            // Guard atómico: decrementa solo si el devengado sigue alcanzando
+            // (cierra la carrera con reversas o liquidaciones concurrentes).
+            const upd = await tx.agentAgreement.updateMany({
+                where: { id: agreement.id, tenantId: req.tenantId, commissionAccrued: { gte: dAmount.toNumber() } },
+                data: { commissionAccrued: { decrement: dAmount.toNumber() } },
+            });
+            if (upd.count !== 1) throw new Error('Las comisiones devengadas cambiaron; actualizá y volvé a intentar.');
+
+            // Debe Bancos (1.1.2) / Haber Comisiones por Cobrar (1.1.7).
+            // Las cuentas ya existen: hubo operaciones que las sembraron.
+            await recordAgentCommissionSettlement(
+                tx, req.tenantId, req.userId, agreement.id, dAmount.toNumber(), agreement.name
+            );
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: req.tenantId,
+                    userId: req.userId,
+                    action: 'AGENT_COMMISSIONS_SETTLED',
+                    details: JSON.stringify({
+                        agreementId: agreement.id,
+                        convenio: agreement.name,
+                        liquidado: dAmount.toNumber(),
+                        before: { commissionAccrued: accrued.toNumber() },
+                        after: { commissionAccrued: accrued.minus(dAmount).toNumber() },
+                    }),
+                },
+            });
+
+            return { liquidado: dAmount.toNumber(), comisionesRestantes: accrued.minus(dAmount).toNumber() };
+        });
+
+        res.json({ success: true, data: result });
+    } catch (error: any) {
+        console.error('Error liquidando comisiones:', error);
+        const known = error?.message?.includes('comisiones devengadas cambiaron');
+        res.status(known ? 409 : 500).json({ success: false, error: known ? error.message : 'Error liquidando las comisiones' });
     }
 });
 
