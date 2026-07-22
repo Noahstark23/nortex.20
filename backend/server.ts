@@ -2276,18 +2276,29 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
                 .filter((s: any) => s.paymentMethod === 'CREDIT')
                 .reduce((sum: number, s: any) => sum + Number(s.total), 0);
 
-            // Bóveda 2: Entradas manuales
-            const manualINs = shift.cashMovements
-                .filter((m: any) => m.type === 'IN')
+            // Bóveda 4 (Fase B): operaciones de agente bancario (corresponsalía)
+            // separadas de los movimientos manuales — es plata del banco, no del
+            // negocio, y el dueño necesita verla aparte para conciliar.
+            const agentINs = shift.cashMovements
+                .filter((m: any) => m.type === 'IN' && m.category === 'AGENTE_BANCARIO')
+                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+            const agentOUTs = shift.cashMovements
+                .filter((m: any) => m.type === 'OUT' && m.category === 'AGENTE_BANCARIO')
                 .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
 
-            // Bóveda 3: Salidas manuales
+            // Bóveda 2: Entradas manuales (sin agente)
+            const manualINs = shift.cashMovements
+                .filter((m: any) => m.type === 'IN' && m.category !== 'AGENTE_BANCARIO')
+                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+
+            // Bóveda 3: Salidas manuales (sin agente)
             const manualOUTs = shift.cashMovements
-                .filter((m: any) => m.type === 'OUT')
+                .filter((m: any) => m.type === 'OUT' && m.category !== 'AGENTE_BANCARIO')
                 .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
 
             // EL NÚMERO SAGRADO: Efectivo físico estimado en la gaveta
-            const estimatedPhysicalCash = Number(shift.initialCash) + cashSales + manualINs - manualOUTs;
+            // (idéntico a antes: manual + agente = todos los movimientos).
+            const estimatedPhysicalCash = Number(shift.initialCash) + cashSales + manualINs + agentINs - manualOUTs - agentOUTs;
 
             // Última venta
             const sortedSales = shift.sales.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -2317,6 +2328,9 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
                 vaultCreditSales: creditSales,
                 vaultManualINs: manualINs,
                 vaultManualOUTs: manualOUTs,
+                // Bóveda agente bancario (Fase B):
+                vaultAgentINs: agentINs,
+                vaultAgentOUTs: agentOUTs,
                 // El Número Sagrado:
                 estimatedPhysicalCash,
                 // Meta:
