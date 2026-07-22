@@ -8,12 +8,13 @@ description: Despliegue y operaciones de Nortex — Docker, variables de entorno
 ## Pipeline
 `Dockerfile`: `npm install` → `prisma generate` (URL dummy) →
 `npm run build:seo` (frontend + prerender 70+ rutas + sitemap) → CMD:
-`prisma db push --accept-data-loss && NODE_ENV=production npm run start` (tsx).
+`prisma db push && NODE_ENV=production npm run start` (tsx).
 - `db push` aplica el schema como **DDL puro** al arrancar → las migraciones
   aditivas entran solas; los backfills son perezosos en la app (ver nortex-migration).
-- ⚠️ `--accept-data-loss`: un cambio NO aditivo del schema puede **borrar datos
-  reales**. Gate: revisar `git diff backend/prisma/schema.prisma` antes de todo
-  release buscando renames/cambios de tipo.
+- ⚠️ El flag `--accept-data-loss` **ya se quitó** (2026-07): un cambio NO aditivo
+  (drop/rename/narrow) ahora **falla el arranque** en vez de borrar datos —la
+  instancia vieja sigue sirviendo. Gate igual: revisar `git diff
+  backend/prisma/schema.prisma` antes de todo release buscando renames/cambios de tipo.
 - `NODE_ENV=production` activa el serving: `/` → `landing.html`; rutas de
   marketing → `dist/<ruta>/index.html` prerenderizado; resto → shell del SPA;
   assets con hash → cache 1 año.

@@ -79,8 +79,23 @@ router.put('/:id', authenticate, checkRole(ROLES_WRITE), async (req: any, res: a
     try {
         const wh = await prisma.warehouse.findFirst({ where: { id: req.params.id, tenantId } });
         if (!wh) return res.status(404).json({ error: 'Bodega no encontrada' });
+        if (name !== undefined && !String(name).trim()) {
+            return res.status(400).json({ error: 'El nombre no puede estar vacío' });
+        }
         if (isActive === false && wh.isDefault) {
             return res.status(400).json({ error: 'No se puede desactivar la bodega principal. Asigná otra default primero.' });
+        }
+        if (isActive === false) {
+            // Bodega con existencias no se desactiva: las transferencias exigen
+            // origen activo, así que su stock quedaría varado (invisible para
+            // mover, aunque siga vendible por agregado).
+            const withStock = await prisma.productStock.aggregate({
+                where: { warehouseId: wh.id, tenantId },
+                _sum: { stock: true },
+            });
+            if (Number(withStock._sum.stock ?? 0) > 0) {
+                return res.status(409).json({ error: 'La bodega tiene existencias: transferilas antes de desactivarla.' });
+            }
         }
         const updated = await prisma.warehouse.update({
             where: { id: wh.id },

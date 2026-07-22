@@ -23,7 +23,10 @@ model Tenant {
   slug                 String?   @unique // URL amigable para catálogo público (ej: "ferreteria-jose")
   walletBalance        Decimal   @default(0) @db.Decimal(18, 4)
   creditLimit          Decimal   @default(0) @db.Decimal(18, 4)
-  creditScore          Int       @default(0)
+  // NULL = "sin datos suficientes": un tenant nuevo NO tiene score hasta que
+  // el motor real (services/scoring.ts) lo calcula desde historial operativo.
+  // Nunca sembrar un valor fantasma; el número solo existe si hay con qué.
+  creditScore          Int?
   subscriptionStatus   String    @default("TRIAL") // TRIAL | ACTIVE | PAST_DUE | CANCELLED
   stripeCustomerId     String? // Stripe Customer ID (cus_xxx)
   stripeSubscriptionId String? // Stripe Subscription ID (sub_xxx)
@@ -238,7 +241,8 @@ model Purchase {
   @@index([purchaseOrderId])
   @@index([supplierId])
   @@index([status])
-  @@index([tenantId, createdAt])
+  // B1: libros de compras DGI y reportes filtran tenant+fecha de factura.
+  @@index([tenantId, date])
 }
 
 model PurchaseItem {
@@ -567,6 +571,9 @@ model Payment {
   user User @relation(fields: [collectedBy], references: [id])
 
   @@index([saleId])
+  // B1: el agregado de cobros del día recorre pagos por fecha (el tenant
+  // viene por el join a Sale, que ya tiene su compuesto).
+  @@index([createdAt])
 }
 
 model Shift {
@@ -616,6 +623,7 @@ model Expense {
 
   @@index([tenantId])
   @@index([category])
+  // B1: reportes de gastos por período filtran tenant+fecha.
   @@index([tenantId, createdAt])
 }
 
@@ -836,7 +844,10 @@ model AuditLog {
 
   @@index([tenantId])
   @@index([userId])
+  // B1: la tabla que más rápido crece (1 fila por venta/ajuste/pago/cierre);
+  // la bitácora y los filtros por acción necesitan tenant+fecha.
   @@index([tenantId, createdAt])
+  @@index([tenantId, action, createdAt])
 }
 
 // ==========================================
@@ -953,7 +964,10 @@ model KardexMovement {
   @@index([type])
   @@index([batchId])
   @@index([warehouseId])
-  @@index([tenantId, date])
+  // B1: el Kardex se consulta por tenant+tipo+fecha (mermas, reportes) y por
+  // tenant+producto+fecha (historial de un producto) — compuestos dedicados.
+  @@index([tenantId, type, date])
+  @@index([tenantId, productId, date])
 }
 
 // ==========================================
@@ -1019,6 +1033,8 @@ model StockTransfer {
   @@index([tenantId])
   @@index([fromWarehouseId])
   @@index([toWarehouseId])
+  // El listado ordena por tenant+createdAt desc (guardrail 3: índice con la query).
+  @@index([tenantId, createdAt])
 }
 
 // ==========================================

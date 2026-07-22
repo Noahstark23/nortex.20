@@ -32,7 +32,16 @@ export function initObservability(): void {
     process.on('unhandledRejection', (reason) => logError('unhandledRejection', reason));
     process.on('uncaughtException', (err) => {
         logError('uncaughtException', err);
-        // No process.exit: el server sigue; Docker/Coolify reinicia si el estado quedó malo.
+        // SALIR es obligatorio: tras un uncaught el estado del proceso es
+        // indefinido (docs de Node), y si NO morimos Docker jamás reinicia —
+        // una app que mueve dinero seguiría atendiendo requests corrupta.
+        // flush de Sentry con tope de 2s y exit(1) para que restart: always actúe.
+        const die = () => process.exit(1);
+        if (sentry) {
+            sentry.flush(2000).then(die, die);
+        } else {
+            die();
+        }
     });
 
     const dsn = process.env.SENTRY_DSN;
@@ -52,11 +61,21 @@ export function initObservability(): void {
 
 /** Middleware de errores de Express: registra estructurado y responde genérico. */
 export function errorTelemetry(err: unknown, req: Request, res: Response, _next: NextFunction): void {
-    logError('express', err, {
-        method: req.method,
-        path: req.path,
-        tenantId: (req as { tenantId?: string }).tenantId ?? null,
-    });
+    // Errores con status propio (p. ej. 400 de express.json por payload
+    // malformado) NO son fallas del servidor: responder su status y no
+    // reportarlos a Sentry (ruido de clientes, no bugs nuestros).
+    const status = typeof (err as { status?: unknown })?.status === 'number'
+        ? (err as { status: number }).status
+        : typeof (err as { statusCode?: unknown })?.statusCode === 'number'
+            ? (err as { statusCode: number }).statusCode
+            : 500;
+    if (status >= 500) {
+        logError('express', err, {
+            method: req.method,
+            path: req.path,
+            tenantId: (req as { tenantId?: string }).tenantId ?? null,
+        });
+    }
     if (res.headersSent) return;
-    res.status(500).json({ error: 'Error interno del servidor' });
+    res.status(status).json({ error: status >= 500 ? 'Error interno del servidor' : (err as Error)?.message ?? 'Solicitud inválida' });
 }

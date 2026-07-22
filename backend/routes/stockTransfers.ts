@@ -14,14 +14,23 @@
  * Aislamiento: TODO query filtra por tenantId (del JWT, nunca del body).
  */
 import express from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { authenticate } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
 import { materializeWarehouseRow } from '../services/stockService';
+import { validate, StockTransferSchema } from '../validation/schemas';
 
-const prisma = new PrismaClient();
 const router = express.Router();
 const ROLES_WRITE = ['OWNER', 'ADMIN', 'MANAGER'];
+
+/** Error de dominio con código + metadatos (no viaja info en strings con separador). */
+class TransferError extends Error {
+    constructor(public code: 'WAREHOUSE_NOT_FOUND' | 'PRODUCT_NOT_FOUND' | 'INSUFFICIENT',
+                public meta?: { name?: string; available?: number }) {
+        super(code);
+    }
+}
 
 // ── GET / — historial de transferencias ─────────────────────────────────────
 router.get('/', authenticate, async (req: any, res: any) => {
@@ -40,24 +49,13 @@ router.get('/', authenticate, async (req: any, res: any) => {
 });
 
 // ── POST / — ejecutar transferencia (inmediata, atómica) ────────────────────
-router.post('/', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any) => {
+router.post('/', authenticate, checkRole(ROLES_WRITE), validate(StockTransferSchema), async (req: any, res: any) => {
     const tenantId: string = req.tenantId;
     const userId: string = req.userId;
-    const { fromWarehouseId, toWarehouseId, notes, items } = req.body ?? {};
+    const { fromWarehouseId, toWarehouseId, notes, items } = req.body;
 
-    if (!fromWarehouseId || !toWarehouseId || typeof fromWarehouseId !== 'string' || typeof toWarehouseId !== 'string') {
-        return res.status(400).json({ error: 'Bodega de origen y destino son requeridas' });
-    }
     if (fromWarehouseId === toWarehouseId) {
         return res.status(400).json({ error: 'Origen y destino no pueden ser la misma bodega' });
-    }
-    if (!Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: 'Se requiere al menos un ítem' });
-    }
-    for (const it of items) {
-        if (!it?.productId || typeof it.productId !== 'string' || !(Number(it.quantity) > 0)) {
-            return res.status(400).json({ error: 'Cada ítem requiere productId y quantity > 0' });
-        }
     }
 
     try {
@@ -67,21 +65,30 @@ router.post('/', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any
                 tx.warehouse.findFirst({ where: { id: fromWarehouseId, tenantId, isActive: true } }),
                 tx.warehouse.findFirst({ where: { id: toWarehouseId, tenantId, isActive: true } }),
             ]);
-            if (!from || !to) throw new Error('WAREHOUSE_NOT_FOUND');
+            if (!from || !to) throw new TransferError('WAREHOUSE_NOT_FOUND');
+
+            // Lectura CONSOLIDADA de productos (una query, no N) — acorta la tx.
+            const productIds = items.map((it: { productId: string }) => it.productId);
+            const products = await tx.product.findMany({
+                where: { id: { in: productIds }, tenantId },
+                select: { id: true, name: true },
+            });
+            const productById = new Map(products.map((p) => [p.id, p]));
 
             const snapshot: { productId: string; name: string; quantity: number }[] = [];
 
             for (const it of items) {
                 const qty = Number(it.quantity);
-                const product = await tx.product.findFirst({
-                    where: { id: String(it.productId), tenantId },
-                    select: { id: true, name: true },
-                });
-                if (!product) throw new Error(`PRODUCT_NOT_FOUND:${it.productId}`);
+                const product = productById.get(it.productId);
+                if (!product) throw new TransferError('PRODUCT_NOT_FOUND');
 
-                // Materializar la fila de origen si su stock era implícito (default
-                // perezosa) para poder aplicar el guard condicional sobre ella.
+                // Materializar AMBAS filas si su stock era implícito (default
+                // perezosa): la de origen para poder aplicar el guard condicional,
+                // y la de DESTINO para que un crédito a la default no cree una
+                // fila `stock: qty` que borre el stock implícito del desglose
+                // (invariante Σ ProductStock == Product.stock).
                 await materializeWarehouseRow(tx, { tenantId, productId: product.id, warehouseId: from.id, isDefault: from.isDefault });
+                await materializeWarehouseRow(tx, { tenantId, productId: product.id, warehouseId: to.id, isDefault: to.isDefault });
 
                 // DÉBITO con suficiencia POR BODEGA: guard y escritura en el mismo UPDATE.
                 const debited = await tx.productStock.updateMany({
@@ -93,29 +100,18 @@ router.post('/', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any
                         where: { productId: product.id, warehouseId: from.id, tenantId },
                         select: { stock: true },
                     });
-                    throw new Error(`INSUFFICIENT:${product.name}:${Number(row?.stock ?? 0)}`);
+                    throw new TransferError('INSUFFICIENT', { name: product.name, available: Number(row?.stock ?? 0) });
                 }
                 const fromRow = await tx.productStock.findFirstOrThrow({
                     where: { productId: product.id, warehouseId: from.id, tenantId }, select: { stock: true },
                 });
 
-                // CRÉDITO al destino (upsert race-safe vía patrón P2002).
+                // CRÉDITO al destino (la fila ya existe: materializada arriba).
                 const credited = await tx.productStock.updateMany({
                     where: { productId: product.id, warehouseId: to.id, tenantId },
                     data: { stock: { increment: qty } },
                 });
-                if (credited.count === 0) {
-                    try {
-                        await tx.productStock.create({ data: { tenantId, productId: product.id, warehouseId: to.id, stock: qty } });
-                    } catch (err) {
-                        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-                            await tx.productStock.updateMany({
-                                where: { productId: product.id, warehouseId: to.id, tenantId },
-                                data: { stock: { increment: qty } },
-                            });
-                        } else throw err;
-                    }
-                }
+                if (credited.count === 0) throw new Error(`CREDIT_ROW_MISSING:${product.id}`);
                 const toRow = await tx.productStock.findFirstOrThrow({
                     where: { productId: product.id, warehouseId: to.id, tenantId }, select: { stock: true },
                 });
@@ -160,14 +156,20 @@ router.post('/', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any
 
         res.status(201).json({ success: true, data: result });
     } catch (e: any) {
-        const msg: string = e?.message ?? '';
-        if (msg === 'WAREHOUSE_NOT_FOUND') return res.status(404).json({ error: 'Bodega no encontrada o inactiva' });
-        if (msg.startsWith('PRODUCT_NOT_FOUND:')) return res.status(404).json({ error: 'Producto no encontrado' });
-        if (msg.startsWith('INSUFFICIENT:')) {
-            const [, name, avail] = msg.split(':');
-            return res.status(422).json({ error: `Stock insuficiente en la bodega de origen para "${name}" (disponible: ${avail})` });
+        if (e instanceof TransferError) {
+            if (e.code === 'WAREHOUSE_NOT_FOUND') return res.status(404).json({ error: 'Bodega no encontrada o inactiva' });
+            if (e.code === 'PRODUCT_NOT_FOUND') return res.status(404).json({ error: 'Producto no encontrado' });
+            return res.status(422).json({
+                error: `Stock insuficiente en la bodega de origen para "${e.meta?.name}" (disponible: ${e.meta?.available})`,
+            });
         }
-        console.error('Error en transferencia:', msg);
+        // Deadlock InnoDB (transferencias cruzadas A→B y B→A concurrentes toman
+        // los row-locks en orden opuesto): la tx perdedora se revierte completa
+        // (sin corrupción) — pedimos reintento en vez de un 500 opaco.
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2034') {
+            return res.status(409).json({ error: 'Conflicto de concurrencia; reintentá la transferencia' });
+        }
+        console.error('Error en transferencia:', e?.message ?? e);
         res.status(500).json({ error: 'Error al ejecutar la transferencia' });
     }
 });

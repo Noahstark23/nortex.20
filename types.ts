@@ -34,8 +34,8 @@ export interface CartItem extends Product {
 export interface Tenant {
   id: string;
   name: string;
-  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE'; 
-  creditScore: number;
+  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE';
+  creditScore: number | null; // null = sin datos suficientes (tenant sin historial)
   creditLimit: number;
   walletBalance: number;
   subscriptionStatus: 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';

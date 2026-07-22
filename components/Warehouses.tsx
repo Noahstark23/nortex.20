@@ -99,8 +99,8 @@ const Warehouses: React.FC = () => {
                                     <td className="p-3 text-slate-500 font-mono text-xs">{it.sku}</td>
                                     <td className="p-3 text-right font-mono font-bold">{it.stock} {it.unit}</td>
                                     <td className="p-3 text-right">
-                                        {warehouses.length > 1 && it.stock > 0 && (
-                                            <button onClick={() => setTransfer({ toId: warehouses.find(w => w.id !== selected?.id)!.id, productId: it.productId, qty: '' })}
+                                        {warehouses.filter(w => w.isActive).length > 1 && it.stock > 0 && (
+                                            <button onClick={() => setTransfer({ toId: warehouses.find(w => w.id !== selected?.id && w.isActive)!.id, productId: it.productId, qty: '' })}
                                                 className="text-brand hover:bg-brand/10 p-1.5 rounded" title="Transferir a otra bodega">
                                                 <ArrowRightLeft size={14} />
                                             </button>

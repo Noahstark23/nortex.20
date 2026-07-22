@@ -70,7 +70,7 @@ async function applyGoodsReceipt(
         // Stock por applyStockDelta: incremento ATÓMICO + doble escritura del
         // desglose por bodega (invariante multi-bodega: Σ bodegas == agregado).
         // El stockBefore que devuelve (post-lock) es el autoritativo para el costo.
-        const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+        const { stockBefore, stockAfter, warehouseId } = await applyStockDelta(tx, {
             tenantId,
             productId: product.id,
             delta: recv,
@@ -122,6 +122,9 @@ async function applyGoodsReceipt(
                 reason: `Recepción de Orden de Compra ${poNumber}`,
                 userId,
                 batchId,
+                // Bodega real del movimiento (la default hoy): sin esto la
+                // reconstrucción del stock por bodega desde Kardex queda coja.
+                warehouseId,
             },
         });
 

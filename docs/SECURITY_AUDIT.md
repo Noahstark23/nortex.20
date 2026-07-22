@@ -3,6 +3,8 @@
 Auditoría de las **6 capas** del Security & Integrity Loop sobre todo el backend
 (`backend/server.ts`, `backend/routes/*`, `backend/services/*`, `backend/prisma/schema.prisma`),
 realizada por 3 auditorías en paralelo + verificación manual. Fecha: 2026-06.
+**Re-auditoría 2026-07-14** (3 frentes en paralelo + verificación adversarial manual):
+hallazgos nuevos S29–S31 abajo; estados de S1–S28 refrescados en las tablas.
 
 **Estado:** los hallazgos **CRÍTICOS de bajo riesgo ya están corregidos** en este PR
 (marcados `✅ FIXED`). El resto, que requiere migraciones o cambios amplios, está en
@@ -96,6 +98,43 @@ libre; **sin columnas `before`/`after` ni inmutabilidad** a nivel BD (filas edit
 | S26 | `db` + `app` en el mismo stack/volumen local; **sin backup off-site** | `docker-compose.yml` | 🔴 CRÍTICO | ✅ script + 📋 desplegar cron |
 | S27 | MySQL expuesto `3306:3306` con `MYSQL_ROOT_PASSWORD` default `root` | `docker-compose.yml:8,11` | 🟠 HIGH | 📋 PLAN |
 | S28 | `phpmyadmin` en el stack de producción (superficie extra) | `docker-compose.yml:15` | 🟡 MED | 📋 PLAN |
+
+---
+
+## Re-auditoría 2026-07-14 — hallazgos nuevos (S29–S31)
+
+Barrido de bugs **no catalogados** sobre `server.ts` + `routes/*` + `services/*`, más
+auditoría del código mergeado en PRs #72–#76 (transferencias, observabilidad, CI).
+
+| ID | Hallazgo | Ubicación | Sev | Estado |
+|----|----------|-----------|-----|--------|
+| S29 | **`POST /api/b2b/order`: total del cliente sin validar + sin `checkRole` + débito no atómico.** Un `total` negativo pasaba el chequeo `saldo < total` y el `decrement` **aumentaba** el wallet (crédito ilimitado auto-otorgado); dos órdenes concurrentes sobregiraban (TOCTOU); sin AuditLog | `server.ts:1255` | 🔴 CRÍTICO | ✅ FIXED (Zod `B2BOrderSchema` total>0/finito · `checkRole(OWNER,ADMIN)` · débito `updateMany` condicional `gte` · `B2B_ORDER` before/after) |
+| S30 | **`PATCH /pedidos/:id/estado`: carrera de doble facturación.** El guard `!facturaId` se leía fuera de la tx → dos requests `entregado` concurrentes creaban 2 `Sale`+`Payment`+asiento | `routes/pedidos.ts:255` | 🟠 HIGH | ✅ FIXED (claim atómico `updateMany({estado:{not:'entregado'}})` → 409 si `count===0`) |
+| S31 | **`uncaughtException` sin `process.exit`.** Tras un uncaught el proceso seguía vivo en estado indefinido y Docker (`restart: always`) nunca reiniciaba → app de dinero atendiendo requests corrupta | `services/observability.ts:33` | 🟠 HIGH | ✅ FIXED (`flush(2000)`→`exit(1)`; `errorTelemetry` respeta `err.status` y no reporta 4xx) |
+
+Otros arreglos de integridad/escala aplicados en el mismo PR (sin ID de seguridad):
+transferencias de stock (`routes/stockTransfers.ts`) — Zod + cap de 50 ítems, `findMany`
+consolidado (no N+1), materialización de la fila **destino** para no perder stock
+implícito del desglose, error como objeto (no `split(':')`), retry ante deadlock
+InnoDB (P2034), y `new PrismaClient()` reemplazado por el singleton nuevo
+`backend/lib/prisma.ts` (primer paso del sweep A2); `warehouseId` propagado al Kardex
+de compras y recepción de OC; `PUT /warehouses/:id` rechaza nombre vacío y desactivar
+bodega con existencias; índices compuestos B1 (ver SCALING_AUDIT).
+
+### Estados de S1–S28 refrescados (2026-07-14, verificado en HEAD)
+
+**Ya corregidos desde la auditoría original** (los docs los tenían como 📋 PLAN):
+S13 (desembolso de capital ya escribe AuditLog), S21 (register/login/reset con Zod),
+S25 (password de super-admin exige env ≥12 chars), S27 (MySQL sin `ports`, root sin
+default), S28 (phpMyAdmin bajo perfil `debug`), y el flag **`--accept-data-loss`
+quitado del Dockerfile** (bomba C del SCALING_AUDIT). S5 pasó a PARCIAL (product.delete
+con guard `stock>0`+AuditLog, aún físico). S14 PARCIAL (wallet motorizado ✅; anticipos
+de nómina en `routes/hr.ts` **siguen sin AuditLog** — abierto). S24 PARCIAL (login 5/h
+pero solo por IP + MemoryStore).
+
+**Siguen ABIERTOS (📋 PLAN):** S6, S7, S15–S18 (Float en dinero), S19 (rotación/purga
+—acción del CEO), S22 (rutas sin Zod restantes), soft-deletes globales (Capa 2), y el
+tracking público de pedidos con PII (`routes/pedidos.ts` `GET /:id/tracking`).
 
 ---
 
