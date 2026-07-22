@@ -3,10 +3,18 @@ import express from 'express';
 import { PrismaClient } from '@prisma/client';
 // @ts-ignore
 import bcrypt from 'bcryptjs';
+import Decimal from 'decimal.js';
 import { authenticate, AuthRequest } from '../middleware/auth';
+import { checkRole } from '../middleware/checkRole';
+
+Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
 const prisma = new PrismaClient();
 const router = express.Router();
+
+// Solo dueños/administradores gestionan la flota propia y resetean el PIN de
+// login del repartidor (evita que un cajero se auto-provisione credenciales de Driver App).
+const ROLES_FLOTA = ['OWNER', 'ADMIN'];
 
 // GET /api/v1/motorizados
 // Listar motorizados (propios del tenant + los globales de NORTEX si están activos)
@@ -35,7 +43,7 @@ router.get('/', authenticate, async (req: any, res: any) => {
 
 // POST /api/v1/motorizados
 // Registrar nuevo motorizado (por defecto es de la ferretería: PROPIA)
-router.post('/', authenticate, async (req: any, res: any) => {
+router.post('/', authenticate, checkRole(ROLES_FLOTA), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { nombre, telefono, zonaCobertura, pin } = req.body;
 
@@ -74,7 +82,7 @@ router.post('/', authenticate, async (req: any, res: any) => {
 
 // PATCH /api/v1/motorizados/:id
 // Actualizar información o activar/desactivar
-router.patch('/:id', authenticate, async (req: any, res: any) => {
+router.patch('/:id', authenticate, checkRole(ROLES_FLOTA), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
     const { activo, zonaCobertura, pin } = req.body;
@@ -140,16 +148,16 @@ router.get('/:id/liquidacion', authenticate, async (req: any, res: any) => {
             }
         });
 
-        let totalCobradoEfectivo = 0;
-        let totalComisiones = 0; // Comisión dinámica = costoEntrega (asuminos que el delivery fee es del driver)
+        let totalCobradoEfectivo = new Decimal(0);
+        let totalComisiones = new Decimal(0); // Comisión dinámica = costoEntrega (asuminos que el delivery fee es del driver)
 
         for (const p of hoyPedidos) {
             // Asumimos que todos cobrados al momento (CASH default for deliveries in this flow)
-            totalCobradoEfectivo += Number(p.total);
-            totalComisiones += Number(p.costoEntrega);
+            totalCobradoEfectivo = totalCobradoEfectivo.plus(new Decimal(p.total.toString()));
+            totalComisiones = totalComisiones.plus(new Decimal(p.costoEntrega.toString()));
         }
 
-        const netoADepositar = totalCobradoEfectivo - totalComisiones;
+        const netoADepositar = totalCobradoEfectivo.minus(totalComisiones);
 
         res.json({
             motorizado: {
@@ -159,9 +167,9 @@ router.get('/:id/liquidacion', authenticate, async (req: any, res: any) => {
             },
             liquidacionDiaria: {
                 pedidosEntregados: hoyPedidos.length,
-                totalCobrado: totalCobradoEfectivo,
-                comisionesGanadas: totalComisiones,
-                netoADepositarA_Tienda: netoADepositar > 0 ? netoADepositar : 0
+                totalCobrado: totalCobradoEfectivo.toDecimalPlaces(2).toNumber(),
+                comisionesGanadas: totalComisiones.toDecimalPlaces(2).toNumber(),
+                netoADepositarA_Tienda: (netoADepositar.gt(0) ? netoADepositar : new Decimal(0)).toDecimalPlaces(2).toNumber()
             }
         });
     } catch (error) {

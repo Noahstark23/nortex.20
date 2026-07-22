@@ -8,6 +8,13 @@ export interface Product {
   sku: string;
   category: string;
   requiresBatchTracking?: boolean; // Control de lotes
+  // Venta por mayor (distribuidora/miscelánea)
+  wholesalePrice?: number | null;  // precio de mayoreo (null = sin mayoreo)
+  wholesaleMinQty?: number | null; // cantidad mínima a partir de la cual aplica
+  // Unidad de empaque (caja/fardo): atajo de cantidad + tercer nivel de precio
+  packUnit?: string | null;  // nombre del empaque (caja, fardo, docena)
+  packSize?: number | null;  // unidades base por empaque (ej: 12)
+  packPrice?: number | null; // precio del empaque completo (null = solo atajo)
 }
 
 export interface ProductBatch {
@@ -27,8 +34,8 @@ export interface CartItem extends Product {
 export interface Tenant {
   id: string;
   name: string;
-  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE'; 
-  creditScore: number;
+  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE';
+  creditScore: number | null; // null = sin datos suficientes (tenant sin historial)
   creditLimit: number;
   walletBalance: number;
   subscriptionStatus: 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';

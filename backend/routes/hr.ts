@@ -1,6 +1,8 @@
 import express from 'express';
 // @ts-ignore
 import { PrismaClient } from '@prisma/client';
+import { z } from 'zod';
+import Decimal from 'decimal.js';
 import { authenticate, AuthRequest } from '../middleware/auth';
 
 const prisma = new PrismaClient();
@@ -172,9 +174,20 @@ router.post('/clock-out', authenticate, async (req: any, res: any) => {
 // 💸 MICRO-LENDING (SALARY ADVANCE)
 // ==========================================
 
+// Validación del cuerpo: monto positivo, finito y numérico (cota inferior).
+const AdvanceRequestSchema = z.object({
+    amount: z.number().positive('El monto debe ser mayor a cero.').finite(),
+});
+
 router.post('/advance/request', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { amount } = req.body;
+
+    const parsed = AdvanceRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+        const msg = parsed.error.issues.map(i => i.message).join(' | ');
+        return res.status(400).json({ error: msg || 'Monto inválido.' });
+    }
+    const amount = new Decimal(parsed.data.amount);
 
     try {
         // Enlazar via userId->Employee
@@ -185,21 +198,22 @@ router.post('/advance/request', authenticate, async (req: any, res: any) => {
         if (!employee) return res.status(404).json({ error: 'Perfil de empleado no encontrado.' });
 
         // Validar límite (ej: 30% del salario base)
-        const maxAdvance = Number(employee.baseSalary) * 0.30;
-        if (amount > maxAdvance) {
-            return res.status(400).json({ error: `El monto excede tu límite permitido de C$ ${maxAdvance}` });
+        const maxAdvance = new Decimal(employee.baseSalary.toString()).mul('0.30').toDecimalPlaces(2);
+        if (amount.gt(maxAdvance)) {
+            return res.status(400).json({ error: `El monto excede tu límite permitido de C$ ${maxAdvance.toFixed(2)}` });
         }
 
         // No apilar adelantos pendientes.
         const pendiente = await prisma.salaryAdvance.findFirst({ where: { tenantId: authReq.tenantId, employeeId: employee.id, status: 'PENDING' }, select: { id: true } });
         if (pendiente) return res.status(400).json({ error: 'Ya hay un adelanto pendiente de aprobación.' });
 
+        const fee = amount.mul('0.05').toDecimalPlaces(2); // 5% flat fee para Nortex/Tenant
         const advance = await prisma.salaryAdvance.create({
             data: {
                 tenantId: authReq.tenantId!,
                 employeeId: employee.id,
-                amount,
-                fee: amount * 0.05, // 5% flat fee para Nortex/Tenant
+                amount: amount.toFixed(2),
+                fee: fee.toFixed(2),
                 status: 'PENDING'
             }
         });

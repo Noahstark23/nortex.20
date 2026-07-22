@@ -145,6 +145,8 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
                 <option value="FERRETERIA">Ferretería / Construcción</option>
                 <option value="PULPERIA">Pulpería / Abarrotes</option>
                 <option value="FARMACIA">Farmacia</option>
+                <option value="DISTRIBUIDORA">Distribuidora / Mayorista</option>
+                <option value="MISCELANEA">Miscelánea</option>
                 <option value="BOUTIQUE">Boutique / Ropa</option>
                 <option value="RETAIL">Retail General</option>
                 <option value="LENDER">Financiera / Prestamista</option>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { maybeAutostartTour } from '../utils/tours';
 import {
     Truck, Plus, Search, FileText, CreditCard, DollarSign, Package,
     Calendar, Hash, X, Check, AlertTriangle, Clock, ArrowRight, Trash2,
@@ -123,6 +124,9 @@ export default function Purchases() {
     }, [headers]);
 
     useEffect(() => { fetchAll(); }, []);
+
+    // Tutorial guiado: si entran con ?tour=compras (desde Ayuda).
+    useEffect(() => { maybeAutostartTour(); }, []);
 
     // ==========================================
     // CART LOGIC
@@ -391,6 +395,7 @@ export default function Purchases() {
                         </div>
                         <div>
                             <h1 className="text-2xl font-bold text-white">Compras & Proveedores</h1>
+                            <a href="/app/purchase-orders" className="ml-3 px-3 py-1.5 bg-slate-800 border border-slate-600 text-slate-200 rounded-lg text-xs font-bold hover:border-brand transition-colors">Órdenes de Compra →</a>
                             <p className="text-sm text-slate-400">Ingreso de mercaderia y cuentas por pagar</p>
                         </div>
                     </div>

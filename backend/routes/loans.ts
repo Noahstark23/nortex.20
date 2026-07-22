@@ -2,7 +2,9 @@ import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import Decimal from 'decimal.js';
+import { z } from 'zod';
 import { authenticate } from '../middleware/auth';
+import { checkRole } from '../middleware/checkRole';
 import {
     validate, OriginateLoanSchema, RepaymentSchema, UpdateClientSchema,
     RefinanceLoanSchema, PenaltySchema, VaultDepositSchema, RouteExpenseSchema,
@@ -10,11 +12,30 @@ import {
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
+// ── Política de roles (Fase 0 blindaje) ──────────────────────────────────────
+// Solo el DUEÑO gestiona dinero y cartera: originar, refinanciar, multar,
+// asignar cobrador, bloquear cliente/límite y recibir en bóveda.
+// El COLLECTOR (motorizado) SOLO puede: registrar abonos y gastos de ruta.
+// checkRole deja pasar siempre a OWNER/ADMIN/SUPER_ADMIN; a COLLECTOR lo bloquea.
+const LENDER_MANAGER = checkRole(['OWNER', 'ADMIN']);
+
 const router = express.Router();
 const prisma = new PrismaClient();
 
+// Alta de cobradores (crea credenciales de login): validación estricta del body.
+// Definido inline para no colisionar con backend/schemas.ts (editado en paralelo).
+const CreateCollectorSchema = z.object({
+    name: z.string().trim().min(1, 'El nombre es obligatorio'),
+    email: z.string().trim().email('Correo inválido'),
+    password: z
+        .string()
+        .min(8, 'La contraseña debe tener al menos 8 caracteres')
+        .regex(/[A-Za-z]/, 'La contraseña debe incluir al menos una letra')
+        .regex(/[0-9]/, 'La contraseña debe incluir al menos un número'),
+});
+
 // 1. ORIGINAR UN CRÉDITO (Desembolso) — Motor Dual
-router.post('/', authenticate, validate(OriginateLoanSchema), async (req: any, res: any) => {
+router.post('/', authenticate, LENDER_MANAGER, validate(OriginateLoanSchema), async (req: any, res: any) => {
     try {
         const { clientName, clientPhone, clientAddress, principalAmount, interestRate, installments, frequency, type } = req.body;
         const lenderId = req.tenantId;
@@ -103,23 +124,25 @@ router.post('/', authenticate, validate(OriginateLoanSchema), async (req: any, r
             }
             await tx.loanInstallment.createMany({ data: rows });
 
-            return loan;
-        });
+            // Asiento inmutable del desembolso DENTRO de la misma transacción, para que
+            // el préstamo nunca quede persistido sin su rastro de auditoría.
+            await tx.auditLog.create({
+                data: {
+                    tenantId: lenderId,
+                    userId: req.userId,
+                    action: 'LOAN_DISBURSED',
+                    details: JSON.stringify({
+                        loanId: loan.id,
+                        customerId: customer!.id,
+                        principal: amount.toString(),
+                        totalToRepay: totalToRepay.toString(),
+                        installments: n,
+                        interestRate: String(interestRate),
+                    }),
+                },
+            });
 
-        await prisma.auditLog.create({
-            data: {
-                tenantId: lenderId,
-                userId: req.userId,
-                action: 'LOAN_DISBURSED',
-                details: JSON.stringify({
-                    loanId: newLoan.id,
-                    customerId: customer.id,
-                    principal: amount.toString(),
-                    totalToRepay: totalToRepay.toString(),
-                    installments: n,
-                    interestRate: String(interestRate),
-                }),
-            },
+            return loan;
         });
 
         res.status(201).json({ success: true, data: newLoan });
@@ -135,10 +158,12 @@ router.post('/:id/repayments', authenticate, validate(RepaymentSchema), async (r
         const { id } = req.params;
         const { amountPaid, collectedBy, notes, timestamp } = req.body;
         const lenderId = req.tenantId;
-        const payment = parseFloat(amountPaid);
-        if (isNaN(payment) || payment <= 0) {
+        // Monto de pago con decimal.js (nunca parseFloat sobre dinero).
+        const payment = new Decimal(amountPaid);
+        if (!payment.isFinite() || payment.lessThanOrEqualTo(0)) {
             return res.status(400).json({ success: false, error: 'Monto de pago inválido' });
         }
+        const paymentNum = payment.toDecimalPlaces(4).toNumber();
 
         // Hacking prevention: Offline Clock Validation
         // Si mandan timestamp (modo offline), validar que no tenga más de 48h de desfase
@@ -158,13 +183,19 @@ router.post('/:id/repayments', authenticate, validate(RepaymentSchema), async (r
         const owned = await prisma.loan.findFirst({ where: { id, lenderId } });
         if (!owned) return res.status(404).json({ success: false, error: 'Préstamo no encontrado' });
 
+        // No permitir sobrepago: el abono no puede exceder el saldo pendiente (tolerancia de un centavo).
+        const saldoActual = new Decimal(owned.balanceRemaining.toString());
+        if (payment.greaterThan(saldoActual.plus('0.01'))) {
+            return res.status(400).json({ success: false, error: 'El abono excede el saldo pendiente del préstamo' });
+        }
+
         // Transacción Atómica: Registramos el pago y bajamos el saldo en la misma operación
         const transaction = await prisma.$transaction(async (tx) => {
             // 1. Crear el recibo de pago
             const repayment = await tx.repayment.create({
                 data: {
                     loanId: id,
-                    amountPaid: payment,
+                    amountPaid: paymentNum,
                     collectedBy,
                     notes,
                     // Usamos el timestamp si vino y es válido, si no, el default (now)
@@ -172,23 +203,26 @@ router.post('/:id/repayments', authenticate, validate(RepaymentSchema), async (r
                 }
             });
 
-            // 2. Actualizar el saldo del préstamo
-            const updatedLoan = await tx.loan.update({
-                where: { id },
-                data: {
-                    balanceRemaining: {
-                        decrement: payment
-                    }
-                }
+            // 2. Bajar el saldo con guarda atómica anti-sobrepago (concurrencia):
+            //    solo decrementa si el saldo aún alcanza; si otra transacción ya lo
+            //    dejó corto, count === 0 y abortamos sin dejar el saldo negativo.
+            const dec = await tx.loan.updateMany({
+                where: { id, lenderId, balanceRemaining: { gte: paymentNum - 0.01 } },
+                data: { balanceRemaining: { decrement: paymentNum } }
             });
-
-            // 3. Si el saldo llega a 0, marcamos como pagado
-            if (Number(updatedLoan.balanceRemaining) <= 0) {
-                await tx.loan.update({
-                    where: { id },
-                    data: { status: 'PAID_OFF' }
-                });
+            if (dec.count === 0) {
+                throw new Error('El abono excede el saldo pendiente');
             }
+            const afterDec = await tx.loan.findFirst({ where: { id, lenderId } });
+            if (!afterDec) throw new Error('Préstamo no encontrado');
+
+            // 3. Si el saldo queda en ~0, fijarlo en 0 exacto y marcar liquidado.
+            const updatedLoan = new Decimal(afterDec.balanceRemaining.toString()).lessThanOrEqualTo('0.01')
+                ? await tx.loan.update({
+                    where: { id },
+                    data: { balanceRemaining: 0, status: 'PAID_OFF' }
+                })
+                : afterDec;
 
             await tx.auditLog.create({
                 data: {
@@ -197,7 +231,7 @@ router.post('/:id/repayments', authenticate, validate(RepaymentSchema), async (r
                     action: 'LOAN_PAYMENT',
                     details: JSON.stringify({
                         loanId: id,
-                        amountPaid: String(payment),
+                        amountPaid: payment.toString(),
                         balanceBefore: owned.balanceRemaining.toString(),
                         balanceAfter: updatedLoan.balanceRemaining.toString(),
                         collectedBy: collectedBy ?? null,
@@ -205,7 +239,7 @@ router.post('/:id/repayments', authenticate, validate(RepaymentSchema), async (r
                 },
             });
             // 4. Imputar el abono a las cuotas, más antiguas primero (Cobranza B2).
-            let remaining = new Decimal(payment);
+            let remaining = new Decimal(paymentNum);
             const pendientes = await tx.loanInstallment.findMany({
                 where: { loanId: id, status: { not: 'PAID' } },
                 orderBy: { number: 'asc' }
@@ -361,7 +395,7 @@ router.get('/clients', authenticate, async (req: any, res: any) => {
 });
 
 // 8. ACTUALIZAR CLIENTE (Bloquear / Cambiar Límite)
-router.patch('/clients/:clientId', authenticate, validate(UpdateClientSchema), async (req: any, res: any) => {
+router.patch('/clients/:clientId', authenticate, LENDER_MANAGER, validate(UpdateClientSchema), async (req: any, res: any) => {
     try {
         const { clientId } = req.params;
         const { isBlocked, creditLimit } = req.body;
@@ -388,13 +422,33 @@ router.post('/route-expenses', authenticate, validate(RouteExpenseSchema), async
         const { amount, description, collectedBy } = req.body;
         const lenderId = req.tenantId;
 
-        const expense = await prisma.routeExpense.create({
-            data: {
-                lenderId,
-                collectedBy: collectedBy || 'MOTO-01',
-                amount: parseFloat(amount),
-                description
-            }
+        // Salida de efectivo (baja el arqueo del motorizado): se persiste junto con su
+        // asiento inmutable en la misma transacción para no perder la traza (Capa 3).
+        const expense = await prisma.$transaction(async (tx) => {
+            const created = await tx.routeExpense.create({
+                data: {
+                    lenderId,
+                    collectedBy: collectedBy || 'MOTO-01',
+                    amount: parseFloat(amount),
+                    description
+                }
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: lenderId,
+                    userId: req.userId,
+                    action: 'ROUTE_EXPENSE',
+                    details: JSON.stringify({
+                        expenseId: created.id,
+                        collectedBy: created.collectedBy,
+                        amount: String(amount),
+                        description: description ?? null,
+                    }),
+                },
+            });
+
+            return created;
         });
 
         res.status(201).json({ success: true, data: expense });
@@ -419,7 +473,7 @@ router.get('/route-expenses', authenticate, async (req: any, res: any) => {
 });
 
 // 6. REFINANCIAR PRÉSTAMO (El botón de oro del Jefe)
-router.post('/:id/refinance', authenticate, validate(RefinanceLoanSchema), async (req: any, res: any) => {
+router.post('/:id/refinance', authenticate, LENDER_MANAGER, validate(RefinanceLoanSchema), async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { newPrincipal, interestRate, installments, frequency, type } = req.body;
@@ -526,7 +580,7 @@ router.post('/:id/refinance', authenticate, validate(RefinanceLoanSchema), async
 });
 
 // APLICAR PENALIDAD A UN PRÉSTAMO
-router.post('/:id/penalty', authenticate, validate(PenaltySchema), async (req: any, res: any) => {
+router.post('/:id/penalty', authenticate, LENDER_MANAGER, validate(PenaltySchema), async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { penaltyAmount, reason } = req.body;
@@ -584,7 +638,7 @@ router.post('/:id/penalty', authenticate, validate(PenaltySchema), async (req: a
 });
 
 // 9. CREAR NUEVO MOTORIZADO (Auto-gestión del Prestamista)
-router.post('/collectors', authenticate, async (req: any, res: any) => {
+router.post('/collectors', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateCollectorSchema), async (req: any, res: any) => {
     try {
         const { name, email, password } = req.body;
         const lenderId = req.tenantId;
@@ -616,8 +670,25 @@ router.post('/collectors', authenticate, async (req: any, res: any) => {
     }
 });
 
+// 9.B LISTAR COBRADORES (Fase 2 H5 — el dropdown de asignación lo llamaba y no existía)
+router.get('/collectors', authenticate, LENDER_MANAGER, async (req: any, res: any) => {
+    try {
+        const lenderId = req.tenantId;
+        // Solo usuarios COLLECTOR de este prestamista (aislamiento por tenant).
+        const collectors = await prisma.user.findMany({
+            where: { tenantId: lenderId, role: 'COLLECTOR' },
+            select: { id: true, name: true },
+            orderBy: { name: 'asc' },
+        });
+        res.json({ success: true, data: collectors });
+    } catch (error) {
+        console.error('Error listando cobradores:', error);
+        res.status(500).json({ success: false, error: 'Error obteniendo los cobradores' });
+    }
+});
+
 // 9. ASIGNAR COBRADOR A UN PRÉSTAMO (Cobranza A3 — botón del dashboard que hoy falla)
-router.patch('/:id/assign', authenticate, async (req: any, res: any) => {
+router.patch('/:id/assign', authenticate, LENDER_MANAGER, async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { assignedToId } = req.body;
@@ -647,7 +718,7 @@ router.patch('/:id/assign', authenticate, async (req: any, res: any) => {
 });
 
 // 10. DEPÓSITO A BÓVEDA (Cobranza A3 — entrega de efectivo del cobrador; botón que hoy falla)
-router.post('/vault/deposit', authenticate, validate(VaultDepositSchema), async (req: any, res: any) => {
+router.post('/vault/deposit', authenticate, LENDER_MANAGER, validate(VaultDepositSchema), async (req: any, res: any) => {
     try {
         const { collectorId, amount, notes } = req.body;
         const lenderId = req.tenantId;
@@ -667,28 +738,34 @@ router.post('/vault/deposit', authenticate, validate(VaultDepositSchema), async 
             collectorName = collector.name;
         }
 
-        const deposit = await prisma.collectorDeposit.create({
-            data: {
-                lenderId,
-                collectorId: collectorId || null,
-                collectorName,
-                amount: amt,
-                notes: notes || null,
-                receivedBy: req.userId
-            }
-        });
+        // Manejo de efectivo: el depósito y su asiento inmutable se escriben atómicamente
+        // en la misma transacción (Capa 3), para que nunca quede uno sin el otro.
+        const deposit = await prisma.$transaction(async (tx) => {
+            const created = await tx.collectorDeposit.create({
+                data: {
+                    lenderId,
+                    collectorId: collectorId || null,
+                    collectorName,
+                    amount: amt,
+                    notes: notes || null,
+                    receivedBy: req.userId
+                }
+            });
 
-        await prisma.auditLog.create({
-            data: {
-                tenantId: lenderId,
-                userId: req.userId,
-                action: 'VAULT_DEPOSIT',
-                details: JSON.stringify({
-                    depositId: deposit.id,
-                    collectorId: collectorId ?? null,
-                    amount: String(amt),
-                }),
-            },
+            await tx.auditLog.create({
+                data: {
+                    tenantId: lenderId,
+                    userId: req.userId,
+                    action: 'VAULT_DEPOSIT',
+                    details: JSON.stringify({
+                        depositId: created.id,
+                        collectorId: collectorId ?? null,
+                        amount: String(amt),
+                    }),
+                },
+            });
+
+            return created;
         });
 
         res.status(201).json({ success: true, data: deposit });

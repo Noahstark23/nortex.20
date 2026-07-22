@@ -5,9 +5,10 @@ import { getBalanceGeneral, getEstadoResultados, seedChartOfAccounts } from './a
 const prisma = new PrismaClient();
 
 interface ScoreResult {
-    score: number;
+    // NULL = sin datos suficientes: no se inventa un número, no hay historial real.
+    score: number | null;
     creditLimit: number;
-    rating: 'AAA' | 'AA' | 'A' | 'B' | 'C' | 'D';
+    rating: 'AAA' | 'AA' | 'A' | 'B' | 'C' | 'D' | null;
     factors: string[];
     financialRatios?: {
         liquidityRatio: number;
@@ -30,6 +31,17 @@ export const calculateTenantScore = async (tenantId: string): Promise<ScoreResul
             createdAt: { gte: new Date(new Date().setDate(new Date().getDate() - 30)) }
         }
     });
+
+    // Gate de historial real: sin NINGÚN cierre de caja ni venta, no hay con qué
+    // calcular. Devolvemos score NULL ("sin datos") y línea 0 — nada fantasma.
+    if (shifts.length === 0 && sales.length === 0) {
+        return {
+            score: null,
+            creditLimit: 0,
+            rating: null,
+            factors: ['Sin historial operativo suficiente para calcular un score'],
+        };
+    }
 
     // 2. VARIABLES DEL ALGORITMO
     let baseScore = 300;

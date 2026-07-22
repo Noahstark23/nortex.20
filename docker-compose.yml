@@ -13,6 +13,16 @@ services:
     # expuesto al mundo — brecha crítica.
     volumes:
       - 'mysql_data:/var/lib/mysql'
+    # Healthcheck: `app` espera a que MySQL esté LISTO (no solo que el contenedor
+    # exista) vía `depends_on: condition: service_healthy`. Elimina el race de
+    # primer arranque que tumbaba la app en bucle. start_period cubre el init
+    # inicial de MySQL 8 (crea el datadir la primera vez).
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-uroot', '-p${DB_ROOT_PASSWORD}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
 
   # phpMyAdmin solo bajo demanda (perfil "debug"); NO se levanta en producción.
   # Uso puntual:  docker compose --profile debug up phpmyadmin
@@ -40,8 +50,11 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - DATABASE_URL=mysql://root:${DB_ROOT_PASSWORD:?Define DB_ROOT_PASSWORD}@db:3306/nortex_db
+    # Espera a que MySQL pase el healthcheck antes de arrancar (belt-and-suspenders
+    # junto al wait del entrypoint, por si Coolify no honra la condición).
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
 volumes:
   mysql_data:

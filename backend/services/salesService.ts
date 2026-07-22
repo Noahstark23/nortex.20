@@ -37,6 +37,7 @@ export class SaleError extends Error {
             | 'NO_SHIFT'
             | 'CUSTOMER_REQUIRED'
             | 'CUSTOMER_NOT_FOUND'
+            | 'EMPLOYEE_NOT_FOUND'
             | 'CUSTOMER_BLOCKED'
             | 'CREDIT_LIMIT_EXCEEDED'
             | 'INVOICE_RANGE_EXHAUSTED'
@@ -148,20 +149,38 @@ export async function executeSale(
     const globalFactor = new Decimal(1).minus(new Decimal(globalDiscount).div(100));
     const finalTotal   = itemsSubtotal.mul(globalFactor).toDecimalPlaces(2);
 
+    // 3b. Validación de pertenencia al tenant de customerId/employeeId — para TODO
+    //     método de pago, no solo CREDIT. Sin esto, una venta CASH/CARD/QR/TRANSFER
+    //     podría persistir un customerId/employeeId de otro tenant (el body no es
+    //     confiable), y /api/sales/search lo expondría vía include sin filtro de tenant
+    //     (fuga de PII cross-tenant + venta que referencia registros ajenos).
+    let customer: Awaited<ReturnType<typeof prisma.customer.findFirst>> = null;
+    if (customerId) {
+        customer = await prisma.customer.findFirst({
+            where: { id: customerId, tenantId },
+        });
+        if (!customer) {
+            throw new SaleError('CUSTOMER_NOT_FOUND', 404, 'Cliente no encontrado');
+        }
+    }
+    if (employeeId) {
+        const employee = await prisma.employee.findFirst({
+            where: { id: employeeId, tenantId },
+            select: { id: true },
+        });
+        if (!employee) {
+            throw new SaleError('EMPLOYEE_NOT_FOUND', 404, 'Empleado no encontrado');
+        }
+    }
+
     // 4. Motor de riesgo crediticio
     let finalStatus  = 'COMPLETED';
     let creditBalance = new Decimal(0);
     let dueDate: Date | null = null;
 
     if (paymentMethod === 'CREDIT') {
-        if (!customerId) {
+        if (!customerId || !customer) {
             throw new SaleError('CUSTOMER_REQUIRED', 400, '⛔ RIESGO: Las ventas a crédito requieren Cliente.');
-        }
-        const customer = await prisma.customer.findFirst({
-            where: { id: customerId, tenantId },
-        });
-        if (!customer) {
-            throw new SaleError('CUSTOMER_NOT_FOUND', 404, 'Cliente no encontrado');
         }
         if (customer.isBlocked) {
             throw new SaleError('CUSTOMER_BLOCKED', 403, '⛔ DENEGADO: Cliente bloqueado por morosidad.');

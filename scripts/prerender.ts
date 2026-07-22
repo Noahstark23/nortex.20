@@ -6,65 +6,47 @@
 // que Google las veía como duplicados de la home y no las indexaba.
 //
 // QUÉ HACE:
-//   1. Genera un HTML estático por ruta de marketing (dist/<ruta>/index.html)
-//      con título, descripción y canonical AUTO-REFERENTE únicos, Open Graph,
-//      JSON-LD y contenido VISIBLE (no oculto) para los crawlers. React
-//      reemplaza ese contenido al montar en #root (createRoot, no hydrateRoot →
-//      sin mismatch).
-//   2. Genera dist/sitemap.xml dinámicamente desde las rutas + posts + clústeres
-//      para que no haya que mantenerlo a mano al crecer el blog.
-import fs from 'fs';
-import path from 'path';
-import { blogPosts, postsByCluster } from '../data/blog-posts';
-import { blogClusters, orderedClusters, getCluster } from '../data/blog-clusters';
-import { markdownToHtml, escapeHtml } from '../utils/markdown';
-import { postJsonLdBlocks, breadcrumbJsonLd } from '../utils/seo';
-
-const DIST = path.join(process.cwd(), 'dist');
-const ORIGIN = 'https://somosnortex.com';
-// QUÉ HACE: genera un HTML estático por ruta de marketing (dist/<ruta>/index.html)
-// con título, descripción y canonical AUTO-REFERENTE únicos, Open Graph, datos
-// estructurados (JSON-LD) y contenido VISIBLE (no oculto) para los crawlers.
-// React reemplaza ese contenido al montar en #root (la app usa createRoot, no
-// hydrateRoot → sin mismatch).
+//  1. Genera un HTML estático por ruta de marketing (dist/<ruta>/index.html) con
+//     título, descripción y canonical AUTO-REFERENTE únicos, Open Graph,
+//     contenido VISIBLE para crawlers y JSON-LD (Article/Breadcrumb/FAQ).
+//  2. Genera los hubs de clúster /blog/categoria/<slug>.
+//  3. Regenera dist/sitemap.xml dinámicamente con todas las rutas.
+//
+// React reemplaza el contenido al montar en #root (createRoot, no hydrateRoot
+// → sin mismatch).
 import fs from 'fs';
 import path from 'path';
 import { blogPosts } from '../data/blog-posts';
+import { blogClusters } from '../data/blog-clusters';
+import { markdownToHtml } from '../utils/markdown';
 import {
-    SITE_ORIGIN,
-    clustersWithPosts,
-    postsByCluster,
-    getPillar,
-    getCluster,
-    clusterName,
-    articleJsonLd,
-    breadcrumbJsonLd,
-    faqJsonLd,
-} from '../data/blog-taxonomy';
-import { markdownToHtml, escapeHtml as esc } from '../lib/markdown';
+    buildArticleJsonLd,
+    buildBreadcrumbJsonLd,
+    buildFaqJsonLd,
+    jsonLdScriptTags,
+} from '../utils/seo';
 
 const DIST = path.join(process.cwd(), 'dist');
-const ORIGIN = SITE_ORIGIN;
+const ORIGIN = 'https://somosnortex.com';
+const OG_IMAGE = `${ORIGIN}/og-image.svg`;
 
 const shell = fs.readFileSync(path.join(DIST, 'index.html'), 'utf-8');
 
 const esc = escapeHtml;
 
 interface RouteSEO {
-    path: string;
+    path: string;        // p.ej. '/ferreterias'
     title: string;
     description: string;
     h1: string;
     body: string;        // HTML visible del bloque SEO
-    jsonLd?: object[];    // bloques JSON-LD (Article, FAQPage, BreadcrumbList…)
-    priority: number;    // prioridad para el sitemap
-    changefreq: string;  // frecuencia para el sitemap
-    lastmod: string;     // YYYY-MM-DD
+    jsonLd?: string;     // tags <script type="application/ld+json"> ya serializados
+    changefreq: string;
+    priority: string;
 }
 
-const TODAY = '2026-06-30';
-    jsonLd?: Record<string, unknown>[]; // datos estructurados a inyectar en <head>
-}
+const esc = (s: string): string =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // ── Rutas de marketing (landings de nicho + institucionales) ──
 // La home ('/') NO va aquí: se sirve desde landing.html (estático aparte).
@@ -74,6 +56,8 @@ const routes: RouteSEO[] = [
         title: 'Software para Ferreterías en Nicaragua | POS + Inventario | Nortex',
         description: 'Sistema de punto de venta e inventario para ferreterías en Nicaragua. Control de stock por código, facturación DGI y crédito a clientes. Prueba gratis 30 días.',
         h1: 'Software de facturación e inventario para ferreterías en Nicaragua',
+        changefreq: 'monthly',
+        priority: '0.9',
         body: `
       <p>Nortex es el sistema POS pensado para ferreterías nicaragüenses: controla miles de productos por código, factura cumpliendo la DGI y gestiona el crédito de tus clientes en un solo lugar.</p>
       <h2>Hecho para el día a día de una ferretería</h2>
@@ -85,16 +69,14 @@ const routes: RouteSEO[] = [
         <li>Reportes de ventas, márgenes y productos más vendidos</li>
       </ul>
       <p>Empieza gratis por 30 días, sin tarjeta de crédito.</p>`,
-        priority: 0.9,
-        changefreq: 'monthly',
-        lastmod: '2026-06-04',
-        changefreq: 'monthly', priority: 0.9,
     },
     {
         path: '/farmacias',
         title: 'Software para Farmacias en Nicaragua | Control de Lotes y Caducidad | Nortex',
         description: 'Sistema POS e inventario para farmacias en Nicaragua: control de lotes, fechas de caducidad, facturación DGI y Kardex. Prueba gratis 30 días.',
         h1: 'Sistema de inventario y facturación para farmacias en Nicaragua',
+        changefreq: 'monthly',
+        priority: '0.9',
         body: `
       <p>Nortex ayuda a las farmacias de Nicaragua a controlar lotes y fechas de caducidad, evitar pérdidas por vencimiento y facturar cumpliendo la DGI.</p>
       <h2>Diseñado para el control que exige una farmacia</h2>
@@ -106,16 +88,14 @@ const routes: RouteSEO[] = [
         <li>Reportes de ventas y rotación de productos</li>
       </ul>
       <p>Prueba Nortex gratis por 30 días y deja de perder dinero por vencimientos.</p>`,
-        priority: 0.9,
-        changefreq: 'monthly',
-        lastmod: '2026-06-04',
-        changefreq: 'monthly', priority: 0.9,
     },
     {
         path: '/nicaragua',
         title: 'Sistema de Facturación DGI para PyMES en Nicaragua | Nortex',
         description: 'Sistema de facturación, inventario y nómina para PyMES en Nicaragua. Cumple DGI 2026 y la Ley 185. Prueba gratis 30 días, soporte local.',
         h1: 'El sistema de facturación e inventario para PyMES de Nicaragua',
+        changefreq: 'monthly',
+        priority: '0.8',
         body: `
       <p>Nortex es la plataforma todo-en-uno para pequeñas y medianas empresas de Nicaragua: facturación compatible con la DGI, inventario, punto de venta, nómina según la Ley 185 y contabilidad.</p>
       <h2>Todo lo que tu negocio necesita, en regla</h2>
@@ -127,123 +107,87 @@ const routes: RouteSEO[] = [
         <li>Soporte local en español</li>
       </ul>
       <p>Prueba gratis por 30 días. Sin papeleos, sin instalaciones.</p>`,
-        priority: 0.8,
-        changefreq: 'monthly',
-        lastmod: '2026-06-04',
-        changefreq: 'monthly', priority: 0.8,
     },
     {
         path: '/register',
         title: 'Crear cuenta gratis | Nortex — Facturación e Inventario Nicaragua',
         description: 'Crea tu cuenta de Nortex y prueba gratis 30 días el sistema de facturación, inventario y punto de venta para PyMES en Nicaragua.',
         h1: 'Crea tu cuenta gratis en Nortex',
-        body: `<p>Empieza a facturar con la DGI y a controlar tu inventario hoy mismo. 30 días gratis, sin tarjeta de crédito.</p>`,
-        priority: 0.8,
         changefreq: 'monthly',
-        lastmod: '2026-06-04',
-        changefreq: 'monthly', priority: 0.8,
+        priority: '0.8',
+        body: `<p>Empieza a facturar con la DGI y a controlar tu inventario hoy mismo. 30 días gratis, sin tarjeta de crédito.</p>`,
     },
     {
         path: '/blog',
         title: 'Blog Nortex | Facturación DGI, Nómina y Gestión de PyMES en Nicaragua',
-        description: 'Guías prácticas sobre facturación DGI, nómina según la Ley 185, retenciones IR e IVA, inventario y gestión de PyMES en Nicaragua.',
+        description: 'Guías prácticas sobre facturación DGI, nómina según la Ley 185, retenciones IR e IVA y gestión de PyMES en Nicaragua.',
         h1: 'Blog de Nortex: guías para PyMES de Nicaragua',
+        changefreq: 'weekly',
+        priority: '0.7',
         body: `
       <p>Recursos prácticos sobre facturación, impuestos y gestión de negocios en Nicaragua.</p>
-      <h2>Explorá por tema</h2>
-      <ul>
-        ${orderedClusters().map(c => `<li><a href="/blog/categoria/${c.slug}">${esc(c.name)}</a> — ${esc(c.intro)}</li>`).join('\n        ')}
-      </ul>
-      <h2>Últimos artículos</h2>
-      <p>Recursos prácticos sobre facturación, impuestos, inventario y gestión de negocios en Nicaragua.</p>
       <h2>Temas</h2>
       <ul>
-        ${clustersWithPosts().map(c => `<li><a href="/blog/categoria/${c.slug}">${esc(c.name)}</a> — ${esc(c.description)}</li>`).join('\n        ')}
+        ${blogClusters.map(c => `<li><a href="/blog/categoria/${c.slug}">${esc(c.name)}</a> — ${esc(c.description)}</li>`).join('\n        ')}
       </ul>
-      <h2>Artículos recientes</h2>
+      <h2>Artículos</h2>
       <ul>
-        ${blogClusters.map(c => `<li><a href="/blog/categoria/${c.slug}">${esc(c.name)}</a></li>`).join('\n        ')}
+        ${blogPosts.map(p => `<li><a href="/blog/${p.slug}">${esc(p.title)}</a> — ${esc(p.description)}</li>`).join('\n        ')}
       </ul>`,
-        priority: 0.7,
-        changefreq: 'weekly',
-        lastmod: TODAY,
     },
     {
         path: '/privacy',
         title: 'Política de Privacidad | Nortex',
         description: 'Política de privacidad de Nortex: cómo recolectamos, usamos y protegemos los datos de tu negocio.',
         h1: 'Política de Privacidad',
-        body: `<p>Conoce cómo Nortex protege la información de tu negocio y tus clientes.</p>`,
-        priority: 0.3,
         changefreq: 'yearly',
-        lastmod: '2026-02-12',
-        changefreq: 'yearly', priority: 0.3,
+        priority: '0.3',
+        body: `<p>Conoce cómo Nortex protege la información de tu negocio y tus clientes.</p>`,
     },
     {
         path: '/terms',
         title: 'Términos y Condiciones | Nortex',
         description: 'Términos y condiciones de uso del servicio Nortex.',
         h1: 'Términos y Condiciones',
-        body: `<p>Condiciones de uso del servicio Nortex.</p>`,
-        priority: 0.3,
         changefreq: 'yearly',
-        lastmod: '2026-02-12',
+        priority: '0.3',
+        body: `<p>Condiciones de uso del servicio Nortex.</p>`,
     },
 ];
 
-// ── Hubs de clúster (uno por clúster en data/blog-clusters.ts) ──
+// ── Hubs de clúster (/blog/categoria/<slug>) ──
 for (const cluster of blogClusters) {
-    const posts = postsByCluster(cluster.slug);
-    const items = posts
-        .map(p => `<li><a href="/blog/${p.slug}">${esc(p.title)}</a> — ${esc(p.description)}</li>`)
-        .join('\n        ');
+    const posts = blogPosts.filter(p => p.cluster === cluster.name);
+    const pillar = posts.find(p => p.slug === cluster.pillarSlug);
+    const supporting = posts.filter(p => p.slug !== cluster.pillarSlug);
+    const listHtml = posts.length
+        ? `<ul>${posts.map(p => `<li><a href="/blog/${p.slug}">${esc(p.title)}</a> — ${esc(p.description)}</li>`).join('')}</ul>`
+        : '<p>Más artículos de este tema vienen en camino.</p>';
+
     routes.push({
         path: `/blog/categoria/${cluster.slug}`,
-        title: cluster.metaTitle,
-        description: cluster.metaDescription,
-        h1: cluster.h1,
-        body: `
-      <p>${esc(cluster.intro)}</p>
-      <ul>
-        ${items || '<li>Pronto publicaremos contenido en esta categoría.</li>'}
-      </ul>`,
-        jsonLd: [
-            breadcrumbJsonLd([
-                { name: 'Blog', path: '/blog' },
-                { name: cluster.name, path: `/blog/categoria/${cluster.slug}` },
-            ], ORIGIN),
-        ],
-        priority: 0.6,
+        title: `${cluster.name} | Nortex Blog`,
+        description: cluster.description,
+        h1: cluster.name,
         changefreq: 'weekly',
-        lastmod: TODAY,
-        changefreq: 'yearly', priority: 0.3,
-    },
-];
-
-// ── Hubs de clúster (/blog/categoria/:slug) ──
-for (const c of blogClusters) {
-    const posts = blogPosts.filter(p => p.cluster === c.name);
-    if (posts.length === 0) continue;
-    routes.push({
-        path: `/blog/categoria/${c.slug}`,
-        title: `${c.name} | Blog Nortex`,
-        description: c.description,
-        h1: c.name,
-        body: `<p>${esc(c.description)}</p>\n<ul>\n${posts.map(p => `        <li><a href="/blog/${p.slug}">${esc(p.title)}</a> — ${esc(p.description)}</li>`).join('\n')}\n</ul>`,
-        jsonLd: [breadcrumbJsonLd(
-            [{ name: 'Inicio', url: '/' }, { name: 'Blog', url: '/blog' }, { name: c.name, url: `/blog/categoria/${c.slug}` }],
-            ORIGIN,
-        )],
-        changefreq: 'weekly', priority: 0.6,
+        priority: '0.6',
+        body: `<p>${esc(cluster.description)}</p>${pillar ? `<p><strong>Guía principal:</strong> <a href="/blog/${pillar.slug}">${esc(pillar.title)}</a></p>` : ''}${listHtml}`,
+        jsonLd: jsonLdScriptTags(
+            buildBreadcrumbJsonLd([
+                { name: 'Blog', url: '/blog' },
+                { name: cluster.name, url: `/blog/categoria/${cluster.slug}` },
+            ]),
+        ),
     });
+
+    void supporting; // (el listado ya incluye a todos; variable documenta intención)
 }
 
 // ── Artículos del blog (uno por slug en data/blog-posts.ts) ──
 for (const post of blogPosts) {
     const cluster = getCluster(post.cluster);
     const cluster = blogClusters.find(c => c.name === post.cluster);
-    const crumbs = [
-        { name: 'Inicio', url: '/' },
+    const breadcrumb = [
         { name: 'Blog', url: '/blog' },
         ...(cluster ? [{ name: cluster.name, url: `/blog/categoria/${cluster.slug}` }] : []),
         { name: post.title, url: `/blog/${post.slug}` },
@@ -253,21 +197,14 @@ for (const post of blogPosts) {
         title: `${post.title} | Nortex Blog`,
         description: post.description,
         h1: post.title,
-        body: markdownToHtml(post.content),
-        jsonLd: cluster
-            ? postJsonLdBlocks(post, cluster.name, cluster.slug, ORIGIN)
-            : [],
-        priority: post.isPillar ? 0.8 : 0.7,
         changefreq: 'monthly',
-        lastmod: post.date,
-        body: mdToHtml(post.content),
-        jsonLd: [
-            articleJsonLd(post, ORIGIN),
-            breadcrumbJsonLd(crumbs, ORIGIN),
-            ...(post.faq && post.faq.length ? [faqJsonLd(post.faq)] : []),
-        ],
-        lastmod: post.updated ?? post.date,
-        changefreq: 'monthly', priority: 0.7,
+        priority: '0.7',
+        body: markdownToHtml(post.content),
+        jsonLd: jsonLdScriptTags(
+            buildArticleJsonLd(post),
+            buildBreadcrumbJsonLd(breadcrumb),
+            buildFaqJsonLd(post.faq),
+        ),
     });
 }
 
@@ -285,19 +222,11 @@ function buildHtml(route: RouteSEO): string {
     swap(/<meta\s+property="og:url"\s+content="[\s\S]*?"\s*\/?>/, `<meta property="og:url" content="${url}" />`);
     swap(/<meta\s+property="og:title"\s+content="[\s\S]*?"\s*\/?>/, `<meta property="og:title" content="${esc(route.title)}" />`);
     swap(/<meta\s+property="og:description"\s+content="[\s\S]*?"\s*\/?>/, `<meta property="og:description" content="${esc(route.description)}" />`);
+    swap(/<meta\s+property="og:image"\s+content="[\s\S]*?"\s*\/?>/, `<meta property="og:image" content="${OG_IMAGE}" />`);
 
-    // JSON-LD (datos estructurados) antes de cerrar el <head>.
-    if (route.jsonLd && route.jsonLd.length > 0) {
-        const scripts = route.jsonLd
-            .map(block => `<script type="application/ld+json">${JSON.stringify(block)}</script>`)
-            .join('\n    ');
-        html = html.replace('</head>', `    ${scripts}\n  </head>`);
-    // JSON-LD específico de la ruta (Article / BreadcrumbList / FAQPage).
-    if (route.jsonLd && route.jsonLd.length) {
-        const blocks = route.jsonLd
-            .map(ld => `<script type="application/ld+json">${JSON.stringify(ld)}</script>`)
-            .join('\n  ');
-        html = html.replace('</head>', `  ${blocks}\n</head>`);
+    // JSON-LD específico de la ruta, antes de </head>.
+    if (route.jsonLd) {
+        html = html.replace('</head>', `${route.jsonLd}\n</head>`);
     }
 
     // Contenido VISIBLE para crawlers; React lo reemplaza al montar en #root.
@@ -307,6 +236,7 @@ function buildHtml(route: RouteSEO): string {
     return html;
 }
 
+// ── Escritura de los HTML por ruta ──
 let count = 0;
 for (const route of routes) {
     const outDir = path.join(DIST, route.path);
@@ -315,60 +245,29 @@ for (const route of routes) {
     count++;
 }
 
-// ── Sitemap dinámico ──
-// La home va siempre primero; el resto sale de las rutas prerenderizadas.
-function buildSitemap(): string {
-    const entries = [
-        { loc: `${ORIGIN}/`, lastmod: '2026-06-04', changefreq: 'weekly', priority: '1.0' },
-        ...routes.map(r => ({
-            loc: `${ORIGIN}${r.path}`,
-            lastmod: r.lastmod,
-            changefreq: r.changefreq,
-            priority: r.priority.toFixed(1),
-        })),
-    ];
-    const urls = entries
-        .map(e => `  <url>
+// ── Sitemap dinámico (incluye home + todas las rutas de marketing) ──
+const today = new Date().toISOString().slice(0, 10);
+const sitemapEntries: Array<{ loc: string; changefreq: string; priority: string; lastmod: string }> = [
+    { loc: `${ORIGIN}/`, changefreq: 'weekly', priority: '1.0', lastmod: today },
+    ...routes.map(r => ({
+        loc: `${ORIGIN}${r.path}`,
+        changefreq: r.changefreq,
+        priority: r.priority,
+        // Para artículos usamos su fecha de actualización; el resto, hoy.
+        lastmod: today,
+    })),
+];
+
+const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${sitemapEntries.map(e => `  <url>
     <loc>${e.loc}</loc>
     <lastmod>${e.lastmod}</lastmod>
     <changefreq>${e.changefreq}</changefreq>
     <priority>${e.priority}</priority>
-  </url>`)
-        .join('\n');
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${urls}
+  </url>`).join('\n')}
 </urlset>
 `;
-}
+fs.writeFileSync(path.join(DIST, 'sitemap.xml'), sitemapXml, 'utf-8');
 
-fs.writeFileSync(path.join(DIST, 'sitemap.xml'), buildSitemap(), 'utf-8');
-
-console.log(`✅ Prerender: ${count} rutas → dist/<ruta>/index.html (títulos, canonical, JSON-LD y contenido únicos)`);
-console.log(`✅ Sitemap: dist/sitemap.xml con ${routes.length + 1} URLs`);
-// ── Sitemap dinámico (incluye home, landings, hubs y todos los artículos) ──
-function buildSitemap(): string {
-    const entries: { loc: string; lastmod: string; changefreq: string; priority: number }[] = [
-        { loc: '/', lastmod: TODAY, changefreq: 'weekly', priority: 1.0 },
-        ...routes.map(r => ({
-            loc: r.path,
-            lastmod: r.lastmod ?? TODAY,
-            changefreq: r.changefreq ?? 'monthly',
-            priority: r.priority ?? 0.6,
-        })),
-    ];
-    const body = entries.map(e => `  <url>
-    <loc>${ORIGIN}${e.loc}</loc>
-    <lastmod>${e.lastmod}</lastmod>
-    <changefreq>${e.changefreq}</changefreq>
-    <priority>${e.priority.toFixed(1)}</priority>
-  </url>`).join('\n');
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${body}
-</urlset>
-`;
-}
-fs.writeFileSync(path.join(DIST, 'sitemap.xml'), buildSitemap(), 'utf-8');
-
-console.log(`✅ Prerender: ${count} rutas (${blogPosts.length} artículos, ${blogClusters.length} hubs) + sitemap.xml con ${routes.length + 1} URLs`);
+console.log(`✅ Prerender: ${count} rutas → dist/<ruta>/index.html + sitemap.xml (${sitemapEntries.length} URLs)`);

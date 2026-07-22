@@ -1,7 +1,29 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { DollarSign, Activity, AlertTriangle, Plus, Users, Wallet, X, Banknote } from 'lucide-react';
 
+// Fase 2 H7: cada tab del panel tiene su propia ruta en el menú lateral del
+// prestamista. Estas rutas dedicadas (no /app/clients|reports|team de retail)
+// mapean 1:1 con las pestañas internas del dashboard.
+type LenderTab = 'DASHBOARD' | 'CLIENTS' | 'REPORTS' | 'TEAM' | 'ACCOUNTING';
+const PATH_TO_TAB: Record<string, LenderTab> = {
+    '/app/dashboard': 'DASHBOARD',
+    '/app/cartera': 'CLIENTS',
+    '/app/cobros': 'REPORTS',
+    '/app/cobradores': 'TEAM',
+};
+// Las pestañas con ruta propia navegan (sincroniza URL + resaltado del menú);
+// CAJA CHICA no tiene item lateral, es una pestaña interna del panel.
+const TAB_TO_PATH: Partial<Record<LenderTab, string>> = {
+    DASHBOARD: '/app/dashboard',
+    CLIENTS: '/app/cartera',
+    REPORTS: '/app/cobros',
+    TEAM: '/app/cobradores',
+};
+
 const LenderDashboard: React.FC = () => {
+    const location = useLocation();
+    const navigate = useNavigate();
     const [loans, setLoans] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
@@ -9,16 +31,22 @@ const LenderDashboard: React.FC = () => {
     const [showDepositModal, setShowDepositModal] = useState(false);
     const [depositData, setDepositData] = useState({ collectorId: '', motoName: '', amount: '', notes: '' });
     const [expandedLoan, setExpandedLoan] = useState<string | null>(null);
+    // Plan de cuotas (amortización) cargado perezosamente al expandir — Fase 2 H8b.
+    const [scheduleByLoan, setScheduleByLoan] = useState<Record<string, any[]>>({});
+    const [loadingSchedule, setLoadingSchedule] = useState<string | null>(null);
     const [routeExpenses, setRouteExpenses] = useState<any[]>([]);
     const [collectors, setCollectors] = useState<any[]>([]);
     const [showPenaltyModal, setShowPenaltyModal] = useState(false);
     const [penaltyData, setPenaltyData] = useState({ loanId: '', clientName: '', amount: '', reason: 'Multa por atraso' });
+    // Abono manual del dueño (pago en el local, no en ruta) — Fase 2 H6.
+    const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [paymentData, setPaymentData] = useState({ loanId: '', clientName: '', balance: 0, amount: '' });
     const [showRefiModal, setShowRefiModal] = useState(false);
     const [refiLoan, setRefiLoan] = useState<any>(null);
     const [refiData, setRefiData] = useState({ newPrincipal: '', interestRate: '', installments: '', frequency: 'DAILY', type: 'INFORMAL_FLAT' });
     const [showMotoModal, setShowMotoModal] = useState(false);
     const [motoData, setMotoData] = useState({ name: '', email: '', password: '' });
-    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'CLIENTS' | 'REPORTS' | 'TEAM' | 'ACCOUNTING'>('DASHBOARD');
+    const [activeTab, setActiveTab] = useState<LenderTab>(() => PATH_TO_TAB[location.pathname] ?? 'DASHBOARD');
     const [clientSearch, setClientSearch] = useState('');
     const [lenderClients, setLenderClients] = useState<any[]>([]);
     const [formData, setFormData] = useState({
@@ -36,6 +64,22 @@ const LenderDashboard: React.FC = () => {
         fetchClients();
         fetchCollectors();
     }, []);
+
+    // El menú lateral navega a /app/cartera|cobros|cobradores (o /app/dashboard);
+    // sincronizamos la pestaña activa con la ruta. CAJA CHICA no tiene ruta → se
+    // maneja como pestaña interna sin tocar la URL. Fase 2 H7.
+    useEffect(() => {
+        const tab = PATH_TO_TAB[location.pathname];
+        if (tab) setActiveTab(tab);
+    }, [location.pathname]);
+
+    // Cambio de pestaña: las que tienen ruta propia navegan (mantiene URL y el
+    // resaltado del menú en sync); CAJA CHICA solo cambia el estado local.
+    const goTab = (tab: LenderTab) => {
+        const path = TAB_TO_PATH[tab];
+        if (path && path !== location.pathname) navigate(path);
+        else setActiveTab(tab);
+    };
 
     const fetchPortfolio = async () => {
         try {
@@ -227,6 +271,56 @@ const LenderDashboard: React.FC = () => {
         }
     };
 
+    // Expandir/colapsar la fila del préstamo. Al abrir, carga el plan de cuotas
+    // por demanda (GET /:id/schedule) y lo cachea — no traemos la amortización de
+    // toda la cartera de golpe (guardrail de escalabilidad). Fase 2 H8b.
+    const toggleExpand = async (loanId: string) => {
+        const next = expandedLoan === loanId ? null : loanId;
+        setExpandedLoan(next);
+        if (next && !scheduleByLoan[loanId]) {
+            setLoadingSchedule(loanId);
+            try {
+                const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/${loanId}/schedule`, {
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
+                    cache: 'no-store'
+                });
+                const data = await response.json();
+                if (data.success) setScheduleByLoan(prev => ({ ...prev, [loanId]: data.data }));
+            } catch (error) {
+                console.error('Error cargando el plan de cuotas:', error);
+            } finally {
+                setLoadingSchedule(null);
+            }
+        }
+    };
+
+    // Abono manual del dueño: usa el MISMO endpoint atómico que el cobrador
+    // (POST /:id/repayments), con su guarda anti-sobrepago y su AuditLog.
+    const handleRegisterPayment = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setSubmitting(true);
+        try {
+            const response = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/loans/${paymentData.loanId}/repayments`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('nortex_token')}` },
+                body: JSON.stringify({ amountPaid: paymentData.amount, collectedBy: 'Caja (dueño)', notes: 'Abono registrado en el local' })
+            });
+            const data = await response.json();
+            if (data.success) {
+                setShowPaymentModal(false);
+                setPaymentData({ loanId: '', clientName: '', balance: 0, amount: '' });
+                alert(`¡Abono registrado! Se aplicó $${paymentData.amount} al crédito.`);
+                fetchPortfolio();
+            } else {
+                alert('Error registrando el abono: ' + data.error);
+            }
+        } catch (error) {
+            alert('Error de conexión al registrar el abono.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
     const handleRefinance = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!refiLoan) return;
@@ -300,11 +394,11 @@ const LenderDashboard: React.FC = () => {
 
             {/* Navegación por Pestañas */}
             <div className="flex border-b border-slate-800 mb-8 gap-6">
-                <button onClick={() => setActiveTab('DASHBOARD')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'DASHBOARD' ? 'border-nortex-accent text-nortex-accent' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>PANEL DE CONTROL</button>
-                <button onClick={() => setActiveTab('CLIENTS')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'CLIENTS' ? 'border-blue-400 text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>DIRECTORIO DE CLIENTES</button>
-                <button onClick={() => setActiveTab('REPORTS')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'REPORTS' ? 'border-purple-400 text-purple-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>REPORTES</button>
-                <button onClick={() => setActiveTab('TEAM')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'TEAM' ? 'border-orange-400 text-orange-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>TROPAS Y COMISIONES</button>
-                <button onClick={() => setActiveTab('ACCOUNTING')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'ACCOUNTING' ? 'border-emerald-400 text-emerald-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>CAJA CHICA</button>
+                <button onClick={() => goTab('DASHBOARD')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'DASHBOARD' ? 'border-nortex-accent text-nortex-accent' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>PANEL DE CONTROL</button>
+                <button onClick={() => goTab('CLIENTS')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'CLIENTS' ? 'border-blue-400 text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>DIRECTORIO DE CLIENTES</button>
+                <button onClick={() => goTab('REPORTS')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'REPORTS' ? 'border-purple-400 text-purple-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>REPORTES</button>
+                <button onClick={() => goTab('TEAM')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'TEAM' ? 'border-orange-400 text-orange-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>TROPAS Y COMISIONES</button>
+                <button onClick={() => goTab('ACCOUNTING')} className={`pb-4 font-bold text-sm transition-all border-b-2 ${activeTab === 'ACCOUNTING' ? 'border-emerald-400 text-emerald-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>CAJA CHICA</button>
             </div>
 
             {/* TAB: Dashboard */}
@@ -410,7 +504,7 @@ const LenderDashboard: React.FC = () => {
                                                 return (
                                                     <>
                                                         <tr
-                                                            onClick={() => setExpandedLoan(expandedLoan === loan.id ? null : loan.id)}
+                                                            onClick={() => toggleExpand(loan.id)}
                                                             className={`transition-colors cursor-pointer group ${isOverdue ? 'bg-red-900/10 hover:bg-red-900/20' : 'hover:bg-slate-700/50'}`}
                                                         >
                                                             <td className="p-4 font-medium text-white flex items-center gap-2">
@@ -461,7 +555,54 @@ const LenderDashboard: React.FC = () => {
                                                         {/* Panel expandible con historial de pagos */}
                                                         {expandedLoan === loan.id && (
                                                             <tr className="bg-slate-900/50">
-                                                                <td colSpan={7} className="p-4 border-l-2 border-nortex-accent">
+                                                                <td colSpan={8} className="p-4 border-l-2 border-nortex-accent">
+                                                                    {/* Plan de cuotas (amortización) — Fase 2 H8b */}
+                                                                    <div className="text-sm mb-4">
+                                                                        <h4 className="font-bold text-slate-400 mb-2">Plan de Cuotas</h4>
+                                                                        {loadingSchedule === loan.id ? (
+                                                                            <p className="text-slate-500 italic">Cargando plan de cuotas…</p>
+                                                                        ) : (scheduleByLoan[loan.id]?.length ?? 0) > 0 ? (
+                                                                            <div className="overflow-x-auto rounded-lg border border-slate-700">
+                                                                                <table className="w-full text-xs">
+                                                                                    <thead className="bg-slate-800/70 text-slate-400">
+                                                                                        <tr>
+                                                                                            <th className="p-2 text-left font-medium">#</th>
+                                                                                            <th className="p-2 text-left font-medium">Vence</th>
+                                                                                            <th className="p-2 text-right font-medium">Cuota</th>
+                                                                                            <th className="p-2 text-right font-medium">Pagado</th>
+                                                                                            <th className="p-2 text-right font-medium">Saldo</th>
+                                                                                            <th className="p-2 text-center font-medium">Estado</th>
+                                                                                        </tr>
+                                                                                    </thead>
+                                                                                    <tbody>
+                                                                                        {scheduleByLoan[loan.id].map((cuota: any) => {
+                                                                                            const estadoStyle = cuota.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-400'
+                                                                                                : cuota.status === 'OVERDUE' ? 'bg-red-500/20 text-red-400'
+                                                                                                : cuota.status === 'PARTIAL' ? 'bg-amber-500/20 text-amber-400'
+                                                                                                : 'bg-slate-600/30 text-slate-300';
+                                                                                            const estadoLabel = cuota.status === 'PAID' ? 'PAGADA'
+                                                                                                : cuota.status === 'OVERDUE' ? `VENCIDA${cuota.daysOverdue ? ` · ${cuota.daysOverdue}d` : ''}`
+                                                                                                : cuota.status === 'PARTIAL' ? 'PARCIAL'
+                                                                                                : 'PENDIENTE';
+                                                                                            return (
+                                                                                                <tr key={cuota.id} className={`border-t border-slate-700/50 ${cuota.status === 'OVERDUE' ? 'bg-red-900/10' : ''}`}>
+                                                                                                    <td className="p-2 text-slate-300 font-mono">{cuota.number}</td>
+                                                                                                    <td className="p-2 text-slate-400">{new Date(cuota.dueDate).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: '2-digit' })}</td>
+                                                                                                    <td className="p-2 text-right font-mono text-slate-300">${Number(cuota.amountDue).toFixed(2)}</td>
+                                                                                                    <td className="p-2 text-right font-mono text-emerald-400">${Number(cuota.amountPaid).toFixed(2)}</td>
+                                                                                                    <td className="p-2 text-right font-mono font-bold text-white">${Number(cuota.balance).toFixed(2)}</td>
+                                                                                                    <td className="p-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${estadoStyle}`}>{estadoLabel}</span></td>
+                                                                                                </tr>
+                                                                                            );
+                                                                                        })}
+                                                                                    </tbody>
+                                                                                </table>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <p className="text-slate-500 italic">Este crédito no tiene un plan de cuotas detallado.</p>
+                                                                        )}
+                                                                    </div>
+
                                                                     <div className="text-sm">
                                                                         <h4 className="font-bold text-slate-400 mb-2">Historial de Pagos</h4>
                                                                         {loan.payments && loan.payments.length > 0 ? (
@@ -485,6 +626,17 @@ const LenderDashboard: React.FC = () => {
                                                                             Saldo: <span className="font-bold text-white text-lg">${Number(loan.balanceRemaining).toFixed(2)}</span>
                                                                         </div>
                                                                         <div className="flex gap-3">
+                                                                            <button
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    setPaymentData({ loanId: loan.id, clientName: loan.clientName, balance: Number(loan.balanceRemaining), amount: '' });
+                                                                                    setShowPaymentModal(true);
+                                                                                }}
+                                                                                className="px-4 py-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-lg font-bold text-xs hover:bg-emerald-500 hover:text-white transition-colors flex items-center gap-2"
+                                                                            >
+                                                                                <Banknote size={14} />
+                                                                                REGISTRAR ABONO
+                                                                            </button>
                                                                             <button
                                                                                 onClick={(e) => {
                                                                                     e.stopPropagation();
@@ -1065,6 +1217,50 @@ const LenderDashboard: React.FC = () => {
                                 className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl mt-2 transition-all disabled:opacity-50"
                             >
                                 {submitting ? 'CARGANDO...' : 'CARGAR MULTA AL SALDO'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal de Abono Manual (Fase 2 H6) — pago en el local */}
+            {showPaymentModal && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-emerald-500/50 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl">
+                        <div className="p-6 border-b border-emerald-500/30 flex justify-between items-center bg-emerald-500/10">
+                            <div>
+                                <h2 className="text-xl font-bold text-emerald-400">Registrar Abono</h2>
+                                <p className="text-sm text-slate-300 mt-1">{paymentData.clientName}</p>
+                            </div>
+                            <button onClick={() => setShowPaymentModal(false)} className="text-emerald-400 hover:text-white transition-colors">
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <form onSubmit={handleRegisterPayment} className="p-6 space-y-4">
+                            <div className="flex justify-between text-sm bg-slate-800/50 p-3 rounded-lg">
+                                <span className="text-slate-400">Saldo pendiente:</span>
+                                <span className="text-white font-bold font-mono">${paymentData.balance.toFixed(2)}</span>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Monto del abono ($)</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    required
+                                    autoFocus
+                                    value={paymentData.amount}
+                                    onChange={(e) => setPaymentData({ ...paymentData, amount: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-emerald-400 outline-none font-mono text-lg"
+                                    placeholder="Ej: 30.00"
+                                />
+                                <p className="text-[11px] text-slate-500 mt-1">No puede exceder el saldo pendiente.</p>
+                            </div>
+                            <button
+                                type="submit"
+                                disabled={submitting || !paymentData.amount}
+                                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl mt-2 transition-all disabled:opacity-50"
+                            >
+                                {submitting ? 'REGISTRANDO...' : 'REGISTRAR ABONO'}
                             </button>
                         </form>
                     </div>

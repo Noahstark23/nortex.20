@@ -18,18 +18,26 @@ datasource db {
 model Tenant {
   id                   String    @id @default(cuid())
   businessName         String
-  type                 String    @default("FERRETERIA") // FERRETERIA | PULPERIA | LENDER | RETAIL
+  type                 String    @default("FERRETERIA") // FERRETERIA | PULPERIA | LENDER | RETAIL | DISTRIBUIDORA | MISCELANEA
   taxId                String    @unique
   slug                 String?   @unique // URL amigable para catálogo público (ej: "ferreteria-jose")
   walletBalance        Decimal   @default(0) @db.Decimal(18, 4)
   creditLimit          Decimal   @default(0) @db.Decimal(18, 4)
-  creditScore          Int       @default(0)
+  // NULL = "sin datos suficientes": un tenant nuevo NO tiene score hasta que
+  // el motor real (services/scoring.ts) lo calcula desde historial operativo.
+  // Nunca sembrar un valor fantasma; el número solo existe si hay con qué.
+  creditScore          Int?
   subscriptionStatus   String    @default("TRIAL") // TRIAL | ACTIVE | PAST_DUE | CANCELLED
   stripeCustomerId     String? // Stripe Customer ID (cus_xxx)
   stripeSubscriptionId String? // Stripe Subscription ID (sub_xxx)
   subscriptionEndsAt   DateTime? // Fecha de vencimiento de la suscripción activa
   trialEndsAt          DateTime? // Fecha límite del trial gratuito (14 días desde registro)
   theftAlertThreshold  Decimal   @default(500) @db.Decimal(10, 2)
+  // Alertas de gaveta del agente bancario (Fase C, nullable = sin alerta):
+  // mínimo = no poder pagar retiros/remesas; máximo = exceso de efectivo
+  // (riesgo de robo → sugerir entrega al banco).
+  agentCashMin         Decimal?  @db.Decimal(18, 4)
+  agentCashMax         Decimal?  @db.Decimal(18, 4)
   // Costo de entrega plano del catálogo público (lo fija el negocio; el
   // cliente NUNCA lo manda — se calcula server-side al crear el Pedido).
   deliveryFee          Decimal   @default(0) @db.Decimal(10, 2)
@@ -63,6 +71,10 @@ model Tenant {
   invitations      Invitation[]
   cashMovements    CashMovement[]
   productReturns   ProductReturn[]
+  serialNumbers    SerialNumber[]
+  warehouses       Warehouse[]
+  productStocks    ProductStock[]
+  stockTransfers   StockTransfer[]
   accounts         Account[]
   journalEntries   JournalEntry[]
   fiscalRetentions FiscalRetention[]
@@ -164,6 +176,8 @@ model Customer {
   creditLimit Decimal  @default(0) @db.Decimal(10, 2)
   currentDebt Decimal  @default(0) @db.Decimal(10, 2)
   isBlocked   Boolean  @default(false)
+  // Cliente mayorista: el POS le aplica el precio de mayoreo desde la unidad 1.
+  isWholesale Boolean  @default(false)
   createdAt   DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
@@ -220,12 +234,15 @@ model Purchase {
   supplier      Supplier       @relation(fields: [supplierId], references: [id])
   items         PurchaseItem[]
   capitalLoan   CapitalLoan?
+  serialNumbers SerialNumber[]
   purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
 
   @@index([tenantId])
   @@index([purchaseOrderId])
   @@index([supplierId])
   @@index([status])
+  // B1: libros de compras DGI y reportes filtran tenant+fecha de factura.
+  @@index([tenantId, date])
 }
 
 model PurchaseItem {
@@ -518,12 +535,14 @@ model Sale {
   items          SaleItem[]
   payments       Payment[]
   productReturns ProductReturn[]
+  serialNumbers  SerialNumber[]
   pedidos        Pedido[]
 
   @@index([tenantId])
   @@index([customerId])
   @@index([employeeId])
   @@index([shiftId])
+  @@index([tenantId, createdAt])
 }
 
 model SaleItem {
@@ -552,6 +571,9 @@ model Payment {
   user User @relation(fields: [collectedBy], references: [id])
 
   @@index([saleId])
+  // B1: el agregado de cobros del día recorre pagos por fecha (el tenant
+  // viene por el join a Sale, que ya tiene su compuesto).
+  @@index([createdAt])
 }
 
 model Shift {
@@ -563,6 +585,12 @@ model Shift {
   finalCashDeclared  Decimal?  @db.Decimal(10, 2)
   systemExpectedCash Decimal?  @db.Decimal(10, 2)
   difference         Decimal?  @db.Decimal(10, 2)
+  // Gaveta multi-moneda (Fase D agente bancario): conteo físico de DÓLARES
+  // separado del de córdobas. Los campos NIO de arriba quedan intactos.
+  initialCashUsd        Decimal  @default(0) @db.Decimal(18, 4)
+  finalCashDeclaredUsd  Decimal? @db.Decimal(18, 4)
+  systemExpectedUsd     Decimal? @db.Decimal(18, 4)
+  differenceUsd         Decimal? @db.Decimal(18, 4)
   regularHours       Float     @default(0)
   overtimeHours      Float     @default(0)
   nightHours         Float     @default(0)
@@ -595,6 +623,8 @@ model Expense {
 
   @@index([tenantId])
   @@index([category])
+  // B1: reportes de gastos por período filtran tenant+fecha.
+  @@index([tenantId, createdAt])
 }
 
 // ==========================================
@@ -644,6 +674,88 @@ model LedgerHead {
   lastSeq   Int      @default(0)
   lastHash  String   @default("GENESIS")
   updatedAt DateTime @updatedAt
+}
+
+// ==========================================
+// 🏦 AGENTE BANCARIO (corresponsalía no bancaria)
+// El negocio opera como Agente Banpro / Rapibac / ServiRED / Puntoxpress, etc.
+// Nortex registra en paralelo lo que pasa por el dispositivo del banco para
+// cuadrar la caja (shadow ledger): cada operación genera un CashMovement
+// firmado (category AGENTE_BANCARIO) + una AgentTransaction con el detalle.
+// tenantId como escalar (sin relación) para no tocar el bloque de relaciones
+// de Tenant (mismo patrón que WhatsApp); el aislamiento se aplica por query.
+// Ver docs/PLAN_AGENTE_BANCARIO.md.
+// ==========================================
+
+model AgentAgreement {
+  id       String  @id @default(cuid())
+  tenantId String
+  name     String // "Agente Banpro", "Rapibac", "Puntoxpress"...
+  kind     String  @default("BANCO") // BANCO | RED_RECAUDADORA | REMESERA
+  active   Boolean @default(true)
+
+  // Comisiones por tipo de operación, pactadas en el contrato (no son públicas
+  // en Nicaragua → SIEMPRE configurables): { "DEPOSITO": {"fija": 5, "pct": 0}, ... }
+  commissionConfig Json?
+
+  // Límites por operación (Fase C), también del contrato — p. ej. Banpro
+  // publica retiros máx US$3,000 y 3 depósitos/día, pero cada convenio pacta
+  // lo suyo: { "RETIRO": {"maxTx": 10000, "maxDia": 50000}, ... }
+  limitsConfig Json?
+
+  // Saldos espejo del convenio (proyección, se actualiza en la misma tx que
+  // cada operación — patrón Motorizado.walletBalance):
+  // settlementBalance: cuánto le DEBE el negocio al banco por efectivo captado
+  // (+ con depósitos/pagos; − con retiros/remesas pagadas = el banco nos debe).
+  settlementBalance Decimal @default(0) @db.Decimal(18, 4)
+  // Comisiones devengadas aún no liquidadas por el banco (ingreso por cobrar).
+  commissionAccrued Decimal @default(0) @db.Decimal(18, 4)
+
+  createdAt DateTime @default(now())
+
+  transactions AgentTransaction[]
+
+  @@index([tenantId])
+}
+
+model AgentTransaction {
+  id          String @id @default(cuid())
+  tenantId    String
+  agreementId String
+  // 1:1 con el movimiento de caja firmado que la respalda (libro encadenado).
+  cashMovementId String @unique
+  shiftId     String
+  userId      String
+
+  // DEPOSITO | RETIRO | PAGO_TARJETA | PAGO_PRESTAMO | PAGO_SERVICIO |
+  // RECARGA | REMESA_ENVIO | REMESA_COBRO
+  operation String
+  direction String // IN | OUT (espejo del CashMovement.type)
+  amount    Decimal @db.Decimal(18, 4)
+  currency  String  @default("NIO") // NIO | USD
+  // Multi-moneda (Fase D): tipo de cambio de la transacción (solo USD) y
+  // valor contable en córdobas (USD: amount×rate; NIO: = amount). La
+  // contabilidad, el settlementBalance y los límites diarios usan amountNio.
+  exchangeRate Decimal? @db.Decimal(12, 6)
+  amountNio    Decimal? @db.Decimal(18, 4)
+  // Comisión devengada en C$ (NO es efectivo: el banco la liquida después a cuenta).
+  commission Decimal @default(0) @db.Decimal(18, 4)
+
+  // Folio/voucher del dispositivo del banco — el comprobante válido y la
+  // clave de conciliación contra el reporte del banco/red.
+  externalRef String?
+  customerRef String? // referencia opcional del cliente (nombre/teléfono)
+
+  status     String    @default("COMPLETED") // COMPLETED | REVERSED (Fase B)
+  reversedAt DateTime?
+  reversedBy String?
+  createdAt  DateTime  @default(now())
+
+  agreement AgentAgreement @relation(fields: [agreementId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([agreementId, createdAt])
+  @@index([shiftId])
 }
 
 // ==========================================
@@ -732,6 +844,10 @@ model AuditLog {
 
   @@index([tenantId])
   @@index([userId])
+  // B1: la tabla que más rápido crece (1 fila por venta/ajuste/pago/cierre);
+  // la bitácora y los filtros por acción necesitan tenant+fecha.
+  @@index([tenantId, createdAt])
+  @@index([tenantId, action, createdAt])
 }
 
 // ==========================================
@@ -749,8 +865,19 @@ model Product {
   category    String?
 
   // Precios
-  price Float // Precio de venta
+  price Float // Precio de venta (detalle)
   cost  Float // Costo de compra
+  // Venta por mayor (distribuidora/miscelánea): precio de mayoreo y cantidad
+  // mínima a partir de la cual aplica. Float para calzar con price/cost — los
+  // tres migran juntos a Decimal(18,4) en el sweep de precisión pendiente.
+  wholesalePrice  Float? // Precio de mayoreo (null = producto sin mayoreo)
+  wholesaleMinQty Float? // Cantidad mínima para mayoreo (ej: 12 = docena)
+  // Unidad de empaque (Fase B): "caja de 12 a C$90". El POS vende el empaque
+  // como atajo de cantidad (unidades base) y packPrice actúa como tercer nivel
+  // de precio a partir de packSize. El stock/Kardex siguen en unidades base.
+  packUnit  String? // nombre del empaque (caja, fardo, docena)
+  packSize  Float? // unidades base por empaque (ej: 12)
+  packPrice Float? // precio del empaque completo (null = solo atajo de cantidad)
 
   // Inventario
   stock    Float  @default(0)
@@ -770,6 +897,8 @@ model Product {
 
   // Control de Lotes
   requiresBatchTracking Boolean @default(false)
+  // Control de Series (números de serie / IMEI / VIN, por unidad)
+  requiresSerialTracking Boolean @default(false)
 
   // Auditoría
   createdAt DateTime @default(now())
@@ -784,6 +913,8 @@ model Product {
   batches         ProductBatch[]
   stockCountItems StockCountItem[]
   purchaseOrderItems PurchaseOrderItem[]
+  serialNumbers   SerialNumber[]
+  productStocks   ProductStock[]
   defaultSupplier Supplier?        @relation("DefaultSupplier", fields: [defaultSupplierId], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, sku])
@@ -823,12 +954,87 @@ model KardexMovement {
   user    User          @relation(fields: [userId], references: [id])
   batchId String?
   batch   ProductBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  // Bodega del movimiento (null = anterior a multi-bodega / no especificada)
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
 
   @@index([productId])
   @@index([tenantId])
   @@index([date])
   @@index([type])
   @@index([batchId])
+  @@index([warehouseId])
+  // B1: el Kardex se consulta por tenant+tipo+fecha (mermas, reportes) y por
+  // tenant+producto+fecha (historial de un producto) — compuestos dedicados.
+  @@index([tenantId, type, date])
+  @@index([tenantId, productId, date])
+}
+
+// ==========================================
+// MULTI-BODEGA (Fase 2: fundación)
+// Product.stock sigue siendo el AGREGADO autoritativo (Σ bodegas); ProductStock
+// es el desglose por bodega. El backfill es perezoso: la bodega default absorbe
+// el total legado la primera vez que se toca (ver stockService).
+// ==========================================
+
+model Warehouse {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  address   String?
+  isDefault Boolean  @default(false) // bodega principal (recibe los flujos sin bodega explícita)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  productStocks   ProductStock[]
+  kardexMovements KardexMovement[]
+  transfersFrom   StockTransfer[]  @relation("TransferFrom")
+  transfersTo     StockTransfer[]  @relation("TransferTo")
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model ProductStock {
+  id          String @id @default(cuid())
+  tenantId    String
+  productId   String
+  warehouseId String
+  stock       Float  @default(0)
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, warehouseId])
+  @@index([tenantId])
+  @@index([warehouseId])
+  @@index([productId])
+}
+
+// Transferencia entre bodegas (Fase 3): mueve existencias origen→destino de forma
+// atómica. NO cambia Product.stock (el agregado no se mueve); items en Json
+// (patrón de B2BOrder/ProductReturn). Ejecución inmediata (sin IN_TRANSIT en v1).
+model StockTransfer {
+  id              String   @id @default(cuid())
+  tenantId        String
+  fromWarehouseId String
+  toWarehouseId   String
+  notes           String?  @db.Text
+  items           Json // [{productId, name, quantity}]
+  createdBy       String
+  createdAt       DateTime @default(now())
+
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fromWarehouse Warehouse @relation("TransferFrom", fields: [fromWarehouseId], references: [id])
+  toWarehouse   Warehouse @relation("TransferTo", fields: [toWarehouseId], references: [id])
+
+  @@index([tenantId])
+  @@index([fromWarehouseId])
+  @@index([toWarehouseId])
+  // El listado ordena por tenant+createdAt desc (guardrail 3: índice con la query).
+  @@index([tenantId, createdAt])
 }
 
 // ==========================================
@@ -852,6 +1058,34 @@ model ProductBatch {
   @@index([tenantId])
   @@index([productId])
   @@index([expiryDate])
+}
+
+// ==========================================
+// CONTROL DE SERIES (números de serie por unidad)
+// ==========================================
+
+model SerialNumber {
+  id         String   @id @default(cuid())
+  tenantId   String
+  productId  String
+  serial     String // número de serie / IMEI / VIN
+  status     String   @default("IN_STOCK") // IN_STOCK | SOLD | RETURNED | VOID
+  saleId     String? // venta donde salió la unidad
+  purchaseId String? // compra/recepción donde entró
+  notes      String?  @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product  Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sale     Sale?     @relation(fields: [saleId], references: [id])
+  purchase Purchase? @relation(fields: [purchaseId], references: [id])
+
+  @@unique([productId, serial])
+  @@index([tenantId])
+  @@index([productId])
+  @@index([status])
+  @@index([serial])
 }
 
 // ==========================================
@@ -1534,6 +1768,12 @@ model Loan {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Índices (Fase 0 blindaje): la cartera filtra por lenderId y ordena por
+  // createdAt; el cobrador filtra por assignedToId; los reportes por estado.
+  @@index([lenderId, createdAt])
+  @@index([lenderId, status])
+  @@index([assignedToId])
 }
 
 // Cuota del plan de pago de un préstamo (Cobranza B2)
@@ -1565,6 +1805,10 @@ model Repayment {
 
   notes     String?  @db.Text
   createdAt DateTime @default(now())
+
+  // Índices (Fase 0 blindaje): la cartera trae los pagos de hoy por préstamo,
+  // filtrando por loanId + rango de paymentDate.
+  @@index([loanId, paymentDate])
 }
 
 model RouteExpense {

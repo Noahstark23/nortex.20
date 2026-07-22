@@ -90,6 +90,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     localStorage.removeItem('nortex_token');
     localStorage.removeItem('nortex_user');
     localStorage.removeItem('nortex_tenant_id');
+    // Purgar el caché de /api/ del SW para que el próximo usuario de una
+    // terminal compartida no reciba datos de negocio del usuario anterior.
+    if (typeof caches !== 'undefined') {
+      caches.delete('nortex-api-cache').catch(() => {});
+    }
     navigate('/login');
   };
 
@@ -234,14 +239,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-3 rounded-xl bg-brand/10 text-brand-300 hover:bg-brand/20 hover:text-brand-200 transition-all active:scale-[0.98] border border-brand/20 shadow-glow shadow-brand/10"
           >
             <Clock size={20} />
-            <span className="font-bold text-sm uppercase tracking-wider">Clock In/Out</span>
+            <span className="font-bold text-sm uppercase tracking-wider">Marcar Entrada/Salida</span>
           </button>
           <button
             onClick={() => navigate('/app/ayuda')}
             className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-3 rounded-xl text-slate-400 hover:bg-white/[0.06] hover:text-white transition-colors"
           >
             <BookOpen size={20} />
-            <span className="font-medium text-sm">Ayuda y Tutoriales</span>
+            <span className="font-medium text-sm">¿Cómo hago…? (Ayuda)</span>
           </button>
           <button
             onClick={handleLogout}

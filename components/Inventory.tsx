@@ -35,6 +35,11 @@ interface Product {
     reorderPoint?: number;
     maxStock?: number;
     defaultSupplierId?: string | null;
+    wholesalePrice?: number | null;
+    wholesaleMinQty?: number | null;
+    packUnit?: string | null;
+    packSize?: number | null;
+    packPrice?: number | null;
 }
 
 interface ProductBatch {
@@ -168,7 +173,7 @@ export default function Inventory() {
 
     // Edit form (solo datos cosméticos/comerciales — sin stock para no disparar Kardex)
     const [editForm, setEditForm] = useState({
-        name: '', description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: '', defaultSupplierId: ''
+        name: '', description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: '', defaultSupplierId: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: ''
     });
     const [editSubmitting, setEditSubmitting] = useState(false);
     const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
@@ -176,7 +181,8 @@ export default function Inventory() {
     // Create form
     const [formData, setFormData] = useState({
         name: '', sku: '', description: '', category: '',
-        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: ''
+        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: '',
+        wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: ''
     });
 
     const token = localStorage.getItem('nortex_token');
@@ -320,6 +326,16 @@ export default function Inventory() {
 
     // Tutorial guiado: si entran con ?tour=inv (desde Ayuda o el checklist).
     useEffect(() => { maybeAutostartTour(); }, []);
+
+    // Alta rápida directa: si entran con ?quick=1 (botón "Agregar producto" del
+    // home Mi Negocio), se abre el modal de 3 campos sin pasos intermedios.
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('quick') === '1') {
+            setQuickAddSKU('');
+            setShowQuickAddModal(true);
+        }
+    }, []);
 
     // ==========================================
     // SCAN DETECTION
@@ -547,7 +563,12 @@ export default function Inventory() {
             imageUrl: product.imageUrl || '',
             reorderPoint: product.reorderPoint ? String(product.reorderPoint) : '',
             maxStock: product.maxStock ? String(product.maxStock) : '',
-            defaultSupplierId: product.defaultSupplierId || ''
+            defaultSupplierId: product.defaultSupplierId || '',
+            wholesalePrice: product.wholesalePrice ? String(product.wholesalePrice) : '',
+            wholesaleMinQty: product.wholesaleMinQty ? String(product.wholesaleMinQty) : '',
+            packUnit: product.packUnit || '',
+            packSize: product.packSize ? String(product.packSize) : '',
+            packPrice: product.packPrice ? String(product.packPrice) : ''
         });
         setShowEditModal(true);
     };
@@ -568,7 +589,12 @@ export default function Inventory() {
                     imageUrl: editForm.imageUrl,
                     reorderPoint: editForm.reorderPoint === '' ? 0 : parseFloat(editForm.reorderPoint),
                     maxStock: editForm.maxStock === '' ? 0 : parseFloat(editForm.maxStock),
-                    defaultSupplierId: editForm.defaultSupplierId || null
+                    defaultSupplierId: editForm.defaultSupplierId || null,
+                    wholesalePrice: editForm.wholesalePrice, // '' limpia el mayoreo (backend → null)
+                    wholesaleMinQty: editForm.wholesaleMinQty,
+                    packUnit: editForm.packUnit,
+                    packSize: editForm.packSize,
+                    packPrice: editForm.packPrice
                     // ⚠️ stock, cost, minStock y unit EXCLUIDOS intencionalmente
                     //    para no disparar el Kardex ni el sistema antirobo
                 })
@@ -654,7 +680,7 @@ export default function Inventory() {
 
             if (res.ok) {
                 setShowCreateModal(false);
-                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: '' });
+                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '' });
                 reload();
                 alert('Producto creado exitosamente');
             } else {
@@ -850,6 +876,10 @@ export default function Inventory() {
                     </div>
                     <div>
                         <h1 className="text-2xl font-bold text-white">Inventario Blindado</h1>
+                        <span className="ml-3 inline-flex gap-2">
+                            <a href="/app/warehouses" className="px-3 py-1.5 bg-slate-800 border border-slate-600 text-slate-200 rounded-lg text-xs font-bold hover:border-brand transition-colors">Bodegas</a>
+                            <a href="/app/serials" className="px-3 py-1.5 bg-slate-800 border border-slate-600 text-slate-200 rounded-lg text-xs font-bold hover:border-brand transition-colors">Series</a>
+                        </span>
                         <p className="text-sm text-slate-400">Sistema Kardex con auditoría inmutable</p>
                     </div>
                 </div>
@@ -1635,6 +1665,68 @@ export default function Inventory() {
                                 />
                             </div>
 
+                            {/* Venta por mayor (distribuidora/miscelánea) */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Precio Mayoreo</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editForm.wholesalePrice}
+                                        onChange={(e) => setEditForm({ ...editForm, wholesalePrice: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="Vacío = sin mayoreo"
+                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Cant. mínima mayoreo</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editForm.wholesaleMinQty}
+                                        onChange={(e) => setEditForm({ ...editForm, wholesaleMinQty: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="Ej: 12 (docena)"
+                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Empaque (caja/fardo): atajo de cantidad + precio por caja en el POS */}
+                            <div className="grid grid-cols-3 gap-3">
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Empaque</label>
+                                    <input
+                                        type="text"
+                                        value={editForm.packUnit}
+                                        onChange={(e) => setEditForm({ ...editForm, packUnit: e.target.value })}
+                                        placeholder="caja / fardo"
+                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Unid. por empaque</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editForm.packSize}
+                                        onChange={(e) => setEditForm({ ...editForm, packSize: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="Ej: 12"
+                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Precio empaque</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editForm.packPrice}
+                                        onChange={(e) => setEditForm({ ...editForm, packPrice: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="Vacío = solo atajo"
+                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    />
+                                </div>
+                            </div>
+
                             {/* Reposición (B2) */}
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
@@ -1809,6 +1901,60 @@ export default function Inventory() {
                                         inputMode="decimal"
                                         value={formData.cost}
                                         onChange={(e) => setFormData({ ...formData, cost: sanitizeDecimalInput(e.target.value) })}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Precio Mayoreo</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={formData.wholesalePrice}
+                                        onChange={(e) => setFormData({ ...formData, wholesalePrice: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="Vacío = sin mayoreo"
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Cant. mínima mayoreo</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={formData.wholesaleMinQty}
+                                        onChange={(e) => setFormData({ ...formData, wholesaleMinQty: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="Ej: 12 (docena)"
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                    />
+                                </div>
+                                <div className="col-span-1">
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Empaque</label>
+                                    <input
+                                        type="text"
+                                        value={formData.packUnit}
+                                        onChange={(e) => setFormData({ ...formData, packUnit: e.target.value })}
+                                        placeholder="caja"
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-brand focus:ring-1 focus:ring-brand"
+                                    />
+                                </div>
+                                <div className="col-span-1">
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Unid./emp.</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={formData.packSize}
+                                        onChange={(e) => setFormData({ ...formData, packSize: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="12"
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Precio empaque</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={formData.packPrice}
+                                        onChange={(e) => setFormData({ ...formData, packPrice: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder="Vacío = solo atajo"
                                         className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
                                     />
                                 </div>

@@ -10,6 +10,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import Decimal from 'decimal.js';
+import { generateMonthlyReport } from './nicaTax';
 
 // Configuración global: 20 dígitos significativos, redondeo HALF_UP (DGI)
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
@@ -28,6 +29,12 @@ const CHART_OF_ACCOUNTS = [
     { code: '1.1.4', name: 'Inventario de Mercancías', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.1.5', name: 'IVA Crédito Fiscal', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.1.6', name: 'Anticipo IR (Retenciones Sufridas)', type: 'ASSET', subtype: 'CURRENT_ASSET' },
+    // Agente bancario (corresponsalía): comisiones devengadas que el banco/red
+    // liquida después (típicamente mensual) — ver docs/PLAN_AGENTE_BANCARIO.md.
+    { code: '1.1.7', name: 'Comisiones por Cobrar Corresponsalía', type: 'ASSET', subtype: 'CURRENT_ASSET' },
+    // Fase D: dólares físicos en gaveta, valuados en C$ al tipo de cambio de
+    // cada transacción (moneda funcional = córdoba, NIIF Nicaragua).
+    { code: '1.1.8', name: 'Caja Moneda Extranjera', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.2.1', name: 'Mobiliario y Equipo', type: 'ASSET', subtype: 'FIXED_ASSET' },
     { code: '1.2.2', name: 'Depreciación Acumulada', type: 'ASSET', subtype: 'FIXED_ASSET' },
     // PASIVOS (2.x.x)
@@ -42,6 +49,9 @@ const CHART_OF_ACCOUNTS = [
     { code: '2.1.9', name: 'Aguinaldo por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     { code: '2.1.10', name: 'Vacaciones por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     { code: '2.1.11', name: 'Indemnización por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    // Agente bancario: efectivo captado por cuenta del banco (depósitos, pagos
+    // de servicios...) — es del banco, NO ingreso del negocio.
+    { code: '2.1.12', name: 'Corresponsalía Bancaria por Liquidar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     // CAPITAL (3.x.x)
     { code: '3.1.1', name: 'Capital Social', type: 'EQUITY', subtype: null },
     { code: '3.1.2', name: 'Utilidades Retenidas', type: 'EQUITY', subtype: null },
@@ -50,6 +60,8 @@ const CHART_OF_ACCOUNTS = [
     { code: '4.1.1', name: 'Ventas', type: 'REVENUE', subtype: null },
     { code: '4.1.2', name: 'Devoluciones sobre Ventas', type: 'REVENUE', subtype: null },
     { code: '4.1.3', name: 'Sobrantes de Inventario', type: 'REVENUE', subtype: null },
+    // Agente bancario: la comisión SÍ es ingreso del negocio (el monto principal no).
+    { code: '4.1.4', name: 'Comisiones por Corresponsalía', type: 'REVENUE', subtype: null },
     // GASTOS (5.x.x)
     { code: '5.1.1', name: 'Costo de Ventas', type: 'EXPENSE', subtype: null },
     { code: '5.1.2', name: 'Pérdida por Merma de Inventario', type: 'EXPENSE', subtype: null },
@@ -157,10 +169,15 @@ export async function createJournalEntry(
         throw new Error(`ASIENTO DESCUADRADO: Debe=${new Decimal(totalDebit).toFixed(2)} Haber=${new Decimal(totalCredit).toFixed(2)}`);
     }
 
-    // Resolve account IDs
-    const accounts = await Promise.all(
-        lines.map(l => getAccount(tenantId, l.accountCode))
-    );
+    // Resolve account IDs — SECUENCIAL a propósito: getAccount auto-siembra el
+    // catálogo cuando falta una cuenta, y dos seedChartOfAccounts (createMany
+    // skipDuplicates) concurrentes sobre el mismo tenant se deadlockean (P2034).
+    // Con 2+ cuentas nuevas del catálogo en un MISMO asiento, el Promise.all
+    // anterior disparaba esos seeds en paralelo y el asiento moría.
+    const accounts: Awaited<ReturnType<typeof getAccount>>[] = [];
+    for (const l of lines) {
+        accounts.push(await getAccount(tenantId, l.accountCode));
+    }
 
     const entry = await tx.journalEntry.create({
         data: {
@@ -271,7 +288,7 @@ export async function recordPurchase(
     tax: number,
     paymentMethod: string
 ) {
-    const subtotal = total - tax;
+    const subtotal = new Decimal(total).minus(tax).toDecimalPlaces(4).toNumber();
     const creditAccount = paymentMethod === 'CREDIT' ? '2.1.1' : '1.1.1';
     const description = paymentMethod === 'CREDIT'
         ? `Compra a crédito #${purchaseId.slice(0, 8)}`
@@ -319,6 +336,103 @@ export async function recordCashIn(
     await createJournalEntry(tx, tenantId, `Entrada: ${description}`, movementId, 'CASH_IN', userId, [
         { accountCode: '1.1.1', debit: amount, credit: 0 },
         { accountCode: '3.1.1', debit: 0, credit: amount },
+    ]);
+}
+
+/**
+ * OPERACIÓN DE AGENTE BANCARIO (corresponsalía) — un solo asiento balanceado.
+ * El monto principal NO es ingreso (es efectivo por cuenta del banco):
+ *   IN  (depósito/pago servicio/remesa enviada):  Debe Caja (1.1.1) / Haber Corresponsalía por Liquidar (2.1.12)
+ *   OUT (retiro/remesa pagada):                   Debe 2.1.12 / Haber Caja (1.1.1)
+ * La comisión SÍ es ingreso, devengada (el banco la paga después):
+ *   Debe Comisiones por Cobrar (1.1.7) / Haber Comisiones por Corresponsalía (4.1.4)
+ * Ver docs/PLAN_AGENTE_BANCARIO.md.
+ */
+export async function recordAgentTransaction(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    agentTxId: string,
+    direction: 'IN' | 'OUT',
+    amount: number,
+    commission: number,
+    description: string,
+    // Fase D: operaciones en USD mueven '1.1.8 Caja Moneda Extranjera' (los
+    // montos ya vienen en C$ al tipo de cambio de la transacción).
+    cashAccount: '1.1.1' | '1.1.8' = '1.1.1'
+) {
+    const lines = direction === 'IN'
+        ? [
+            { accountCode: cashAccount, debit: amount, credit: 0 },
+            { accountCode: '2.1.12', debit: 0, credit: amount },
+        ]
+        : [
+            { accountCode: '2.1.12', debit: amount, credit: 0 },
+            { accountCode: cashAccount, debit: 0, credit: amount },
+        ];
+    if (commission > 0) {
+        lines.push(
+            { accountCode: '1.1.7', debit: commission, credit: 0 },
+            { accountCode: '4.1.4', debit: 0, credit: commission },
+        );
+    }
+    await createJournalEntry(tx, tenantId, `Agente bancario: ${description}`, agentTxId, 'AGENT_TX', userId, lines);
+}
+
+/**
+ * REVERSA de una operación de agente (Fase B): asiento espejo exacto del
+ * original — deshace el movimiento principal Y la comisión devengada.
+ * `direction` es la dirección de la operación ORIGINAL.
+ */
+export async function recordAgentReversal(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    agentTxId: string,
+    originalDirection: 'IN' | 'OUT',
+    amount: number,
+    commission: number,
+    description: string,
+    cashAccount: '1.1.1' | '1.1.8' = '1.1.1'
+) {
+    // Espejo: si el original fue IN (Debe Caja / Haber 2.1.12), la reversa es
+    // Debe 2.1.12 / Haber Caja — y viceversa. Misma cuenta de caja (y mismo
+    // tipo de cambio implícito: montos C$ del registro original).
+    const lines = originalDirection === 'IN'
+        ? [
+            { accountCode: '2.1.12', debit: amount, credit: 0 },
+            { accountCode: cashAccount, debit: 0, credit: amount },
+        ]
+        : [
+            { accountCode: cashAccount, debit: amount, credit: 0 },
+            { accountCode: '2.1.12', debit: 0, credit: amount },
+        ];
+    if (commission > 0) {
+        lines.push(
+            { accountCode: '4.1.4', debit: commission, credit: 0 },
+            { accountCode: '1.1.7', debit: 0, credit: commission },
+        );
+    }
+    await createJournalEntry(tx, tenantId, `Reversa agente: ${description}`, agentTxId, 'AGENT_TX_REVERSAL', userId, lines);
+}
+
+/**
+ * LIQUIDACIÓN DE COMISIONES (Fase B): el banco/red paga a la cuenta bancaria
+ * del negocio las comisiones devengadas.
+ *   Debe: Bancos (1.1.2) / Haber: Comisiones por Cobrar Corresponsalía (1.1.7)
+ * No toca la gaveta (va a cuenta bancaria, no a efectivo).
+ */
+export async function recordAgentCommissionSettlement(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    agreementId: string,
+    amount: number,
+    description: string
+) {
+    await createJournalEntry(tx, tenantId, `Liquidación comisiones: ${description}`, agreementId, 'AGENT_COMMISSION_SETTLEMENT', userId, [
+        { accountCode: '1.1.2', debit: amount, credit: 0 },
+        { accountCode: '1.1.7', debit: 0, credit: amount },
     ]);
 }
 
@@ -536,28 +650,33 @@ export async function getBalanceGeneral(tenantId: string) {
     const liabilities = accounts.filter(a => a.type === 'LIABILITY');
     const equity = accounts.filter(a => a.type === 'EQUITY');
 
-    const totalAssets = assets.reduce((sum, a) => sum + Number(a.balance), 0);
-    const totalLiabilities = liabilities.reduce((sum, a) => sum + Number(a.balance), 0);
-    const totalEquity = equity.reduce((sum, a) => sum + Number(a.balance), 0);
+    // Estado financiero NIIF: acumular y cuadrar con Decimal.js (cero float nativo).
+    const sumBalances = (accs: typeof accounts) =>
+        accs.reduce((sum, a) => sum.plus(a.balance.toString()), new Decimal(0));
+
+    const totalAssets = sumBalances(assets);
+    const totalLiabilities = sumBalances(liabilities);
+    const totalEquity = sumBalances(equity);
 
     // Add net income to equity for balance
     const revenue = accounts.filter(a => a.type === 'REVENUE');
     const expenses = accounts.filter(a => a.type === 'EXPENSE');
-    const totalRevenue = revenue.reduce((sum, a) => sum + Number(a.balance), 0);
-    const totalExpenses = expenses.reduce((sum, a) => sum + Number(a.balance), 0);
-    const netIncome = totalRevenue - totalExpenses;
+    const totalRevenue = sumBalances(revenue);
+    const totalExpenses = sumBalances(expenses);
+    const netIncome = totalRevenue.minus(totalExpenses);
+    const equityPlusIncome = totalEquity.plus(netIncome);
 
     return {
         assets: assets.map(a => ({ code: a.code, name: a.name, balance: Number(a.balance) })),
         liabilities: liabilities.map(a => ({ code: a.code, name: a.name, balance: Number(a.balance) })),
         equity: equity.map(a => ({ code: a.code, name: a.name, balance: Number(a.balance) })),
         totals: {
-            assets: totalAssets,
-            liabilities: totalLiabilities,
-            equity: totalEquity,
-            netIncome,
-            equityPlusIncome: totalEquity + netIncome,
-            isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity + netIncome)) < 0.01,
+            assets: totalAssets.toNumber(),
+            liabilities: totalLiabilities.toNumber(),
+            equity: totalEquity.toNumber(),
+            netIncome: netIncome.toNumber(),
+            equityPlusIncome: equityPlusIncome.toNumber(),
+            isBalanced: totalAssets.minus(totalLiabilities.plus(equityPlusIncome)).abs().lessThan('0.01'),
         }
     };
 }
@@ -607,22 +726,24 @@ export async function getEstadoResultados(tenantId: string, month?: number, year
         };
     }
 
-    // All-time from account balances
+    // All-time from account balances — acumular con Decimal.js (cero float nativo),
+    // igual que la rama con periodo, para un estado financiero NIIF consistente.
     const accounts = await prisma.account.findMany({ where: { tenantId }, orderBy: { code: 'asc' } });
     const revenue = accounts.filter(a => a.type === 'REVENUE');
     const expenses = accounts.filter(a => a.type === 'EXPENSE');
-    const totalRevenue = revenue.reduce((sum, a) => sum + Number(a.balance), 0);
+    const opExpenses = expenses.filter(a => a.code !== '5.1.1');
+    const totalRevenue = revenue.reduce((sum, a) => sum.plus(a.balance.toString()), new Decimal(0));
     const cogsAccount = accounts.find(a => a.code === '5.1.1');
-    const totalCOGS = cogsAccount ? Number(cogsAccount.balance) : 0;
-    const totalExpenses = expenses.filter(a => a.code !== '5.1.1').reduce((sum, a) => sum + Number(a.balance), 0);
+    const totalCOGS = cogsAccount ? new Decimal(cogsAccount.balance.toString()) : new Decimal(0);
+    const totalExpenses = opExpenses.reduce((sum, a) => sum.plus(a.balance.toString()), new Decimal(0));
 
     return {
         period: 'Acumulado',
-        revenue: { total: totalRevenue, lines: revenue.map(a => ({ account: a.name, amount: Number(a.balance) })) },
-        costOfSales: totalCOGS,
-        grossProfit: totalRevenue - totalCOGS,
-        operatingExpenses: { total: totalExpenses, lines: expenses.filter(a => a.code !== '5.1.1').map(a => ({ account: a.name, amount: Number(a.balance) })) },
-        netIncome: totalRevenue - totalCOGS - totalExpenses,
+        revenue: { total: totalRevenue.toNumber(), lines: revenue.map(a => ({ account: a.name, amount: Number(a.balance) })) },
+        costOfSales: totalCOGS.toNumber(),
+        grossProfit: totalRevenue.minus(totalCOGS).toNumber(),
+        operatingExpenses: { total: totalExpenses.toNumber(), lines: opExpenses.map(a => ({ account: a.name, amount: Number(a.balance) })) },
+        netIncome: totalRevenue.minus(totalCOGS).minus(totalExpenses).toNumber(),
     };
 }
 
@@ -638,13 +759,13 @@ const IVA_RETENTION_RATE = 0.15;  // 15% IVA retenido (gran contribuyente)
  * Genera retenciones fiscales del periodo desde las compras registradas.
  * Crea registros en FiscalRetention para cada tipo.
  */
-export async function generateRetentions(tenantId: string, month: number, year: number) {
+export async function generateRetentions(tenantId: string, month: number, year: number, db: AnyTx = prisma) {
     const period = `${year}-${String(month).padStart(2, '0')}`;
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0, 23, 59, 59);
 
     // Verificar si ya se generaron para este periodo
-    const existing = await prisma.fiscalRetention.count({
+    const existing = await db.fiscalRetention.count({
         where: { tenantId, period }
     });
     if (existing > 0) {
@@ -652,7 +773,7 @@ export async function generateRetentions(tenantId: string, month: number, year: 
     }
 
     // Obtener compras del periodo
-    const purchases = await prisma.purchase.findMany({
+    const purchases = await db.purchase.findMany({
         where: {
             tenantId,
             date: { gte: startDate, lte: endDate },
@@ -723,7 +844,7 @@ export async function generateRetentions(tenantId: string, month: number, year: 
 
     // Guardar todas las retenciones
     if (retentions.length > 0) {
-        await prisma.fiscalRetention.createMany({ data: retentions });
+        await db.fiscalRetention.createMany({ data: retentions });
     }
 
     return {
@@ -750,49 +871,79 @@ export async function fiscalClose(tenantId: string, month: number, year: number,
     const balance = await getBalanceGeneral(tenantId);
     const estado = await getEstadoResultados(tenantId, month, year);
 
-    // Generar retenciones si no existen
-    const retentions = await generateRetentions(tenantId, month, year);
-
-    // Guardar o actualizar TaxReport como snapshot del cierre
-    const existingReport = await prisma.taxReport.findFirst({
-        where: { tenantId, month, year }
-    });
-
-    const dRevenue = new Decimal(estado.revenue.total);
-    const ivaCollected = dRevenue.mul('0.15').dividedBy('1.15').toDecimalPlaces(4);
-    const anticipoIR = dRevenue.mul('0.01').toDecimalPlaces(4);
-    const imiAlcaldia = dRevenue.mul('0.01').toDecimalPlaces(4);
+    // Reporte fiscal REAL del mes (IVA pagado, IVA neto y total a pagar netos de
+    // retenciones sufridas). Reutiliza el motor DGI de nicaTax en vez de fijar
+    // ceros que pisarían la fila que saveMonthlyReport ya calcula correctamente.
+    const monthly = await generateMonthlyReport(tenantId, month, year);
 
     const reportData = {
         tenantId,
         month,
         year,
-        totalSales: estado.revenue.total,
-        totalIVACollected: ivaCollected.toNumber(),
-        totalCompras: estado.costOfSales,
-        totalIVAPaid: 0,
-        ivaNeto: 0,
-        anticipoIR: anticipoIR.toNumber(),
-        imiAlcaldia: imiAlcaldia.toNumber(),
-        totalToPay: 0,
+        totalSales: monthly.totalSales,
+        totalIVACollected: monthly.totalIVACollected,
+        totalIVAPaid: monthly.totalIVAPaid,
+        ivaNeto: monthly.ivaNeto,
+        anticipoIR: monthly.anticipoIR,
+        imiAlcaldia: monthly.imiAlcaldia,
+        totalToPay: monthly.totalToPay,
     };
 
-    reportData.ivaNeto = Decimal.max(0, new Decimal(reportData.totalIVACollected).minus(reportData.totalIVAPaid)).toNumber();
+    // Snapshot ANTES del cierre (para el AuditLog inmutable before/after).
+    const [existingReport, existingPeriod] = await Promise.all([
+        prisma.taxReport.findFirst({ where: { tenantId, month, year } }),
+        prisma.fiscalPeriod.findUnique({ where: { tenantId_year_month: { tenantId, year, month } } }),
+    ]);
 
-    if (existingReport) {
-        await prisma.taxReport.update({
-            where: { id: existingReport.id },
-            data: reportData,
+    // Atomicidad del cierre: retenciones + TaxReport + FiscalPeriod + AuditLog en
+    // una sola transacción, para no dejar estado parcial ante un fallo intermedio.
+    let retentions!: Awaited<ReturnType<typeof generateRetentions>>;
+    await prisma.$transaction(async (tx) => {
+        // Generar retenciones si no existen (idempotente por conteo del período).
+        retentions = await generateRetentions(tenantId, month, year, tx);
+
+        // Guardar o actualizar TaxReport como snapshot del cierre.
+        if (existingReport) {
+            await tx.taxReport.update({ where: { id: existingReport.id }, data: reportData });
+        } else {
+            await tx.taxReport.create({ data: reportData });
+        }
+
+        // A3: CERRAR el período → ningún asiento futuro puede caer en este mes.
+        await tx.fiscalPeriod.upsert({
+            where: { tenantId_year_month: { tenantId, year, month } },
+            create: { tenantId, year, month, status: 'CLOSED', closedBy, closedAt: new Date() },
+            update: { status: 'CLOSED', closedBy, closedAt: new Date(), reopenedBy: null, reopenedAt: null, reopenReason: null },
         });
-    } else {
-        await prisma.taxReport.create({ data: reportData });
-    }
 
-    // A3: CERRAR el período → ningún asiento futuro puede caer en este mes.
-    await prisma.fiscalPeriod.upsert({
-        where: { tenantId_year_month: { tenantId, year, month } },
-        create: { tenantId, year, month, status: 'CLOSED', closedBy, closedAt: new Date() },
-        update: { status: 'CLOSED', closedBy, closedAt: new Date(), reopenedBy: null, reopenedAt: null, reopenReason: null },
+        // Traza forense inmutable del cierre (análoga al AuditLog del reopen).
+        await tx.auditLog.create({
+            data: {
+                tenantId,
+                userId: closedBy,
+                action: 'FISCAL_CLOSE',
+                details: JSON.stringify({
+                    period,
+                    month,
+                    year,
+                    before: {
+                        periodStatus: existingPeriod?.status ?? 'OPEN',
+                        taxReport: existingReport
+                            ? {
+                                totalSales: Number(existingReport.totalSales),
+                                totalIVACollected: Number(existingReport.totalIVACollected),
+                                totalIVAPaid: Number(existingReport.totalIVAPaid),
+                                ivaNeto: Number(existingReport.ivaNeto),
+                                anticipoIR: Number(existingReport.anticipoIR),
+                                imiAlcaldia: Number(existingReport.imiAlcaldia),
+                                totalToPay: Number(existingReport.totalToPay),
+                            }
+                            : null,
+                    },
+                    after: { periodStatus: 'CLOSED', taxReport: reportData },
+                }),
+            },
+        });
     });
 
     return {

@@ -1,0 +1,28 @@
+# NORTEX — CI mínima: tipos + tests + build en cada PR y push a main.
+# Sin BD (los tests de lógica pura no la necesitan); el smoke E2E con MySQL
+# vive en .claude/skills/run-nortex/smoke.sh (candidato a job futuro con
+# services: mysql:8).
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Prisma generate (URL dummy — solo tipos)
+        run: DATABASE_URL="mysql://u:p@localhost:3306/db" npx prisma generate --schema=backend/prisma/schema.prisma
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Tests (vitest)
+        run: npm test
+      - name: Build frontend
+        run: npm run build

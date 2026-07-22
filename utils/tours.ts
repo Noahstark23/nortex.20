@@ -101,9 +101,86 @@ export function startPosTour() {
   driver({ ...baseOpts, steps }).drive();
 }
 
+export function startFiadoTour() {
+  const steps: DriveStep[] = [
+    {
+      popover: {
+        title: '📒 Fiado y Cobros',
+        description:
+          'Acá vive todo lo que te deben. Te muestro cómo cobrar sin perder ni una cuenta.',
+      },
+    },
+    {
+      popover: {
+        title: '1. Mirá quién te debe',
+        description:
+          'La lista ordena las deudas por antigüedad: lo más vencido arriba. Eso es lo primero que conviene cobrar — mientras más vieja la deuda, más cuesta recuperarla.',
+      },
+    },
+    {
+      popover: {
+        title: '2. Usá "Cobrar hoy"',
+        description:
+          'El filtro "Cobrar hoy" te deja solo lo vencido y lo que vence pronto: tu lista de tareas del día.',
+      },
+    },
+    {
+      popover: {
+        title: '3. Registrá el abono',
+        description:
+          'Cuando el cliente paga (todo o una parte), registrá el abono ahí mismo. El saldo se actualiza solo.',
+      },
+    },
+    {
+      popover: {
+        title: '4. Avisale por WhatsApp',
+        description:
+          'Podés mandarle al cliente su estado de cuenta por WhatsApp con un botón — recordar amable cobra más que pelear. ¡Eso es todo!',
+      },
+    },
+  ];
+  driver({ ...baseOpts, steps }).drive();
+}
+
+export function startComprasTour() {
+  const steps: DriveStep[] = [
+    {
+      popover: {
+        title: '🚚 Compras',
+        description:
+          'Acá registrás la mercadería que le comprás a tus proveedores. Te muestro por qué vale la pena hacerlo siempre.',
+      },
+    },
+    {
+      popover: {
+        title: '1. Registrá cada compra',
+        description:
+          'Cuando te llega mercadería, registrá la factura del proveedor: qué productos, cuántos y a qué costo.',
+      },
+    },
+    {
+      popover: {
+        title: '2. El stock sube solo',
+        description:
+          'Al guardar la compra, el inventario se actualiza solo y el costo de tus productos se recalcula (promedio ponderado). Nada de contar a mano.',
+      },
+    },
+    {
+      popover: {
+        title: '3. Tu ganancia sale bien',
+        description:
+          'Con el costo real registrado, el sistema te dice cuánto ganás de verdad en cada venta. Comprar sin registrar = ganancia a ciegas.',
+      },
+    },
+  ];
+  driver({ ...baseOpts, steps }).drive();
+}
+
 const TOURS: Record<string, () => void> = {
   pos: startPosTour,
   inv: startInventoryTour,
+  fiado: startFiadoTour,
+  compras: startComprasTour,
 };
 
 /**

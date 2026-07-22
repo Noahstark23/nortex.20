@@ -17,6 +17,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import Decimal from 'decimal.js';
 import { authenticate } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
+import { applyStockDelta } from '../services/stockService';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -32,6 +33,17 @@ interface ReceiptLine {
     expiryDate?: string | null;
 }
 
+// Resumen before/after por producto de una recepción, para el AuditLog inmutable.
+interface ReceiptResult {
+    productId: string;
+    quantityReceived: number;
+    unitCost: string;
+    stockBefore: string;
+    stockAfter: string;
+    costBefore: string;
+    costAfter: string;
+}
+
 /**
  * Aplica la entrada física de una recepción dentro de una transacción:
  * stock (incremento atómico) + costo promedio + lote (FEFO) + Kardex, y suma a
@@ -44,34 +56,41 @@ async function applyGoodsReceipt(
     poId: string,
     poNumber: string,
     lines: { item: { id: string; productId: string; unitCost: Prisma.Decimal }; line: ReceiptLine }[]
-): Promise<void> {
+): Promise<ReceiptResult[]> {
+    const results: ReceiptResult[] = [];
     for (const { item, line } of lines) {
         const recv = line.quantityReceived;
 
         const product = await tx.product.findFirst({
             where: { id: item.productId, tenantId },
-            select: { id: true, stock: true, cost: true, requiresBatchTracking: true },
+            select: { id: true, cost: true, requiresBatchTracking: true },
         });
         if (!product) throw new Error(`Producto no encontrado: ${item.productId}`);
 
+        // Stock por applyStockDelta: incremento ATÓMICO + doble escritura del
+        // desglose por bodega (invariante multi-bodega: Σ bodegas == agregado).
+        // El stockBefore que devuelve (post-lock) es el autoritativo para el costo.
+        const { stockBefore, stockAfter, warehouseId } = await applyStockDelta(tx, {
+            tenantId,
+            productId: product.id,
+            delta: recv,
+            enforceSufficient: false,
+        });
+
         // Costo promedio ponderado con el costo de la OC.
-        const oldStock = new Decimal(product.stock.toString());
+        const oldStock = new Decimal(stockBefore);
         const oldCost = new Decimal(product.cost.toString());
         const unitCost = new Decimal(item.unitCost.toString());
         const recvD = new Decimal(recv);
-        const newStock = oldStock.plus(recvD);
-        const newAvgCost = newStock.gt(0)
-            ? oldStock.mul(oldCost).plus(recvD.mul(unitCost)).dividedBy(newStock).toDecimalPlaces(4).toNumber()
-            : unitCost.toNumber();
+        const newStock = new Decimal(stockAfter);
+        const newAvgCostD = newStock.gt(0)
+            ? oldStock.mul(oldCost).plus(recvD.mul(unitCost)).dividedBy(newStock).toDecimalPlaces(4)
+            : unitCost;
 
-        // Stock: incremento ATÓMICO (sin lost-update); read-back para el Kardex.
-        const updated = await tx.product.update({
+        await tx.product.update({
             where: { id: product.id },
-            data: { stock: { increment: recv }, cost: newAvgCost },
-            select: { stock: true },
+            data: { cost: newAvgCostD.toNumber() },
         });
-        const stockAfter = Number(updated.stock);
-        const stockBefore = stockAfter - recv;
 
         // Control de lotes (FEFO/alertas) si el producto lo requiere y vino lote+vencimiento.
         let batchId: string | null = null;
@@ -103,6 +122,9 @@ async function applyGoodsReceipt(
                 reason: `Recepción de Orden de Compra ${poNumber}`,
                 userId,
                 batchId,
+                // Bodega real del movimiento (la default hoy): sin esto la
+                // reconstrucción del stock por bodega desde Kardex queda coja.
+                warehouseId,
             },
         });
 
@@ -110,7 +132,18 @@ async function applyGoodsReceipt(
             where: { id: item.id },
             data: { quantityReceived: { increment: recv } },
         });
+
+        results.push({
+            productId: product.id,
+            quantityReceived: recv,
+            unitCost: unitCost.toString(),
+            stockBefore: oldStock.toString(),
+            stockAfter: newStock.toString(),
+            costBefore: oldCost.toString(),
+            costAfter: newAvgCostD.toString(),
+        });
     }
+    return results;
 }
 
 // ── GET / — listar órdenes de compra del tenant ─────────────────────────────
@@ -287,7 +320,7 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_WRITE), async (req: an
                 matched.push({ item, line: { ...line, quantityReceived: Number(line.quantityReceived) } });
             }
 
-            await applyGoodsReceipt(tx, tenantId, userId, po.id, po.orderNumber, matched);
+            const receiptResults = await applyGoodsReceipt(tx, tenantId, userId, po.id, po.orderNumber, matched);
 
             // Recalcular estado: RECEIVED si todo lo pedido fue recibido, si no PARTIALLY_RECEIVED.
             const fresh = await tx.purchaseOrder.findUniqueOrThrow({
@@ -307,7 +340,19 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_WRITE), async (req: an
                     tenantId, userId, action: 'PO_RECEIVED',
                     details: JSON.stringify({
                         poId: po.id, orderNumber: po.orderNumber, newStatus,
-                        received: matched.map((m) => ({ itemId: m.item.id, qty: m.line.quantityReceived })),
+                        received: matched.map((m, idx) => {
+                            const r = receiptResults[idx];
+                            return {
+                                itemId: m.item.id,
+                                productId: r.productId,
+                                qty: m.line.quantityReceived,
+                                unitCost: r.unitCost,
+                                stockBefore: r.stockBefore,
+                                stockAfter: r.stockAfter,
+                                costBefore: r.costBefore,
+                                costAfter: r.costAfter,
+                            };
+                        }),
                     }),
                 },
             });

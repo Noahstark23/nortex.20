@@ -25,5 +25,10 @@ RUN NODE_OPTIONS="--max-old-space-size=3072" npm run build:seo
 # 8. Puerto en el que corre la app
 EXPOSE 3000
 
-# 9. Comando para arrancar en producción (con migración automática)
-CMD ["sh", "-c", "npx prisma db push --schema=backend/prisma/schema.prisma --accept-data-loss && NODE_ENV=production npm run start"]
+# 9. Arranque resiliente vía entrypoint (ver scripts/docker-entrypoint.sh):
+#    espera a que MySQL acepte conexiones ANTES del `db push` (el `depends_on` de
+#    compose no espera readiness), reintenta la ventana de primer arranque, y solo
+#    falla si el error es persistente — así un simple race de inicio no quema el
+#    límite de restarts. Sigue SIN --accept-data-loss: un cambio destructivo del
+#    schema hace fallar el arranque en vez de borrar datos (ver nortex-migration).
+CMD ["sh", "scripts/docker-entrypoint.sh"]
