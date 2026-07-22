@@ -289,6 +289,59 @@ export const RouteExpenseSchema = z.object({
 });
 
 // ============================================================
+// AGENTE BANCARIO (corresponsalía) — ver docs/PLAN_AGENTE_BANCARIO.md
+// ============================================================
+
+/** Operaciones de mostrador del agente (define la dirección del efectivo). */
+export const agentOperation = z.enum([
+    'DEPOSITO', 'PAGO_TARJETA', 'PAGO_PRESTAMO', 'PAGO_SERVICIO', 'RECARGA',
+    'REMESA_ENVIO', // cliente envía dinero → entrega efectivo (IN)
+    'RETIRO', 'REMESA_COBRO', // el negocio paga efectivo (OUT)
+]);
+
+/** Config de comisión por operación: monto fijo y/o porcentaje (pactado en contrato). */
+const commissionEntry = z.object({
+    fija: numeric.refine((v) => v >= 0, { message: 'Comisión fija inválida' }).optional(),
+    pct:  numeric.refine((v) => v >= 0 && v <= 100, { message: 'Porcentaje de comisión fuera de rango' }).optional(),
+});
+
+// z.record con clave enum exige TODAS las claves (exhaustivo) en esta versión
+// de Zod → clave string + refine de pertenencia, para aceptar configs parciales
+// ({ DEPOSITO: {...} } sin las otras 7 operaciones).
+const commissionConfigSchema = z.record(z.string(), commissionEntry).refine(
+    (cfg) => Object.keys(cfg).every((k) => (agentOperation.options as string[]).includes(k)),
+    { message: 'Operación desconocida en la configuración de comisiones' },
+);
+
+// POST /api/agent-banking/agreements
+export const CreateAgentAgreementSchema = z.object({
+    name: z.string().trim().min(1, 'El nombre del convenio es obligatorio').max(120),
+    kind: z.enum(['BANCO', 'RED_RECAUDADORA', 'REMESERA']).default('BANCO'),
+    commissionConfig: commissionConfigSchema.optional(),
+});
+
+// PATCH /api/agent-banking/agreements/:id
+export const UpdateAgentAgreementSchema = z.object({
+    name:   z.string().trim().min(1).max(120).optional(),
+    active: z.boolean().optional(),
+    commissionConfig: commissionConfigSchema.optional(),
+}).refine((d) => d.name !== undefined || d.active !== undefined || d.commissionConfig !== undefined, {
+    message: 'Indicá al menos un cambio',
+});
+
+// POST /api/agent-banking/transactions
+export const CreateAgentTxSchema = z.object({
+    agreementId: z.string().min(1, 'agreementId requerido'),
+    operation:   agentOperation,
+    amount:      moneyAmountPositive,
+    currency:    z.enum(['NIO', 'USD']).default('NIO'),
+    // Si no viene, se calcula del commissionConfig del convenio.
+    commission:  moneyAmount.optional(),
+    externalRef: z.string().trim().max(120).optional(),
+    customerRef: z.string().trim().max(160).optional(),
+});
+
+// ============================================================
 // INVENTARIO / CAPITAL
 // ============================================================
 

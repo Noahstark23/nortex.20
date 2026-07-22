@@ -658,6 +658,78 @@ model LedgerHead {
 }
 
 // ==========================================
+// 🏦 AGENTE BANCARIO (corresponsalía no bancaria)
+// El negocio opera como Agente Banpro / Rapibac / ServiRED / Puntoxpress, etc.
+// Nortex registra en paralelo lo que pasa por el dispositivo del banco para
+// cuadrar la caja (shadow ledger): cada operación genera un CashMovement
+// firmado (category AGENTE_BANCARIO) + una AgentTransaction con el detalle.
+// tenantId como escalar (sin relación) para no tocar el bloque de relaciones
+// de Tenant (mismo patrón que WhatsApp); el aislamiento se aplica por query.
+// Ver docs/PLAN_AGENTE_BANCARIO.md.
+// ==========================================
+
+model AgentAgreement {
+  id       String  @id @default(cuid())
+  tenantId String
+  name     String // "Agente Banpro", "Rapibac", "Puntoxpress"...
+  kind     String  @default("BANCO") // BANCO | RED_RECAUDADORA | REMESERA
+  active   Boolean @default(true)
+
+  // Comisiones por tipo de operación, pactadas en el contrato (no son públicas
+  // en Nicaragua → SIEMPRE configurables): { "DEPOSITO": {"fija": 5, "pct": 0}, ... }
+  commissionConfig Json?
+
+  // Saldos espejo del convenio (proyección, se actualiza en la misma tx que
+  // cada operación — patrón Motorizado.walletBalance):
+  // settlementBalance: cuánto le DEBE el negocio al banco por efectivo captado
+  // (+ con depósitos/pagos; − con retiros/remesas pagadas = el banco nos debe).
+  settlementBalance Decimal @default(0) @db.Decimal(18, 4)
+  // Comisiones devengadas aún no liquidadas por el banco (ingreso por cobrar).
+  commissionAccrued Decimal @default(0) @db.Decimal(18, 4)
+
+  createdAt DateTime @default(now())
+
+  transactions AgentTransaction[]
+
+  @@index([tenantId])
+}
+
+model AgentTransaction {
+  id          String @id @default(cuid())
+  tenantId    String
+  agreementId String
+  // 1:1 con el movimiento de caja firmado que la respalda (libro encadenado).
+  cashMovementId String @unique
+  shiftId     String
+  userId      String
+
+  // DEPOSITO | RETIRO | PAGO_TARJETA | PAGO_PRESTAMO | PAGO_SERVICIO |
+  // RECARGA | REMESA_ENVIO | REMESA_COBRO
+  operation String
+  direction String // IN | OUT (espejo del CashMovement.type)
+  amount    Decimal @db.Decimal(18, 4)
+  currency  String  @default("NIO") // NIO | USD
+  // Comisión devengada (NO es efectivo: el banco la liquida después a cuenta).
+  commission Decimal @default(0) @db.Decimal(18, 4)
+
+  // Folio/voucher del dispositivo del banco — el comprobante válido y la
+  // clave de conciliación contra el reporte del banco/red.
+  externalRef String?
+  customerRef String? // referencia opcional del cliente (nombre/teléfono)
+
+  status     String    @default("COMPLETED") // COMPLETED | REVERSED (Fase B)
+  reversedAt DateTime?
+  reversedBy String?
+  createdAt  DateTime  @default(now())
+
+  agreement AgentAgreement @relation(fields: [agreementId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([agreementId, createdAt])
+  @@index([shiftId])
+}
+
+// ==========================================
 // WHATSAPP — Agente IA (RAG) · infraestructura Fase 1
 // tenantId como escalar (sin relación) para no tocar el bloque de
 // relaciones de Tenant; el aislamiento se aplica en la capa de servicio.
