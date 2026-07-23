@@ -288,7 +288,7 @@ const MotorizadosPanel: React.FC = () => {
                     disabled={!selectedLoan || !amount || loading}
                     className={`w-full py-5 rounded-xl font-bold text-xl flex justify-center items-center gap-2 transition-all shadow-lg active:scale-95 ${!selectedLoan || !amount
                         ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                        : 'bg-nortex-accent text-slate-900 hover:bg-emerald-400 shadow-emerald-500/20'
+                        : 'bg-nortex-accent text-white hover:bg-emerald-400 shadow-emerald-500/20'
                         }`}
                 >
                     {loading ? (

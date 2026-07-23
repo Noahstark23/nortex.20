@@ -349,7 +349,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                                         }`}
                                 >
                                     <span
-                                        className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${continuousMode ? 'translate-x-8' : 'translate-x-1'
+                                        className={`inline-block h-5 w-5 transform rounded-full bg-surface-900 transition-transform ${continuousMode ? 'translate-x-8' : 'translate-x-1'
                                             }`}
                                     />
                                 </button>
@@ -390,7 +390,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                         {sessionHistory.length === 0 ? (
                             <div className="text-center py-8">
                                 <p className="text-slate-500 text-sm">Aún no has agregado productos</p>
-                                <p className="text-xs text-slate-600 mt-1">Completa el formulario y guarda</p>
+                                <p className="text-xs text-slate-300 mt-1">Completa el formulario y guarda</p>
                             </div>
                         ) : (
                             <div className="space-y-2">

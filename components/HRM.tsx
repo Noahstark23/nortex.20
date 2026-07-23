@@ -162,7 +162,7 @@ interface AttendanceData { period: string; items: AttendanceRow[]; }
 const formatC = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (s: string) => new Date(s).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: '2-digit' });
 const LEAVE_LABELS: Record<string, string> = { UNPAID: 'Permiso sin goce', VACATION: 'Vacaciones', SICK: 'Incapacidad (INSS)', MATERNITY: 'Maternidad' };
-const LEAVE_BADGE: Record<string, string> = { UNPAID: 'bg-amber-100 text-amber-700', VACATION: 'bg-emerald-100 text-emerald-700', SICK: 'bg-orange-100 text-orange-700', MATERNITY: 'bg-pink-100 text-pink-700' };
+const LEAVE_BADGE: Record<string, string> = { UNPAID: 'bg-amber-500/15 text-amber-400', VACATION: 'bg-emerald-500/15 text-emerald-400', SICK: 'bg-orange-500/15 text-orange-400', MATERNITY: 'bg-pink-100 text-pink-700' };
 const REASON_LABELS: Record<string, string> = { DISMISSAL: 'Despido', RESIGNATION: 'Renuncia', MUTUAL: 'Mutuo acuerdo' };
 const CONTRACT_LABELS: Record<string, string> = { INDETERMINADO: 'Indeterminado', DETERMINADO: 'Determinado', POR_OBRA: 'Por obra' };
 const JORNADA_LABELS: Record<string, string> = { DIURNA: 'Diurna (8h)', NOCTURNA: 'Nocturna (7h)', MIXTA: 'Mixta (7.5h)' };
@@ -860,11 +860,11 @@ const HRM: React.FC = () => {
 
     return (
         <>
-        <div className="flex h-full bg-slate-100 overflow-hidden">
+        <div className="flex h-full bg-white/[0.04] overflow-hidden">
             {/* Sidebar Navigation */}
-            <div className="w-64 bg-white border-r border-slate-200 flex flex-col text-slate-800">
-                <div className="p-6 border-b border-slate-200 text-slate-800">
-                    <h2 className="text-xl font-bold text-nortex-900 flex items-center gap-2">
+            <div className="w-64 bg-surface-900 border-r border-white/[0.06] flex flex-col text-slate-100">
+                <div className="p-6 border-b border-white/[0.06] text-slate-100">
+                    <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
                         <Briefcase className="text-nortex-500" /> Recursos Humanos
                     </h2>
                     <p className="text-xs text-slate-400 mt-1">Nómina & Leyes Laborales NI</p>
@@ -872,38 +872,38 @@ const HRM: React.FC = () => {
                 <nav className="p-4 space-y-2">
                     <button
                         onClick={() => setActiveTab('DASHBOARD')}
-                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'DASHBOARD' ? 'bg-nortex-50 text-nortex-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'DASHBOARD' ? 'bg-nortex-50 text-nortex-700' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
                         <BarChart3 size={18} /> Tablero
-                        {alerts.length > 0 && <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-700">{alerts.length}</span>}
+                        {alerts.length > 0 && <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-red-500/15 text-red-400">{alerts.length}</span>}
                     </button>
                     <button
                         onClick={() => setActiveTab('TEAM')}
-                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'TEAM' ? 'bg-nortex-50 text-nortex-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'TEAM' ? 'bg-nortex-50 text-nortex-700' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
                         <Users size={18} /> Mi Equipo
                     </button>
                     <button
                         onClick={() => setActiveTab('PAYROLL')}
-                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'PAYROLL' ? 'bg-nortex-50 text-nortex-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'PAYROLL' ? 'bg-nortex-50 text-nortex-700' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
                         <Calculator size={18} /> Nómina Nica
                     </button>
                     <button
                         onClick={() => setActiveTab('LIABILITIES')}
-                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'LIABILITIES' ? 'bg-nortex-50 text-nortex-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'LIABILITIES' ? 'bg-nortex-50 text-nortex-700' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
                         <Shield size={18} /> Pasivo Laboral
                         {totalPasivo > 0 && (
-                            <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded font-bold ${pasivoSemaforo === 'red' ? 'bg-red-100 text-red-700' :
-                                pasivoSemaforo === 'yellow' ? 'bg-yellow-100 text-yellow-700' :
-                                    'bg-green-100 text-green-700'
+                            <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded font-bold ${pasivoSemaforo === 'red' ? 'bg-red-500/15 text-red-400' :
+                                pasivoSemaforo === 'yellow' ? 'bg-yellow-500/15 text-yellow-400' :
+                                    'bg-green-500/15 text-green-400'
                                 }`}>!</span>
                         )}
                     </button>
                     <button
                         onClick={() => setActiveTab('AGUINALDO')}
-                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'AGUINALDO' ? 'bg-rose-50 text-rose-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'AGUINALDO' ? 'bg-rose-500/10 text-rose-400' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
                         <Gift size={18} /> Aguinaldo
                     </button>
@@ -912,19 +912,19 @@ const HRM: React.FC = () => {
                     </div>
                     <button
                         onClick={() => setActiveTab('TIME')}
-                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'TIME' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'TIME' ? 'bg-indigo-500/10 text-indigo-400' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
                         <Clock size={18} /> Asistencia y Turnos
                     </button>
                     <button
                         onClick={() => setActiveTab('ADVANCES')}
-                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'ADVANCES' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'ADVANCES' ? 'bg-emerald-500/10 text-emerald-400' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
                         <DollarSign size={18} /> Adelantos (Lending)
                     </button>
                     <button
                         onClick={() => setActiveTab('LEAVES')}
-                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'LEAVES' ? 'bg-amber-50 text-amber-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`w-full text-left px-4 py-3 rounded-lg font-medium flex items-center gap-3 transition-colors ${activeTab === 'LEAVES' ? 'bg-amber-500/10 text-amber-400' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
                         <Calendar size={18} /> Gestión de Vacaciones
                     </button>
@@ -939,14 +939,14 @@ const HRM: React.FC = () => {
                     <div>
                         <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
                             <div>
-                                <h3 className="text-2xl font-bold text-slate-800">Tablero de RRHH</h3>
+                                <h3 className="text-2xl font-bold text-slate-100">Tablero de RRHH</h3>
                                 <p className="text-slate-500 text-sm">Costo laboral real, ausentismo y rotación.</p>
                             </div>
                             <div className="flex items-center gap-2">
-                                <select value={dashMonth} onChange={e => setDashMonth(Number(e.target.value))} className="border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                <select value={dashMonth} onChange={e => setDashMonth(Number(e.target.value))} className="border border-white/10 p-2 rounded bg-surface-900 text-slate-100 text-sm">
                                     {monthNames.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
                                 </select>
-                                <select value={dashYear} onChange={e => setDashYear(Number(e.target.value))} className="border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm font-mono">
+                                <select value={dashYear} onChange={e => setDashYear(Number(e.target.value))} className="border border-white/10 p-2 rounded bg-surface-900 text-slate-100 text-sm font-mono">
                                     {[0, 1, 2].map(d => { const yr = new Date().getFullYear() - d; return <option key={yr} value={yr}>{yr}</option>; })}
                                 </select>
                             </div>
@@ -954,9 +954,9 @@ const HRM: React.FC = () => {
 
                         {alerts.length > 0 && (
                             <div className="mb-6 space-y-2">
-                                <h4 className="text-sm font-bold text-slate-600 flex items-center gap-2"><AlertTriangle size={15} className="text-amber-500" /> Alertas ({alerts.length})</h4>
+                                <h4 className="text-sm font-bold text-slate-300 flex items-center gap-2"><AlertTriangle size={15} className="text-amber-500" /> Alertas ({alerts.length})</h4>
                                 {alerts.map((a, i) => {
-                                    const cls = a.severity === 'danger' ? 'bg-red-50 border-red-200 text-red-700' : a.severity === 'warning' ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-blue-50 border-blue-200 text-blue-700';
+                                    const cls = a.severity === 'danger' ? 'bg-red-500/10 border-red-500/20 text-red-400' : a.severity === 'warning' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400' : 'bg-blue-500/10 border-blue-500/20 text-blue-400';
                                     return <div key={i} className={`text-sm border rounded-lg px-4 py-2.5 ${cls}`}>{a.message}</div>;
                                 })}
                             </div>
@@ -967,7 +967,7 @@ const HRM: React.FC = () => {
                         ) : (
                             <>
                                 {!dashboard.planillaCalculada && (
-                                    <div className="mb-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-2"><AlertTriangle size={15} /> La nómina de este mes aún no se calculó — los montos aparecerán al correrla.</div>
+                                    <div className="mb-4 text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3 flex items-center gap-2"><AlertTriangle size={15} /> La nómina de este mes aún no se calculó — los montos aparecerán al correrla.</div>
                                 )}
                                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                                     {([
@@ -980,7 +980,7 @@ const HRM: React.FC = () => {
                                         { label: 'Ausentismo', value: `${dashboard.ausentismo.diasAusencia} días`, sub: `${dashboard.ausentismo.empleadosConAusencia} colaborador(es)` },
                                         { label: 'Rotación (año)', value: `${dashboard.rotacion.tasaRotacion}%`, sub: `${dashboard.rotacion.bajasAnio} baja(s)` },
                                     ] as { label: string; value: string; sub: string; dark?: boolean }[]).map((m, i) => (
-                                        <div key={i} className={`rounded-xl p-4 border ${m.dark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200'}`}>
+                                        <div key={i} className={`rounded-xl p-4 border ${m.dark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-surface-900 border-white/[0.06]'}`}>
                                             <p className={`text-[11px] uppercase tracking-wider ${m.dark ? 'text-slate-300' : 'text-slate-400'}`}>{m.label}</p>
                                             <p className="text-xl font-bold font-mono mt-1">{m.value}</p>
                                             <p className={`text-[11px] mt-0.5 ${m.dark ? 'text-slate-400' : 'text-slate-400'}`}>{m.sub}</p>
@@ -989,19 +989,19 @@ const HRM: React.FC = () => {
                                 </div>
 
                                 {dashboard.salarioMinimo > 0 && (
-                                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+                                    <div className="bg-surface-900 rounded-xl shadow-sm border border-white/[0.06] p-5">
                                         <div className="flex items-center justify-between mb-3">
-                                            <h4 className="font-bold text-slate-700">Alerta de salario mínimo</h4>
+                                            <h4 className="font-bold text-slate-200">Alerta de salario mínimo</h4>
                                             <span className="text-xs text-slate-500">Mínimo vigente: {formatC(dashboard.salarioMinimo)}</span>
                                         </div>
                                         {dashboard.bajoMinimo.length === 0 ? (
-                                            <p className="text-sm text-emerald-600 flex items-center gap-2"><CheckCircle size={15} /> Ningún colaborador por debajo del salario mínimo.</p>
+                                            <p className="text-sm text-emerald-400 flex items-center gap-2"><CheckCircle size={15} /> Ningún colaborador por debajo del salario mínimo.</p>
                                         ) : (
                                             <div className="space-y-2">
                                                 {dashboard.bajoMinimo.map(e => (
-                                                    <div key={e.id} className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-4 py-2">
-                                                        <span className="font-semibold text-slate-700">{e.name}</span>
-                                                        <span className="font-mono text-red-600 font-bold">{formatC(e.baseSalary)}</span>
+                                                    <div key={e.id} className="flex items-center justify-between bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-2">
+                                                        <span className="font-semibold text-slate-200">{e.name}</span>
+                                                        <span className="font-mono text-red-400 font-bold">{formatC(e.baseSalary)}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -1017,7 +1017,7 @@ const HRM: React.FC = () => {
                 {activeTab === 'TEAM' && (
                     <div>
                         <div className="flex justify-between items-center mb-6">
-                            <h3 className="text-2xl font-bold text-slate-800">Directorio de Personal</h3>
+                            <h3 className="text-2xl font-bold text-slate-100">Directorio de Personal</h3>
                             <button onClick={() => setShowModal(true)} className="bg-nortex-900 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-nortex-800">
                                 <UserPlus size={18} /> Nuevo Colaborador
                             </button>
@@ -1025,22 +1025,22 @@ const HRM: React.FC = () => {
 
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                             {employees.map(emp => (
-                                <div key={emp.id} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all text-slate-800">
+                                <div key={emp.id} className="bg-surface-900 p-6 rounded-xl border border-white/[0.06] shadow-sm hover:shadow-md transition-all text-slate-100">
                                     <div className="flex justify-between items-start mb-4">
-                                        <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-500 font-bold text-xl">
+                                        <div className="w-12 h-12 bg-white/[0.04] rounded-full flex items-center justify-center text-slate-500 font-bold text-xl">
                                             {emp.firstName[0]}{emp.lastName[0]}
                                         </div>
-                                        <span className="px-2 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded uppercase">{emp.role}</span>
+                                        <span className="px-2 py-1 bg-blue-500/10 text-blue-400 text-xs font-bold rounded uppercase">{emp.role}</span>
                                     </div>
-                                    <h4 className="text-lg font-bold text-slate-800">{emp.firstName} {emp.lastName}</h4>
-                                    <div className="mt-4 space-y-2 text-sm text-slate-600">
+                                    <h4 className="text-lg font-bold text-slate-100">{emp.firstName} {emp.lastName}</h4>
+                                    <div className="mt-4 space-y-2 text-sm text-slate-300">
                                         <div className="flex justify-between items-center">
                                             <span className="flex items-center gap-1"><KeyRound size={13} /> PIN:</span>
                                             <div className="flex items-center gap-2">
-                                                <span className="font-mono font-bold bg-slate-100 px-2 py-0.5 rounded tracking-widest">{emp.pin || '****'}</span>
+                                                <span className="font-mono font-bold bg-white/[0.04] px-2 py-0.5 rounded tracking-widest">{emp.pin || '****'}</span>
                                                 <button
                                                     onClick={() => { setPinModal({ id: emp.id, name: `${emp.firstName} ${emp.lastName}` }); setNewPin(''); setPinError(''); }}
-                                                    className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline"
+                                                    className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold underline"
                                                 >
                                                     Cambiar
                                                 </button>
@@ -1066,21 +1066,21 @@ const HRM: React.FC = () => {
                                             <span>Comision:</span>
                                             <span className="font-mono font-bold">{(emp.commissionRate * 100).toFixed(1)}%</span>
                                         </div>
-                                        <div className="flex justify-between border-t border-slate-100 pt-2">
+                                        <div className="flex justify-between border-t border-white/[0.04] pt-2">
                                             <span className="flex items-center gap-1"><Calendar size={13} /> Vacaciones:</span>
-                                            <span className="font-mono font-bold text-emerald-700">{Number(emp.vacationDays || 0).toFixed(1)} días</span>
+                                            <span className="font-mono font-bold text-emerald-400">{Number(emp.vacationDays || 0).toFixed(1)} días</span>
                                         </div>
                                     </div>
                                     <div className="mt-4 flex gap-2">
                                         <button
                                             onClick={() => setExpedienteEmp(emp)}
-                                            className="flex-1 text-xs font-bold text-slate-600 hover:text-white hover:bg-slate-700 border border-slate-200 rounded-lg py-2 transition-colors inline-flex items-center justify-center gap-1.5"
+                                            className="flex-1 text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-700 border border-white/[0.06] rounded-lg py-2 transition-colors inline-flex items-center justify-center gap-1.5"
                                         >
                                             <Briefcase size={13} /> Expediente
                                         </button>
                                         <button
                                             onClick={() => setSettlementEmp(emp)}
-                                            className="flex-1 text-xs font-bold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 rounded-lg py-2 transition-colors inline-flex items-center justify-center gap-1.5"
+                                            className="flex-1 text-xs font-bold text-rose-400 hover:text-white hover:bg-rose-600 border border-rose-500/20 rounded-lg py-2 transition-colors inline-flex items-center justify-center gap-1.5"
                                         >
                                             <FileText size={13} /> Liquidar
                                         </button>
@@ -1096,14 +1096,14 @@ const HRM: React.FC = () => {
                     <div>
                         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
                             <div>
-                                <h3 className="text-2xl font-bold text-slate-800">Nómina Nicaragüense</h3>
+                                <h3 className="text-2xl font-bold text-slate-100">Nómina Nicaragüense</h3>
                                 <p className="text-slate-500 text-sm">Ley 185 - Código del Trabajo | Ley 539 - Seguridad Social</p>
                             </div>
                             <div className="flex items-center gap-3">
                                 <select
                                     value={payrollMonth}
                                     onChange={e => setPayrollMonth(Number(e.target.value))}
-                                    className="border p-2 rounded-lg text-slate-800 bg-white"
+                                    className="border p-2 rounded-lg text-slate-100 bg-surface-900"
                                 >
                                     {monthNames.map((m, i) => (
                                         <option key={i} value={i + 1}>{m}</option>
@@ -1113,7 +1113,7 @@ const HRM: React.FC = () => {
                                     type="number"
                                     value={payrollYear}
                                     onChange={e => setPayrollYear(Number(e.target.value))}
-                                    className="border p-2 rounded-lg w-24 text-slate-800"
+                                    className="border p-2 rounded-lg w-24 text-slate-100"
                                 />
                                 {payrolls.length > 0 && (
                                     <button
@@ -1138,30 +1138,30 @@ const HRM: React.FC = () => {
                         {/* Payroll Summary Cards */}
                         {payrolls.length > 0 && (
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                                <div className="bg-surface-900 p-4 rounded-xl border border-white/[0.06] shadow-sm">
                                     <div className="text-xs text-slate-500 font-mono mb-1">TOTAL BRUTO</div>
-                                    <div className="text-xl font-bold text-slate-800">{formatC(payrolls.reduce((s, p) => s + Number(p.totalIncome), 0))}</div>
+                                    <div className="text-xl font-bold text-slate-100">{formatC(payrolls.reduce((s, p) => s + Number(p.totalIncome), 0))}</div>
                                 </div>
-                                <div className="bg-white p-4 rounded-xl border border-red-100 shadow-sm">
+                                <div className="bg-surface-900 p-4 rounded-xl border border-red-500/15 shadow-sm">
                                     <div className="text-xs text-slate-500 font-mono mb-1">TOTAL INSS + IR</div>
-                                    <div className="text-xl font-bold text-red-600">{formatC(payrolls.reduce((s, p) => s + Number(p.totalDeductions), 0))}</div>
+                                    <div className="text-xl font-bold text-red-400">{formatC(payrolls.reduce((s, p) => s + Number(p.totalDeductions), 0))}</div>
                                 </div>
-                                <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 shadow-sm">
+                                <div className="bg-emerald-500/10 p-4 rounded-xl border border-emerald-500/20 shadow-sm">
                                     <div className="text-xs text-slate-500 font-mono mb-1">TOTAL NETO A PAGAR</div>
-                                    <div className="text-xl font-bold text-emerald-700">{formatC(payrolls.reduce((s, p) => s + Number(p.netSalary), 0))}</div>
+                                    <div className="text-xl font-bold text-emerald-400">{formatC(payrolls.reduce((s, p) => s + Number(p.netSalary), 0))}</div>
                                 </div>
-                                <div className="bg-white p-4 rounded-xl border border-amber-200 shadow-sm">
+                                <div className="bg-surface-900 p-4 rounded-xl border border-amber-500/20 shadow-sm">
                                     <div className="text-xs text-slate-500 font-mono mb-1">COSTO PATRONAL</div>
-                                    <div className="text-xl font-bold text-amber-700">{formatC(payrolls.reduce((s, p) => s + Number(p.inssPatronal) + Number(p.inatec), 0))}</div>
-                                    <div className="text-[10px] text-amber-600">INSS 22.5% + INATEC 2%</div>
+                                    <div className="text-xl font-bold text-amber-400">{formatC(payrolls.reduce((s, p) => s + Number(p.inssPatronal) + Number(p.inatec), 0))}</div>
+                                    <div className="text-[10px] text-amber-400">INSS 22.5% + INATEC 2%</div>
                                 </div>
                             </div>
                         )}
 
                         {/* Payroll Table */}
-                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden text-slate-800">
+                        <div className="bg-surface-900 rounded-xl shadow-sm border border-white/[0.06] overflow-hidden text-slate-100">
                             <table className="w-full text-left">
-                                <thead className="bg-slate-50 text-slate-500 font-mono text-xs uppercase">
+                                <thead className="bg-surface-800/40 text-slate-500 font-mono text-xs uppercase">
                                     <tr>
                                         <th className="p-4">Colaborador</th>
                                         <th className="p-4 text-right">Bruto</th>
@@ -1172,7 +1172,7 @@ const HRM: React.FC = () => {
                                         <th className="p-4 text-center">Acciones</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-100">
+                                <tbody className="divide-y divide-white/[0.04]">
                                     {payrolls.length === 0 ? (
                                         <tr><td colSpan={7} className="p-8 text-center text-slate-400">
                                             Selecciona mes/año y dale "Calcular Nómina" para generar los cálculos.
@@ -1180,24 +1180,24 @@ const HRM: React.FC = () => {
                                     ) : payrolls.map(p => {
                                         const name = p.employee ? `${p.employee.firstName} ${p.employee.lastName}` : (p.employeeName || '');
                                         return (
-                                            <tr key={p.id} className="hover:bg-slate-50">
+                                            <tr key={p.id} className="hover:bg-surface-800/40">
                                                 <td className="p-4">
-                                                    <div className="font-bold text-slate-700">{name}</div>
+                                                    <div className="font-bold text-slate-200">{name}</div>
                                                     {p.employee?.cedula && <div className="text-[10px] text-slate-400">Céd: {p.employee.cedula}</div>}
                                                     <div className="flex flex-wrap gap-2 mt-0.5">
-                                                        {Number(p.horasExtra || 0) > 0 && <span className="text-[10px] text-amber-600 font-bold">+{Number(p.horasExtra)}h extra</span>}
-                                                        {Number(p.diasFeriados || 0) > 0 && <span className="text-[10px] text-indigo-600 font-bold">{Number(p.diasFeriados)}d feriado</span>}
-                                                        {Number(p.diasAusencia || 0) > 0 && <span className="text-[10px] text-orange-600 font-bold">{Number(p.diasAusencia)}d ausencia</span>}
-                                                        {Number(p.judicialDeduction || 0) > 0 && <span className="text-[10px] text-purple-600 font-bold">Judicial -{formatC(Number(p.judicialDeduction))}</span>}
+                                                        {Number(p.horasExtra || 0) > 0 && <span className="text-[10px] text-amber-400 font-bold">+{Number(p.horasExtra)}h extra</span>}
+                                                        {Number(p.diasFeriados || 0) > 0 && <span className="text-[10px] text-indigo-400 font-bold">{Number(p.diasFeriados)}d feriado</span>}
+                                                        {Number(p.diasAusencia || 0) > 0 && <span className="text-[10px] text-orange-400 font-bold">{Number(p.diasAusencia)}d ausencia</span>}
+                                                        {Number(p.judicialDeduction || 0) > 0 && <span className="text-[10px] text-purple-400 font-bold">Judicial -{formatC(Number(p.judicialDeduction))}</span>}
                                                         {Number(p.advanceDeduction || 0) > 0 && <span className="text-[10px] text-red-500 font-bold">Adelanto -{formatC(Number(p.advanceDeduction))}</span>}
                                                     </div>
                                                 </td>
                                                 <td className="p-4 text-right font-mono">{formatC(Number(p.totalIncome))}</td>
                                                 <td className="p-4 text-right font-mono text-red-500">-{formatC(Number(p.inssLaboral))}</td>
                                                 <td className="p-4 text-right font-mono text-red-500">-{formatC(Number(p.irLaboral))}</td>
-                                                <td className="p-4 text-right font-mono font-bold text-emerald-700 text-lg">{formatC(Number(p.netSalary))}</td>
+                                                <td className="p-4 text-right font-mono font-bold text-emerald-400 text-lg">{formatC(Number(p.netSalary))}</td>
                                                 <td className="p-4 text-center">
-                                                    <span className={`px-2 py-1 rounded text-xs font-bold ${p.status === 'PAGADO' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                                                    <span className={`px-2 py-1 rounded text-xs font-bold ${p.status === 'PAGADO' ? 'bg-green-500/15 text-green-400' : 'bg-yellow-500/15 text-yellow-400'
                                                         }`}>
                                                         {p.status === 'PAGADO' ? 'PAGADO' : '⏳ PENDIENTE'}
                                                     </span>
@@ -1206,7 +1206,7 @@ const HRM: React.FC = () => {
                                                     <div className="flex items-center justify-center gap-2">
                                                         <button
                                                             onClick={() => { setShowColilla(p); }}
-                                                            className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
+                                                            className="p-2 bg-blue-500/10 text-blue-400 rounded-lg hover:bg-blue-500/15 transition-colors"
                                                             title="Ver Colilla de Pago"
                                                         >
                                                             <FileText size={16} />
@@ -1214,7 +1214,7 @@ const HRM: React.FC = () => {
                                                         {p.status !== 'PAGADO' && (
                                                             <button
                                                                 onClick={() => handlePayPayroll(p.id)}
-                                                                className="p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors"
+                                                                className="p-2 bg-green-500/10 text-green-400 rounded-lg hover:bg-green-500/15 transition-colors"
                                                                 title="Pagar"
                                                             >
                                                                 <CreditCard size={16} />
@@ -1236,23 +1236,23 @@ const HRM: React.FC = () => {
                     <div>
                         <div className="flex justify-between items-center mb-6">
                             <div>
-                                <h3 className="text-2xl font-bold text-slate-800">Pasivo Laboral Acumulado</h3>
+                                <h3 className="text-2xl font-bold text-slate-100">Pasivo Laboral Acumulado</h3>
                                 <p className="text-slate-500 text-sm">Reserva para Aguinaldo, Vacaciones e Indemnización (Ley 185)</p>
                             </div>
-                            <button onClick={fetchLiabilities} className="text-sm text-nortex-600 hover:text-nortex-800 font-bold">
+                            <button onClick={fetchLiabilities} className="text-sm text-nortex-600 hover:text-slate-200 font-bold">
                                 Actualizar
                             </button>
                         </div>
 
                         {/* Semáforo total */}
-                        <div className={`p-6 rounded-xl border-2 mb-6 ${pasivoSemaforo === 'red' ? 'bg-red-50 border-red-300' :
-                            pasivoSemaforo === 'yellow' ? 'bg-yellow-50 border-yellow-300' :
-                                'bg-green-50 border-green-300'
+                        <div className={`p-6 rounded-xl border-2 mb-6 ${pasivoSemaforo === 'red' ? 'bg-red-500/10 border-red-300' :
+                            pasivoSemaforo === 'yellow' ? 'bg-yellow-500/10 border-yellow-300' :
+                                'bg-green-500/10 border-green-300'
                             }`}>
                             <div className="flex items-center gap-4">
-                                <div className={`p-4 rounded-xl ${pasivoSemaforo === 'red' ? 'bg-red-100 text-red-600' :
-                                    pasivoSemaforo === 'yellow' ? 'bg-yellow-100 text-yellow-600' :
-                                        'bg-green-100 text-green-600'
+                                <div className={`p-4 rounded-xl ${pasivoSemaforo === 'red' ? 'bg-red-500/15 text-red-400' :
+                                    pasivoSemaforo === 'yellow' ? 'bg-yellow-500/15 text-yellow-400' :
+                                        'bg-green-500/15 text-green-400'
                                     }`}>
                                     {pasivoSemaforo === 'red' ? <AlertTriangle size={32} /> :
                                         pasivoSemaforo === 'yellow' ? <Wallet size={32} /> :
@@ -1260,9 +1260,9 @@ const HRM: React.FC = () => {
                                 </div>
                                 <div>
                                     <div className="text-sm font-mono text-slate-500">TOTAL PASIVO LABORAL</div>
-                                    <div className={`text-3xl font-bold ${pasivoSemaforo === 'red' ? 'text-red-700' :
-                                        pasivoSemaforo === 'yellow' ? 'text-yellow-700' :
-                                            'text-green-700'
+                                    <div className={`text-3xl font-bold ${pasivoSemaforo === 'red' ? 'text-red-400' :
+                                        pasivoSemaforo === 'yellow' ? 'text-yellow-400' :
+                                            'text-green-400'
                                         }`}>{formatC(totalPasivo)}</div>
                                     <div className="text-sm mt-1 text-slate-500">
                                         {pasivoSemaforo === 'red' ? 'Alerta: Reserva insuficiente. Provisione fondos inmediatamente.' :
@@ -1274,9 +1274,9 @@ const HRM: React.FC = () => {
                         </div>
 
                         {/* Liabilities Table */}
-                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden text-slate-800">
+                        <div className="bg-surface-900 rounded-xl shadow-sm border border-white/[0.06] overflow-hidden text-slate-100">
                             <table className="w-full text-left">
-                                <thead className="bg-slate-50 text-slate-500 font-mono text-xs uppercase">
+                                <thead className="bg-surface-800/40 text-slate-500 font-mono text-xs uppercase">
                                     <tr>
                                         <th className="p-4">Colaborador</th>
                                         <th className="p-4 text-center">Antigüedad</th>
@@ -1286,19 +1286,19 @@ const HRM: React.FC = () => {
                                         <th className="p-4 text-right">Total Pasivo</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-100">
+                                <tbody className="divide-y divide-white/[0.04]">
                                     {liabilities.map(l => (
-                                        <tr key={l.employeeId} className="hover:bg-slate-50">
-                                            <td className="p-4 font-bold text-slate-700">{l.employeeName}</td>
+                                        <tr key={l.employeeId} className="hover:bg-surface-800/40">
+                                            <td className="p-4 font-bold text-slate-200">{l.employeeName}</td>
                                             <td className="p-4 text-center">
-                                                <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded text-xs font-bold">
+                                                <span className="bg-blue-500/10 text-blue-400 px-2 py-1 rounded text-xs font-bold">
                                                     {l.monthsWorked} meses
                                                 </span>
                                             </td>
                                             <td className="p-4 text-right font-mono">{formatC(l.vacacionesPendientes)}</td>
                                             <td className="p-4 text-right font-mono">{formatC(l.aguinaldoAcumulado)}</td>
                                             <td className="p-4 text-right font-mono">{formatC(l.indemnizacion)}</td>
-                                            <td className="p-4 text-right font-mono font-bold text-red-600 text-lg">{formatC(l.totalPasivo)}</td>
+                                            <td className="p-4 text-right font-mono font-bold text-red-400 text-lg">{formatC(l.totalPasivo)}</td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -1312,66 +1312,66 @@ const HRM: React.FC = () => {
                     <div>
                         <div className="flex justify-between items-center mb-6">
                             <div>
-                                <h3 className="text-2xl font-bold text-slate-800">Asistencia y Feriados</h3>
+                                <h3 className="text-2xl font-bold text-slate-100">Asistencia y Feriados</h3>
                                 <p className="text-slate-500 text-sm">Marcaje por PIN y calendario de feriados (los trabajados se pagan al doble, Art. 68).</p>
                             </div>
                         </div>
 
-                        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 mb-6 flex items-center gap-3">
+                        <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-4 mb-6 flex items-center gap-3">
                             <Clock className="w-8 h-8 text-indigo-400 shrink-0" />
-                            <p className="text-sm text-indigo-700">Usa el botón <strong>"CLOCK IN/OUT"</strong> del menú principal para marcar asistencia con el PIN. Las horas extra y los feriados trabajados se suman a la nómina del mes automáticamente.</p>
+                            <p className="text-sm text-indigo-400">Usa el botón <strong>"CLOCK IN/OUT"</strong> del menú principal para marcar asistencia con el PIN. Las horas extra y los feriados trabajados se suman a la nómina del mes automáticamente.</p>
                         </div>
 
-                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                            <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-slate-100">
-                                <h4 className="font-bold text-slate-700">Calendario de feriados</h4>
-                                <select value={holidayYear} onChange={e => setHolidayYear(Number(e.target.value))} className="border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm font-mono">
+                        <div className="bg-surface-900 rounded-xl shadow-sm border border-white/[0.06] overflow-hidden">
+                            <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-white/[0.04]">
+                                <h4 className="font-bold text-slate-200">Calendario de feriados</h4>
+                                <select value={holidayYear} onChange={e => setHolidayYear(Number(e.target.value))} className="border border-white/10 p-2 rounded bg-surface-900 text-slate-100 text-sm font-mono">
                                     {[0, 1, 2].map(d => { const yr = new Date().getFullYear() - d + 1; return <option key={yr} value={yr}>{yr}</option>; })}
                                 </select>
                             </div>
 
-                            <form onSubmit={addHoliday} className="flex flex-wrap items-end gap-3 p-4 bg-slate-50 border-b border-slate-100">
+                            <form onSubmit={addHoliday} className="flex flex-wrap items-end gap-3 p-4 bg-surface-800/40 border-b border-white/[0.04]">
                                 <div>
                                     <label className="text-xs font-bold text-slate-500">Fecha</label>
-                                    <input type="date" required value={holidayForm.date} onChange={e => setHolidayForm({ ...holidayForm, date: e.target.value })} className="block border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                    <input type="date" required value={holidayForm.date} onChange={e => setHolidayForm({ ...holidayForm, date: e.target.value })} className="block border border-white/10 p-2 rounded text-slate-100 text-sm font-mono" />
                                 </div>
                                 <div className="flex-1 min-w-[160px]">
                                     <label className="text-xs font-bold text-slate-500">Nombre (fiesta local)</label>
-                                    <input required value={holidayForm.name} onChange={e => setHolidayForm({ ...holidayForm, name: e.target.value })} placeholder="Ej: Fiestas patronales" className="block w-full border border-slate-300 p-2 rounded text-slate-800 text-sm" />
+                                    <input required value={holidayForm.name} onChange={e => setHolidayForm({ ...holidayForm, name: e.target.value })} placeholder="Ej: Fiestas patronales" className="block w-full border border-white/10 p-2 rounded text-slate-100 text-sm" />
                                 </div>
                                 <button type="submit" disabled={savingHoliday} className="bg-indigo-600 text-white font-bold px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm inline-flex items-center gap-1.5"><Plus size={15} /> {savingHoliday ? 'Guardando…' : 'Agregar'}</button>
                             </form>
 
-                            <div className="divide-y divide-slate-100">
+                            <div className="divide-y divide-white/[0.04]">
                                 {holidays.length === 0 ? (
                                     <p className="p-8 text-center text-slate-400 text-sm">Cargando feriados…</p>
                                 ) : holidays.map(h => (
-                                    <div key={h.id} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50">
+                                    <div key={h.id} className="flex items-center justify-between px-4 py-3 hover:bg-surface-800/40">
                                         <div className="flex items-center gap-3">
                                             <span className="font-mono text-xs text-slate-500 w-28">{fmtHoliday(h.date)}</span>
-                                            <span className="font-semibold text-slate-700">{h.name}</span>
+                                            <span className="font-semibold text-slate-200">{h.name}</span>
                                             {h.national
-                                                ? <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-500 font-bold">Nacional</span>
-                                                : <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">Local</span>}
+                                                ? <span className="text-[10px] px-2 py-0.5 rounded bg-white/[0.04] text-slate-500 font-bold">Nacional</span>
+                                                : <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-400 font-bold">Local</span>}
                                         </div>
                                         {!h.national && (
-                                            <button onClick={() => deleteHoliday(h.id)} className="text-rose-500 hover:text-rose-700" title="Eliminar"><X size={16} /></button>
+                                            <button onClick={() => deleteHoliday(h.id)} className="text-rose-500 hover:text-rose-400" title="Eliminar"><X size={16} /></button>
                                         )}
                                     </div>
                                 ))}
                             </div>
                         </div>
 
-                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-6">
-                            <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-slate-100">
-                                <h4 className="font-bold text-slate-700">Reporte de asistencia</h4>
-                                <select value={attMonth} onChange={e => setAttMonth(Number(e.target.value))} className="border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                        <div className="bg-surface-900 rounded-xl shadow-sm border border-white/[0.06] overflow-hidden mt-6">
+                            <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-white/[0.04]">
+                                <h4 className="font-bold text-slate-200">Reporte de asistencia</h4>
+                                <select value={attMonth} onChange={e => setAttMonth(Number(e.target.value))} className="border border-white/10 p-2 rounded bg-surface-900 text-slate-100 text-sm">
                                     {monthNames.map((m, i) => <option key={i} value={i + 1}>{m} {holidayYear}</option>)}
                                 </select>
                             </div>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left text-sm">
-                                    <thead className="bg-slate-50 text-slate-500 font-mono text-xs uppercase">
+                                    <thead className="bg-surface-800/40 text-slate-500 font-mono text-xs uppercase">
                                         <tr>
                                             <th className="p-3">Colaborador</th>
                                             <th className="p-3 text-center">Jornada</th>
@@ -1381,17 +1381,17 @@ const HRM: React.FC = () => {
                                             <th className="p-3 text-center">Ausencias</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-slate-100">
+                                    <tbody className="divide-y divide-white/[0.04]">
                                         {!attendance || attendance.items.length === 0 ? (
                                             <tr><td colSpan={6} className="p-6 text-center text-slate-400">Sin colaboradores activos.</td></tr>
                                         ) : attendance.items.map(a => (
-                                            <tr key={a.employeeId} className="hover:bg-slate-50">
-                                                <td className="p-3 font-semibold text-slate-700">{a.name}</td>
+                                            <tr key={a.employeeId} className="hover:bg-surface-800/40">
+                                                <td className="p-3 font-semibold text-slate-200">{a.name}</td>
                                                 <td className="p-3 text-center text-xs text-slate-500">{JORNADA_LABELS[a.jornada] || a.jornada}</td>
                                                 <td className="p-3 text-center font-mono">{a.diasTrabajados}</td>
-                                                <td className="p-3 text-center font-mono text-amber-600">{a.horasExtra > 0 ? `${a.horasExtra}h` : '—'}</td>
-                                                <td className="p-3 text-center font-mono text-indigo-600">{a.diasFeriados > 0 ? a.diasFeriados : '—'}</td>
-                                                <td className="p-3 text-center font-mono text-orange-600">{a.diasAusencia > 0 ? a.diasAusencia : '—'}</td>
+                                                <td className="p-3 text-center font-mono text-amber-400">{a.horasExtra > 0 ? `${a.horasExtra}h` : '—'}</td>
+                                                <td className="p-3 text-center font-mono text-indigo-400">{a.diasFeriados > 0 ? a.diasFeriados : '—'}</td>
+                                                <td className="p-3 text-center font-mono text-orange-400">{a.diasAusencia > 0 ? a.diasAusencia : '—'}</td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -1406,27 +1406,27 @@ const HRM: React.FC = () => {
                     <div>
                         <div className="flex justify-between items-center mb-6">
                             <div>
-                                <h3 className="text-2xl font-bold text-slate-800">Micro-Préstamos Nortex</h3>
+                                <h3 className="text-2xl font-bold text-slate-100">Micro-Préstamos Nortex</h3>
                                 <p className="text-slate-500 text-sm">Adelantos de salario (Capital Financiero Integrado)</p>
                             </div>
                         </div>
-                        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-6 mb-6">
+                        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-6 mb-6">
                             <div className="flex items-start gap-4">
-                                <div className="p-3 bg-emerald-100 text-emerald-600 rounded-lg">
+                                <div className="p-3 bg-emerald-500/15 text-emerald-400 rounded-lg">
                                     <DollarSign size={24} />
                                 </div>
                                 <div>
-                                    <h4 className="font-bold text-emerald-800 text-lg">Financiamiento de Nómina Inteligente</h4>
-                                    <p className="text-emerald-700 text-sm mt-1">
+                                    <h4 className="font-bold text-emerald-300 text-lg">Financiamiento de Nómina Inteligente</h4>
+                                    <p className="text-emerald-400 text-sm mt-1">
                                         Nortex te presta liquidez instantánea para que apruebes los adelantos de tus empleados sin descapitalizar el negocio. Las cuotas se deducen automáticamente en la quincena.
                                     </p>
                                 </div>
                             </div>
                         </div>
 
-                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 text-slate-800 overflow-hidden">
+                        <div className="bg-surface-900 rounded-xl shadow-sm border border-white/[0.06] text-slate-100 overflow-hidden">
                             <table className="w-full text-left">
-                                <thead className="bg-slate-50 text-slate-500 font-mono text-xs uppercase">
+                                <thead className="bg-surface-800/40 text-slate-500 font-mono text-xs uppercase">
                                     <tr>
                                         <th className="p-4">Solicitante</th>
                                         <th className="p-4 text-center">Fecha</th>
@@ -1436,7 +1436,7 @@ const HRM: React.FC = () => {
                                         <th className="p-4 text-center">Estado</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-100">
+                                <tbody className="divide-y divide-white/[0.04]">
                                     {advancesList.length === 0 ? (
                                         <tr>
                                             <td colSpan={6} className="p-8 text-center text-slate-400">
@@ -1444,20 +1444,20 @@ const HRM: React.FC = () => {
                                             </td>
                                         </tr>
                                     ) : advancesList.map(a => (
-                                        <tr key={a.id} className="hover:bg-slate-50">
-                                            <td className="p-4 font-bold text-slate-700">{a.employee ? `${a.employee.firstName} ${a.employee.lastName}` : '—'}</td>
+                                        <tr key={a.id} className="hover:bg-surface-800/40">
+                                            <td className="p-4 font-bold text-slate-200">{a.employee ? `${a.employee.firstName} ${a.employee.lastName}` : '—'}</td>
                                             <td className="p-4 text-center text-xs text-slate-400">—</td>
                                             <td className="p-4 text-slate-500 text-sm">Adelanto de salario</td>
-                                            <td className="p-4 text-right font-mono font-bold text-slate-700">{formatC(a.amount)}</td>
-                                            <td className="p-4 text-right font-mono text-emerald-600">{formatC(a.fee)}</td>
+                                            <td className="p-4 text-right font-mono font-bold text-slate-200">{formatC(a.amount)}</td>
+                                            <td className="p-4 text-right font-mono text-emerald-400">{formatC(a.fee)}</td>
                                             <td className="p-4 text-center">
                                                 {a.status === 'PENDING' ? (
                                                     <div className="flex items-center justify-center gap-2">
-                                                        <button onClick={() => decideAdvance(a.id, 'APPROVED')} className="px-2 py-1 bg-green-50 text-green-700 rounded text-xs font-bold hover:bg-green-100">Aprobar</button>
-                                                        <button onClick={() => decideAdvance(a.id, 'REJECTED')} className="px-2 py-1 bg-red-50 text-red-600 rounded text-xs font-bold hover:bg-red-100">Rechazar</button>
+                                                        <button onClick={() => decideAdvance(a.id, 'APPROVED')} className="px-2 py-1 bg-green-500/10 text-green-400 rounded text-xs font-bold hover:bg-green-500/15">Aprobar</button>
+                                                        <button onClick={() => decideAdvance(a.id, 'REJECTED')} className="px-2 py-1 bg-red-500/10 text-red-400 rounded text-xs font-bold hover:bg-red-500/15">Rechazar</button>
                                                     </div>
                                                 ) : (
-                                                    <span className={`px-2 py-1 rounded text-xs font-bold ${a.status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                                    <span className={`px-2 py-1 rounded text-xs font-bold ${a.status === 'REJECTED' ? 'bg-red-500/15 text-red-400' : 'bg-green-500/15 text-green-400'}`}>
                                                         {a.status === 'APPROVED' ? 'Aprobado' : a.status === 'DEDUCTED' ? 'Descontado' : a.status === 'REJECTED' ? 'Rechazado' : a.status}
                                                     </span>
                                                 )}
@@ -1475,23 +1475,23 @@ const HRM: React.FC = () => {
                     <div>
                         <div className="flex justify-between items-center mb-6">
                             <div>
-                                <h3 className="text-2xl font-bold text-slate-800">Gestión de Ausencias</h3>
+                                <h3 className="text-2xl font-bold text-slate-100">Gestión de Ausencias</h3>
                                 <p className="text-slate-500 text-sm">Vacaciones, Incapacidades INSS y Permisos. Los <strong>permisos sin goce</strong> descuentan días de la nómina del mes.</p>
                             </div>
                         </div>
 
                         {/* Registrar ausencia */}
-                        <form onSubmit={handleCreateLeave} className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6 grid sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+                        <form onSubmit={handleCreateLeave} className="bg-surface-900 rounded-xl shadow-sm border border-white/[0.06] p-5 mb-6 grid sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
                             <div>
                                 <label className="text-xs font-bold text-slate-500">Colaborador</label>
-                                <select required value={leaveForm.employeeId} onChange={e => setLeaveForm({ ...leaveForm, employeeId: e.target.value })} className="w-full border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                <select required value={leaveForm.employeeId} onChange={e => setLeaveForm({ ...leaveForm, employeeId: e.target.value })} className="w-full border border-white/10 p-2 rounded bg-surface-900 text-slate-100 text-sm">
                                     <option value="">Seleccionar…</option>
                                     {employees.map(e => <option key={e.id} value={e.id}>{e.firstName} {e.lastName}</option>)}
                                 </select>
                             </div>
                             <div>
                                 <label className="text-xs font-bold text-slate-500">Tipo</label>
-                                <select value={leaveForm.type} onChange={e => setLeaveForm({ ...leaveForm, type: e.target.value })} className="w-full border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                <select value={leaveForm.type} onChange={e => setLeaveForm({ ...leaveForm, type: e.target.value })} className="w-full border border-white/10 p-2 rounded bg-surface-900 text-slate-100 text-sm">
                                     <option value="UNPAID">Permiso sin goce</option>
                                     <option value="VACATION">Vacaciones</option>
                                     <option value="SICK">Incapacidad (INSS)</option>
@@ -1500,28 +1500,28 @@ const HRM: React.FC = () => {
                             </div>
                             <div>
                                 <label className="text-xs font-bold text-slate-500">Desde</label>
-                                <input type="date" required value={leaveForm.startDate} onChange={e => setLeaveForm({ ...leaveForm, startDate: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                <input type="date" required value={leaveForm.startDate} onChange={e => setLeaveForm({ ...leaveForm, startDate: e.target.value })} className="w-full border border-white/10 p-2 rounded text-slate-100 text-sm font-mono" />
                             </div>
                             <div>
                                 <label className="text-xs font-bold text-slate-500">Hasta</label>
-                                <input type="date" required value={leaveForm.endDate} onChange={e => setLeaveForm({ ...leaveForm, endDate: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                <input type="date" required value={leaveForm.endDate} onChange={e => setLeaveForm({ ...leaveForm, endDate: e.target.value })} className="w-full border border-white/10 p-2 rounded text-slate-100 text-sm font-mono" />
                             </div>
                             <button type="submit" disabled={savingLeave} className="bg-amber-600 text-white font-bold py-2 rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50">
                                 {savingLeave ? 'Guardando…' : 'Registrar'}
                             </button>
                             <div className="sm:col-span-2 lg:col-span-5">
-                                <input value={leaveForm.reason} onChange={e => setLeaveForm({ ...leaveForm, reason: e.target.value })} placeholder="Justificación (opcional)" className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm" />
+                                <input value={leaveForm.reason} onChange={e => setLeaveForm({ ...leaveForm, reason: e.target.value })} placeholder="Justificación (opcional)" className="w-full border border-white/10 p-2 rounded text-slate-100 text-sm" />
                             </div>
                             {leaveForm.type === 'VACATION' && leaveForm.employeeId && (
-                                <div className="sm:col-span-2 lg:col-span-5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                                <div className="sm:col-span-2 lg:col-span-5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
                                     Saldo de vacaciones disponible: <strong>{Number(employees.find(e => e.id === leaveForm.employeeId)?.vacationDays || 0).toFixed(1)} días</strong> · se descontará al registrar.
                                 </div>
                             )}
                         </form>
 
-                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 text-slate-800 overflow-hidden">
+                        <div className="bg-surface-900 rounded-xl shadow-sm border border-white/[0.06] text-slate-100 overflow-hidden">
                             <table className="w-full text-left">
-                                <thead className="bg-slate-50 text-slate-500 font-mono text-xs uppercase">
+                                <thead className="bg-surface-800/40 text-slate-500 font-mono text-xs uppercase">
                                     <tr>
                                         <th className="p-4">Colaborador</th>
                                         <th className="p-4 text-center">Tipo</th>
@@ -1530,7 +1530,7 @@ const HRM: React.FC = () => {
                                         <th className="p-4 text-center">Estado</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-100">
+                                <tbody className="divide-y divide-white/[0.04]">
                                     {leaves.length === 0 ? (
                                         <tr>
                                             <td colSpan={5} className="p-8 text-center text-slate-400">
@@ -1538,21 +1538,21 @@ const HRM: React.FC = () => {
                                             </td>
                                         </tr>
                                     ) : leaves.map(l => (
-                                        <tr key={l.id} className="hover:bg-slate-50">
-                                            <td className="p-4 font-bold text-slate-700">{l.employee ? `${l.employee.firstName} ${l.employee.lastName}` : '—'}</td>
+                                        <tr key={l.id} className="hover:bg-surface-800/40">
+                                            <td className="p-4 font-bold text-slate-200">{l.employee ? `${l.employee.firstName} ${l.employee.lastName}` : '—'}</td>
                                             <td className="p-4 text-center">
-                                                <span className={`px-2 py-1 rounded text-xs font-bold ${LEAVE_BADGE[l.type] || 'bg-slate-100 text-slate-600'}`}>{LEAVE_LABELS[l.type] || l.type}</span>
+                                                <span className={`px-2 py-1 rounded text-xs font-bold ${LEAVE_BADGE[l.type] || 'bg-white/[0.04] text-slate-300'}`}>{LEAVE_LABELS[l.type] || l.type}</span>
                                             </td>
-                                            <td className="p-4 text-center font-mono text-xs text-slate-600">{fmtDate(l.startDate)} → {fmtDate(l.endDate)}</td>
+                                            <td className="p-4 text-center font-mono text-xs text-slate-300">{fmtDate(l.startDate)} → {fmtDate(l.endDate)}</td>
                                             <td className="p-4 text-sm text-slate-500">{l.reason || '—'}</td>
                                             <td className="p-4 text-center">
                                                 {l.status === 'PENDING' ? (
                                                     <div className="flex items-center justify-center gap-2">
-                                                        <button onClick={() => decideLeave(l.id, 'APPROVED')} className="px-2 py-1 bg-green-50 text-green-700 rounded text-xs font-bold hover:bg-green-100">Aprobar</button>
-                                                        <button onClick={() => decideLeave(l.id, 'REJECTED')} className="px-2 py-1 bg-red-50 text-red-600 rounded text-xs font-bold hover:bg-red-100">Rechazar</button>
+                                                        <button onClick={() => decideLeave(l.id, 'APPROVED')} className="px-2 py-1 bg-green-500/10 text-green-400 rounded text-xs font-bold hover:bg-green-500/15">Aprobar</button>
+                                                        <button onClick={() => decideLeave(l.id, 'REJECTED')} className="px-2 py-1 bg-red-500/10 text-red-400 rounded text-xs font-bold hover:bg-red-500/15">Rechazar</button>
                                                     </div>
                                                 ) : (
-                                                    <span className={`px-2 py-1 rounded text-xs font-bold ${l.status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{l.status === 'APPROVED' ? 'Aprobada' : l.status === 'REJECTED' ? 'Rechazada' : l.status}</span>
+                                                    <span className={`px-2 py-1 rounded text-xs font-bold ${l.status === 'REJECTED' ? 'bg-red-500/15 text-red-400' : 'bg-green-500/15 text-green-400'}`}>{l.status === 'APPROVED' ? 'Aprobada' : l.status === 'REJECTED' ? 'Rechazada' : l.status}</span>
                                                 )}
                                             </td>
                                         </tr>
@@ -1568,11 +1568,11 @@ const HRM: React.FC = () => {
                     <div>
                         <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
                             <div>
-                                <h3 className="text-2xl font-bold text-slate-800">Aguinaldo (Treceavo Mes)</h3>
+                                <h3 className="text-2xl font-bold text-slate-100">Aguinaldo (Treceavo Mes)</h3>
                                 <p className="text-slate-500 text-sm">{aguinaldo?.periodo ? `${aguinaldo.periodo} · ` : ''}Exento de INSS e IR (Arts. 93-95)</p>
                             </div>
                             <div className="flex items-center gap-3">
-                                <select value={aguinaldoYear} onChange={e => setAguinaldoYear(Number(e.target.value))} className="border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm font-mono">
+                                <select value={aguinaldoYear} onChange={e => setAguinaldoYear(Number(e.target.value))} className="border border-white/10 p-2 rounded bg-surface-900 text-slate-100 text-sm font-mono">
                                     {[0, 1, 2].map(d => { const yr = new Date().getFullYear() - d; return <option key={yr} value={yr}>{yr}</option>; })}
                                 </select>
                                 <button onClick={handleRunAguinaldo} disabled={runningAg || !aguinaldo || aguinaldo.pendientes === 0}
@@ -1585,30 +1585,30 @@ const HRM: React.FC = () => {
                         {aguinaldo && (() => {
                             const vencidoSinPagar = aguinaldo.diasParaVencer < 0 && aguinaldo.pendientes > 0;
                             const todoPagado = aguinaldo.pendientes === 0;
-                            const cardCls = vencidoSinPagar ? 'bg-red-50 border-red-300' : todoPagado ? 'bg-green-50 border-green-300' : 'bg-blue-50 border-blue-300';
+                            const cardCls = vencidoSinPagar ? 'bg-red-500/10 border-red-300' : todoPagado ? 'bg-green-500/10 border-green-300' : 'bg-blue-500/10 border-blue-300';
                             return (
                                 <div className={`p-5 rounded-xl border-2 mb-6 flex flex-wrap items-center justify-between gap-3 ${cardCls}`}>
                                     <div>
                                         {vencidoSinPagar ? (
-                                            <p className="font-bold text-red-700 flex items-center gap-2"><AlertTriangle size={18} /> Vencido hace {Math.abs(aguinaldo.diasParaVencer)} días — multa de un día de salario por día de retraso (Art. 95)</p>
+                                            <p className="font-bold text-red-400 flex items-center gap-2"><AlertTriangle size={18} /> Vencido hace {Math.abs(aguinaldo.diasParaVencer)} días — multa de un día de salario por día de retraso (Art. 95)</p>
                                         ) : todoPagado ? (
-                                            <p className="font-bold text-green-700 flex items-center gap-2"><CheckCircle size={18} /> Aguinaldo {aguinaldoYear} pagado a todos los colaboradores</p>
+                                            <p className="font-bold text-green-400 flex items-center gap-2"><CheckCircle size={18} /> Aguinaldo {aguinaldoYear} pagado a todos los colaboradores</p>
                                         ) : (
-                                            <p className="font-bold text-blue-700 flex items-center gap-2"><Clock size={18} /> Faltan {aguinaldo.diasParaVencer} días para la fecha límite</p>
+                                            <p className="font-bold text-blue-400 flex items-center gap-2"><Clock size={18} /> Faltan {aguinaldo.diasParaVencer} días para la fecha límite</p>
                                         )}
                                         <p className="text-sm text-slate-500 mt-1">Fecha límite legal: 10 de diciembre {aguinaldoYear} · {aguinaldo.pendientes} pendiente(s)</p>
                                     </div>
                                     <div className="text-right">
                                         <p className="text-xs uppercase tracking-wider text-slate-500">Total aguinaldo</p>
-                                        <p className="text-2xl font-bold font-mono text-slate-800">{formatC(aguinaldo.totalMonto)}</p>
+                                        <p className="text-2xl font-bold font-mono text-slate-100">{formatC(aguinaldo.totalMonto)}</p>
                                     </div>
                                 </div>
                             );
                         })()}
 
-                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 text-slate-800 overflow-hidden">
+                        <div className="bg-surface-900 rounded-xl shadow-sm border border-white/[0.06] text-slate-100 overflow-hidden">
                             <table className="w-full text-left">
-                                <thead className="bg-slate-50 text-slate-500 font-mono text-xs uppercase">
+                                <thead className="bg-surface-800/40 text-slate-500 font-mono text-xs uppercase">
                                     <tr>
                                         <th className="p-4">Colaborador</th>
                                         <th className="p-4 text-center">Días</th>
@@ -1618,21 +1618,21 @@ const HRM: React.FC = () => {
                                         <th className="p-4 text-center">Comprobante</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-100">
+                                <tbody className="divide-y divide-white/[0.04]">
                                     {!aguinaldo || aguinaldo.items.length === 0 ? (
                                         <tr><td colSpan={6} className="p-8 text-center text-slate-400">Sin colaboradores activos para el período.</td></tr>
                                     ) : aguinaldo.items.map(item => (
-                                        <tr key={item.employeeId} className="hover:bg-slate-50">
-                                            <td className="p-4 font-bold text-slate-700">{item.name}{item.cedula && <div className="text-[10px] text-slate-400 font-normal">Céd: {item.cedula}</div>}</td>
-                                            <td className="p-4 text-center font-mono text-slate-600">{item.diasLaborados}</td>
-                                            <td className="p-4 text-right font-mono text-slate-600">{formatC(item.baseSalary)}</td>
-                                            <td className="p-4 text-right font-mono font-bold text-rose-700 text-lg">{formatC(item.monto)}</td>
+                                        <tr key={item.employeeId} className="hover:bg-surface-800/40">
+                                            <td className="p-4 font-bold text-slate-200">{item.name}{item.cedula && <div className="text-[10px] text-slate-400 font-normal">Céd: {item.cedula}</div>}</td>
+                                            <td className="p-4 text-center font-mono text-slate-300">{item.diasLaborados}</td>
+                                            <td className="p-4 text-right font-mono text-slate-300">{formatC(item.baseSalary)}</td>
+                                            <td className="p-4 text-right font-mono font-bold text-rose-400 text-lg">{formatC(item.monto)}</td>
                                             <td className="p-4 text-center">
-                                                <span className={`px-2 py-1 rounded text-xs font-bold ${item.pagado ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{item.pagado ? 'Pagado' : '⏳ Pendiente'}</span>
+                                                <span className={`px-2 py-1 rounded text-xs font-bold ${item.pagado ? 'bg-green-500/15 text-green-400' : 'bg-yellow-500/15 text-yellow-400'}`}>{item.pagado ? 'Pagado' : '⏳ Pendiente'}</span>
                                             </td>
                                             <td className="p-4 text-center">
                                                 {item.pagado && (
-                                                    <button onClick={() => printAguinaldo(item)} className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors" title="Imprimir comprobante"><Printer size={16} /></button>
+                                                    <button onClick={() => printAguinaldo(item)} className="p-2 bg-blue-500/10 text-blue-400 rounded-lg hover:bg-blue-500/15 transition-colors" title="Imprimir comprobante"><Printer size={16} /></button>
                                                 )}
                                             </td>
                                         </tr>
@@ -1647,15 +1647,15 @@ const HRM: React.FC = () => {
             {/* ==================== MODAL: CREAR EMPLEADO ==================== */}
             {showModal && (
                 <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 animate-in zoom-in duration-200">
+                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-lg p-6 animate-in zoom-in duration-200">
                         <div className="flex justify-between items-center mb-4">
-                            <h3 className="font-bold text-lg text-slate-800">Registrar Colaborador</h3>
-                            <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+                            <h3 className="font-bold text-lg text-slate-100">Registrar Colaborador</h3>
+                            <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-300"><X size={20} /></button>
                         </div>
                         <form onSubmit={handleCreateEmployee} className="space-y-4">
                             <div className="grid grid-cols-2 gap-4">
-                                <input required className="border p-2 rounded text-slate-800" placeholder="Nombre" value={formData.firstName} onChange={e => setFormData({ ...formData, firstName: e.target.value })} />
-                                <input required className="border p-2 rounded text-slate-800" placeholder="Apellido" value={formData.lastName} onChange={e => setFormData({ ...formData, lastName: e.target.value })} />
+                                <input required className="border p-2 rounded text-slate-100" placeholder="Nombre" value={formData.firstName} onChange={e => setFormData({ ...formData, firstName: e.target.value })} />
+                                <input required className="border p-2 rounded text-slate-100" placeholder="Apellido" value={formData.lastName} onChange={e => setFormData({ ...formData, lastName: e.target.value })} />
                             </div>
 
                             {/* Datos Nicaragua */}
@@ -1663,7 +1663,7 @@ const HRM: React.FC = () => {
                                 <div>
                                     <label className="text-xs font-bold text-slate-500">Cédula de Identidad</label>
                                     <input
-                                        className="w-full border p-2 rounded text-slate-800 font-mono"
+                                        className="w-full border p-2 rounded text-slate-100 font-mono"
                                         placeholder="001-010190-0001A"
                                         value={formData.cedula}
                                         onChange={e => setFormData({ ...formData, cedula: e.target.value })}
@@ -1672,7 +1672,7 @@ const HRM: React.FC = () => {
                                 <div>
                                     <label className="text-xs font-bold text-slate-500">Número INSS</label>
                                     <input
-                                        className="w-full border p-2 rounded text-slate-800 font-mono"
+                                        className="w-full border p-2 rounded text-slate-100 font-mono"
                                         placeholder="123456789"
                                         value={formData.inss}
                                         onChange={e => setFormData({ ...formData, inss: e.target.value })}
@@ -1683,7 +1683,7 @@ const HRM: React.FC = () => {
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-xs font-bold text-slate-500">Cargo</label>
-                                    <select className="w-full border p-2 rounded bg-white text-slate-800" value={formData.role} onChange={e => setFormData({ ...formData, role: e.target.value })}>
+                                    <select className="w-full border p-2 rounded bg-surface-900 text-slate-100" value={formData.role} onChange={e => setFormData({ ...formData, role: e.target.value })}>
                                         <option value="VENDEDOR">Vendedor</option>
                                         <option value="MANAGER">Gerente</option>
                                         <option value="BODEGA">Bodeguero</option>
@@ -1696,7 +1696,7 @@ const HRM: React.FC = () => {
                                         inputMode="numeric"
                                         maxLength={4}
                                         required
-                                        className="w-full border p-2 rounded text-slate-800 font-mono text-lg tracking-[0.5em] text-center"
+                                        className="w-full border p-2 rounded text-slate-100 font-mono text-lg tracking-[0.5em] text-center"
                                         placeholder="0000"
                                         value={formData.pin}
                                         onChange={e => setFormData({ ...formData, pin: e.target.value.replace(/\D/g, '').slice(0, 4) })}
@@ -1706,23 +1706,23 @@ const HRM: React.FC = () => {
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-xs font-bold text-slate-500">Salario Base (C$)</label>
-                                    <input type="number" required className="w-full border p-2 rounded text-slate-800" placeholder="0.00" value={formData.baseSalary} onChange={e => setFormData({ ...formData, baseSalary: e.target.value })} />
+                                    <input type="number" required className="w-full border p-2 rounded text-slate-100" placeholder="0.00" value={formData.baseSalary} onChange={e => setFormData({ ...formData, baseSalary: e.target.value })} />
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-slate-500">Comision (%)</label>
-                                    <input type="number" required className="w-full border p-2 rounded text-slate-800" placeholder="Ej: 5" value={formData.commissionRate} onChange={e => setFormData({ ...formData, commissionRate: e.target.value })} />
+                                    <input type="number" required className="w-full border p-2 rounded text-slate-100" placeholder="Ej: 5" value={formData.commissionRate} onChange={e => setFormData({ ...formData, commissionRate: e.target.value })} />
                                 </div>
                             </div>
                             <div>
                                 <label className="text-xs font-bold text-slate-500">Jornada (Art. 51)</label>
-                                <select className="w-full border p-2 rounded bg-white text-slate-800" value={formData.jornada} onChange={e => setFormData({ ...formData, jornada: e.target.value })}>
+                                <select className="w-full border p-2 rounded bg-surface-900 text-slate-100" value={formData.jornada} onChange={e => setFormData({ ...formData, jornada: e.target.value })}>
                                     <option value="DIURNA">Diurna (8h)</option>
                                     <option value="NOCTURNA">Nocturna (7h)</option>
                                     <option value="MIXTA">Mixta (7.5h)</option>
                                 </select>
                             </div>
                             <button type="submit" className="w-full bg-nortex-900 text-white py-3 rounded-lg font-bold hover:bg-nortex-800">Guardar</button>
-                            <button type="button" onClick={() => setShowModal(false)} className="w-full text-slate-500 py-2 hover:text-slate-700">Cancelar</button>
+                            <button type="button" onClick={() => setShowModal(false)} className="w-full text-slate-500 py-2 hover:text-slate-200">Cancelar</button>
                         </form>
                     </div>
                 </div>
@@ -1731,16 +1731,16 @@ const HRM: React.FC = () => {
             {/* ==================== MODAL: COLILLA DE PAGO ==================== */}
             {showColilla && (
                 <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl p-6 max-h-[90vh] overflow-y-auto">
+                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-xl p-6 max-h-[90vh] overflow-y-auto">
                         <div className="flex justify-between items-center mb-6">
-                            <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                            <h3 className="font-bold text-lg text-slate-100 flex items-center gap-2">
                                 <FileText className="text-blue-500" /> Colilla de Pago
                             </h3>
-                            <button onClick={() => setShowColilla(null)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+                            <button onClick={() => setShowColilla(null)} className="text-slate-400 hover:text-slate-300"><X size={20} /></button>
                         </div>
 
                         <div className="space-y-4">
-                            <div className="bg-slate-50 p-4 rounded-lg">
+                            <div className="bg-surface-800/40 p-4 rounded-lg">
                                 <div className="grid grid-cols-2 gap-2 text-sm">
                                     <div><span className="text-slate-500">Empleado:</span> <strong>{showColilla.employee ? `${showColilla.employee.firstName} ${showColilla.employee.lastName}` : showColilla.employeeName}</strong></div>
                                     <div><span className="text-slate-500">Periodo:</span> <strong>{monthNames[showColilla.month - 1]} {showColilla.year}</strong></div>
@@ -1752,16 +1752,16 @@ const HRM: React.FC = () => {
                             {/* Ingresos */}
                             <div>
                                 <div className="text-xs font-bold text-slate-500 mb-2 uppercase">Ingresos</div>
-                                <div className="bg-blue-50 p-3 rounded-lg space-y-2">
+                                <div className="bg-blue-500/10 p-3 rounded-lg space-y-2">
                                     <div className="flex justify-between text-sm">
                                         <span>Salario Base</span>
                                         <span className="font-mono font-bold">{formatC(Number(showColilla.grossSalary))}</span>
                                     </div>
                                     <div className="flex justify-between text-sm">
                                         <span>Comisiones</span>
-                                        <span className="font-mono font-bold text-blue-600">+{formatC(Number(showColilla.commissions))}</span>
+                                        <span className="font-mono font-bold text-blue-400">+{formatC(Number(showColilla.commissions))}</span>
                                     </div>
-                                    <div className="flex justify-between text-sm font-bold border-t border-blue-200 pt-2">
+                                    <div className="flex justify-between text-sm font-bold border-t border-blue-500/20 pt-2">
                                         <span>TOTAL DEVENGADO</span>
                                         <span className="font-mono">{formatC(Number(showColilla.totalIncome))}</span>
                                     </div>
@@ -1771,33 +1771,33 @@ const HRM: React.FC = () => {
                             {/* Deducciones */}
                             <div>
                                 <div className="text-xs font-bold text-slate-500 mb-2 uppercase">Deducciones de Ley</div>
-                                <div className="bg-red-50 p-3 rounded-lg space-y-2">
+                                <div className="bg-red-500/10 p-3 rounded-lg space-y-2">
                                     <div className="flex justify-between text-sm">
                                         <span>INSS Laboral (7%)</span>
-                                        <span className="font-mono font-bold text-red-600">-{formatC(Number(showColilla.inssLaboral))}</span>
+                                        <span className="font-mono font-bold text-red-400">-{formatC(Number(showColilla.inssLaboral))}</span>
                                     </div>
                                     <div className="flex justify-between text-sm">
                                         <span>IR Laboral (Tabla DGI)</span>
-                                        <span className="font-mono font-bold text-red-600">-{formatC(Number(showColilla.irLaboral))}</span>
+                                        <span className="font-mono font-bold text-red-400">-{formatC(Number(showColilla.irLaboral))}</span>
                                     </div>
-                                    <div className="flex justify-between text-sm font-bold border-t border-red-200 pt-2">
+                                    <div className="flex justify-between text-sm font-bold border-t border-red-500/20 pt-2">
                                         <span>TOTAL DEDUCCIONES</span>
-                                        <span className="font-mono text-red-700">-{formatC(Number(showColilla.totalDeductions))}</span>
+                                        <span className="font-mono text-red-400">-{formatC(Number(showColilla.totalDeductions))}</span>
                                     </div>
                                 </div>
                             </div>
 
                             {/* Neto */}
-                            <div className="bg-emerald-100 p-4 rounded-lg">
+                            <div className="bg-emerald-500/15 p-4 rounded-lg">
                                 <div className="flex justify-between items-center">
-                                    <span className="text-lg font-bold text-emerald-800">NETO A RECIBIR</span>
-                                    <span className="text-2xl font-bold font-mono text-emerald-700">{formatC(Number(showColilla.netSalary))}</span>
+                                    <span className="text-lg font-bold text-emerald-300">NETO A RECIBIR</span>
+                                    <span className="text-2xl font-bold font-mono text-emerald-400">{formatC(Number(showColilla.netSalary))}</span>
                                 </div>
                             </div>
 
                             {/* Patronal */}
-                            <div className="bg-amber-50 p-3 rounded-lg space-y-2">
-                                <div className="text-xs font-bold text-amber-700 uppercase mb-1">Aportes Patronales (Informativo)</div>
+                            <div className="bg-amber-500/10 p-3 rounded-lg space-y-2">
+                                <div className="text-xs font-bold text-amber-400 uppercase mb-1">Aportes Patronales (Informativo)</div>
                                 <div className="flex justify-between text-sm">
                                     <span>INSS Patronal (22.5%)</span>
                                     <span className="font-mono">{formatC(Number(showColilla.inssPatronal))}</span>
@@ -1823,8 +1823,8 @@ const HRM: React.FC = () => {
             {/* Modal: Cambiar PIN */}
             {pinModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-                    <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm">
-                        <h3 className="text-lg font-bold text-slate-800 mb-1">Cambiar PIN</h3>
+                    <div className="bg-surface-900 rounded-2xl shadow-2xl p-6 w-full max-w-sm">
+                        <h3 className="text-lg font-bold text-slate-100 mb-1">Cambiar PIN</h3>
                         <p className="text-sm text-slate-500 mb-5">
                             Nuevo PIN para <strong>{pinModal.name}</strong>
                         </p>
@@ -1835,14 +1835,14 @@ const HRM: React.FC = () => {
                             placeholder="4 dígitos"
                             value={newPin}
                             onChange={e => { setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4)); setPinError(''); }}
-                            className="w-full text-center text-3xl font-mono tracking-[0.5em] border-2 border-slate-200 rounded-xl py-4 focus:outline-none focus:border-indigo-500 mb-3"
+                            className="bg-transparent w-full text-center text-3xl font-mono tracking-[0.5em] border-2 border-white/[0.06] rounded-xl py-4 focus:outline-none focus:border-indigo-500 mb-3"
                             autoFocus
                         />
                         {pinError && <p className="text-sm text-red-500 text-center mb-3">{pinError}</p>}
                         <div className="flex gap-3">
                             <button
                                 onClick={() => { setPinModal(null); setNewPin(''); setPinError(''); }}
-                                className="flex-1 py-3 border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-slate-50"
+                                className="flex-1 py-3 border border-white/[0.06] rounded-xl font-semibold text-slate-300 hover:bg-surface-800/40"
                             >
                                 Cancelar
                             </button>
@@ -1861,16 +1861,16 @@ const HRM: React.FC = () => {
             {/* ==================== MODAL: LIQUIDACIÓN / FINIQUITO ==================== */}
             {settlementEmp && (
                 <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
                         <div className="flex justify-between items-center mb-4">
-                            <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><FileText size={18} className="text-rose-600" /> Liquidación — {settlementEmp.firstName} {settlementEmp.lastName}</h3>
-                            <button onClick={() => setSettlementEmp(null)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+                            <h3 className="font-bold text-lg text-slate-100 flex items-center gap-2"><FileText size={18} className="text-rose-400" /> Liquidación — {settlementEmp.firstName} {settlementEmp.lastName}</h3>
+                            <button onClick={() => setSettlementEmp(null)} className="text-slate-400 hover:text-slate-300"><X size={20} /></button>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3 mb-4">
                             <div>
                                 <label className="text-xs font-bold text-slate-500">Causa de salida</label>
-                                <select value={settlementReason} onChange={e => setSettlementReason(e.target.value)} className="w-full border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                <select value={settlementReason} onChange={e => setSettlementReason(e.target.value)} className="w-full border border-white/10 p-2 rounded bg-surface-900 text-slate-100 text-sm">
                                     <option value="DISMISSAL">Despido</option>
                                     <option value="MUTUAL">Mutuo acuerdo</option>
                                     <option value="RESIGNATION">Renuncia</option>
@@ -1878,7 +1878,7 @@ const HRM: React.FC = () => {
                             </div>
                             <div>
                                 <label className="text-xs font-bold text-slate-500">Fecha de salida</label>
-                                <input type="date" value={settlementDate} onChange={e => setSettlementDate(e.target.value)} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                <input type="date" value={settlementDate} onChange={e => setSettlementDate(e.target.value)} className="w-full border border-white/10 p-2 rounded text-slate-100 text-sm font-mono" />
                             </div>
                         </div>
 
@@ -1887,22 +1887,22 @@ const HRM: React.FC = () => {
                         ) : (
                             <>
                                 {settlementData.yaLiquidado && (
-                                    <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Este colaborador ya tiene una liquidación registrada.</div>
+                                    <div className="mb-3 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">Este colaborador ya tiene una liquidación registrada.</div>
                                 )}
                                 {settlementReason === 'RESIGNATION' && (
-                                    <div className="mb-3 text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">En renuncia no corresponde indemnización por antigüedad (Art. 45); sí vacaciones y aguinaldo proporcional.</div>
+                                    <div className="mb-3 text-xs text-slate-500 bg-surface-800/40 border border-white/[0.06] rounded-lg px-3 py-2">En renuncia no corresponde indemnización por antigüedad (Art. 45); sí vacaciones y aguinaldo proporcional.</div>
                                 )}
-                                <div className="bg-slate-50 rounded-xl p-4 text-sm space-y-2">
+                                <div className="bg-surface-800/40 rounded-xl p-4 text-sm space-y-2">
                                     <div className="flex justify-between text-slate-500"><span>Antigüedad</span><span className="font-mono">{settlementData.settlement.antiguedadTexto}</span></div>
                                     <div className="flex justify-between text-slate-500"><span>Salario base (prom. 6m)</span><span className="font-mono">{formatC(settlementData.settlement.salarioMensual)}</span></div>
-                                    <div className="border-t border-slate-200 pt-2 flex justify-between"><span>Indemnización {settlementData.settlement.aplicaIndemnizacion ? `(${settlementData.settlement.indemnizacionDias.toFixed(0)} días)` : '(no aplica)'}</span><span className="font-mono font-bold">{formatC(settlementData.settlement.indemnizacion)}</span></div>
+                                    <div className="border-t border-white/[0.06] pt-2 flex justify-between"><span>Indemnización {settlementData.settlement.aplicaIndemnizacion ? `(${settlementData.settlement.indemnizacionDias.toFixed(0)} días)` : '(no aplica)'}</span><span className="font-mono font-bold">{formatC(settlementData.settlement.indemnizacion)}</span></div>
                                     <div className="flex justify-between"><span>Vacaciones ({settlementData.settlement.diasVacaciones.toFixed(1)} días)</span><span className="font-mono font-bold">{formatC(settlementData.settlement.vacaciones)}</span></div>
                                     <div className="flex justify-between"><span>Aguinaldo ({settlementData.settlement.diasAguinaldo} días)</span><span className="font-mono font-bold">{formatC(settlementData.settlement.aguinaldo)}</span></div>
-                                    <div className="border-t-2 border-slate-300 pt-2 flex justify-between text-lg"><span className="font-bold text-slate-800">Total a pagar</span><span className="font-mono font-bold text-rose-700">{formatC(settlementData.settlement.total)}</span></div>
+                                    <div className="border-t-2 border-white/10 pt-2 flex justify-between text-lg"><span className="font-bold text-slate-100">Total a pagar</span><span className="font-mono font-bold text-rose-400">{formatC(settlementData.settlement.total)}</span></div>
                                 </div>
 
                                 <div className="flex gap-3 mt-5">
-                                    <button onClick={() => printFiniquito(settlementData)} className="flex-1 border border-slate-300 text-slate-600 font-bold py-2.5 rounded-lg hover:bg-slate-50 inline-flex items-center justify-center gap-2"><Printer size={16} /> Imprimir</button>
+                                    <button onClick={() => printFiniquito(settlementData)} className="flex-1 border border-white/10 text-slate-300 font-bold py-2.5 rounded-lg hover:bg-surface-800/40 inline-flex items-center justify-center gap-2"><Printer size={16} /> Imprimir</button>
                                     <button onClick={paySettlement} disabled={settlementPaying || settlementData.yaLiquidado} className="flex-1 bg-rose-600 text-white font-bold py-2.5 rounded-lg hover:bg-rose-700 disabled:opacity-50 inline-flex items-center justify-center gap-2">
                                         {settlementPaying ? 'Procesando…' : 'Pagar liquidación'}
                                     </button>
@@ -1916,10 +1916,10 @@ const HRM: React.FC = () => {
             {/* ==================== MODAL: EXPEDIENTE DIGITAL ==================== */}
             {expedienteEmp && (
                 <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
                         <div className="flex justify-between items-center mb-4">
-                            <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2"><Briefcase size={18} className="text-slate-700" /> Expediente — {expedienteEmp.firstName} {expedienteEmp.lastName}</h3>
-                            <button onClick={() => setExpedienteEmp(null)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+                            <h3 className="font-bold text-lg text-slate-100 flex items-center gap-2"><Briefcase size={18} className="text-slate-200" /> Expediente — {expedienteEmp.firstName} {expedienteEmp.lastName}</h3>
+                            <button onClick={() => setExpedienteEmp(null)} className="text-slate-400 hover:text-slate-300"><X size={20} /></button>
                         </div>
 
                         {expedienteLoading || !expediente ? (
@@ -1929,7 +1929,7 @@ const HRM: React.FC = () => {
                                 {expediente.alertas.length > 0 && (
                                     <div className="mb-4 space-y-1.5">
                                         {expediente.alertas.map((a, i) => (
-                                            <div key={i} className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex items-center gap-2"><AlertTriangle size={13} /> {a}</div>
+                                            <div key={i} className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 flex items-center gap-2"><AlertTriangle size={13} /> {a}</div>
                                         ))}
                                     </div>
                                 )}
@@ -1947,23 +1947,23 @@ const HRM: React.FC = () => {
                                         ['Vacaciones', `${Number(expediente.employee.vacationDays).toFixed(1)} días`],
                                         ['Estado', expediente.employee.status],
                                     ] as [string, string][]).map(([label, val]) => (
-                                        <div key={label} className="bg-slate-50 rounded-lg p-3">
+                                        <div key={label} className="bg-surface-800/40 rounded-lg p-3">
                                             <p className="text-[10px] uppercase tracking-wider text-slate-400">{label}</p>
-                                            <p className="font-semibold text-slate-700">{val}</p>
+                                            <p className="font-semibold text-slate-200">{val}</p>
                                         </div>
                                     ))}
                                 </div>
 
                                 <div className="flex items-center justify-between mb-2">
-                                    <h4 className="font-bold text-slate-700">Contratos</h4>
-                                    {!showContractForm && <button onClick={openContractForm} className="text-xs font-bold text-nortex-600 hover:text-nortex-800 inline-flex items-center gap-1"><Plus size={13} /> Agregar contrato</button>}
+                                    <h4 className="font-bold text-slate-200">Contratos</h4>
+                                    {!showContractForm && <button onClick={openContractForm} className="text-xs font-bold text-nortex-600 hover:text-slate-200 inline-flex items-center gap-1"><Plus size={13} /> Agregar contrato</button>}
                                 </div>
 
                                 {showContractForm && (
-                                    <form onSubmit={handleAddContract} className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 grid sm:grid-cols-2 gap-3">
+                                    <form onSubmit={handleAddContract} className="bg-surface-800/40 border border-white/[0.06] rounded-xl p-4 mb-4 grid sm:grid-cols-2 gap-3">
                                         <div>
                                             <label className="text-xs font-bold text-slate-500">Tipo</label>
-                                            <select value={contractForm.type} onChange={e => setContractForm({ ...contractForm, type: e.target.value })} className="w-full border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                            <select value={contractForm.type} onChange={e => setContractForm({ ...contractForm, type: e.target.value })} className="w-full border border-white/10 p-2 rounded bg-surface-900 text-slate-100 text-sm">
                                                 <option value="INDETERMINADO">Indeterminado</option>
                                                 <option value="DETERMINADO">Determinado</option>
                                                 <option value="POR_OBRA">Por obra</option>
@@ -1971,23 +1971,23 @@ const HRM: React.FC = () => {
                                         </div>
                                         <div>
                                             <label className="text-xs font-bold text-slate-500">Cargo</label>
-                                            <input value={contractForm.position} onChange={e => setContractForm({ ...contractForm, position: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm" />
+                                            <input value={contractForm.position} onChange={e => setContractForm({ ...contractForm, position: e.target.value })} className="w-full border border-white/10 p-2 rounded text-slate-100 text-sm" />
                                         </div>
                                         <div>
                                             <label className="text-xs font-bold text-slate-500">Inicio</label>
-                                            <input type="date" required value={contractForm.startDate} onChange={e => setContractForm({ ...contractForm, startDate: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                            <input type="date" required value={contractForm.startDate} onChange={e => setContractForm({ ...contractForm, startDate: e.target.value })} className="w-full border border-white/10 p-2 rounded text-slate-100 text-sm font-mono" />
                                         </div>
                                         <div>
                                             <label className="text-xs font-bold text-slate-500">Fin (si aplica)</label>
-                                            <input type="date" value={contractForm.endDate} onChange={e => setContractForm({ ...contractForm, endDate: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                            <input type="date" value={contractForm.endDate} onChange={e => setContractForm({ ...contractForm, endDate: e.target.value })} className="w-full border border-white/10 p-2 rounded text-slate-100 text-sm font-mono" />
                                         </div>
                                         <div>
                                             <label className="text-xs font-bold text-slate-500">Fin período de prueba</label>
-                                            <input type="date" value={contractForm.probationEnd} onChange={e => setContractForm({ ...contractForm, probationEnd: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                            <input type="date" value={contractForm.probationEnd} onChange={e => setContractForm({ ...contractForm, probationEnd: e.target.value })} className="w-full border border-white/10 p-2 rounded text-slate-100 text-sm font-mono" />
                                         </div>
                                         <div>
                                             <label className="text-xs font-bold text-slate-500">Salario</label>
-                                            <input type="number" required value={contractForm.salary} onChange={e => setContractForm({ ...contractForm, salary: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                            <input type="number" required value={contractForm.salary} onChange={e => setContractForm({ ...contractForm, salary: e.target.value })} className="w-full border border-white/10 p-2 rounded text-slate-100 text-sm font-mono" />
                                         </div>
                                         <div className="sm:col-span-2 flex gap-2">
                                             <button type="submit" disabled={savingContract} className="bg-nortex-600 text-white font-bold px-4 py-2 rounded-lg hover:bg-nortex-700 disabled:opacity-50 text-sm">{savingContract ? 'Guardando…' : 'Guardar contrato'}</button>
@@ -1997,18 +1997,18 @@ const HRM: React.FC = () => {
                                 )}
 
                                 {expediente.contracts.length === 0 ? (
-                                    <p className="text-sm text-slate-400 text-center py-6 bg-slate-50 rounded-xl">Sin contratos registrados.</p>
+                                    <p className="text-sm text-slate-400 text-center py-6 bg-surface-800/40 rounded-xl">Sin contratos registrados.</p>
                                 ) : (
                                     <div className="space-y-2">
                                         {expediente.contracts.map(c => (
-                                            <div key={c.id} className="border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between">
+                                            <div key={c.id} className="border border-white/[0.06] rounded-xl px-4 py-3 flex items-center justify-between">
                                                 <div>
-                                                    <p className="font-semibold text-slate-700">{CONTRACT_LABELS[c.type] || c.type}{c.position ? ` · ${c.position}` : ''}</p>
+                                                    <p className="font-semibold text-slate-200">{CONTRACT_LABELS[c.type] || c.type}{c.position ? ` · ${c.position}` : ''}</p>
                                                     <p className="text-xs text-slate-500 font-mono">{fmtDate(c.startDate)}{c.endDate ? ` → ${fmtDate(c.endDate)}` : ' → indefinido'}{c.probationEnd ? ` · prueba hasta ${fmtDate(c.probationEnd)}` : ''}</p>
                                                 </div>
                                                 <div className="text-right">
-                                                    <p className="font-mono font-bold text-slate-700">{formatC(c.salary)}</p>
-                                                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${c.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>{c.status === 'ACTIVE' ? 'Vigente' : 'Finalizado'}</span>
+                                                    <p className="font-mono font-bold text-slate-200">{formatC(c.salary)}</p>
+                                                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${c.status === 'ACTIVE' ? 'bg-green-500/15 text-green-400' : 'bg-white/[0.04] text-slate-500'}`}>{c.status === 'ACTIVE' ? 'Vigente' : 'Finalizado'}</span>
                                                 </div>
                                             </div>
                                         ))}
@@ -2017,15 +2017,15 @@ const HRM: React.FC = () => {
 
                                 {/* Deducciones judiciales */}
                                 <div className="flex items-center justify-between mt-6 mb-2">
-                                    <h4 className="font-bold text-slate-700">Deducciones judiciales</h4>
-                                    {!showJudicialForm && <button onClick={() => setShowJudicialForm(true)} className="text-xs font-bold text-purple-600 hover:text-purple-800 inline-flex items-center gap-1"><Plus size={13} /> Agregar</button>}
+                                    <h4 className="font-bold text-slate-200">Deducciones judiciales</h4>
+                                    {!showJudicialForm && <button onClick={() => setShowJudicialForm(true)} className="text-xs font-bold text-purple-400 hover:text-purple-300 inline-flex items-center gap-1"><Plus size={13} /> Agregar</button>}
                                 </div>
 
                                 {showJudicialForm && (
-                                    <form onSubmit={handleAddJudicial} className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4 grid sm:grid-cols-2 gap-3">
+                                    <form onSubmit={handleAddJudicial} className="bg-surface-800/40 border border-white/[0.06] rounded-xl p-4 mb-4 grid sm:grid-cols-2 gap-3">
                                         <div>
                                             <label className="text-xs font-bold text-slate-500">Tipo</label>
-                                            <select value={judicialForm.type} onChange={e => setJudicialForm({ ...judicialForm, type: e.target.value })} className="w-full border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                            <select value={judicialForm.type} onChange={e => setJudicialForm({ ...judicialForm, type: e.target.value })} className="w-full border border-white/10 p-2 rounded bg-surface-900 text-slate-100 text-sm">
                                                 <option value="PENSION_ALIMENTICIA">Pensión alimenticia</option>
                                                 <option value="EMBARGO">Embargo</option>
                                                 <option value="OTRO">Otro</option>
@@ -2033,15 +2033,15 @@ const HRM: React.FC = () => {
                                         </div>
                                         <div>
                                             <label className="text-xs font-bold text-slate-500">Beneficiario / N° expediente</label>
-                                            <input value={judicialForm.beneficiary} onChange={e => setJudicialForm({ ...judicialForm, beneficiary: e.target.value })} className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm" />
+                                            <input value={judicialForm.beneficiary} onChange={e => setJudicialForm({ ...judicialForm, beneficiary: e.target.value })} className="w-full border border-white/10 p-2 rounded text-slate-100 text-sm" />
                                         </div>
                                         <div>
                                             <label className="text-xs font-bold text-slate-500">Monto fijo (C$)</label>
-                                            <input type="number" value={judicialForm.amount} onChange={e => setJudicialForm({ ...judicialForm, amount: e.target.value, percentage: '' })} placeholder="0.00" className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                            <input type="number" value={judicialForm.amount} onChange={e => setJudicialForm({ ...judicialForm, amount: e.target.value, percentage: '' })} placeholder="0.00" className="w-full border border-white/10 p-2 rounded text-slate-100 text-sm font-mono" />
                                         </div>
                                         <div>
                                             <label className="text-xs font-bold text-slate-500">o % del salario disponible</label>
-                                            <input type="number" value={judicialForm.percentage} onChange={e => setJudicialForm({ ...judicialForm, percentage: e.target.value, amount: '' })} placeholder="0" className="w-full border border-slate-300 p-2 rounded text-slate-800 text-sm font-mono" />
+                                            <input type="number" value={judicialForm.percentage} onChange={e => setJudicialForm({ ...judicialForm, percentage: e.target.value, amount: '' })} placeholder="0" className="w-full border border-white/10 p-2 rounded text-slate-100 text-sm font-mono" />
                                         </div>
                                         <div className="sm:col-span-2 flex gap-2">
                                             <button type="submit" disabled={savingJudicial} className="bg-purple-600 text-white font-bold px-4 py-2 rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm">{savingJudicial ? 'Guardando…' : 'Guardar deducción'}</button>
@@ -2051,18 +2051,18 @@ const HRM: React.FC = () => {
                                 )}
 
                                 {expediente.judicialDeductions.length === 0 ? (
-                                    <p className="text-sm text-slate-400 text-center py-4 bg-slate-50 rounded-xl">Sin deducciones judiciales activas.</p>
+                                    <p className="text-sm text-slate-400 text-center py-4 bg-surface-800/40 rounded-xl">Sin deducciones judiciales activas.</p>
                                 ) : (
                                     <div className="space-y-2">
                                         {expediente.judicialDeductions.map(j => (
-                                            <div key={j.id} className="border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between">
+                                            <div key={j.id} className="border border-white/[0.06] rounded-xl px-4 py-3 flex items-center justify-between">
                                                 <div>
-                                                    <p className="font-semibold text-slate-700">{JUDICIAL_LABELS[j.type] || j.type}{j.beneficiary ? ` · ${j.beneficiary}` : ''}</p>
+                                                    <p className="font-semibold text-slate-200">{JUDICIAL_LABELS[j.type] || j.type}{j.beneficiary ? ` · ${j.beneficiary}` : ''}</p>
                                                     <p className="text-xs text-slate-500">Prioridad {j.priority} · desde {fmtDate(j.startDate)}</p>
                                                 </div>
                                                 <div className="flex items-center gap-3">
-                                                    <span className="font-mono font-bold text-purple-700">{j.amount != null ? formatC(j.amount) : `${j.percentage}%`}</span>
-                                                    <button onClick={() => endJudicial(j.id)} className="text-xs text-rose-500 hover:text-rose-700 font-semibold underline">Finalizar</button>
+                                                    <span className="font-mono font-bold text-purple-400">{j.amount != null ? formatC(j.amount) : `${j.percentage}%`}</span>
+                                                    <button onClick={() => endJudicial(j.id)} className="text-xs text-rose-500 hover:text-rose-400 font-semibold underline">Finalizar</button>
                                                 </div>
                                             </div>
                                         ))}
@@ -2070,18 +2070,18 @@ const HRM: React.FC = () => {
                                 )}
 
                                 {/* Cuenta de acceso (Mi Espacio) */}
-                                <h4 className="font-bold text-slate-700 mt-6 mb-2">Cuenta de acceso (Mi Espacio)</h4>
+                                <h4 className="font-bold text-slate-200 mt-6 mb-2">Cuenta de acceso (Mi Espacio)</h4>
                                 {expediente.linkedUser ? (
-                                    <div className="flex items-center justify-between border border-slate-200 rounded-xl px-4 py-3">
+                                    <div className="flex items-center justify-between border border-white/[0.06] rounded-xl px-4 py-3">
                                         <div>
-                                            <p className="font-semibold text-slate-700">{expediente.linkedUser.name}</p>
+                                            <p className="font-semibold text-slate-200">{expediente.linkedUser.name}</p>
                                             {expediente.linkedUser.email && <p className="text-xs text-slate-500">{expediente.linkedUser.email}</p>}
                                         </div>
-                                        <button onClick={unlinkUser} disabled={savingLink} className="text-xs text-rose-500 hover:text-rose-700 font-semibold underline disabled:opacity-50">Desvincular</button>
+                                        <button onClick={unlinkUser} disabled={savingLink} className="text-xs text-rose-500 hover:text-rose-400 font-semibold underline disabled:opacity-50">Desvincular</button>
                                     </div>
                                 ) : (
                                     <div className="flex flex-wrap items-center gap-2">
-                                        <select value={linkUserId} onChange={e => setLinkUserId(e.target.value)} className="flex-1 min-w-[180px] border border-slate-300 p-2 rounded bg-white text-slate-800 text-sm">
+                                        <select value={linkUserId} onChange={e => setLinkUserId(e.target.value)} className="flex-1 min-w-[180px] border border-white/10 p-2 rounded bg-surface-900 text-slate-100 text-sm">
                                             <option value="">Seleccionar cuenta de usuario…</option>
                                             {linkableUsers.map(u => <option key={u.id} value={u.id}>{u.name}{u.email ? ` (${u.email})` : ''} · {u.role}</option>)}
                                         </select>

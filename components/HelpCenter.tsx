@@ -94,20 +94,20 @@ const HelpCenter: React.FC = () => {
   };
 
   return (
-    <div className="p-6 h-full overflow-y-auto bg-slate-50 text-slate-800">
+    <div className="p-6 h-full overflow-y-auto bg-surface-800/40 text-slate-100">
       <header className="mb-8 flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 bg-nortex-900 text-white rounded-2xl flex items-center justify-center">
             <BookOpen size={24} />
           </div>
           <div>
-            <h1 className="text-3xl font-bold text-nortex-900">Ayuda y Tutoriales</h1>
+            <h1 className="text-3xl font-bold text-slate-100">Ayuda y Tutoriales</h1>
             <p className="text-slate-500">Aprendé a usar Nortex paso a paso.</p>
           </div>
         </div>
         <button
           onClick={reshowChecklist}
-          className="flex items-center gap-2 px-4 py-2.5 bg-nortex-accent/15 hover:bg-nortex-accent/30 text-nortex-900 font-bold rounded-xl transition-colors"
+          className="flex items-center gap-2 px-4 py-2.5 bg-nortex-accent/15 hover:bg-nortex-accent/30 text-slate-100 font-bold rounded-xl transition-colors"
         >
           <Sparkles size={18} /> Ver mis primeros pasos
         </button>
@@ -115,78 +115,78 @@ const HelpCenter: React.FC = () => {
 
       {/* TUTORIALES INTERACTIVOS */}
       <section className="mb-10">
-        <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-bold text-slate-100 mb-4 flex items-center gap-2">
           <PlayCircle size={20} className="text-nortex-accent" /> Tutoriales interactivos
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <button
             onClick={() => navigate('/app/pos?tour=pos')}
-            className="text-left bg-white border border-slate-200 hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
+            className="text-left bg-surface-900 border border-white/[0.06] hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
           >
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center">
+              <div className="w-10 h-10 bg-blue-500/15 text-blue-400 rounded-xl flex items-center justify-center">
                 <ShoppingCart size={20} />
               </div>
-              <h3 className="font-bold text-slate-800">Cómo hacer una venta</h3>
+              <h3 className="font-bold text-slate-100">Cómo hacer una venta</h3>
             </div>
             <p className="text-sm text-slate-500 mb-3">
               Un recorrido guiado por el Punto de Venta: del carrito al ticket.
             </p>
-            <span className="text-sm font-bold text-nortex-900 flex items-center gap-1 group-hover:gap-2 transition-all">
+            <span className="text-sm font-bold text-slate-100 flex items-center gap-1 group-hover:gap-2 transition-all">
               Iniciar tutorial <ArrowRight size={16} />
             </span>
           </button>
 
           <button
             onClick={() => navigate('/app/inventory?tour=inv')}
-            className="text-left bg-white border border-slate-200 hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
+            className="text-left bg-surface-900 border border-white/[0.06] hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
           >
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center">
+              <div className="w-10 h-10 bg-emerald-500/15 text-emerald-400 rounded-xl flex items-center justify-center">
                 <Package size={20} />
               </div>
-              <h3 className="font-bold text-slate-800">Cómo cargar inventario</h3>
+              <h3 className="font-bold text-slate-100">Cómo cargar inventario</h3>
             </div>
             <p className="text-sm text-slate-500 mb-3">
               Te muestro dónde agregar productos y cómo buscarlos.
             </p>
-            <span className="text-sm font-bold text-nortex-900 flex items-center gap-1 group-hover:gap-2 transition-all">
+            <span className="text-sm font-bold text-slate-100 flex items-center gap-1 group-hover:gap-2 transition-all">
               Iniciar tutorial <ArrowRight size={16} />
             </span>
           </button>
 
           <button
             onClick={() => navigate('/app/receivables?tour=fiado')}
-            className="text-left bg-white border border-slate-200 hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
+            className="text-left bg-surface-900 border border-white/[0.06] hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
           >
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center">
+              <div className="w-10 h-10 bg-amber-500/15 text-amber-400 rounded-xl flex items-center justify-center">
                 <HandCoins size={20} />
               </div>
-              <h3 className="font-bold text-slate-800">Cómo cobrar el fiado</h3>
+              <h3 className="font-bold text-slate-100">Cómo cobrar el fiado</h3>
             </div>
             <p className="text-sm text-slate-500 mb-3">
               Quién te debe, qué cobrar primero y cómo registrar los abonos.
             </p>
-            <span className="text-sm font-bold text-nortex-900 flex items-center gap-1 group-hover:gap-2 transition-all">
+            <span className="text-sm font-bold text-slate-100 flex items-center gap-1 group-hover:gap-2 transition-all">
               Iniciar tutorial <ArrowRight size={16} />
             </span>
           </button>
 
           <button
             onClick={() => navigate('/app/purchases?tour=compras')}
-            className="text-left bg-white border border-slate-200 hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
+            className="text-left bg-surface-900 border border-white/[0.06] hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
           >
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center">
+              <div className="w-10 h-10 bg-indigo-500/15 text-indigo-400 rounded-xl flex items-center justify-center">
                 <Truck size={20} />
               </div>
-              <h3 className="font-bold text-slate-800">Cómo registrar compras</h3>
+              <h3 className="font-bold text-slate-100">Cómo registrar compras</h3>
             </div>
             <p className="text-sm text-slate-500 mb-3">
               Registrá la mercadería que entra para conocer tu ganancia real.
             </p>
-            <span className="text-sm font-bold text-nortex-900 flex items-center gap-1 group-hover:gap-2 transition-all">
+            <span className="text-sm font-bold text-slate-100 flex items-center gap-1 group-hover:gap-2 transition-all">
               Iniciar tutorial <ArrowRight size={16} />
             </span>
           </button>
@@ -195,21 +195,21 @@ const HelpCenter: React.FC = () => {
 
       {/* GUÍAS RÁPIDAS */}
       <section>
-        <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-bold text-slate-100 mb-4 flex items-center gap-2">
           <HandCoins size={20} className="text-nortex-accent" /> Guías rápidas
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {GUIDES.map((g) => (
-            <div key={g.title} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+            <div key={g.title} className="bg-surface-900 border border-white/[0.06] rounded-2xl p-5 shadow-sm">
               <div className="flex items-center gap-3 mb-3">
-                <div className="w-9 h-9 bg-slate-100 text-slate-600 rounded-lg flex items-center justify-center">
+                <div className="w-9 h-9 bg-white/[0.04] text-slate-300 rounded-lg flex items-center justify-center">
                   {g.icon}
                 </div>
-                <h3 className="font-bold text-slate-800 text-sm">{g.title}</h3>
+                <h3 className="font-bold text-slate-100 text-sm">{g.title}</h3>
               </div>
               <ol className="space-y-1.5">
                 {g.steps.map((s, i) => (
-                  <li key={i} className="text-sm text-slate-600 flex gap-2">
+                  <li key={i} className="text-sm text-slate-300 flex gap-2">
                     <span className="text-nortex-accent font-bold shrink-0">{i + 1}.</span>
                     <span>{s}</span>
                   </li>
