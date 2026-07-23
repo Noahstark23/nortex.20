@@ -59,11 +59,11 @@ const Warehouses: React.FC = () => {
     };
 
     return (
-        <div className="p-6 max-w-6xl mx-auto text-slate-800">
+        <div className="p-6 max-w-6xl mx-auto text-slate-100">
             <div className="flex items-center justify-between mb-6">
                 <h1 className="text-2xl font-bold flex items-center gap-2"><WarehouseIcon className="text-brand" /> Bodegas</h1>
-                {msg && <span className="text-emerald-600 font-bold text-sm">{msg}</span>}
-                <button onClick={() => selected && loadStock(selected)} className="p-2 hover:bg-slate-100 rounded-lg"><RefreshCw size={16} /></button>
+                {msg && <span className="text-emerald-400 font-bold text-sm">{msg}</span>}
+                <button onClick={() => selected && loadStock(selected)} className="p-2 hover:bg-white/[0.06] rounded-lg"><RefreshCw size={16} /></button>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -71,28 +71,28 @@ const Warehouses: React.FC = () => {
                 <div className="space-y-2">
                     {warehouses.map(w => (
                         <button key={w.id} onClick={() => setSelected(w)}
-                            className={`w-full text-left p-3 rounded-lg border transition-colors ${selected?.id === w.id ? 'border-brand bg-brand/5' : 'border-slate-200 hover:border-slate-300'}`}>
+                            className={`w-full text-left p-3 rounded-lg border transition-colors ${selected?.id === w.id ? 'border-brand bg-brand/5' : 'border-white/[0.06] hover:border-white/10'}`}>
                             <div className="font-bold text-sm flex items-center gap-1.5">{w.name}{w.isDefault && <Star size={12} className="text-amber-500 fill-amber-500" />}</div>
                             {!w.isActive && <span className="text-[10px] text-red-500">INACTIVA</span>}
                         </button>
                     ))}
                     <div className="flex gap-2 pt-2">
                         <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nueva bodega"
-                            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                            className="flex-1 px-3 py-2 border border-white/10 rounded-lg text-sm" />
                         <button onClick={createWarehouse} className="p-2 bg-brand text-white rounded-lg"><Plus size={16} /></button>
                     </div>
                 </div>
 
                 {/* Stock de la bodega seleccionada */}
-                <div className="lg:col-span-3 bg-white border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="px-4 py-3 border-b border-slate-100 font-bold text-sm">
+                <div className="lg:col-span-3 bg-surface-900 border border-white/[0.06] rounded-xl overflow-hidden">
+                    <div className="px-4 py-3 border-b border-white/[0.04] font-bold text-sm">
                         Existencias en {selected?.name ?? '—'} {loading && '…'}
                     </div>
                     <table className="w-full text-sm">
-                        <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+                        <thead className="bg-surface-800/40 text-slate-500 text-xs uppercase">
                             <tr><th className="p-3 text-left">Producto</th><th className="p-3 text-left">SKU</th><th className="p-3 text-right">Stock</th><th className="p-3"></th></tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-100">
+                        <tbody className="divide-y divide-white/[0.04]">
                             {stock.map(it => (
                                 <tr key={it.productId}>
                                     <td className="p-3">{it.name}{it.implicit && <span className="ml-2 text-[9px] text-slate-400" title="Stock legado aún no movido en esta bodega">IMPLÍCITO</span>}</td>
@@ -117,7 +117,7 @@ const Warehouses: React.FC = () => {
             {/* Modal de transferencia */}
             {transfer && selected && (
                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-xl w-full max-w-sm p-5 space-y-4">
+                    <div className="bg-surface-900 rounded-xl w-full max-w-sm p-5 space-y-4">
                         <div className="flex justify-between items-center">
                             <h3 className="font-bold flex items-center gap-2"><ArrowRightLeft size={18} className="text-brand" /> Transferir desde {selected.name}</h3>
                             <button onClick={() => setTransfer(null)}><X size={18} /></button>
@@ -125,14 +125,14 @@ const Warehouses: React.FC = () => {
                         <div>
                             <label className="text-xs font-bold text-slate-500">Bodega destino</label>
                             <select value={transfer.toId} onChange={e => setTransfer({ ...transfer, toId: e.target.value })}
-                                className="w-full mt-1 px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                                className="w-full mt-1 px-3 py-2 border border-white/10 rounded-lg text-sm">
                                 {warehouses.filter(w => w.id !== selected.id && w.isActive).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                             </select>
                         </div>
                         <div>
                             <label className="text-xs font-bold text-slate-500">Cantidad</label>
                             <input value={transfer.qty} onChange={e => setTransfer({ ...transfer, qty: e.target.value.replace(/[^\d.]/g, '') })}
-                                inputMode="decimal" className="w-full mt-1 px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono" autoFocus />
+                                inputMode="decimal" className="w-full mt-1 px-3 py-2 border border-white/10 rounded-lg text-sm font-mono" autoFocus />
                         </div>
                         <button onClick={doTransfer} className="w-full py-2.5 bg-brand text-white rounded-lg font-bold text-sm">Transferir</button>
                     </div>

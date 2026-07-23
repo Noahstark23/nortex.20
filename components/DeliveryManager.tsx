@@ -31,10 +31,10 @@ interface Motorizado {
 }
 
 const COLUMNAS = [
-    { id: 'pendiente',  title: 'Nuevos',     icon: <Clock       size={16} />, color: 'border-amber-200   bg-amber-50',   badge: 'bg-amber-100   text-amber-700'   },
-    { id: 'preparando', title: 'Preparando', icon: <Package     size={16} />, color: 'border-blue-200    bg-blue-50',    badge: 'bg-blue-100    text-blue-700'    },
-    { id: 'en_camino',  title: 'En Camino',  icon: <Truck       size={16} />, color: 'border-purple-200  bg-purple-50',  badge: 'bg-purple-100  text-purple-700'  },
-    { id: 'entregado',  title: 'Entregados', icon: <CheckCircle size={16} />, color: 'border-emerald-200 bg-emerald-50', badge: 'bg-emerald-100 text-emerald-700' },
+    { id: 'pendiente',  title: 'Nuevos',     icon: <Clock       size={16} />, color: 'border-amber-500/20   bg-amber-500/10',   badge: 'bg-amber-500/15   text-amber-400'   },
+    { id: 'preparando', title: 'Preparando', icon: <Package     size={16} />, color: 'border-blue-500/20    bg-blue-500/10',    badge: 'bg-blue-500/15    text-blue-400'    },
+    { id: 'en_camino',  title: 'En Camino',  icon: <Truck       size={16} />, color: 'border-purple-500/20  bg-purple-500/10',  badge: 'bg-purple-500/15  text-purple-400'  },
+    { id: 'entregado',  title: 'Entregados', icon: <CheckCircle size={16} />, color: 'border-emerald-500/20 bg-emerald-500/10', badge: 'bg-emerald-500/15 text-emerald-400' },
 ];
 
 const ESTADO_SIGUIENTE: Record<string, string> = {
@@ -175,17 +175,17 @@ const DeliveryManager: React.FC = () => {
         <div className="h-full flex flex-col overflow-hidden">
 
             {/* ── Top Bar ─────────────────────────────────────────── */}
-            <div className="flex-none px-6 py-4 border-b border-slate-200 bg-white flex flex-wrap items-center justify-between gap-3">
+            <div className="flex-none px-6 py-4 border-b border-white/[0.06] bg-surface-900 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                        <Truck className="text-blue-600" size={22} /> Torre de Control · Logística
+                    <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
+                        <Truck className="text-blue-400" size={22} /> Torre de Control · Logística
                     </h2>
                     <p className="text-xs text-slate-400 mt-0.5">
-                        <span className="text-amber-600 font-semibold">{pendingCount} nuevos</span>
+                        <span className="text-amber-400 font-semibold">{pendingCount} nuevos</span>
                         &nbsp;·&nbsp;
-                        <span className="text-purple-600 font-semibold">{inRouteCount} en ruta</span>
+                        <span className="text-purple-400 font-semibold">{inRouteCount} en ruta</span>
                         &nbsp;·&nbsp;
-                        <span className="text-emerald-600 font-semibold">{todayDelivered} entregados hoy</span>
+                        <span className="text-emerald-400 font-semibold">{todayDelivered} entregados hoy</span>
                     </p>
                 </div>
                 <button
@@ -198,18 +198,18 @@ const DeliveryManager: React.FC = () => {
 
             {/* ── Flota Activa (horizontal strip) ─────────────────── */}
             {activeRiders.length > 0 && (
-                <div className="flex-none px-6 py-3 bg-slate-50 border-b border-slate-200">
+                <div className="flex-none px-6 py-3 bg-surface-800/40 border-b border-white/[0.06]">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
                         Flota Activa ({activeRiders.length})
                     </p>
                     <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
                         {activeRiders.map(m => (
-                            <div key={m.id} className="flex-none flex items-center gap-2.5 bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-sm min-w-0">
-                                <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                                    <User size={16} className="text-blue-600" />
+                            <div key={m.id} className="flex-none flex items-center gap-2.5 bg-surface-900 border border-white/[0.06] rounded-xl px-3 py-2 shadow-sm min-w-0">
+                                <div className="w-8 h-8 bg-blue-500/15 rounded-lg flex items-center justify-center flex-shrink-0">
+                                    <User size={16} className="text-blue-400" />
                                 </div>
                                 <div className="min-w-0">
-                                    <p className="text-sm font-bold text-slate-800 truncate max-w-[120px]">{m.nombre}</p>
+                                    <p className="text-sm font-bold text-slate-100 truncate max-w-[120px]">{m.nombre}</p>
                                     {m.telefono && (
                                         <p className="text-[11px] text-slate-400 truncate">{m.telefono}</p>
                                     )}
@@ -219,8 +219,8 @@ const DeliveryManager: React.FC = () => {
                                     title="Copiar link del motorizado"
                                     className={`ml-1 flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-all flex-shrink-0 ${
                                         copiedId === m.id
-                                            ? 'bg-emerald-100 text-emerald-700'
-                                            : 'bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600'
+                                            ? 'bg-emerald-500/15 text-emerald-400'
+                                            : 'bg-white/[0.04] text-slate-300 hover:bg-blue-500/10 hover:text-blue-400'
                                     }`}
                                 >
                                     {copiedId === m.id ? <><Check size={12} /> ¡Copiado!</> : <><Link2 size={12} /> Link</>}
@@ -240,7 +240,7 @@ const DeliveryManager: React.FC = () => {
                             <div key={col.id} className={`w-80 flex-none rounded-2xl border ${col.color} flex flex-col max-h-[calc(100vh-260px)]`}>
                                 {/* Column Header */}
                                 <div className="p-4 border-b border-white/50 flex justify-between items-center">
-                                    <h3 className="font-bold text-sm text-slate-700 flex items-center gap-2">
+                                    <h3 className="font-bold text-sm text-slate-200 flex items-center gap-2">
                                         {col.icon} {col.title}
                                     </h3>
                                     <span className={`text-xs font-bold px-2 py-0.5 rounded-lg ${col.badge}`}>
@@ -259,13 +259,13 @@ const DeliveryManager: React.FC = () => {
                                         </div>
                                     ) : (
                                         colPedidos.map(pedido => (
-                                            <div key={pedido.id} className="bg-white rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden hover:shadow-md transition-shadow">
+                                            <div key={pedido.id} className="bg-surface-900 rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden hover:shadow-md transition-shadow">
                                                 {/* Card Header */}
-                                                <div className="px-4 py-2.5 bg-slate-50/80 border-b border-slate-100 flex justify-between items-center">
-                                                    <span className="font-bold text-slate-800 text-sm truncate max-w-[140px]">
+                                                <div className="px-4 py-2.5 bg-white/[0.03] border-b border-white/[0.04] flex justify-between items-center">
+                                                    <span className="font-bold text-slate-100 text-sm truncate max-w-[140px]">
                                                         {pedido.clienteNombre}
                                                     </span>
-                                                    <span className="font-black text-blue-600 text-sm ml-2 flex-shrink-0">
+                                                    <span className="font-black text-blue-400 text-sm ml-2 flex-shrink-0">
                                                         C${Number(pedido.total).toFixed(2)}
                                                     </span>
                                                 </div>
@@ -274,7 +274,7 @@ const DeliveryManager: React.FC = () => {
                                                     {/* Contacto */}
                                                     <div className="flex gap-2">
                                                         <a href={`tel:${pedido.clienteTelefono}`}
-                                                            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-600 transition-colors"
+                                                            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-400 transition-colors"
                                                         >
                                                             <Phone size={12} className="flex-shrink-0" />
                                                             {pedido.clienteTelefono}
@@ -310,7 +310,7 @@ const DeliveryManager: React.FC = () => {
                                                                     value={pedido.motorizadoId || ''}
                                                                     onChange={e => assignMotorizado(pedido.id, e.target.value)}
                                                                     disabled={assigningId === pedido.id || col.id === 'cancelado'}
-                                                                    className="w-full text-xs px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-700 focus:outline-none focus:border-blue-400 appearance-none disabled:opacity-60"
+                                                                    className="w-full text-xs px-3 py-2 rounded-lg border border-white/[0.06] bg-surface-800/40 text-slate-200 focus:outline-none focus:border-blue-400 appearance-none disabled:opacity-60"
                                                                 >
                                                                     <option value="">— Sin asignar —</option>
                                                                     {activeRiders.map(m => (
@@ -328,7 +328,7 @@ const DeliveryManager: React.FC = () => {
 
                                                     {/* Motorizado asignado badge */}
                                                     {pedido.motorizado && (
-                                                        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-purple-700 bg-purple-50 rounded-lg px-2.5 py-1.5">
+                                                        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-purple-400 bg-purple-500/10 rounded-lg px-2.5 py-1.5">
                                                             <Truck size={11} /> {pedido.motorizado.nombre}
                                                         </div>
                                                     )}
@@ -341,8 +341,8 @@ const DeliveryManager: React.FC = () => {
                                                             onClick={() => updateEstado(pedido.id, ESTADO_SIGUIENTE[col.id])}
                                                             className={`w-full py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] ${
                                                                 col.id === 'pendiente'
-                                                                    ? 'bg-blue-50 text-blue-700 hover:bg-blue-100'
-                                                                    : 'bg-purple-50 text-purple-700 hover:bg-purple-100'
+                                                                    ? 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/15'
+                                                                    : 'bg-purple-500/10 text-purple-400 hover:bg-purple-500/15'
                                                             }`}
                                                         >
                                                             {col.id === 'pendiente' ? 'Iniciar Preparación' : 'Despachar'}
@@ -364,14 +364,14 @@ const DeliveryManager: React.FC = () => {
             {showNewRider && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowNewRider(false)} />
-                    <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in-95 duration-200">
+                    <div className="relative bg-surface-900 rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in-95 duration-200">
                         {/* Modal Header */}
                         <div className="flex items-center justify-between mb-5">
                             <div>
-                                <h3 className="text-lg font-bold text-slate-900">Registrar Motorizado</h3>
+                                <h3 className="text-lg font-bold text-white">Registrar Motorizado</h3>
                                 <p className="text-xs text-slate-400 mt-0.5">Flota Propia del negocio</p>
                             </div>
-                            <button onClick={() => setShowNewRider(false)} className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-400">
+                            <button onClick={() => setShowNewRider(false)} className="p-1.5 rounded-xl hover:bg-white/[0.06] text-slate-400">
                                 <X size={18} />
                             </button>
                         </div>
@@ -388,7 +388,7 @@ const DeliveryManager: React.FC = () => {
                                     value={riderForm.nombre}
                                     onChange={e => setRiderForm({ ...riderForm, nombre: e.target.value })}
                                     autoFocus
-                                    className="w-full px-4 py-3 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+                                    className="bg-transparent w-full px-4 py-3 border border-white/[0.06] rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
                                 />
                             </div>
 
@@ -404,7 +404,7 @@ const DeliveryManager: React.FC = () => {
                                         placeholder="8888-0000"
                                         value={riderForm.telefono}
                                         onChange={e => setRiderForm({ ...riderForm, telefono: e.target.value })}
-                                        className="w-full pl-9 pr-4 py-3 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+                                        className="bg-transparent w-full pl-9 pr-4 py-3 border border-white/[0.06] rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
                                     />
                                 </div>
                             </div>
@@ -419,13 +419,13 @@ const DeliveryManager: React.FC = () => {
                                     placeholder="Ej: Moto Honda · M-123456"
                                     value={riderForm.vehiculo}
                                     onChange={e => setRiderForm({ ...riderForm, vehiculo: e.target.value })}
-                                    className="w-full px-4 py-3 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+                                    className="bg-transparent w-full px-4 py-3 border border-white/[0.06] rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
                                 />
                             </div>
 
                             {/* Error */}
                             {riderError && (
-                                <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                                <div className="flex items-center gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
                                     <AlertCircle size={16} className="flex-shrink-0" />
                                     {riderError}
                                 </div>
@@ -435,7 +435,7 @@ const DeliveryManager: React.FC = () => {
                             <div className="flex gap-3 pt-1">
                                 <button
                                     onClick={() => setShowNewRider(false)}
-                                    className="flex-1 py-3 border border-slate-200 rounded-xl text-slate-600 font-semibold hover:bg-slate-50 transition-all"
+                                    className="flex-1 py-3 border border-white/[0.06] rounded-xl text-slate-300 font-semibold hover:bg-surface-800/40 transition-all"
                                 >
                                     Cancelar
                                 </button>

@@ -1196,7 +1196,7 @@ export default function Inventory() {
                                                         {product.category}
                                                     </span>
                                                 ) : (
-                                                    <span className="text-slate-600">-</span>
+                                                    <span className="text-slate-300">-</span>
                                                 )}
                                             </td>
                                             <td className="px-4 py-3 text-right">
@@ -1376,7 +1376,7 @@ export default function Inventory() {
                                 <div className="flex flex-col items-center justify-center py-16 text-slate-400">
                                     <Clock size={40} className="opacity-30 mb-2" />
                                     <p>No hay movimientos registrados</p>
-                                    <p className="text-xs text-slate-600 mt-1">El historial se llenará automáticamente con cada operación</p>
+                                    <p className="text-xs text-slate-300 mt-1">El historial se llenará automáticamente con cada operación</p>
                                 </div>
                             ) : (
                                 <table className="w-full">
@@ -2016,7 +2016,7 @@ export default function Inventory() {
                                                 className="sr-only"
                                             />
                                             <div className={`w-10 h-5 bg-slate-700 rounded-full transition-colors ${formData.isPublished ? 'bg-blue-600' : ''}`}></div>
-                                            <div className={`absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-transform ${formData.isPublished ? 'translate-x-5' : ''}`}></div>
+                                            <div className={`absolute left-1 top-1 w-3 h-3 bg-surface-900 rounded-full transition-transform ${formData.isPublished ? 'translate-x-5' : ''}`}></div>
                                         </div>
                                         <div className="flex flex-col">
                                             <span className="text-sm font-medium text-white">Publicar en Catálogo Online</span>
@@ -2034,7 +2034,7 @@ export default function Inventory() {
                                                 className="sr-only"
                                             />
                                             <div className={`w-10 h-5 bg-slate-700 rounded-full transition-colors ${formData.requiresBatchTracking ? 'bg-orange-600' : ''}`}></div>
-                                            <div className={`absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-transform ${formData.requiresBatchTracking ? 'translate-x-5' : ''}`}></div>
+                                            <div className={`absolute left-1 top-1 w-3 h-3 bg-surface-900 rounded-full transition-transform ${formData.requiresBatchTracking ? 'translate-x-5' : ''}`}></div>
                                         </div>
                                         <div className="flex flex-col">
                                             <span className="text-sm font-medium text-white">Requiere Control de Lote/Vencimiento</span>
