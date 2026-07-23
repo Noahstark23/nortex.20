@@ -242,7 +242,7 @@ const Contabilidad: React.FC = () => {
             body: JSON.stringify({ month: m, year: y }),
         });
         const d = await res.json();
-        alert(res.ok ? `✅ ${d.message}` : (d.error || 'Error al cerrar'));
+        alert(res.ok ? `${d.message}` : (d.error || 'Error al cerrar'));
         if (res.ok) loadPeriods();
     };
 
@@ -254,7 +254,7 @@ const Contabilidad: React.FC = () => {
             body: JSON.stringify({ reason }),
         });
         const d = await res.json();
-        alert(res.ok ? `🔓 ${d.message}` : (d.error || 'Error'));
+        alert(res.ok ? `${d.message}` : (d.error || 'Error'));
         if (res.ok) loadPeriods();
     };
 
@@ -291,7 +291,7 @@ const Contabilidad: React.FC = () => {
             }),
         });
         const d = await res.json();
-        setCfgMsg(res.ok ? '✅ Configuración guardada.' : (d.error || 'Error'));
+        setCfgMsg(res.ok ? 'Configuración guardada.' : (d.error || 'Error'));
     };
 
     const saveRate = async () => {
@@ -369,7 +369,7 @@ const Contabilidad: React.FC = () => {
         setDepMsg('Corriendo...');
         const res = await fetch('/api/accounting/depreciacion/run', { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth }, body: JSON.stringify({}) });
         const d = await res.json();
-        setDepMsg(res.ok ? `✅ ${d.message}` : (d.error || 'Error'));
+        setDepMsg(res.ok ? `${d.message}` : (d.error || 'Error'));
         loadAssets();
     };
 
@@ -559,7 +559,7 @@ const Contabilidad: React.FC = () => {
                                 <div className="panel-premium p-10 text-center text-slate-500 text-sm">No se pudo cargar la antigüedad de saldos.</div>
                             ) : s.entidades.length === 0 ? (
                                 <div className="panel-premium p-10 text-center text-slate-400 text-sm">
-                                    {agingSide === 'cxc' ? 'Nadie te debe — las ventas a crédito están al día. 🎉' : 'No tenés cuentas por pagar pendientes. 🎉'}
+                                    {agingSide === 'cxc' ? 'Nadie te debe — las ventas a crédito están al día. ' : 'No tenés cuentas por pagar pendientes. '}
                                 </div>
                             ) : (
                                 <div className="panel-premium p-0 overflow-hidden">
@@ -725,7 +725,7 @@ const Contabilidad: React.FC = () => {
                                     {(['MANUAL', 'OPENING'] as const).map(t => (
                                         <button key={t} onClick={() => setTipo(t)}
                                             className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-all ${tipo === t ? 'bg-brand/15 border-brand/40 text-white' : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:text-white'}`}>
-                                            {t === 'MANUAL' ? '✍️ Ajuste manual' : '📥 Saldos de apertura'}
+                                            {t === 'MANUAL' ? 'Ajuste manual' : 'Saldos de apertura'}
                                         </button>
                                     ))}
                                 </div>
@@ -1089,7 +1089,7 @@ const Contabilidad: React.FC = () => {
                                         <span>{C(renta.saldoAPagar > 0 ? renta.saldoAPagar : renta.saldoAFavor)}</span>
                                     </div>
                                 </div>
-                                <p className="text-[11px] text-slate-500 mt-4">📋 IR-1 — vence el 31 de marzo de {renta.year + 1}. Revisar con el contador antes de presentar.</p>
+                                <p className="text-[11px] text-slate-500 mt-4">IR-1 — vence el 31 de marzo de {renta.year + 1}. Revisar con el contador antes de presentar.</p>
                             </div>
                         )}
                     </div>

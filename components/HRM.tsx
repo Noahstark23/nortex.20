@@ -700,7 +700,7 @@ const HRM: React.FC = () => {
             XLSX.utils.book_append_sheet(wb, ws, 'Planilla INSS');
             XLSX.writeFile(wb, `Planilla_INSS_${data.year}_${String(data.month).padStart(2, '0')}.xlsx`);
             if (data.empleadosSinINSS > 0) {
-                alert(`⚠️ ${data.empleadosSinINSS} empleado(s) sin número INSS. Complétalo en su ficha para una declaración válida.`);
+                alert(`${data.empleadosSinINSS} empleado(s) sin número INSS. Complétalo en su ficha para una declaración válida.`);
             }
         } catch {
             alert('Error de conexión al generar el Excel.');
@@ -1199,7 +1199,7 @@ const HRM: React.FC = () => {
                                                 <td className="p-4 text-center">
                                                     <span className={`px-2 py-1 rounded text-xs font-bold ${p.status === 'PAGADO' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
                                                         }`}>
-                                                        {p.status === 'PAGADO' ? '✅ PAGADO' : '⏳ PENDIENTE'}
+                                                        {p.status === 'PAGADO' ? 'PAGADO' : '⏳ PENDIENTE'}
                                                     </span>
                                                 </td>
                                                 <td className="p-4 text-center">
@@ -1265,9 +1265,9 @@ const HRM: React.FC = () => {
                                             'text-green-700'
                                         }`}>{formatC(totalPasivo)}</div>
                                     <div className="text-sm mt-1 text-slate-500">
-                                        {pasivoSemaforo === 'red' ? '⚠️ Alerta: Reserva insuficiente. Provisione fondos inmediatamente.' :
-                                            pasivoSemaforo === 'yellow' ? '⚡ Precaución: Pasivo moderado. Revise su flujo de caja.' :
-                                                '✅ Saludable: Pasivo controlado.'}
+                                        {pasivoSemaforo === 'red' ? 'Alerta: Reserva insuficiente. Provisione fondos inmediatamente.' :
+                                            pasivoSemaforo === 'yellow' ? 'Precaución: Pasivo moderado. Revise su flujo de caja.' :
+                                                'Saludable: Pasivo controlado.'}
                                     </div>
                                 </div>
                             </div>
@@ -1458,7 +1458,7 @@ const HRM: React.FC = () => {
                                                     </div>
                                                 ) : (
                                                     <span className={`px-2 py-1 rounded text-xs font-bold ${a.status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                                                        {a.status === 'APPROVED' ? '✅ Aprobado' : a.status === 'DEDUCTED' ? '✅ Descontado' : a.status === 'REJECTED' ? '❌ Rechazado' : a.status}
+                                                        {a.status === 'APPROVED' ? 'Aprobado' : a.status === 'DEDUCTED' ? 'Descontado' : a.status === 'REJECTED' ? 'Rechazado' : a.status}
                                                     </span>
                                                 )}
                                             </td>
@@ -1552,7 +1552,7 @@ const HRM: React.FC = () => {
                                                         <button onClick={() => decideLeave(l.id, 'REJECTED')} className="px-2 py-1 bg-red-50 text-red-600 rounded text-xs font-bold hover:bg-red-100">Rechazar</button>
                                                     </div>
                                                 ) : (
-                                                    <span className={`px-2 py-1 rounded text-xs font-bold ${l.status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{l.status === 'APPROVED' ? '✅ Aprobada' : l.status === 'REJECTED' ? '❌ Rechazada' : l.status}</span>
+                                                    <span className={`px-2 py-1 rounded text-xs font-bold ${l.status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{l.status === 'APPROVED' ? 'Aprobada' : l.status === 'REJECTED' ? 'Rechazada' : l.status}</span>
                                                 )}
                                             </td>
                                         </tr>
@@ -1628,7 +1628,7 @@ const HRM: React.FC = () => {
                                             <td className="p-4 text-right font-mono text-slate-600">{formatC(item.baseSalary)}</td>
                                             <td className="p-4 text-right font-mono font-bold text-rose-700 text-lg">{formatC(item.monto)}</td>
                                             <td className="p-4 text-center">
-                                                <span className={`px-2 py-1 rounded text-xs font-bold ${item.pagado ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{item.pagado ? '✅ Pagado' : '⏳ Pendiente'}</span>
+                                                <span className={`px-2 py-1 rounded text-xs font-bold ${item.pagado ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{item.pagado ? 'Pagado' : '⏳ Pendiente'}</span>
                                             </td>
                                             <td className="p-4 text-center">
                                                 {item.pagado && (

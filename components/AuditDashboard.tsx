@@ -455,7 +455,7 @@ const EmptyState = ({ message }: { message: string }) => (
     <div className="text-center py-16 text-slate-400">
         <Shield size={40} className="mx-auto mb-3 opacity-40" />
         <p className="text-sm">{message}</p>
-        <p className="text-xs mt-1">🟢 Todo en orden</p>
+        <p className="text-xs mt-1">Todo en orden</p>
     </div>
 );
 

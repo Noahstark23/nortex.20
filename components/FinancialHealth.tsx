@@ -198,7 +198,7 @@ const FinancialHealth: React.FC = () => {
                     <div className="space-y-1.5">
                         {data.score.factors.slice(0, 5).map((f, i) => (
                             <div key={i} className="text-xs text-slate-500 flex items-start gap-1.5">
-                                {f.includes('⚠️') || f.includes('RIESGO') ? (
+                                {f.includes('') || f.includes('RIESGO') ? (
                                     <AlertTriangle size={12} className="text-amber-500 flex-shrink-0 mt-0.5" />
                                 ) : (
                                     <CheckCircle size={12} className="text-emerald-500 flex-shrink-0 mt-0.5" />
@@ -245,7 +245,7 @@ const FinancialHealth: React.FC = () => {
                         </div>
 
                         <div className={`flex justify-between text-sm font-bold px-3 py-2 rounded-lg ${data.balance.totals.isBalanced ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
-                            <span>{data.balance.totals.isBalanced ? '✅ Cuadrado' : '❌ Descuadrado'}</span>
+                            <span>{data.balance.totals.isBalanced ? 'Cuadrado' : 'Descuadrado'}</span>
                             <span>Capital: {formatC(data.balance.totals.equity + data.balance.totals.netIncome)}</span>
                         </div>
                     </div>

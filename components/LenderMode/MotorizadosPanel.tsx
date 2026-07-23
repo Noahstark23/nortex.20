@@ -170,7 +170,7 @@ const MotorizadosPanel: React.FC = () => {
             )}
             {offlineQueue.length > 0 && isOffline && (
                 <div className="bg-slate-800 border border-slate-600 text-slate-300 p-3 rounded-xl mb-4 text-sm">
-                    📦 {offlineQueue.length} cobro(s) en cola esperando señal.
+                    {offlineQueue.length} cobro(s) en cola esperando señal.
                 </div>
             )}
 
@@ -186,7 +186,7 @@ const MotorizadosPanel: React.FC = () => {
                         onClick={() => {
                             const clientName = loans.find(l => l.id === selectedLoan)?.clientName || 'Cliente';
                             const userName = JSON.parse(localStorage.getItem('nortex_user') || '{}').name || 'Tu Cobrador';
-                            const text = `*NORTEX CAPITAL* 🏦\n\nHola *${clientName}* 👋,\nConfirmamos la recepción de tu pago.\n\n💰 *Monto:* $${parseFloat(amount || '0').toFixed(2)}\n👤 *Cobrador:* ${userName}\n📅 *Fecha:* ${new Date().toLocaleString()}\n\n_Gracias por tu puntualidad. Tu saldo ha sido actualizado._`;
+                            const text = `*NORTEX CAPITAL* \n\nHola *${clientName}* ,\nConfirmamos la recepción de tu pago.\n\n*Monto:* $${parseFloat(amount || '0').toFixed(2)}\n*Cobrador:* ${userName}\n*Fecha:* ${new Date().toLocaleString()}\n\n_Gracias por tu puntualidad. Tu saldo ha sido actualizado._`;
                             window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
                         }}
                         className="w-full py-4 bg-[#25D366] hover:bg-[#1ebe57] text-white font-bold rounded-xl flex items-center justify-center gap-3 shadow-lg shadow-[#25D366]/20 transition-all active:scale-95"

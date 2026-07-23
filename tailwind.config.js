@@ -36,6 +36,26 @@ const brand = {
     500: '#6366f1',
     600: '#4f46e5',
     700: '#4338ca',
+    800: '#3730a3',
+    900: '#312e81',
+    950: '#1e1b4b',
+};
+
+// Verde Nortex (dinero que entra / éxito) — escala completa para absorber
+// los usos de `emerald-*` y `green-*` en un solo verde de marca.
+const accent = {
+    DEFAULT: '#10b981',
+    50:  '#ecfdf5',
+    100: '#d1fae5',
+    200: '#a7f3d0',
+    300: '#6ee7b7',
+    400: '#34d399',
+    500: '#10b981',
+    600: '#059669',
+    700: '#047857',
+    800: '#065f46',
+    900: '#064e3b',
+    950: '#022c22',
 };
 
 export default {
@@ -57,6 +77,24 @@ export default {
                 slate: obsidian,
                 surface: obsidian,
                 brand,
+                // ── Fase 1 rediseño: la paleta default de Tailwind deja de
+                // existir en la app. El arcoíris frío (blue/indigo/sky/cyan/
+                // violet/purple — >600 usos, el look genérico de IA) colapsa
+                // al índigo de marca; los dos verdes (emerald+green) colapsan
+                // al verde Nortex; `gray` duplicaba a `slate` → obsidiana.
+                // Cientos de usos se recolorean sin tocar un solo componente
+                // (misma palanca que el remapeo de `slate`). La semántica de
+                // color queda fija: índigo=acción · verde=dinero/éxito ·
+                // ámbar=advertencia/deuda · rojo=peligro/salida.
+                blue: brand,
+                indigo: brand,
+                sky: brand,
+                cyan: brand,
+                violet: brand,
+                purple: brand,
+                emerald: accent,
+                green: accent,
+                gray: obsidian,
                 nortex: {
                     // Lights → índigo suave (badges, fondos tenues)
                     50:  brand[50],

@@ -61,7 +61,7 @@ const Clients: React.FC = () => {
                 setShowModal(false);
                 setFormData({ name: '', taxId: '', phone: '', email: '', address: '', creditLimit: '' });
                 fetchCustomers();
-                alert("✅ Cliente registrado exitosamente.");
+                alert("Cliente registrado exitosamente.");
             }
         } catch (e) {
             alert("Error creando cliente");

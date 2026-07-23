@@ -40,7 +40,7 @@ const PublicCatalog: React.FC = () => {
             return parsed;
         } catch (error) { 
             // Si explota el parseo, nukeamos el storage para evitar la pantalla blanca
-            console.warn("⚠️ Carrito corrupto detectado. Limpiando...");
+            console.warn("Carrito corrupto detectado. Limpiando...");
             localStorage.removeItem(CART_KEY);
             return []; 
         }
@@ -151,7 +151,7 @@ const PublicCatalog: React.FC = () => {
         const message =
             `Hola ${businessInfo.name}, quiero hacer el pedido #${orderNum} por un total de C$ ${total.toFixed(2)}.\n\n` +
             `Detalles:\n${itemLines}\n\n` +
-            (trackingUrl ? `📍 Seguimiento en vivo: ${trackingUrl}\n\n` : '') +
+            (trackingUrl ? `Seguimiento en vivo: ${trackingUrl}\n\n` : '') +
             `Por favor, confírmenme mi pedido.`;
         const phone = businessInfo.phone?.replace(/\D/g, '') || '';
         return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
@@ -311,7 +311,7 @@ const PublicCatalog: React.FC = () => {
                             href={lastTrackingPath}
                             className="flex items-center justify-center gap-2 w-full bg-slate-900 text-white px-6 py-4 rounded-2xl font-bold text-base hover:bg-slate-800 active:scale-[0.98] transition-all shadow-lg mb-3"
                         >
-                            📍 Seguir mi pedido en vivo
+                            Seguir mi pedido en vivo
                         </a>
                     )}
 
@@ -614,14 +614,14 @@ const PublicCatalog: React.FC = () => {
                                         onClick={() => setOrderMode('DELIVERY')}
                                         className={`py-2.5 px-2 rounded-xl text-sm font-bold transition-all ${orderMode === 'DELIVERY' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                                     >
-                                        🛵 Pedir a Domicilio
+                                        Pedir a Domicilio
                                     </button>
                                     <button
                                         type="button"
                                         onClick={() => setOrderMode('QUOTE')}
                                         className={`py-2.5 px-2 rounded-xl text-sm font-bold transition-all ${orderMode === 'QUOTE' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                                     >
-                                        🧾 Cotización Mayorista
+                                        Cotización Mayorista
                                     </button>
                                 </div>
                                 <p className="text-sm text-slate-500 mb-2">

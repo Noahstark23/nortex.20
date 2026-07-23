@@ -315,7 +315,7 @@ const DeliveryManager: React.FC = () => {
                                                                     <option value="">— Sin asignar —</option>
                                                                     {activeRiders.map(m => (
                                                                         <option key={m.id} value={m.id}>
-                                                                            {m.tipoFlota === 'NORTEX' ? '⚡ ' : '🛵 '}{m.nombre}
+                                                                            {m.tipoFlota === 'NORTEX' ? '' : ''}{m.nombre}
                                                                         </option>
                                                                     ))}
                                                                 </select>

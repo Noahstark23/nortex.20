@@ -100,7 +100,7 @@ const ForgotPassword: React.FC = () => {
                             recibirás un link para restablecer tu contraseña en los próximos minutos.
                         </p>
                         <div className="bg-slate-900/50 rounded-lg p-3 text-xs text-slate-500 mb-6">
-                            💡 Revisa también tu carpeta de spam. El link expira en 1 hora.
+                            Revisa también tu carpeta de spam. El link expira en 1 hora.
                         </div>
                         <Link
                             to="/login"

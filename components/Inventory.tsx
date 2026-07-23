@@ -71,19 +71,19 @@ type AdjustType = 'ADJUST_LOSS' | 'ADJUST_GAIN' | 'IN_PURCHASE' | 'RETURN';
 // ==========================================
 
 const MOVEMENT_LABELS: Record<string, { label: string; color: string; icon: string }> = {
-    'IN_PURCHASE': { label: 'Compra', color: 'bg-emerald-900/60 text-emerald-300 border-emerald-700', icon: '📦' },
-    'IN': { label: 'Entrada', color: 'bg-emerald-900/60 text-emerald-300 border-emerald-700', icon: '📦' },
-    'OUT_SALE': { label: 'Venta', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '🛒' },
-    'OUT': { label: 'Salida', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '📤' },
-    'SALE': { label: 'Venta', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '🛒' },
-    'ADJUST_LOSS': { label: 'Pérdida', color: 'bg-orange-900/60 text-orange-300 border-orange-700', icon: '⚠️' },
-    'ADJUST_GAIN': { label: 'Ganancia', color: 'bg-blue-900/60 text-blue-300 border-blue-700', icon: '📈' },
-    'ADJUSTMENT': { label: 'Ajuste', color: 'bg-yellow-900/60 text-yellow-300 border-yellow-700', icon: '🔧' },
-    'RETURN': { label: 'Devolución', color: 'bg-purple-900/60 text-purple-300 border-purple-700', icon: '↩️' },
+    'IN_PURCHASE': { label: 'Compra', color: 'bg-emerald-900/60 text-emerald-300 border-emerald-700', icon: '' },
+    'IN': { label: 'Entrada', color: 'bg-emerald-900/60 text-emerald-300 border-emerald-700', icon: '' },
+    'OUT_SALE': { label: 'Venta', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '' },
+    'OUT': { label: 'Salida', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '' },
+    'SALE': { label: 'Venta', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '' },
+    'ADJUST_LOSS': { label: 'Pérdida', color: 'bg-orange-900/60 text-orange-300 border-orange-700', icon: '' },
+    'ADJUST_GAIN': { label: 'Ganancia', color: 'bg-blue-900/60 text-blue-300 border-blue-700', icon: '' },
+    'ADJUSTMENT': { label: 'Ajuste', color: 'bg-yellow-900/60 text-yellow-300 border-yellow-700', icon: '' },
+    'RETURN': { label: 'Devolución', color: 'bg-purple-900/60 text-purple-300 border-purple-700', icon: '↩' },
 };
 
 const getMovementMeta = (type: string) => {
-    return MOVEMENT_LABELS[type] || { label: type, color: 'bg-slate-700 text-slate-300 border-slate-600', icon: '❓' };
+    return MOVEMENT_LABELS[type] || { label: type, color: 'bg-slate-700 text-slate-300 border-slate-600', icon: '' };
 };
 
 const formatCurrency = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -917,7 +917,7 @@ export default function Inventory() {
                                     >
                                         <Zap size={18} className="text-orange-400" />
                                         <div>
-                                            <p className="font-semibold">Modo Rápido 🔫</p>
+                                            <p className="font-semibold">Modo Rápido </p>
                                             <p className="text-xs text-slate-400">Escáner / Teclado</p>
                                         </div>
                                     </button>
@@ -1140,8 +1140,7 @@ export default function Inventory() {
                                                                 className="flex-1 flex items-center justify-center gap-2 px-6 py-4 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.4)] hover:shadow-[0_0_30px_rgba(59,130,246,0.6)] hover:-translate-y-1"
                                                             >
                                                                 <Zap size={20} />
-                                                                Modo Rápido 🔫
-                                                            </button>
+                                                                Modo Rápido                                                             </button>
                                                             <button
                                                                 onClick={() => setShowCreateModal(true)}
                                                                 className="flex items-center justify-center gap-2 px-6 py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-all border border-slate-700 hover:border-slate-500"
@@ -2206,7 +2205,7 @@ export default function Inventory() {
                                                     </td>
                                                     <td className="px-6 py-4 text-sm">
                                                         <span className={`px-2 py-1 rounded-full text-xs font-semibold ${isExpired ? 'bg-red-900/40 text-red-400' : isExpiringSoon ? 'bg-amber-900/40 text-amber-400' : 'bg-emerald-900/40 text-emerald-400'}`}>
-                                                            {isExpired ? '⚠ ' : ''}{new Date(batch.expiryDate).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                                            {isExpired ? '' : ''}{new Date(batch.expiryDate).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                                                         </span>
                                                     </td>
                                                     <td className="px-6 py-4 text-sm text-right font-bold text-white">

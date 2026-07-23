@@ -187,7 +187,7 @@ const QuotationManager: React.FC = () => {
                 setCustomerName('');
                 setCustomerRuc('');
                 setActiveTab('HISTORY');
-                alert(`✅ Cotización ${savedQuote.id} generada exitosamente.`);
+                alert(`Cotización ${savedQuote.id} generada exitosamente.`);
             } else {
                 alert('Error al guardar cotización');
             }
@@ -223,7 +223,7 @@ const QuotationManager: React.FC = () => {
             });
 
             if (res.ok) {
-                alert('✅ Pedido convertido en cotización exitosamente.');
+                alert('Pedido convertido en cotización exitosamente.');
                 // Refresh both lists
                 await Promise.all([fetchWebOrders(), fetchQuotations()]);
                 setActiveTab('HISTORY');

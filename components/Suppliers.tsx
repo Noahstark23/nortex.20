@@ -57,7 +57,7 @@ const Suppliers: React.FC = () => {
               setEditingId(null);
               setFormData(emptyForm);
               fetchSuppliers();
-              alert(editingId ? "✅ Proveedor actualizado." : "✅ Proveedor agregado.");
+              alert(editingId ? "Proveedor actualizado." : "Proveedor agregado.");
           } else {
               const d = await res.json().catch(() => ({}));
               alert(`Error: ${d.error || 'No se pudo guardar'}`);

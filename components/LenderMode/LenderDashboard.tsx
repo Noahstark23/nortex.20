@@ -216,7 +216,7 @@ const LenderDashboard: React.FC = () => {
             if (data.success) {
                 setShowDepositModal(false);
                 setDepositData({ collectorId: '', motoName: '', amount: '', notes: '' });
-                alert(`¡✅ Exito! Se han ingresado $${depositData.amount} a la Bóveda General Nortex.`);
+                alert(`¡Exito! Se han ingresado $${depositData.amount} a la Bóveda General Nortex.`);
             } else {
                 alert("Error: " + data.error);
             }
@@ -1087,7 +1087,7 @@ const LenderDashboard: React.FC = () => {
                     <div className="bg-slate-900 border border-orange-500/50 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
                         <div className="p-6 border-b border-orange-500/30 flex justify-between items-center">
                             <h2 className="text-xl font-bold text-orange-400">Reclutar Motorizado</h2>
-                            <button onClick={() => setShowMotoModal(false)} className="text-slate-500 hover:text-white">✕</button>
+                            <button onClick={() => setShowMotoModal(false)} className="text-slate-500 hover:text-white"></button>
                         </div>
 
                         <form onSubmit={handleCreateMoto} className="p-6 space-y-4">

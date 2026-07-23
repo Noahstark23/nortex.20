@@ -189,7 +189,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                         </div>
                         <div>
                             <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                                🔫 Modo Alta Velocidad
+                                Modo Alta Velocidad
                             </h2>
                             <p className="text-sm text-slate-400">
                                 {sessionHistory.length} producto{sessionHistory.length !== 1 ? 's' : ''} agregado{sessionHistory.length !== 1 ? 's' : ''} en esta sesión
@@ -219,7 +219,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                             {showSuccess && (
                                 <div className="bg-emerald-950/60 border border-emerald-700 rounded-lg p-3 flex items-center gap-2 animate-pulse">
                                     <Check size={20} className="text-emerald-400" />
-                                    <span className="text-emerald-300 font-semibold">✅ Producto guardado</span>
+                                    <span className="text-emerald-300 font-semibold">Producto guardado</span>
                                 </div>
                             )}
 
@@ -418,7 +418,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                             <div className="mt-4 pt-4 border-t border-slate-700">
                                 <div className="bg-orange-950/40 border border-orange-800/50 rounded-lg p-3">
                                     <p className="text-xs text-orange-300 font-semibold">
-                                        📊 Total: {sessionHistory.length} producto{sessionHistory.length !== 1 ? 's' : ''}
+                                        Total: {sessionHistory.length} producto{sessionHistory.length !== 1 ? 's' : ''}
                                     </p>
                                 </div>
                             </div>

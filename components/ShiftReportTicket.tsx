@@ -109,7 +109,7 @@ export const ShiftReportTicket: React.FC<ShiftReportTicketProps> = ({ data }) =>
                         {data.difference !== 0 && (
                             <div className="text-center mt-1 font-bold text-xs border border-black p-1">
                                 {data.difference < 0
-                                    ? `⚠ FALTANTE: C$ ${Math.abs(data.difference).toFixed(2)}`
+                                    ? `FALTANTE: C$ ${Math.abs(data.difference).toFixed(2)}`
                                     : `△ SOBRANTE: C$ ${data.difference.toFixed(2)}`
                                 }
                             </div>
@@ -117,7 +117,7 @@ export const ShiftReportTicket: React.FC<ShiftReportTicketProps> = ({ data }) =>
 
                         {data.difference === 0 && (
                             <div className="text-center mt-1 font-bold text-xs border border-black p-1">
-                                ✓ CAJA CUADRADA
+                                CAJA CUADRADA
                             </div>
                         )}
                     </div>
