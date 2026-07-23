@@ -142,7 +142,7 @@ const RetailDashboard: React.FC = () => {
   // Loading spinner
   if (isLoading || !tenantData) {
     return (
-      <div className="h-full flex items-center justify-center bg-slate-50">
+      <div className="h-full flex items-center justify-center bg-surface-800/40">
         <div className="flex flex-col items-center gap-3">
           <RefreshCw className="animate-spin text-slate-400" size={32} />
           <span className="text-sm text-slate-500 font-medium">Cargando panel financiero...</span>
@@ -273,12 +273,12 @@ const RetailDashboard: React.FC = () => {
   };
 
   return (
-    <div className="p-6 h-full overflow-y-auto bg-slate-50 text-slate-800 relative">
+    <div className="p-6 h-full overflow-y-auto bg-surface-800/40 text-slate-100 relative">
 
       {/* BILLING BANNERS */}
       {tenantData.subscriptionStatus === 'TRIALING' && (
         <div className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex items-center justify-between">
-          <div className="flex items-center gap-3 text-yellow-700">
+          <div className="flex items-center gap-3 text-yellow-400">
             <Clock size={20} />
             <span className="font-medium">
               Modo Prueba: Quedan <span className="font-bold">{daysLeftInTrial} días</span> gratis.
@@ -302,7 +302,7 @@ const RetailDashboard: React.FC = () => {
           <button
             onClick={handleReactivate}
             disabled={processingSub}
-            className="px-6 py-3 bg-white text-red-600 font-bold rounded shadow-lg hover:bg-slate-100 transition-colors"
+            className="px-6 py-3 bg-surface-900 text-red-400 font-bold rounded shadow-lg hover:bg-white/[0.06] transition-colors"
           >
             {processingSub ? 'PROCESANDO...' : 'REACTIVAR SERVICIO ($50)'}
           </button>
@@ -311,12 +311,12 @@ const RetailDashboard: React.FC = () => {
 
       <header className="mb-8 flex justify-between items-start">
         <div>
-          <h1 className="text-3xl font-bold text-nortex-900">Panel Financiero</h1>
+          <h1 className="text-3xl font-bold text-slate-100">Panel Financiero</h1>
           <div className="flex items-center gap-2 mt-2">
-            <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold uppercase tracking-wider">{tenantData.type}</span>
+            <span className="px-2 py-1 bg-blue-500/15 text-blue-400 rounded text-xs font-bold uppercase tracking-wider">{tenantData.type}</span>
             <span className="text-slate-500">{tenantData.name}</span>
-            <span className={`px-2 py-1 rounded text-xs font-bold uppercase tracking-wider ${tenantData.subscriptionStatus === 'ACTIVE' ? 'bg-green-100 text-green-700' :
-              tenantData.subscriptionStatus === 'PAST_DUE' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
+            <span className={`px-2 py-1 rounded text-xs font-bold uppercase tracking-wider ${tenantData.subscriptionStatus === 'ACTIVE' ? 'bg-green-500/15 text-green-400' :
+              tenantData.subscriptionStatus === 'PAST_DUE' ? 'bg-red-500/15 text-red-400' : 'bg-yellow-500/15 text-yellow-400'
               }`}>
               {tenantData.subscriptionStatus}
             </span>
@@ -324,7 +324,7 @@ const RetailDashboard: React.FC = () => {
         </div>
         <button
           onClick={() => setShowFiscalModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-sm font-bold text-slate-700 rounded-lg hover:bg-slate-50 shadow-sm transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-surface-900 border border-white/[0.06] text-sm font-bold text-slate-200 rounded-lg hover:bg-surface-800/40 shadow-sm transition-colors"
         >
           <Settings size={16} /> Configuración DGI
         </button>
@@ -349,7 +349,7 @@ const RetailDashboard: React.FC = () => {
             </div>
             <button
               onClick={() => navigate('/app/marketplace')}
-              className="px-6 py-3 bg-white text-nortex-900 font-bold rounded-lg hover:bg-nortex-accent transition-colors flex items-center gap-2 shadow-lg"
+              className="px-6 py-3 bg-surface-900 text-slate-100 font-bold rounded-lg hover:bg-nortex-accent transition-colors flex items-center gap-2 shadow-lg"
             >
               <ShoppingCart size={18} /> Pedir Reabastecimiento <ArrowRight size={18} />
             </button>
@@ -359,19 +359,19 @@ const RetailDashboard: React.FC = () => {
 
       {/* 🚨 THEFT ALERT BANNER */}
       {theftAlerts.length > 0 && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl">
+        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
           <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-red-100 text-red-600 rounded-lg">
+            <div className="p-2 bg-red-500/15 text-red-400 rounded-lg">
               <ShieldAlert size={20} />
             </div>
             <div>
-              <h3 className="font-bold text-red-700">Alerta de Auditoría</h3>
+              <h3 className="font-bold text-red-400">Alerta de Auditoría</h3>
               <p className="text-xs text-red-500">{theftAlerts.length} discrepancia(s) detectada(s) en los últimos 7 días</p>
             </div>
           </div>
           <div className="space-y-1">
             {theftAlerts.slice(0, 3).map((alert: any) => (
-              <div key={alert.id} className="text-xs bg-red-100 text-red-700 px-3 py-1.5 rounded-lg flex justify-between">
+              <div key={alert.id} className="text-xs bg-red-500/15 text-red-400 px-3 py-1.5 rounded-lg flex justify-between">
                 <span>{alert.details?.cajero || 'Cajero'}: {alert.details?.tipo}</span>
                 <span className="font-bold">C${Math.abs(alert.details?.diferencia || 0).toFixed(2)}</span>
               </div>
@@ -382,13 +382,13 @@ const RetailDashboard: React.FC = () => {
 
       {/* ⚠️ EXPIRING BATCHES ALERT BANNER */}
       {expiringBatches.length > 0 && (
-        <div className="mb-6 p-4 bg-orange-50 border border-orange-200 rounded-xl">
+        <div className="mb-6 p-4 bg-orange-500/10 border border-orange-500/20 rounded-xl">
           <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-orange-100 text-orange-600 rounded-lg">
+            <div className="p-2 bg-orange-500/15 text-orange-400 rounded-lg">
               <Timer size={20} />
             </div>
             <div>
-              <h3 className="font-bold text-orange-700">Alerta de Vencimiento</h3>
+              <h3 className="font-bold text-orange-400">Alerta de Vencimiento</h3>
               <p className="text-xs text-orange-500">{expiringBatches.length} lote(s) próximo(s) a vencer (≤ 90 días)</p>
             </div>
           </div>
@@ -396,14 +396,14 @@ const RetailDashboard: React.FC = () => {
             {expiringBatches.slice(0, 3).map((batch: any) => {
               const isExpired = new Date(batch.expiryDate) < new Date();
               return (
-                <div key={batch.id} className={`text-xs px-3 py-1.5 rounded-lg flex justify-between ${isExpired ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'}`}>
+                <div key={batch.id} className={`text-xs px-3 py-1.5 rounded-lg flex justify-between ${isExpired ? 'bg-red-500/15 text-red-400' : 'bg-orange-500/15 text-orange-400'}`}>
                   <span>{batch.productName} (Lote: {batch.batchNumber})</span>
                   <span className="font-bold">{new Date(batch.expiryDate).toLocaleDateString()} • {batch.stock} uds</span>
                 </div>
               );
             })}
             {expiringBatches.length > 3 && (
-              <div className="text-xs text-orange-600 font-semibold px-3 py-1">
+              <div className="text-xs text-orange-400 font-semibold px-3 py-1">
                 + {expiringBatches.length - 3} lotes más... Ve al Inventario para más detalles.
               </div>
             )}
@@ -414,33 +414,33 @@ const RetailDashboard: React.FC = () => {
       {/* 📊 TODAY'S PERFORMANCE KPIs */}
       {todayStats && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div className="bg-surface-900 p-4 rounded-xl shadow-sm border border-white/[0.06]">
             <div className="flex justify-between items-center">
               <div>
                 <p className="text-xs font-medium text-slate-500 uppercase">Ventas Hoy</p>
-                <h3 className="text-xl font-bold text-slate-800">C${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+                <h3 className="text-xl font-bold text-slate-100">C${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
               </div>
-              <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><TrendingUp size={18} /></div>
+              <div className="p-2 bg-blue-500/15 text-blue-400 rounded-lg"><TrendingUp size={18} /></div>
             </div>
           </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+          <div className="bg-surface-900 p-4 rounded-xl shadow-sm border border-white/[0.06]">
             <div className="flex justify-between items-center">
               <div>
                 <p className="text-xs font-medium text-slate-500 uppercase">Gastos Hoy</p>
-                <h3 className="text-xl font-bold text-red-600">C${todayStats.totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+                <h3 className="text-xl font-bold text-red-400">C${todayStats.totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
               </div>
-              <div className="p-2 bg-red-100 text-red-600 rounded-lg"><TrendingDown size={18} /></div>
+              <div className="p-2 bg-red-500/15 text-red-400 rounded-lg"><TrendingDown size={18} /></div>
             </div>
           </div>
-          <div className={`p-4 rounded-xl shadow-sm border ${todayStats.netProfit >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+          <div className={`p-4 rounded-xl shadow-sm border ${todayStats.netProfit >= 0 ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
             <div className="flex justify-between items-center">
               <div>
                 <p className="text-xs font-medium text-slate-500 uppercase">Utilidad Neta Hoy</p>
-                <h3 className={`text-xl font-bold ${todayStats.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                <h3 className={`text-xl font-bold ${todayStats.netProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                   C${todayStats.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </h3>
               </div>
-              <div className={`p-2 rounded-lg ${todayStats.netProfit >= 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
+              <div className={`p-2 rounded-lg ${todayStats.netProfit >= 0 ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
                 <DollarSign size={18} />
               </div>
             </div>
@@ -452,26 +452,26 @@ const RetailDashboard: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
 
         {/* Wallet Card */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <div className="bg-surface-900 p-6 rounded-xl shadow-sm border border-white/[0.06]">
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Saldo en Billetera</p>
-              <h3 className="text-2xl font-bold text-slate-900 transition-all duration-500">${tenantData.walletBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+              <h3 className="text-2xl font-bold text-white transition-all duration-500">${tenantData.walletBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
             </div>
-            <div className="p-2 bg-green-100 text-green-600 rounded-lg">
+            <div className="p-2 bg-green-500/15 text-green-400 rounded-lg">
               <DollarSign size={20} />
             </div>
           </div>
-          <div className="text-xs text-green-600 font-medium flex items-center gap-1">
+          <div className="text-xs text-green-400 font-medium flex items-center gap-1">
             <TrendingUp size={14} /> +12.5% vs mes anterior
           </div>
         </div>
 
         {/* Credit Score Card */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 relative overflow-hidden group">
+        <div className="bg-surface-900 p-6 rounded-xl shadow-sm border border-white/[0.06] relative overflow-hidden group">
           <button
             onClick={refreshCreditScore}
-            className={`absolute top-2 right-2 p-1.5 rounded-full hover:bg-slate-100 text-slate-400 ${refreshingScore ? 'animate-spin' : ''}`}
+            className={`absolute top-2 right-2 p-1.5 rounded-full hover:bg-white/[0.06] text-slate-400 ${refreshingScore ? 'animate-spin' : ''}`}
             title="Recalcular Score"
           >
             <RefreshCw size={14} />
@@ -481,16 +481,16 @@ const RetailDashboard: React.FC = () => {
             <div>
               <p className="text-sm font-medium text-slate-500">Nortex Score</p>
               {tenantData.creditScore != null ? (
-                <h3 className="text-2xl font-bold text-blue-600">{tenantData.creditScore} <span className="text-sm text-slate-400 font-normal">/ 850</span></h3>
+                <h3 className="text-2xl font-bold text-blue-400">{tenantData.creditScore} <span className="text-sm text-slate-400 font-normal">/ 850</span></h3>
               ) : (
                 <h3 className="text-lg font-bold text-slate-400">Sin datos</h3>
               )}
             </div>
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+            <div className="p-2 bg-blue-500/10 text-blue-400 rounded-lg">
               <Activity size={20} />
             </div>
           </div>
-          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mb-2">
+          <div className="w-full bg-white/[0.04] h-2 rounded-full overflow-hidden mb-2">
             <div className="bg-blue-500 h-full rounded-full transition-all duration-1000" style={{ width: `${((tenantData.creditScore ?? 0) / 850) * 100}%` }}></div>
           </div>
           {tenantData.creditScore == null ? (
@@ -520,7 +520,7 @@ const RetailDashboard: React.FC = () => {
           <button
             onClick={() => setShowLoanModal(true)}
             disabled={tenantData.creditLimit <= 100 || (tenantData.creditScore ?? 0) < 500}
-            className="relative z-10 w-full py-2 bg-nortex-accent hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-nortex-900 text-sm font-bold rounded transition-colors flex items-center justify-center gap-2"
+            className="relative z-10 w-full py-2 bg-nortex-accent hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-slate-100 text-sm font-bold rounded transition-colors flex items-center justify-center gap-2"
           >
             {(tenantData.creditScore ?? 0) < 500 ? <Lock size={16} /> : <Banknote size={16} />}
             {tenantData.creditScore == null ? 'GENERÁ HISTORIAL' : tenantData.creditScore < 500 ? 'MEJORA TU SCORE' : 'SOLICITAR DESEMBOLSO'}
@@ -528,13 +528,13 @@ const RetailDashboard: React.FC = () => {
         </div>
 
         {/* Active Debt Card */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <div className="bg-surface-900 p-6 rounded-xl shadow-sm border border-white/[0.06]">
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Deuda Activa</p>
-              <h3 className="text-2xl font-bold text-red-600">${activeDebt.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+              <h3 className="text-2xl font-bold text-red-400">${activeDebt.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
             </div>
-            <div className="p-2 bg-red-100 text-red-600 rounded-lg">
+            <div className="p-2 bg-red-500/15 text-red-400 rounded-lg">
               <AlertCircle size={20} />
             </div>
           </div>
@@ -546,9 +546,9 @@ const RetailDashboard: React.FC = () => {
 
       {/* 🛡️ DASHBOARD DE SUPERVIVENCIA (NIIF PyMES) */}
       {survivalData && (
-        <div className="mb-8 border-t border-slate-200 pt-8">
-          <h2 className="text-2xl font-bold text-nortex-900 mb-6 flex items-center gap-2">
-            <ShieldAlert className="text-emerald-600" /> Dashboard de Supervivencia
+        <div className="mb-8 border-t border-white/[0.06] pt-8">
+          <h2 className="text-2xl font-bold text-slate-100 mb-6 flex items-center gap-2">
+            <ShieldAlert className="text-emerald-400" /> Dashboard de Supervivencia
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
@@ -556,7 +556,7 @@ const RetailDashboard: React.FC = () => {
             <div className={`p-6 rounded-xl shadow-lg text-white relative overflow-hidden flex flex-col justify-center border
               ${survivalData.liquidezLibre > 0 ? 'bg-emerald-600 border-emerald-500' : 'bg-red-600 border-red-500'}
             `}>
-              <div className="absolute -top-10 -right-10 w-48 h-48 bg-white blur-[60px] opacity-10 rounded-full"></div>
+              <div className="absolute -top-10 -right-10 w-48 h-48 bg-surface-900 blur-[60px] opacity-10 rounded-full"></div>
               <h3 className="text-lg font-bold text-white/90 mb-1 relative z-10 flex items-center gap-2">
                 {survivalData.liquidezLibre > 0 ? <Check size={18} /> : <AlertCircle size={18} />} Retiro Seguro Permitido
               </h3>
@@ -574,8 +574,8 @@ const RetailDashboard: React.FC = () => {
             </div>
 
             {/* Survival Chart */}
-            <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-              <h3 className="text-lg font-bold text-slate-800 mb-1">Efectivo vs Créditos vs Deudas</h3>
+            <div className="lg:col-span-2 bg-surface-900 p-6 rounded-xl shadow-sm border border-white/[0.06]">
+              <h3 className="text-lg font-bold text-slate-100 mb-1">Efectivo vs Créditos vs Deudas</h3>
               <p className="text-xs text-slate-500 mb-6">Muestra dónde está la plata (NIIF PyMES)</p>
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
@@ -605,8 +605,8 @@ const RetailDashboard: React.FC = () => {
 
       {/* Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h3 className="text-lg font-bold text-slate-800 mb-6">Flujo de Caja Real (Últimos 7 días)</h3>
+        <div className="lg:col-span-2 bg-surface-900 p-6 rounded-xl shadow-sm border border-white/[0.06]">
+          <h3 className="text-lg font-bold text-slate-100 mb-6">Flujo de Caja Real (Últimos 7 días)</h3>
           <div className="h-64 min-h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
@@ -623,8 +623,8 @@ const RetailDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h3 className="text-lg font-bold text-slate-800 mb-6">Préstamos Activos</h3>
+        <div className="bg-surface-900 p-6 rounded-xl shadow-sm border border-white/[0.06]">
+          <h3 className="text-lg font-bold text-slate-100 mb-6">Préstamos Activos</h3>
           <div className="h-64 overflow-y-auto custom-scrollbar pr-2">
             {activeLoans.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-400">
@@ -634,14 +634,14 @@ const RetailDashboard: React.FC = () => {
             ) : (
               <div className="space-y-3">
                 {activeLoans.map(loan => (
-                  <div key={loan.id} className="p-3 bg-slate-50 border border-slate-100 rounded-lg flex justify-between items-center">
+                  <div key={loan.id} className="p-3 bg-surface-800/40 border border-white/[0.04] rounded-lg flex justify-between items-center">
                     <div>
                       <div className="text-xs text-slate-400 flex items-center gap-1">
                         <Clock size={10} /> Vence: {new Date(loan.dueDate).toLocaleDateString()}
                       </div>
-                      <div className="font-bold text-slate-700">${loan.amount.toFixed(2)}</div>
+                      <div className="font-bold text-slate-200">${loan.amount.toFixed(2)}</div>
                     </div>
-                    <span className="text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">ACTIVE</span>
+                    <span className="text-xs font-bold bg-green-500/15 text-green-400 px-2 py-1 rounded-full">ACTIVE</span>
                   </div>
                 ))}
               </div>
@@ -653,7 +653,7 @@ const RetailDashboard: React.FC = () => {
       {/* LENDING MODAL */}
       {showLoanModal && (
         <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
+          <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-white/[0.06]">
             <div className="bg-nortex-900 p-6 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-32 h-32 bg-nortex-accent blur-[60px] opacity-20"></div>
               <button
@@ -679,7 +679,7 @@ const RetailDashboard: React.FC = () => {
                     step="0.01"
                     max={tenantData.creditLimit}
                     required
-                    className="w-full pl-12 pr-4 py-4 text-3xl font-bold text-slate-900 border border-slate-200 rounded-xl focus:ring-2 focus:ring-nortex-500 focus:border-nortex-500 outline-none transition-all"
+                    className="w-full pl-12 pr-4 py-4 text-3xl font-bold text-white border border-white/[0.06] rounded-xl focus:ring-2 focus:ring-nortex-500 focus:border-nortex-500 outline-none transition-all"
                     placeholder="0.00"
                     value={loanAmount}
                     onChange={e => setLoanAmount(e.target.value)}
@@ -687,7 +687,7 @@ const RetailDashboard: React.FC = () => {
                   />
                 </div>
                 <div className="flex justify-between mt-2 text-xs">
-                  <span className="text-slate-500">Disponible: <span className="font-bold text-slate-700">${tenantData.creditLimit.toFixed(2)}</span></span>
+                  <span className="text-slate-500">Disponible: <span className="font-bold text-slate-200">${tenantData.creditLimit.toFixed(2)}</span></span>
                   {Number(loanAmount) > tenantData.creditLimit && (
                     <span className="text-red-500 font-bold">Excede el límite</span>
                   )}
@@ -696,22 +696,22 @@ const RetailDashboard: React.FC = () => {
 
               {/* Loan Breakdown */}
               {Number(loanAmount) > 0 && Number(loanAmount) <= tenantData.creditLimit && (
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 space-y-2">
+                <div className="bg-surface-800/40 p-4 rounded-xl border border-white/[0.06] mb-6 space-y-2">
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-500">Capital</span>
-                    <span className="font-medium text-slate-900">${Number(loanAmount).toFixed(2)}</span>
+                    <span className="font-medium text-white">${Number(loanAmount).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-500">Interés (5% Flat)</span>
-                    <span className="font-medium text-slate-900">${(Number(loanAmount) * 0.05).toFixed(2)}</span>
+                    <span className="font-medium text-white">${(Number(loanAmount) * 0.05).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-500">Plazo</span>
-                    <span className="font-medium text-slate-900">30 Días</span>
+                    <span className="font-medium text-white">30 Días</span>
                   </div>
-                  <div className="border-t border-slate-200 pt-2 mt-2 flex justify-between items-center">
-                    <span className="font-bold text-slate-700">Total a Pagar</span>
-                    <span className="font-bold text-nortex-900 text-lg">${(Number(loanAmount) * 1.05).toFixed(2)}</span>
+                  <div className="border-t border-white/[0.06] pt-2 mt-2 flex justify-between items-center">
+                    <span className="font-bold text-slate-200">Total a Pagar</span>
+                    <span className="font-bold text-slate-100 text-lg">${(Number(loanAmount) * 1.05).toFixed(2)}</span>
                   </div>
                 </div>
               )}
@@ -735,7 +735,7 @@ const RetailDashboard: React.FC = () => {
       {/* FISCAL SETTINGS MODAL */}
       {showFiscalModal && (
         <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
+          <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-white/[0.06]">
             <div className="bg-slate-800 p-6 relative overflow-hidden">
               <button
                 onClick={() => setShowFiscalModal(false)}
@@ -751,11 +751,11 @@ const RetailDashboard: React.FC = () => {
 
             <form onSubmit={handleSaveFiscalData} className="p-6 space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">RUC DE LA EMPRESA</label>
+                <label className="block text-xs font-bold text-slate-300 mb-1">RUC DE LA EMPRESA</label>
                 <input
                   type="text"
                   required
-                  className="w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full p-3 border border-white/10 rounded focus:ring-2 focus:ring-blue-500 outline-none"
                   placeholder="Ej. J0310000123456"
                   value={fiscalData.taxId}
                   onChange={e => setFiscalData({ ...fiscalData, taxId: e.target.value })}
@@ -763,11 +763,11 @@ const RetailDashboard: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">DIRECCIÓN FÍSICA</label>
+                <label className="block text-xs font-bold text-slate-300 mb-1">DIRECCIÓN FÍSICA</label>
                 <input
                   type="text"
                   required
-                  className="w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full p-3 border border-white/10 rounded focus:ring-2 focus:ring-blue-500 outline-none"
                   placeholder="Dirección del local para la factura"
                   value={fiscalData.address}
                   onChange={e => setFiscalData({ ...fiscalData, address: e.target.value })}
@@ -775,10 +775,10 @@ const RetailDashboard: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">TELÉFONO</label>
+                <label className="block text-xs font-bold text-slate-300 mb-1">TELÉFONO</label>
                 <input
                   type="text"
-                  className="w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full p-3 border border-white/10 rounded focus:ring-2 focus:ring-blue-500 outline-none"
                   placeholder="Teléfono (Opcional)"
                   value={fiscalData.phone}
                   onChange={e => setFiscalData({ ...fiscalData, phone: e.target.value })}
@@ -786,10 +786,10 @@ const RetailDashboard: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">RESOLUCIÓN DGI (AUTORIZACIÓN)</label>
+                <label className="block text-xs font-bold text-slate-300 mb-1">RESOLUCIÓN DGI (AUTORIZACIÓN)</label>
                 <input
                   type="text"
-                  className="w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none bg-yellow-50"
+                  className="w-full p-3 border border-white/10 rounded focus:ring-2 focus:ring-blue-500 outline-none bg-yellow-500/10"
                   placeholder="Ej. Autorización DGI No. 12345"
                   value={fiscalData.dgiAuthCode}
                   onChange={e => setFiscalData({ ...fiscalData, dgiAuthCode: e.target.value })}
@@ -797,11 +797,11 @@ const RetailDashboard: React.FC = () => {
                 <p className="text-xs text-slate-500 mt-1">Este código aparecerá al pie de tus tickets para darle validez fiscal.</p>
               </div>
 
-              <div className="pt-4 border-t border-slate-100 flex gap-3">
+              <div className="pt-4 border-t border-white/[0.04] flex gap-3">
                 <button
                   type="button"
                   onClick={() => setShowFiscalModal(false)}
-                  className="flex-1 py-3 text-slate-600 font-bold hover:bg-slate-100 rounded transition-colors"
+                  className="flex-1 py-3 text-slate-300 font-bold hover:bg-white/[0.06] rounded transition-colors"
                 >
                   CANCELAR
                 </button>
