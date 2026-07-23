@@ -5,6 +5,9 @@ Auditoría de las **6 capas** del Security & Integrity Loop sobre todo el backen
 realizada por 3 auditorías en paralelo + verificación manual. Fecha: 2026-06.
 **Re-auditoría 2026-07-14** (3 frentes en paralelo + verificación adversarial manual):
 hallazgos nuevos S29–S31 abajo; estados de S1–S28 refrescados en las tablas.
+**Re-auditoría 2026-07-23** (2 red-teams adversariales — acceso/auth/inyección +
+dinero/integridad — sobre el módulo Agente Bancario y código nuevo): S32–S34 abajo,
+los 3 corregidos en el PR; el carril de aislamiento/inyección salió limpio.
 
 **Estado:** los hallazgos **CRÍTICOS de bajo riesgo ya están corregidos** en este PR
 (marcados `✅ FIXED`). El resto, que requiere migraciones o cambios amplios, está en
@@ -135,6 +138,50 @@ pero solo por IP + MemoryStore).
 **Siguen ABIERTOS (📋 PLAN):** S6, S7, S15–S18 (Float en dinero), S19 (rotación/purga
 —acción del CEO), S22 (rutas sin Zod restantes), soft-deletes globales (Capa 2), y el
 tracking público de pedidos con PII (`routes/pedidos.ts` `GET /:id/tracking`).
+
+---
+
+## Re-auditoría 2026-07-23 — red-team adversarial (S32–S34)
+
+Dos red-teams en paralelo (carril **acceso/auth/inyección** + carril **dinero/integridad**)
+sobre el código NUEVO sin auditar desde el 2026-07-14: módulo **Agente Bancario**
+completo (`routes/agentBanking.ts`, PRs Fase A–D), Préstamos Fase 2 y el rediseño.
+
+**Resultado del carril acceso/auth/inyección:** **sin brechas nuevas.** El aislamiento
+multi-tenant, el patrón `findFirst({id, tenantId})→404→mutar`, los `updateMany`
+condicionales, el raw SQL parametrizado y el tenant server-side del agente WhatsApp
+(ninguna tool acepta ids del LLM) están **sólidos**. No hay IDOR, SQLi, spoofing de
+tenant/rol ni prompt-injection cross-tenant en la superficie nueva.
+
+**Resultado del carril dinero/integridad:** 3 bugs de integridad **intra-tenant** en
+código nuevo (ninguno cruza tenants). **Los 3 corregidos en este PR.**
+
+| ID | Hallazgo | Ubicación | Sev | Estado |
+|----|----------|-----------|-----|--------|
+| S32 | **`POST /agent-banking/transactions`: `commission` del cliente confiada, sin tope ni relación con `amount`.** Un cajero enviaba `amount:1, commission:50M` → `commissionAccrued` inflado → devengaba ingreso (4.1.4)/CxC (1.1.7) ficticios que luego se liquidaban como caja bancaria fantasma (1.1.2). Fraude de estados financieros disparable por rol bajo | `routes/agentBanking.ts:320` · `validation/schemas.ts:414` | 🟠 HIGH | ✅ FIXED (cota `commission ≤ amountNio` → 400) |
+| S33 | **Reversa de agente decrementaba `commissionAccrued` sin guarda de suficiencia.** Si la comisión ya se había liquidado, la reversa la restaba igual → saldo **negativo** + doble-conteo del asiento 1.1.7 (banco sobrevaluado); además bloqueaba liquidaciones legítimas futuras. Disparable por manager o **por accidente** al reversar tras el cierre de mes | `routes/agentBanking.ts:543` | 🟡 MED | ✅ FIXED (lock `FOR UPDATE` del convenio + acote al remanente devengado; el principal se revierte completo) |
+| S34 | **`installments` sin cota superior** (originar/refinanciar préstamo) → construcción síncrona de un arreglo gigante + `createMany` que bloquea el event loop del **proceso único** → **DoS multi-tenant** con un solo request de cualquier OWNER (registro abierto) | `routes/loans.ts:118,563` · `validation/schemas.ts:277,306` | 🟡 MED | ✅ FIXED (tope `1–600` cuotas en Zod) |
+
+**Endurecimiento adicional (misma clase, sin ID):** el validador base `moneyAmount`
+(`validation/schemas.ts:21`) aceptaba `"Infinity"`/`"1e400"` (`parseFloat` los pasa como
+`>= 0`); ahora exige `Number.isFinite` en la frontera para TODOS los campos de dinero
+(antes solo `SaleSchema.total` tenía el refine puntual).
+
+**Verificado OK (zonas de dinero de alto riesgo, confirmadas sanas):** `executeSale`
+(total autoritativo server-side + idempotencia `offlineId`), `applyStockDelta` (suficiencia
++ escritura en el mismo `updateMany` condicional), reversa anti-doble (claim atómico
+`status COMPLETED`), `settle-commissions` (decremento atómico `gte`), gaveta OUT
+(`assertGavetaAlcanza` con `FOR UPDATE` + recálculo fresco), `exchangeRate` (1–1000,
+obligatorio en USD), y `loans` repayment (anti-sobrepago atómico).
+
+**Observación descartada (por diseño):** `POST /agent-banking/transactions` sin
+`checkRole` es **consistente** con `/api/cash-movements` (patrón "cajero de mostrador");
+los traslados `LIQUIDACION_*` sí exigen manager. No es bug.
+
+**QA de los fixes:** `npx tsc --noEmit` limpio · `npm test` (vitest) 20/20 · suite de
+lógica pura 24/24 (predicados de validación + álgebra del clamp: `commissionAccrued`
+resultante ≥ 0 en barrido; comisión ≤ monto; installments 1–600; `Infinity`/`NaN`
+rechazados).
 
 ---
 

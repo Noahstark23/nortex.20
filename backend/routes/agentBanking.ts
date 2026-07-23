@@ -323,6 +323,19 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
                 ? new Decimal(commission).toDecimalPlaces(4)
                 : calcAgentCommission(agreement.commissionConfig, operation, dAmountNio);
 
+        // La comisión es un cargo de mostrador que el cliente provee (override) o
+        // se calcula del convenio. Nunca puede exceder el VALOR de la operación:
+        // sin este tope, un `commission` arbitrario (p. ej. amount 1, commission
+        // 50M) devengaba ingreso/CxC ficticios que luego se liquidaban como caja
+        // bancaria fantasma (fraude de estados financieros disparable por un
+        // cajero). Cotamos al equivalente en C$ del monto de la transacción.
+        if (dCommission.greaterThan(dAmountNio)) {
+            return res.status(400).json({
+                success: false,
+                error: 'La comisión no puede superar el monto de la operación.',
+            });
+        }
+
         // Límites del contrato (Fase C): chequeo rápido del tope por transacción
         // antes de abrir la tx (respuesta 400 limpia). El límite DIARIO se
         // revalida DENTRO de la tx bajo lock del convenio (race-safe). Los
@@ -538,21 +551,32 @@ router.post('/transactions/:id/reverse', authenticate, checkRole(['OWNER', 'ADMI
             });
 
             // Deshacer los saldos espejo del convenio (delta opuesto al original).
+            // La comisión devengada solo puede revertirse HASTA lo que siga
+            // devengado: si ya se liquidó (settle-commissions la bajó a 0), un
+            // decremento incondicional dejaba `commissionAccrued` NEGATIVO y
+            // duplicaba el asiento de 1.1.7 (banco sobrevaluado). Lockeamos la
+            // fila del convenio (FOR UPDATE, serializa contra una liquidación
+            // concurrente) y acotamos al remanente. El principal (settlementBalance)
+            // SÍ se revierte completo: el efectivo de la contrapartida es total.
+            const lockedAgg: any[] = await tx.$queryRaw`SELECT \`commissionAccrued\` FROM \`AgentAgreement\` WHERE id = ${original.agreementId} AND \`tenantId\` = ${req.tenantId} FOR UPDATE`;
+            const freshAccrued = new Decimal((lockedAgg[0]?.commissionAccrued ?? 0).toString());
+            const commissionToReverse = Decimal.min(dCommission, Decimal.max(freshAccrued, new Decimal(0)));
+
             const balanceBefore = new Decimal(original.agreement.settlementBalance.toString());
             const delta = original.direction === 'IN' ? dAmountNio.negated() : dAmountNio;
             await tx.agentAgreement.update({
                 where: { id: original.agreementId },
                 data: {
                     settlementBalance: { increment: delta.toNumber() },
-                    commissionAccrued: { decrement: dCommission.toNumber() },
+                    commissionAccrued: { decrement: commissionToReverse.toNumber() },
                 },
             });
 
-            // Asiento espejo (deshace monto principal + comisión devengada).
-            // Las cuentas ya existen: la operación original las sembró.
+            // Asiento espejo (deshace monto principal + la comisión REALMENTE
+            // desdevengada). Las cuentas ya existen: la operación original las sembró.
             await recordAgentReversal(
                 tx, req.tenantId, req.userId, original.id, original.direction as 'IN' | 'OUT',
-                dAmountNio.toNumber(), dCommission.toNumber(),
+                dAmountNio.toNumber(), commissionToReverse.toNumber(),
                 `${original.agreement.name} ${original.operation}`,
                 monedaOriginal === 'USD' ? '1.1.8' : '1.1.1'
             );
@@ -568,7 +592,7 @@ router.post('/transactions/:id/reverse', authenticate, checkRole(['OWNER', 'ADMI
                         convenio: original.agreement.name,
                         operacion: original.operation,
                         monto: dAmount.toNumber(),
-                        comisionRevertida: dCommission.toNumber(),
+                        comisionRevertida: commissionToReverse.toNumber(),
                         motivo: reason,
                         turnoId: currentShift.id,
                         before: { settlementBalance: balanceBefore.toNumber(), status: 'COMPLETED' },
