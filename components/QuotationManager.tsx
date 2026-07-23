@@ -247,29 +247,29 @@ const QuotationManager: React.FC = () => {
     const pendingWebOrders = webOrders.filter(o => o.status === 'PENDING');
 
     return (
-        <div className="flex h-full bg-slate-100 overflow-hidden">
+        <div className="flex h-full bg-white/[0.04] overflow-hidden">
             {/* Left Panel: Navigation & Products/List */}
-            <div className="flex-1 flex flex-col border-r border-slate-200 bg-white text-slate-800">
-                <div className="p-6 border-b border-slate-200 text-slate-800">
-                    <h1 className="text-2xl font-bold text-nortex-900 flex items-center gap-2">
+            <div className="flex-1 flex flex-col border-r border-white/[0.06] bg-surface-900 text-slate-100">
+                <div className="p-6 border-b border-white/[0.06] text-slate-100">
+                    <h1 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
                         <FileText className="text-nortex-500" /> Cotizaciones B2B
                     </h1>
                     <div className="flex gap-2 mt-6">
                         <button
                             onClick={() => setActiveTab('NEW')}
-                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'NEW' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-white border-slate-200 text-slate-500'}`}
+                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'NEW' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-surface-900 border-white/[0.06] text-slate-500'}`}
                         >
                             + NUEVA
                         </button>
                         <button
                             onClick={() => setActiveTab('HISTORY')}
-                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'HISTORY' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-white border-slate-200 text-slate-500'}`}
+                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'HISTORY' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-surface-900 border-white/[0.06] text-slate-500'}`}
                         >
                             HISTORIAL
                         </button>
                         <button
                             onClick={() => { setActiveTab('WEB_ORDERS'); fetchWebOrders(); }}
-                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all relative ${activeTab === 'WEB_ORDERS' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-500'}`}
+                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all relative ${activeTab === 'WEB_ORDERS' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-surface-900 border-white/[0.06] text-slate-500'}`}
                         >
                             <Globe size={14} className="inline mr-1" />
                             PEDIDOS WEB
@@ -284,13 +284,13 @@ const QuotationManager: React.FC = () => {
 
                 {activeTab === 'NEW' ? (
                     <div className="flex-1 flex flex-col overflow-hidden">
-                        <div className="p-4 border-b border-slate-100 text-slate-800">
+                        <div className="p-4 border-b border-white/[0.04] text-slate-100">
                             <div className="relative">
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                                 <input
                                     type="text"
                                     placeholder="Buscar productos para cotizar..."
-                                    className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-nortex-500"
+                                    className="w-full pl-10 pr-4 py-2 bg-surface-800/40 border border-white/[0.06] rounded-lg focus:outline-none focus:border-nortex-500"
                                     value={searchTerm}
                                     onChange={e => setSearchTerm(e.target.value)}
                                 />
@@ -301,14 +301,14 @@ const QuotationManager: React.FC = () => {
                                 <button
                                     key={product.id}
                                     onClick={() => addToCart(product)}
-                                    className="p-3 text-left border border-slate-200 rounded-lg hover:border-nortex-500 hover:bg-slate-50 transition-all group text-slate-800"
+                                    className="p-3 text-left border border-white/[0.06] rounded-lg hover:border-nortex-500 hover:bg-surface-800/40 transition-all group text-slate-100"
                                 >
                                     <div className="flex justify-between items-start">
                                         <span className="text-xs font-mono text-slate-400">{product.sku}</span>
                                         <div className="opacity-0 group-hover:opacity-100 text-nortex-600 bg-nortex-100 p-1 rounded-full"><Plus size={14} /></div>
                                     </div>
-                                    <div className="font-medium text-slate-800 text-sm line-clamp-1 mt-1">{product.name}</div>
-                                    <div className="font-bold text-slate-900 mt-1">${product.price.toFixed(2)}</div>
+                                    <div className="font-medium text-slate-100 text-sm line-clamp-1 mt-1">{product.name}</div>
+                                    <div className="font-bold text-white mt-1">${product.price.toFixed(2)}</div>
                                 </button>
                             ))}
                         </div>
@@ -317,14 +317,14 @@ const QuotationManager: React.FC = () => {
                     <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
                         {history.length === 0 && <div className="text-center text-slate-400 mt-10">No hay cotizaciones guardadas.</div>}
                         {history.map(quote => (
-                            <div key={quote.id} className="p-4 mb-3 border border-slate-200 rounded-xl hover:shadow-md transition-shadow bg-slate-50 text-slate-800">
+                            <div key={quote.id} className="p-4 mb-3 border border-white/[0.06] rounded-xl hover:shadow-md transition-shadow bg-surface-800/40 text-slate-100">
                                 <div className="flex justify-between items-start mb-2">
                                     <div>
-                                        <h3 className="font-bold text-nortex-900">{quote.customerName}</h3>
+                                        <h3 className="font-bold text-slate-100">{quote.customerName}</h3>
                                         <span className="text-xs text-slate-500 font-mono">ID: {quote.id}</span>
                                     </div>
-                                    <span className={`text-xs px-2 py-1 rounded font-bold ${quote.status === 'CONVERTED' ? 'bg-green-100 text-green-700' :
-                                        quote.status === 'EXPIRED' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                                    <span className={`text-xs px-2 py-1 rounded font-bold ${quote.status === 'CONVERTED' ? 'bg-green-500/15 text-green-400' :
+                                        quote.status === 'EXPIRED' ? 'bg-red-500/15 text-red-400' : 'bg-blue-500/15 text-blue-400'
                                         }`}>
                                         {quote.status}
                                     </span>
@@ -397,9 +397,9 @@ const QuotationManager: React.FC = () => {
                                 </div>
                             </div>
                         ) : (
-                            <div className="mb-6 bg-white border border-slate-200 rounded-xl p-5 shadow-sm text-center">
+                            <div className="mb-6 bg-surface-900 border border-white/[0.06] rounded-xl p-5 shadow-sm text-center">
                                 <Globe className="mx-auto text-slate-400 mb-2" size={32} />
-                                <h3 className="font-bold text-slate-800 mb-1">Activa tu Catálogo Público</h3>
+                                <h3 className="font-bold text-slate-100 mb-1">Activa tu Catálogo Público</h3>
                                 <p className="text-sm text-slate-500 mb-4">Aún no tienes un enlace público para compartir con tus clientes.</p>
                                 <button
                                     onClick={handleCreateSlug}
@@ -419,7 +419,7 @@ const QuotationManager: React.FC = () => {
                             <button
                                 onClick={fetchWebOrders}
                                 disabled={loadingWebOrders}
-                                className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                                className="p-2 rounded-lg hover:bg-white/[0.06] text-slate-400 hover:text-slate-300 transition-colors"
                             >
                                 <RefreshCw size={16} className={loadingWebOrders ? 'animate-spin' : ''} />
                             </button>
@@ -447,13 +447,13 @@ const QuotationManager: React.FC = () => {
                                     <div
                                         key={order.id}
                                         className={`p-4 mb-3 border rounded-xl transition-all ${order.status === 'PENDING'
-                                            ? 'border-emerald-200 bg-emerald-50/50 hover:shadow-md'
-                                            : 'border-slate-200 bg-slate-50 opacity-70'
+                                            ? 'border-emerald-500/20 bg-emerald-500/10 hover:shadow-md'
+                                            : 'border-white/[0.06] bg-surface-800/40 opacity-70'
                                             }`}
                                     >
                                         <div className="flex justify-between items-start mb-3">
                                             <div>
-                                                <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                                                <h3 className="font-bold text-white flex items-center gap-2">
                                                     <User size={14} className="text-slate-400" />
                                                     {order.customerName}
                                                 </h3>
@@ -462,15 +462,15 @@ const QuotationManager: React.FC = () => {
                                                         href={`https://wa.me/${order.customerPhone.replace(/\D/g, '')}`}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
-                                                        className="text-xs text-green-600 hover:underline flex items-center gap-1 mt-0.5"
+                                                        className="text-xs text-green-400 hover:underline flex items-center gap-1 mt-0.5"
                                                     >
                                                         <Phone size={10} /> {order.customerPhone}
                                                     </a>
                                                 )}
                                             </div>
                                             <span className={`text-xs px-2 py-1 rounded font-bold ${order.status === 'PENDING'
-                                                ? 'bg-amber-100 text-amber-700'
-                                                : 'bg-green-100 text-green-700'
+                                                ? 'bg-amber-500/15 text-amber-400'
+                                                : 'bg-green-500/15 text-green-400'
                                                 }`}>
                                                 {order.status === 'PENDING' ? 'PENDIENTE' : 'CONVERTIDO'}
                                             </span>
@@ -479,7 +479,7 @@ const QuotationManager: React.FC = () => {
                                         {/* Items preview */}
                                         <div className="bg-white/80 rounded-lg p-2 mb-3 space-y-1">
                                             {orderItems.slice(0, 4).map((item: any, idx: number) => (
-                                                <div key={idx} className="flex justify-between text-xs text-slate-600">
+                                                <div key={idx} className="flex justify-between text-xs text-slate-300">
                                                     <span className="truncate flex-1">{item.quantity}× {item.name}</span>
                                                     <span className="font-medium ml-2">C${(Number(item.price) * Number(item.quantity)).toFixed(2)}</span>
                                                 </div>
@@ -495,7 +495,7 @@ const QuotationManager: React.FC = () => {
                                                 {new Date(order.createdAt).toLocaleString()}
                                             </div>
                                             <div className="flex items-center gap-3">
-                                                <span className="font-bold text-slate-900">C${orderTotal.toFixed(2)}</span>
+                                                <span className="font-bold text-white">C${orderTotal.toFixed(2)}</span>
                                                 {order.status === 'PENDING' && (
                                                     <button
                                                         onClick={() => convertWebOrder(order)}
@@ -522,16 +522,16 @@ const QuotationManager: React.FC = () => {
 
             {/* Right Panel: Active Quotation Details */}
             {activeTab === 'NEW' && (
-                <div className="w-96 bg-slate-50 flex flex-col border-l border-slate-200 text-slate-800">
-                    <div className="p-6 border-b border-slate-200 bg-white text-slate-800">
-                        <h2 className="font-bold text-slate-800 mb-4 flex items-center gap-2">Detalle de Cotización</h2>
+                <div className="w-96 bg-surface-800/40 flex flex-col border-l border-white/[0.06] text-slate-100">
+                    <div className="p-6 border-b border-white/[0.06] bg-surface-900 text-slate-100">
+                        <h2 className="font-bold text-slate-100 mb-4 flex items-center gap-2">Detalle de Cotización</h2>
                         <div className="space-y-3">
                             <div>
                                 <label className="block text-xs font-mono text-slate-500 mb-1">CLIENTE / EMPRESA</label>
                                 <div className="relative">
                                     <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                                     <input
-                                        className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:border-nortex-500 outline-none text-slate-800"
+                                        className="bg-transparent w-full pl-9 pr-3 py-2 border border-white/[0.06] rounded-lg text-sm focus:border-nortex-500 outline-none text-slate-100"
                                         placeholder="Nombre del Cliente"
                                         value={customerName}
                                         onChange={e => setCustomerName(e.target.value)}
@@ -541,7 +541,7 @@ const QuotationManager: React.FC = () => {
                             <div>
                                 <label className="block text-xs font-mono text-slate-500 mb-1">RUC / NIT (Opcional)</label>
                                 <input
-                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:border-nortex-500 outline-none text-slate-800"
+                                    className="bg-transparent w-full px-3 py-2 border border-white/[0.06] rounded-lg text-sm focus:border-nortex-500 outline-none text-slate-100"
                                     placeholder="00000000000"
                                     value={customerRuc}
                                     onChange={e => setCustomerRuc(e.target.value)}
@@ -558,9 +558,9 @@ const QuotationManager: React.FC = () => {
                             </div>
                         ) : (
                             cart.map(item => (
-                                <div key={item.id} className="flex justify-between items-center bg-white p-3 rounded border border-slate-200 text-sm text-slate-800">
+                                <div key={item.id} className="flex justify-between items-center bg-surface-900 p-3 rounded border border-white/[0.06] text-sm text-slate-100">
                                     <div>
-                                        <div className="font-medium text-slate-800 line-clamp-1">{item.name}</div>
+                                        <div className="font-medium text-slate-100 line-clamp-1">{item.name}</div>
                                         <div className="text-xs text-slate-500">{item.quantity} x ${item.price.toFixed(2)}</div>
                                     </div>
                                     <div className="flex items-center gap-3">
@@ -572,15 +572,15 @@ const QuotationManager: React.FC = () => {
                         )}
                     </div>
 
-                    <div className="p-6 bg-white border-t border-slate-200 text-slate-800">
+                    <div className="p-6 bg-surface-900 border-t border-white/[0.06] text-slate-100">
                         <div className="space-y-2 text-sm mb-4">
                             <div className="flex justify-between text-slate-500"><span>Subtotal</span><span>${total.toFixed(2)}</span></div>
                             <div className="flex justify-between text-slate-500"><span>Impuesto (18%)</span><span>${tax.toFixed(2)}</span></div>
-                            <div className="flex justify-between font-bold text-nortex-900 text-lg pt-2 border-t border-slate-100 text-slate-800"><span>Total</span><span>${grandTotal.toFixed(2)}</span></div>
+                            <div className="flex justify-between font-bold text-slate-100 text-lg pt-2 border-t border-white/[0.04] text-slate-100"><span>Total</span><span>${grandTotal.toFixed(2)}</span></div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
-                            <button className="py-3 border border-slate-300 rounded-lg font-bold text-slate-600 hover:bg-slate-50 flex items-center justify-center gap-2 text-slate-800">
+                            <button className="py-3 border border-white/10 rounded-lg font-bold text-slate-300 hover:bg-surface-800/40 flex items-center justify-center gap-2 text-slate-100">
                                 <Printer size={18} /> IMPRIMIR
                             </button>
                             <button

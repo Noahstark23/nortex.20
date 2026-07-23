@@ -82,10 +82,10 @@ const Suppliers: React.FC = () => {
   const filtered = suppliers.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase()));
 
   return (
-    <div className="p-6 h-full bg-slate-100 overflow-y-auto">
+    <div className="p-6 h-full bg-white/[0.04] overflow-y-auto">
         <div className="flex justify-between items-center mb-6">
             <div>
-                <h1 className="text-2xl font-bold text-nortex-900 flex items-center gap-2">
+                <h1 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
                     <Truck className="text-nortex-500" /> Proveedores (SRM)
                 </h1>
                 <p className="text-slate-500 text-sm">Directorio de Cadena de Suministro</p>
@@ -95,13 +95,13 @@ const Suppliers: React.FC = () => {
             </button>
         </div>
 
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 text-slate-800">
+        <div className="bg-surface-900 p-4 rounded-xl shadow-sm border border-white/[0.06] mb-6 text-slate-100">
             <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                 <input
                     type="text"
                     placeholder="Buscar proveedor..."
-                    className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-nortex-500"
+                    className="bg-transparent w-full pl-10 pr-4 py-2 border border-white/[0.06] rounded-lg focus:outline-none focus:border-nortex-500"
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
                 />
@@ -110,17 +110,17 @@ const Suppliers: React.FC = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {loading ? <p>Cargando...</p> : filtered.map(s => (
-                <div key={s.id} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all text-slate-800">
+                <div key={s.id} className="bg-surface-900 p-6 rounded-xl border border-white/[0.06] shadow-sm hover:shadow-md transition-all text-slate-100">
                     <div className="flex justify-between items-start mb-4">
-                        <h3 className="font-bold text-lg text-slate-800">{s.name}</h3>
+                        <h3 className="font-bold text-lg text-slate-100">{s.name}</h3>
                         <div className="flex items-center gap-1">
-                            <span className="text-[10px] bg-slate-100 px-2 py-1 rounded font-bold uppercase text-slate-500">{s.category || 'General'}</span>
-                            <button onClick={() => openEdit(s)} className="p-1.5 rounded-lg text-slate-400 hover:text-nortex-700 hover:bg-slate-100 transition-colors" title="Editar"><Pencil size={15} /></button>
-                            <button onClick={() => handleDelete(s)} className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Eliminar"><Trash2 size={15} /></button>
+                            <span className="text-[10px] bg-white/[0.04] px-2 py-1 rounded font-bold uppercase text-slate-500">{s.category || 'General'}</span>
+                            <button onClick={() => openEdit(s)} className="p-1.5 rounded-lg text-slate-400 hover:text-nortex-700 hover:bg-white/[0.06] transition-colors" title="Editar"><Pencil size={15} /></button>
+                            <button onClick={() => handleDelete(s)} className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors" title="Eliminar"><Trash2 size={15} /></button>
                         </div>
                     </div>
-                    <div className="space-y-2 text-sm text-slate-600">
-                        {s.ruc && <div className="flex items-center gap-2"><Hash size={14} className="text-amber-500"/> <span className="font-mono font-semibold text-amber-700">{s.ruc}</span></div>}
+                    <div className="space-y-2 text-sm text-slate-300">
+                        {s.ruc && <div className="flex items-center gap-2"><Hash size={14} className="text-amber-500"/> <span className="font-mono font-semibold text-amber-400">{s.ruc}</span></div>}
                         <div className="flex items-center gap-2"><User size={14} className="text-slate-400"/> {s.contactName || 'Sin contacto'}</div>
                         <div className="flex items-center gap-2"><Phone size={14} className="text-slate-400"/> {s.phone || '-'}</div>
                         <div className="flex items-center gap-2"><Mail size={14} className="text-slate-400"/> {s.email || '-'}</div>
@@ -133,21 +133,21 @@ const Suppliers: React.FC = () => {
         {/* MODAL */}
         {showModal && (
             <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+                <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md p-6">
                     <div className="flex justify-between items-center mb-6">
                         <h3 className="font-bold text-lg">{editingId ? 'Editar Proveedor' : 'Nuevo Proveedor'}</h3>
                         <button onClick={() => { setShowModal(false); setEditingId(null); }}><X size={20}/></button>
                     </div>
                     <form onSubmit={handleSubmit} className="space-y-3">
-                        <input required className="w-full border p-2 rounded text-slate-800" placeholder="Nombre Empresa *" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-                        <input className="w-full border p-2 rounded text-slate-800 font-mono" placeholder="RUC / Cédula Jurídica (DGI)" value={formData.ruc} onChange={e => setFormData({...formData, ruc: e.target.value})} />
-                        <input className="w-full border p-2 rounded text-slate-800" placeholder="Persona de Contacto" value={formData.contactName} onChange={e => setFormData({...formData, contactName: e.target.value})} />
-                        <input className="w-full border p-2 rounded text-slate-800" placeholder="Categoría (Ej. Cementos)" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} />
+                        <input required className="w-full border p-2 rounded text-slate-100" placeholder="Nombre Empresa *" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                        <input className="w-full border p-2 rounded text-slate-100 font-mono" placeholder="RUC / Cédula Jurídica (DGI)" value={formData.ruc} onChange={e => setFormData({...formData, ruc: e.target.value})} />
+                        <input className="w-full border p-2 rounded text-slate-100" placeholder="Persona de Contacto" value={formData.contactName} onChange={e => setFormData({...formData, contactName: e.target.value})} />
+                        <input className="w-full border p-2 rounded text-slate-100" placeholder="Categoría (Ej. Cementos)" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} />
                         <div className="grid grid-cols-2 gap-3">
-                            <input className="w-full border p-2 rounded text-slate-800" placeholder="Teléfono" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
-                            <input className="w-full border p-2 rounded text-slate-800" placeholder="Email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
+                            <input className="w-full border p-2 rounded text-slate-100" placeholder="Teléfono" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
+                            <input className="w-full border p-2 rounded text-slate-100" placeholder="Email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
                         </div>
-                        <input className="w-full border p-2 rounded text-slate-800" placeholder="Dirección" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
+                        <input className="w-full border p-2 rounded text-slate-100" placeholder="Dirección" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
                         <button type="submit" className="w-full bg-nortex-900 text-white py-3 rounded font-bold mt-1">{editingId ? 'Guardar cambios' : 'Guardar'}</button>
                     </form>
                 </div>
