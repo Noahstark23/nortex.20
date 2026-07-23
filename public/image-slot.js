@@ -23,7 +23,7 @@ customElements.define('image-slot', class extends HTMLElement {
     if (src) {
       this.innerHTML = `<img src="${src}" alt="${this.getAttribute('alt') || placeholder}" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy" />`;
     } else {
-      this.innerHTML = `<div style="width:100%;height:100%;min-height:64px;background:linear-gradient(135deg,#e9e4d6,#d8d0bd);display:flex;align-items:center;justify-content:center;"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#8f8979;letter-spacing:0.08em;text-align:center;padding:8px;">${placeholder}</span></div>`;
+      this.innerHTML = `<div style="width:100%;height:100%;min-height:64px;background:linear-gradient(135deg,#16161a,#0c0c0e);display:flex;align-items:center;justify-content:center;"><span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#71717a;letter-spacing:0.08em;text-align:center;padding:8px;">${placeholder}</span></div>`;
     }
   }
 });
