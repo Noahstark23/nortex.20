@@ -92,7 +92,8 @@ const RETAIL_CATALOG: CatalogEntry[] = [
     { path: '/app/purchases', label: 'Compras', shortLabel: 'Compras', group: 'Compras', iconKey: 'truck' },
     { path: '/app/suppliers', label: 'Proveedores', shortLabel: 'Proveed.', group: 'Compras', iconKey: 'clipboardList' },
     { path: '/app/smart-purchases', label: 'Compras Inteligentes', shortLabel: 'Smart', group: 'Compras', iconKey: 'zap', roles: GATE_ADMIN },
-    { path: '/app/marketplace', label: 'Mercado B2B', shortLabel: 'B2B', group: 'Compras', iconKey: 'shoppingBag' },
+    // Mercado B2B oculto del nav hasta tener catálogo real (no mock que debite
+    // el wallet). La ruta sigue existiendo con un placeholder "próximamente".
     // ── FINANZAS ──
     { path: '/app/dashboard', label: 'Mi Plata', shortLabel: 'Mi Plata', group: 'Finanzas', iconKey: 'layoutGrid' },
     { path: '/app/receivables', label: 'Fiado y Cobros', shortLabel: 'Fiado', group: 'Finanzas', iconKey: 'wallet' },

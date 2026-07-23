@@ -12,7 +12,7 @@ interface TenantInfo {
     taxId: string;
     walletBalance: string;
     creditLimit: string;
-    creditScore: number;
+    creditScore: number | null;
     subscriptionStatus: string;
     createdAt: string;
     owner: { id: string; name: string; email: string; role: string } | null;
@@ -39,7 +39,7 @@ interface LoanRequest {
     total: string;
     status: string;
     createdAt: string;
-    tenant: { businessName: string; creditScore: number; walletBalance: string; creditLimit: string };
+    tenant: { businessName: string; creditScore: number | null; walletBalance: string; creditLimit: string };
 }
 
 interface ManualPaymentAdmin {
@@ -85,13 +85,15 @@ const authHeaders = (): Record<string, string> => ({
     'Content-Type': 'application/json',
 });
 
-const getScoreColor = (score: number) => {
+const getScoreColor = (score: number | null) => {
+    if (score == null) return 'text-slate-500';
     if (score >= 700) return 'text-green-400';
     if (score >= 500) return 'text-yellow-400';
     return 'text-red-400';
 };
 
-const getScoreLabel = (score: number) => {
+const getScoreLabel = (score: number | null) => {
+    if (score == null) return 'S/D';
     if (score >= 800) return 'AAA';
     if (score >= 700) return 'AA';
     if (score >= 600) return 'A';
@@ -336,7 +338,7 @@ const SuperAdmin: React.FC = () => {
                                                     ) : <span className="text-gray-600">-</span>}
                                                 </td>
                                                 <td className="px-3 py-3 text-center">
-                                                    <div className={`font-bold text-lg ${getScoreColor(t.creditScore)}`}>{t.creditScore}</div>
+                                                    <div className={`font-bold text-lg ${getScoreColor(t.creditScore)}`}>{t.creditScore ?? 'S/D'}</div>
                                                     <div className={`text-[9px] font-bold ${getScoreColor(t.creditScore)}`}>{getScoreLabel(t.creditScore)}</div>
                                                 </td>
                                                 <td className="px-3 py-3 text-right">
@@ -503,12 +505,12 @@ const SuperAdmin: React.FC = () => {
                                                 {/* Score badge */}
                                                 <div className="flex items-center gap-3 mb-3">
                                                     <div className={`flex items-center gap-1 px-2 py-1 rounded ${
-                                                        lr.tenant.creditScore >= 700 ? 'bg-green-500/10' :
-                                                        lr.tenant.creditScore >= 500 ? 'bg-yellow-500/10' : 'bg-red-500/10'
+                                                        (lr.tenant.creditScore ?? 0) >= 700 ? 'bg-green-500/10' :
+                                                        (lr.tenant.creditScore ?? 0) >= 500 ? 'bg-yellow-500/10' : 'bg-red-500/10'
                                                     }`}>
                                                         <Target size={12} className={getScoreColor(lr.tenant.creditScore)} />
                                                         <span className={`font-bold text-sm ${getScoreColor(lr.tenant.creditScore)}`}>
-                                                            {lr.tenant.creditScore}
+                                                            {lr.tenant.creditScore ?? 'S/D'}
                                                         </span>
                                                         <span className={`text-[10px] font-bold ${getScoreColor(lr.tenant.creditScore)}`}>
                                                             {getScoreLabel(lr.tenant.creditScore)}

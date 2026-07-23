@@ -255,13 +255,27 @@ router.patch('/:id/estado', authenticate, async (req: any, res: any) => {
         const entregadoAt = estado === 'entregado' ? new Date() : pedido.entregadoAt;
 
         const updated = await prisma.$transaction(async (tx) => {
-            const p = await tx.pedido.update({
-                where: { id },
-                data: {
-                    estado,
-                    entregadoAt
-                }
-            });
+            let p;
+            if (estado === 'entregado') {
+                // CLAIM atómico de la entrega: guard y escritura en la MISMA
+                // sentencia. Sin esto, dos requests concurrentes de 'entregado'
+                // pasaban ambas el chequeo `!pedido.facturaId` (leído fuera de
+                // la tx) y facturaban DOS veces (doble Sale + Payment + asiento).
+                const claim = await tx.pedido.updateMany({
+                    where: { id, tenantId: authReq.tenantId, estado: { not: 'entregado' } },
+                    data: { estado, entregadoAt }
+                });
+                if (claim.count === 0) throw new Error('YA_ENTREGADO');
+                p = await tx.pedido.findFirstOrThrow({ where: { id, tenantId: authReq.tenantId } });
+            } else {
+                p = await tx.pedido.update({
+                    where: { id },
+                    data: {
+                        estado,
+                        entregadoAt
+                    }
+                });
+            }
 
             await tx.trackingEvento.create({
                 data: {
@@ -475,6 +489,9 @@ router.patch('/:id/estado', authenticate, async (req: any, res: any) => {
         if (error instanceof StockError) {
             const status = error.code === 'PRODUCT_NOT_FOUND' ? 404 : 422;
             return res.status(status).json({ error: error.message });
+        }
+        if (error instanceof Error && error.message === 'YA_ENTREGADO') {
+            return res.status(409).json({ error: 'El pedido ya fue marcado como entregado.' });
         }
         console.error('Patch Estado Error:', error);
         res.status(500).json({ error: 'Error al actualizar el estado.' });
