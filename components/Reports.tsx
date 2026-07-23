@@ -223,39 +223,39 @@ const Reports: React.FC = () => {
     }
 
     return (
-        <div className="p-6 h-full overflow-y-auto bg-slate-50">
+        <div className="p-6 h-full overflow-y-auto bg-surface-800/40">
             {/* HEADER */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
                 <div>
-                    <h1 className="text-3xl font-bold text-nortex-900 flex items-center gap-2">
+                    <h1 className="text-3xl font-bold text-slate-100 flex items-center gap-2">
                         <ShieldCheck className="text-nortex-500" /> Inteligencia Financiera
                     </h1>
                     <p className="text-slate-500 text-sm mt-1">Reportes fiscales adaptados a normativa DGI Nicaragua (IVA 15%)</p>
                 </div>
 
                 {/* TAB SWITCHER */}
-                <div className="flex bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+                <div className="flex bg-surface-900 border border-white/[0.06] rounded-lg overflow-hidden shadow-sm">
                     <button
                         onClick={() => setActiveTab('DASHBOARD')}
-                        className={`px-4 py-2 text-sm font-bold transition-colors ${activeTab === 'DASHBOARD' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`px-4 py-2 text-sm font-bold transition-colors ${activeTab === 'DASHBOARD' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
                         Dashboard
                     </button>
                     <button
                         onClick={() => setActiveTab('CONTADOR')}
-                        className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CONTADOR' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CONTADOR' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
                         <Landmark size={14} /> Contador DGI
                     </button>
                     <button
                         onClick={() => setActiveTab('CAJAS')}
-                        className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CAJAS' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CAJAS' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
                         <Clock size={14} /> Historial Cajas
                     </button>
                     <button
                         onClick={() => setActiveTab('CONTABILIDAD')}
-                        className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CONTABILIDAD' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CONTABILIDAD' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
                         <BookOpen size={14} /> Contabilidad
                     </button>
@@ -267,18 +267,18 @@ const Reports: React.FC = () => {
                 <>
                     {/* DATE FILTER + ACTIONS */}
                     <div className="flex items-center gap-3 flex-wrap mb-8">
-                        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2 shadow-sm">
+                        <div className="flex items-center gap-2 bg-surface-900 border border-white/[0.06] rounded-lg px-3 py-2 shadow-sm">
                             <Calendar size={16} className="text-slate-400" />
                             <input
                                 type="date"
-                                className="text-sm text-slate-700 outline-none bg-transparent"
+                                className="text-sm text-slate-200 outline-none bg-transparent"
                                 value={dates.startDate}
                                 onChange={e => setDates(prev => ({ ...prev, startDate: e.target.value }))}
                             />
                             <span className="text-slate-400 text-xs">a</span>
                             <input
                                 type="date"
-                                className="text-sm text-slate-700 outline-none bg-transparent"
+                                className="text-sm text-slate-200 outline-none bg-transparent"
                                 value={dates.endDate}
                                 onChange={e => setDates(prev => ({ ...prev, endDate: e.target.value }))}
                             />
@@ -286,7 +286,7 @@ const Reports: React.FC = () => {
                         <button
                             onClick={() => fetchReports(true)}
                             disabled={refreshing}
-                            className="p-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 shadow-sm text-slate-600 transition-colors"
+                            className="p-2 bg-surface-900 border border-white/[0.06] rounded-lg hover:bg-surface-800/40 shadow-sm text-slate-300 transition-colors"
                             title="Actualizar"
                         >
                             <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
@@ -302,59 +302,59 @@ const Reports: React.FC = () => {
                     {/* KPI CARDS */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
                         {/* Ventas Netas (Sin IVA) */}
-                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                        <div className="bg-surface-900 p-5 rounded-xl border border-white/[0.06] shadow-sm">
                             <div className="flex items-center justify-between mb-3">
-                                <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+                                <div className="p-2 bg-blue-500/10 text-blue-400 rounded-lg">
                                     <DollarSign size={20} />
                                 </div>
-                                <span className="text-[10px] font-mono bg-blue-50 text-blue-600 px-2 py-0.5 rounded font-bold">SIN IVA</span>
+                                <span className="text-[10px] font-mono bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded font-bold">SIN IVA</span>
                             </div>
                             <div className="text-xs font-mono text-slate-500 mb-1">VENTAS NETAS</div>
-                            <div className="text-2xl font-bold text-slate-800">{formatUSD(salesData?.ventasNetas ?? 0)}</div>
+                            <div className="text-2xl font-bold text-slate-100">{formatUSD(salesData?.ventasNetas ?? 0)}</div>
                             <div className="text-xs text-slate-400 mt-1">{salesData?.totalTransacciones ?? 0} transacciones</div>
                         </div>
 
                         {/* IVA Recaudado */}
-                        <div className="bg-white p-5 rounded-xl border border-amber-200 shadow-sm relative overflow-hidden">
+                        <div className="bg-surface-900 p-5 rounded-xl border border-amber-500/20 shadow-sm relative overflow-hidden">
                             <div className="absolute top-0 right-0 w-12 h-12 bg-amber-500/10 rounded-bl-full" />
                             <div className="flex items-center justify-between mb-3">
-                                <div className="p-2 bg-amber-50 text-amber-600 rounded-lg">
+                                <div className="p-2 bg-amber-500/10 text-amber-400 rounded-lg">
                                     <Receipt size={20} />
                                 </div>
-                                <span className="text-[10px] font-mono bg-amber-50 text-amber-700 px-2 py-0.5 rounded font-bold">DGI</span>
+                                <span className="text-[10px] font-mono bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded font-bold">DGI</span>
                             </div>
                             <div className="text-xs font-mono text-slate-500 mb-1">IVA RECAUDADO (15%)</div>
-                            <div className="text-2xl font-bold text-amber-700">{formatUSD(salesData?.ivaRecaudado ?? 0)}</div>
-                            <div className="text-xs text-amber-600 mt-1">Para declarar a la DGI</div>
+                            <div className="text-2xl font-bold text-amber-400">{formatUSD(salesData?.ivaRecaudado ?? 0)}</div>
+                            <div className="text-xs text-amber-400 mt-1">Para declarar a la DGI</div>
                         </div>
 
                         {/* Utilidad Neta */}
-                        <div className={`p-5 rounded-xl border shadow-sm relative overflow-hidden ${utilidadNeta >= 0 ? 'bg-white border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                        <div className={`p-5 rounded-xl border shadow-sm relative overflow-hidden ${utilidadNeta >= 0 ? 'bg-surface-900 border-emerald-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
                             <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-500/5 rounded-bl-full" />
                             <div className="flex items-center justify-between mb-3">
-                                <div className={`p-2 rounded-lg ${utilidadNeta >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
+                                <div className={`p-2 rounded-lg ${utilidadNeta >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
                                     {utilidadNeta >= 0 ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
                                 </div>
-                                <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${margen >= 25 ? 'bg-emerald-50 text-emerald-700' : margen >= 0 ? 'bg-yellow-50 text-yellow-700' : 'bg-red-50 text-red-700'}`}>
+                                <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${margen >= 25 ? 'bg-emerald-500/10 text-emerald-400' : margen >= 0 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-red-500/10 text-red-400'}`}>
                                     {margen.toFixed(1)}%
                                 </span>
                             </div>
                             <div className="text-xs font-mono text-slate-500 mb-1">UTILIDAD NETA</div>
-                            <div className={`text-2xl font-bold ${utilidadNeta >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                            <div className={`text-2xl font-bold ${utilidadNeta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                                 {formatUSD(utilidadNeta)}
                             </div>
                             <div className="text-xs text-slate-400 mt-1">Ventas - Costo - Gastos</div>
                         </div>
 
                         {/* Gastos del Periodo */}
-                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                        <div className="bg-surface-900 p-5 rounded-xl border border-white/[0.06] shadow-sm">
                             <div className="flex items-center justify-between mb-3">
-                                <div className="p-2 bg-red-50 text-red-500 rounded-lg">
+                                <div className="p-2 bg-red-500/10 text-red-500 rounded-lg">
                                     <TrendingDown size={20} />
                                 </div>
                             </div>
                             <div className="text-xs font-mono text-slate-500 mb-1">GASTOS OPERATIVOS</div>
-                            <div className="text-2xl font-bold text-red-600">{formatUSD(expensesData?.totalExpenses ?? 0)}</div>
+                            <div className="text-2xl font-bold text-red-400">{formatUSD(expensesData?.totalExpenses ?? 0)}</div>
                             <div className="text-xs text-slate-400 mt-1">{expensesData?.count ?? 0} registros</div>
                         </div>
 
@@ -378,8 +378,8 @@ const Reports: React.FC = () => {
                     {/* CHART + EXPENSES BREAKDOWN */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
                         {/* Sales vs Expenses Chart */}
-                        <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                            <h3 className="font-bold text-slate-800 mb-1">Tendencia: Ventas vs Gastos</h3>
+                        <div className="lg:col-span-2 bg-surface-900 p-6 rounded-xl border border-white/[0.06] shadow-sm">
+                            <h3 className="font-bold text-slate-100 mb-1">Tendencia: Ventas vs Gastos</h3>
                             <p className="text-xs text-slate-400 mb-6">Flujo diario en el periodo seleccionado</p>
                             <div className="h-72">
                                 {salesData && salesData.chartData.length > 0 ? (
@@ -408,8 +408,8 @@ const Reports: React.FC = () => {
                         </div>
 
                         {/* Expenses by Category */}
-                        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                            <h3 className="font-bold text-slate-800 mb-1">Gastos por Categoria</h3>
+                        <div className="bg-surface-900 p-6 rounded-xl border border-white/[0.06] shadow-sm">
+                            <h3 className="font-bold text-slate-100 mb-1">Gastos por Categoria</h3>
                             <p className="text-xs text-slate-400 mb-6">Desglose del periodo</p>
                             <div className="space-y-3">
                                 {expensesData && Object.keys(expensesData.byCategory).length > 0 ? (
@@ -423,10 +423,10 @@ const Reports: React.FC = () => {
                                             return (
                                                 <div key={cat}>
                                                     <div className="flex justify-between text-sm mb-1">
-                                                        <span className="text-slate-600 font-medium">{cat}</span>
-                                                        <span className="font-mono font-bold text-slate-800">{formatUSD(amount)}</span>
+                                                        <span className="text-slate-300 font-medium">{cat}</span>
+                                                        <span className="font-mono font-bold text-slate-100">{formatUSD(amount)}</span>
                                                     </div>
-                                                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                                    <div className="w-full bg-white/[0.04] h-2 rounded-full overflow-hidden">
                                                         <div className="bg-red-400 h-full rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
                                                     </div>
                                                 </div>
@@ -444,48 +444,48 @@ const Reports: React.FC = () => {
                     {/* DESGLOSE FISCAL */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
                         {/* Fiscal Summary Table */}
-                        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                            <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                        <div className="bg-surface-900 p-6 rounded-xl border border-white/[0.06] shadow-sm">
+                            <h3 className="font-bold text-slate-100 mb-4 flex items-center gap-2">
                                 <Receipt size={18} className="text-amber-500" /> Desglose Fiscal (IVA 15%)
                             </h3>
-                            <div className="overflow-hidden rounded-lg border border-slate-100">
+                            <div className="overflow-hidden rounded-lg border border-white/[0.04]">
                                 <table className="w-full text-sm">
-                                    <tbody className="divide-y divide-slate-100">
-                                        <tr className="hover:bg-slate-50">
-                                            <td className="px-4 py-3 text-slate-600">Ventas Brutas (con IVA)</td>
-                                            <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">
+                                    <tbody className="divide-y divide-white/[0.04]">
+                                        <tr className="hover:bg-surface-800/40">
+                                            <td className="px-4 py-3 text-slate-300">Ventas Brutas (con IVA)</td>
+                                            <td className="px-4 py-3 text-right font-mono font-bold text-slate-100">
                                                 {formatUSD(salesData?.totalVentas ?? 0)}
                                             </td>
                                         </tr>
-                                        <tr className="hover:bg-slate-50">
-                                            <td className="px-4 py-3 text-slate-600">(-) IVA 15%</td>
-                                            <td className="px-4 py-3 text-right font-mono font-bold text-amber-600">
+                                        <tr className="hover:bg-surface-800/40">
+                                            <td className="px-4 py-3 text-slate-300">(-) IVA 15%</td>
+                                            <td className="px-4 py-3 text-right font-mono font-bold text-amber-400">
                                                 -{formatUSD(salesData?.ivaRecaudado ?? 0)}
                                             </td>
                                         </tr>
-                                        <tr className="hover:bg-slate-50 bg-blue-50/50">
-                                            <td className="px-4 py-3 font-bold text-blue-700">= Ventas Netas</td>
-                                            <td className="px-4 py-3 text-right font-mono font-bold text-blue-700">
+                                        <tr className="hover:bg-surface-800/40 bg-blue-500/10">
+                                            <td className="px-4 py-3 font-bold text-blue-400">= Ventas Netas</td>
+                                            <td className="px-4 py-3 text-right font-mono font-bold text-blue-400">
                                                 {formatUSD(salesData?.ventasNetas ?? 0)}
                                             </td>
                                         </tr>
-                                        <tr className="hover:bg-slate-50">
-                                            <td className="px-4 py-3 text-slate-600">(-) Costo de Ventas (COGS)</td>
-                                            <td className="px-4 py-3 text-right font-mono font-bold text-slate-600">
+                                        <tr className="hover:bg-surface-800/40">
+                                            <td className="px-4 py-3 text-slate-300">(-) Costo de Ventas (COGS)</td>
+                                            <td className="px-4 py-3 text-right font-mono font-bold text-slate-300">
                                                 -{formatUSD(salesData?.totalCOGS ?? 0)}
                                             </td>
                                         </tr>
-                                        <tr className="hover:bg-slate-50">
-                                            <td className="px-4 py-3 text-slate-600">(-) Gastos Operativos</td>
+                                        <tr className="hover:bg-surface-800/40">
+                                            <td className="px-4 py-3 text-slate-300">(-) Gastos Operativos</td>
                                             <td className="px-4 py-3 text-right font-mono font-bold text-red-500">
                                                 -{formatUSD(expensesData?.totalExpenses ?? 0)}
                                             </td>
                                         </tr>
-                                        <tr className={`${utilidadNeta >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}>
-                                            <td className={`px-4 py-4 font-bold text-lg ${utilidadNeta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                                        <tr className={`${utilidadNeta >= 0 ? 'bg-emerald-500/10' : 'bg-red-500/10'}`}>
+                                            <td className={`px-4 py-4 font-bold text-lg ${utilidadNeta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                                                 = UTILIDAD NETA
                                             </td>
-                                            <td className={`px-4 py-4 text-right font-mono font-bold text-lg ${utilidadNeta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                                            <td className={`px-4 py-4 text-right font-mono font-bold text-lg ${utilidadNeta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                                                 {formatUSD(utilidadNeta)}
                                             </td>
                                         </tr>
@@ -495,23 +495,23 @@ const Reports: React.FC = () => {
                         </div>
 
                         {/* Low Stock Alert */}
-                        <div className="bg-white p-6 rounded-xl border border-red-100 shadow-sm relative">
+                        <div className="bg-surface-900 p-6 rounded-xl border border-red-500/15 shadow-sm relative">
                             <div className="absolute top-0 right-0 p-4 opacity-10">
                                 <AlertTriangle size={64} className="text-red-500" />
                             </div>
-                            <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                            <h3 className="font-bold text-slate-100 mb-4 flex items-center gap-2">
                                 <Package className="text-red-500" size={18} /> Alerta de Stock Critico
                             </h3>
                             <div className="space-y-3 max-h-72 overflow-y-auto custom-scrollbar pr-1">
                                 {inventoryData && inventoryData.lowStock.length > 0 ? (
                                     inventoryData.lowStock.map(p => (
-                                        <div key={p.id} className="flex justify-between items-center bg-red-50 p-3 rounded-lg border border-red-100">
+                                        <div key={p.id} className="flex justify-between items-center bg-red-500/10 p-3 rounded-lg border border-red-500/15">
                                             <div>
-                                                <div className="font-bold text-slate-800 text-sm">{p.name}</div>
+                                                <div className="font-bold text-slate-100 text-sm">{p.name}</div>
                                                 <div className="text-xs text-red-500 font-mono">SKU: {p.sku} | Min: {p.minStock}</div>
                                             </div>
                                             <div className="text-right">
-                                                <span className="text-2xl font-bold text-red-600">{p.stock}</span>
+                                                <span className="text-2xl font-bold text-red-400">{p.stock}</span>
                                                 <div className="text-[10px] text-red-400">unidades</div>
                                             </div>
                                         </div>
@@ -533,8 +533,8 @@ const Reports: React.FC = () => {
                     {/* Period Selector */}
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
                         <div>
-                            <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                                <Landmark className="text-blue-600" /> Oficina del Contador
+                            <h2 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
+                                <Landmark className="text-blue-400" /> Oficina del Contador
                             </h2>
                             <p className="text-slate-500 text-sm">Declaración mensual DGI | Ley de Concertación Tributaria (LCT 822)</p>
                         </div>
@@ -542,7 +542,7 @@ const Reports: React.FC = () => {
                             <select
                                 value={taxMonth}
                                 onChange={e => setTaxMonth(Number(e.target.value))}
-                                className="border p-2 rounded-lg text-slate-800 bg-white"
+                                className="border p-2 rounded-lg text-slate-100 bg-surface-900"
                             >
                                 {monthNames.map((m, i) => (
                                     <option key={i} value={i + 1}>{m}</option>
@@ -552,7 +552,7 @@ const Reports: React.FC = () => {
                                 type="number"
                                 value={taxYear}
                                 onChange={e => setTaxYear(Number(e.target.value))}
-                                className="border p-2 rounded-lg w-24 text-slate-800"
+                                className="border p-2 rounded-lg w-24 text-slate-100"
                             />
                             <button
                                 onClick={handleGenerateTaxReport}
@@ -589,9 +589,9 @@ const Reports: React.FC = () => {
                             {/* Desglose de impuestos */}
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                                 {/* Alcaldía */}
-                                <div className="bg-white p-6 rounded-xl border-2 border-blue-200 shadow-sm">
+                                <div className="bg-surface-900 p-6 rounded-xl border-2 border-blue-500/20 shadow-sm">
                                     <div className="flex items-center gap-3 mb-4">
-                                        <div className="p-3 bg-blue-100 text-blue-600 rounded-xl">
+                                        <div className="p-3 bg-blue-500/15 text-blue-400 rounded-xl">
                                             <Building2 size={24} />
                                         </div>
                                         <div>
@@ -599,14 +599,14 @@ const Reports: React.FC = () => {
                                             <div className="text-sm text-slate-400">Impuesto Municipal</div>
                                         </div>
                                     </div>
-                                    <div className="text-3xl font-bold text-blue-700">{formatC(taxReport.imiAlcaldia)}</div>
+                                    <div className="text-3xl font-bold text-blue-400">{formatC(taxReport.imiAlcaldia)}</div>
                                     <div className="text-xs text-slate-400 mt-2">Base: {formatC(taxReport.salesNetasSinIVA)} (Ventas sin IVA)</div>
                                 </div>
 
                                 {/* DGI Anticipo IR */}
-                                <div className="bg-white p-6 rounded-xl border-2 border-amber-200 shadow-sm">
+                                <div className="bg-surface-900 p-6 rounded-xl border-2 border-amber-500/20 shadow-sm">
                                     <div className="flex items-center gap-3 mb-4">
-                                        <div className="p-3 bg-amber-100 text-amber-600 rounded-xl">
+                                        <div className="p-3 bg-amber-500/15 text-amber-400 rounded-xl">
                                             <Scale size={24} />
                                         </div>
                                         <div>
@@ -614,14 +614,14 @@ const Reports: React.FC = () => {
                                             <div className="text-sm text-slate-400">Dirección General de Ingresos</div>
                                         </div>
                                     </div>
-                                    <div className="text-3xl font-bold text-amber-700">{formatC(taxReport.anticipoIR)}</div>
+                                    <div className="text-3xl font-bold text-amber-400">{formatC(taxReport.anticipoIR)}</div>
                                     <div className="text-xs text-slate-400 mt-2">Base: {formatC(taxReport.salesNetasSinIVA)} (Ingresos brutos)</div>
                                 </div>
 
                                 {/* IVA Neto */}
-                                <div className="bg-white p-6 rounded-xl border-2 border-emerald-200 shadow-sm">
+                                <div className="bg-surface-900 p-6 rounded-xl border-2 border-emerald-500/20 shadow-sm">
                                     <div className="flex items-center gap-3 mb-4">
-                                        <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl">
+                                        <div className="p-3 bg-emerald-500/15 text-emerald-400 rounded-xl">
                                             <Receipt size={24} />
                                         </div>
                                         <div>
@@ -629,9 +629,9 @@ const Reports: React.FC = () => {
                                             <div className="text-sm text-slate-400">Débito - Crédito Fiscal</div>
                                         </div>
                                     </div>
-                                    <div className="text-3xl font-bold text-emerald-700">{formatC(taxReport.ivaNeto)}</div>
+                                    <div className="text-3xl font-bold text-emerald-400">{formatC(taxReport.ivaNeto)}</div>
                                     {taxReport.ivaCredito > 0 && (
-                                        <div className="text-xs text-emerald-600 mt-2 bg-emerald-50 p-2 rounded">
+                                        <div className="text-xs text-emerald-400 mt-2 bg-emerald-500/10 p-2 rounded">
                                             Crédito fiscal a favor: {formatC(taxReport.ivaCredito)}
                                         </div>
                                     )}
@@ -641,42 +641,42 @@ const Reports: React.FC = () => {
                             {/* Desglose completo */}
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
                                 {/* Tabla desglose */}
-                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                                    <h3 className="font-bold text-slate-800 mb-4">Desglose del Período</h3>
-                                    <div className="overflow-hidden rounded-lg border border-slate-100">
+                                <div className="bg-surface-900 p-6 rounded-xl border border-white/[0.06] shadow-sm">
+                                    <h3 className="font-bold text-slate-100 mb-4">Desglose del Período</h3>
+                                    <div className="overflow-hidden rounded-lg border border-white/[0.04]">
                                         <table className="w-full text-sm">
-                                            <tbody className="divide-y divide-slate-100">
-                                                <tr className="bg-blue-50/50">
-                                                    <td className="px-4 py-3 font-bold text-blue-700" colSpan={2}>VENTAS</td>
+                                            <tbody className="divide-y divide-white/[0.04]">
+                                                <tr className="bg-blue-500/10">
+                                                    <td className="px-4 py-3 font-bold text-blue-400" colSpan={2}>VENTAS</td>
                                                 </tr>
-                                                <tr className="hover:bg-slate-50">
-                                                    <td className="px-4 py-3 text-slate-600">Ventas Brutas (con IVA)</td>
+                                                <tr className="hover:bg-surface-800/40">
+                                                    <td className="px-4 py-3 text-slate-300">Ventas Brutas (con IVA)</td>
                                                     <td className="px-4 py-3 text-right font-mono font-bold">{formatC(taxReport.totalSales)}</td>
                                                 </tr>
-                                                <tr className="hover:bg-slate-50">
-                                                    <td className="px-4 py-3 text-slate-600">Ventas Netas (sin IVA)</td>
+                                                <tr className="hover:bg-surface-800/40">
+                                                    <td className="px-4 py-3 text-slate-300">Ventas Netas (sin IVA)</td>
                                                     <td className="px-4 py-3 text-right font-mono font-bold">{formatC(taxReport.salesNetasSinIVA)}</td>
                                                 </tr>
-                                                <tr className="hover:bg-slate-50">
-                                                    <td className="px-4 py-3 text-slate-600">IVA Cobrado (Débito Fiscal)</td>
-                                                    <td className="px-4 py-3 text-right font-mono font-bold text-amber-600">{formatC(taxReport.totalIVACollected)}</td>
+                                                <tr className="hover:bg-surface-800/40">
+                                                    <td className="px-4 py-3 text-slate-300">IVA Cobrado (Débito Fiscal)</td>
+                                                    <td className="px-4 py-3 text-right font-mono font-bold text-amber-400">{formatC(taxReport.totalIVACollected)}</td>
                                                 </tr>
 
-                                                <tr className="bg-green-50/50">
-                                                    <td className="px-4 py-3 font-bold text-green-700" colSpan={2}>COMPRAS</td>
+                                                <tr className="bg-green-500/10">
+                                                    <td className="px-4 py-3 font-bold text-green-400" colSpan={2}>COMPRAS</td>
                                                 </tr>
-                                                <tr className="hover:bg-slate-50">
-                                                    <td className="px-4 py-3 text-slate-600">Compras Brutas (con IVA)</td>
+                                                <tr className="hover:bg-surface-800/40">
+                                                    <td className="px-4 py-3 text-slate-300">Compras Brutas (con IVA)</td>
                                                     <td className="px-4 py-3 text-right font-mono font-bold">{formatC(taxReport.totalPurchases)}</td>
                                                 </tr>
-                                                <tr className="hover:bg-slate-50">
-                                                    <td className="px-4 py-3 text-slate-600">IVA Pagado (Crédito Fiscal)</td>
-                                                    <td className="px-4 py-3 text-right font-mono font-bold text-green-600">{formatC(taxReport.totalIVAPaid)}</td>
+                                                <tr className="hover:bg-surface-800/40">
+                                                    <td className="px-4 py-3 text-slate-300">IVA Pagado (Crédito Fiscal)</td>
+                                                    <td className="px-4 py-3 text-right font-mono font-bold text-green-400">{formatC(taxReport.totalIVAPaid)}</td>
                                                 </tr>
 
-                                                <tr className="bg-red-50">
-                                                    <td className="px-4 py-4 font-bold text-red-700 text-lg">TOTAL A PAGAR</td>
-                                                    <td className="px-4 py-4 text-right font-mono font-bold text-red-700 text-lg">{formatC(taxReport.totalToPay)}</td>
+                                                <tr className="bg-red-500/10">
+                                                    <td className="px-4 py-4 font-bold text-red-400 text-lg">TOTAL A PAGAR</td>
+                                                    <td className="px-4 py-4 text-right font-mono font-bold text-red-400 text-lg">{formatC(taxReport.totalToPay)}</td>
                                                 </tr>
                                             </tbody>
                                         </table>
@@ -684,14 +684,14 @@ const Reports: React.FC = () => {
                                 </div>
 
                                 {/* VET Summary */}
-                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                <div className="bg-surface-900 p-6 rounded-xl border border-white/[0.06] shadow-sm">
                                     <div className="flex justify-between items-center mb-4">
-                                        <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                                        <h3 className="font-bold text-slate-100 flex items-center gap-2">
                                             <FileSpreadsheet size={18} className="text-blue-500" /> Resumen para VET
                                         </h3>
                                         <button
                                             onClick={handleCopyVET}
-                                            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${copiedVET ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${copiedVET ? 'bg-green-500/15 text-green-400' : 'bg-white/[0.04] text-slate-300 hover:bg-white/[0.06]'
                                                 }`}
                                         >
                                             {copiedVET ? <><CheckCircle size={14} /> Copiado!</> : <><Copy size={14} /> Copiar</>}
@@ -718,7 +718,7 @@ const Reports: React.FC = () => {
                 <div>
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
                         <div>
-                            <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                            <h2 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
                                 <Users className="text-nortex-500" /> Auditoría de Cajas
                             </h2>
                             <p className="text-slate-500 text-sm">Historial completo de cierres — rastro inmutable anti-robo hormiga</p>
@@ -726,7 +726,7 @@ const Reports: React.FC = () => {
                         <button
                             onClick={fetchShiftHistory}
                             disabled={shiftHistoryLoading}
-                            className="p-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 shadow-sm text-slate-600"
+                            className="p-2 bg-surface-900 border border-white/[0.06] rounded-lg hover:bg-surface-800/40 shadow-sm text-slate-300"
                             title="Actualizar"
                         >
                             <RefreshCw size={18} className={shiftHistoryLoading ? 'animate-spin' : ''} />
@@ -744,33 +744,33 @@ const Reports: React.FC = () => {
                             <p className="text-sm mt-1">Los cierres aparecerán aquí automáticamente</p>
                         </div>
                     ) : (
-                        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div className="bg-surface-900 rounded-xl border border-white/[0.06] shadow-sm overflow-hidden">
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead>
-                                        <tr className="bg-slate-50 border-b border-slate-200">
-                                            <th className="px-4 py-3 text-left font-bold text-slate-600">Fecha Cierre</th>
-                                            <th className="px-4 py-3 text-left font-bold text-slate-600">Cajero</th>
-                                            <th className="px-4 py-3 text-right font-bold text-slate-600">Ventas</th>
-                                            <th className="px-4 py-3 text-right font-bold text-slate-600">Esperado</th>
-                                            <th className="px-4 py-3 text-right font-bold text-slate-600">Declarado</th>
-                                            <th className="px-4 py-3 text-right font-bold text-slate-600">Diferencia</th>
-                                            <th className="px-4 py-3 text-center font-bold text-slate-600">Estado</th>
-                                            <th className="px-4 py-3 text-center font-bold text-slate-600">Acción</th>
+                                        <tr className="bg-surface-800/40 border-b border-white/[0.06]">
+                                            <th className="px-4 py-3 text-left font-bold text-slate-300">Fecha Cierre</th>
+                                            <th className="px-4 py-3 text-left font-bold text-slate-300">Cajero</th>
+                                            <th className="px-4 py-3 text-right font-bold text-slate-300">Ventas</th>
+                                            <th className="px-4 py-3 text-right font-bold text-slate-300">Esperado</th>
+                                            <th className="px-4 py-3 text-right font-bold text-slate-300">Declarado</th>
+                                            <th className="px-4 py-3 text-right font-bold text-slate-300">Diferencia</th>
+                                            <th className="px-4 py-3 text-center font-bold text-slate-300">Estado</th>
+                                            <th className="px-4 py-3 text-center font-bold text-slate-300">Acción</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-slate-100">
+                                    <tbody className="divide-y divide-white/[0.04]">
                                         {shiftHistory.map((s: any) => {
                                             const diff = s.difference ?? 0;
-                                            const diffColor = diff < 0 ? 'text-red-600' : diff > 0 ? 'text-amber-600' : 'text-emerald-600';
-                                            const diffBg = diff < 0 ? 'bg-red-50' : diff > 0 ? 'bg-amber-50' : 'bg-emerald-50';
+                                            const diffColor = diff < 0 ? 'text-red-400' : diff > 0 ? 'text-amber-400' : 'text-emerald-400';
+                                            const diffBg = diff < 0 ? 'bg-red-500/10' : diff > 0 ? 'bg-amber-500/10' : 'bg-emerald-500/10';
                                             const statusLabel = diff < 0 ? 'FALTANTE' : diff > 0 ? 'SOBRANTE' : 'CUADRADO';
                                             const statusIcon = diff < 0 ? '' : diff > 0 ? '' : '';
 
                                             return (
-                                                <tr key={s.id} className="hover:bg-slate-50 transition-colors">
+                                                <tr key={s.id} className="hover:bg-surface-800/40 transition-colors">
                                                     <td className="px-4 py-3">
-                                                        <div className="font-mono text-slate-800">
+                                                        <div className="font-mono text-slate-100">
                                                             {new Date(s.endTime).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
                                                         </div>
                                                         <div className="text-xs text-slate-400">
@@ -778,18 +778,18 @@ const Reports: React.FC = () => {
                                                         </div>
                                                     </td>
                                                     <td className="px-4 py-3">
-                                                        <div className="font-bold text-slate-800">
+                                                        <div className="font-bold text-slate-100">
                                                             {s.employee ? `${s.employee.firstName} ${s.employee.lastName}` : 'N/A'}
                                                         </div>
                                                         <div className="text-xs text-slate-400">{s.totalSales} ventas</div>
                                                     </td>
-                                                    <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">
+                                                    <td className="px-4 py-3 text-right font-mono font-bold text-slate-100">
                                                         C$ {s.grandTotal.toFixed(2)}
                                                     </td>
-                                                    <td className="px-4 py-3 text-right font-mono text-slate-700">
+                                                    <td className="px-4 py-3 text-right font-mono text-slate-200">
                                                         C$ {(s.systemExpectedCash ?? 0).toFixed(2)}
                                                     </td>
-                                                    <td className="px-4 py-3 text-right font-mono text-slate-700">
+                                                    <td className="px-4 py-3 text-right font-mono text-slate-200">
                                                         C$ {(s.finalCashDeclared ?? 0).toFixed(2)}
                                                     </td>
                                                     <td className={`px-4 py-3 text-right font-mono font-bold ${diffColor}`}>
@@ -825,53 +825,53 @@ const Reports: React.FC = () => {
                 <div>
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
                         <div>
-                            <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                                <BookOpen className="text-indigo-600" /> Motor Contable (Partida Doble)
+                            <h2 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
+                                <BookOpen className="text-indigo-400" /> Motor Contable (Partida Doble)
                             </h2>
                             <p className="text-slate-500 text-sm">Balance General, Estado de Resultados y Libro Diario — NIIF PyMES</p>
                         </div>
                         <div className="flex items-center gap-2">
-                            <div className="flex bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+                            <div className="flex bg-surface-900 border border-white/[0.06] rounded-lg overflow-hidden shadow-sm">
                                 {(['BALANCE', 'ESTADO', 'DIARIO'] as const).map(tab => (
                                     <button
                                         key={tab}
                                         onClick={() => setAccountingSubTab(tab)}
-                                        className={`px-3 py-1.5 text-xs font-bold transition-colors ${accountingSubTab === tab ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                                        className={`px-3 py-1.5 text-xs font-bold transition-colors ${accountingSubTab === tab ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-surface-800/40'}`}
                                     >
                                         {tab === 'BALANCE' ? 'Balance General' : tab === 'ESTADO' ? 'Estado de Resultados' : 'Libro Diario'}
                                     </button>
                                 ))}
                             </div>
-                            <button onClick={fetchAccounting} disabled={accountingLoading} className="p-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 shadow-sm">
+                            <button onClick={fetchAccounting} disabled={accountingLoading} className="p-2 bg-surface-900 border border-white/[0.06] rounded-lg hover:bg-surface-800/40 shadow-sm">
                                 <RefreshCw size={16} className={accountingLoading ? 'animate-spin text-indigo-500' : 'text-slate-500'} />
                             </button>
                         </div>
                     </div>
 
                     {/* ── EXPORTACIONES DGI ── */}
-                    <div className="mb-6 bg-indigo-50 border border-indigo-200 rounded-xl p-4">
-                        <p className="text-xs font-black text-indigo-700 uppercase tracking-widest mb-3 flex items-center gap-2">
+                    <div className="mb-6 bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-4">
+                        <p className="text-xs font-black text-indigo-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                             <Download size={14} /> Exportaciones Fiscales DGI — {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][taxMonth-1]} {taxYear}
                         </p>
                         <div className="flex flex-wrap gap-2">
                             <a
                                 href={`/api/fiscal/libro-ventas/${taxMonth}/${taxYear}`}
                                 download
-                                className="flex items-center gap-2 px-4 py-2 bg-white border border-indigo-300 text-indigo-700 rounded-lg text-sm font-semibold hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all shadow-sm"
+                                className="flex items-center gap-2 px-4 py-2 bg-surface-900 border border-indigo-300 text-indigo-400 rounded-lg text-sm font-semibold hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all shadow-sm"
                             >
                                 <FileSpreadsheet size={15} /> Libro de Ventas (.xlsx)
                             </a>
                             <a
                                 href={`/api/fiscal/libro-compras/${taxMonth}/${taxYear}`}
                                 download
-                                className="flex items-center gap-2 px-4 py-2 bg-white border border-indigo-300 text-indigo-700 rounded-lg text-sm font-semibold hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all shadow-sm"
+                                className="flex items-center gap-2 px-4 py-2 bg-surface-900 border border-indigo-300 text-indigo-400 rounded-lg text-sm font-semibold hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all shadow-sm"
                             >
                                 <FileSpreadsheet size={15} /> Libro de Compras (.xlsx)
                             </a>
                             <a
                                 href={`/api/fiscal/vet-export/${taxMonth}/${taxYear}`}
                                 download
-                                className="flex items-center gap-2 px-4 py-2 bg-white border border-emerald-300 text-emerald-700 rounded-lg text-sm font-semibold hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all shadow-sm"
+                                className="flex items-center gap-2 px-4 py-2 bg-surface-900 border border-emerald-300 text-emerald-400 rounded-lg text-sm font-semibold hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all shadow-sm"
                             >
                                 <Download size={15} /> Archivo VET (.txt)
                             </a>
@@ -889,13 +889,13 @@ const Reports: React.FC = () => {
                             {accountingSubTab === 'BALANCE' && balanceGeneral && (
                                 <div className="space-y-6">
                                     {/* Cuadra? */}
-                                    <div className={`p-4 rounded-xl border-2 flex items-center justify-between ${balanceGeneral.totals.isBalanced ? 'bg-emerald-50 border-emerald-300' : 'bg-red-50 border-red-300'}`}>
+                                    <div className={`p-4 rounded-xl border-2 flex items-center justify-between ${balanceGeneral.totals.isBalanced ? 'bg-emerald-500/10 border-emerald-300' : 'bg-red-500/10 border-red-300'}`}>
                                         <div className="flex items-center gap-3">
-                                            <div className={`p-2 rounded-full ${balanceGeneral.totals.isBalanced ? 'bg-emerald-200 text-emerald-700' : 'bg-red-200 text-red-700'}`}>
+                                            <div className={`p-2 rounded-full ${balanceGeneral.totals.isBalanced ? 'bg-emerald-200 text-emerald-400' : 'bg-red-200 text-red-400'}`}>
                                                 {balanceGeneral.totals.isBalanced ? <CheckCircle size={24} /> : <AlertTriangle size={24} />}
                                             </div>
                                             <div>
-                                                <p className={`font-bold ${balanceGeneral.totals.isBalanced ? 'text-emerald-800' : 'text-red-800'}`}>
+                                                <p className={`font-bold ${balanceGeneral.totals.isBalanced ? 'text-emerald-300' : 'text-red-300'}`}>
                                                     {balanceGeneral.totals.isBalanced ? 'Balance Cuadrado' : 'Balance Descuadrado'}
                                                 </p>
                                                 <p className="text-xs text-slate-500">Activos = Pasivos + Capital + Utilidad</p>
@@ -909,63 +909,63 @@ const Reports: React.FC = () => {
 
                                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                                         {/* ACTIVOS */}
-                                        <div className="bg-white p-6 rounded-xl border border-blue-200 shadow-sm">
-                                            <h3 className="font-bold text-blue-800 mb-4 flex items-center gap-2">
+                                        <div className="bg-surface-900 p-6 rounded-xl border border-blue-500/20 shadow-sm">
+                                            <h3 className="font-bold text-blue-300 mb-4 flex items-center gap-2">
                                                 <BarChart3 size={18} className="text-blue-500" /> ACTIVOS
                                             </h3>
                                             <div className="space-y-2">
                                                 {balanceGeneral.assets.map((a: any) => (
                                                     <div key={a.code} className="flex justify-between items-center py-1.5 border-b border-slate-50">
-                                                        <span className="text-xs text-slate-600"><span className="font-mono text-slate-400">{a.code}</span> {a.name}</span>
-                                                        <span className={`text-xs font-mono font-bold ${a.balance > 0 ? 'text-blue-700' : 'text-slate-400'}`}>{formatC(a.balance)}</span>
+                                                        <span className="text-xs text-slate-300"><span className="font-mono text-slate-400">{a.code}</span> {a.name}</span>
+                                                        <span className={`text-xs font-mono font-bold ${a.balance > 0 ? 'text-blue-400' : 'text-slate-400'}`}>{formatC(a.balance)}</span>
                                                     </div>
                                                 ))}
                                             </div>
-                                            <div className="mt-4 pt-3 border-t-2 border-blue-200 flex justify-between">
-                                                <span className="font-bold text-blue-800">Total Activos</span>
-                                                <span className="font-bold font-mono text-blue-800">{formatC(balanceGeneral.totals.assets)}</span>
+                                            <div className="mt-4 pt-3 border-t-2 border-blue-500/20 flex justify-between">
+                                                <span className="font-bold text-blue-300">Total Activos</span>
+                                                <span className="font-bold font-mono text-blue-300">{formatC(balanceGeneral.totals.assets)}</span>
                                             </div>
                                         </div>
 
                                         {/* PASIVOS */}
-                                        <div className="bg-white p-6 rounded-xl border border-red-200 shadow-sm">
-                                            <h3 className="font-bold text-red-800 mb-4 flex items-center gap-2">
+                                        <div className="bg-surface-900 p-6 rounded-xl border border-red-500/20 shadow-sm">
+                                            <h3 className="font-bold text-red-300 mb-4 flex items-center gap-2">
                                                 <TrendingDown size={18} className="text-red-500" /> PASIVOS
                                             </h3>
                                             <div className="space-y-2">
                                                 {balanceGeneral.liabilities.map((a: any) => (
                                                     <div key={a.code} className="flex justify-between items-center py-1.5 border-b border-slate-50">
-                                                        <span className="text-xs text-slate-600"><span className="font-mono text-slate-400">{a.code}</span> {a.name}</span>
-                                                        <span className={`text-xs font-mono font-bold ${Math.abs(a.balance) > 0 ? 'text-red-700' : 'text-slate-400'}`}>{formatC(Math.abs(a.balance))}</span>
+                                                        <span className="text-xs text-slate-300"><span className="font-mono text-slate-400">{a.code}</span> {a.name}</span>
+                                                        <span className={`text-xs font-mono font-bold ${Math.abs(a.balance) > 0 ? 'text-red-400' : 'text-slate-400'}`}>{formatC(Math.abs(a.balance))}</span>
                                                     </div>
                                                 ))}
                                             </div>
-                                            <div className="mt-4 pt-3 border-t-2 border-red-200 flex justify-between">
-                                                <span className="font-bold text-red-800">Total Pasivos</span>
-                                                <span className="font-bold font-mono text-red-800">{formatC(balanceGeneral.totals.liabilities)}</span>
+                                            <div className="mt-4 pt-3 border-t-2 border-red-500/20 flex justify-between">
+                                                <span className="font-bold text-red-300">Total Pasivos</span>
+                                                <span className="font-bold font-mono text-red-300">{formatC(balanceGeneral.totals.liabilities)}</span>
                                             </div>
                                         </div>
 
                                         {/* CAPITAL */}
-                                        <div className="bg-white p-6 rounded-xl border border-emerald-200 shadow-sm">
-                                            <h3 className="font-bold text-emerald-800 mb-4 flex items-center gap-2">
+                                        <div className="bg-surface-900 p-6 rounded-xl border border-emerald-500/20 shadow-sm">
+                                            <h3 className="font-bold text-emerald-300 mb-4 flex items-center gap-2">
                                                 <TrendingUp size={18} className="text-emerald-500" /> CAPITAL
                                             </h3>
                                             <div className="space-y-2">
                                                 {balanceGeneral.equity.map((a: any) => (
                                                     <div key={a.code} className="flex justify-between items-center py-1.5 border-b border-slate-50">
-                                                        <span className="text-xs text-slate-600"><span className="font-mono text-slate-400">{a.code}</span> {a.name}</span>
-                                                        <span className={`text-xs font-mono font-bold ${a.balance > 0 ? 'text-emerald-700' : 'text-slate-400'}`}>{formatC(a.balance)}</span>
+                                                        <span className="text-xs text-slate-300"><span className="font-mono text-slate-400">{a.code}</span> {a.name}</span>
+                                                        <span className={`text-xs font-mono font-bold ${a.balance > 0 ? 'text-emerald-400' : 'text-slate-400'}`}>{formatC(a.balance)}</span>
                                                     </div>
                                                 ))}
-                                                <div className="flex justify-between items-center py-1.5 bg-indigo-50 px-2 rounded">
-                                                    <span className="text-xs font-bold text-indigo-700">Utilidad del Ejercicio</span>
-                                                    <span className={`text-xs font-mono font-bold ${balanceGeneral.totals.netIncome >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{formatC(balanceGeneral.totals.netIncome)}</span>
+                                                <div className="flex justify-between items-center py-1.5 bg-indigo-500/10 px-2 rounded">
+                                                    <span className="text-xs font-bold text-indigo-400">Utilidad del Ejercicio</span>
+                                                    <span className={`text-xs font-mono font-bold ${balanceGeneral.totals.netIncome >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatC(balanceGeneral.totals.netIncome)}</span>
                                                 </div>
                                             </div>
-                                            <div className="mt-4 pt-3 border-t-2 border-emerald-200 flex justify-between">
-                                                <span className="font-bold text-emerald-800">Total Capital</span>
-                                                <span className="font-bold font-mono text-emerald-800">{formatC(balanceGeneral.totals.equityPlusIncome)}</span>
+                                            <div className="mt-4 pt-3 border-t-2 border-emerald-500/20 flex justify-between">
+                                                <span className="font-bold text-emerald-300">Total Capital</span>
+                                                <span className="font-bold font-mono text-emerald-300">{formatC(balanceGeneral.totals.equityPlusIncome)}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -974,38 +974,38 @@ const Reports: React.FC = () => {
 
                             {/* ===== SUB-TAB: ESTADO DE RESULTADOS ===== */}
                             {accountingSubTab === 'ESTADO' && estadoResultados && (
-                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm max-w-2xl">
-                                    <h3 className="font-bold text-slate-800 mb-4 text-lg">Estado de Resultados — {estadoResultados.period}</h3>
-                                    <div className="overflow-hidden rounded-lg border border-slate-100">
+                                <div className="bg-surface-900 p-6 rounded-xl border border-white/[0.06] shadow-sm max-w-2xl">
+                                    <h3 className="font-bold text-slate-100 mb-4 text-lg">Estado de Resultados — {estadoResultados.period}</h3>
+                                    <div className="overflow-hidden rounded-lg border border-white/[0.04]">
                                         <table className="w-full text-sm">
-                                            <tbody className="divide-y divide-slate-100">
-                                                <tr className="bg-blue-50/50"><td className="px-4 py-3 font-bold text-blue-700" colSpan={2}>INGRESOS</td></tr>
-                                                <tr className="hover:bg-slate-50">
-                                                    <td className="px-4 py-3 text-slate-600">Ventas Netas</td>
-                                                    <td className="px-4 py-3 text-right font-mono font-bold text-slate-800">{formatC(estadoResultados.revenue.total)}</td>
+                                            <tbody className="divide-y divide-white/[0.04]">
+                                                <tr className="bg-blue-500/10"><td className="px-4 py-3 font-bold text-blue-400" colSpan={2}>INGRESOS</td></tr>
+                                                <tr className="hover:bg-surface-800/40">
+                                                    <td className="px-4 py-3 text-slate-300">Ventas Netas</td>
+                                                    <td className="px-4 py-3 text-right font-mono font-bold text-slate-100">{formatC(estadoResultados.revenue.total)}</td>
                                                 </tr>
-                                                <tr className="hover:bg-slate-50">
-                                                    <td className="px-4 py-3 text-slate-600">(-) Costo de Ventas</td>
-                                                    <td className="px-4 py-3 text-right font-mono font-bold text-red-600">-{formatC(estadoResultados.costOfSales)}</td>
+                                                <tr className="hover:bg-surface-800/40">
+                                                    <td className="px-4 py-3 text-slate-300">(-) Costo de Ventas</td>
+                                                    <td className="px-4 py-3 text-right font-mono font-bold text-red-400">-{formatC(estadoResultados.costOfSales)}</td>
                                                 </tr>
-                                                <tr className="bg-emerald-50/50">
-                                                    <td className="px-4 py-3 font-bold text-emerald-700">= Utilidad Bruta</td>
-                                                    <td className="px-4 py-3 text-right font-mono font-bold text-emerald-700">{formatC(estadoResultados.grossProfit)}</td>
+                                                <tr className="bg-emerald-500/10">
+                                                    <td className="px-4 py-3 font-bold text-emerald-400">= Utilidad Bruta</td>
+                                                    <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400">{formatC(estadoResultados.grossProfit)}</td>
                                                 </tr>
-                                                <tr className="bg-red-50/30"><td className="px-4 py-3 font-bold text-red-700" colSpan={2}>GASTOS OPERATIVOS</td></tr>
+                                                <tr className="bg-red-500/10"><td className="px-4 py-3 font-bold text-red-400" colSpan={2}>GASTOS OPERATIVOS</td></tr>
                                                 {estadoResultados.operatingExpenses.lines.map((l: any, i: number) => (
-                                                    <tr key={i} className="hover:bg-slate-50">
-                                                        <td className="px-4 py-2 text-slate-600 text-xs pl-8">{l.account}</td>
+                                                    <tr key={i} className="hover:bg-surface-800/40">
+                                                        <td className="px-4 py-2 text-slate-300 text-xs pl-8">{l.account}</td>
                                                         <td className="px-4 py-2 text-right font-mono text-xs text-red-500">-{formatC(l.amount)}</td>
                                                     </tr>
                                                 ))}
-                                                <tr className="hover:bg-slate-50">
-                                                    <td className="px-4 py-3 text-slate-600">(-) Total Gastos Operativos</td>
-                                                    <td className="px-4 py-3 text-right font-mono font-bold text-red-600">-{formatC(estadoResultados.operatingExpenses.total)}</td>
+                                                <tr className="hover:bg-surface-800/40">
+                                                    <td className="px-4 py-3 text-slate-300">(-) Total Gastos Operativos</td>
+                                                    <td className="px-4 py-3 text-right font-mono font-bold text-red-400">-{formatC(estadoResultados.operatingExpenses.total)}</td>
                                                 </tr>
-                                                <tr className={`${estadoResultados.netIncome >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}>
-                                                    <td className={`px-4 py-4 font-bold text-lg ${estadoResultados.netIncome >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>= UTILIDAD NETA</td>
-                                                    <td className={`px-4 py-4 text-right font-mono font-bold text-lg ${estadoResultados.netIncome >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{formatC(estadoResultados.netIncome)}</td>
+                                                <tr className={`${estadoResultados.netIncome >= 0 ? 'bg-emerald-500/10' : 'bg-red-500/10'}`}>
+                                                    <td className={`px-4 py-4 font-bold text-lg ${estadoResultados.netIncome >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>= UTILIDAD NETA</td>
+                                                    <td className={`px-4 py-4 text-right font-mono font-bold text-lg ${estadoResultados.netIncome >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatC(estadoResultados.netIncome)}</td>
                                                 </tr>
                                             </tbody>
                                         </table>
@@ -1023,16 +1023,16 @@ const Reports: React.FC = () => {
                                             <p className="text-sm mt-1">Los asientos se generan automáticamente con cada venta, compra o gasto</p>
                                         </div>
                                     ) : journalEntries.map((entry: any) => (
-                                        <div key={entry.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                                            <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-b border-slate-100">
+                                        <div key={entry.id} className="bg-surface-900 rounded-xl border border-white/[0.06] shadow-sm overflow-hidden">
+                                            <div className="flex items-center justify-between px-4 py-3 bg-surface-800/40 border-b border-white/[0.04]">
                                                 <div className="flex items-center gap-3">
-                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${entry.referenceType === 'SALE' ? 'bg-blue-100 text-blue-700' :
-                                                            entry.referenceType === 'PURCHASE' ? 'bg-emerald-100 text-emerald-700' :
-                                                                entry.referenceType === 'EXPENSE' ? 'bg-red-100 text-red-700' :
-                                                                    entry.referenceType === 'RETURN' ? 'bg-amber-100 text-amber-700' :
-                                                                        'bg-slate-100 text-slate-700'
+                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${entry.referenceType === 'SALE' ? 'bg-blue-500/15 text-blue-400' :
+                                                            entry.referenceType === 'PURCHASE' ? 'bg-emerald-500/15 text-emerald-400' :
+                                                                entry.referenceType === 'EXPENSE' ? 'bg-red-500/15 text-red-400' :
+                                                                    entry.referenceType === 'RETURN' ? 'bg-amber-500/15 text-amber-400' :
+                                                                        'bg-white/[0.04] text-slate-200'
                                                         }`}>{entry.referenceType || 'MANUAL'}</span>
-                                                    <span className="text-sm font-medium text-slate-700">{entry.description}</span>
+                                                    <span className="text-sm font-medium text-slate-200">{entry.description}</span>
                                                 </div>
                                                 <span className="text-xs text-slate-400 font-mono">{new Date(entry.date).toLocaleDateString('es-NI')}</span>
                                             </div>
@@ -1046,15 +1046,15 @@ const Reports: React.FC = () => {
                                                 </thead>
                                                 <tbody className="divide-y divide-slate-50">
                                                     {entry.lines.map((line: any) => (
-                                                        <tr key={line.id} className="hover:bg-slate-50">
-                                                            <td className="px-4 py-2 text-slate-700">
+                                                        <tr key={line.id} className="hover:bg-surface-800/40">
+                                                            <td className="px-4 py-2 text-slate-200">
                                                                 <span className="font-mono text-slate-400 mr-1">{line.account.code}</span>
                                                                 {line.account.name}
                                                             </td>
-                                                            <td className={`px-4 py-2 text-right font-mono font-bold ${Number(line.debit) > 0 ? 'text-blue-700' : 'text-slate-300'}`}>
+                                                            <td className={`px-4 py-2 text-right font-mono font-bold ${Number(line.debit) > 0 ? 'text-blue-400' : 'text-slate-300'}`}>
                                                                 {Number(line.debit) > 0 ? formatC(Number(line.debit)) : '-'}
                                                             </td>
-                                                            <td className={`px-4 py-2 text-right font-mono font-bold ${Number(line.credit) > 0 ? 'text-emerald-700' : 'text-slate-300'}`}>
+                                                            <td className={`px-4 py-2 text-right font-mono font-bold ${Number(line.credit) > 0 ? 'text-emerald-400' : 'text-slate-300'}`}>
                                                                 {Number(line.credit) > 0 ? formatC(Number(line.credit)) : '-'}
                                                             </td>
                                                         </tr>

@@ -41,10 +41,10 @@ const fmtDate = (d: string | null) => d ? new Date(d).toLocaleDateString('es-NI'
 
 // Etiqueta de urgencia a partir de los días vencidos.
 const urgencyLabel = (it: { daysOverdue: number; status: string }) => {
-  if (it.daysOverdue > 0) return { text: `Vencido ${it.daysOverdue}d`, cls: 'bg-red-100 text-red-700 border-red-200' };
-  if (it.daysOverdue === 0) return { text: 'Vence hoy', cls: 'bg-amber-100 text-amber-700 border-amber-200' };
-  if (it.status === 'DUE_SOON') return { text: `Vence en ${-it.daysOverdue}d`, cls: 'bg-amber-50 text-amber-600 border-amber-200' };
-  return { text: 'Al día', cls: 'bg-emerald-50 text-emerald-600 border-emerald-200' };
+  if (it.daysOverdue > 0) return { text: `Vencido ${it.daysOverdue}d`, cls: 'bg-red-500/15 text-red-400 border-red-500/20' };
+  if (it.daysOverdue === 0) return { text: 'Vence hoy', cls: 'bg-amber-500/15 text-amber-400 border-amber-500/20' };
+  if (it.status === 'DUE_SOON') return { text: `Vence en ${-it.daysOverdue}d`, cls: 'bg-amber-500/10 text-amber-400 border-amber-500/20' };
+  return { text: 'Al día', cls: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' };
 };
 
 const AccountsReceivable: React.FC = () => {
@@ -235,46 +235,46 @@ const AccountsReceivable: React.FC = () => {
     : items;
 
   return (
-    <div className="flex h-full bg-slate-100 overflow-hidden">
+    <div className="flex h-full bg-white/[0.04] overflow-hidden">
 
       {/* LEFT: Worklist */}
-      <div className="w-1/2 lg:w-2/5 flex flex-col border-r border-slate-200 bg-white">
-        <div className="p-5 border-b border-slate-200 bg-slate-50">
+      <div className="w-1/2 lg:w-2/5 flex flex-col border-r border-white/[0.06] bg-surface-900">
+        <div className="p-5 border-b border-white/[0.06] bg-surface-800/40">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-nortex-900 flex items-center gap-2">
+            <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
               <Wallet className="text-nortex-500" /> Cobranza
             </h2>
-            <button onClick={fetchWorklist} className="p-2 rounded-lg text-slate-400 hover:text-nortex-700 hover:bg-slate-100" title="Actualizar">
+            <button onClick={fetchWorklist} className="p-2 rounded-lg text-slate-400 hover:text-nortex-700 hover:bg-white/[0.06]" title="Actualizar">
               <RefreshCw size={16} />
             </button>
           </div>
 
           {/* KPIs */}
           <div className="grid grid-cols-2 gap-3 mt-4">
-            <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+            <div className="bg-surface-900 p-3 rounded-lg border border-white/[0.06] shadow-sm">
               <span className="text-[11px] text-slate-500 font-mono block">POR COBRAR</span>
-              <span className="text-lg font-bold text-slate-800">{fmt(summary?.totalReceivable || 0)}</span>
+              <span className="text-lg font-bold text-slate-100">{fmt(summary?.totalReceivable || 0)}</span>
             </div>
-            <div className="bg-white p-3 rounded-lg border border-red-100 shadow-sm">
+            <div className="bg-surface-900 p-3 rounded-lg border border-red-500/15 shadow-sm">
               <span className="text-[11px] text-slate-500 font-mono block">VENCIDO {summary?.overdueCount ? `(${summary.overdueCount})` : ''}</span>
-              <span className="text-lg font-bold text-red-600">{fmt(summary?.totalOverdue || 0)}</span>
+              <span className="text-lg font-bold text-red-400">{fmt(summary?.totalOverdue || 0)}</span>
             </div>
-            <div className="bg-white p-3 rounded-lg border border-amber-100 shadow-sm">
+            <div className="bg-surface-900 p-3 rounded-lg border border-amber-500/15 shadow-sm">
               <span className="text-[11px] text-slate-500 font-mono block">POR VENCER {summary?.dueSoonCount ? `(${summary.dueSoonCount})` : ''}</span>
-              <span className="text-lg font-bold text-amber-600">{fmt(summary?.dueSoon || 0)}</span>
+              <span className="text-lg font-bold text-amber-400">{fmt(summary?.dueSoon || 0)}</span>
             </div>
-            <div className="bg-white p-3 rounded-lg border border-emerald-100 shadow-sm">
+            <div className="bg-surface-900 p-3 rounded-lg border border-emerald-500/15 shadow-sm">
               <span className="text-[11px] text-slate-500 font-mono block">RECAUDADO HOY</span>
-              <span className="text-lg font-bold text-emerald-600">{fmt(summary?.collectedToday || 0)}</span>
+              <span className="text-lg font-bold text-emerald-400">{fmt(summary?.collectedToday || 0)}</span>
             </div>
           </div>
 
           {/* Filter */}
           <div className="flex gap-2 mt-4">
-            <button onClick={() => setFilter('today')} className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${filter === 'today' ? 'bg-nortex-900 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}>
+            <button onClick={() => setFilter('today')} className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${filter === 'today' ? 'bg-nortex-900 text-white' : 'bg-surface-900 border border-white/[0.06] text-slate-300'}`}>
               Cobrar hoy {summary ? `(${summary.overdueCount + summary.dueSoonCount})` : ''}
             </button>
-            <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${filter === 'all' ? 'bg-nortex-900 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}>
+            <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${filter === 'all' ? 'bg-nortex-900 text-white' : 'bg-surface-900 border border-white/[0.06] text-slate-300'}`}>
               Todos ({items.length})
             </button>
           </div>
@@ -294,18 +294,18 @@ const AccountsReceivable: React.FC = () => {
               <button
                 key={it.saleId}
                 onClick={() => openDetail(it)}
-                className={`w-full text-left p-4 border-b border-slate-100 hover:bg-slate-50 transition-colors flex justify-between items-center
-                  ${selected?.saleId === it.saleId ? 'bg-blue-50 border-l-4 border-l-nortex-500' : ''}`}
+                className={`w-full text-left p-4 border-b border-white/[0.04] hover:bg-surface-800/40 transition-colors flex justify-between items-center
+                  ${selected?.saleId === it.saleId ? 'bg-blue-500/10 border-l-4 border-l-nortex-500' : ''}`}
               >
                 <div className="min-w-0">
-                  <h4 className="font-bold text-slate-800 truncate">{it.customerName}</h4>
+                  <h4 className="font-bold text-slate-100 truncate">{it.customerName}</h4>
                   <div className="flex items-center gap-2 text-xs text-slate-500 mt-1">
                     <Calendar size={12} /> Vence: {fmtDate(it.dueDate)}
                   </div>
                   <span className={`inline-block mt-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${u.cls}`}>{u.text}</span>
                 </div>
                 <div className="text-right shrink-0 ml-2">
-                  <div className="font-mono font-bold text-red-600">{fmt(it.balance)}</div>
+                  <div className="font-mono font-bold text-red-400">{fmt(it.balance)}</div>
                   <div className="text-[11px] text-slate-400">de {fmt(it.total)}</div>
                 </div>
               </button>
@@ -315,7 +315,7 @@ const AccountsReceivable: React.FC = () => {
       </div>
 
       {/* RIGHT: Detail / Statement */}
-      <div className="flex-1 bg-slate-100 flex flex-col relative overflow-hidden">
+      <div className="flex-1 bg-white/[0.04] flex flex-col relative overflow-hidden">
         {!selected ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-400">
             <User size={48} className="mb-4 opacity-20" />
@@ -324,22 +324,22 @@ const AccountsReceivable: React.FC = () => {
         ) : (
           <div className="h-full flex flex-col p-6 overflow-y-auto" id="statement-print">
             {/* Header */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-5">
+            <div className="bg-surface-900 rounded-xl shadow-sm border border-white/[0.06] p-6 mb-5">
               <div className="flex justify-between items-start gap-3">
                 <div>
-                  <h1 className="text-2xl font-bold text-nortex-900">{statement?.customer.name || selected.customerName}</h1>
+                  <h1 className="text-2xl font-bold text-slate-100">{statement?.customer.name || selected.customerName}</h1>
                   {statement?.customer.phone && <span className="text-sm text-slate-400">{statement.customer.phone}</span>}
                   {statement?.customer.isBlocked && (
-                    <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">BLOQUEADO</span>
+                    <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-bold bg-red-500/15 text-red-400">BLOQUEADO</span>
                   )}
                 </div>
                 <div className="flex gap-2 no-print">
                   <button onClick={() => notifyWhatsapp(statement?.customer.name || selected.customerName, statement?.customer.phone || selected.phone, statement?.totals.balance ?? selected.balance)}
-                    className="px-3 py-1.5 bg-green-100 hover:bg-green-200 text-green-700 rounded-lg flex items-center gap-2 font-bold text-sm">
+                    className="px-3 py-1.5 bg-green-500/15 hover:bg-green-200 text-green-400 rounded-lg flex items-center gap-2 font-bold text-sm">
                     <MessageCircle size={16} /> Recordar
                   </button>
                   {statement && (
-                    <button onClick={printStatement} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center gap-2 font-bold text-sm">
+                    <button onClick={printStatement} className="px-3 py-1.5 bg-white/[0.04] hover:bg-white/[0.06] text-slate-200 rounded-lg flex items-center gap-2 font-bold text-sm">
                       <Printer size={16} /> Imprimir
                     </button>
                   )}
@@ -347,11 +347,11 @@ const AccountsReceivable: React.FC = () => {
               </div>
 
               {statement && (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5 pt-5 border-t border-slate-100">
-                  <div><label className="text-[11px] font-mono text-slate-400 block">FACTURADO</label><span className="text-lg font-bold text-slate-800">{fmt(statement.totals.billed)}</span></div>
-                  <div><label className="text-[11px] font-mono text-slate-400 block">ABONADO</label><span className="text-lg font-bold text-emerald-600">{fmt(statement.totals.paid)}</span></div>
-                  <div><label className="text-[11px] font-mono text-slate-400 block">SALDO</label><span className="text-lg font-bold text-red-600">{fmt(statement.totals.balance)}</span></div>
-                  <div><label className="text-[11px] font-mono text-slate-400 block">LÍMITE</label><span className="text-lg font-bold text-slate-700">{fmt(statement.customer.creditLimit)}</span></div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5 pt-5 border-t border-white/[0.04]">
+                  <div><label className="text-[11px] font-mono text-slate-400 block">FACTURADO</label><span className="text-lg font-bold text-slate-100">{fmt(statement.totals.billed)}</span></div>
+                  <div><label className="text-[11px] font-mono text-slate-400 block">ABONADO</label><span className="text-lg font-bold text-emerald-400">{fmt(statement.totals.paid)}</span></div>
+                  <div><label className="text-[11px] font-mono text-slate-400 block">SALDO</label><span className="text-lg font-bold text-red-400">{fmt(statement.totals.balance)}</span></div>
+                  <div><label className="text-[11px] font-mono text-slate-400 block">LÍMITE</label><span className="text-lg font-bold text-slate-200">{fmt(statement.customer.creditLimit)}</span></div>
                 </div>
               )}
             </div>
@@ -364,18 +364,18 @@ const AccountsReceivable: React.FC = () => {
                 <h3 className="text-sm font-bold text-slate-500 mb-3 uppercase tracking-wider flex items-center gap-2"><FileText size={15} /> Estado de cuenta</h3>
                 <div className="space-y-3">
                   {statement.invoices.map(inv => (
-                    <div key={inv.id} className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+                    <div key={inv.id} className="bg-surface-900 rounded-lg border border-white/[0.06] overflow-hidden">
                       <div className="p-4 flex justify-between items-center">
                         <div>
-                          <div className="font-bold text-slate-800">Factura {inv.invoiceNumber || inv.id.slice(0, 8)}</div>
+                          <div className="font-bold text-slate-100">Factura {inv.invoiceNumber || inv.id.slice(0, 8)}</div>
                           <div className="text-xs text-slate-500 mt-0.5">Emitida {fmtDate(inv.date)} · Vence {fmtDate(inv.dueDate)}</div>
-                          <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${inv.status === 'PAID' ? 'bg-emerald-100 text-emerald-700' : inv.status === 'WRITTEN_OFF' ? 'bg-slate-200 text-slate-600' : inv.status === 'OVERDUE' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                          <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${inv.status === 'PAID' ? 'bg-emerald-500/15 text-emerald-400' : inv.status === 'WRITTEN_OFF' ? 'bg-white/[0.06] text-slate-300' : inv.status === 'OVERDUE' ? 'bg-red-500/15 text-red-400' : 'bg-amber-500/15 text-amber-400'}`}>
                             {inv.status === 'PAID' ? 'Pagada' : inv.status === 'WRITTEN_OFF' ? 'Incobrable' : inv.status === 'OVERDUE' ? `Vencida ${inv.daysOverdue}d` : 'Pendiente'}
                           </span>
                         </div>
                         <div className="text-right">
                           <div className="text-xs text-slate-400">Saldo</div>
-                          <div className="font-mono font-bold text-red-600">{fmt(inv.balance)}</div>
+                          <div className="font-mono font-bold text-red-400">{fmt(inv.balance)}</div>
                           <div className="text-[11px] text-slate-400">de {fmt(inv.total)}</div>
                           {inv.balance > 0 && (
                             <div className="no-print mt-1 flex gap-1 justify-end">
@@ -385,7 +385,7 @@ const AccountsReceivable: React.FC = () => {
                               </button>
                               {isOwner && (
                                 <button onClick={() => handleWriteoff(inv.id, inv.balance)}
-                                  className="px-2 py-1 border border-slate-300 text-slate-500 rounded-lg text-xs font-semibold hover:bg-red-50 hover:text-red-600 hover:border-red-200"
+                                  className="px-2 py-1 border border-white/10 text-slate-500 rounded-lg text-xs font-semibold hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20"
                                   title="Castigar como incobrable">
                                   Incobrable
                                 </button>
@@ -395,11 +395,11 @@ const AccountsReceivable: React.FC = () => {
                         </div>
                       </div>
                       {inv.payments.length > 0 && (
-                        <div className="border-t border-slate-100 bg-slate-50 px-4 py-2 space-y-1">
+                        <div className="border-t border-white/[0.04] bg-surface-800/40 px-4 py-2 space-y-1">
                           {inv.payments.map(p => (
-                            <div key={p.id} className="flex justify-between text-xs text-slate-600">
+                            <div key={p.id} className="flex justify-between text-xs text-slate-300">
                               <span>{fmtDate(p.date)} · {p.method}{p.collectedBy ? ` · ${p.collectedBy}` : ''}</span>
-                              <span className="font-mono font-semibold text-emerald-600">+{fmt(p.amount)}</span>
+                              <span className="font-mono font-semibold text-emerald-400">+{fmt(p.amount)}</span>
                             </div>
                           ))}
                         </div>
@@ -410,13 +410,13 @@ const AccountsReceivable: React.FC = () => {
               </>
             ) : (
               // Walk-in sin ficha de cliente → solo la venta seleccionada
-              <div className="bg-white rounded-xl border border-slate-200 p-6">
+              <div className="bg-surface-900 rounded-xl border border-white/[0.06] p-6">
                 <div className="flex items-start gap-2 text-slate-500 text-sm mb-4">
                   <AlertTriangle size={16} className="text-amber-500 mt-0.5" /> Cliente sin ficha registrada; se muestra solo esta venta.
                 </div>
                 <div className="grid grid-cols-3 gap-6">
-                  <div><label className="text-xs font-mono text-slate-400 block mb-1">TOTAL</label><span className="text-xl font-bold text-slate-800">{fmt(selected.total)}</span></div>
-                  <div><label className="text-xs font-mono text-slate-400 block mb-1">SALDO</label><span className="text-xl font-bold text-red-600">{fmt(selected.balance)}</span></div>
+                  <div><label className="text-xs font-mono text-slate-400 block mb-1">TOTAL</label><span className="text-xl font-bold text-slate-100">{fmt(selected.total)}</span></div>
+                  <div><label className="text-xs font-mono text-slate-400 block mb-1">SALDO</label><span className="text-xl font-bold text-red-400">{fmt(selected.balance)}</span></div>
                   <button onClick={() => openPay({ id: selected.saleId, customerName: selected.customerName, balance: selected.balance })}
                     className="bg-nortex-900 text-white rounded-lg font-bold hover:bg-nortex-800 flex items-center justify-center gap-2">
                     <DollarSign size={18} /> Abonar
@@ -430,7 +430,7 @@ const AccountsReceivable: React.FC = () => {
         {/* PAYMENT MODAL */}
         {showPayModal && paySale && (
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 no-print">
-            <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden" style={{ color: '#1e293b' }}>
+            <div className="bg-surface-900 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden" style={{ color: '#1e293b' }}>
               <div className="bg-nortex-900 px-6 py-5 text-white flex items-center justify-between">
                 <div>
                   <h3 className="text-lg font-bold">Registrar Abono</h3>
@@ -442,18 +442,18 @@ const AccountsReceivable: React.FC = () => {
               </div>
               <form onSubmit={handleRegisterPayment} className="p-6">
                 <div className="text-center mb-5">
-                  <span className="inline-block px-4 py-2 rounded-full bg-red-50 border border-red-200 text-red-600 font-bold text-lg">{fmt(paySale.balance)}</span>
+                  <span className="inline-block px-4 py-2 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 font-bold text-lg">{fmt(paySale.balance)}</span>
                 </div>
                 <div className="mb-4">
                   <label className="block text-sm font-bold mb-2" style={{ color: '#475569' }}>Monto a cobrar (C$)</label>
                   <input type="number" step="0.01" autoFocus value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)}
-                    className="w-full px-4 py-3 text-2xl font-bold border-2 border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    className="w-full px-4 py-3 text-2xl font-bold border-2 border-white/10 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                     style={{ color: '#0f172a', backgroundColor: '#ffffff' }} placeholder="0.00" />
                 </div>
                 <div className="mb-6">
                   <label className="block text-sm font-bold mb-2" style={{ color: '#475569' }}>Método</label>
                   <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}
-                    className="w-full px-4 py-3 border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-4 py-3 border border-white/10 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
                     style={{ color: '#0f172a', backgroundColor: '#ffffff' }}>
                     <option value="CASH">Efectivo</option>
                     <option value="TRANSFER">Transferencia</option>
@@ -461,7 +461,7 @@ const AccountsReceivable: React.FC = () => {
                   </select>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <button type="button" onClick={() => setShowPayModal(false)} className="py-3 px-4 rounded-xl border border-slate-300 font-medium hover:bg-slate-50" style={{ color: '#475569' }}>Cancelar</button>
+                  <button type="button" onClick={() => setShowPayModal(false)} className="py-3 px-4 rounded-xl border border-white/10 font-medium hover:bg-surface-800/40" style={{ color: '#475569' }}>Cancelar</button>
                   <button type="submit" disabled={submitting} className="py-3 px-4 rounded-xl bg-nortex-500 font-bold text-white hover:bg-nortex-400 disabled:opacity-50 flex items-center justify-center gap-2">
                     {submitting ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle size={18} />} Confirmar
                   </button>

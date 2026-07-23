@@ -87,19 +87,19 @@ const FinancialHealth: React.FC = () => {
 
     const getRatingBadge = (rating: string) => {
         const colors: Record<string, string> = {
-            'AAA': 'bg-emerald-100 text-emerald-700 border-emerald-200',
-            'AA': 'bg-blue-100 text-blue-700 border-blue-200',
-            'A': 'bg-sky-100 text-sky-700 border-sky-200',
-            'B': 'bg-amber-100 text-amber-700 border-amber-200',
-            'C': 'bg-orange-100 text-orange-700 border-orange-200',
-            'D': 'bg-red-100 text-red-700 border-red-200',
+            'AAA': 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20',
+            'AA': 'bg-blue-500/15 text-blue-400 border-blue-500/20',
+            'A': 'bg-sky-500/15 text-sky-400 border-sky-500/20',
+            'B': 'bg-amber-500/15 text-amber-400 border-amber-500/20',
+            'C': 'bg-orange-500/15 text-orange-400 border-orange-500/20',
+            'D': 'bg-red-500/15 text-red-400 border-red-500/20',
         };
-        return colors[rating] || 'bg-slate-100 text-slate-700';
+        return colors[rating] || 'bg-white/[0.04] text-slate-200';
     };
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-full bg-slate-50">
+            <div className="flex items-center justify-center h-full bg-surface-800/40">
                 <Loader2 className="animate-spin text-nortex-500" size={32} />
             </div>
         );
@@ -107,7 +107,7 @@ const FinancialHealth: React.FC = () => {
 
     if (error || !data) {
         return (
-            <div className="flex items-center justify-center h-full bg-slate-50">
+            <div className="flex items-center justify-center h-full bg-surface-800/40">
                 <div className="text-center text-slate-500">
                     <AlertTriangle className="mx-auto mb-3" size={40} />
                     <p>{error || 'Sin datos'}</p>
@@ -120,16 +120,16 @@ const FinancialHealth: React.FC = () => {
     const scorePercent = ((data.score.value - 300) / 550) * 100;
 
     return (
-        <div className="h-full overflow-y-auto bg-slate-50 p-6 custom-scrollbar">
+        <div className="h-full overflow-y-auto bg-surface-800/40 p-6 custom-scrollbar">
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                    <h1 className="text-2xl font-bold text-white flex items-center gap-2">
                         <BarChart3 className="text-nortex-500" /> Salud Financiera
                     </h1>
                     <p className="text-sm text-slate-500 mt-1">Vista ejecutiva de tu negocio — datos en tiempo real</p>
                 </div>
-                <button onClick={fetchData} className="p-2 rounded-xl hover:bg-white text-slate-400 hover:text-slate-600 transition-colors border border-transparent hover:border-slate-200">
+                <button onClick={fetchData} className="p-2 rounded-xl hover:bg-surface-900 text-slate-400 hover:text-slate-300 transition-colors border border-transparent hover:border-white/[0.06]">
                     <RefreshCw size={18} />
                 </button>
             </div>
@@ -166,7 +166,7 @@ const FinancialHealth: React.FC = () => {
 
             <div className="grid lg:grid-cols-3 gap-6">
                 {/* Nortex Score */}
-                <div className="lg:col-span-1 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+                <div className="lg:col-span-1 bg-surface-900 rounded-2xl border border-white/[0.06] p-6 shadow-sm">
                     <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
                         <Shield size={16} /> Nortex Score
                     </h2>
@@ -180,7 +180,7 @@ const FinancialHealth: React.FC = () => {
                     </div>
 
                     {/* Score Bar */}
-                    <div className="relative h-3 bg-slate-100 rounded-full overflow-hidden mb-4">
+                    <div className="relative h-3 bg-white/[0.04] rounded-full overflow-hidden mb-4">
                         <div
                             className={`absolute left-0 top-0 h-full rounded-full bg-gradient-to-r ${getScoreGradient(data.score.value)} transition-all`}
                             style={{ width: `${Math.min(scorePercent, 100)}%` }}
@@ -190,9 +190,9 @@ const FinancialHealth: React.FC = () => {
                         <span>300</span><span>550</span><span>700</span><span>850</span>
                     </div>
 
-                    <div className="text-sm text-slate-600 mb-3">
+                    <div className="text-sm text-slate-300 mb-3">
                         <span className="font-medium">Línea de crédito: </span>
-                        <span className="font-bold text-emerald-600">{formatC(data.score.creditLimit)}</span>
+                        <span className="font-bold text-emerald-400">{formatC(data.score.creditLimit)}</span>
                     </div>
 
                     <div className="space-y-1.5">
@@ -210,22 +210,22 @@ const FinancialHealth: React.FC = () => {
                 </div>
 
                 {/* Balance General */}
-                <div className="lg:col-span-1 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+                <div className="lg:col-span-1 bg-surface-900 rounded-2xl border border-white/[0.06] p-6 shadow-sm">
                     <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
                         <Landmark size={16} /> Balance General
                     </h2>
 
                     <div className="space-y-4">
                         <div>
-                            <h3 className="text-xs font-semibold text-emerald-600 uppercase mb-2">Activos</h3>
+                            <h3 className="text-xs font-semibold text-emerald-400 uppercase mb-2">Activos</h3>
                             {data.balance.assets.filter(a => Number(a.balance) !== 0).map(a => (
                                 <div key={a.code} className="flex justify-between text-sm py-1">
-                                    <span className="text-slate-600">{a.name}</span>
-                                    <span className="font-medium text-slate-800">{formatC(a.balance)}</span>
+                                    <span className="text-slate-300">{a.name}</span>
+                                    <span className="font-medium text-slate-100">{formatC(a.balance)}</span>
                                 </div>
                             ))}
-                            <div className="flex justify-between text-sm font-bold border-t border-slate-100 pt-1 mt-1">
-                                <span className="text-emerald-700">Total Activos</span>
+                            <div className="flex justify-between text-sm font-bold border-t border-white/[0.04] pt-1 mt-1">
+                                <span className="text-emerald-400">Total Activos</span>
                                 <span>{formatC(data.balance.totals.assets)}</span>
                             </div>
                         </div>
@@ -234,17 +234,17 @@ const FinancialHealth: React.FC = () => {
                             <h3 className="text-xs font-semibold text-red-500 uppercase mb-2">Pasivos</h3>
                             {data.balance.liabilities.filter(a => Number(a.balance) !== 0).map(a => (
                                 <div key={a.code} className="flex justify-between text-sm py-1">
-                                    <span className="text-slate-600">{a.name}</span>
-                                    <span className="font-medium text-slate-800">{formatC(Math.abs(a.balance))}</span>
+                                    <span className="text-slate-300">{a.name}</span>
+                                    <span className="font-medium text-slate-100">{formatC(Math.abs(a.balance))}</span>
                                 </div>
                             ))}
-                            <div className="flex justify-between text-sm font-bold border-t border-slate-100 pt-1 mt-1">
-                                <span className="text-red-600">Total Pasivos</span>
+                            <div className="flex justify-between text-sm font-bold border-t border-white/[0.04] pt-1 mt-1">
+                                <span className="text-red-400">Total Pasivos</span>
                                 <span>{formatC(Math.abs(data.balance.totals.liabilities))}</span>
                             </div>
                         </div>
 
-                        <div className={`flex justify-between text-sm font-bold px-3 py-2 rounded-lg ${data.balance.totals.isBalanced ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+                        <div className={`flex justify-between text-sm font-bold px-3 py-2 rounded-lg ${data.balance.totals.isBalanced ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
                             <span>{data.balance.totals.isBalanced ? 'Cuadrado' : 'Descuadrado'}</span>
                             <span>Capital: {formatC(data.balance.totals.equity + data.balance.totals.netIncome)}</span>
                         </div>
@@ -252,7 +252,7 @@ const FinancialHealth: React.FC = () => {
                 </div>
 
                 {/* Estado de Resultados */}
-                <div className="lg:col-span-1 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
+                <div className="lg:col-span-1 bg-surface-900 rounded-2xl border border-white/[0.06] p-6 shadow-sm">
                     <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
                         <PieChart size={16} /> Estado de Resultados
                     </h2>
@@ -262,7 +262,7 @@ const FinancialHealth: React.FC = () => {
                         <ResultRow label="(−) Costo de Ventas" value={-data.estadoResultados.costOfSales} color="red" formatC={formatC} />
                         <ResultRow label="= Utilidad Bruta" value={data.estadoResultados.grossProfit} color="blue" bold formatC={formatC} />
                         <ResultRow label="(−) Gastos Operativos" value={-data.estadoResultados.operatingExpenses.total} color="red" formatC={formatC} />
-                        <div className="border-t-2 border-slate-200 pt-2">
+                        <div className="border-t-2 border-white/[0.06] pt-2">
                             <ResultRow
                                 label="= Utilidad Neta"
                                 value={data.estadoResultados.netIncome}
@@ -274,7 +274,7 @@ const FinancialHealth: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="mt-4 p-3 bg-slate-50 rounded-xl text-xs text-slate-500">
+                    <div className="mt-4 p-3 bg-surface-800/40 rounded-xl text-xs text-slate-500">
                         Periodo: <strong>{data.estadoResultados.period}</strong>
                     </div>
                 </div>
@@ -289,16 +289,16 @@ const KPICard = ({ title, value, icon, trend, color }: {
     trend?: 'up' | 'down'; color: string;
 }) => {
     const colorMap: Record<string, string> = {
-        emerald: 'bg-emerald-50 text-emerald-600 border-emerald-200',
-        blue: 'bg-blue-50 text-blue-600 border-blue-200',
-        amber: 'bg-amber-50 text-amber-600 border-amber-200',
-        red: 'bg-red-50 text-red-600 border-red-200',
+        emerald: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+        blue: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+        amber: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+        red: 'bg-red-500/10 text-red-400 border-red-500/20',
     };
     const iconColorMap: Record<string, string> = {
-        emerald: 'bg-emerald-100 text-emerald-600',
-        blue: 'bg-blue-100 text-blue-600',
-        amber: 'bg-amber-100 text-amber-600',
-        red: 'bg-red-100 text-red-600',
+        emerald: 'bg-emerald-500/15 text-emerald-400',
+        blue: 'bg-blue-500/15 text-blue-400',
+        amber: 'bg-amber-500/15 text-amber-400',
+        red: 'bg-red-500/15 text-red-400',
     };
 
     return (
@@ -311,7 +311,7 @@ const KPICard = ({ title, value, icon, trend, color }: {
                         : <ArrowDownRight size={16} className="text-red-500" />
                 )}
             </div>
-            <div className="font-bold text-lg text-slate-900">{value}</div>
+            <div className="font-bold text-lg text-white">{value}</div>
             <div className="text-xs font-medium opacity-70">{title}</div>
         </div>
     );
@@ -323,7 +323,7 @@ const ResultRow = ({ label, value, color, bold, large, formatC }: {
     formatC: (n: number) => string;
 }) => (
     <div className={`flex justify-between items-center ${bold ? 'font-bold' : ''} ${large ? 'text-base' : 'text-sm'}`}>
-        <span className="text-slate-600">{label}</span>
+        <span className="text-slate-300">{label}</span>
         <span className={`text-${color}-600`}>
             {value >= 0 ? formatC(value) : `(${formatC(Math.abs(value))})`}
         </span>
