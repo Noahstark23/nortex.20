@@ -113,7 +113,7 @@ const OnboardingHub: React.FC = () => {
       {/* ---------- MODAL DE BIENVENIDA ---------- */}
       {showWelcome && (
         <div className="fixed inset-0 z-[60] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200">
+          <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/[0.06]">
             <div className="bg-nortex-900 p-8 relative overflow-hidden">
               <div className="absolute -top-10 -right-10 w-48 h-48 bg-nortex-accent blur-[70px] opacity-25" />
               <div className="relative z-10">
@@ -131,7 +131,7 @@ const OnboardingHub: React.FC = () => {
             <div className="p-6">
               <ul className="space-y-2 mb-6">
                 {data.steps.map((s) => (
-                  <li key={s.key} className="flex items-center gap-3 text-sm text-slate-600">
+                  <li key={s.key} className="flex items-center gap-3 text-sm text-slate-300">
                     {s.done ? (
                       <CheckCircle2 size={18} className="text-emerald-500 shrink-0" />
                     ) : (
@@ -144,7 +144,7 @@ const OnboardingHub: React.FC = () => {
               <div className="flex gap-3">
                 <button
                   onClick={() => closeWelcome(false)}
-                  className="flex-1 py-3 text-slate-600 font-bold hover:bg-slate-100 rounded-lg transition-colors"
+                  className="flex-1 py-3 text-slate-300 font-bold hover:bg-white/[0.06] rounded-lg transition-colors"
                 >
                   Ahora no
                 </button>
@@ -164,7 +164,7 @@ const OnboardingHub: React.FC = () => {
       {/* En móvil lo subimos por encima de la barra inferior (h-16); en desktop, abajo. */}
       <div className="fixed bottom-36 right-4 lg:bottom-5 lg:right-5 z-40 print:hidden">
         {open && (
-          <div className="mb-3 w-[22rem] max-w-[calc(100vw-2.5rem)] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <div className="mb-3 w-[22rem] max-w-[calc(100vw-2.5rem)] bg-surface-900 rounded-2xl shadow-2xl border border-white/[0.06] overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
             <div className="bg-nortex-900 px-5 py-4 flex items-center justify-between">
               <div className="flex items-center gap-2 text-white">
                 <Sparkles size={18} className="text-nortex-accent" />
@@ -180,9 +180,9 @@ const OnboardingHub: React.FC = () => {
                 <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">
                   {data.completed} de {data.total} completados
                 </span>
-                <span className="text-xs font-bold text-nortex-900">{pct}%</span>
+                <span className="text-xs font-bold text-slate-100">{pct}%</span>
               </div>
-              <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+              <div className="w-full bg-white/[0.04] h-2 rounded-full overflow-hidden">
                 <div
                   className="bg-nortex-accent h-full rounded-full transition-all duration-700"
                   style={{ width: `${pct}%` }}
@@ -193,7 +193,7 @@ const OnboardingHub: React.FC = () => {
             {data.allDone ? (
               <div className="p-6 text-center">
                 <PartyPopper className="mx-auto text-emerald-500 mb-2" size={32} />
-                <p className="font-bold text-slate-800">¡Configuración completa!</p>
+                <p className="font-bold text-slate-100">¡Configuración completa!</p>
                 <p className="text-sm text-slate-500 mt-1">Tu negocio ya está listo para operar.</p>
                 <button
                   onClick={dismissChecklist}
@@ -209,7 +209,7 @@ const OnboardingHub: React.FC = () => {
                     <li
                       key={s.key}
                       className={`flex items-center gap-3 p-2.5 rounded-xl ${
-                        s.done ? 'opacity-60' : 'hover:bg-slate-50'
+                        s.done ? 'opacity-60' : 'hover:bg-surface-800/40'
                       }`}
                     >
                       {s.done ? (
@@ -217,13 +217,13 @@ const OnboardingHub: React.FC = () => {
                       ) : (
                         <Circle size={20} className="text-slate-300 shrink-0" />
                       )}
-                      <span className={`flex-1 text-sm ${s.done ? 'line-through text-slate-400' : 'text-slate-700 font-medium'}`}>
+                      <span className={`flex-1 text-sm ${s.done ? 'line-through text-slate-400' : 'text-slate-200 font-medium'}`}>
                         {s.label}
                       </span>
                       {!s.done && (
                         <button
                           onClick={() => goTo(s.href)}
-                          className="text-xs font-bold text-nortex-900 bg-nortex-accent/15 hover:bg-nortex-accent/30 px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap"
+                          className="text-xs font-bold text-slate-100 bg-nortex-accent/15 hover:bg-nortex-accent/30 px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap"
                         >
                           {s.cta}
                         </button>
@@ -232,10 +232,10 @@ const OnboardingHub: React.FC = () => {
                   ))}
                 </ul>
                 <div className="px-3 pb-3 flex items-center justify-between">
-                  <button onClick={fetchStatus} className="text-xs text-slate-400 hover:text-slate-600 font-medium px-2 py-1">
+                  <button onClick={fetchStatus} className="text-xs text-slate-400 hover:text-slate-300 font-medium px-2 py-1">
                     Actualizar
                   </button>
-                  <button onClick={dismissChecklist} className="text-xs text-slate-400 hover:text-slate-600 font-medium px-2 py-1">
+                  <button onClick={dismissChecklist} className="text-xs text-slate-400 hover:text-slate-300 font-medium px-2 py-1">
                     No mostrar más
                   </button>
                 </div>
@@ -254,7 +254,7 @@ const OnboardingHub: React.FC = () => {
         >
           <Sparkles size={18} className="text-nortex-accent" />
           <span className="text-sm">Primeros pasos</span>
-          <span className="text-xs bg-nortex-accent text-nortex-900 rounded-full px-2 py-0.5 font-extrabold">
+          <span className="text-xs bg-nortex-accent text-slate-100 rounded-full px-2 py-0.5 font-extrabold">
             {data.completed}/{data.total}
           </span>
         </button>

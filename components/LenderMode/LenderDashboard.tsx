@@ -385,7 +385,7 @@ const LenderDashboard: React.FC = () => {
                 </div>
                 <button
                     onClick={() => setShowModal(true)}
-                    className="bg-nortex-accent hover:bg-emerald-400 text-slate-900 font-bold py-3 px-6 rounded-xl flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/20"
+                    className="bg-nortex-accent hover:bg-emerald-400 text-white font-bold py-3 px-6 rounded-xl flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/20"
                 >
                     <Plus size={20} />
                     NUEVO CRÉDITO
@@ -1002,7 +1002,7 @@ const LenderDashboard: React.FC = () => {
                             <button
                                 type="submit"
                                 disabled={submitting}
-                                className="w-full bg-nortex-accent hover:bg-emerald-400 text-slate-900 font-bold py-4 rounded-xl mt-6 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="w-full bg-nortex-accent hover:bg-emerald-400 text-white font-bold py-4 rounded-xl mt-6 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {submitting ? 'PROCESANDO...' : 'DESEMBOLSAR CAPITAL'}
                             </button>
