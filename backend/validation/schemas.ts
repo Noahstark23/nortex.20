@@ -17,11 +17,14 @@ import type { Request, Response, NextFunction } from 'express';
 // HELPERS
 // ============================================================
 
-/** Cantidad monetaria: string o number → Decimal-safe string  */
+/** Cantidad monetaria: string o number → Decimal-safe string.
+ *  Exige FINITO: `parseFloat('Infinity')`/`'1e400'` pasaban el chequeo `>= 0`
+ *  y llegaban a columnas Decimal como valores no-finitos (500/rollback, o peor
+ *  si algún cálculo los propaga). `Number.isFinite` los rechaza en la frontera. */
 const moneyAmount = z
     .union([z.string(), z.number()])
     .transform((v) => String(v))
-    .refine((v) => !isNaN(parseFloat(v)) && parseFloat(v) >= 0, {
+    .refine((v) => Number.isFinite(parseFloat(v)) && parseFloat(v) >= 0, {
         message: 'El monto debe ser un número positivo',
     });
 
@@ -271,7 +274,11 @@ export const OriginateLoanSchema = z.object({
     clientAddress:   z.string().trim().max(300).optional(),
     principalAmount: moneyAmountPositive,
     interestRate:    numeric.refine((v) => v >= 0 && v <= 1000, { message: 'Tasa de interés fuera de rango' }),
-    installments:    numeric.refine((v) => Number.isInteger(v) && v > 0, { message: 'Número de cuotas inválido' }),
+    // Cota superior: sin techo, un `installments` gigante construye un arreglo
+    // masivo síncrono + `createMany` que bloquea el event loop del proceso ÚNICO
+    // (DoS multi-tenant). 600 cuotas ≈ 50 años mensuales — holgado para cualquier
+    // préstamo real. Mismo tope en refinanciamiento.
+    installments:    numeric.refine((v) => Number.isInteger(v) && v > 0 && v <= 600, { message: 'Número de cuotas inválido (1–600)' }),
     frequency:       loanFrequency.optional(),
     type:            loanType.optional(),
 });
@@ -296,7 +303,8 @@ export const UpdateClientSchema = z.object({
 export const RefinanceLoanSchema = z.object({
     newPrincipal: moneyAmount,
     interestRate: numeric.refine((v) => v >= 0 && v <= 1000, { message: 'Tasa de interés fuera de rango' }),
-    installments: numeric.refine((v) => Number.isInteger(v) && v > 0, { message: 'Número de cuotas inválido' }),
+    // Mismo tope que en originación (S34): evita el DoS del arreglo síncrono gigante.
+    installments: numeric.refine((v) => Number.isInteger(v) && v > 0 && v <= 600, { message: 'Número de cuotas inválido (1–600)' }),
     frequency:    loanFrequency.optional(),
     type:         loanType.optional(),
 });
