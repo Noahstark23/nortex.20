@@ -316,7 +316,7 @@ const CashRegisters: React.FC = () => {
 
     if (loading) {
         return (
-            <div className="h-full flex items-center justify-center bg-slate-50">
+            <div className="h-full flex items-center justify-center bg-surface-800/40">
                 <div className="flex items-center gap-3 text-slate-500">
                     <RefreshCw className="animate-spin" size={24} />
                     <span className="text-lg font-medium">Cargando monitor de cajas...</span>
@@ -327,27 +327,27 @@ const CashRegisters: React.FC = () => {
 
     if (error) {
         return (
-            <div className="h-full flex items-center justify-center bg-slate-50">
-                <div className="bg-red-50 border border-red-200 rounded-xl p-6 max-w-md text-center">
+            <div className="h-full flex items-center justify-center bg-surface-950">
+                <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 max-w-md text-center">
                     <AlertTriangle className="text-red-500 mx-auto mb-3" size={32} />
-                    <h3 className="font-bold text-red-700 mb-1">Error de Acceso</h3>
-                    <p className="text-sm text-red-600">{error}</p>
+                    <h3 className="font-bold text-red-400 mb-1">Error de Acceso</h3>
+                    <p className="text-sm text-red-400">{error}</p>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="h-full overflow-y-auto bg-slate-50">
+        <div className="h-full overflow-y-auto bg-surface-950">
             {/* HEADER */}
-            <div className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-10">
+            <div className="bg-surface-900 border-b border-white/[0.06] px-6 py-4 sticky top-0 z-10">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-nortex-900 text-nortex-accent rounded-xl flex items-center justify-center">
                             <Monitor size={22} />
                         </div>
                         <div>
-                            <h1 className="text-xl font-bold text-slate-800">Cajas y Arqueos</h1>
+                            <h1 className="text-xl font-bold text-slate-100">Cajas y Arqueos</h1>
                             <p className="text-xs text-slate-500">Última actualización: {formatTime(lastRefresh.toISOString())} · Auto-refresh 15s</p>
                         </div>
                     </div>
@@ -366,12 +366,12 @@ const CashRegisters: React.FC = () => {
                 <section>
                     <div className="flex items-center gap-2 mb-4">
                         <span className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse" />
-                        <h2 className="text-lg font-bold text-slate-800">Cajas Activas</h2>
-                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">{activeShifts.length}</span>
+                        <h2 className="text-lg font-bold text-slate-100">Cajas Activas</h2>
+                        <span className="text-xs bg-green-500/15 text-green-400 px-2 py-0.5 rounded-full font-bold">{activeShifts.length}</span>
                     </div>
 
                     {activeShifts.length === 0 ? (
-                        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+                        <div className="bg-surface-900 rounded-xl border border-white/[0.06] p-8 text-center">
                             <Monitor className="text-slate-300 mx-auto mb-3" size={48} />
                             <p className="text-slate-500 font-medium">Todas las cajas están cerradas</p>
                             <p className="text-xs text-slate-400 mt-1">Los turnos activos aparecerán aquí en tiempo real</p>
@@ -379,7 +379,7 @@ const CashRegisters: React.FC = () => {
                     ) : (
                         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
                             {activeShifts.map(shift => (
-                                <div key={shift.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+                                <div key={shift.id} className="bg-surface-900 rounded-xl border border-white/[0.06] shadow-sm overflow-hidden hover:shadow-md transition-shadow">
                                     {/* Card Header */}
                                     <div className="bg-nortex-900 px-4 py-3 flex items-center justify-between">
                                         <div className="flex items-center gap-3">
@@ -402,62 +402,62 @@ const CashRegisters: React.FC = () => {
                                     <div className="p-4 space-y-3">
                                         {/* Vault: Cash Sales */}
                                         <div className="flex items-center justify-between">
-                                            <div className="flex items-center gap-2 text-sm text-slate-600">
+                                            <div className="flex items-center gap-2 text-sm text-slate-300">
                                                 <ShoppingCart size={14} className="text-blue-500" />
                                                 <span>Ventas Efectivo</span>
                                             </div>
-                                            <span className="font-bold text-slate-800">C${shift.vaultCashSales.toFixed(2)}</span>
+                                            <span className="font-bold text-slate-100">C${shift.vaultCashSales.toFixed(2)}</span>
                                         </div>
 
                                         {/* Vault: Manual INs */}
                                         <div className="flex items-center justify-between">
-                                            <div className="flex items-center gap-2 text-sm text-slate-600">
+                                            <div className="flex items-center gap-2 text-sm text-slate-300">
                                                 <ArrowDownCircle size={14} className="text-emerald-500" />
                                                 <span>Entradas Manuales</span>
                                             </div>
-                                            <span className="font-bold text-emerald-600">+C${shift.vaultManualINs.toFixed(2)}</span>
+                                            <span className="font-bold text-emerald-400">+C${shift.vaultManualINs.toFixed(2)}</span>
                                         </div>
 
                                         {/* Vault: Manual OUTs */}
                                         <div className="flex items-center justify-between">
-                                            <div className="flex items-center gap-2 text-sm text-slate-600">
+                                            <div className="flex items-center gap-2 text-sm text-slate-300">
                                                 <ArrowUpCircle size={14} className="text-amber-500" />
                                                 <span>Salidas</span>
                                             </div>
-                                            <span className="font-bold text-amber-600">-C${shift.vaultManualOUTs.toFixed(2)}</span>
+                                            <span className="font-bold text-amber-400">-C${shift.vaultManualOUTs.toFixed(2)}</span>
                                         </div>
 
                                         {/* Vault: Agente Bancario (Fase B) — plata del banco, separada */}
                                         {((shift.vaultAgentINs ?? 0) > 0 || (shift.vaultAgentOUTs ?? 0) > 0) && (
                                             <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-2 text-sm text-slate-600">
+                                                <div className="flex items-center gap-2 text-sm text-slate-300">
                                                     <Landmark size={14} className="text-sky-500" />
                                                     <span>Agente Bancario</span>
                                                 </div>
-                                                <span className="font-bold text-sky-600">
+                                                <span className="font-bold text-sky-400">
                                                     +C${(shift.vaultAgentINs ?? 0).toFixed(2)} / -C${(shift.vaultAgentOUTs ?? 0).toFixed(2)}
                                                 </span>
                                             </div>
                                         )}
 
                                         {/* Divider */}
-                                        <div className="border-t border-dashed border-slate-200 pt-3">
+                                        <div className="border-t border-dashed border-white/[0.06] pt-3">
                                             <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                                                <div className="flex items-center gap-2 text-sm font-bold text-slate-200">
                                                     <Banknote size={16} className="text-nortex-600" />
                                                     Efectivo en Gaveta
                                                 </div>
-                                                <span className="text-xl font-black text-nortex-900">C${shift.estimatedPhysicalCash.toFixed(2)}</span>
+                                                <span className="text-xl font-black text-white font-mono tabular-nums">C${shift.estimatedPhysicalCash.toFixed(2)}</span>
                                             </div>
                                             <p className="text-[10px] text-slate-400 mt-1">Fondo: C${shift.initialCash.toFixed(2)} · {shift.salesCount} ventas · {shift.movementsCount} movimientos</p>
                                             {/* Alertas de gaveta del agente (Fase C) */}
                                             {agentThresholds.min !== '' && shift.estimatedPhysicalCash < parseFloat(agentThresholds.min) && (
-                                                <p className="mt-2 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 flex items-center gap-1">
+                                                <p className="mt-2 text-[11px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2 py-1 flex items-center gap-1">
                                                     <AlertTriangle size={12} /> Gaveta baja: podrías no poder pagar retiros. Considerá fondear.
                                                 </p>
                                             )}
                                             {agentThresholds.max !== '' && shift.estimatedPhysicalCash > parseFloat(agentThresholds.max) && (
-                                                <p className="mt-2 text-[11px] font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1 flex items-center gap-1">
+                                                <p className="mt-2 text-[11px] font-bold text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-2 py-1 flex items-center gap-1">
                                                     <AlertTriangle size={12} /> Exceso de efectivo (riesgo de robo). Considerá entregar al banco.
                                                 </p>
                                             )}
@@ -465,14 +465,14 @@ const CashRegisters: React.FC = () => {
                                             {(shift.estimatedPhysicalUsd ?? 0) !== 0 && (
                                                 <div className="mt-2 flex items-center justify-between text-sm">
                                                     <span className="text-slate-500 flex items-center gap-1"><DollarSign size={13} className="text-emerald-500" /> Dólares en gaveta</span>
-                                                    <span className="font-bold text-emerald-700 font-mono">US${(shift.estimatedPhysicalUsd ?? 0).toFixed(2)}</span>
+                                                    <span className="font-bold text-emerald-400 font-mono">US${(shift.estimatedPhysicalUsd ?? 0).toFixed(2)}</span>
                                                 </div>
                                             )}
                                         </div>
                                     </div>
 
                                     {/* Card Footer */}
-                                    <div className="bg-slate-50 px-4 py-3 border-t border-slate-100 flex items-center justify-between">
+                                    <div className="bg-surface-800/40 px-4 py-3 border-t border-white/[0.04] flex items-center justify-between">
                                         <div className="text-[10px] text-slate-400">
                                             <span className="flex items-center gap-1 mb-1">
                                                 {shift.vaultCardSales > 0 && <span>C${shift.vaultCardSales.toFixed(0)}</span>}
@@ -482,7 +482,7 @@ const CashRegisters: React.FC = () => {
                                         </div>
                                         <button
                                             onClick={() => setShiftToClose(shift)}
-                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 font-bold text-xs rounded-lg transition-colors border border-red-100"
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 text-red-400 hover:bg-red-500/15 hover:text-red-400 font-bold text-xs rounded-lg transition-colors border border-red-500/15"
                                         >
                                             <Lock size={14} /> Forzar Cierre
                                         </button>
@@ -497,12 +497,12 @@ const CashRegisters: React.FC = () => {
                 {agentAgreements.length > 0 && (
                     <section>
                         <div className="flex items-center gap-2 mb-4">
-                            <Landmark size={18} className="text-sky-600" />
-                            <h2 className="text-lg font-bold text-slate-800">Agente Bancario — Conciliación</h2>
+                            <Landmark size={18} className="text-sky-400" />
+                            <h2 className="text-lg font-bold text-slate-100">Agente Bancario — Conciliación</h2>
                         </div>
 
                         {/* Umbrales de alerta de gaveta (Fase C) */}
-                        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 mb-4 flex flex-wrap items-end gap-3">
+                        <div className="bg-surface-900 rounded-xl border border-white/[0.06] shadow-sm p-4 mb-4 flex flex-wrap items-end gap-3">
                             <div>
                                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Alerta gaveta mínima (C$)</label>
                                 <input
@@ -510,7 +510,7 @@ const CashRegisters: React.FC = () => {
                                     value={agentThresholds.min}
                                     onChange={e => setAgentThresholds(prev => ({ ...prev, min: e.target.value }))}
                                     placeholder="Sin alerta"
-                                    className="w-36 border-2 border-slate-200 rounded-lg px-3 py-2 text-sm focus:border-sky-500 outline-none text-slate-700 font-mono"
+                                    className="w-36 border-2 border-white/[0.06] rounded-lg px-3 py-2 text-sm focus:border-sky-500 outline-none text-slate-200 font-mono"
                                 />
                             </div>
                             <div>
@@ -520,7 +520,7 @@ const CashRegisters: React.FC = () => {
                                     value={agentThresholds.max}
                                     onChange={e => setAgentThresholds(prev => ({ ...prev, max: e.target.value }))}
                                     placeholder="Sin alerta"
-                                    className="w-36 border-2 border-slate-200 rounded-lg px-3 py-2 text-sm focus:border-sky-500 outline-none text-slate-700 font-mono"
+                                    className="w-36 border-2 border-white/[0.06] rounded-lg px-3 py-2 text-sm focus:border-sky-500 outline-none text-slate-200 font-mono"
                                 />
                             </div>
                             <button
@@ -538,10 +538,10 @@ const CashRegisters: React.FC = () => {
                                 const saldo = Number(a.settlementBalance);
                                 const comisiones = Number(a.commissionAccrued);
                                 return (
-                                    <div key={a.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+                                    <div key={a.id} className="bg-surface-900 rounded-xl border border-white/[0.06] shadow-sm p-4">
                                         <div className="flex items-center justify-between mb-3">
                                             <div>
-                                                <p className="font-bold text-slate-800">{a.name}</p>
+                                                <p className="font-bold text-slate-100">{a.name}</p>
                                                 <p className="text-[10px] text-slate-400">{a.kind === 'BANCO' ? 'Banco' : a.kind === 'RED_RECAUDADORA' ? 'Red de pagos' : 'Remesera'}{!a.active && ' · INACTIVO'}</p>
                                             </div>
                                             <Landmark size={20} className="text-sky-500" />
@@ -549,18 +549,18 @@ const CashRegisters: React.FC = () => {
                                         <div className="space-y-2 text-sm">
                                             <div className="flex justify-between">
                                                 <span className="text-slate-500">{saldo >= 0 ? 'Le debés al banco:' : 'El banco te debe:'}</span>
-                                                <span className={`font-bold font-mono ${saldo >= 0 ? 'text-amber-600' : 'text-emerald-600'}`}>C${Math.abs(saldo).toFixed(2)}</span>
+                                                <span className={`font-bold font-mono ${saldo >= 0 ? 'text-amber-400' : 'text-emerald-400'}`}>C${Math.abs(saldo).toFixed(2)}</span>
                                             </div>
                                             <div className="flex justify-between">
                                                 <span className="text-slate-500">Comisiones por cobrar:</span>
-                                                <span className="font-bold font-mono text-sky-600">C${comisiones.toFixed(2)}</span>
+                                                <span className="font-bold font-mono text-sky-400">C${comisiones.toFixed(2)}</span>
                                             </div>
                                         </div>
                                         <div className="grid grid-cols-2 gap-2 mt-4">
                                             <button
                                                 onClick={() => handleCashSettlement(a, 'LIQUIDACION_ENTREGA')}
                                                 disabled={agentBusy}
-                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/15 transition-colors disabled:opacity-50"
                                                 title="Llevar el efectivo captado al banco (sale de tu gaveta)"
                                             >
                                                 Entregar al banco
@@ -568,7 +568,7 @@ const CashRegisters: React.FC = () => {
                                             <button
                                                 onClick={() => handleCashSettlement(a, 'LIQUIDACION_FONDEO')}
                                                 disabled={agentBusy}
-                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors disabled:opacity-50"
+                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/15 transition-colors disabled:opacity-50"
                                                 title="Traer efectivo del banco para pagar retiros (entra a tu gaveta)"
                                             >
                                                 Fondear gaveta
@@ -576,7 +576,7 @@ const CashRegisters: React.FC = () => {
                                             <button
                                                 onClick={() => handleSettleCommissions(a)}
                                                 disabled={agentBusy || !(comisiones > 0)}
-                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition-colors disabled:opacity-50"
+                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20 hover:bg-sky-500/15 transition-colors disabled:opacity-50"
                                                 title="El banco pagó las comisiones a tu cuenta bancaria"
                                             >
                                                 Liquidar comisiones
@@ -584,7 +584,7 @@ const CashRegisters: React.FC = () => {
                                             <button
                                                 onClick={() => handleConfigureLimits(a)}
                                                 disabled={agentBusy}
-                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100 transition-colors disabled:opacity-50"
+                                                className="text-[11px] font-bold px-2 py-2 rounded-lg bg-surface-800/40 text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors disabled:opacity-50"
                                                 title="Límites del contrato por operación (por transacción y por día)"
                                             >
                                                 Límites
@@ -597,14 +597,14 @@ const CashRegisters: React.FC = () => {
 
                         {/* Reporte de conciliación 30 días (Fase C, agregado en SQL) */}
                         {agentReport && agentReport.breakdown?.length > 0 && (
-                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-                                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-                                    <h3 className="text-sm font-bold text-slate-700">Resumen últimos {agentReport.days} días</h3>
+                            <div className="bg-surface-900 rounded-xl border border-white/[0.06] shadow-sm overflow-hidden mb-4">
+                                <div className="px-4 py-3 border-b border-white/[0.04] flex items-center justify-between">
+                                    <h3 className="text-sm font-bold text-slate-200">Resumen últimos {agentReport.days} días</h3>
                                     <span className="text-[10px] text-slate-400">para conciliar contra el reporte del banco/red</span>
                                 </div>
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-sm">
-                                        <thead className="bg-slate-50 text-slate-500 text-xs">
+                                        <thead className="bg-surface-800/40 text-slate-500 text-xs">
                                             <tr>
                                                 <th className="px-4 py-2 text-left font-medium">Convenio</th>
                                                 <th className="px-4 py-2 text-left font-medium">Operación</th>
@@ -618,14 +618,14 @@ const CashRegisters: React.FC = () => {
                                             {agentReport.breakdown.map((b: any, i: number) => {
                                                 const agr = agentReport.agreements.find((a: any) => a.id === b.agreementId);
                                                 return (
-                                                    <tr key={i} className="border-t border-slate-100">
-                                                        <td className="px-4 py-2 text-slate-700">{agr?.name || '—'}</td>
-                                                        <td className="px-4 py-2 text-slate-600 text-xs">{b.operation.replace(/_/g, ' ')}</td>
-                                                        <td className="px-4 py-2 text-right font-mono text-slate-700">{b.count}</td>
-                                                        <td className="px-4 py-2 text-right font-mono font-bold text-slate-800">C${b.totalAmount.toFixed(2)}</td>
-                                                        <td className="px-4 py-2 text-right font-mono text-sky-600">C${b.totalCommission.toFixed(2)}</td>
+                                                    <tr key={i} className="border-t border-white/[0.04]">
+                                                        <td className="px-4 py-2 text-slate-200">{agr?.name || '—'}</td>
+                                                        <td className="px-4 py-2 text-slate-300 text-xs">{b.operation.replace(/_/g, ' ')}</td>
+                                                        <td className="px-4 py-2 text-right font-mono text-slate-200">{b.count}</td>
+                                                        <td className="px-4 py-2 text-right font-mono font-bold text-slate-100">C${b.totalAmount.toFixed(2)}</td>
+                                                        <td className="px-4 py-2 text-right font-mono text-sky-400">C${b.totalCommission.toFixed(2)}</td>
                                                         <td className="px-4 py-2 text-center">
-                                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${b.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${b.status === 'COMPLETED' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
                                                                 {b.status === 'COMPLETED' ? 'OK' : 'REVERSADAS'}
                                                             </span>
                                                         </td>
@@ -640,13 +640,13 @@ const CashRegisters: React.FC = () => {
 
                         {/* Últimas operaciones con botón de reversa */}
                         {agentTxs.length > 0 && (
-                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                                <div className="px-4 py-3 border-b border-slate-100">
-                                    <h3 className="text-sm font-bold text-slate-700">Últimas operaciones de agente</h3>
+                            <div className="bg-surface-900 rounded-xl border border-white/[0.06] shadow-sm overflow-hidden">
+                                <div className="px-4 py-3 border-b border-white/[0.04]">
+                                    <h3 className="text-sm font-bold text-slate-200">Últimas operaciones de agente</h3>
                                 </div>
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-sm">
-                                        <thead className="bg-slate-50 text-slate-500 text-xs">
+                                        <thead className="bg-surface-800/40 text-slate-500 text-xs">
                                             <tr>
                                                 <th className="px-4 py-2 text-left font-medium">Fecha</th>
                                                 <th className="px-4 py-2 text-left font-medium">Convenio</th>
@@ -660,21 +660,21 @@ const CashRegisters: React.FC = () => {
                                         </thead>
                                         <tbody>
                                             {agentTxs.map((t: any) => (
-                                                <tr key={t.id} className="border-t border-slate-100">
+                                                <tr key={t.id} className="border-t border-white/[0.04]">
                                                     <td className="px-4 py-2 text-slate-500 text-xs">{new Date(t.createdAt).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
-                                                    <td className="px-4 py-2 text-slate-700">{t.agreement?.name}</td>
+                                                    <td className="px-4 py-2 text-slate-200">{t.agreement?.name}</td>
                                                     <td className="px-4 py-2">
-                                                        <span className={`text-xs font-bold ${t.direction === 'IN' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                                        <span className={`text-xs font-bold ${t.direction === 'IN' ? 'text-emerald-400' : 'text-amber-400'}`}>
                                                             {t.operation.replace(/_/g, ' ')}
                                                         </span>
                                                     </td>
-                                                    <td className="px-4 py-2 text-right font-mono font-bold text-slate-800">
+                                                    <td className="px-4 py-2 text-right font-mono font-bold text-slate-100">
                                                         {t.direction === 'IN' ? '+' : '-'}C${Number(t.amount).toFixed(2)}
                                                     </td>
-                                                    <td className="px-4 py-2 text-right font-mono text-sky-600">C${Number(t.commission).toFixed(2)}</td>
+                                                    <td className="px-4 py-2 text-right font-mono text-sky-400">C${Number(t.commission).toFixed(2)}</td>
                                                     <td className="px-4 py-2 text-slate-400 text-xs">{t.externalRef || '—'}</td>
                                                     <td className="px-4 py-2 text-center">
-                                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${t.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${t.status === 'COMPLETED' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
                                                             {t.status === 'COMPLETED' ? 'OK' : 'REVERSADA'}
                                                         </span>
                                                     </td>
@@ -683,7 +683,7 @@ const CashRegisters: React.FC = () => {
                                                             <button
                                                                 onClick={() => handleReverseTx(t)}
                                                                 disabled={agentBusy}
-                                                                className="flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded bg-red-50 text-red-600 border border-red-100 hover:bg-red-100 transition-colors disabled:opacity-50"
+                                                                className="flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded bg-red-500/10 text-red-400 border border-red-500/15 hover:bg-red-500/15 transition-colors disabled:opacity-50"
                                                                 title="Reversar (la transacción falló o se anuló en el equipo del banco)"
                                                             >
                                                                 <Undo2 size={12} /> Reversar
@@ -702,64 +702,64 @@ const CashRegisters: React.FC = () => {
 
                 {/* ====== ZONA 2: HISTORIAL DE CIERRES (AUDITORÍA) ====== */}
                 <section>
-                    <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <h2 className="text-lg font-bold text-slate-100 mb-4 flex items-center gap-2">
                         <Clock size={20} className="text-slate-500" />
                         Historial de Cierres
                     </h2>
 
                     {closedShifts.length === 0 ? (
-                        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
+                        <div className="bg-surface-900 rounded-xl border border-white/[0.06] p-8 text-center">
                             <Clock className="text-slate-300 mx-auto mb-3" size={48} />
                             <p className="text-slate-500 font-medium">Sin cierres registrados</p>
                         </div>
                     ) : (
-                        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                        <div className="bg-surface-900 rounded-xl border border-white/[0.06] overflow-hidden">
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead>
-                                        <tr className="bg-slate-50 border-b border-slate-200">
-                                            <th className="text-left px-4 py-3 font-bold text-slate-600 text-xs uppercase">Fecha</th>
-                                            <th className="text-left px-4 py-3 font-bold text-slate-600 text-xs uppercase">Cajero</th>
-                                            <th className="text-right px-4 py-3 font-bold text-slate-600 text-xs uppercase">Fondo</th>
-                                            <th className="text-right px-4 py-3 font-bold text-slate-600 text-xs uppercase">Esperado</th>
-                                            <th className="text-right px-4 py-3 font-bold text-slate-600 text-xs uppercase">Declarado</th>
-                                            <th className="text-right px-4 py-3 font-bold text-slate-600 text-xs uppercase">Diferencia</th>
-                                            <th className="text-center px-4 py-3 font-bold text-slate-600 text-xs uppercase">Estado</th>
+                                        <tr className="bg-surface-800/40 border-b border-white/[0.06]">
+                                            <th className="text-left px-4 py-3 font-bold text-slate-300 text-xs uppercase">Fecha</th>
+                                            <th className="text-left px-4 py-3 font-bold text-slate-300 text-xs uppercase">Cajero</th>
+                                            <th className="text-right px-4 py-3 font-bold text-slate-300 text-xs uppercase">Fondo</th>
+                                            <th className="text-right px-4 py-3 font-bold text-slate-300 text-xs uppercase">Esperado</th>
+                                            <th className="text-right px-4 py-3 font-bold text-slate-300 text-xs uppercase">Declarado</th>
+                                            <th className="text-right px-4 py-3 font-bold text-slate-300 text-xs uppercase">Diferencia</th>
+                                            <th className="text-center px-4 py-3 font-bold text-slate-300 text-xs uppercase">Estado</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-slate-100">
+                                    <tbody className="divide-y divide-white/[0.04]">
                                         {closedShifts.map(shift => (
                                             <tr
                                                 key={shift.id}
                                                 onClick={() => setSelectedShift(shift)}
-                                                className="hover:bg-slate-50 cursor-pointer transition-colors"
+                                                className="hover:bg-surface-800/40 cursor-pointer transition-colors"
                                             >
                                                 <td className="px-4 py-3">
-                                                    <p className="font-medium text-slate-700">{formatDate(shift.endTime)}</p>
+                                                    <p className="font-medium text-slate-200">{formatDate(shift.endTime)}</p>
                                                     <p className="text-[10px] text-slate-400">{formatTime(shift.startTime)} - {formatTime(shift.endTime)}</p>
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <div className="flex items-center gap-2">
-                                                        <div className="w-7 h-7 bg-slate-200 rounded-full flex items-center justify-center text-[10px] font-bold text-slate-600">
+                                                        <div className="w-7 h-7 bg-white/[0.06] rounded-full flex items-center justify-center text-[10px] font-bold text-slate-300">
                                                             {shift.employee ? shift.employee.firstName.charAt(0) : <User size={12} />}
                                                         </div>
-                                                        <span className="text-slate-700 font-medium">
+                                                        <span className="text-slate-200 font-medium">
                                                             {shift.employee ? `${shift.employee.firstName} ${shift.employee.lastName}` : shift.user.name}
                                                         </span>
                                                     </div>
                                                 </td>
-                                                <td className="px-4 py-3 text-right text-slate-600">C${shift.initialCash.toFixed(2)}</td>
-                                                <td className="px-4 py-3 text-right text-slate-600">{shift.systemExpectedCash !== null ? `C$${shift.systemExpectedCash.toFixed(2)}` : '—'}</td>
-                                                <td className="px-4 py-3 text-right text-slate-600">{shift.finalCashDeclared !== null ? `C$${shift.finalCashDeclared.toFixed(2)}` : '—'}</td>
-                                                <td className={`px-4 py-3 text-right font-bold ${shift.status === 'PERFECT' ? 'text-green-600' :
-                                                    shift.status === 'WARNING' ? 'text-amber-600' : 'text-red-600'
+                                                <td className="px-4 py-3 text-right text-slate-300">C${shift.initialCash.toFixed(2)}</td>
+                                                <td className="px-4 py-3 text-right text-slate-300">{shift.systemExpectedCash !== null ? `C$${shift.systemExpectedCash.toFixed(2)}` : '—'}</td>
+                                                <td className="px-4 py-3 text-right text-slate-300">{shift.finalCashDeclared !== null ? `C$${shift.finalCashDeclared.toFixed(2)}` : '—'}</td>
+                                                <td className={`px-4 py-3 text-right font-bold ${shift.status === 'PERFECT' ? 'text-green-400' :
+                                                    shift.status === 'WARNING' ? 'text-amber-400' : 'text-red-400'
                                                     }`}>
                                                     {shift.difference > 0 ? '+' : ''}C${shift.difference.toFixed(2)}
                                                 </td>
                                                 <td className="px-4 py-3 text-center">
-                                                    {shift.status === 'PERFECT' && <span className="inline-flex items-center gap-1 text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold"><CheckCircle size={10} /> OK</span>}
-                                                    {shift.status === 'WARNING' && <span className="inline-flex items-center gap-1 text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold"><AlertTriangle size={10} /> Rev</span>}
-                                                    {shift.status === 'ALERT' && <span className="inline-flex items-center gap-1 text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold animate-pulse"><AlertTriangle size={10} /> </span>}
+                                                    {shift.status === 'PERFECT' && <span className="inline-flex items-center gap-1 text-[10px] bg-green-500/15 text-green-400 px-2 py-0.5 rounded-full font-bold"><CheckCircle size={10} /> OK</span>}
+                                                    {shift.status === 'WARNING' && <span className="inline-flex items-center gap-1 text-[10px] bg-amber-500/15 text-amber-400 px-2 py-0.5 rounded-full font-bold"><AlertTriangle size={10} /> Rev</span>}
+                                                    {shift.status === 'ALERT' && <span className="inline-flex items-center gap-1 text-[10px] bg-red-500/15 text-red-400 px-2 py-0.5 rounded-full font-bold animate-pulse"><AlertTriangle size={10} /> </span>}
                                                 </td>
                                             </tr>
                                         ))}
@@ -774,7 +774,7 @@ const CashRegisters: React.FC = () => {
             {/* ====== DETAIL SLIDE-OUT ====== */}
             {selectedShift && (
                 <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end" onClick={() => setSelectedShift(null)}>
-                    <div className="w-full max-w-md bg-white h-full overflow-y-auto shadow-2xl animate-in slide-in-from-right duration-200" onClick={e => e.stopPropagation()}>
+                    <div className="w-full max-w-md bg-surface-900 h-full overflow-y-auto shadow-2xl animate-in slide-in-from-right duration-200" onClick={e => e.stopPropagation()}>
                         {/* Detail Header */}
                         <div className="bg-nortex-900 p-6 sticky top-0">
                             <div className="flex items-center justify-between mb-4">
@@ -797,12 +797,12 @@ const CashRegisters: React.FC = () => {
                         {/* Detail Body */}
                         <div className="p-6 space-y-6">
                             {/* Difference Card */}
-                            <div className={`rounded-xl p-4 text-center ${selectedShift.status === 'PERFECT' ? 'bg-green-50 border border-green-200' :
-                                selectedShift.status === 'WARNING' ? 'bg-amber-50 border border-amber-200' : 'bg-red-50 border border-red-200'
+                            <div className={`rounded-xl p-4 text-center ${selectedShift.status === 'PERFECT' ? 'bg-green-500/10 border border-green-500/20' :
+                                selectedShift.status === 'WARNING' ? 'bg-amber-500/10 border border-amber-500/20' : 'bg-red-500/10 border border-red-500/20'
                                 }`}>
                                 <p className="text-xs font-bold text-slate-500 uppercase mb-1">Diferencia</p>
-                                <p className={`text-3xl font-black ${selectedShift.status === 'PERFECT' ? 'text-green-600' :
-                                    selectedShift.status === 'WARNING' ? 'text-amber-600' : 'text-red-600'
+                                <p className={`text-3xl font-black ${selectedShift.status === 'PERFECT' ? 'text-green-400' :
+                                    selectedShift.status === 'WARNING' ? 'text-amber-400' : 'text-red-400'
                                     }`}>
                                     {selectedShift.difference > 0 ? '+' : ''}C${selectedShift.difference.toFixed(2)}
                                 </p>
@@ -814,50 +814,50 @@ const CashRegisters: React.FC = () => {
                             {/* Breakdown */}
                             <div className="space-y-3">
                                 <h4 className="text-xs font-bold text-slate-500 uppercase">Desglose</h4>
-                                <div className="bg-slate-50 rounded-xl p-4 space-y-2.5">
+                                <div className="bg-surface-800/40 rounded-xl p-4 space-y-2.5">
                                     <div className="flex justify-between text-sm">
                                         <span className="text-slate-500">Fondo Inicial</span>
-                                        <span className="font-bold text-slate-700">C${selectedShift.initialCash.toFixed(2)}</span>
+                                        <span className="font-bold text-slate-200">C${selectedShift.initialCash.toFixed(2)}</span>
                                     </div>
                                     <div className="flex justify-between text-sm">
                                         <span className="text-slate-500">Ventas Efectivo</span>
-                                        <span className="font-bold text-blue-600">+C${selectedShift.cashTotal.toFixed(2)}</span>
+                                        <span className="font-bold text-blue-400">+C${selectedShift.cashTotal.toFixed(2)}</span>
                                     </div>
                                     {selectedShift.cardTotal > 0 && (
                                         <div className="flex justify-between text-sm">
                                             <span className="text-slate-500">Ventas Tarjeta</span>
-                                            <span className="font-bold text-slate-600">C${selectedShift.cardTotal.toFixed(2)}</span>
+                                            <span className="font-bold text-slate-300">C${selectedShift.cardTotal.toFixed(2)}</span>
                                         </div>
                                     )}
                                     {selectedShift.creditTotal > 0 && (
                                         <div className="flex justify-between text-sm">
                                             <span className="text-slate-500">Ventas Crédito</span>
-                                            <span className="font-bold text-slate-600">C${selectedShift.creditTotal.toFixed(2)}</span>
+                                            <span className="font-bold text-slate-300">C${selectedShift.creditTotal.toFixed(2)}</span>
                                         </div>
                                     )}
-                                    <div className="border-t border-slate-200 pt-2 flex justify-between text-sm">
-                                        <span className="font-bold text-slate-700">Sistema Esperaba</span>
-                                        <span className="font-bold text-slate-900">{selectedShift.systemExpectedCash !== null ? `C$${selectedShift.systemExpectedCash.toFixed(2)}` : '—'}</span>
+                                    <div className="border-t border-white/[0.06] pt-2 flex justify-between text-sm">
+                                        <span className="font-bold text-slate-200">Sistema Esperaba</span>
+                                        <span className="font-bold text-white">{selectedShift.systemExpectedCash !== null ? `C$${selectedShift.systemExpectedCash.toFixed(2)}` : '—'}</span>
                                     </div>
                                     <div className="flex justify-between text-sm">
-                                        <span className="font-bold text-slate-700">Cajero Declaró</span>
-                                        <span className="font-bold text-slate-900">{selectedShift.finalCashDeclared !== null ? `C$${selectedShift.finalCashDeclared.toFixed(2)}` : '—'}</span>
+                                        <span className="font-bold text-slate-200">Cajero Declaró</span>
+                                        <span className="font-bold text-white">{selectedShift.finalCashDeclared !== null ? `C$${selectedShift.finalCashDeclared.toFixed(2)}` : '—'}</span>
                                     </div>
                                 </div>
                             </div>
 
                             {/* Ticket Promedio */}
-                            <div className="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+                            <div className="flex items-center justify-between bg-surface-900 border border-white/[0.06] rounded-xl p-4 shadow-sm">
                                 <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center">
+                                    <div className="w-10 h-10 bg-indigo-500/10 text-indigo-500 rounded-full flex items-center justify-center">
                                         <TrendingUp size={20} />
                                     </div>
                                     <div>
                                         <p className="text-xs font-bold text-slate-500 uppercase">Ticket Promedio</p>
-                                        <p className="text-sm font-medium text-slate-700">{selectedShift.salesCount > 0 ? `${selectedShift.salesCount} ventas procesadas` : 'Sin ventas'}</p>
+                                        <p className="text-sm font-medium text-slate-200">{selectedShift.salesCount > 0 ? `${selectedShift.salesCount} ventas procesadas` : 'Sin ventas'}</p>
                                     </div>
                                 </div>
-                                <span className="text-xl font-black text-slate-800">
+                                <span className="text-xl font-black text-slate-100">
                                     C${selectedShift.salesCount > 0 ? (selectedShift.grandTotal / selectedShift.salesCount).toFixed(2) : '0.00'}
                                 </span>
                             </div>
@@ -868,15 +868,15 @@ const CashRegisters: React.FC = () => {
                                     <h4 className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
                                         <ArrowDownCircle size={14} /> Movimientos Manuales (Últimos 3)
                                     </h4>
-                                    <div className="bg-slate-50 rounded-xl overflow-hidden border border-slate-100">
+                                    <div className="bg-surface-800/40 rounded-xl overflow-hidden border border-white/[0.04]">
                                         {selectedShift.recentMovements.slice(0, 3).map((mov, idx) => (
-                                            <div key={idx} className="p-3 border-b border-slate-100 last:border-0 flex justify-between items-center bg-white">
+                                            <div key={idx} className="p-3 border-b border-white/[0.04] last:border-0 flex justify-between items-center bg-surface-900">
                                                 <div>
-                                                    <p className="text-sm font-bold text-slate-700">{mov.category}</p>
+                                                    <p className="text-sm font-bold text-slate-200">{mov.category}</p>
                                                     <p className="text-xs text-slate-500 truncate max-w-[200px]">{mov.description}</p>
                                                     <p className="text-[10px] text-slate-400 mt-0.5">{formatTime(mov.createdAt)}</p>
                                                 </div>
-                                                <span className={`font-bold ${mov.type === 'IN' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                                <span className={`font-bold ${mov.type === 'IN' ? 'text-emerald-400' : 'text-amber-400'}`}>
                                                     {mov.type === 'IN' ? '+' : '-'}C${mov.amount.toFixed(2)}
                                                 </span>
                                             </div>
@@ -887,13 +887,13 @@ const CashRegisters: React.FC = () => {
 
                             {/* Stats */}
                             <div className="grid grid-cols-2 gap-3">
-                                <div className="bg-blue-50 rounded-xl p-3 text-center">
+                                <div className="bg-blue-500/10 rounded-xl p-3 text-center">
                                     <p className="text-xs text-blue-500 font-bold">VENTAS</p>
-                                    <p className="text-2xl font-black text-blue-700">{selectedShift.salesCount}</p>
+                                    <p className="text-2xl font-black text-blue-400">{selectedShift.salesCount}</p>
                                 </div>
-                                <div className="bg-emerald-50 rounded-xl p-3 text-center">
+                                <div className="bg-emerald-500/10 rounded-xl p-3 text-center">
                                     <p className="text-xs text-emerald-500 font-bold">TOTAL BRUTO</p>
-                                    <p className="text-lg font-black text-emerald-700">C${selectedShift.grandTotal.toFixed(2)}</p>
+                                    <p className="text-lg font-black text-emerald-400">C${selectedShift.grandTotal.toFixed(2)}</p>
                                 </div>
                             </div>
                         </div>
@@ -904,35 +904,35 @@ const CashRegisters: React.FC = () => {
             {/* ====== MODAL: FORZAR CIERRE DE CAJA (Calculadora de Denominaciones) ====== */}
             {shiftToClose && (
                 <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                    <div className="bg-surface-900 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
                         {/* Modal Header */}
-                        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                        <div className="px-6 py-4 border-b border-white/[0.04] flex items-center justify-between bg-surface-800/40">
                             <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-red-100 text-red-600 rounded-xl flex items-center justify-center">
+                                <div className="w-10 h-10 bg-red-500/15 text-red-400 rounded-xl flex items-center justify-center">
                                     <Lock size={20} />
                                 </div>
                                 <div>
-                                    <h3 className="text-lg font-bold text-slate-800">Forzar Cierre de Caja</h3>
+                                    <h3 className="text-lg font-bold text-slate-100">Forzar Cierre de Caja</h3>
                                     <p className="text-xs text-slate-500 flex items-center gap-1">
                                         <User size={12} /> Cajero: {shiftToClose.employee ? `${shiftToClose.employee.firstName} ${shiftToClose.employee.lastName}` : shiftToClose.user.name}
                                     </p>
                                 </div>
                             </div>
-                            <button onClick={() => setShiftToClose(null)} className="text-slate-400 hover:text-slate-600 bg-white p-2 rounded-full hover:bg-slate-200 transition-colors">
+                            <button onClick={() => setShiftToClose(null)} className="text-slate-400 hover:text-slate-300 bg-surface-900 p-2 rounded-full hover:bg-white/[0.06] transition-colors">
                                 <X size={20} />
                             </button>
                         </div>
 
                         {/* Modal Body */}
-                        <div className="p-6 overflow-y-auto flex-1 bg-slate-50/50">
+                        <div className="p-6 overflow-y-auto flex-1 bg-surface-950/40">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 {/* Zona Izquierda: Calculadora */}
                                 <div className="space-y-4">
                                     <div className="flex items-center gap-2 mb-2">
                                         <Calculator className="text-blue-500" size={18} />
-                                        <h4 className="font-bold text-slate-700 text-sm uppercase tracking-wider">Calculadora de Efectivo</h4>
+                                        <h4 className="font-bold text-slate-200 text-sm uppercase tracking-wider">Calculadora de Efectivo</h4>
                                     </div>
-                                    <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm grid grid-cols-2 gap-x-4 gap-y-3">
+                                    <div className="bg-surface-900 border border-white/[0.06] rounded-2xl p-4 shadow-sm grid grid-cols-2 gap-x-4 gap-y-3">
                                         {[1000, 500, 200, 100, 50, 20, 10, 5, 1].map(den => (
                                             <div key={den} className="flex items-center gap-2">
                                                 <span className="text-xs font-bold text-slate-500 w-12 text-right">C$ {den}</span>
@@ -941,7 +941,7 @@ const CashRegisters: React.FC = () => {
                                                     min="0"
                                                     value={denominations[den as keyof typeof denominations] || ''}
                                                     onChange={(e) => handleDenominationChange(den, e.target.value)}
-                                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all text-center"
+                                                    className="w-full bg-surface-800/40 border border-white/[0.06] rounded-lg px-2 py-1.5 text-sm font-medium text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all text-center"
                                                     placeholder="0"
                                                 />
                                             </div>
@@ -961,24 +961,24 @@ const CashRegisters: React.FC = () => {
                                     </div>
 
                                     {/* Expectativa del Sistema (Opcional, puede ocultarse si el cajero no debe verlo, pero al ser Admin, es útil) */}
-                                    <div className="bg-white border border-slate-200 rounded-2xl p-4 flex justify-between items-center shadow-sm">
+                                    <div className="bg-surface-900 border border-white/[0.06] rounded-2xl p-4 flex justify-between items-center shadow-sm">
                                         <span className="text-xs font-bold text-slate-500 uppercase">Aprox. Sistema</span>
-                                        <span className="font-bold text-slate-800">C${shiftToClose.estimatedPhysicalCash.toFixed(2)}</span>
+                                        <span className="font-bold text-slate-100">C${shiftToClose.estimatedPhysicalCash.toFixed(2)}</span>
                                     </div>
 
                                     {/* Gaveta USD (Fase D): solo si el turno manejó dólares */}
                                     {(shiftToClose.estimatedPhysicalUsd ?? 0) !== 0 && (
-                                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 shadow-sm space-y-2">
+                                        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 shadow-sm space-y-2">
                                             <div className="flex justify-between items-center">
-                                                <span className="text-xs font-bold text-emerald-700 uppercase">Dólares esperados</span>
-                                                <span className="font-bold text-emerald-800">US${(shiftToClose.estimatedPhysicalUsd ?? 0).toFixed(2)}</span>
+                                                <span className="text-xs font-bold text-emerald-400 uppercase">Dólares esperados</span>
+                                                <span className="font-bold text-emerald-300">US${(shiftToClose.estimatedPhysicalUsd ?? 0).toFixed(2)}</span>
                                             </div>
                                             <input
                                                 type="number" min="0" step="0.01"
                                                 value={declaredUsdForce}
                                                 onChange={(e) => setDeclaredUsdForce(e.target.value)}
                                                 placeholder="Dólares contados (US$)"
-                                                className="w-full bg-white border border-emerald-200 rounded-xl px-3 py-2 text-sm text-slate-700 focus:outline-none focus:border-emerald-500 font-mono"
+                                                className="w-full bg-surface-900 border border-emerald-500/20 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500 font-mono"
                                             />
                                         </div>
                                     )}
@@ -991,7 +991,7 @@ const CashRegisters: React.FC = () => {
                                             value={auditNotes}
                                             onChange={(e) => setAuditNotes(e.target.value)}
                                             placeholder="Justificación del cierre forzado, discrepancias, etc."
-                                            className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all resize-none shadow-sm"
+                                            className="w-full bg-surface-900 border border-white/[0.06] rounded-2xl px-4 py-3 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all resize-none shadow-sm"
                                         />
                                     </div>
                                 </div>
@@ -999,10 +999,10 @@ const CashRegisters: React.FC = () => {
                         </div>
 
                         {/* Modal Footer */}
-                        <div className="p-4 border-t border-slate-100 bg-white flex justify-end gap-3">
+                        <div className="p-4 border-t border-white/[0.04] bg-surface-900 flex justify-end gap-3">
                             <button
                                 onClick={() => setShiftToClose(null)}
-                                className="px-6 py-2.5 rounded-xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
+                                className="px-6 py-2.5 rounded-xl font-bold text-slate-300 bg-white/[0.04] hover:bg-white/[0.06] transition-colors"
                             >
                                 Cancelar
                             </button>
