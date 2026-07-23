@@ -159,6 +159,13 @@
     ]
   }
   </script>
+
+  <!-- ===== Analytics (GA4 G-Q1L0ZWF7SM) ===== -->
+  <!-- Loader compartido public/analytics.js: carga gtag.js con Consent Mode v2
+       e IP anonimizada, y expone window.nxTrack para conversiones. Este mismo
+       <head> es el shell que scripts/prerender.ts usa para las 70+ páginas de
+       marketing, así que el tag queda en TODAS ellas y en el SPA. -->
+  <script src="/analytics.js" defer></script>
 </head>
   <body>
     <div id="root"></div>

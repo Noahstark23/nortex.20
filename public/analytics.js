@@ -12,8 +12,8 @@
   'use strict';
 
   var CONFIG = {
-    GA4_MEASUREMENT_ID: '',   // p. ej. 'G-XXXXXXXXXX' (Google Analytics 4)
-    META_PIXEL_ID:      ''    // p. ej. '123456789012345' (Meta / Facebook Pixel)
+    GA4_MEASUREMENT_ID: 'G-Q1L0ZWF7SM',   // Google Analytics 4 (somosnortex.com)
+    META_PIXEL_ID:      ''                 // p. ej. '123456789012345' (Meta / Facebook Pixel)
   };
 
   // ---------- Google Analytics 4 ----------
@@ -24,6 +24,16 @@
     document.head.appendChild(s);
     window.dataLayer = window.dataLayer || [];
     window.gtag = function () { window.dataLayer.push(arguments); };
+    // Consent Mode v2: solo analítica (IP anonimizada), sin publicidad ni datos
+    // de anuncios. Divulgado en la Política de Privacidad. Si en el futuro se
+    // agrega un banner de cookies, cambiar analytics_storage a 'denied' aquí y
+    // hacer gtag('consent','update',...) cuando el usuario acepte.
+    gtag('consent', 'default', {
+      analytics_storage:  'granted',
+      ad_storage:         'denied',
+      ad_user_data:       'denied',
+      ad_personalization: 'denied'
+    });
     gtag('js', new Date());
     gtag('config', CONFIG.GA4_MEASUREMENT_ID, {
       anonymize_ip: true

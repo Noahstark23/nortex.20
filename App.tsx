@@ -1,6 +1,7 @@
-import React, { Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import React, { Suspense, lazy, useEffect, useRef } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
+import { trackPageView } from './utils/analytics';
 import { homePathFor, resolveUiMode, UI_MODE_KEY } from './utils/navigation';
 import MiNegocio from './components/MiNegocio';
 import POS from './components/POS';
@@ -113,9 +114,29 @@ const ProtectedApp = () => {
   );
 };
 
+/**
+ * Envía un page_view de GA4 en cada cambio de ruta del SPA. React Router no
+ * recarga la página, así que sin esto GA4 solo vería el primer load. Salta el
+ * render inicial: ese page_view ya lo mandó gtag('config') en analytics.js, así
+ * no se duplica. Debe vivir DENTRO de <BrowserRouter> (usa useLocation).
+ */
+function RouteAnalytics() {
+  const location = useLocation();
+  const isInitialLoad = useRef(true);
+  useEffect(() => {
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false;
+      return;
+    }
+    trackPageView(location.pathname + location.search);
+  }, [location.pathname, location.search]);
+  return null;
+}
+
 function App() {
   return (
     <BrowserRouter>
+      <RouteAnalytics />
       <Suspense fallback={<div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>Cargando…</div>}>
         <Routes>
           <Route path="/" element={<LandingPage />} />
