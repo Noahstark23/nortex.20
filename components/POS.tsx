@@ -2481,7 +2481,7 @@ const POS: React.FC = () => {
                             key={product.id}
                             onClick={() => { addToCart(product); playBeep(); }}
                             disabled={product.stock === 0}
-                            className="panel-premium-light aspect-square p-4 hover:border-brand/40 hover:shadow-glow shadow-brand/10 transition-all text-left flex flex-col justify-between text-slate-100 active:scale-95 disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand/40"
+                            className="bg-surface-800 hover:bg-surface-700 border border-white/[0.06] rounded-2xl shadow-premium aspect-square p-4 hover:border-brand/40 hover:shadow-glow shadow-brand/10 transition-all text-left flex flex-col justify-between text-slate-100 active:scale-95 disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand/40"
                         >
                             <div className="min-w-0">
                                 <div className="flex justify-between items-start mb-1 gap-1">
