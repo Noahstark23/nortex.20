@@ -142,7 +142,20 @@ const PrivacyPolicy: React.FC = () => {
                             <li>Almacenar preferencias del usuario</li>
                             <li>Cachear datos temporales para mejorar el rendimiento</li>
                         </ul>
-                        <p className="mt-2">No utilizamos cookies de rastreo ni publicidad de terceros.</p>
+                        <p className="mt-2">
+                            Usamos <strong>Google Analytics 4</strong> para entender de forma agregada
+                            cómo se usa el sitio (páginas visitadas, registros, inicios de prueba) y así
+                            mejorar el producto. Google Analytics coloca cookies propias (p. ej. <code>_ga</code>)
+                            con la <strong>dirección IP anonimizada</strong>; los datos se usan solo con fines
+                            estadísticos y de medición. No activamos cookies de publicidad ni compartimos tus
+                            datos con terceros para fines publicitarios (Consent Mode con almacenamiento de
+                            anuncios deshabilitado).
+                        </p>
+                        <p className="mt-2">
+                            Podés desactivar Google Analytics con el
+                            <a href="https://tools.google.com/dlpage/gaoptout" target="_blank" rel="noopener noreferrer" className="text-brand underline"> complemento de inhabilitación de Google</a>
+                            o bloqueando cookies desde tu navegador.
+                        </p>
                     </section>
 
                     <section>

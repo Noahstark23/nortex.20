@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Building2, Mail, Lock, ArrowRight, Loader2 } from 'lucide-react';
+import { trackEvent } from '../utils/analytics';
 
 interface RegisterTenantProps {
   isModal?: boolean;
@@ -61,6 +62,12 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
       localStorage.setItem('nortex_tenant_id', data.tenant.id);
       localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
       localStorage.setItem('nortex_onboarding_pin', '1234');
+
+      // Conversiones GA4: el registro exitoso ES el alta (sign_up) y a la vez el
+      // inicio de la prueba gratis (el tenant nace en TRIAL). Se disparan acá, en
+      // el callback de ÉXITO — nunca en el submit — para no contar intentos fallidos.
+      trackEvent('sign_up', { method: 'email', business_type: formData.type });
+      trackEvent('begin_trial', { business_type: formData.type });
 
       alert('¡Cuenta creada con éxito! \n\nTu PIN de apertura de caja es: 1234\n(Podrás cambiarlo en Recursos Humanos → Directorio de Personal).');
 
