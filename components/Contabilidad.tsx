@@ -588,7 +588,7 @@ const Contabilidad: React.FC = () => {
                                                                     </div>
                                                                 </td>
                                                                 {BUCKET_META.map(b => (
-                                                                    <td key={b.key} className={`text-right px-3 py-3 font-mono tabular-nums whitespace-nowrap ${e[b.key] > 0 ? b.cls : 'text-slate-700'}`}>
+                                                                    <td key={b.key} className={`text-right px-3 py-3 font-mono tabular-nums whitespace-nowrap ${e[b.key] > 0 ? b.cls : 'text-slate-600'}`}>
                                                                         {e[b.key] > 0 ? C(e[b.key]) : '—'}
                                                                     </td>
                                                                 ))}
