@@ -39,6 +39,10 @@ export interface BlogPost {
     faq: BlogPostFaq[];
     /** Cuerpo en Markdown (subconjunto soportado por utils/markdown.ts). */
     content: string;
+    /** Si está presente, la guía renderiza una calculadora interactiva (SEO + captación). */
+    calculator?: 'aguinaldo' | 'vacaciones' | 'horasExtras' | 'inss' | 'liquidacion' | 'iva';
+    /** Pasos para el JSON-LD HowTo (guías "cómo calcular"). ≥ 2 pasos. */
+    howToSteps?: { name: string; text: string }[];
 }
 
 export const blogPosts: BlogPost[] = [
@@ -556,9 +560,16 @@ Nortex acumula vacaciones y aguinaldo mes a mes, calcula horas extra y arma la l
     },
     {
         slug: 'como-calcular-inss-nicaragua',
-        title: 'Cómo calcular el INSS en Nicaragua (laboral y patronal)',
-        description: 'Cálculo del INSS laboral (7%) y patronal en Nicaragua, con ejemplos. Qué descuenta el trabajador, qué aporta el patrono y cómo enterarlo.',
+        title: 'Cómo calcular el INSS en Nicaragua 2026 (con calculadora)',
+        description: 'Calculá el INSS laboral (7%) y patronal en Nicaragua con la calculadora gratis. Qué descuenta el trabajador, qué aporta el patrono y cómo enterarlo.',
         keyword: 'cómo calcular INSS Nicaragua',
+        calculator: 'inss',
+        howToSteps: [
+            { name: 'Tomá el salario bruto', text: 'Partí del salario bruto mensual del trabajador (incluye comisiones y horas extra).' },
+            { name: 'INSS laboral (7%)', text: 'Aplicá el 7% sobre el salario, hasta el techo cotizable vigente: es la deducción que paga el trabajador.' },
+            { name: 'INSS patronal', text: 'Aplicá la tasa patronal (22.5% con 50 o más empleados, 21.5% con menos) sobre la misma base: es el aporte de la empresa.' },
+            { name: 'INATEC (2%)', text: 'Sumá el 2% de INATEC sobre el total como costo adicional del empleador.' },
+        ],
         cluster: 'Nómina y Planillas',
         category: 'Recursos Humanos',
         date: '2026-05-02',
@@ -604,9 +615,16 @@ Ingresás el salario y Nortex calcula el INSS laboral, el patronal y el INATEC, 
     },
     {
         slug: 'como-calcular-aguinaldo-nicaragua',
-        title: 'Cómo calcular el aguinaldo (décimo tercer mes) en Nicaragua',
-        description: 'Fórmula del aguinaldo o décimo tercer mes en Nicaragua, con ejemplos para año completo y proporcional. Cuándo se paga y si paga impuestos.',
+        title: 'Cómo calcular el aguinaldo en Nicaragua 2026 (con calculadora)',
+        description: 'Calculá el aguinaldo o décimo tercer mes en Nicaragua con la calculadora gratis. Fórmula para año completo y proporcional, cuándo se paga y si paga impuestos.',
         keyword: 'cómo calcular aguinaldo Nicaragua',
+        calculator: 'aguinaldo',
+        howToSteps: [
+            { name: 'Tomá el salario mensual', text: 'Partí del salario mensual ordinario del trabajador.' },
+            { name: 'Dividí entre 12', text: 'Dividí el salario mensual entre 12 para obtener el aguinaldo de un mes de trabajo.' },
+            { name: 'Multiplicá por los meses', text: 'Multiplicá por los meses trabajados desde el 1 de diciembre anterior.' },
+            { name: 'Resultado', text: 'Ese es el aguinaldo proporcional; si trabajó el año completo, equivale a un salario mensual.' },
+        ],
         cluster: 'Nómina y Planillas',
         category: 'Recursos Humanos',
         date: '2026-05-06',
@@ -656,7 +674,7 @@ En vez de buscar la plata en diciembre, Nortex acumula la provisión del aguinal
     },
     {
         slug: 'como-calcular-indemnizacion-laboral-nicaragua',
-        title: 'Cómo calcular la indemnización laboral en Nicaragua (Art. 45)',
+        title: 'Cómo calcular la indemnización laboral en Nicaragua 2026 (Art. 45)',
         description: 'Cómo funciona la indemnización por antigüedad del Art. 45 del Código del Trabajo de Nicaragua, con ejemplo de cálculo y qué incluye la liquidación final.',
         keyword: 'indemnización laboral Nicaragua',
         cluster: 'Recursos Humanos',
@@ -1816,7 +1834,7 @@ En Nortex, la nota de crédito o débito se genera desde la factura original: he
     },
     {
         slug: 'como-inscribirse-dgi-ruc-nicaragua',
-        title: 'Cómo inscribir tu negocio en la DGI y obtener el RUC',
+        title: 'Cómo inscribirse en la DGI y sacar el RUC en Nicaragua 2026',
         description: 'Los pasos para formalizar tu negocio en Nicaragua: inscripción en la DGI, obtención del RUC, elección de régimen y qué sigue después.',
         keyword: 'cómo sacar el RUC Nicaragua',
         cluster: 'Facturación DGI',
@@ -1918,7 +1936,7 @@ En Cuota Fija, Nortex te ordena ventas e inventario. En régimen general, ademá
     },
     {
         slug: 'como-calcular-horas-extras-nicaragua',
-        title: 'Cómo calcular las horas extras en Nicaragua (con ejemplos)',
+        title: 'Cómo calcular las horas extras en Nicaragua 2026 (con ejemplos)',
         description: 'Las horas extras en Nicaragua se pagan al doble (100% de recargo, Art. 62 Ley 185). Fórmula, límites legales y ejemplos paso a paso.',
         keyword: 'cómo calcular horas extras Nicaragua',
         cluster: 'Nómina y Planillas',
@@ -2046,9 +2064,16 @@ Nortex anualiza, aplica la tabla por tramos y ajusta cuando el salario varía. L
     },
     {
         slug: 'como-calcular-vacaciones-nicaragua',
-        title: 'Cómo calcular las vacaciones en Nicaragua (descansadas o pagadas)',
-        description: 'Cálculo de vacaciones según el Art. 76 de la Ley 185: 15 días por semestre (2.5 por mes), con ejemplos de goce y de pago en liquidación.',
+        title: 'Cómo calcular las vacaciones en Nicaragua 2026 (con calculadora)',
+        description: 'Calculá las vacaciones según el Art. 76 de la Ley 185 con la calculadora gratis: 15 días por semestre (2.5 por mes), con ejemplos de goce y de pago.',
         keyword: 'cómo calcular vacaciones Nicaragua',
+        calculator: 'vacaciones',
+        howToSteps: [
+            { name: 'Contá los meses trabajados', text: 'Contá los meses trabajados desde tu último período de vacaciones gozado.' },
+            { name: 'Multiplicá por 2.5', text: 'Multiplicá los meses por 2.5 para los días de vacaciones acumulados (15 por semestre, Art. 76).' },
+            { name: 'Salario diario', text: 'Calculá el salario diario dividiendo el salario mensual entre 30.' },
+            { name: 'Monto a pagar', text: 'Multiplicá los días por el salario diario para el monto, o gozá los días de descanso.' },
+        ],
         cluster: 'Recursos Humanos',
         category: 'Recursos Humanos',
         date: '2026-07-04',
