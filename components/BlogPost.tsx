@@ -11,6 +11,7 @@ import {
     SITE_ORIGIN,
 } from '../utils/seo';
 import Calculator from './Calculator';
+import { pickRelatedGuides } from '../utils/related-guides';
 import { ArrowLeft, Clock, Calendar, ChevronRight } from 'lucide-react';
 
 const BlogPost: React.FC = () => {
@@ -52,11 +53,13 @@ const BlogPost: React.FC = () => {
     if (!post) return <Navigate to="/blog" replace />;
 
     // Relacionados: solo los slugs que existen como artículos publicados.
-    const related = post.relatedSlugs
-        .filter(s => s !== post.slug)
-        .map(s => blogPosts.find(p => p.slug === s))
-        .filter((p): p is typeof blogPosts[number] => Boolean(p))
-        .slice(0, 3);
+    // Enlazado interno: relacionados curados + relleno automático con hermanos
+    // del clúster (Palanca B). Ver utils/related-guides.ts.
+    const related = pickRelatedGuides(post, blogPosts, {
+        limit: 4,
+        relatedSlugs: post.relatedSlugs,
+        pillarSlug: cluster?.pillarSlug,
+    });
 
     return (
         <div className="min-h-screen bg-white">
