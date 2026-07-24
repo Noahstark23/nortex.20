@@ -7,8 +7,10 @@ import {
     buildArticleJsonLd,
     buildBreadcrumbJsonLd,
     buildFaqJsonLd,
+    buildHowToJsonLd,
     SITE_ORIGIN,
 } from '../utils/seo';
+import Calculator from './Calculator';
 import { ArrowLeft, Clock, Calendar, ChevronRight } from 'lucide-react';
 
 const BlogPost: React.FC = () => {
@@ -32,6 +34,7 @@ const BlogPost: React.FC = () => {
             buildArticleJsonLd(post),
             buildBreadcrumbJsonLd(breadcrumb),
             buildFaqJsonLd(post.faq),
+            post.howToSteps ? buildHowToJsonLd(post.title, post.howToSteps, post.description) : null,
         ].filter((b): b is Record<string, unknown> => b !== null);
 
         const tag = document.createElement('script');
@@ -100,6 +103,10 @@ const BlogPost: React.FC = () => {
                     <span className="flex items-center gap-1"><Calendar size={14} /> {post.updated ?? post.date}</span>
                     <span className="flex items-center gap-1"><Clock size={14} /> {post.readTime} de lectura</span>
                 </div>
+
+                {/* Calculadora interactiva (si la guía la declara) — arriba del
+                    cuerpo para que quede visible sin scroll y capte conversión. */}
+                {post.calculator && <Calculator type={post.calculator} />}
 
                 <div className="prose-nortex">
                     {renderMarkdown(post.content, Link)}

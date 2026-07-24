@@ -23,6 +23,7 @@ import {
     buildArticleJsonLd,
     buildBreadcrumbJsonLd,
     buildFaqJsonLd,
+    buildHowToJsonLd,
     jsonLdScriptTags,
 } from '../utils/seo';
 
@@ -201,6 +202,7 @@ for (const post of blogPosts) {
             buildArticleJsonLd(post),
             buildBreadcrumbJsonLd(breadcrumb),
             buildFaqJsonLd(post.faq),
+            post.howToSteps ? buildHowToJsonLd(post.title, post.howToSteps, post.description) : null,
         ),
     });
 }

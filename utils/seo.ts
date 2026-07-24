@@ -89,6 +89,32 @@ export function buildFaqJsonLd(faq: FAQItem[]): Record<string, unknown> | null {
     };
 }
 
+export interface HowToStep { name: string; text: string; }
+
+/**
+ * schema.org/HowTo — para las guías de "cómo calcular X" (aguinaldo, INSS, etc.).
+ * Devuelve null si no hay pasos (no emitir vacío), igual que buildFaqJsonLd.
+ */
+export function buildHowToJsonLd(
+    name: string,
+    steps: HowToStep[],
+    description?: string,
+): Record<string, unknown> | null {
+    if (!steps || steps.length === 0) return null;
+    return {
+        '@context': 'https://schema.org',
+        '@type': 'HowTo',
+        name,
+        ...(description ? { description } : {}),
+        step: steps.map((s, i) => ({
+            '@type': 'HowToStep',
+            position: i + 1,
+            name: s.name,
+            text: s.text,
+        })),
+    };
+}
+
 /** Serializa uno o varios bloques JSON-LD a tags <script> (para prerender). */
 export function jsonLdScriptTags(...blocks: Array<Record<string, unknown> | null>): string {
     return blocks
