@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
@@ -2475,6 +2476,39 @@ const POS: React.FC = () => {
                     </div>
                 )}
 
+                {filteredProducts.length === 0 ? (
+                    <div className="flex-1 min-h-0 flex items-center justify-center pb-4">
+                        <div className="flex flex-col items-center justify-center max-w-sm text-center px-4">
+                            <div className="w-20 h-20 bg-brand-500/10 rounded-full flex items-center justify-center mb-6 shadow-glow shadow-brand/20">
+                                <Package size={40} className="text-brand-400" />
+                            </div>
+                            {searchTerm ? (
+                                <>
+                                    <h3 className="text-xl font-bold text-white mb-2">Sin resultados</h3>
+                                    <p className="text-slate-400 mb-6">No hay ningún producto que coincida con "{searchTerm}".</p>
+                                    <button
+                                        onClick={() => setSearchTerm('')}
+                                        className="px-6 py-2.5 bg-surface-800 hover:bg-surface-700 text-white font-semibold rounded-xl transition-colors border border-white/[0.08] focus:outline-none focus:ring-2 focus:ring-brand/40"
+                                    >
+                                        Limpiar búsqueda
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <h3 className="text-2xl font-bold text-white mb-3">Todavía no tenés productos</h3>
+                                    <p className="text-slate-400 mb-8">Agregá tu primer producto para empezar a vender. Toma menos de 10 segundos.</p>
+                                    <Link
+                                        to="/app/inventory"
+                                        className="inline-flex items-center justify-center gap-2 px-6 py-4 bg-brand hover:bg-brand-hover text-white font-bold rounded-xl transition-all shadow-glow shadow-brand/30 hover:-translate-y-0.5"
+                                    >
+                                        <PackagePlus size={20} />
+                                        Agregá tu primer producto
+                                    </Link>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                ) : (
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 overflow-y-auto pb-4 custom-scrollbar flex-1 min-h-0">
                     {filteredProducts.map(product => (
                         <button
@@ -2499,6 +2533,7 @@ const POS: React.FC = () => {
                         </button>
                     ))}
                 </div>
+                )}
 
                 {/* ⌨️ HOTKEY CHEAT SHEET */}
                 <div className="hidden lg:flex items-center gap-3 mt-2 px-2 py-1.5 text-[10px] text-slate-400 font-mono select-none flex-shrink-0">

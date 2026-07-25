@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Building2, Mail, Lock, ArrowRight, Loader2 } from 'lucide-react';
+import { Building2, Mail, Lock, ArrowRight, Loader2, Check, AlertCircle } from 'lucide-react';
 import { trackEvent } from '../utils/analytics';
 
 interface RegisterTenantProps {
@@ -24,10 +24,19 @@ const PageWrapper: React.FC<{ isModal: boolean; children: React.ReactNode }> = R
 
 PageWrapper.displayName = 'PageWrapper';
 
+// El backend exige mínimo 8 caracteres (RegisterSchema en backend/validation/schemas.ts).
+const PASSWORD_MIN = 8;
+
 const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initialCart = [] }) => {
   const navigate = useNavigate();
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
+  // Errores por campo, mapeados desde `details` (validate() los devuelve como
+  // { campo: [mensajes] }). Sin esto el usuario solo veía el genérico y quedaba mudo.
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
+  // PIN de éxito: se muestra en UI de marca (no alert() bloqueante). Al continuar navega.
+  const [successPin, setSuccessPin] = React.useState<string | null>(null);
+  const [pendingNav, setPendingNav] = React.useState<string>('/app/dashboard?welcome=1');
   const [formData, setFormData] = React.useState({
     companyName: '',
     email: '',
@@ -37,12 +46,34 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
 
   const updateField = React.useCallback((field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    // Al editar un campo con error, limpiamos su marca (feedback en vivo).
+    setFieldErrors(prev => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
   }, []);
+
+  // Validación en vivo de la contraseña (espejo de la regla del backend).
+  const passwordLen = formData.password.length;
+  const passwordTooShort = passwordLen > 0 && passwordLen < PASSWORD_MIN;
+  const passwordValid = passwordLen >= PASSWORD_MIN;
 
   const handleSubmit = React.useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError('');
+    setFieldErrors({});
+
+    // Cortamos antes de ir al server si la contraseña no cumple el mínimo: evita
+    // el ida-y-vuelta y le da al usuario el motivo exacto de inmediato.
+    if (formData.password.length < PASSWORD_MIN) {
+      setFieldErrors({ password: `La contraseña debe tener al menos ${PASSWORD_MIN} caracteres` });
+      setError('Revisá los campos marcados en rojo.');
+      return;
+    }
+
+    setLoading(true);
 
     try {
       const response = await fetch('/api/auth/register', {
@@ -54,7 +85,22 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Error en el registro');
+        // El middleware validate() responde { error, details: { campo: [msgs] } }.
+        // Mapeamos ese detalle al campo (y al mensaje general) en vez de mostrar
+        // solo el genérico "Datos de entrada inválidos".
+        const details = data?.details;
+        if (details && typeof details === 'object') {
+          const fe: Record<string, string> = {};
+          for (const [k, v] of Object.entries(details)) {
+            if (Array.isArray(v) && v.length) fe[k] = String(v[0]);
+          }
+          setFieldErrors(fe);
+          const firstDetail = Object.values(fe)[0];
+          setError(firstDetail || data.error || 'Revisá los datos e intentá de nuevo.');
+        } else {
+          setError(data.error || 'Error en el registro');
+        }
+        return;
       }
 
       localStorage.setItem('nortex_token', data.token);
@@ -69,8 +115,6 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
       trackEvent('sign_up', { method: 'email', business_type: formData.type });
       trackEvent('begin_trial', { business_type: formData.type });
 
-      alert('¡Cuenta creada con éxito! \n\nTu PIN de apertura de caja es: 1234\n(Podrás cambiarlo en Recursos Humanos → Directorio de Personal).');
-
       if (initialCart && initialCart.length > 0) {
         const persistentCart = initialCart.map(i => ({
           ...i.product,
@@ -81,18 +125,21 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
         }));
         localStorage.setItem('nortex_pending_cart', JSON.stringify(persistentCart));
         // Venía del catálogo con un carrito: lo llevamos directo a cobrar.
-        navigate('/app/pos');
+        setPendingNav('/app/pos');
       } else {
         // Registro normal: lo recibe el panel con la bienvenida + primeros pasos.
-        navigate('/app/dashboard?welcome=1');
+        setPendingNav('/app/dashboard?welcome=1');
       }
 
+      // Mostramos el PIN en un modal de marca en vez de un alert() nativo.
+      setSuccessPin('1234');
+
     } catch (err: any) {
-      setError(err.message);
+      setError('No pudimos conectar con el servidor. Revisá tu internet e intentá de nuevo.');
     } finally {
       setLoading(false);
     }
-  }, [formData, initialCart, navigate]);
+  }, [formData, initialCart]);
 
   const containerClasses = React.useMemo(() =>
     isModal
@@ -120,12 +167,13 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
         </div>
 
         {error && (
-          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400 text-sm text-center">
-            {error}
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400 text-sm flex items-start gap-2">
+            <AlertCircle size={16} className="mt-0.5 shrink-0" />
+            <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div>
             <label className="block text-xs font-mono text-slate-400 mb-1">NOMBRE DEL NEGOCIO</label>
             <div className="relative">
@@ -133,12 +181,15 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
               <input
                 type="text"
                 required
-                className="w-full bg-nortex-800 border border-nortex-700 text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:border-nortex-accent transition-colors"
+                className={`w-full bg-nortex-800 border text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none transition-colors ${fieldErrors.companyName ? 'border-red-500/70 focus:border-red-500' : 'border-nortex-700 focus:border-nortex-accent'}`}
                 placeholder="Ej. Ferretería Los Andes"
                 value={formData.companyName}
                 onChange={e => updateField('companyName', e.target.value)}
               />
             </div>
+            {fieldErrors.companyName && (
+              <p className="text-xs text-red-400 mt-1">{fieldErrors.companyName}</p>
+            )}
           </div>
 
           {!isModal && (
@@ -168,12 +219,15 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
               <input
                 type="email"
                 required
-                className="w-full bg-nortex-800 border border-nortex-700 text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:border-nortex-accent transition-colors"
+                className={`w-full bg-nortex-800 border text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none transition-colors ${fieldErrors.email ? 'border-red-500/70 focus:border-red-500' : 'border-nortex-700 focus:border-nortex-accent'}`}
                 placeholder="dueno@empresa.com"
                 value={formData.email}
                 onChange={e => updateField('email', e.target.value)}
               />
             </div>
+            {fieldErrors.email && (
+              <p className="text-xs text-red-400 mt-1">{fieldErrors.email}</p>
+            )}
           </div>
 
           <div>
@@ -183,12 +237,26 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
               <input
                 type="password"
                 required
-                className="w-full bg-nortex-800 border border-nortex-700 text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:border-nortex-accent transition-colors"
+                minLength={PASSWORD_MIN}
+                aria-describedby="password-hint"
+                className={`w-full bg-nortex-800 border text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none transition-colors ${(fieldErrors.password || passwordTooShort) ? 'border-red-500/70 focus:border-red-500' : passwordValid ? 'border-nortex-accent/60 focus:border-nortex-accent' : 'border-nortex-700 focus:border-nortex-accent'}`}
                 placeholder="••••••••"
                 value={formData.password}
                 onChange={e => updateField('password', e.target.value)}
               />
             </div>
+            {/* Pista visible del mínimo + feedback en vivo (verde al cumplir, rojo si falta). */}
+            <p
+              id="password-hint"
+              className={`text-xs mt-1 flex items-center gap-1 ${(fieldErrors.password || passwordTooShort) ? 'text-red-400' : passwordValid ? 'text-nortex-accent' : 'text-slate-500'}`}
+            >
+              {passwordValid && <Check size={13} className="shrink-0" />}
+              {fieldErrors.password
+                ? fieldErrors.password
+                : passwordValid
+                  ? 'Contraseña válida'
+                  : `Mínimo ${PASSWORD_MIN} caracteres`}
+            </p>
           </div>
 
           <button
@@ -214,6 +282,31 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
           </div>
         )}
       </div>
+
+      {/* Modal de marca con el PIN de apertura de caja (reemplaza el alert() nativo). */}
+      {successPin && (
+        <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-nortex-800 border border-nortex-700 rounded-2xl shadow-2xl p-6 text-center">
+            <div className="w-14 h-14 bg-nortex-accent/15 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Check className="text-nortex-accent" size={28} />
+            </div>
+            <h3 className="text-xl font-bold text-white mb-2">¡Cuenta creada con éxito!</h3>
+            <p className="text-slate-400 text-sm mb-4">Tu PIN de apertura de caja es:</p>
+            <div className="text-4xl font-mono font-black text-white tracking-[0.3em] bg-nortex-900 border border-nortex-700 rounded-xl py-4 mb-4">
+              {successPin}
+            </div>
+            <p className="text-xs text-slate-500 mb-6">
+              Podés cambiarlo en Recursos Humanos → Directorio de Personal.
+            </p>
+            <button
+              onClick={() => navigate(pendingNav)}
+              className="w-full bg-nortex-accent text-nortex-900 font-bold py-3 rounded-lg hover:bg-emerald-400 transition-all flex justify-center items-center gap-2"
+            >
+              Continuar <ArrowRight size={18} />
+            </button>
+          </div>
+        </div>
+      )}
     </PageWrapper>
   );
 };
