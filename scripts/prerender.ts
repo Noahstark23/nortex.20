@@ -23,8 +23,10 @@ import {
     buildArticleJsonLd,
     buildBreadcrumbJsonLd,
     buildFaqJsonLd,
+    buildHowToJsonLd,
     jsonLdScriptTags,
 } from '../utils/seo';
+import { pickRelatedGuides } from '../utils/related-guides';
 
 const DIST = path.join(process.cwd(), 'dist');
 const ORIGIN = 'https://somosnortex.com';
@@ -189,6 +191,20 @@ for (const post of blogPosts) {
         ...(cluster ? [{ name: cluster.name, url: `/blog/categoria/${cluster.slug}` }] : []),
         { name: post.title, url: `/blog/${post.slug}` },
     ];
+    // Enlazado interno EN EL HTML ESTÁTICO (Palanca B): los relacionados vivían
+    // solo en el render de React, así que el HTML que ve el crawler no llevaba
+    // esos enlaces. Se emiten con la misma regla que la SPA (utils/related-guides).
+    const relacionados = pickRelatedGuides(post, blogPosts, {
+        limit: 4,
+        relatedSlugs: post.relatedSlugs,
+        pillarSlug: cluster?.pillarSlug,
+    });
+    const relatedHtml = relacionados.length
+        ? `<nav aria-label="Guías relacionadas"><h2>Seguí leyendo</h2><ul>${relacionados
+              .map(r => `<li><a href="/blog/${r.slug}">${esc(r.title)}</a></li>`)
+              .join('')}</ul></nav>`
+        : '';
+
     routes.push({
         path: `/blog/${post.slug}`,
         title: `${post.title} | Nortex Blog`,
@@ -196,11 +212,12 @@ for (const post of blogPosts) {
         h1: post.title,
         changefreq: 'monthly',
         priority: '0.7',
-        body: markdownToHtml(post.content),
+        body: markdownToHtml(post.content) + relatedHtml,
         jsonLd: jsonLdScriptTags(
             buildArticleJsonLd(post),
             buildBreadcrumbJsonLd(breadcrumb),
             buildFaqJsonLd(post.faq),
+            post.howToSteps ? buildHowToJsonLd(post.title, post.howToSteps, post.description) : null,
         ),
     });
 }

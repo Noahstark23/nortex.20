@@ -39,6 +39,10 @@ export interface BlogPost {
     faq: BlogPostFaq[];
     /** Cuerpo en Markdown (subconjunto soportado por utils/markdown.ts). */
     content: string;
+    /** Si está presente, la guía renderiza una calculadora interactiva (SEO + captación). */
+    calculator?: 'aguinaldo' | 'vacaciones' | 'horasExtras' | 'inss' | 'liquidacion' | 'iva';
+    /** Pasos para el JSON-LD HowTo (guías "cómo calcular"). ≥ 2 pasos. */
+    howToSteps?: { name: string; text: string }[];
 }
 
 export const blogPosts: BlogPost[] = [
@@ -317,8 +321,15 @@ Nortex asigna el siguiente número correlativo de cada serie automáticamente, b
     },
     {
         slug: 'iva-nicaragua-guia-completa',
-        title: 'IVA en Nicaragua: tasa, base gravable y declaración (guía 2026)',
-        description: 'Cómo funciona el IVA en Nicaragua: tasa del 15%, base gravable, crédito fiscal, exenciones y declaración mensual ante la DGI. Guía para PyMES.',
+        title: 'IVA en Nicaragua 2026: cuánto es y cómo calcularlo (con calculadora)',
+        description: 'Cuánto es el IVA en Nicaragua (15%) y cómo separarlo de un precio con la calculadora gratis. Base gravable, crédito fiscal, exenciones y declaración DGI.',
+        calculator: 'iva',
+        howToSteps: [
+            { name: 'Identificá el monto con IVA', text: 'Tomá el precio total que ya incluye el IVA (lo que paga el cliente).' },
+            { name: 'Dividí entre 1.15', text: 'Dividí el total entre 1.15 para obtener el precio neto sin IVA (la tasa general en Nicaragua es 15%).' },
+            { name: 'Restá para obtener el IVA', text: 'Restá el neto al total: esa diferencia es el IVA contenido en el precio.' },
+            { name: 'Declaralo a la DGI', text: 'El IVA cobrado en ventas menos el IVA pagado en compras (crédito fiscal) es lo que enterás mensualmente en la VET.' },
+        ],
         keyword: 'IVA Nicaragua',
         cluster: 'IVA',
         category: 'Fiscal',
@@ -490,8 +501,8 @@ Estés en Cuota Fija o en régimen general, Nortex ordena tus ventas, compras e 
     },
     {
         slug: 'prestaciones-laborales-nicaragua-guia',
-        title: 'Prestaciones laborales en Nicaragua: la guía completa (Ley 185)',
-        description: 'Vacaciones, aguinaldo, indemnización, horas extra y feriados según el Código del Trabajo de Nicaragua. Qué le debés a cada trabajador y cómo calcularlo.',
+        title: 'Prestaciones de ley en Nicaragua 2026: la guía completa (Ley 185)',
+        description: 'Todas las prestaciones de ley en Nicaragua: vacaciones, aguinaldo, indemnización, horas extra y feriados según la Ley 185. Qué le debés a cada trabajador y cómo calcularlo.',
         keyword: 'prestaciones laborales Nicaragua',
         cluster: 'Recursos Humanos',
         category: 'Recursos Humanos',
@@ -556,9 +567,16 @@ Nortex acumula vacaciones y aguinaldo mes a mes, calcula horas extra y arma la l
     },
     {
         slug: 'como-calcular-inss-nicaragua',
-        title: 'Cómo calcular el INSS en Nicaragua (laboral y patronal)',
-        description: 'Cálculo del INSS laboral (7%) y patronal en Nicaragua, con ejemplos. Qué descuenta el trabajador, qué aporta el patrono y cómo enterarlo.',
+        title: 'Cómo calcular el INSS en Nicaragua 2026 (con calculadora)',
+        description: 'Calculá el INSS laboral (7%) y patronal en Nicaragua con la calculadora gratis. Qué descuenta el trabajador, qué aporta el patrono y cómo enterarlo.',
         keyword: 'cómo calcular INSS Nicaragua',
+        calculator: 'inss',
+        howToSteps: [
+            { name: 'Tomá el salario bruto', text: 'Partí del salario bruto mensual del trabajador (incluye comisiones y horas extra).' },
+            { name: 'INSS laboral (7%)', text: 'Aplicá el 7% sobre el salario, hasta el techo cotizable vigente: es la deducción que paga el trabajador.' },
+            { name: 'INSS patronal', text: 'Aplicá la tasa patronal (22.5% con 50 o más empleados, 21.5% con menos) sobre la misma base: es el aporte de la empresa.' },
+            { name: 'INATEC (2%)', text: 'Sumá el 2% de INATEC sobre el total como costo adicional del empleador.' },
+        ],
         cluster: 'Nómina y Planillas',
         category: 'Recursos Humanos',
         date: '2026-05-02',
@@ -604,9 +622,16 @@ Ingresás el salario y Nortex calcula el INSS laboral, el patronal y el INATEC, 
     },
     {
         slug: 'como-calcular-aguinaldo-nicaragua',
-        title: 'Cómo calcular el aguinaldo (décimo tercer mes) en Nicaragua',
-        description: 'Fórmula del aguinaldo o décimo tercer mes en Nicaragua, con ejemplos para año completo y proporcional. Cuándo se paga y si paga impuestos.',
+        title: 'Cómo calcular el aguinaldo en Nicaragua 2026 (con calculadora)',
+        description: 'Calculá el aguinaldo o décimo tercer mes en Nicaragua con la calculadora gratis. Fórmula para año completo y proporcional, cuándo se paga y si paga impuestos.',
         keyword: 'cómo calcular aguinaldo Nicaragua',
+        calculator: 'aguinaldo',
+        howToSteps: [
+            { name: 'Tomá el salario mensual', text: 'Partí del salario mensual ordinario del trabajador.' },
+            { name: 'Dividí entre 12', text: 'Dividí el salario mensual entre 12 para obtener el aguinaldo de un mes de trabajo.' },
+            { name: 'Multiplicá por los meses', text: 'Multiplicá por los meses trabajados desde el 1 de diciembre anterior.' },
+            { name: 'Resultado', text: 'Ese es el aguinaldo proporcional; si trabajó el año completo, equivale a un salario mensual.' },
+        ],
         cluster: 'Nómina y Planillas',
         category: 'Recursos Humanos',
         date: '2026-05-06',
@@ -656,8 +681,15 @@ En vez de buscar la plata en diciembre, Nortex acumula la provisión del aguinal
     },
     {
         slug: 'como-calcular-indemnizacion-laboral-nicaragua',
-        title: 'Cómo calcular la indemnización laboral en Nicaragua (Art. 45)',
-        description: 'Cómo funciona la indemnización por antigüedad del Art. 45 del Código del Trabajo de Nicaragua, con ejemplo de cálculo y qué incluye la liquidación final.',
+        title: 'Cómo calcular la liquidación en Nicaragua 2026 (con calculadora)',
+        description: 'Calculá la liquidación y la indemnización del Art. 45 con la calculadora gratis: antigüedad, vacaciones y aguinaldo proporcional. Con ejemplos.',
+        calculator: 'liquidacion',
+        howToSteps: [
+            { name: 'Calculá el salario diario', text: 'Dividí el salario mensual entre 30 para obtener el salario diario.' },
+            { name: 'Contá la antigüedad', text: 'Calculá los años de servicio entre la fecha de ingreso y la de salida (las fracciones cuentan proporcionalmente).' },
+            { name: 'Indemnización Art. 45', text: 'Sumá 30 días por cada uno de los primeros 3 años y 20 días por cada año a partir del cuarto. El resultado tiene piso de 1 mes y techo de 5 meses de salario.' },
+            { name: 'Sumá vacaciones y aguinaldo', text: 'Agregá las vacaciones pendientes y el aguinaldo proporcional. Ojo: la indemnización por antigüedad no aplica en renuncia voluntaria.' },
+        ],
         keyword: 'indemnización laboral Nicaragua',
         cluster: 'Recursos Humanos',
         category: 'Recursos Humanos',
@@ -1816,7 +1848,7 @@ En Nortex, la nota de crédito o débito se genera desde la factura original: he
     },
     {
         slug: 'como-inscribirse-dgi-ruc-nicaragua',
-        title: 'Cómo inscribir tu negocio en la DGI y obtener el RUC',
+        title: 'Cómo inscribirse en la DGI y sacar el RUC en Nicaragua 2026',
         description: 'Los pasos para formalizar tu negocio en Nicaragua: inscripción en la DGI, obtención del RUC, elección de régimen y qué sigue después.',
         keyword: 'cómo sacar el RUC Nicaragua',
         cluster: 'Facturación DGI',
@@ -1918,8 +1950,15 @@ En Cuota Fija, Nortex te ordena ventas e inventario. En régimen general, ademá
     },
     {
         slug: 'como-calcular-horas-extras-nicaragua',
-        title: 'Cómo calcular las horas extras en Nicaragua (con ejemplos)',
-        description: 'Las horas extras en Nicaragua se pagan al doble (100% de recargo, Art. 62 Ley 185). Fórmula, límites legales y ejemplos paso a paso.',
+        title: 'Cómo calcular las horas extras en Nicaragua 2026 (con calculadora)',
+        description: 'Calculá las horas extras con la calculadora gratis: en Nicaragua se pagan al doble (100% de recargo, Art. 62 Ley 185). Fórmula, límites legales y ejemplos.',
+        calculator: 'horasExtras',
+        howToSteps: [
+            { name: 'Calculá la hora ordinaria', text: 'Dividí el salario mensual entre 240 (30 días × 8 horas) para obtener el valor de una hora ordinaria.' },
+            { name: 'Multiplicá por el recargo', text: 'Multiplicá la hora ordinaria por 2: las horas extra se pagan al doble (100% de recargo, Art. 62 Ley 185).' },
+            { name: 'Multiplicá por las horas', text: 'Multiplicá ese valor por la cantidad de horas extra trabajadas en el período.' },
+            { name: 'Respetá los límites', text: 'Verificá el tope legal: no más de 3 horas extra diarias ni 9 semanales, salvo casos de fuerza mayor.' },
+        ],
         keyword: 'cómo calcular horas extras Nicaragua',
         cluster: 'Nómina y Planillas',
         category: 'Recursos Humanos',
@@ -1981,8 +2020,8 @@ Registrás las horas y Nortex aplica el recargo correcto (50% o 100%), las suma 
     },
     {
         slug: 'ir-salarial-nicaragua-como-calcularlo',
-        title: 'IR salarial en Nicaragua: cómo calcularlo paso a paso',
-        description: 'Cómo calcular el IR sobre salarios en Nicaragua con la tabla progresiva: base gravable, anualización y ejemplo completo con INSS incluido.',
+        title: 'IR salarial en Nicaragua 2026: cómo calcularlo paso a paso',
+        description: 'Cómo calcular el IR sobre salarios en Nicaragua 2026 con la tabla progresiva de la DGI: base gravable, anualización y ejemplo completo con INSS incluido.',
         keyword: 'IR salarial Nicaragua',
         cluster: 'Nómina y Planillas',
         category: 'Fiscal',
@@ -2046,9 +2085,16 @@ Nortex anualiza, aplica la tabla por tramos y ajusta cuando el salario varía. L
     },
     {
         slug: 'como-calcular-vacaciones-nicaragua',
-        title: 'Cómo calcular las vacaciones en Nicaragua (descansadas o pagadas)',
-        description: 'Cálculo de vacaciones según el Art. 76 de la Ley 185: 15 días por semestre (2.5 por mes), con ejemplos de goce y de pago en liquidación.',
+        title: 'Cómo calcular las vacaciones en Nicaragua 2026 (con calculadora)',
+        description: 'Calculá las vacaciones según el Art. 76 de la Ley 185 con la calculadora gratis: 15 días por semestre (2.5 por mes), con ejemplos de goce y de pago.',
         keyword: 'cómo calcular vacaciones Nicaragua',
+        calculator: 'vacaciones',
+        howToSteps: [
+            { name: 'Contá los meses trabajados', text: 'Contá los meses trabajados desde tu último período de vacaciones gozado.' },
+            { name: 'Multiplicá por 2.5', text: 'Multiplicá los meses por 2.5 para los días de vacaciones acumulados (15 por semestre, Art. 76).' },
+            { name: 'Salario diario', text: 'Calculá el salario diario dividiendo el salario mensual entre 30.' },
+            { name: 'Monto a pagar', text: 'Multiplicá los días por el salario diario para el monto, o gozá los días de descanso.' },
+        ],
         cluster: 'Recursos Humanos',
         category: 'Recursos Humanos',
         date: '2026-07-04',
