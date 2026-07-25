@@ -121,7 +121,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   if (userRole === 'LENDER_COLLECTOR' || userRole === 'COLLECTOR') {
     // Retorna ÚNICAMENTE la vista del motorizado sin menú lateral completo
     return (
-      <div className="mobile-only-layout min-h-screen bg-slate-900">
+      <div className="mobile-only-layout min-h-screen bg-slate-900 [color-scheme:dark]">
         {children}
       </div>
     );
@@ -200,7 +200,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   ];
 
   return (
-    <div className="flex h-screen w-screen bg-surface-950 overflow-hidden">
+    <div className="flex h-screen w-screen bg-surface-950 overflow-hidden [color-scheme:dark]">
       {/* DESKTOP SIDEBAR */}
       <aside className="hidden lg:flex w-64 bg-nortex-900 border-r border-white/[0.06] flex-col justify-between transition-all duration-300">
         <div>
