@@ -105,39 +105,41 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
 
     // Descargar plantilla
     const downloadTemplate = () => {
+        // Ejemplos de una PyME nica (ferretería/pulpería/farmacia) con precios
+        // realistas en córdobas (C$). El dueño reemplaza estas filas con su catálogo.
         const template = [
             {
-                sku: 'PROD001',
-                nombre: 'Laptop Dell XPS 15',
-                categoria: 'Electrónica',
-                precio: 1200.00,
-                costo: 950.00,
-                stock: 10,
-                minStock: 2,
-                unidad: 'unidad',
-                descripcion: 'Laptop profesional 15 pulgadas'
+                sku: 'CEM001',
+                nombre: 'Cemento Canal 42.5kg',
+                categoria: 'Construcción',
+                precio: 385.00,
+                costo: 330.00,
+                stock: 40,
+                minStock: 10,
+                unidad: 'saco',
+                descripcion: 'Cemento gris uso general'
             },
             {
-                sku: 'PROD002',
-                nombre: 'Mouse Logitech MX Master 3',
-                categoria: 'Accesorios',
-                precio: 45.00,
-                costo: 30.00,
-                stock: 50,
-                minStock: 10,
+                sku: 'COCA600',
+                nombre: 'Coca-Cola 600ml',
+                categoria: 'Bebidas',
+                precio: 25.00,
+                costo: 18.00,
+                stock: 120,
+                minStock: 24,
                 unidad: 'unidad',
                 descripcion: ''
             },
             {
-                sku: 'PROD003',
-                nombre: 'Teclado Mecánico',
-                categoria: 'Accesorios',
-                precio: 85.00,
-                costo: 60.00,
-                stock: 25,
-                minStock: 5,
+                sku: 'ACE500',
+                nombre: 'Acetaminofén 500mg (tableta)',
+                categoria: 'Farmacia',
+                precio: 3.50,
+                costo: 2.00,
+                stock: 500,
+                minStock: 50,
                 unidad: 'unidad',
-                descripcion: 'Switches Blue'
+                descripcion: 'Analgésico / antipirético'
             }
         ];
 
@@ -201,17 +203,17 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
 
     return (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className="bg-slate-800 rounded-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-surface-800 rounded-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden shadow-2xl border border-surface-700" onClick={(e) => e.stopPropagation()}>
                 {/* Header */}
-                <div className="bg-gradient-to-r from-blue-900/40 to-cyan-900/20 px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+                <div className="bg-gradient-to-r from-brand-900/40 to-brand-900/20 px-6 py-4 border-b border-surface-700 flex items-center justify-between">
                     <div>
                         <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                            <Upload size={20} className="text-blue-400" />
+                            <Upload size={20} className="text-brand-400" />
                             Importar Productos Masivamente
                         </h2>
-                        <p className="text-sm text-slate-400 mt-1">Carga hasta 500 productos desde Excel/CSV con validación automática</p>
+                        <p className="text-sm text-surface-400 mt-1">Carga hasta 500 productos desde Excel/CSV con validación automática</p>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
+                    <button onClick={onClose} className="p-2 hover:bg-surface-700 rounded-lg text-surface-400 hover:text-white transition-colors">
                         <X size={20} />
                     </button>
                 </div>
@@ -225,19 +227,19 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                 onDrop={handleDrop}
                                 onDragOver={(e) => e.preventDefault()}
                                 onClick={() => fileInputRef.current?.click()}
-                                className="border-2 border-dashed border-slate-600 rounded-xl p-12 text-center cursor-pointer hover:border-blue-500 hover:bg-slate-700/20 transition-all"
+                                className="border-2 border-dashed border-surface-600 rounded-xl p-12 text-center cursor-pointer hover:border-brand-500 hover:bg-surface-700/20 transition-all"
                             >
                                 {loading ? (
                                     <div className="flex flex-col items-center gap-3">
-                                        <Loader2 className="animate-spin text-blue-400" size={48} />
-                                        <p className="text-slate-400">Procesando archivo...</p>
+                                        <Loader2 className="animate-spin text-brand-400" size={48} />
+                                        <p className="text-surface-400">Procesando archivo...</p>
                                     </div>
                                 ) : (
                                     <>
-                                        <FileSpreadsheet size={48} className="mx-auto text-blue-400 mb-4" />
+                                        <FileSpreadsheet size={48} className="mx-auto text-brand-400 mb-4" />
                                         <p className="text-lg text-white font-semibold mb-2">Arrastra tu archivo Excel/CSV aquí</p>
-                                        <p className="text-sm text-slate-400 mb-4">o haz click para seleccionar</p>
-                                        <p className="text-xs text-slate-500">Formatos soportados: .xlsx, .xls, .csv (max 500 productos)</p>
+                                        <p className="text-sm text-surface-400 mb-4">o haz click para seleccionar</p>
+                                        <p className="text-xs text-surface-500">Formatos soportados: .xlsx, .xls, .csv (max 500 productos)</p>
                                     </>
                                 )}
                             </div>
@@ -253,7 +255,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                             <div className="mt-4 flex justify-center">
                                 <button
                                     onClick={downloadTemplate}
-                                    className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-medium transition-colors"
+                                    className="flex items-center gap-2 px-4 py-2 bg-surface-700 hover:bg-surface-600 rounded-lg text-white font-medium transition-colors"
                                 >
                                     <Download size={18} />
                                     Descargar Plantilla Excel
@@ -282,29 +284,29 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                 </div>
                                 <button
                                     onClick={() => setProducts([])}
-                                    className="text-sm text-slate-400 hover:text-white underline"
+                                    className="text-sm text-surface-400 hover:text-white underline"
                                 >
                                     Cargar otro archivo
                                 </button>
                             </div>
 
-                            <div className="bg-slate-900/60 rounded-xl border border-slate-700 overflow-hidden">
+                            <div className="bg-surface-900/60 rounded-xl border border-surface-700 overflow-hidden">
                                 <div className="overflow-x-auto max-h-96">
                                     <table className="w-full text-sm">
-                                        <thead className="bg-slate-900/80 sticky top-0">
+                                        <thead className="bg-surface-900/80 sticky top-0">
                                             <tr>
-                                                <th className="text-left px-3 py-2 text-xs text-slate-400 uppercase font-semibold">Estado</th>
-                                                <th className="text-left px-3 py-2 text-xs text-slate-400 uppercase font-semibold">SKU</th>
-                                                <th className="text-left px-3 py-2 text-xs text-slate-400 uppercase font-semibold">Nombre</th>
-                                                <th className="text-left px-3 py-2 text-xs text-slate-400 uppercase font-semibold">Categoría</th>
-                                                <th className="text-right px-3 py-2 text-xs text-slate-400 uppercase font-semibold">Precio</th>
-                                                <th className="text-right px-3 py-2 text-xs text-slate-400 uppercase font-semibold">Costo</th>
-                                                <th className="text-right px-3 py-2 text-xs text-slate-400 uppercase font-semibold">Stock</th>
+                                                <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Estado</th>
+                                                <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">SKU</th>
+                                                <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Nombre</th>
+                                                <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Categoría</th>
+                                                <th className="text-right px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Precio</th>
+                                                <th className="text-right px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Costo</th>
+                                                <th className="text-right px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Stock</th>
                                             </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-slate-700/50">
+                                        <tbody className="divide-y divide-surface-700/50">
                                             {products.map((p, i) => (
-                                                <tr key={i} className={p.valid ? 'hover:bg-slate-700/20' : 'bg-red-950/20'}>
+                                                <tr key={i} className={p.valid ? 'hover:bg-surface-700/20' : 'bg-red-950/20'}>
                                                     <td className="px-3 py-2">
                                                         {p.valid ? (
                                                             <CheckCircle size={16} className="text-emerald-400" />
@@ -317,13 +319,13 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                                             </div>
                                                         )}
                                                     </td>
-                                                    <td className="px-3 py-2 font-mono text-slate-300">{p.sku}</td>
+                                                    <td className="px-3 py-2 font-mono text-surface-300">{p.sku}</td>
                                                     <td className="px-3 py-2 text-white">{p.nombre}</td>
-                                                    <td className="px-3 py-2 text-slate-400">{p.categoria}</td>
+                                                    <td className="px-3 py-2 text-surface-400">{p.categoria}</td>
                                                     <td className="px-3 py-2 text-right text-emerald-400 font-semibold">
-                                                        ${p.precio.toFixed(2)}
+                                                        C$ {p.precio.toFixed(2)}
                                                     </td>
-                                                    <td className="px-3 py-2 text-right text-slate-400">${p.costo.toFixed(2)}</td>
+                                                    <td className="px-3 py-2 text-right text-surface-400">C$ {p.costo.toFixed(2)}</td>
                                                     <td className="px-3 py-2 text-right text-white font-bold">{p.stock}</td>
                                                 </tr>
                                             ))}
@@ -351,21 +353,21 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
 
                 {/* Footer */}
                 {products.length > 0 && (
-                    <div className="bg-slate-900/80 px-6 py-4 border-t border-slate-700 flex items-center justify-between">
-                        <div className="text-sm text-slate-400">
+                    <div className="bg-surface-900/80 px-6 py-4 border-t border-surface-700 flex items-center justify-between">
+                        <div className="text-sm text-surface-400">
                             Se importarán <span className="font-bold text-white">{validCount}</span> producto{validCount !== 1 ? 's' : ''}
                         </div>
                         <div className="flex gap-3">
                             <button
                                 onClick={onClose}
-                                className="px-6 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-medium transition-colors"
+                                className="px-6 py-2.5 bg-surface-700 hover:bg-surface-600 rounded-lg text-white font-medium transition-colors"
                             >
                                 Cancelar
                             </button>
                             <button
                                 onClick={handleImport}
                                 disabled={validCount === 0 || importing}
-                                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 rounded-lg text-white font-bold transition-colors flex items-center gap-2"
+                                className="px-6 py-2.5 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-800 disabled:opacity-50 rounded-lg text-white font-bold transition-colors flex items-center gap-2"
                             >
                                 {importing ? (
                                     <>

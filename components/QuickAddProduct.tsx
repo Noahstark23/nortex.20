@@ -97,7 +97,8 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                     name: formData.name.trim(),
                     category: formData.category.trim() || undefined,
                     price: parseFloat(formData.price),
-                    cost: parseFloat(formData.cost),
+                    // Costo opcional: si el dueño no lo sabe, va 0 (se corrige con la compra).
+                    cost: formData.cost ? parseFloat(formData.cost) : 0,
                     stock: parseInt(formData.stock) || 0,
                     minStock: 5,
                     unit: 'unidad',
@@ -118,7 +119,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                     name: formData.name,
                     category: formData.category,
                     price: parseFloat(formData.price),
-                    cost: parseFloat(formData.cost),
+                    cost: formData.cost ? parseFloat(formData.cost) : 0,
                     stock: parseInt(formData.stock) || 0
                 };
                 setSessionHistory(prev => [newProduct, ...prev].slice(0, 5));
@@ -180,18 +181,18 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
 
     return (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className="bg-slate-800 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-surface-800 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl border border-surface-700" onClick={(e) => e.stopPropagation()}>
                 {/* Header */}
-                <div className="bg-gradient-to-r from-orange-900/40 to-red-900/20 px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+                <div className="bg-gradient-to-r from-brand-900/40 to-red-900/20 px-6 py-4 border-b border-surface-700 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-orange-600 rounded-lg flex items-center justify-center">
+                        <div className="w-10 h-10 bg-brand-600 rounded-lg flex items-center justify-center">
                             <Zap size={20} className="text-white" />
                         </div>
                         <div>
                             <h2 className="text-xl font-bold text-white flex items-center gap-2">
                                 Modo Alta Velocidad
                             </h2>
-                            <p className="text-sm text-slate-400">
+                            <p className="text-sm text-surface-400">
                                 {sessionHistory.length} producto{sessionHistory.length !== 1 ? 's' : ''} agregado{sessionHistory.length !== 1 ? 's' : ''} en esta sesión
                             </p>
                         </div>
@@ -199,12 +200,12 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                     <div className="flex items-center gap-2">
                         <button
                             onClick={() => setAudioEnabled(!audioEnabled)}
-                            className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors"
+                            className="p-2 hover:bg-surface-700 rounded-lg text-surface-400 hover:text-white transition-colors"
                             title={audioEnabled ? 'Silenciar' : 'Activar sonido'}
                         >
                             {audioEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
                         </button>
-                        <button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
+                        <button onClick={onClose} className="p-2 hover:bg-surface-700 rounded-lg text-surface-400 hover:text-white transition-colors">
                             <X size={20} />
                         </button>
                     </div>
@@ -233,7 +234,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
 
                             {/* SKU */}
                             <div>
-                                <label className="block text-sm text-slate-300 mb-1.5 font-medium">
+                                <label className="block text-sm text-surface-300 mb-1.5 font-medium">
                                     SKU / Código de Barras *
                                 </label>
                                 <input
@@ -242,14 +243,14 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                                     autoFocus={!initialSKU}
                                     value={formData.sku}
                                     onChange={(e) => setFormData({ ...formData, sku: e.target.value.toUpperCase() })}
-                                    className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg font-mono focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 transition-all"
+                                    className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white text-lg font-mono focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 transition-all"
                                     placeholder="7501234567890"
                                 />
                             </div>
 
                             {/* Name */}
                             <div>
-                                <label className="block text-sm text-slate-300 mb-1.5 font-medium">
+                                <label className="block text-sm text-surface-300 mb-1.5 font-medium">
                                     Nombre del Producto *
                                 </label>
                                 <input
@@ -257,20 +258,20 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                                     required
                                     value={formData.name}
                                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                    className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 transition-all"
+                                    className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white text-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 transition-all"
                                     placeholder="Martillo Truper 16oz"
                                 />
                             </div>
 
                             {/* Category */}
                             <div>
-                                <label className="block text-sm text-slate-300 mb-1.5 font-medium">
+                                <label className="block text-sm text-surface-300 mb-1.5 font-medium">
                                     Categoría
                                 </label>
                                 <input
                                     value={formData.category}
                                     onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                                    className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 transition-all"
+                                    className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 transition-all"
                                     placeholder="Herramientas"
                                 />
                             </div>
@@ -278,7 +279,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                             {/* Price & Cost */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-sm text-slate-300 mb-1.5 font-medium">
+                                    <label className="block text-sm text-surface-300 mb-1.5 font-medium">
                                         Precio Venta *
                                     </label>
                                     <input
@@ -288,22 +289,21 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                                         min="0"
                                         value={formData.price}
                                         onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 transition-all"
+                                        className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white text-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 transition-all"
                                         placeholder="150.00"
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm text-slate-300 mb-1.5 font-medium">
-                                        Costo *
+                                    <label className="block text-sm text-surface-300 mb-1.5 font-medium">
+                                        Costo <span className="text-surface-500 font-normal">(opcional)</span>
                                     </label>
                                     <input
-                                        required
                                         type="number"
                                         step="0.01"
                                         min="0"
                                         value={formData.cost}
                                         onChange={(e) => setFormData({ ...formData, cost: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 transition-all"
+                                        className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white text-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 transition-all"
                                         placeholder="95.00"
                                     />
                                 </div>
@@ -311,7 +311,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
 
                             {/* Stock */}
                             <div>
-                                <label className="block text-sm text-slate-300 mb-1.5 font-medium">
+                                <label className="block text-sm text-surface-300 mb-1.5 font-medium">
                                     Stock Inicial
                                 </label>
                                 <input
@@ -319,15 +319,15 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                                     min="0"
                                     value={formData.stock}
                                     onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
-                                    className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 transition-all"
+                                    className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white text-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 transition-all"
                                     placeholder="0"
                                 />
                             </div>
 
                             {/* Foto del Producto */}
                             <div>
-                                <label className="block text-sm text-slate-300 mb-1.5 font-medium">
-                                    Foto del Producto <span className="text-slate-500 font-normal">(opcional)</span>
+                                <label className="block text-sm text-surface-300 mb-1.5 font-medium">
+                                    Foto del Producto <span className="text-surface-500 font-normal">(opcional)</span>
                                 </label>
                                 <ImageUploader
                                     value={formData.imageUrl}
@@ -337,15 +337,15 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                             </div>
 
                             {/* Continuous Mode Toggle */}
-                            <div className="bg-slate-900/60 border border-slate-700 rounded-lg p-4 flex items-center justify-between">
+                            <div className="bg-surface-900/60 border border-surface-700 rounded-lg p-4 flex items-center justify-between">
                                 <div>
                                     <p className="text-white font-semibold">Modo Continuo</p>
-                                    <p className="text-xs text-slate-400">No cerrar ventana al guardar</p>
+                                    <p className="text-xs text-surface-400">No cerrar ventana al guardar</p>
                                 </div>
                                 <button
                                     type="button"
                                     onClick={() => setContinuousMode(!continuousMode)}
-                                    className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors ${continuousMode ? 'bg-orange-600' : 'bg-slate-700'
+                                    className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors ${continuousMode ? 'bg-brand-600' : 'bg-surface-700'
                                         }`}
                                 >
                                     <span
@@ -359,7 +359,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                             <button
                                 type="submit"
                                 disabled={isSubmitting}
-                                className="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-orange-800 disabled:opacity-50 py-4 rounded-lg text-white font-bold text-lg transition-colors flex items-center justify-center gap-2"
+                                className="w-full bg-brand-600 hover:bg-brand-700 disabled:bg-brand-800 disabled:opacity-50 py-4 rounded-lg text-white font-bold text-lg transition-colors flex items-center justify-center gap-2"
                             >
                                 {isSubmitting ? (
                                     <>
@@ -374,36 +374,36 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                                 )}
                             </button>
 
-                            <p className="text-xs text-slate-500 text-center">
-                                Presiona <kbd className="px-2 py-1 bg-slate-700 rounded text-slate-300">ESC</kbd> para cerrar
+                            <p className="text-xs text-surface-500 text-center">
+                                Presiona <kbd className="px-2 py-1 bg-surface-700 rounded text-surface-300">ESC</kbd> para cerrar
                             </p>
                         </form>
                     </div>
 
                     {/* Session History Sidebar */}
-                    <div className="w-72 bg-slate-900/60 border border-slate-700 rounded-lg p-4">
+                    <div className="w-72 bg-surface-900/60 border border-surface-700 rounded-lg p-4">
                         <div className="flex items-center gap-2 mb-3">
-                            <History size={18} className="text-slate-400" />
+                            <History size={18} className="text-surface-400" />
                             <h3 className="font-semibold text-white">Últimos Agregados</h3>
                         </div>
 
                         {sessionHistory.length === 0 ? (
                             <div className="text-center py-8">
-                                <p className="text-slate-500 text-sm">Aún no has agregado productos</p>
-                                <p className="text-xs text-slate-300 mt-1">Completa el formulario y guarda</p>
+                                <p className="text-surface-500 text-sm">Aún no has agregado productos</p>
+                                <p className="text-xs text-surface-300 mt-1">Completa el formulario y guarda</p>
                             </div>
                         ) : (
                             <div className="space-y-2">
                                 {sessionHistory.map((product, index) => (
                                     <div
                                         key={index}
-                                        className="bg-slate-800/60 border border-slate-700 rounded-lg p-3 animate-in fade-in slide-in-from-top-2 duration-200"
+                                        className="bg-surface-800/60 border border-surface-700 rounded-lg p-3 animate-in fade-in slide-in-from-top-2 duration-200"
                                     >
                                         <div className="flex items-start gap-2">
                                             <Check size={16} className="text-emerald-400 mt-0.5 shrink-0" />
                                             <div className="flex-1 min-w-0">
                                                 <p className="text-white font-semibold text-sm truncate">{product.name}</p>
-                                                <p className="text-xs text-slate-400 font-mono">{product.sku}</p>
+                                                <p className="text-xs text-surface-400 font-mono">{product.sku}</p>
                                                 <p className="text-xs text-emerald-400 font-bold mt-1">
                                                     C$ {product.price.toFixed(2)}
                                                 </p>
@@ -415,9 +415,9 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                         )}
 
                         {sessionHistory.length > 0 && (
-                            <div className="mt-4 pt-4 border-t border-slate-700">
-                                <div className="bg-orange-950/40 border border-orange-800/50 rounded-lg p-3">
-                                    <p className="text-xs text-orange-300 font-semibold">
+                            <div className="mt-4 pt-4 border-t border-surface-700">
+                                <div className="bg-brand-950/40 border border-brand-800/50 rounded-lg p-3">
+                                    <p className="text-xs text-brand-300 font-semibold">
                                         Total: {sessionHistory.length} producto{sessionHistory.length !== 1 ? 's' : ''}
                                     </p>
                                 </div>

@@ -48,6 +48,13 @@ const RetailDashboard: React.FC = () => {
   const [fiscalData, setFiscalData] = useState({ taxId: '', address: '', phone: '', dgiAuthCode: '' });
   const [savingFiscal, setSavingFiscal] = useState(false);
 
+  // Deep-link del onboarding: el paso fiscal apunta a /app/dashboard?config=fiscal
+  // para abrir directo el modal de Configuración DGI (la pantalla real del paso).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('config') === 'fiscal') setShowFiscalModal(true);
+  }, []);
+
   // 📊 Today Stats & Alerts
   const [todayStats, setTodayStats] = useState<{ totalSales: number; totalExpenses: number; netProfit: number } | null>(null);
   const [theftAlerts, setTheftAlerts] = useState<any[]>([]);

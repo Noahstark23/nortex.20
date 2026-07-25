@@ -1016,11 +1016,13 @@ app.get('/api/onboarding', authenticate, async (req: any, res: any) => {
                 { key: 'team',      label: 'Agregá un cobrador a tu equipo',     done: teamReady,        href: '/app/hr',        cta: 'Agregar cobrador' },
               ]
             : [
-                { key: 'fiscal',    label: 'Configurá tus datos fiscales (DGI)', done: hasFiscal,        href: '/app/dashboard', cta: 'Configurar' },
-                { key: 'product',   label: 'Agregá tu primer producto',          done: products > 0,     href: '/app/inventory?tour=inv', cta: 'Agregar producto' },
-                { key: 'sale',      label: 'Hacé tu primera venta',              done: sales > 0,        href: '/app/pos?tour=pos',       cta: 'Ir al POS' },
-                { key: 'customer',  label: 'Registrá un cliente',                done: customers > 0,    href: '/app/clients',   cta: 'Agregar cliente' },
-                { key: 'team',      label: 'Invitá a tu equipo',                 done: teamReady,        href: '/app/team',      cta: 'Invitar' },
+                // El activation moment real es vender: primer producto y primera venta
+                // van primero; lo fiscal (RUC/DGI) queda al final porque no bloquea operar.
+                { key: 'product',   label: 'Agregá tu primer producto',          done: products > 0,     href: '/app/inventory?tour=inv',     cta: 'Agregar producto' },
+                { key: 'sale',      label: 'Hacé tu primera venta',              done: sales > 0,        href: '/app/pos?tour=pos',           cta: 'Ir al POS' },
+                { key: 'customer',  label: 'Registrá un cliente',                done: customers > 0,    href: '/app/clients',                cta: 'Agregar cliente' },
+                { key: 'team',      label: 'Invitá a tu equipo',                 done: teamReady,        href: '/app/team',                   cta: 'Invitar' },
+                { key: 'fiscal',    label: 'Configurá tus datos fiscales (DGI)', done: hasFiscal,        href: '/app/dashboard?config=fiscal', cta: 'Configurar' },
               ];
 
         const completed = steps.filter(s => s.done).length;
@@ -2909,7 +2911,9 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (re
                 description,
                 category,
                 price: parseFloat(price),
-                cost: parseFloat(cost),
+                // Costo opcional: un pulpero no siempre sabe el costo exacto al dar de
+                // alta. Ausente/''/NaN → 0 (el margen se corrige luego con la compra).
+                cost: parseFloat(cost) || 0,
                 stock: parseFloat(stock) || 0,
                 minStock: parseFloat(minStock) || 0,
                 unit: unit || 'unidad',
