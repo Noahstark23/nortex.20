@@ -321,6 +321,113 @@ export async function recordExpense(
 }
 
 /**
+ * ADQUISICIÓN DE ACTIVO FIJO (capitalización) — E1:
+ *   Debe: Mobiliario y Equipo (1.2.1)
+ *   Haber: Caja (1.1.1) o CxP Proveedores (2.1.1)
+ *
+ * Sin este asiento, 1.2.1 nunca se debita: la depreciación (Haber 1.2.2) dejaba
+ * el PP&E NETO en NEGATIVO, y la baja (Haber 1.2.1 por el costo) lo hundía aún
+ * más inventando una "pérdida" por un valor en libros que nunca se capitalizó.
+ */
+export async function recordFixedAssetAcquisition(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    assetId: string,
+    assetName: string,
+    costo: number,
+    paymentMethod: string,
+    date: Date
+) {
+    const creditAccount = paymentMethod === 'CREDIT' ? '2.1.1' : '1.1.1';
+    await createJournalEntry(
+        tx, tenantId, `Compra de activo fijo — ${assetName}`, assetId, 'FIXED_ASSET_ACQUISITION', userId,
+        [
+            { accountCode: '1.2.1', debit: costo, credit: 0 },
+            { accountCode: creditAccount, debit: 0, credit: costo },
+        ],
+        { date }
+    );
+}
+
+/**
+ * Mapeo CATEGORÍA de movimiento de caja → líneas del asiento (función PURA).
+ *
+ * Devuelve `null` cuando el movimiento NO es un evento económico contabilizable
+ * y por lo tanto NO debe generar asiento:
+ *  - `CAMBIO`: cambiar un billete no altera el patrimonio (entra y sale el mismo
+ *    valor); asentarlo inflaría Caja contra una contrapartida inexistente.
+ *  - `AJUSTE`: sobrante/faltante de arqueo. Requiere decidir la cuenta de
+ *    sobrante/faltante de CAJA (4.1.3 es de INVENTARIO, no sirve) — queda
+ *    pendiente de definición contable en vez de asentarlo mal.
+ *  - `AGENTE_BANCARIO`: la corresponsalía YA postea su propio asiento en
+ *    `recordAgentTransaction`; asentarlo aquí lo DUPLICARÍA.
+ *
+ * Ojo `PAGO_PROVEEDOR`: es cancelar una CxP (Debe 2.1.1), NO un gasto. Mandarlo
+ * a 5.2.1 duplicaría el costo, que ya entró como Inventario en la compra.
+ */
+export function cashMovementJournalLines(
+    type: 'IN' | 'OUT',
+    category: string,
+    amount: number
+): { accountCode: string; debit: number; credit: number }[] | null {
+    const CAJA = '1.1.1';
+    if (type === 'IN') {
+        switch (category) {
+            case 'INYECCION_CAPITAL':
+                return [
+                    { accountCode: CAJA, debit: amount, credit: 0 },
+                    { accountCode: '3.1.1', debit: 0, credit: amount },   // Capital Social ↑
+                ];
+            default:
+                return null;
+        }
+    }
+    switch (category) {
+        case 'GASTO_OPERATIVO':
+            return [
+                { accountCode: '5.2.1', debit: amount, credit: 0 },       // Gasto ↑
+                { accountCode: CAJA, debit: 0, credit: amount },
+            ];
+        case 'PAGO_PROVEEDOR':
+            return [
+                { accountCode: '2.1.1', debit: amount, credit: 0 },       // CxP ↓ (no es gasto)
+                { accountCode: CAJA, debit: 0, credit: amount },
+            ];
+        case 'RETIRO_PERSONAL':
+            return [
+                { accountCode: '3.1.1', debit: amount, credit: 0 },       // Patrimonio ↓ (retiro del dueño)
+                { accountCode: CAJA, debit: 0, credit: amount },
+            ];
+        default:
+            return null;
+    }
+}
+
+/**
+ * MOVIMIENTO DE CAJA (entrada/salida) → asiento, según `cashMovementJournalLines`.
+ * No hace nada si la categoría no es contabilizable (ver doc de la función pura).
+ */
+export async function recordCashMovement(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    movementId: string,
+    type: 'IN' | 'OUT',
+    category: string,
+    amount: number,
+    description: string
+) {
+    const lines = cashMovementJournalLines(type, category, amount);
+    if (!lines) return;
+    const prefix = type === 'IN' ? 'Entrada' : 'Salida';
+    await createJournalEntry(
+        tx, tenantId, `${prefix} de caja (${category}): ${description}`,
+        movementId, type === 'IN' ? 'CASH_IN' : 'CASH_OUT', userId, lines
+    );
+}
+
+/**
  * ENTRADA DE EFECTIVO (inyección de capital):
  *   Debe: Caja (1.1.1)
  *   Haber: Capital Social (3.1.1)
