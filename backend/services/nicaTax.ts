@@ -21,36 +21,25 @@ const IVA_RATE = new Decimal('0.15');
 const ANTICIPO_IR_RATE = new Decimal('0.01');  // 1% anticipo mensual
 const IMI_RATE = new Decimal('0.01');           // 1% impuesto municipal (Alcaldía)
 
+/** Factor para desglosar un precio que YA trae IVA incluido: neto = total / 1.15 */
+const IVA_FACTOR = IVA_RATE.plus(1);           // 1.15
+
 /**
- * T2 — Desglose de IVA de una venta con parte EXONERADA.
+ * T1 — Desglose de IVA sobre un precio que YA LO INCLUYE.
  *
- * Fuente única de verdad del cálculo: la usan el asiento contable (`recordSale`)
- * y la declaración mensual, para que el mayor y el VET nunca discrepen.
+ * En Nortex el `Product.price` es precio de GÓNDOLA: ya trae el IVA adentro.
+ * Así lo trata la venta autoritativa (`recordSale`: neto = total / 1.15), y así
+ * debe tratarlo cualquier documento que use precios de venta (cotizaciones).
+ * Sumar 15% ENCIMA de un precio inclusivo cobra el IVA dos veces: un producto
+ * de góndola de C$115 se vendía a C$115 pero se cotizaba a C$132.25.
  *
- * Reglas:
- *  - `exento` se acota a [0, total] (defensa ante datos inconsistentes: un exento
- *    mayor que el total daría IVA negativo).
- *  - El IVA solo grava `total − exento`, y ese gravado YA trae el IVA incluido
- *    (precio de góndola) → `neto = gravado / 1.15`, `iva = gravado − neto`.
- *  - El ingreso neto es `netoGravado + exonerado`: lo exonerado SÍ es ingreso,
- *    solo que sin IVA que separar.
+ * `iva` se deriva por RESTA (no por multiplicación) para garantizar la
+ * identidad exacta `neto + iva === totalConIva`, sin descuadre de centavos.
  */
-export function desglosarVentaConExoneracion(total: Decimal.Value, exento: Decimal.Value = 0) {
-    const dTotal = new Decimal(total);
-    const dExento = Decimal.min(
-        Decimal.max(new Decimal(exento ?? 0), new Decimal(0)),
-        dTotal
-    );
-    const gravado = dTotal.minus(dExento);
-    const netoGravado = gravado.dividedBy(IVA_RATE.plus(1)).toDecimalPlaces(4);
-    const iva = gravado.minus(netoGravado).toDecimalPlaces(4);
-    return {
-        exonerado: dExento.toDecimalPlaces(4),
-        gravado: gravado.toDecimalPlaces(4),
-        netoGravado,
-        iva,
-        ingresoNeto: netoGravado.plus(dExento).toDecimalPlaces(4),
-    };
+export function desglosarIvaIncluido(totalConIva: Decimal.Value): { neto: Decimal; iva: Decimal } {
+    const total = new Decimal(totalConIva).toDecimalPlaces(2);
+    const neto = total.dividedBy(IVA_FACTOR).toDecimalPlaces(2);
+    return { neto, iva: total.minus(neto) };
 }
 
 export interface MonthlyTaxReport {

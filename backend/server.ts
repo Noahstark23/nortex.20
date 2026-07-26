@@ -15,7 +15,7 @@ import { sendPasswordResetEmail } from './services/email';
 import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { calculateTenantScore } from './services/scoring';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
@@ -2508,6 +2508,15 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
             }
         }
 
+        // A1/A5: catálogo sembrado ANTES de la tx (ver nota en /api/purchases): el
+        // auto-seed de getAccount ocurre fuera de la transacción y sus filas no son
+        // visibles dentro bajo REPEATABLE READ.
+        const anchorCash = await prisma.account.findUnique({
+            where: { tenantId_code: { tenantId: authReq.tenantId!, code: '5.2.1' } },
+            select: { id: true },
+        });
+        if (!anchorCash) await seedChartOfAccounts(authReq.tenantId!);
+
         // C. TRANSACCIÓN: crear movimiento + auto-crear Expense si es salida
         const result = await prisma.$transaction(async (tx: any) => {
             // Revalidación race-safe del saldo para salidas: se bloquea la fila del turno
@@ -2576,6 +2585,23 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
                 expenseId,
             });
 
+            // A1: ASIENTO CONTABLE del movimiento de caja. Antes los gastos en
+            // efectivo y los aportes de capital NUNCA llegaban al mayor
+            // (`recordExpense`/`recordCashIn` eran código muerto): Gastos Operativos
+            // (5.2.1) y Capital Social (3.1.1) quedaban en cero para siempre.
+            // El mapeo por categoría vive en `cashMovementJournalLines` (pura):
+            // CAMBIO/AJUSTE no generan asiento a propósito (ver su doc).
+            await recordCashMovement(
+                tx as Parameters<typeof recordCashMovement>[0],
+                authReq.tenantId,
+                authReq.userId,
+                movement.id,
+                type,
+                category,
+                new Decimal(amount).toNumber(),
+                description.trim()
+            );
+
             // AUDIT LOG inmutable
             await tx.auditLog.create({
                 data: {
@@ -2601,7 +2627,13 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
         res.json(result);
     } catch (error: any) {
         console.error('Error creating cash movement:', error);
-        res.status(500).json({ error: error.message || 'Error registrando movimiento de caja' });
+        // Período cerrado (A1): el movimiento ahora exige asiento → 423 en vez de
+        // registrar plata que sale de la gaveta sin contrapartida contable.
+        if (error instanceof PeriodLockedError) {
+            return res.status(423).json({ error: error.message });
+        }
+        const insufficient = error?.message?.includes('Saldo insuficiente');
+        res.status(insufficient ? 400 : 500).json({ error: error.message || 'Error registrando movimiento de caja' });
     }
 });
 
@@ -4399,6 +4431,17 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
     // Validaciones de formato ya realizadas por Zod
 
     try {
+        // A1/A5: el asiento de la compra necesita el catálogo YA sembrado. `getAccount`
+        // auto-siembra con el prisma GLOBAL (autocommit): bajo REPEATABLE READ esas filas
+        // son INVISIBLES dentro de la tx y el `tx.account.update` moría con P2025 en el
+        // primer movimiento de un tenant nuevo. Sembramos ANTES de abrir la transacción
+        // (idempotente, y solo si falta el ancla → sin escritura extra en cada compra).
+        const anchorPurchase = await prisma.account.findUnique({
+            where: { tenantId_code: { tenantId: authReq.tenantId!, code: '1.1.4' } },
+            select: { id: true },
+        });
+        if (!anchorPurchase) await seedChartOfAccounts(authReq.tenantId!);
+
         const result = await prisma.$transaction(async (tx: any) => {
             // Verificar propiedad del proveedor: nunca confiar en supplierId del body sin
             // scoping por tenant. Sin esto, el include: { supplier: true } filtraría PII
@@ -4583,6 +4626,24 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             }
             // Si es CREDIT, no se descuenta dinero - queda como cuenta por pagar
 
+            // A1: ASIENTO CONTABLE de la compra. Antes NO se posteaba ninguno
+            // (`recordPurchase` estaba importada pero nunca se llamaba), así que
+            // Inventario (1.1.4) solo DECRECÍA por el COGS de las ventas y llegaba a
+            // saldo negativo con stock físico real; IVA Crédito (1.1.5) y CxP (2.1.1)
+            // quedaban permanentemente en cero y la utilidad salía inflada.
+            // Va DENTRO de la tx y sin try/catch: si el asiento no se puede registrar
+            // (p. ej. período cerrado), la compra entera se revierte — el dinero y el
+            // inventario NO se mueven sin su contrapartida contable.
+            await recordPurchase(
+                tx as Parameters<typeof recordPurchase>[0],
+                authReq.tenantId!,
+                authReq.userId!,
+                purchase.id,
+                new Decimal(total).toNumber(),
+                new Decimal(tax).toNumber(),
+                paymentMethod
+            );
+
             // Asiento inmutable de auditoría (Capa 3): la compra mueve dinero (billetera
             // + gasto) e inventario valorizado (stock + costo promedio). Registrar
             // before/after de billetera y de costo/stock por producto.
@@ -4618,6 +4679,11 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
 
     } catch (error: any) {
         console.error('Error registrando compra:', error);
+        // Período cerrado (A1): la compra ahora exige asiento, así que un período
+        // bloqueado la RECHAZA (423) en vez de dejar entrar mercancía sin registrar.
+        if (error instanceof PeriodLockedError) {
+            return res.status(423).json({ error: error.message });
+        }
         const insufficient = error?.message?.includes('SALDO_INSUFICIENTE');
         const notFound = error?.message?.includes('no encontrado');
         res.status(insufficient ? 400 : notFound ? 404 : 500).json({ error: error.message || 'Error al procesar la compra' });
@@ -4747,7 +4813,7 @@ app.get('/api/purchases/pending', authenticate, async (req: any, res: any) => {
 // ==========================================
 
 import { calculatePayroll, calculateLaborLiability } from './services/nicaLabor';
-import { generateMonthlyReport, saveMonthlyReport } from './services/nicaTax';
+import { generateMonthlyReport, saveMonthlyReport, desglosarIvaIncluido } from './services/nicaTax';
 
 // POST /api/payroll/calculate - Calcular nómina de todos los empleados
 app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), validate(PayrollCalculateSchema), async (req: any, res: any) => {
@@ -6191,11 +6257,16 @@ app.post('/api/quotations', authenticate, async (req: any, res: any) => {
     if (!items || items.length === 0) return res.status(400).json({ error: 'Faltan items' });
 
     try {
-        // Calculate totals server-side for security
-        let subtotal = 0;
+        // Totales server-side (nunca confiar en los del cliente), con decimal.js.
+        // T1: `item.price` es precio de GÓNDOLA — YA trae el IVA incluido, igual
+        // que en la venta (`recordSale` hace neto = total / 1.15). Antes se le
+        // sumaba 15% ENCIMA (`tax = subtotal * 0.15; total = subtotal + tax`), así
+        // que la cotización cobraba el IVA dos veces y NUNCA cuadraba con lo que
+        // el POS le cobra al cliente: un producto de C$115 se vendía a C$115 pero
+        // se cotizaba a C$132.25. Ahora se DESGLOSA desde el precio inclusivo.
+        let totalD = new Decimal(0);
         const formattedItems = items.map((item: any) => {
-            const total = Number(item.price) * Number(item.quantity);
-            subtotal += total;
+            totalD = totalD.plus(new Decimal(item.price).mul(item.quantity));
             return {
                 productId: item.id || item.productId,
                 name: item.name,
@@ -6204,8 +6275,10 @@ app.post('/api/quotations', authenticate, async (req: any, res: any) => {
             };
         });
 
-        const tax = subtotal * 0.15;
-        const total = subtotal + tax;
+        const { neto, iva } = desglosarIvaIncluido(totalD);
+        const subtotal = neto.toNumber();
+        const tax = iva.toNumber();
+        const total = neto.plus(iva).toNumber();   // === totalD: lo que paga el cliente
 
         const quote = await prisma.quotation.create({
             data: {
@@ -7178,16 +7251,44 @@ app.post('/api/accounting/fixed-assets', authenticate, checkRole(['OWNER', 'ADMI
         if (isNaN(fecha.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
         const vida = Number(vidaUtilMeses) > 0 ? Math.floor(Number(vidaUtilMeses)) : VIDA_UTIL_DEFAULT[cat];
 
-        const asset = await prisma.fixedAsset.create({
-            data: {
-                tenantId: authReq.tenantId!, nombre: nombre.trim(), categoria: cat,
-                costo: costoD.toDecimalPlaces(2).toNumber(), fechaAdquisicion: fecha,
-                vidaUtilMeses: vida, createdBy: authReq.userId!,
-            },
+        // E1: el alta ahora CAPITALIZA el activo (Debe 1.2.1) dentro de una
+        // transacción. Antes solo se creaba la fila: 1.2.1 nunca se debitaba, así
+        // que la depreciación (Haber 1.2.2) dejaba el PP&E NETO en NEGATIVO y la
+        // baja (Haber 1.2.1 por el costo) inventaba una pérdida por un valor en
+        // libros jamás registrado. `formaPago` es opcional: CASH (default) acredita
+        // Caja; CREDIT acredita CxP Proveedores.
+        const formaPago = String(req.body?.formaPago || 'CASH').toUpperCase() === 'CREDIT' ? 'CREDIT' : 'CASH';
+        // A5: catálogo sembrado ANTES de la tx (ver nota en /api/purchases).
+        const anchorAsset = await prisma.account.findUnique({
+            where: { tenantId_code: { tenantId: authReq.tenantId!, code: '1.2.1' } },
+            select: { id: true },
+        });
+        if (!anchorAsset) await seedChartOfAccounts(authReq.tenantId!);
+
+        const asset = await prisma.$transaction(async (tx: any) => {
+            const created = await tx.fixedAsset.create({
+                data: {
+                    tenantId: authReq.tenantId!, nombre: nombre.trim(), categoria: cat,
+                    costo: costoD.toDecimalPlaces(2).toNumber(), fechaAdquisicion: fecha,
+                    vidaUtilMeses: vida, createdBy: authReq.userId!,
+                },
+            });
+            await recordFixedAssetAcquisition(
+                tx as Parameters<typeof recordFixedAssetAcquisition>[0],
+                authReq.tenantId!, authReq.userId!, created.id, created.nombre,
+                costoD.toDecimalPlaces(2).toNumber(), formaPago,
+                // El asiento va con la FECHA DE ADQUISICIÓN para que caiga en el
+                // mismo período que su primera cuota de depreciación.
+                fecha
+            );
+            return created;
         });
         res.status(201).json({ message: 'Activo registrado.', asset });
-    } catch (error) {
+    } catch (error: any) {
         console.error('Create fixed asset error:', error);
+        if (error instanceof PeriodLockedError) {
+            return res.status(423).json({ error: error.message });
+        }
         res.status(500).json({ error: 'Error al registrar el activo.' });
     }
 });
@@ -8753,12 +8854,14 @@ app.patch('/api/public-orders/:id/convert', authenticate, async (req: any, res: 
                 quantity: cantidad.toNumber(),
             };
         });
-        subtotalD = subtotalD.toDecimalPlaces(2);
-        const taxD = subtotalD.mul('0.15').toDecimalPlaces(2);
-        const totalD = subtotalD.plus(taxD).toDecimalPlaces(2);
-        const subtotal = subtotalD.toNumber();
-        const tax = taxD.toNumber();
-        const total = totalD.toNumber();
+        // T1: los precios del pedido público son de GÓNDOLA (IVA incluido), igual
+        // que en la venta. Antes se sumaba 15% encima → doble IVA y un total que
+        // no coincidía con lo que el POS le cobra al cliente. Se desglosa.
+        const brutoD = subtotalD.toDecimalPlaces(2);
+        const { neto, iva } = desglosarIvaIncluido(brutoD);
+        const subtotal = neto.toNumber();
+        const tax = iva.toNumber();
+        const total = neto.plus(iva).toNumber();   // === brutoD
 
         // Transacción: crear Quotation + marcar PublicOrder como CONVERTED
         const result = await prisma.$transaction(async (tx: any) => {
