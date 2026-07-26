@@ -154,9 +154,13 @@ const QuotationManager: React.FC = () => {
 
     const removeFromCart = (id: string) => setCart(prev => prev.filter(item => item.id !== id));
 
-    const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const tax = total * 0.15; // IVA 15% Nicaragua
-    const grandTotal = total + tax;
+    // T1: el precio del producto es de GÓNDOLA — YA incluye el IVA (así lo trata
+    // la venta: neto = total / 1.15). Antes acá se le sumaba 15% ENCIMA, así que
+    // la proforma mostraba un total ~15% mayor al que el POS le cobra al cliente.
+    // El IVA se deriva por RESTA para que neto + IVA === total exacto.
+    const grandTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const total = Number((grandTotal / 1.15).toFixed(2));   // base imponible (neto)
+    const tax = Number((grandTotal - total).toFixed(2));    // IVA incluido
 
     const handleSaveQuotation = async () => {
         if (cart.length === 0) return alert("Agrega productos primero.");
@@ -574,9 +578,9 @@ const QuotationManager: React.FC = () => {
 
                     <div className="p-6 bg-surface-900 border-t border-white/[0.06] text-slate-100">
                         <div className="space-y-2 text-sm mb-4">
-                            <div className="flex justify-between text-slate-500"><span>Subtotal</span><span>${total.toFixed(2)}</span></div>
-                            <div className="flex justify-between text-slate-500"><span>Impuesto (18%)</span><span>${tax.toFixed(2)}</span></div>
-                            <div className="flex justify-between font-bold text-slate-100 text-lg pt-2 border-t border-white/[0.04] text-slate-100"><span>Total</span><span>${grandTotal.toFixed(2)}</span></div>
+                            <div className="flex justify-between text-slate-500"><span>Subtotal</span><span className="font-mono tabular-nums">C$ {total.toFixed(2)}</span></div>
+                            <div className="flex justify-between text-slate-500"><span>IVA (15%)</span><span className="font-mono tabular-nums">C$ {tax.toFixed(2)}</span></div>
+                            <div className="flex justify-between font-bold text-slate-100 text-lg pt-2 border-t border-white/[0.04]"><span>Total</span><span className="font-mono tabular-nums">C$ {grandTotal.toFixed(2)}</span></div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
