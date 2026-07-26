@@ -42,6 +42,38 @@ export function desglosarIvaIncluido(totalConIva: Decimal.Value): { neto: Decima
     return { neto, iva: total.minus(neto) };
 }
 
+/**
+ * T2 — Desglose de IVA de una venta con parte EXONERADA.
+ *
+ * Fuente única de verdad del cálculo: la usan el asiento contable (`recordSale`)
+ * y la declaración mensual, para que el mayor y el VET nunca discrepen.
+ *
+ * Reglas:
+ *  - `exento` se acota a [0, total] (defensa ante datos inconsistentes: un exento
+ *    mayor que el total daría IVA negativo).
+ *  - El IVA solo grava `total − exento`, y ese gravado YA trae el IVA incluido
+ *    (precio de góndola) → `neto = gravado / 1.15`, `iva = gravado − neto`.
+ *  - El ingreso neto es `netoGravado + exonerado`: lo exonerado SÍ es ingreso,
+ *    solo que sin IVA que separar.
+ */
+export function desglosarVentaConExoneracion(total: Decimal.Value, exento: Decimal.Value = 0) {
+    const dTotal = new Decimal(total);
+    const dExento = Decimal.min(
+        Decimal.max(new Decimal(exento ?? 0), new Decimal(0)),
+        dTotal
+    );
+    const gravado = dTotal.minus(dExento);
+    const netoGravado = gravado.dividedBy(IVA_FACTOR).toDecimalPlaces(4);
+    const iva = gravado.minus(netoGravado).toDecimalPlaces(4);
+    return {
+        exonerado: dExento.toDecimalPlaces(4),
+        gravado: gravado.toDecimalPlaces(4),
+        netoGravado,
+        iva,
+        ingresoNeto: netoGravado.plus(dExento).toDecimalPlaces(4),
+    };
+}
+
 export interface MonthlyTaxReport {
     month: number;
     year: number;
