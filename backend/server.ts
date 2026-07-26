@@ -4741,7 +4741,7 @@ app.get('/api/purchases/pending', authenticate, async (req: any, res: any) => {
 // ==========================================
 
 import { calculatePayroll, calculateLaborLiability } from './services/nicaLabor';
-import { generateMonthlyReport, saveMonthlyReport } from './services/nicaTax';
+import { generateMonthlyReport, saveMonthlyReport, desglosarIvaIncluido } from './services/nicaTax';
 
 // POST /api/payroll/calculate - Calcular nómina de todos los empleados
 app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), validate(PayrollCalculateSchema), async (req: any, res: any) => {
@@ -6185,11 +6185,16 @@ app.post('/api/quotations', authenticate, async (req: any, res: any) => {
     if (!items || items.length === 0) return res.status(400).json({ error: 'Faltan items' });
 
     try {
-        // Calculate totals server-side for security
-        let subtotal = 0;
+        // Totales server-side (nunca confiar en los del cliente), con decimal.js.
+        // T1: `item.price` es precio de GÓNDOLA — YA trae el IVA incluido, igual
+        // que en la venta (`recordSale` hace neto = total / 1.15). Antes se le
+        // sumaba 15% ENCIMA (`tax = subtotal * 0.15; total = subtotal + tax`), así
+        // que la cotización cobraba el IVA dos veces y NUNCA cuadraba con lo que
+        // el POS le cobra al cliente: un producto de C$115 se vendía a C$115 pero
+        // se cotizaba a C$132.25. Ahora se DESGLOSA desde el precio inclusivo.
+        let totalD = new Decimal(0);
         const formattedItems = items.map((item: any) => {
-            const total = Number(item.price) * Number(item.quantity);
-            subtotal += total;
+            totalD = totalD.plus(new Decimal(item.price).mul(item.quantity));
             return {
                 productId: item.id || item.productId,
                 name: item.name,
@@ -6198,8 +6203,10 @@ app.post('/api/quotations', authenticate, async (req: any, res: any) => {
             };
         });
 
-        const tax = subtotal * 0.15;
-        const total = subtotal + tax;
+        const { neto, iva } = desglosarIvaIncluido(totalD);
+        const subtotal = neto.toNumber();
+        const tax = iva.toNumber();
+        const total = neto.plus(iva).toNumber();   // === totalD: lo que paga el cliente
 
         const quote = await prisma.quotation.create({
             data: {
@@ -8747,12 +8754,14 @@ app.patch('/api/public-orders/:id/convert', authenticate, async (req: any, res: 
                 quantity: cantidad.toNumber(),
             };
         });
-        subtotalD = subtotalD.toDecimalPlaces(2);
-        const taxD = subtotalD.mul('0.15').toDecimalPlaces(2);
-        const totalD = subtotalD.plus(taxD).toDecimalPlaces(2);
-        const subtotal = subtotalD.toNumber();
-        const tax = taxD.toNumber();
-        const total = totalD.toNumber();
+        // T1: los precios del pedido público son de GÓNDOLA (IVA incluido), igual
+        // que en la venta. Antes se sumaba 15% encima → doble IVA y un total que
+        // no coincidía con lo que el POS le cobra al cliente. Se desglosa.
+        const brutoD = subtotalD.toDecimalPlaces(2);
+        const { neto, iva } = desglosarIvaIncluido(brutoD);
+        const subtotal = neto.toNumber();
+        const tax = iva.toNumber();
+        const total = neto.plus(iva).toNumber();   // === brutoD
 
         // Transacción: crear Quotation + marcar PublicOrder como CONVERTED
         const result = await prisma.$transaction(async (tx: any) => {

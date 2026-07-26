@@ -21,6 +21,27 @@ const IVA_RATE = new Decimal('0.15');
 const ANTICIPO_IR_RATE = new Decimal('0.01');  // 1% anticipo mensual
 const IMI_RATE = new Decimal('0.01');           // 1% impuesto municipal (Alcaldía)
 
+/** Factor para desglosar un precio que YA trae IVA incluido: neto = total / 1.15 */
+const IVA_FACTOR = IVA_RATE.plus(1);           // 1.15
+
+/**
+ * T1 — Desglose de IVA sobre un precio que YA LO INCLUYE.
+ *
+ * En Nortex el `Product.price` es precio de GÓNDOLA: ya trae el IVA adentro.
+ * Así lo trata la venta autoritativa (`recordSale`: neto = total / 1.15), y así
+ * debe tratarlo cualquier documento que use precios de venta (cotizaciones).
+ * Sumar 15% ENCIMA de un precio inclusivo cobra el IVA dos veces: un producto
+ * de góndola de C$115 se vendía a C$115 pero se cotizaba a C$132.25.
+ *
+ * `iva` se deriva por RESTA (no por multiplicación) para garantizar la
+ * identidad exacta `neto + iva === totalConIva`, sin descuadre de centavos.
+ */
+export function desglosarIvaIncluido(totalConIva: Decimal.Value): { neto: Decimal; iva: Decimal } {
+    const total = new Decimal(totalConIva).toDecimalPlaces(2);
+    const neto = total.dividedBy(IVA_FACTOR).toDecimalPlaces(2);
+    return { neto, iva: total.minus(neto) };
+}
+
 export interface MonthlyTaxReport {
     month: number;
     year: number;
