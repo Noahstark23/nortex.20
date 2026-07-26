@@ -10,7 +10,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import Decimal from 'decimal.js';
-import { generateMonthlyReport } from './nicaTax';
+import { generateMonthlyReport, desglosarVentaConExoneracion } from './nicaTax';
 
 // Configuración global: 20 dígitos significativos, redondeo HALF_UP (DGI)
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
@@ -235,12 +235,19 @@ export async function recordSale(
     saleId: string,
     saleTotal: number,
     costTotal: number,
-    paymentMethod: string
+    paymentMethod: string,
+    // T2 — porción EXONERADA del total (canasta básica, medicamentos…). Opcional:
+    // si no viene (o es null), la venta se trata como 100% GRAVADA, que es el
+    // comportamiento histórico. Así las llamadas viejas siguen funcionando igual.
+    exemptTotal?: number | null
 ) {
-    // IVA Nicaragua 15%: total = neto * 1.15  →  neto = total / 1.15
-    const dTotal = new Decimal(saleTotal);
-    const salesNeto = dTotal.dividedBy('1.15').toDecimalPlaces(4);
-    const ivaAmount = dTotal.minus(salesNeto).toDecimalPlaces(4);
+    // IVA Nicaragua 15% SOLO sobre la parte gravada (misma función pura que usa
+    // la declaración mensual → el mayor y el VET no pueden discrepar). Antes se
+    // dividía el total ENTERO, así que una pulpería que vende canasta básica
+    // acreditaba IVA por Pagar (2.1.2) que jamás le cobró al cliente.
+    const desglose = desglosarVentaConExoneracion(saleTotal, exemptTotal ?? 0);
+    const ivaAmount = desglose.iva;
+    const salesNeto = desglose.ingresoNeto;   // neto gravado + exonerado
 
     const cashAccount = paymentMethod === 'CREDIT' ? '1.1.3' : '1.1.1'; // CxC vs Caja
     const description = paymentMethod === 'CREDIT'

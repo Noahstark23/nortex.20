@@ -2868,7 +2868,7 @@ app.get('/api/products/categories', authenticate, async (req: any, res: any) => 
 // POST /api/products - Crear producto (OWNER o ADMIN)
 app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking, reorderPoint, maxStock, defaultSupplierId, wholesalePrice, wholesaleMinQty, packUnit, packSize, packPrice } = req.body;
+    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking, reorderPoint, maxStock, defaultSupplierId, wholesalePrice, wholesaleMinQty, packUnit, packSize, packPrice, ivaExento } = req.body;
 
     // Venta por mayor: si vienen, deben ser números > 0 (null/'' = sin mayoreo).
     const wp = wholesalePrice !== undefined && wholesalePrice !== null && wholesalePrice !== '' ? parseFloat(wholesalePrice) : null;
@@ -2918,6 +2918,9 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (re
                 minStock: parseFloat(minStock) || 0,
                 unit: unit || 'unidad',
                 isPublished: Boolean(isPublished),
+                // T2: exoneración de IVA (canasta básica, medicamentos). Default
+                // false = gravado; la clasificación legal la decide el negocio.
+                ivaExento: Boolean(ivaExento),
                 imageUrl: imageUrl || null,
                 requiresBatchTracking: Boolean(requiresBatchTracking),
                 reorderPoint: parseFloat(reorderPoint) || 0,
@@ -3103,7 +3106,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
 app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { name, description, category, price, cost, stock, minStock, unit, imageUrl, reorderPoint, maxStock, defaultSupplierId, wholesalePrice, wholesaleMinQty, packUnit, packSize, packPrice } = req.body;
+    const { name, description, category, price, cost, stock, minStock, unit, imageUrl, reorderPoint, maxStock, defaultSupplierId, wholesalePrice, wholesaleMinQty, packUnit, packSize, packPrice, ivaExento } = req.body;
 
     try {
         const existing = await prisma.product.findFirst({
@@ -3124,6 +3127,9 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
         // parseFloat preserva la fracción; parseInt truncaba y perdía inventario.
         if (minStock !== undefined) updates.minStock = parseFloat(minStock);
         if (unit !== undefined) updates.unit = unit;
+        // T2: reclasificar exoneración de IVA. Las ventas YA registradas no cambian
+        // (SaleItem.ivaExento es una foto del momento de la venta).
+        if (ivaExento !== undefined) updates.ivaExento = Boolean(ivaExento);
         if (imageUrl !== undefined) updates.imageUrl = imageUrl;
         if (reorderPoint !== undefined) updates.reorderPoint = parseFloat(reorderPoint) || 0;
         if (maxStock !== undefined) updates.maxStock = parseFloat(maxStock) || 0;

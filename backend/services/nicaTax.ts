@@ -21,14 +21,48 @@ const IVA_RATE = new Decimal('0.15');
 const ANTICIPO_IR_RATE = new Decimal('0.01');  // 1% anticipo mensual
 const IMI_RATE = new Decimal('0.01');           // 1% impuesto municipal (Alcaldía)
 
+/**
+ * T2 — Desglose de IVA de una venta con parte EXONERADA.
+ *
+ * Fuente única de verdad del cálculo: la usan el asiento contable (`recordSale`)
+ * y la declaración mensual, para que el mayor y el VET nunca discrepen.
+ *
+ * Reglas:
+ *  - `exento` se acota a [0, total] (defensa ante datos inconsistentes: un exento
+ *    mayor que el total daría IVA negativo).
+ *  - El IVA solo grava `total − exento`, y ese gravado YA trae el IVA incluido
+ *    (precio de góndola) → `neto = gravado / 1.15`, `iva = gravado − neto`.
+ *  - El ingreso neto es `netoGravado + exonerado`: lo exonerado SÍ es ingreso,
+ *    solo que sin IVA que separar.
+ */
+export function desglosarVentaConExoneracion(total: Decimal.Value, exento: Decimal.Value = 0) {
+    const dTotal = new Decimal(total);
+    const dExento = Decimal.min(
+        Decimal.max(new Decimal(exento ?? 0), new Decimal(0)),
+        dTotal
+    );
+    const gravado = dTotal.minus(dExento);
+    const netoGravado = gravado.dividedBy(IVA_RATE.plus(1)).toDecimalPlaces(4);
+    const iva = gravado.minus(netoGravado).toDecimalPlaces(4);
+    return {
+        exonerado: dExento.toDecimalPlaces(4),
+        gravado: gravado.toDecimalPlaces(4),
+        netoGravado,
+        iva,
+        ingresoNeto: netoGravado.plus(dExento).toDecimalPlaces(4),
+    };
+}
+
 export interface MonthlyTaxReport {
     month: number;
     year: number;
 
     // Ventas
     totalSales: number;           // Ventas brutas (con IVA)
-    salesNetasSinIVA: number;     // Ventas sin IVA
-    totalIVACollected: number;    // IVA cobrado en ventas
+    ventasExentas: number;        // T2 — ventas EXONERADAS (canasta básica, medicinas)
+    ventasGravadas: number;       // T2 — ventas gravadas brutas (total − exentas)
+    salesNetasSinIVA: number;     // Ventas sin IVA (neto gravado + exentas)
+    totalIVACollected: number;    // IVA cobrado (solo sobre lo gravado)
 
     // Compras
     totalPurchases: number;       // Compras brutas (con IVA)
@@ -73,15 +107,28 @@ export async function generateMonthlyReport(
             createdAt: { gte: startDate, lte: endDate },
             status: { not: 'VOIDED' },
         },
-        _sum: { total: true },
+        _sum: { total: true, exemptTotal: true },
         _count: true,
     });
 
     const totalSalesRaw = new Decimal(salesResult._sum.total?.toString() ?? '0');
 
-    // Separar IVA de las ventas: total incluye IVA → neto = total / (1 + 0.15)
-    const salesNetasSinIVA = totalSalesRaw.dividedBy(IVA_RATE.plus(1)).toDecimalPlaces(4);
-    const totalIVACollected = totalSalesRaw.minus(salesNetasSinIVA).toDecimalPlaces(4);
+    // T2 — Ventas EXONERADAS del período (canasta básica, medicamentos…).
+    // `Sale.exemptTotal` es NULL en ventas anteriores a T2: el _sum las ignora,
+    // así que quedan como gravadas — el comportamiento histórico, sin backfill.
+    // El IVA se separa SOLO de lo gravado (misma función que usa el asiento
+    // contable, para que el mayor y el VET nunca discrepen). Antes se dividía el
+    // total ENTERO, así que se declaraba —y se pagaba— IVA por ventas exoneradas
+    // que nunca se le cobraron al cliente.
+    const desglose = desglosarVentaConExoneracion(
+        totalSalesRaw,
+        salesResult._sum.exemptTotal?.toString() ?? '0'
+    );
+    const ventasExentas = desglose.exonerado;
+    const ventasGravadas = desglose.gravado;
+    const totalIVACollected = desglose.iva;
+    // Base del anticipo IR / IMI: ingreso neto (gravado sin IVA + exoneradas).
+    const salesNetasSinIVA = desglose.ingresoNeto;
 
     // 2. Obtener compras del mes (IVA pagado = crédito fiscal)
     const purchasesResult = await prisma.purchase.aggregate({
@@ -140,7 +187,9 @@ export async function generateMonthlyReport(
 Preparado por: NORTEX ERP
 
 📊 VENTAS DEL PERÍODO
-   Ventas Brutas (con IVA): C$ ${totalSalesRaw.toFixed(2)}
+   Ventas Brutas (con IVA): C$ ${totalSalesRaw.toFixed(2)}${ventasExentas.greaterThan(0) ? `
+   (−) Ventas Exoneradas:   C$ ${ventasExentas.toFixed(2)}
+   = Ventas Gravadas:       C$ ${ventasGravadas.toFixed(2)}` : ''}
    Ventas Netas (sin IVA):  C$ ${salesNetasSinIVA.toFixed(2)}
    IVA Cobrado (15%):       C$ ${totalIVACollected.toFixed(2)}
 
@@ -163,6 +212,8 @@ Preparado por: NORTEX ERP
         month,
         year,
         totalSales: totalSalesRaw.toNumber(),
+        ventasExentas: ventasExentas.toNumber(),
+        ventasGravadas: ventasGravadas.toNumber(),
         salesNetasSinIVA: salesNetasSinIVA.toNumber(),
         totalIVACollected: totalIVACollected.toNumber(),
         totalPurchases: totalPurchases.toNumber(),
@@ -230,9 +281,9 @@ Período: ${monthNames[month - 1].toUpperCase()} ${year}
    Total Facturas Emitidas: ${invoiceRange._count}
 
 📊 RESUMEN DE VENTAS
-   Ventas Gravadas (sin IVA):  C$ ${taxReport.salesNetasSinIVA.toFixed(2)}
+   Ventas Gravadas (sin IVA):  C$ ${(taxReport.salesNetasSinIVA - taxReport.ventasExentas).toFixed(2)}
    IVA 15%:                     C$ ${taxReport.totalIVACollected.toFixed(2)}
-   Ventas Exentas:              C$ 0.00
+   Ventas Exentas:              C$ ${taxReport.ventasExentas.toFixed(2)}
    Total Ventas (con IVA):      C$ ${taxReport.totalSales.toFixed(2)}
 
 🛒 COMPRAS Y CRÉDITO FISCAL
