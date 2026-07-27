@@ -32,6 +32,7 @@ interface Product {
     creator?: { name: string };
     updatedAt?: string;
     requiresBatchTracking?: boolean;
+    ivaExento?: boolean;
     reorderPoint?: number;
     maxStock?: number;
     defaultSupplierId?: string | null;
@@ -181,7 +182,7 @@ export default function Inventory() {
     // Create form
     const [formData, setFormData] = useState({
         name: '', sku: '', description: '', category: '',
-        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: '',
+        price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, ivaExento: false, reorderPoint: '', maxStock: '',
         wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: ''
     });
 
@@ -674,13 +675,14 @@ export default function Inventory() {
                     cost: parseFloat(formData.cost),
                     stock: parseInt(formData.stock) || 0,
                     minStock: parseInt(formData.minStock) || 5,
-                    requiresBatchTracking: formData.requiresBatchTracking
+                    requiresBatchTracking: formData.requiresBatchTracking,
+                    ivaExento: formData.ivaExento
                 })
             });
 
             if (res.ok) {
                 setShowCreateModal(false);
-                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, reorderPoint: '', maxStock: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '' });
+                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, ivaExento: false, reorderPoint: '', maxStock: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '' });
                 reload();
                 alert('Producto creado exitosamente');
             } else {
@@ -2039,6 +2041,24 @@ export default function Inventory() {
                                         <div className="flex flex-col">
                                             <span className="text-sm font-medium text-white">Requiere Control de Lote/Vencimiento</span>
                                             <span className="text-xs text-slate-400">Activar para farmacias. Exigirá lote y fecha al comprar.</span>
+                                        </div>
+                                    </label>
+                                </div>
+                                <div className="col-span-4 mt-2">
+                                    <label className="flex items-center gap-3 p-3 bg-surface-900 border border-white/[0.06] rounded-lg cursor-pointer hover:border-brand/50 transition-colors">
+                                        <div className="relative flex items-center">
+                                            <input
+                                                type="checkbox"
+                                                checked={formData.ivaExento}
+                                                onChange={(e) => setFormData({ ...formData, ivaExento: e.target.checked })}
+                                                className="sr-only"
+                                            />
+                                            <div className={`w-10 h-5 rounded-full transition-colors ${formData.ivaExento ? 'bg-accent' : 'bg-surface-700'}`}></div>
+                                            <div className={`absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-transform ${formData.ivaExento ? 'translate-x-5' : ''}`}></div>
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-medium text-white">Exonerado de IVA</span>
+                                            <span className="text-xs text-slate-400">Canasta básica y medicamentos. Si lo activás, este producto NO lleva IVA en la venta ni en tu declaración.</span>
                                         </div>
                                     </label>
                                 </div>

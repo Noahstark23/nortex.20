@@ -218,11 +218,37 @@ export async function executeSale(
             throw new SaleError('INVOICE_RANGE_EXHAUSTED', 422, 'Rango de facturación DGI agotado. Solicite nuevo rango.');
         }
 
+        // 5a-bis. Costos y trato fiscal AUTORITATIVOS del servidor. Ambos salen de
+        //   la BD (nunca del cliente): el costo evita que un POS manipulado falsee
+        //   el COGS, y el flag de exoneración evita que se declare como exento algo
+        //   que no lo es. Se leen juntos, en una sola query scoped por tenant.
+        const productIds = [...new Set(items.map((i) => i.id))];
+        const costRows = await tx.product.findMany({
+            where: { tenantId, id: { in: productIds } },
+            select: { id: true, cost: true, ivaExento: true },
+        });
+        const costByProduct = new Map(costRows.map((p) => [p.id, new Decimal(p.cost)]));
+        const exentoByProduct = new Map(costRows.map((p) => [p.id, p.ivaExento === true]));
+
+        // T2. Porción EXONERADA del total, con la MISMA fórmula de descuentos que
+        //   `finalTotal` (descuento de línea y luego el global), para que
+        //   `exemptTotal <= total` siempre y la base gravada sea exacta:
+        //   gravado = total - exemptTotal. Un producto no marcado es gravado.
+        const exemptSubtotal = items.reduce((acc, item) => {
+            if (!exentoByProduct.get(item.id)) return acc;
+            const line        = new Decimal(item.price).mul(item.quantity);
+            const discountPct = item.discount ? parseFloat(item.discount) : 0;
+            const factor      = new Decimal(1).minus(new Decimal(discountPct).div(100));
+            return acc.plus(line.mul(factor));
+        }, new Decimal(0));
+        const exemptTotal = exemptSubtotal.mul(globalFactor).toDecimalPlaces(2);
+
         // 5b. Crear venta
         const created = await tx.sale.create({
             data: {
                 tenantId,
                 total:         finalTotal.toNumber(),
+                exemptTotal:   exemptTotal.toNumber(),
                 status:        finalStatus,
                 paymentMethod,
                 customerName:  customerName ?? '',
@@ -238,16 +264,7 @@ export async function executeSale(
             },
         });
 
-        // 5c. Costos autoritativos del servidor — el costo de venta sale de
-        //     Product.cost (promedio ponderado que mantiene el flujo de compras),
-        //     NUNCA del cliente. Evita que un POS manipulado falsee el COGS (y
-        //     con él la utilidad y el IR).
-        const productIds = [...new Set(items.map((i) => i.id))];
-        const costRows = await tx.product.findMany({
-            where: { tenantId, id: { in: productIds } },
-            select: { id: true, cost: true },
-        });
-        const costByProduct = new Map(costRows.map((p) => [p.id, new Decimal(p.cost)]));
+        // (costos y trato fiscal ya resueltos en 5a-bis, antes de crear la venta)
 
         // 0a · Política de stock negativo del tenant. Si está activa, la venta NO se
         // bloquea por stock insuficiente (la salida puede dejar el stock en negativo y
@@ -272,6 +289,9 @@ export async function executeSale(
                     priceAtSale: priceD.toNumber(),
                     costAtSale:  costD.toNumber(),
                     discount:    item.discount ? parseFloat(item.discount) : 0,
+                    // T2: foto del trato fiscal al momento de vender — si el dueño
+                    // reclasifica el producto luego, esta venta no cambia.
+                    ivaExento:   exentoByProduct.get(item.id) === true,
                 },
             });
 
@@ -333,7 +353,8 @@ export async function executeSale(
                 created.id,
                 finalTotal.toNumber(),
                 costTotal.toDecimalPlaces(2).toNumber(),
-                paymentMethod
+                paymentMethod,
+                exemptTotal.toNumber()   // T2: el IVA solo grava la parte no exonerada
             );
         } catch (accErr) {
             console.warn('⚠️ Accounting hook failed (sale continues):', accErr);

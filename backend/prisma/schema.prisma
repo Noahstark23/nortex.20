@@ -512,6 +512,11 @@ model Sale {
   id             String    @id @default(cuid())
   tenantId       String
   total          Decimal   @db.Decimal(18, 4)
+  // T2 — porción del total que corresponde a productos EXONERADOS de IVA.
+  // NULLABLE a propósito (backfill perezoso): `null` = venta anterior a T2 →
+  // se trata como 100% GRAVADA, exactamente el comportamiento histórico. Solo
+  // las ventas nuevas escriben un valor (0 cuando todo es gravado).
+  exemptTotal    Decimal?  @db.Decimal(18, 4)
   status         String
   paymentMethod  String
   customerName   String?
@@ -553,6 +558,9 @@ model SaleItem {
   priceAtSale Decimal @db.Decimal(10, 2)
   costAtSale  Decimal @db.Decimal(10, 2)
   discount    Float   @default(0) // Item discount percentage (0-100)
+  // T2: foto del trato fiscal AL MOMENTO de vender (igual que costAtSale).
+  // Si el dueño reclasifica el producto después, las ventas viejas no cambian.
+  ivaExento   Boolean @default(false)
 
   sale Sale @relation(fields: [saleId], references: [id])
 
@@ -893,6 +901,12 @@ model Product {
 
   // Catálogo Público
   isPublished Boolean @default(false) // Visible en catálogo público
+
+  // T2 — IVA: exoneración por producto. Nicaragua exonera canasta básica y
+  // medicamentos (LCT 822 art. 127). Default false = GRAVADO, que es el
+  // comportamiento histórico: ningún producto existente cambia de trato.
+  // La clasificación legal la hace el dueño del negocio, no el sistema.
+  ivaExento Boolean @default(false)
   imageUrl    String? // URL de imagen del producto
 
   // Control de Lotes
