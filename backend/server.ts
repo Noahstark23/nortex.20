@@ -7854,11 +7854,22 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
         const tenant = await prisma.tenant.findUnique({ where: { id: authReq.tenantId } });
         if (!tenant) return res.status(404).json({ error: 'Tenant no encontrado.' });
 
-        const subtotal = items.reduce((s: number, i: any) => s + (i.quantity * i.unitCost), 0);
-        const tax = subtotal * 0.15; // IVA 15%
-        const total = subtotal + tax;
+        // A2 — montos con decimal.js (antes float nativo: se ALMACENAN en
+        // Purchase/CapitalLoan y alimentan el asiento; el float acumula centavos).
+        // El costo del proveedor (unitCost) NO trae IVA → el IVA se SUMA (15%),
+        // igual que en /api/purchases (correcto para compras).
+        const subtotalD = items.reduce(
+            (s: Decimal, i: any) => s.plus(new Decimal(i.quantity).mul(i.unitCost)),
+            new Decimal(0)
+        ).toDecimalPlaces(4);
+        const taxD = subtotalD.mul('0.15').toDecimalPlaces(4);
+        const totalD = subtotalD.plus(taxD).toDecimalPlaces(4);
         const interestRate = 0.05; // 5% flat
-        const totalDue = total * (1 + interestRate);
+        const totalDueD = totalD.mul(new Decimal(1).plus(interestRate)).toDecimalPlaces(4);
+        const subtotal = subtotalD.toNumber();
+        const tax = taxD.toNumber();
+        const total = totalD.toNumber();
+        const totalDue = totalDueD.toNumber();
 
         const creditLimit = Number(tenant.creditLimit);
         if (total > creditLimit) {
@@ -7930,8 +7941,13 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
             await signCapitalLoan(tx, loan);
 
             // c) Asiento contable (Partida Doble)
-            // Debe: Inventario de Mercancías (1.1.4) — aumenta activo
-            // Haber: Préstamos Nortex Capital por Pagar (2.1.8) — aumenta pasivo
+            // A2 — antes se debitaba TODO el `total` (con IVA) a Inventario (1.1.4)
+            // y se omitía IVA Crédito Fiscal (1.1.5): el inventario quedaba
+            // sobrevaluado en el 15% y se PERDÍA el crédito fiscal del IVA de la
+            // compra. Ahora se separa igual que `recordPurchase`:
+            //   Debe: Inventario (1.1.4) = subtotal SIN IVA
+            //   Debe: IVA Crédito Fiscal (1.1.5) = IVA de la compra
+            //   Haber: Préstamos Nortex Capital por Pagar (2.1.8) = total
             const { createJournalEntry } = await import('./services/accounting');
             await createJournalEntry(
                 tx,
@@ -7941,8 +7957,9 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
                 'CAPITAL_LOAN',
                 authReq.userId!,
                 [
-                    { accountCode: '1.1.4', debit: total, credit: 0 },    // Inventario ↑
-                    { accountCode: '2.1.8', debit: 0, credit: total },    // Préstamo por Pagar ↑
+                    { accountCode: '1.1.4', debit: subtotal, credit: 0 },  // Inventario ↑ (sin IVA)
+                    { accountCode: '1.1.5', debit: tax, credit: 0 },       // IVA Crédito Fiscal ↑
+                    { accountCode: '2.1.8', debit: 0, credit: total },     // Préstamo por Pagar ↑
                 ]
             );
 
