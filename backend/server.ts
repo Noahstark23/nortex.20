@@ -4460,8 +4460,14 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             });
             const walletBefore = new Decimal(tenantBefore?.walletBalance?.toString() ?? '0');
 
-            // 1. Calcular totales
+            // 1. Calcular totales. T2 Fase 2 — el crédito fiscal (IVA de compras)
+            //    se genera SOLO por los ítems GRAVADOS. Antes se aplicaba 15% a
+            //    TODO el subtotal, así que una farmacia que compra medicamentos
+            //    exonerados se acreditaba un crédito fiscal INEXISTENTE (menos IVA
+            //    a pagar del que corresponde). `product.ivaExento` es autoritativo
+            //    (viene de la BD scoped por tenant, nunca del cliente).
             let subtotal = 0;
+            let taxableSubtotal = new Decimal(0);   // base gravada (no exonerada)
             const processedItems: any[] = [];
 
             for (const item of items) {
@@ -4479,6 +4485,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
 
                 const totalCost = new Decimal(item.quantity).mul(item.unitCost);
                 subtotal = new Decimal(subtotal).plus(totalCost).toNumber();
+                if (!product.ivaExento) taxableSubtotal = taxableSubtotal.plus(totalCost);
 
                 processedItems.push({
                     productId:   item.productId,
@@ -4491,7 +4498,11 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 });
             }
 
-            const tax   = new Decimal(subtotal).mul('0.15').toDecimalPlaces(4).toNumber(); // IVA 15% Nicaragua
+            // IVA solo sobre la base GRAVADA. `total = subtotal(todo) + IVA(gravado)`:
+            // se paga al proveedor el costo de TODA la mercancía más el IVA de la
+            // parte gravada. En recordPurchase el asiento queda Debe 1.1.4 = subtotal
+            // (todo el inventario) + Debe 1.1.5 = tax (crédito solo del gravado).
+            const tax   = taxableSubtotal.mul('0.15').toDecimalPlaces(4).toNumber(); // IVA 15% Nicaragua
             const total = new Decimal(subtotal).plus(tax).toDecimalPlaces(4).toNumber();
 
             // 2. Crear cabecera de compra
