@@ -17,7 +17,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import Decimal from 'decimal.js';
 import { authenticate } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
-import { applyStockDelta } from '../services/stockService';
+import { applyStockDelta, weightedAverageCost } from '../services/stockService';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -79,13 +79,16 @@ async function applyGoodsReceipt(
 
         // Costo promedio ponderado con el costo de la OC.
         const oldStock = new Decimal(stockBefore);
-        const oldCost = new Decimal(product.cost.toString());
-        const unitCost = new Decimal(item.unitCost.toString());
-        const recvD = new Decimal(recv);
+        // C2 — costo re-leído con la fila YA BLOQUEADA por applyStockDelta (FOR
+        // UPDATE). El `product.cost` de arriba viene de un findFirst NO-bloqueante
+        // ANTES del lock (snapshot REPEATABLE READ): con recepciones concurrentes
+        // del mismo producto quedaría STALE y el promedio mezclaría stock nuevo con
+        // costo viejo. La lectura locking devuelve el costo comprometido más reciente.
+        const lockedCostRows: any[] = await tx.$queryRaw`SELECT cost FROM \`Product\` WHERE id = ${product.id} AND \`tenantId\` = ${tenantId} FOR UPDATE`;
+        const oldCost = new Decimal((lockedCostRows[0]?.cost ?? 0).toString());
         const newStock = new Decimal(stockAfter);
-        const newAvgCostD = newStock.gt(0)
-            ? oldStock.mul(oldCost).plus(recvD.mul(unitCost)).dividedBy(newStock).toDecimalPlaces(4)
-            : unitCost;
+        // Promedio ponderado móvil (función pura compartida — regla C1 adentro).
+        const newAvgCostD = weightedAverageCost(oldStock, oldCost, recv, item.unitCost.toString());
 
         await tx.product.update({
             where: { id: product.id },
@@ -136,7 +139,7 @@ async function applyGoodsReceipt(
         results.push({
             productId: product.id,
             quantityReceived: recv,
-            unitCost: unitCost.toString(),
+            unitCost: item.unitCost.toString(),
             stockBefore: oldStock.toString(),
             stockAfter: newStock.toString(),
             costBefore: oldCost.toString(),

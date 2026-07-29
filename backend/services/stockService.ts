@@ -36,6 +36,37 @@
  */
 
 import { Prisma } from '@prisma/client';
+import Decimal from 'decimal.js';
+
+/**
+ * Costo promedio ponderado móvil (moving average) — función PURA.
+ *
+ * `nuevoPromedio = (stockViejo*costoViejo + cantidadEntrante*costoEntrante) / stockNuevo`
+ *
+ * C1 (auditoría): SOLO se pondera si el stock viejo es POSITIVO. Con stock
+ * negativo (backorder por `allowNegativeStock`), `stockViejo*costoViejo` es un
+ * "costo de deuda" IRREAL que corrompe el promedio; en ese caso el stock
+ * resultante proviene íntegramente de la entrada → el costo ES el de la compra.
+ * También cae al costo de compra si el stock nuevo no es positivo (sigue en
+ * backorder) o si no había stock previo. Nunca divide por ≤ 0.
+ *
+ * El caller debe pasar `oldCost` LEÍDO CON LA FILA BLOQUEADA (C2): un costo del
+ * snapshot (pre-lock) puede estar stale bajo compras concurrentes del mismo SKU.
+ */
+export function weightedAverageCost(
+    oldStock: Decimal.Value,
+    oldCost: Decimal.Value,
+    qtyIn: Decimal.Value,
+    unitCost: Decimal.Value,
+): Decimal {
+    const os = new Decimal(oldStock);
+    const uc = new Decimal(unitCost);
+    const newStock = os.plus(qtyIn);
+    if (os.lessThanOrEqualTo(0) || newStock.lessThanOrEqualTo(0)) {
+        return uc.toDecimalPlaces(4);
+    }
+    return os.mul(oldCost).plus(new Decimal(qtyIn).mul(uc)).dividedBy(newStock).toDecimalPlaces(4);
+}
 
 export class StockError extends Error {
     constructor(
