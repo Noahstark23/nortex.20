@@ -1,0 +1,6 @@
+interface:
+  display_name: "Nortex.20"
+  short_description: "Repo-specific patterns and workflows for nortex.20"
+  default_prompt: "Use the nortex.20 repo skill to follow existing architecture, testing, and workflow conventions."
+policy:
+  allow_implicit_invocation: true
