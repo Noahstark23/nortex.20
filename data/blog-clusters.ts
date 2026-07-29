@@ -19,6 +19,15 @@ export interface BlogCluster {
     pillarSlug: string;
     /** emoji corto para el chip/hub (sin dependencias de íconos extra) */
     emoji: string;
+    // Campos SEO opcionales que consume components/BlogCategory.tsx (hub de
+    // clúster alternativo). El merge de #61/#62 los referenciaba sin declararlos.
+    // Opcionales: los datos actuales de blogClusters no los definen y siguen válidos.
+    /** título <title> del hub (fallback: name) */
+    metaTitle?: string;
+    /** H1 del hub (fallback: name) */
+    h1?: string;
+    /** párrafo introductorio del hub */
+    intro?: string;
 }
 
 export const blogClusters: BlogCluster[] = [
@@ -140,3 +149,6 @@ const clustersBySlug: Record<string, BlogCluster> = Object.fromEntries(
 
 export const getClusterByName = (name: string): BlogCluster | undefined => clustersByName[name];
 export const getClusterBySlug = (slug: string): BlogCluster | undefined => clustersBySlug[slug];
+// Alias usado por BlogCategory.tsx (recibe el :slug de la ruta). El merge de
+// #61/#62 lo referenciaba sin exportarlo.
+export const getCluster = getClusterBySlug;

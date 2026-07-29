@@ -146,25 +146,15 @@
 }
 
 /* ==========================================
-   CONTENIDO DEL BLOG (.prose-nortex)
-   Estilos para el HTML generado por utils/markdown.ts
-   (mismo renderer en SPA y en el prerender SEO).
+   TIPOGRAFÍA DEL BLOG (.prose-nortex)
+   El cuerpo de los artículos se renderiza con utils/markdown.ts (HTML único para
+   cliente y prerender). Estos estilos le dan jerarquía sobre fondo claro.
+   (Bloque reconstruido: el merge de #61/#62 interleó dos versiones y dejó CSS
+   malformado —regla sin cerrar + propiedades sin selector— que rompía postcss.)
    ========================================== */
 .prose-nortex {
   color: #475569; /* slate-600 */
   line-height: 1.75;
-}
-.prose-nortex h2 {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #0f172a; /* slate-900 */
-   TIPOGRAFÍA DEL BLOG (.prose-nortex)
-   El cuerpo de los artículos se renderiza con lib/markdown.ts (HTML único para
-   cliente y prerender). Estos estilos le dan jerarquía sobre fondo claro.
-   ========================================== */
-.prose-nortex {
-  color: #475569; /* slate-600 */
-  line-height: 1.7;
   font-size: 1rem;
 }
 .prose-nortex h2 {
@@ -176,43 +166,27 @@
   margin-bottom: 1rem;
 }
 .prose-nortex h3 {
+  color: #1e293b; /* slate-800 */
   font-size: 1.25rem;
   font-weight: 700;
-  color: #1e293b; /* slate-800 */
   margin-top: 1.5rem;
   margin-bottom: 0.75rem;
 }
 .prose-nortex h4 {
+  color: #1e293b; /* slate-800 */
   font-size: 1.05rem;
   font-weight: 700;
-  color: #1e293b;
   margin-top: 1.25rem;
   margin-bottom: 0.5rem;
 }
 .prose-nortex p {
   margin-bottom: 1rem;
 }
-.prose-nortex ul {
-  list-style: disc;
-  padding-left: 1.5rem;
-  margin-bottom: 1rem;
-}
-.prose-nortex li {
-  margin-bottom: 0.35rem;
-}
-  color: #1e293b; /* slate-800 */
-  font-size: 1.25rem;
-  font-weight: 700;
-  margin-top: 1.5rem;
-  margin-bottom: 0.75rem;
-}
-.prose-nortex p {
-  margin-bottom: 1rem;
-}
 .prose-nortex strong {
-  color: #1e293b;
+  color: #1e293b; /* slate-800 */
   font-weight: 700;
 }
+
 .prose-nortex a {
   color: #059669; /* emerald-600 */
   font-weight: 600;

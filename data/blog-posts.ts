@@ -26,6 +26,8 @@ export interface BlogPost {
     keyword: string;
     /** Nombre EXACTO del clúster (data/blog-clusters.ts → BlogCluster.name). */
     cluster: string;
+    /** true = artículo PILAR del clúster (ordena primero en el hub). */
+    isPillar?: boolean;
     /** Badge corto para tarjetas/encabezado. */
     category: string;
     /** Fecha de publicación ISO YYYY-MM-DD. */
