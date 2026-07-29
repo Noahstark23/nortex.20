@@ -1,4 +1,11 @@
 import React, { Suspense, lazy, useEffect, useRef } from 'react';
+
+// Blog (lazy: el contenido de los artículos NO entra al bundle inicial del SPA).
+// Restaurados: el merge de #61/#62 borró estas declaraciones pero dejó las rutas
+// que las usan (Blog/BlogPost/ClusterPage), rompiendo la compilación.
+const Blog = lazy(() => import('./components/Blog'));
+const BlogPost = lazy(() => import('./components/BlogPost'));
+const ClusterPage = lazy(() => import('./components/ClusterPage'));
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
 import { trackPageView } from './utils/analytics';
