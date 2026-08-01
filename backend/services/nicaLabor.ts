@@ -231,36 +231,66 @@ export function calculatePayroll(
 }
 
 /**
- * Calcula el pasivo laboral de un empleado (Aguinaldo, Vacaciones, Indemnización).
- * Según Ley 185 del Código del Trabajo de Nicaragua.
+ * Calcula el pasivo laboral DEVENGADO de un empleado (Aguinaldo, Vacaciones,
+ * Indemnización) — Ley 185. Es el estimador del reporte de pasivos; usa las
+ * MISMAS reglas que la liquidación real (`calculateSettlement`) para que el
+ * pasivo reportado no sobrestime lo que de verdad se pagaría (N1):
+ *  - Vacaciones: saldo REAL acumulado si se conoce (Employee.vacationDays, que
+ *    la nómina incrementa y las licencias descuentan); el estimado 2.5
+ *    días/mes topado a 30 queda solo de fallback.
+ *  - Aguinaldo (Art. 93): proporcional desde el último 1-dic (o la fecha de
+ *    contratación si es posterior) — NO desde enero: el período del treceavo
+ *    mes corre dic→nov, y el cálculo viejo ignoraba además la fecha de
+ *    contratación (a un empleado contratado en octubre le acreditaba 10 meses).
+ *  - Indemnización (Art. 45): 30 días/año los primeros 3 años, 20 días/año a
+ *    partir del 4º, fracción proporcional al tramo, techo 5 meses (150 días).
+ *    El cálculo viejo pagaba 1 mes por TODOS los años y sumaba la fracción
+ *    DESPUÉS del techo (7.5 años → 5.5 meses > máximo legal).
+ *    Sin piso de 1 mes: el piso (N4) solo cristaliza al liquidar, y su
+ *    aplicación exacta está pendiente de decisión del contador.
  */
 export function calculateLaborLiability(
     employeeId: string,
     employeeName: string,
     hireDate: Date,
-    baseSalary: number
+    baseSalary: number,
+    vacationDaysBalance?: number | null
 ): LaborLiability {
     const now = new Date();
-    const diffMs = now.getTime() - new Date(hireDate).getTime();
+    const hire = new Date(hireDate);
+    const diffMs = now.getTime() - hire.getTime();
     const monthsWorked = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24 * 30.44)));
-    const yearsWorked  = new Decimal(monthsWorked).dividedBy(12);
 
     const dBase = new Decimal(baseSalary);
     const salarioDiario = dBase.dividedBy(30);
 
-    // Vacaciones: 15 días por cada 6 meses trabajados (2.5 días/mes)
-    const diasVacaciones = Decimal.min(new Decimal(monthsWorked).mul('2.5'), 30);
+    // Vacaciones: saldo real si está disponible; estimado como fallback.
+    const diasVacaciones = (vacationDaysBalance !== undefined && vacationDaysBalance !== null)
+        ? new Decimal(Math.max(0, vacationDaysBalance))
+        : Decimal.min(new Decimal(monthsWorked).mul('2.5'), 30);
     const vacacionesPendientes = diasVacaciones.mul(salarioDiario).toDecimalPlaces(4);
 
-    // Aguinaldo (Treceavo Mes): Proporcional al tiempo trabajado en el año
-    const mesEnAnio = now.getMonth(); // 0-11
-    const aguinaldoProporcional = dBase.dividedBy(12).mul(mesEnAnio + 1);
-    const aguinaldoAcumulado    = aguinaldoProporcional.toDecimalPlaces(4);
+    // Aguinaldo (Art. 93): días desde max(último 1-dic, contratación), /360.
+    const lastDec1 = now.getMonth() >= 11
+        ? new Date(now.getFullYear(), 11, 1)
+        : new Date(now.getFullYear() - 1, 11, 1);
+    const aguinaldoStart = hire > lastDec1 ? hire : lastDec1;
+    const diasAguinaldo = now >= aguinaldoStart
+        ? Math.min(360, Math.floor((now.getTime() - aguinaldoStart.getTime()) / 86400000) + 1)
+        : 0;
+    const aguinaldoAcumulado = dBase.mul(Math.min(1, diasAguinaldo / 360)).toDecimalPlaces(4);
 
-    // Indemnización por antigüedad: 1 mes por año trabajado (máximo 5 meses)
-    const aniosIndemnizacion = Decimal.min(yearsWorked.floor(), 5);
-    const fraccion           = yearsWorked.minus(yearsWorked.floor());
-    const indemnizacion      = aniosIndemnizacion.plus(fraccion).mul(dBase).toDecimalPlaces(4);
+    // Indemnización (Art. 45): tramos 30/20 días con fracción, techo 150 días.
+    const anios = Math.max(0, diffMs / (1000 * 60 * 60 * 24 * 365.25));
+    let indemnizacionDias = 0;
+    if (anios > 0) {
+        const completos = Math.floor(anios);
+        for (let i = 1; i <= completos; i++) indemnizacionDias += i <= 3 ? 30 : 20;
+        const fraccion = anios - completos;
+        indemnizacionDias += fraccion * ((completos + 1) <= 3 ? 30 : 20);
+        indemnizacionDias = Math.min(indemnizacionDias, 150); // techo 5 meses
+    }
+    const indemnizacion = salarioDiario.mul(indemnizacionDias).toDecimalPlaces(4);
 
     const totalPasivo = vacacionesPendientes.plus(aguinaldoAcumulado).plus(indemnizacion).toDecimalPlaces(4);
 
