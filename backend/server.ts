@@ -19,7 +19,7 @@ import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn,
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
-import { applyStockDelta, StockError } from './services/stockService';
+import { applyStockDelta, StockError, weightedAverageCost } from './services/stockService';
 import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger, appendDriverWalletMovement, verifyDriverLedger } from './services/ledger';
 import { signAuthToken } from './services/secrets';
 import { initObservability, errorTelemetry } from './services/observability';
@@ -4544,13 +4544,18 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 const oldStock = stockBefore;
                 const newStock = stockAfter;
 
-                // Costo promedio ponderado con el stockBefore autoritativo (post-lock):
-                // (stockViejo*costoViejo + cantidadNueva*costoNuevo) / stockTotal
-                const oldTotalCost = new Decimal(oldStock).mul(product.cost.toString());
-                const newTotalCost = new Decimal(item.quantity).mul(item.unitCost.toString());
-                const newAvgCost   = newStock > 0
-                    ? oldTotalCost.plus(newTotalCost).dividedBy(newStock).toDecimalPlaces(4).toNumber()
-                    : new Decimal(item.unitCost.toString()).toNumber();
+                // C2 — costo viejo re-leído con la fila YA BLOQUEADA por applyStockDelta
+                // (FOR UPDATE). El `product.cost` de arriba viene de un findUnique
+                // NO-bloqueante ANTES del lock: bajo REPEATABLE READ es el snapshot de la
+                // tx y puede estar STALE si una compra concurrente del MISMO producto ya
+                // movió el costo → el promedio mezclaría stock nuevo con costo viejo
+                // (ej. graba 6.3333 donde lo correcto era 7.00). La lectura locking
+                // devuelve el costo comprometido más reciente.
+                const lockedCostRows: any[] = await tx.$queryRaw`SELECT cost FROM \`Product\` WHERE id = ${item.productId} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
+                const oldCost = new Decimal((lockedCostRows[0]?.cost ?? 0).toString());
+
+                // Promedio ponderado móvil (función pura compartida — regla C1 adentro).
+                const newAvgCost = weightedAverageCost(oldStock, oldCost, item.quantity, item.unitCost.toString()).toNumber();
 
                 await tx.product.update({
                     where: { id: item.productId },
@@ -4563,7 +4568,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     productId: item.productId,
                     stockBefore: oldStock,
                     stockAfter: newStock,
-                    costBefore: new Decimal(product.cost.toString()).toNumber(),
+                    costBefore: oldCost.toNumber(),
                     costAfter: newAvgCost
                 });
 
