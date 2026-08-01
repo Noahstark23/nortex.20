@@ -400,8 +400,12 @@ export async function generateAnnualIR(tenantId: string, year: number): Promise<
 
     // Agregación del ejercicio desde el libro (mismo criterio que el Estado de
     // Resultados): ingresos, costo de ventas (5.1.1) y gastos (resto de 5.x).
+    // E4: se EXCLUYE el asiento de CIERRE ANUAL (fechado 31-dic): salda todos
+    // los ingresos/gastos del año, así que incluirlo dejaría la utilidad fiscal
+    // en 0 para un ejercicio ya cerrado. (Prisma incluye referenceType NULL en
+    // el filtro `not` → los asientos manuales sin tipo se conservan.)
     const lines = await prisma.journalLine.findMany({
-        where: { entry: { tenantId, date: { gte: start, lte: end } } },
+        where: { entry: { tenantId, date: { gte: start, lte: end }, referenceType: { not: 'ANNUAL_CLOSE' } } },
         include: { account: { select: { type: true, code: true } } },
     });
 
