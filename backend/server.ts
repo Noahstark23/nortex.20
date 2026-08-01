@@ -8201,6 +8201,31 @@ app.post('/api/accounting/fiscal-close', authenticate, checkRole(['OWNER']), asy
     }
 });
 
+// POST /api/accounting/annual-close — Cierre ANUAL (E4): asiento que salda el
+// Estado de Resultados contra Utilidades Retenidas (3.1.2). Solo OWNER, como el
+// cierre mensual. Idempotente por año.
+app.post('/api/accounting/annual-close', authenticate, checkRole(['OWNER']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const year = Number(req.body?.year);
+    if (!Number.isInteger(year) || year < 2000 || year > 2200) {
+        return res.status(400).json({ error: 'year inválido' });
+    }
+    try {
+        const { cierreAnual } = await import('./services/accounting');
+        const result = await cierreAnual(authReq.tenantId!, year, authReq.userId!);
+        res.json({ message: `Cierre anual del ejercicio ${year} completado`, ...result });
+    } catch (error: any) {
+        console.error('Annual close error:', error);
+        if (error?.message?.startsWith('AÑO_YA_CERRADO')) {
+            return res.status(409).json({ error: error.message });
+        }
+        if (error?.message?.startsWith('SIN_MOVIMIENTOS')) {
+            return res.status(400).json({ error: error.message });
+        }
+        res.status(500).json({ error: 'Error al realizar el cierre anual' });
+    }
+});
+
 // Salario mensual base de la liquidación: promedio de los últimos 6 meses de
 // nómina (Art. 78, salario variable) o el salario base si no hay historial.
 async function salarioBaseLiquidacion(tenantId: string, employeeId: string, baseSalary: number): Promise<number> {
