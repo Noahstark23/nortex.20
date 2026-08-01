@@ -5454,8 +5454,10 @@ app.post('/api/payroll/aguinaldo/:year/run', authenticate, checkRole(['OWNER', '
 app.get('/api/labor-liabilities', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
+        // N1: un empleado TERMINATED ya fue liquidado — su pasivo se pagó en el
+        // finiquito; incluirlo inflaba el total reportado.
         const employees = await prisma.employee.findMany({
-            where: { tenantId: authReq.tenantId },
+            where: { tenantId: authReq.tenantId, status: { not: 'TERMINATED' } },
         });
 
         const liabilities = employees.map(emp =>
@@ -5463,7 +5465,8 @@ app.get('/api/labor-liabilities', authenticate, async (req: any, res: any) => {
                 emp.id,
                 `${emp.firstName} ${emp.lastName}`,
                 emp.hireDate,
-                Number(emp.baseSalary)
+                Number(emp.baseSalary),
+                Number(emp.vacationDays || 0) // saldo REAL (nómina/licencias lo mantienen)
             )
         );
 
