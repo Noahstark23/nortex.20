@@ -168,10 +168,15 @@ export async function createJournalEntry(
     }
 
     // Validate: Sum of debits must equal sum of credits (Decimal para evitar 0.1+0.2 != 0.3)
+    // A3: tolerancia 0.0001 (antes 0.01). Un centavo de descuadre POR ASIENTO se
+    // acumulaba en silencio y desviaba el mayor. Todos los flujos del motor
+    // construyen la contrapartida por COMPLEMENTO (iva = gravado − neto, etc.),
+    // así que cuadran exacto en Decimal; la tolerancia solo absorbe ruido de
+    // float (~1e-12) de callers que suman en Number antes de llamar.
     const totalDebit = lines.reduce((sum, l) => new Decimal(sum).plus(l.debit).toNumber(), 0);
     const totalCredit = lines.reduce((sum, l) => new Decimal(sum).plus(l.credit).toNumber(), 0);
-    if (new Decimal(totalDebit).minus(totalCredit).abs().greaterThan('0.01')) {
-        throw new Error(`ASIENTO DESCUADRADO: Debe=${new Decimal(totalDebit).toFixed(2)} Haber=${new Decimal(totalCredit).toFixed(2)}`);
+    if (new Decimal(totalDebit).minus(totalCredit).abs().greaterThan('0.0001')) {
+        throw new Error(`ASIENTO DESCUADRADO: Debe=${new Decimal(totalDebit).toFixed(4)} Haber=${new Decimal(totalCredit).toFixed(4)}`);
     }
 
     // Resolve account IDs — SECUENCIAL a propósito: getAccount auto-siembra el
@@ -182,6 +187,18 @@ export async function createJournalEntry(
     const accounts: Awaited<ReturnType<typeof getAccount>>[] = [];
     for (const l of lines) {
         accounts.push(await getAccount(tenantId, l.accountCode));
+    }
+
+    // A4: si algún código NO existe en el catálogo (ni tras el auto-seed), se
+    // ABORTA ANTES de crear el asiento. Antes la línea se saltaba en silencio
+    // (`continue`) DESPUÉS de crear el header: quedaba persistido un asiento
+    // descuadrado (pasó la validación con N líneas pero se asentaron N−1) y la
+    // cuenta contrapartida se movía sin su contraparte. La tx revierte todo.
+    const codigosInexistentes = lines
+        .filter((_, i) => !accounts[i])
+        .map(l => l.accountCode);
+    if (codigosInexistentes.length > 0) {
+        throw new Error(`CUENTA_INEXISTENTE: ${[...new Set(codigosInexistentes)].join(', ')} no existe(n) en el catálogo — asiento abortado.`);
     }
 
     const entry = await tx.journalEntry.create({
@@ -198,6 +215,7 @@ export async function createJournalEntry(
 
     for (let i = 0; i < lines.length; i++) {
         const account = accounts[i];
+        // Inalcanzable tras el guard A4 de arriba — queda solo para el narrowing de TS.
         if (!account) continue;
 
         await tx.journalLine.create({
