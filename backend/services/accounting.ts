@@ -154,13 +154,18 @@ export async function createJournalEntry(
     referenceType: string,
     userId: string,
     lines: { accountCode: string; debit: number; credit: number }[],
-    opts?: { isAutomatic?: boolean; date?: Date }
+    opts?: { isAutomatic?: boolean; date?: Date; allowClosedPeriod?: boolean }
 ): Promise<void> {
     const date = opts?.date ?? new Date();
     const isAutomatic = opts?.isAutomatic ?? true;
 
     // A3: ningún asiento entra en un período cerrado (cubre TODO el motor).
-    await assertPeriodOpen(tx, tenantId, date);
+    // Excepción: el ASIENTO DE CIERRE ANUAL (E4) es, por definición, el último
+    // asiento del período que se está cerrando → se le permite explícitamente
+    // (allowClosedPeriod). Solo lo usa `cierreAnual`, nunca un flujo de negocio.
+    if (!opts?.allowClosedPeriod) {
+        await assertPeriodOpen(tx, tenantId, date);
+    }
 
     // Validate: Sum of debits must equal sum of credits (Decimal para evitar 0.1+0.2 != 0.3)
     const totalDebit = lines.reduce((sum, l) => new Decimal(sum).plus(l.debit).toNumber(), 0);
@@ -803,9 +808,14 @@ export async function getEstadoResultados(tenantId: string, month?: number, year
     if (month && year) {
         const startDate = new Date(year, month - 1, 1);
         const endDate = new Date(year, month, 0, 23, 59, 59);
-        // Get journal entries for this period
+        // Get journal entries for this period.
+        // E4: se EXCLUYE el asiento de CIERRE ANUAL — está fechado 31-dic y, de
+        // incluirse, restaría todo el ingreso/gasto del año del P&L de diciembre
+        // (o de cualquier rango que cubra esa fecha). El P&L es operativo; el
+        // cierre no es una operación. (Prisma incluye filas con referenceType NULL
+        // en un filtro `not`, así que los asientos manuales sin tipo se conservan.)
         const entries = await prisma.journalEntry.findMany({
-            where: { tenantId, date: { gte: startDate, lte: endDate } },
+            where: { tenantId, date: { gte: startDate, lte: endDate }, referenceType: { not: 'ANNUAL_CLOSE' } },
             include: { lines: { include: { account: true } } }
         });
 
@@ -1074,4 +1084,134 @@ export async function fiscalClose(tenantId: string, month: number, year: number,
         retentions: retentions.existing ? 'Ya generadas' : retentions.retentions,
         taxes: reportData,
     };
+}
+
+/**
+ * CIERRE ANUAL (E4) — asiento de cierre que salda el Estado de Resultados.
+ *
+ * Problema que corrige: los ingresos (4.x) y gastos (5.x) NUNCA se saldaban a
+ * cero, así que `getBalanceGeneral` derivaba la "Utilidad del Ejercicio" como
+ * `Σingresos − Σgastos` sobre TODA la vida del negocio, y Utilidades Retenidas
+ * (3.1.2) quedaba permanentemente en 0. El Balance cuadraba, pero presentaba la
+ * utilidad ACUMULADA DE POR VIDA en vez de la del ejercicio (defecto NIIF).
+ *
+ * Qué hace: postea UN asiento (fechado 31-dic del año) que:
+ *   - Debita cada cuenta de INGRESO por su saldo (la lleva a 0; el ingreso es de
+ *     naturaleza acreedora, así que un débito por el saldo la cancela).
+ *   - Acredita cada cuenta de GASTO por su saldo (la lleva a 0).
+ *   - Lleva el RESULTADO NETO a Utilidades Retenidas (3.1.2): Haber si hubo
+ *     utilidad, Debe si hubo pérdida.
+ * Resultado: 4.x y 5.x quedan en 0 (el año siguiente arranca limpio), el
+ * resultado del ejercicio se "realiza" en el patrimonio (3.1.2), y el Balance
+ * sigue cuadrando (Σdebe == Σhaber por construcción).
+ *
+ * Idempotente: si ya existe un asiento ANNUAL_CLOSE para ese año, no re-cierra.
+ * Es el único asiento autorizado a caer en un período cerrado (allowClosedPeriod).
+ */
+export async function cierreAnual(tenantId: string, year: number, closedBy: string = 'SYSTEM') {
+    await seedChartOfAccounts(tenantId);
+
+    return prisma.$transaction(async (tx) => {
+        // Idempotencia: un año se cierra UNA sola vez (re-cerrar duplicaría el
+        // traslado a 3.1.2). Guard por asiento existente + lock implícito de la tx.
+        const yaCerrado = await tx.journalEntry.findFirst({
+            where: { tenantId, referenceType: 'ANNUAL_CLOSE', referenceId: String(year) },
+            select: { id: true },
+        });
+        if (yaCerrado) {
+            throw new Error(`AÑO_YA_CERRADO: el ejercicio ${year} ya tiene su asiento de cierre.`);
+        }
+
+        // Saldos vivos de ingresos y gastos (los que hay que saldar).
+        const cuentas = await tx.account.findMany({
+            where: { tenantId, type: { in: ['REVENUE', 'EXPENSE'] } },
+            select: { code: true, type: true, balance: true },
+        });
+
+        const lines: { accountCode: string; debit: number; credit: number }[] = [];
+        let totalIngresos = new Decimal(0);
+        let totalGastos = new Decimal(0);
+
+        for (const c of cuentas) {
+            const saldo = new Decimal(c.balance.toString());
+            if (saldo.isZero()) continue;
+            if (c.type === 'REVENUE') {
+                totalIngresos = totalIngresos.plus(saldo);
+                // Ingreso (acreedor): se DEBITA por su saldo para dejarlo en 0.
+                // Robusto ante saldo negativo (p. ej. devoluciones > ventas): se
+                // acredita el valor absoluto para no meter un débito negativo que
+                // empujaría el saldo en sentido contrario.
+                if (saldo.greaterThan(0)) {
+                    lines.push({ accountCode: c.code, debit: saldo.toNumber(), credit: 0 });
+                } else {
+                    lines.push({ accountCode: c.code, debit: 0, credit: saldo.abs().toNumber() });
+                }
+            } else {
+                totalGastos = totalGastos.plus(saldo);
+                // Gasto (deudor): se ACREDITA por su saldo para dejarlo en 0
+                // (mismo cuidado con saldos negativos por reversas de gasto).
+                if (saldo.greaterThan(0)) {
+                    lines.push({ accountCode: c.code, debit: 0, credit: saldo.toNumber() });
+                } else {
+                    lines.push({ accountCode: c.code, debit: saldo.abs().toNumber(), credit: 0 });
+                }
+            }
+        }
+
+        const resultado = totalIngresos.minus(totalGastos).toDecimalPlaces(4); // + utilidad / − pérdida
+
+        if (lines.length === 0) {
+            throw new Error('SIN_MOVIMIENTOS: no hay ingresos ni gastos que cerrar en el ejercicio.');
+        }
+
+        // Contrapartida a Utilidades Retenidas (3.1.2): la utilidad ACREDITA
+        // patrimonio; la pérdida lo DEBITA. Por construcción Σdebe == Σhaber:
+        //   utilidad → Debe Σingresos ; Haber Σgastos + resultado (= Σingresos)
+        //   pérdida  → Debe Σingresos + |resultado| (= Σgastos) ; Haber Σgastos
+        if (resultado.greaterThan(0)) {
+            lines.push({ accountCode: '3.1.2', debit: 0, credit: resultado.toNumber() });
+        } else if (resultado.lessThan(0)) {
+            lines.push({ accountCode: '3.1.2', debit: resultado.abs().toNumber(), credit: 0 });
+        }
+        // resultado == 0 (ingresos == gastos): el asiento ya cuadra sin tocar 3.1.2.
+
+        // Fecha: último instante del ejercicio. Se permite en período cerrado
+        // porque ES el asiento de cierre del propio período.
+        const fecha = new Date(year, 11, 31, 23, 59, 59);
+        await createJournalEntry(
+            tx as Parameters<typeof createJournalEntry>[0],
+            tenantId,
+            `Cierre anual del ejercicio ${year}`,
+            String(year),
+            'ANNUAL_CLOSE',
+            closedBy,
+            lines,
+            { isAutomatic: false, date: fecha, allowClosedPeriod: true }
+        );
+
+        await tx.auditLog.create({
+            data: {
+                tenantId,
+                userId: closedBy,
+                action: 'ANNUAL_CLOSE',
+                details: JSON.stringify({
+                    year,
+                    totalIngresos: totalIngresos.toNumber(),
+                    totalGastos: totalGastos.toNumber(),
+                    resultado: resultado.toNumber(),
+                    tipo: resultado.greaterThanOrEqualTo(0) ? 'UTILIDAD' : 'PERDIDA',
+                    cuentasSaldadas: lines.length - (resultado.isZero() ? 0 : 1),
+                }),
+            },
+        });
+
+        return {
+            year,
+            totalIngresos: totalIngresos.toNumber(),
+            totalGastos: totalGastos.toNumber(),
+            resultado: resultado.toNumber(),
+            tipo: resultado.greaterThanOrEqualTo(0) ? 'UTILIDAD' : 'PERDIDA',
+            trasladadoAUtilidadesRetenidas: resultado.toNumber(),
+        };
+    });
 }
