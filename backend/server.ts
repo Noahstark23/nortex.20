@@ -1122,22 +1122,26 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
         const invObj = assets.find((a: any) => a.code === '1.1.4');
         const cxpObj = liabilities.find((a: any) => a.code === '2.1.1');
 
-        const caja = cashObj ? Number(cashObj.balance) : 0;
-        const bancos = bankObj ? Number(bankObj.balance) : 0;
-        const cxc = cxcObj ? Number(cxcObj.balance) : 0;
-        const inventario = invObj ? Number(invObj.balance) : 0;
-        const cxp = cxpObj ? Number(cxpObj.balance) : 0;
+        // E6 — indicadores de supervivencia con decimal.js (Capa 4): la suma y
+        // resta de saldos en float nativo arrastraba error binario al efectivo
+        // total y la liquidez libre que ve el dueño.
+        const caja = new Decimal(cashObj ? cashObj.balance.toString() : 0);
+        const bancos = new Decimal(bankObj ? bankObj.balance.toString() : 0);
+        const cxc = new Decimal(cxcObj ? cxcObj.balance.toString() : 0);
+        const inventario = new Decimal(invObj ? invObj.balance.toString() : 0);
+        const cxp = new Decimal(cxpObj ? cxpObj.balance.toString() : 0);
 
-        const liquidezLibre = (caja + bancos) - cxp;
+        const efectivoTotal = caja.plus(bancos);
+        const liquidezLibre = efectivoTotal.minus(cxp);
 
         const survivalData = {
-            cajaGeneral: caja,
-            bancos: bancos,
-            efectivoTotal: caja + bancos,
-            cuentasPorCobrar: cxc,
-            inventario: inventario,
-            cuentasPorPagar: cxp,
-            liquidezLibre: liquidezLibre
+            cajaGeneral: caja.toNumber(),
+            bancos: bancos.toNumber(),
+            efectivoTotal: efectivoTotal.toNumber(),
+            cuentasPorCobrar: cxc.toNumber(),
+            inventario: inventario.toNumber(),
+            cuentasPorPagar: cxp.toNumber(),
+            liquidezLibre: liquidezLibre.toDecimalPlaces(4).toNumber()
         };
 
         res.json({
@@ -4908,13 +4912,21 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             where: { tenantId: authReq.tenantId!, year: Number(year), month: { lt: Number(month) } },
             select: { employeeId: true, totalIncome: true, inssLaboral: true, irLaboral: true },
         });
+        // N3 — acumular con decimal.js (Capa 4): hasta 11 meses de resta+suma en
+        // float nativo arrastraban error binario a la base del IR acumulado (la
+        // retención que se declara a la DGI). El motor Decimal recibe ahora una
+        // base exacta; se materializa a number recién al armar el mapa.
+        const netoPrevioDec = new Map<string, Decimal>();
+        const irPrevioDec = new Map<string, Decimal>();
+        for (const pp of prevPayrolls) {
+            const neto = new Decimal(pp.totalIncome.toString()).minus(pp.inssLaboral.toString());
+            netoPrevioDec.set(pp.employeeId, (netoPrevioDec.get(pp.employeeId) ?? new Decimal(0)).plus(neto));
+            irPrevioDec.set(pp.employeeId, (irPrevioDec.get(pp.employeeId) ?? new Decimal(0)).plus(pp.irLaboral.toString()));
+        }
         const netoPrevioByEmp = new Map<string, number>();
         const irPrevioByEmp = new Map<string, number>();
-        for (const pp of prevPayrolls) {
-            const neto = Number(pp.totalIncome) - Number(pp.inssLaboral);
-            netoPrevioByEmp.set(pp.employeeId, (netoPrevioByEmp.get(pp.employeeId) || 0) + neto);
-            irPrevioByEmp.set(pp.employeeId, (irPrevioByEmp.get(pp.employeeId) || 0) + Number(pp.irLaboral));
-        }
+        for (const [id, v] of netoPrevioDec) netoPrevioByEmp.set(id, v.toDecimalPlaces(4).toNumber());
+        for (const [id, v] of irPrevioDec) irPrevioByEmp.set(id, v.toDecimalPlaces(4).toNumber());
 
         // Fase C4: deducciones judiciales activas por empleado (orden de prioridad).
         const judiciales = await prisma.judicialDeduction.findMany({
