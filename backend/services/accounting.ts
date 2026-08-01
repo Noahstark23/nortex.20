@@ -833,9 +833,17 @@ export async function getEstadoResultados(tenantId: string, month?: number, year
                     revenueLines.push({ account: line.account.name, amount: amount.toNumber() });
                 } else if (line.account.type === 'EXPENSE') {
                     const amount = new Decimal(line.debit.toString()).minus(line.credit.toString());
-                    if (line.account.code === '5.1.1') totalCOGS = totalCOGS.plus(amount);
-                    else totalExpenses = totalExpenses.plus(amount);
-                    expenseLines.push({ account: line.account.name, amount: amount.toNumber() });
+                    // E2: el Costo de Ventas (5.1.1) se reporta aparte en `costOfSales`
+                    // y se resta en `grossProfit`. NO debe además aparecer en el
+                    // desglose de gastos operativos (`operatingExpenses.lines`), o el
+                    // P&L lo muestra dos veces. La rama "Acumulado" ya lo excluye
+                    // (opExpenses filtra 5.1.1); acá se alinea el mismo criterio.
+                    if (line.account.code === '5.1.1') {
+                        totalCOGS = totalCOGS.plus(amount);
+                    } else {
+                        totalExpenses = totalExpenses.plus(amount);
+                        expenseLines.push({ account: line.account.name, amount: amount.toNumber() });
+                    }
                 }
             }
         }
