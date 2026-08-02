@@ -56,12 +56,28 @@ export class SaleError extends Error {
 const moneyString = z
     .union([z.string(), z.number()])
     .transform(String)
-    .refine((v) => !isNaN(parseFloat(v)) && parseFloat(v) >= 0, 'Debe ser un número >= 0');
+    // Number.isFinite (no !isNaN): !isNaN(parseFloat("Infinity")) es true → dejaba
+    // pasar "Infinity"/"1e400". El endurecimiento S34 solo tocó validation/schemas.ts;
+    // este moneyString LOCAL del canal de ventas quedó afuera. Cerrado acá.
+    .refine((v) => Number.isFinite(parseFloat(v)) && parseFloat(v) >= 0, 'Debe ser un número >= 0');
 
 const moneyStringPositive = moneyString.refine(
     (v) => parseFloat(v) > 0,
     'Debe ser un número > 0'
 );
+
+// S36 — descuento de LÍNEA: es un PORCENTAJE (se aplica como 1 − v/100), así que
+// debe estar acotado 0–100 igual que globalDiscount (:88). Sin el .max(100), un
+// discount:"100000" hacía factor = 1 − 1000 = −999 → total NEGATIVO → la venta a
+// crédito DECREMENTABA la deuda del cliente (currentDebt += negativo) sin piso en 0,
+// condonando CxC de todo el tenant a escala. Capturado en el CTF red-team (F-MONEY).
+const percentString = z
+    .union([z.string(), z.number()])
+    .transform(String)
+    .refine(
+        (v) => Number.isFinite(parseFloat(v)) && parseFloat(v) >= 0 && parseFloat(v) <= 100,
+        'El descuento debe estar entre 0 y 100'
+    );
 
 export const CreateSaleSchema = z.object({
     items: z
@@ -73,7 +89,7 @@ export const CreateSaleSchema = z.object({
                 // costPrice: el cliente ya NO dicta el costo. Se ignora si llega
                 // (Zod descarta llaves desconocidas). El costo de venta lo fija
                 // el servidor desde Product.cost — ver paso 5c.
-                discount:  moneyString.optional(),
+                discount:  percentString.optional(),
             })
         )
         .min(1, 'Se requiere al menos 1 producto'),
@@ -148,6 +164,14 @@ export async function executeSale(
 
     const globalFactor = new Decimal(1).minus(new Decimal(globalDiscount).div(100));
     const finalTotal   = itemsSubtotal.mul(globalFactor).toDecimalPlaces(2);
+
+    // S36 — defensa en profundidad: ningún camino puede producir un total negativo.
+    // Con los descuentos ya acotados 0–100 esto es inalcanzable, pero un total < 0
+    // decrementaría la deuda del cliente / asentaría ingreso negativo, así que se
+    // corta explícito (cinturón + tirantes ante futuros cambios de la fórmula).
+    if (finalTotal.isNegative()) {
+        throw new SaleError('INVALID_INPUT', 400, 'El total de la venta no puede ser negativo');
+    }
 
     // 3b. Validación de pertenencia al tenant de customerId/employeeId — para TODO
     //     método de pago, no solo CREDIT. Sin esto, una venta CASH/CARD/QR/TRANSFER
