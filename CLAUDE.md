@@ -34,9 +34,12 @@ con la QA documentada. Los hallazgos de QA **se corrigen antes del push**, no se
 Skills especializadas (en `.claude/skills/`): **nortex-qa** (rondas de QA sobre
 código existente/diffs) · **nortex-migration** (schema/BD: MySQL + db push aditivo)
 · **nortex-security-audit** (barrido por clases de bug reales, hallazgos S-n) ·
-**nortex-seo** (landing/blog/prerender) · **nortex-deploy** (release, env vars,
-smoke tests) · **nortex-rag** (agente WhatsApp: retrieval, tools, cerebro LLM,
-simulador de conversaciones) · **run-nortex** (levantar la app real y probarla).
+**nortex-red-team** (cadenas de CAPTURA ofensivas: cross-tenant, forja JWT, minteo
+de dinero) · **nortex-blue-team** (adjudicar capturas con honestidad brutal:
+BLOCKED/EXPLOITABLE/PARTIAL + parche) · **nortex-seo** (landing/blog/prerender) ·
+**nortex-deploy** (release, env vars, smoke tests) · **nortex-rag** (agente
+WhatsApp: retrieval, tools, cerebro LLM, simulador de conversaciones) ·
+**run-nortex** (levantar la app real y probarla).
 
 ---
 
