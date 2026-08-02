@@ -1674,11 +1674,15 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
         const currentShift = await prisma.shift.findFirst({
             where: { userId: authReq.userId, status: 'OPEN' },
         });
+        // S36 — el canal se FIJA server-side: este es el endpoint del cajero (POS).
+        // Antes `source` salía de req.body, y mandar source:'WHATSAPP'/'PUBLIC_ORDER'
+        // saltaba el requisito de turno abierto (el gate `if (source === 'POS')`).
+        // WHATSAPP/PUBLIC_ORDER llaman a executeSale server-side, no por esta ruta.
         const result = await executeSale(
             authReq.tenantId!,
             authReq.userId!,
             currentShift?.id ?? null,
-            req.body
+            { ...req.body, source: 'POS' }
         );
         res.json(result);
     } catch (error) {
