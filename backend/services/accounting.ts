@@ -247,6 +247,31 @@ export async function createJournalEntry(
 // ==========================================
 
 /**
+ * Líneas del asiento de una VENTA — función PURA (testeable sin DB).
+ *   Debe: Caja/CxC (total) + Costo de Ventas (costo)
+ *   Haber: Ventas (ingreso neto) + IVA por Pagar (iva) + Inventario (costo)
+ * Por construcción Σdebe == Σhaber: `total = ingresoNeto + iva` (identidad del
+ * desglose) y el costo se netea (Debe 5.1.1 == Haber 1.1.4). El IVA solo grava
+ * la parte NO exonerada (canasta básica/medicinas quedan sin IVA que separar).
+ */
+export function buildSaleJournalLines(
+    saleTotal: number,
+    costTotal: number,
+    paymentMethod: string,
+    exemptTotal?: number | null
+): { accountCode: string; debit: number; credit: number }[] {
+    const desglose = desglosarVentaConExoneracion(saleTotal, exemptTotal ?? 0);
+    const cashAccount = paymentMethod === 'CREDIT' ? '1.1.3' : '1.1.1'; // CxC vs Caja
+    return [
+        { accountCode: cashAccount, debit: saleTotal, credit: 0 },
+        { accountCode: '4.1.1', debit: 0, credit: desglose.ingresoNeto.toNumber() },
+        { accountCode: '2.1.2', debit: 0, credit: desglose.iva.toNumber() },
+        { accountCode: '5.1.1', debit: costTotal, credit: 0 },
+        { accountCode: '1.1.4', debit: 0, credit: costTotal },
+    ];
+}
+
+/**
  * VENTA EN EFECTIVO:
  *   Debe: Caja (1.1.1) + Costo de Ventas (5.1.1)
  *   Haber: Ventas (4.1.1) + Inventario (1.1.4) + IVA por Pagar (2.1.2)
@@ -268,22 +293,14 @@ export async function recordSale(
     // la declaración mensual → el mayor y el VET no pueden discrepar). Antes se
     // dividía el total ENTERO, así que una pulpería que vende canasta básica
     // acreditaba IVA por Pagar (2.1.2) que jamás le cobró al cliente.
-    const desglose = desglosarVentaConExoneracion(saleTotal, exemptTotal ?? 0);
-    const ivaAmount = desglose.iva;
-    const salesNeto = desglose.ingresoNeto;   // neto gravado + exonerado
-
-    const cashAccount = paymentMethod === 'CREDIT' ? '1.1.3' : '1.1.1'; // CxC vs Caja
     const description = paymentMethod === 'CREDIT'
         ? `Venta a crédito #${saleId.slice(0, 8)}`
         : `Venta de contado #${saleId.slice(0, 8)}`;
 
-    await createJournalEntry(tx, tenantId, description, saleId, 'SALE', userId, [
-        { accountCode: cashAccount, debit: saleTotal, credit: 0 },
-        { accountCode: '4.1.1', debit: 0, credit: salesNeto.toNumber() },
-        { accountCode: '2.1.2', debit: 0, credit: ivaAmount.toNumber() },
-        { accountCode: '5.1.1', debit: costTotal, credit: 0 },
-        { accountCode: '1.1.4', debit: 0, credit: costTotal },
-    ]);
+    await createJournalEntry(
+        tx, tenantId, description, saleId, 'SALE', userId,
+        buildSaleJournalLines(saleTotal, costTotal, paymentMethod, exemptTotal)
+    );
 }
 
 /**
