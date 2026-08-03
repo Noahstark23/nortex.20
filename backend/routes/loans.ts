@@ -5,6 +5,7 @@ import Decimal from 'decimal.js';
 import { z } from 'zod';
 import { authenticate } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
+import { calcularAmortizacion } from '../services/loanMath';
 import {
     validate, OriginateLoanSchema, RepaymentSchema, UpdateClientSchema,
     RefinanceLoanSchema, PenaltySchema, VaultDepositSchema, RouteExpenseSchema,
@@ -41,27 +42,10 @@ router.post('/', authenticate, LENDER_MANAGER, validate(OriginateLoanSchema), as
         const lenderId = req.tenantId;
 
         const amount = new Decimal(principalAmount);
-        const rate   = new Decimal(interestRate).dividedBy(100); // 5% → 0.05
         const n      = parseInt(installments);
 
-        let totalToRepay:     Decimal;
-        let installmentAmount: Decimal;
-
-        if (type === 'FORMAL_AMORTIZED') {
-            // Sistema Francés: Cuota = Capital * ( i*(1+i)^n ) / ( (1+i)^n - 1 )
-            if (rate.isZero()) {
-                installmentAmount = amount.dividedBy(n);
-            } else {
-                const onePlusR = rate.plus(1);
-                const pow      = onePlusR.pow(n);
-                installmentAmount = amount.mul(rate.mul(pow)).dividedBy(pow.minus(1));
-            }
-            totalToRepay = installmentAmount.mul(n);
-        } else {
-            // Gota a Gota (Flat): interés sobre capital total
-            totalToRepay     = amount.plus(amount.mul(rate));
-            installmentAmount = totalToRepay.dividedBy(n);
-        }
+        // Amortización en función pura (deduplicada, con test-oro en CI).
+        const { installmentAmount, totalToRepay } = calcularAmortizacion(principalAmount, interestRate, n, type);
 
         // Calcular fecha de vencimiento según frecuencia
         const dueDate = new Date();
@@ -495,25 +479,10 @@ router.post('/:id/refinance', authenticate, LENDER_MANAGER, validate(RefinanceLo
             const carryOver       = new Decimal(oldLoan.balanceRemaining.toString());
             const freshCapital    = new Decimal(newPrincipal);
             const totalNewPrincipal = carryOver.plus(freshCapital);
-            const rate = new Decimal(interestRate).dividedBy(100);
             const n    = parseInt(installments);
 
-            let totalToRepay:     Decimal;
-            let installmentAmount: Decimal;
-
-            if (type === 'FORMAL_AMORTIZED') {
-                if (rate.isZero()) {
-                    installmentAmount = totalNewPrincipal.dividedBy(n);
-                } else {
-                    const onePlusR = rate.plus(1);
-                    const pow      = onePlusR.pow(n);
-                    installmentAmount = totalNewPrincipal.mul(rate.mul(pow)).dividedBy(pow.minus(1));
-                }
-                totalToRepay = installmentAmount.mul(n);
-            } else {
-                totalToRepay      = totalNewPrincipal.plus(totalNewPrincipal.mul(rate));
-                installmentAmount = totalToRepay.dividedBy(n);
-            }
+            // Misma función pura que la originación (deduplicada, test-oro en CI).
+            const { installmentAmount, totalToRepay } = calcularAmortizacion(totalNewPrincipal, interestRate, n, type);
 
             const dueDate = new Date();
             const freqDays: Record<string, number> = { DAILY: 1, WEEKLY: 7, BIWEEKLY: 15, MONTHLY: 30 };
