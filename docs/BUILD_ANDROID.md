@@ -18,7 +18,38 @@ existe. Consecuencia clave para operar:
 - Por qué no se bundleó el `dist` adentro: el frontend hace 213 `fetch('/api/...')` relativas;
   bundlear las rompería. Bundle local + OTA + capacidades nativas = fase siguiente (ver §Fase 2).
 
-## Requisitos (una vez)
+## ⚡ Camino FÁCIL: dejá que GitHub lo compile (sin instalar nada)
+
+Hay un flujo de CI (`.github/workflows/android.yml`) que **compila la app en los
+servidores de GitHub** — no necesitás Android Studio ni SDK en tu máquina.
+
+**Para probar en tu teléfono (APK de debug):**
+1. En GitHub: pestaña **Actions** → workflow **"Android (APK/AAB)"** → **Run workflow**
+   (o se corre solo al pushear cambios de la app).
+2. Cuando termina (verde), entrá a esa corrida → sección **Artifacts** → descargá
+   **`nortex-debug-apk`**.
+3. Pasá el `app-debug.apk` a tu Android e instalalo (activá "instalar de fuentes
+   desconocidas"). Ya podés probar Nortex en el teléfono.
+
+**Para el AAB de la tienda (firmado, vía CI):** generá el keystore UNA vez con
+`keytool` (viene con cualquier JDK — no hace falta Android Studio):
+```bash
+keytool -genkey -v -keystore nortex-release.keystore -alias nortex -keyalg RSA -keysize 2048 -validity 10000
+```
+Luego, en GitHub → Settings → Secrets and variables → Actions, cargá:
+- `ANDROID_KEYSTORE_BASE64` → salida de `base64 -w0 nortex-release.keystore`
+- `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`
+
+La próxima corrida del workflow genera **`nortex-release-aab`** firmado, listo para
+subir a Play. (Sin esos secrets, el workflow solo hace el APK de debug — no falla.)
+🔴 Igual: **respaldá el `.keystore` y sus contraseñas**. Perderlos = no poder
+actualizar la app nunca.
+
+---
+
+## Camino manual (Android Studio en tu PC)
+
+Requisitos (una vez)
 
 - **Android Studio** (trae el SDK, build-tools y platform **API 35** — requerido por Play en 2026).
 - **JDK 17**.
