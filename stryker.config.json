@@ -1,25 +1,27 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "_comment": "NORTEX — Pruebas de MUTACIÓN sobre los módulos de DINERO. Verifica que los tests de números-oro realmente MATEN bugs, no solo que pasen: Stryker introduce fallas (cambia +/-, invierte comparaciones, borra cuerpos) y exige que algún test falle. Un mutante 'sobreviviente' = un bug de plata que hoy pasaría el CI sin que nadie se entere. Alcance deliberadamente ACOTADO a lógica PURA con tests: incluir todo el repo sería lentísimo y llenaría el reporte de ruido de código sin cobertura. Los archivos grandes (Prisma adentro) se mutan por RANGO de líneas: solo las funciones puras testeadas.",
+  "_comment": "NORTEX — Pruebas de MUTACIÓN sobre los módulos de DINERO. Verifica que los tests de números-oro realmente MATEN bugs, no solo que pasen: Stryker introduce fallas (cambia +/-, invierte comparaciones, borra cuerpos) y exige que algún test falle. Un mutante 'sobreviviente' = un bug de plata que hoy pasaría el CI sin que nadie se entere. Alcance deliberadamente ACOTADO a lógica PURA con tests: incluir todo el repo sería lentísimo y llenaría el reporte de ruido de código sin cobertura. Los archivos grandes (Prisma adentro) se mutan por RANGO de líneas, solo las funciones puras testeadas — OJO: los rangos se desfasan con cualquier refactor que mueva las funciones, y Stryker NO avisa (un rango inválido da score NaN y sale con éxito). Por eso `npm run test:mutation` corre además scripts/check-mutation-scope.cjs, que falla si un archivo pierde mutantes.",
   "packageManager": "npm",
   "testRunner": "vitest",
-  "reporters": ["html", "clear-text", "progress"],
+  "reporters": ["html", "json", "clear-text", "progress"],
   "htmlReporter": { "fileName": "reports/mutation/index.html" },
+  "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
   "coverageAnalysis": "perTest",
   "timeoutMS": 15000,
   "concurrency": 2,
+  "_comment_mutate": "nicaTax arranca en la línea 25 (no en la 39) para incluir IVA_FACTOR = IVA_RATE.plus(1): la aritmética del 15% es el número que esta red debe proteger, y los tests de desglose la matan. NO se incluyen las líneas 20-22 (IVA_RATE, ANTICIPO_IR_RATE, IMI_RATE): son inicialización de nivel módulo — corren al importar, antes de que `perTest` atribuya cobertura, así que sus mutantes sobreviven siempre y darían un rojo permanente sin significado. Además ANTICIPO_IR_RATE e IMI_RATE solo se usan en generateMonthlyReport/generateAnnualIR (con Prisma, sin tests): son ZONA CIEGA declarada, no cobertura falsa.",
   "mutate": [
     "utils/calc-laborales.ts",
     "utils/pricing.ts",
     "backend/services/loanMath.ts",
-    "backend/services/nicaTax.ts:39-75",
+    "backend/services/nicaTax.ts:25-75",
     "backend/services/stockService.ts:56-69",
     "backend/services/accounting.ts:257-272"
   ],
-  "_comment_thresholds": "Línea base medida al introducir Stryker: 95.59% (backend de dinero al 100%). 'break' pone ROJO el CI y se fija con ~5 pts de margen para no romper por ruido. REGLA: este número solo SUBE. Bajarlo para que pase un PR es exactamente el 'specification gaming' que esta red viene a prevenir — si un cambio hunde el score, se arregla el test, no el umbral. Los ~9 mutantes sobrevivientes restantes son equivalentes (guardas redundantes del tipo `x != null && x > 0`, donde `null > 0` ya es false).",
+  "thresholds_comment": "Línea base al introducir Stryker: 95.59% (backend de dinero al 100%). El score es DETERMINISTA (se midió que el único mutante 'timeout' lo es por hit-limit de iteraciones, no por reloj de pared), así que no hace falta margen para ruido: `break` se pega a la línea base. REGLA: este número solo SUBE. Bajarlo para que pase un PR es exactamente el 'specification gaming' que esta red viene a prevenir — si un cambio hunde el score, se arregla el test, no el umbral. Los ~9 mutantes sobrevivientes restantes son equivalentes (guardas redundantes del tipo `x != null && x > 0`, donde `null > 0` ya es false).",
   "thresholds": {
     "high": 95,
-    "low": 90,
-    "break": 90
+    "low": 95,
+    "break": 95
   }
 }

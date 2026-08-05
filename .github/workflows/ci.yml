@@ -31,5 +31,15 @@ jobs:
       # sobrevive por debajo del umbral. Alcance acotado a lógica pura → ~30 s.
       - name: Mutación (Stryker — módulos de dinero)
         run: npm run test:mutation
+
+      # Si el score cae, el reporte HTML dice QUÉ mutante sobrevivió y dónde.
+      # Sin esto muere con el runner y hay que reproducir a ciegas en local.
+      - name: Reporte de mutación (si falla)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          retention-days: 7
       - name: Build frontend
         run: npm run build

@@ -76,8 +76,15 @@ describe('INSS — calcINSS', () => {
     });
     it('aplica el techo cotizable en salarios altos', () => {
         // Sobre el techo, la base deja de crecer: el INSS laboral se congela.
-        const enTecho = calcINSS(132071.43).inssLaboral;
-        expect(calcINSS(500000).inssLaboral).toBe(enTecho);
+        // OJO: este caso fija el VALOR ABSOLUTO del techo a propósito. Antes
+        // comparaba calcINSS(techo) contra calcINSS(500000) — es decir, la
+        // función contra sí misma — y por eso pasaba con CUALQUIER techo: se
+        // verificó cambiándolo a 100000 y los tests seguían en verde. El techo
+        // es justamente el número que utils/tasas.ts marca "⚠️ VERIFICAR, casi
+        // seguro desactualizado", así que era el único sin red.
+        // 132071.43 × 0.07 = 9245.0001 → 2 decimales → 9245
+        expect(calcINSS(500000).baseAplicada).toBe(132071.43);
+        expect(calcINSS(500000).inssLaboral).toBe(9245);
     });
     it('INATEC se calcula sobre el total, no sobre el techo', () => {
         expect(calcINSS(500000).inatec).toBe(10000);
@@ -177,8 +184,13 @@ describe('IVA — calcIVA', () => {
         expect(r.neto).toBe(100);
         expect(r.iva).toBe(15);
     });
-    it('neto + IVA reconstruye el total (sin centavo perdido)', () => {
+    it('desglosa un monto quebrado a valores exactos', () => {
+        // Antes este caso afirmaba solo `neto + iva === total`, que se cumple POR
+        // CONSTRUCCIÓN (`iva` se deriva restando) y por lo tanto pasaba con
+        // cualquier tasa — se verificó mutando IVA_RATE a 0.16 y seguía verde.
+        // Ahora fija los valores absolutos: 1234.56 / 1.15 = 1073.5304…
         const r = calcIVA(1234.56);
-        expect(Number((r.neto + r.iva).toFixed(2))).toBe(1234.56);
+        expect(r.neto).toBe(1073.53);
+        expect(r.iva).toBe(161.03);
     });
 });

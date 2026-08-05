@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",
-    "test:mutation": "stryker run",
+    "test:mutation": "stryker run && node scripts/check-mutation-scope.cjs",
     "build:seo": "vite build && tsx scripts/prerender.ts",
     "preview": "vite preview"
   },

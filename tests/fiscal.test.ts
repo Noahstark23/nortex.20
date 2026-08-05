@@ -143,12 +143,21 @@ describe('Partida doble — buildSaleJournalLines', () => {
         expect(l[2].accountCode).toBe('2.1.2');
         expect(l[2].credit).toBeCloseTo(13.0435, 4);
     });
-    it('sin exonerado explícito (undefined) se trata como 0', () => {
-        // Fija el default de `exemptTotal ?? 0`: llamar sin el parámetro debe dar
-        // exactamente lo mismo que pasar 0 (si no, una venta normal cambiaría de
-        // números según cómo se invoque la función).
-        expect(buildSaleJournalLines(115, 60, 'CASH')).toEqual(
-            buildSaleJournalLines(115, 60, 'CASH', 0),
-        );
+    it('sin exonerado (undefined o null) produce el asiento absoluto correcto', () => {
+        // Antes este caso comparaba la función contra sí misma con y sin el
+        // parámetro; como `desglosarVentaConExoneracion` ya tiene default de
+        // parámetro Y un `?? 0` interno, la igualdad se cumplía aunque se quitara
+        // el default de accounting.ts (verificado: los tests seguían en verde).
+        // Ahora se fijan los 5 renglones absolutos, y se cubre el camino `null`
+        // —que es el que reenvía recordSale (`exemptTotal?: number | null`)—.
+        const esperado = [
+            { accountCode: '1.1.1', debit: 115, credit: 0 },
+            { accountCode: '4.1.1', debit: 0, credit: 100 },
+            { accountCode: '2.1.2', debit: 0, credit: 15 },
+            { accountCode: '5.1.1', debit: 60, credit: 0 },
+            { accountCode: '1.1.4', debit: 0, credit: 60 },
+        ];
+        expect(buildSaleJournalLines(115, 60, 'CASH')).toEqual(esperado);
+        expect(buildSaleJournalLines(115, 60, 'CASH', null)).toEqual(esperado);
     });
 });
