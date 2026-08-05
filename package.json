@@ -9,10 +9,15 @@
     "build": "vite build",
     "test": "vitest run",
     "build:seo": "vite build && tsx scripts/prerender.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "mobile:sync": "npm run build && cap sync android",
+    "mobile:assets": "capacitor-assets generate --android",
+    "mobile:open": "cap open android"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.1",
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/core": "^6.2.1",
     "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^6.4.1",
     "@sentry/node": "^10.65.0",
@@ -41,6 +46,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@capacitor/cli": "^6.2.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/compression": "^1.7.5",
     "@types/cors": "^2.8.17",
