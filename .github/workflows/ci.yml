@@ -24,5 +24,12 @@ jobs:
         run: npx tsc --noEmit
       - name: Tests (vitest)
         run: npm test
+
+      # Pruebas de MUTACIÓN sobre los módulos de dinero: no basta con que los
+      # tests pasen, tienen que MATAR bugs. Stryker introduce fallas (invierte
+      # comparaciones, cambia signos, vacía cuerpos) y falla el CI si un mutante
+      # sobrevive por debajo del umbral. Alcance acotado a lógica pura → ~30 s.
+      - name: Mutación (Stryker — módulos de dinero)
+        run: npm run test:mutation
       - name: Build frontend
         run: npm run build

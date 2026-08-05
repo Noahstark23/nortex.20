@@ -114,4 +114,41 @@ describe('Partida doble — buildSaleJournalLines', () => {
         expect(buildSaleJournalLines(115, 60, 'CREDIT', 0)[0].accountCode).toBe('1.1.3');
         expect(buildSaleJournalLines(115, 60, 'CASH', 0)[0].accountCode).toBe('1.1.1');
     });
+
+    // ── Cuentas y montos EXACTOS por línea ───────────────────────────────────
+    // Hallazgo de las pruebas de mutación: los casos de arriba solo verificaban
+    // que el asiento CUADRE (debe==haber) y la primera cuenta. Se podían vaciar
+    // los códigos de Ingresos/IVA/Costo/Inventario y el test seguía en verde —
+    // un asiento que cuadra pero registra el IVA en la cuenta equivocada ensucia
+    // el mayor y la declaración de la DGI. Acá se fija cada cuenta y su monto.
+    it('venta contado C$115 (neto 100 + IVA 15), costo 60 → cuenta y monto por línea', () => {
+        const l = buildSaleJournalLines(115, 60, 'CASH', 0);
+        expect(l).toHaveLength(5);
+        expect(l[0]).toEqual({ accountCode: '1.1.1', debit: 115, credit: 0 });   // Caja
+        expect(l[1]).toEqual({ accountCode: '4.1.1', debit: 0, credit: 100 });   // Ingresos por ventas
+        expect(l[2]).toEqual({ accountCode: '2.1.2', debit: 0, credit: 15 });    // IVA por pagar
+        expect(l[3]).toEqual({ accountCode: '5.1.1', debit: 60, credit: 0 });    // Costo de ventas
+        expect(l[4]).toEqual({ accountCode: '1.1.4', debit: 0, credit: 60 });    // Inventario
+    });
+    it('venta a crédito debita CxC por el total (no Caja)', () => {
+        const l = buildSaleJournalLines(115, 60, 'CREDIT', 0);
+        expect(l[0]).toEqual({ accountCode: '1.1.3', debit: 115, credit: 0 });
+    });
+    it('parte exonerada: el IVA solo grava lo NO exento', () => {
+        // total 115, exento 15 → gravado 100 → neto 86.9565, IVA 13.0435
+        // ingresoNeto = neto gravado + exonerado = 86.9565 + 15 = 101.9565
+        const l = buildSaleJournalLines(115, 60, 'CASH', 15);
+        expect(l[1].accountCode).toBe('4.1.1');
+        expect(l[1].credit).toBeCloseTo(101.9565, 4);
+        expect(l[2].accountCode).toBe('2.1.2');
+        expect(l[2].credit).toBeCloseTo(13.0435, 4);
+    });
+    it('sin exonerado explícito (undefined) se trata como 0', () => {
+        // Fija el default de `exemptTotal ?? 0`: llamar sin el parámetro debe dar
+        // exactamente lo mismo que pasar 0 (si no, una venta normal cambiaría de
+        // números según cómo se invoque la función).
+        expect(buildSaleJournalLines(115, 60, 'CASH')).toEqual(
+            buildSaleJournalLines(115, 60, 'CASH', 0),
+        );
+    });
 });

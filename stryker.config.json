@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "NORTEX — Pruebas de MUTACIÓN sobre los módulos de DINERO. Verifica que los tests de números-oro realmente MATEN bugs, no solo que pasen: Stryker introduce fallas (cambia +/-, invierte comparaciones, borra cuerpos) y exige que algún test falle. Un mutante 'sobreviviente' = un bug de plata que hoy pasaría el CI sin que nadie se entere. Alcance deliberadamente ACOTADO a lógica PURA con tests: incluir todo el repo sería lentísimo y llenaría el reporte de ruido de código sin cobertura. Los archivos grandes (Prisma adentro) se mutan por RANGO de líneas: solo las funciones puras testeadas.",
+  "packageManager": "npm",
+  "testRunner": "vitest",
+  "reporters": ["html", "clear-text", "progress"],
+  "htmlReporter": { "fileName": "reports/mutation/index.html" },
+  "coverageAnalysis": "perTest",
+  "timeoutMS": 15000,
+  "concurrency": 2,
+  "mutate": [
+    "utils/calc-laborales.ts",
+    "utils/pricing.ts",
+    "backend/services/loanMath.ts",
+    "backend/services/nicaTax.ts:39-75",
+    "backend/services/stockService.ts:56-69",
+    "backend/services/accounting.ts:257-272"
+  ],
+  "_comment_thresholds": "Línea base medida al introducir Stryker: 95.59% (backend de dinero al 100%). 'break' pone ROJO el CI y se fija con ~5 pts de margen para no romper por ruido. REGLA: este número solo SUBE. Bajarlo para que pase un PR es exactamente el 'specification gaming' que esta red viene a prevenir — si un cambio hunde el score, se arregla el test, no el umbral. Los ~9 mutantes sobrevivientes restantes son equivalentes (guardas redundantes del tipo `x != null && x > 0`, donde `null > 0` ya es false).",
+  "thresholds": {
+    "high": 95,
+    "low": 90,
+    "break": 90
+  }
+}

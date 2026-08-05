@@ -164,6 +164,16 @@ libro firmado de caja · keyring JWT rotable.
 - Mensajes, UI y comentarios en **español** (variante nicaragüense; voseo en UI).
 - Verificación mínima antes de pushear: `npx tsc --noEmit` y (si tocaste frontend)
   `npm run build`. Migración aditiva en `backend/prisma/migrations/` si tocaste el schema.
+- **Pruebas de mutación (`npm run test:mutation`, en CI).** Si tocás lógica de
+  **dinero pura** (`utils/calc-laborales`, `utils/pricing`, `services/loanMath`,
+  y las funciones puras de `nicaTax`/`stockService`/`accounting`), no alcanza con
+  que los tests pasen: tienen que **matar bugs**. Stryker inyecta fallas (invierte
+  comparaciones, cambia signos, vacía cuerpos) y falla el CI si el score baja del
+  umbral. Línea base: **95.59%** (backend de dinero al 100%). El umbral
+  (`stryker.config.json`) **solo sube**: si un cambio lo hunde, se arregla el test
+  —nunca se baja el umbral ni se debilita una aserción para pasar—. Al agregar una
+  función de dinero nueva, sumala al `mutate` (los archivos con Prisma se mutan
+  por rango de líneas, solo la parte pura).
 - No introducir dependencias pesadas sin necesidad; el bundle del SPA ya roza el
   límite de precache del PWA (SWR se eligió sobre react-query por esto).
 - Commits: `feat|fix(<área>): <qué>` con el porqué + resumen de QA en el cuerpo.
