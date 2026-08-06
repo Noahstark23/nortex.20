@@ -24,3 +24,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Artefactos de pruebas de mutación (Stryker)
+.stryker-tmp/
+reports/mutation/

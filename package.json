@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",
+    "test:mutation": "stryker run && node scripts/check-mutation-scope.cjs",
     "build:seo": "vite build && tsx scripts/prerender.ts",
     "preview": "vite preview"
   },
@@ -41,6 +42,8 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/compression": "^1.7.5",
     "@types/cors": "^2.8.17",
