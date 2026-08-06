@@ -43,6 +43,33 @@ describe('degradaciones (campos ausentes o inválidos)', () => {
     it('wholesalePrice 0 → detalle (guard)', () => expect(effectiveUnitPrice({ basePrice: 10, wholesalePrice: 0, wholesaleMinQty: 6 }, 20, false)).toBe(10));
     it('packSize SIN packPrice → solo atajo, precio por Fase A', () => expect(effectiveTier({ basePrice: 10, packSize: 12 }, 12, false).kind).toBe('DETALLE'));
     it('minQty 0 → no aplica por cantidad', () => expect(effectiveUnitPrice({ basePrice: 10, wholesalePrice: 8, wholesaleMinQty: 0 }, 20, false)).toBe(10));
+
+    // ── Guardas contra datos malformados ─────────────────────────────────────
+    // Hallazgo de las pruebas de mutación: las guardas `!= null` y `> 0` del
+    // empaque podían relajarse (a `true` o `>= 0`) sin que ningún test fallara.
+    // Un packSize 0 divide por cero (precio Infinity) y un packPrice 0 regala el
+    // producto: son datos que un catálogo mal cargado produce de verdad.
+    it('packSize 0 → detalle (no divide por cero)', () => {
+        const r = effectiveTier({ basePrice: 10, packPrice: 90, packSize: 0 }, 20, false);
+        expect(r.kind).toBe('DETALLE');
+        expect(r.unitPrice).toBe(10);
+        expect(Number.isFinite(r.unitPrice)).toBe(true);
+    });
+    it('packPrice 0 → detalle (no regala el producto)', () => {
+        expect(effectiveUnitPrice({ basePrice: 10, packPrice: 0, packSize: 12 }, 20, false)).toBe(10);
+    });
+    it('packPrice negativo → detalle', () => {
+        expect(effectiveUnitPrice({ basePrice: 10, packPrice: -90, packSize: 12 }, 20, false)).toBe(10);
+    });
+    it('wholesalePrice negativo → detalle', () => {
+        expect(effectiveUnitPrice({ basePrice: 10, wholesalePrice: -8, wholesaleMinQty: 6 }, 20, false)).toBe(10);
+    });
+    it('minQty negativo → no aplica por cantidad', () => {
+        expect(effectiveUnitPrice({ basePrice: 10, wholesalePrice: 8, wholesaleMinQty: -5 }, 20, false)).toBe(10);
+    });
+    it('packSize negativo → detalle', () => {
+        expect(effectiveUnitPrice({ basePrice: 10, packPrice: 90, packSize: -12 }, 20, false)).toBe(10);
+    });
 });
 
 describe('ida y vuelta por la escalera', () => {

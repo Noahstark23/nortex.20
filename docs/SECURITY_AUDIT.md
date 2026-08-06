@@ -185,6 +185,95 @@ rechazados).
 
 ---
 
+## Re-auditoría 2026-08-01 — barrido de módulos de dinero (S35–S75)
+
+Seis auditores en paralelo, uno por clúster de dinero: **Ventas/POS** (`salesService.ts`,
+`sync.ts`, `serials.ts`), **Stock/Inventario** (`stockService.ts`, `stockTransfers.ts`,
+`warehouses.ts`, lotes/FEFO, conteos), **Compras** (`/api/purchases`, `purchaseOrders.ts`),
+**Préstamos LENDER** (`loans.ts`, `scoring.ts`, `ledger.ts`), **Agente Bancario**
+(`agentBanking.ts` + asientos) y **Delivery/Red Nortex** (`driver.ts`, `pedidos.ts`,
+`motorizados.ts`, payout del wallet). Billing/Stripe **excluido a pedido del CEO**
+("el pago déjalo así"). Solo lectura; **ningún hallazgo corregido aún** (PENDIENTE).
+
+**41 hallazgos.** Cada fila trae el ID original del agente (V*/S*/C*/L*/AB*/D*) para
+trazabilidad. Confianza: CONFIRMADO salvo donde se anota PLAUSIBLE.
+
+### 🔑 Dos patrones sistémicos (transversales)
+- **Idempotencia ausente en escrituras de dinero.** S37, S39, S41, S52, S44 son la
+  MISMA falla en módulos distintos: ningún endpoint de escritura de dinero deduplica
+  reintentos, salvo la venta *offline* (`executeSale`+`offlineId`). Conviene atacarlo
+  como patrón único (clave `offlineId`/`clientTxId` + `@@unique` compuesto + catch P2002).
+- **Desincronización de inventario.** S42, S43, S45 hacen que stock/valuación/Kardex
+  diverjan por tres caminos distintos (entrega driver sin `applyStockDelta`, venta online
+  sin consumo de lote, doble ingreso OC→factura).
+
+### 🔴 Altos (S35–S43) — pérdida de dinero/stock o feature muerta
+
+| ID | orig | Hallazgo | Ubicación | Estado |
+|----|------|----------|-----------|--------|
+| S35 | S1 | Raw query con comillas dobles estilo **PostgreSQL** en MySQL → el **cierre de toma física** revienta con error 1064 (y rompe un path de crédito/AR): la reconciliación de inventario queda muerta | `server.ts:4038-4041,1928-1929` | 🔴 PENDIENTE |
+| S36 | V1 | Descuento por ítem **sin tope de 100%** en venta online → `total` negativo y, a crédito, **condona deuda** del cliente (CxC negativo, salta el límite). Explotable por cualquier cajero vía API cruda | `salesService.ts:56-64,144-146` | 🔴 PENDIENTE |
+| S37 | V2 | Venta **online sin `offlineId`** → sin idempotencia; doble-click/reintento **duplica la venta** (doble stock, factura, deuda, asiento) | `POS.tsx:1302-1314` · `salesService.ts:120-125` | 🔴 PENDIENTE |
+| S38 | C3 | **Doble recepción de OC** por concurrencia (lectura no bloqueante, sin guard atómico de estado) → stock ingresado 2× + promedio ponderado corrido 2× | `purchaseOrders.ts:307-339` | 🔴 PENDIENTE |
+| S39 | C4 | `/api/purchases` **sin idempotencia ni `@@unique([tenantId, invoiceNumber])`** → factura, inventario y CxP duplicados en doble-submit | `server.ts:4432-4693` · `schema.prisma:215-246` | 🔴 PENDIENTE |
+| S40 | L1 | **Refinanciar no liquida el préstamo viejo**: `balanceRemaining` fantasma + cuotas PENDING → cartera inflada por doble conteo + mora eterna sobre préstamo cerrado | `loans.ts:489-492` | 🔴 PENDIENTE |
+| S41 | L2 | **Abonos sin idempotencia** → reintento offline decrementa el saldo 2× (cliente acreditado de más, caja del cobrador descuadra) | `loans.ts:156-266` · `schema.prisma:1811` | 🔴 PENDIENTE |
+| S42 | D1 | **Entrega vía Driver App crea la venta pero nunca descuenta inventario** (no llama `applyStockDelta`) → stock fantasma, sobreventa, Kardex descuadrado | `driver.ts:296-364` | 🔴 PENDIENTE |
+| S43 | S2 | **Venta online no descuenta lotes** (`ProductBatch`) → el writeoff da de baja unidades ya vendidas = **merma contable fantasma** + stock agregado negativo (crítico en farmacia) | `salesService.ts` (executeSale) vs `server.ts:3766` | 🔴 PENDIENTE |
+
+### 🟠 Medios (S44–S55)
+
+| ID | orig | Hallazgo | Ubicación | Estado |
+|----|------|----------|-----------|--------|
+| S44 | D2 | Payout al repartidor valida sobregiro con lectura **no bloqueante** (TOCTOU) + sin idempotencia → wallet puede quedar **negativo** (se paga de más); sin `NORTEX_LEDGER_KEYS` no hay ningún lock | `server.ts:5707-5719` | 🟠 PENDIENTE |
+| S45 | C5 | Link OC→factura existe en schema (`purchaseOrderId`) pero **nunca se usa**: seguir el flujo documentado (recibir OC + registrar factura) **suma stock 2×** | `purchaseOrders.ts:52-150` · `server.ts:4535-4617` (PLAUSIBLE) | 🟠 PENDIENTE |
+| S46 | C6 | Recepción de OC **sin tope** (`quantityReceived > quantityOrdered`) ni dedupe de `itemId` repetido en el payload | `purchaseOrders.ts:300-324` | 🟠 PENDIENTE |
+| S47 | V4 | El **sync offline no valida el rango DGI** (`rangeEnd`) → correlativos de factura fuera del rango autorizado (incumplimiento fiscal); el online sí bloquea | `sync.ts:181-194` | 🟠 PENDIENTE |
+| S48 | V5 | El "total autoritativo" **confía en el `price` del cliente** (no revalida catálogo/tier); riesgo real en canales **WhatsApp/PUBLIC_ORDER** (comprador no confiable) | `salesService.ts:142-150` (impacto PLAUSIBLE) | 🟠 PENDIENTE |
+| S49 | L3 | Un **COLLECTOR puede abonar a préstamos de rutas ajenas** (scoping solo por `lenderId`, no por `assignedToId`) | `loans.ts:156,182-184` | 🟠 PENDIENTE |
+| S50 | L4 | Se puede **penalizar un préstamo ya liquidado**; la multa no crea cuota y entra como `Repayment` negativo que contamina el arqueo | `loans.ts:583-638` | 🟠 PENDIENTE |
+| S51 | L5 | El **efectivo del módulo de préstamos** (el que más dinero físico mueve) **no pasa por el libro firmado** tamper-evident | `ledger.ts` vs `loans.ts` | 🟠 PENDIENTE |
+| S52 | AB1 | Agente bancario **sin idempotencia**: doble-submit duplica la operación + `settlementBalance` 2× → descuadra la deuda con el banco y el arqueo | `agentBanking.ts:280-471` | 🟠 PENDIENTE |
+| S53 | V3 | El sync crea `Payment` para ventas de **contado** → infla "cobrado hoy" en el reporte de CxC (asimétrico: online no lo crea) | `sync.ts:240-249` | 🟠 PENDIENTE |
+| S54 | D3 | `costoEntrega` = `Tenant.deliveryFee` **sin tope** se vuelve pasivo de payout de **Nortex** para flota NORTEX (el fee lo fija una parte, lo paga otra) | `pedidos.ts:98` · `driver.ts:371-380` (PLAUSIBLE) | 🟠 PENDIENTE |
+| S55 | S3 | **Sobreventa/stock negativo por bodega**: la suficiencia solo se valida sobre el agregado, no sobre `ProductStock`. Latente hasta que un canal de venta pase `warehouseId` | `stockService.ts:268-304` (PLAUSIBLE) | 🟠 PENDIENTE |
+
+### 🟡 Bajos (S56–S75) — endurecimiento
+
+| ID | orig | Hallazgo | Ubicación | Estado |
+|----|------|----------|-----------|--------|
+| S56 | L6 | Imputación a cuotas **no atómica** (findMany+update sin lock) → plan desincronizado del saldo bajo abonos concurrentes | `loans.ts:242-263` (PLAUSIBLE) | 🟡 PENDIENTE |
+| S57 | L7 | `moneyAmount` sin techo + `interestRate ≤ 1000` **desborda** `Decimal(5,2)`/`Decimal(12,2)` → 500/rollback | `schemas.ts:24-34,276` · `schema.prisma:1761-1767` | 🟡 PENDIENTE |
+| S58 | L8 | `collectedBy` es **texto libre del body**, falsificable (mitigado: el AuditLog sí guarda `userId` real) | `loans.ts:159,199,237` | 🟡 PENDIENTE |
+| S59 | L9 | `parseFloat` sobre dinero persistido + `scoring.ts` con `Number`/`findMany` sin `take`/`new PrismaClient()` propio | `loans.ts:408,433,589,726` · `scoring.ts:5,28,58` | 🟡 PENDIENTE |
+| S60 | L10 | La firma del ledger **omite `expenseId`** (económicamente relevante) → re-vínculo no rompe la cadena | `ledger.ts:43-63` | 🟡 PENDIENTE |
+| S61 | L11 | Refinance **pierde el `customerId`** → préstamo nuevo huérfano del CRM | `loans.ts:523-540` | 🟡 PENDIENTE |
+| S62 | AB2 | El `before/after` del AuditLog se lee **fuera de la tx** → bajo concurrencia el rastro miente sobre el saldo | `agentBanking.ts:428,464-465,565,598-599` | 🟡 PENDIENTE |
+| S63 | AB3 | El reporte de conciliación **suma C$ + US$** como la misma unidad (`_sum: amount` sin `currency`/`amountNio`) | `agentBanking.ts:772-787` | 🟡 PENDIENTE |
+| S64 | AB4 | Comisión ya liquidada queda como ingreso reconocido al reversar la operación (tradeoff contable a confirmar) | `agentBanking.ts:561-582` (observación) | 🟡 PENDIENTE |
+| S65 | C7 | `/approve` y `/cancel` de OC: guard de estado **no atómico** (TOCTOU) + AuditLog fuera de tx | `purchaseOrders.ts:252-289` | 🟡 PENDIENTE |
+| S66 | C8 | `/api/purchases/pending`: `findMany` **sin `take`** + suma en JS (guardrail escalabilidad) | `server.ts:4813-4817` | 🟡 PENDIENTE |
+| S67 | C9 | Crear OC **sin Zod**: permite `unitCost=0` y `quantity` fraccional | `purchaseOrders.ts:194-199,234` | 🟡 PENDIENTE |
+| S68 | D4 | `pedidos.ts` muta ventas/contabilidad bajo `authenticate` **sin `checkRole` ni Zod**, y permite transiciones de estado hacia atrás | `pedidos.ts:236,502` | 🟡 PENDIENTE |
+| S69 | D5 | `verifyDriverLedger` **suma dinero con float** → falso positivo/negativo de "proyección manipulada" | `ledger.ts:319-321` | 🟡 PENDIENTE |
+| S70 | D6 | `lat/lng` sin validar → `NaN` persistido; `if (lat && lng)` descarta la coordenada `0` | `driver.ts:274,279` · `pedidos.ts:285,337` | 🟡 PENDIENTE |
+| S71 | D7 | `motorizados.ts` crea driver **sin el chequeo de teléfono único** que sí tiene `/registro` → login ambiguo | `motorizados.ts:62-75` | 🟡 PENDIENTE |
+| S72 | D8 | El tracking público filtra **nombre y teléfono** del motorizado (id UUID, no enumerable) | `pedidos.ts:206-224` | 🟡 PENDIENTE |
+| S73 | S4 | "Set absolute" de stock en edición usa base **stale** bajo concurrencia (relativo, no corrompe, pero el final ≠ tecleado) | `server.ts:3221-3231` (PLAUSIBLE) | 🟡 PENDIENTE |
+| S74 | S5 | Stock inicial en alta de producto **sin Kardex génesis** (existencia inicial sin traza) | `server.ts:2953` | 🟡 PENDIENTE |
+| S75 | V6 | `offlineId` es `@unique` **global** en vez de `@@unique([tenantId, offlineId])` (colisión cross-tenant → venta descartada en silencio; riesgo despreciable con UUID) | `schema.prisma:534` | 🟡 PENDIENTE |
+
+**Zonas verificadas SANAS (para no re-trabajar):** aislamiento multi-tenant en los 6
+módulos (tenant/lenderId del JWT, `findFirst({id, tenantId})` antes de mutar, sin
+`req.body.tenantId`); `applyStockDelta` (UPDATE condicional atómico, sin TOCTOU);
+`weightedAverageCost` (decimal.js, división guardada, C1/C2); transferencias de bodega;
+libro firmado del wallet driver y del POS (seq/prevHash/HMAC con row-lock); reversa
+anti-doble y `settle-commissions` del agente bancario (claim atómico); motor de préstamos
+francés/flat (decimal.js, última cuota absorbe residuo, tope 600); idempotencia del sync
+offline; asientos espejo exactos. Ver detalle por módulo en la corrida de agentes.
+
+---
+
 ## Acciones del CEO (no las puede hacer un agente)
 
 1. **🔴 ROTAR YA `JWT_SECRET`** (estaba en `.env.backup`/git). Con el keyring se hace sin
