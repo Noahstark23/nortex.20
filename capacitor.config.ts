@@ -25,12 +25,20 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   backgroundColor: '#0c0c0e', // Identidad Obsidian (igual que theme_color del manifest PWA)
   server: {
-    url: 'https://somosnortex.com',
+    // Abrimos directo en /login: la raíz "/" de producción sirve la landing de
+    // marketing (Express → landing.html), no la app. Sin este path, la app
+    // arrancaba en la web de ventas en vez de la pantalla de acceso. Tras el
+    // login el SPA navega a /app/* (mismo origen, permitido). Si ya hay sesión,
+    // /login rebota solo a /app.
+    url: 'https://somosnortex.com/login',
     androidScheme: 'https',
     cleartext: false, // solo HTTPS; nada de tráfico en claro
-    // La navegación queda acotada al dominio propio; los links externos
-    // (WhatsApp, etc.) los abre el navegador del sistema, no el WebView.
-    allowNavigation: ['somosnortex.com', '*.somosnortex.com'],
+    // Navegación acotada SOLO al apex. Antes el wildcard *.somosnortex.com
+    // dejaba que un XSS en cualquier subdominio (marketing, CMS, preview) se
+    // cargara DENTRO del WebView con el bridge nativo a mano → phishing con la
+    // barra de la app y acceso al contexto nativo. La app solo vive en el apex;
+    // los links externos (WhatsApp, etc.) los abre el navegador del sistema.
+    allowNavigation: ['somosnortex.com'],
   },
   android: {
     // El WebView respeta el color de fondo mientras carga (evita el flash blanco).

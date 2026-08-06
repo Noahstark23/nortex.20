@@ -53,9 +53,11 @@ captures/
 .idea/navEditor.xml
 
 # Keystore files
-# Uncomment the following lines if you do not want to check your keystore files in.
-#*.jks
-#*.keystore
+# App de dinero: los keystores de firma NUNCA se commitean (perder/filtrar el de
+# release = poder firmar apps falsas como Nortex). En CI se reconstruye desde un
+# Secret y vive solo en el runner efímero.
+*.jks
+*.keystore
 
 # External native build folder generated in Android Studio 2.2 and later
 .externalNativeBuild

@@ -11,7 +11,7 @@
     "build:seo": "vite build && tsx scripts/prerender.ts",
     "preview": "vite preview",
     "mobile:sync": "npm run build && cap sync android",
-    "mobile:assets": "capacitor-assets generate --android",
+    "mobile:assets": "npx @capacitor/assets generate --android",
     "mobile:open": "cap open android"
   },
   "dependencies": {

@@ -69,10 +69,15 @@ jobs:
       #   ANDROID_KEYSTORE_BASE64  → tu .keystore codificado en base64
       #   ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
       # Si no están, este paso se salta (no rompe el build).
+      # Nunca interpolamos ${{ secrets.* }} dentro del cuerpo de un `run:` (el
+      # texto del script queda en el log y el enmascarado es frágil con base64
+      # multilínea). Lo pasamos por `env:` y lo leemos como $VAR.
       - name: ¿Hay keystore configurado?
         id: keycheck
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
-          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+          if [ -n "$KS_B64" ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
@@ -81,7 +86,11 @@ jobs:
 
       - name: Reconstruir keystore desde el Secret
         if: steps.keycheck.outputs.present == 'true'
-        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/nortex-release.keystore
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        # printf '%s' (no `echo`) para no interpretar secuencias; codificá el
+        # keystore con `base64 -w0` (una sola línea) al cargar el Secret.
+        run: printf '%s' "$KS_B64" | base64 -d > android/app/nortex-release.keystore
 
       - name: Compilar AAB release firmado
         if: steps.keycheck.outputs.present == 'true'

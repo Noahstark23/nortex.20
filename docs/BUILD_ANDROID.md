@@ -28,8 +28,15 @@ servidores de GitHub** — no necesitás Android Studio ni SDK en tu máquina.
    (o se corre solo al pushear cambios de la app).
 2. Cuando termina (verde), entrá a esa corrida → sección **Artifacts** → descargá
    **`nortex-debug-apk`**.
-3. Pasá el `app-debug.apk` a tu Android e instalalo (activá "instalar de fuentes
-   desconocidas"). Ya podés probar Nortex en el teléfono.
+3. Instalalo **solo en tu propio teléfono de prueba** (activá "instalar de fuentes
+   desconocidas"). Ya podés probar Nortex en el dispositivo.
+
+> 🔴 **NUNCA distribuyas el APK de debug** (ni por WhatsApp, ni a clientes, ni a
+> testers). Es `debuggable=true`: cualquiera con la app y un cable puede abrir el
+> WebView con `chrome://inspect`/`adb`, leer el **JWT de sesión** de `localStorage`
+> e inyectar JS — es decir, robar la cuenta de quien lo tenga instalado. El APK
+> debug es **solo para vos, en tu equipo de prueba**. Para repartir a testers o
+> publicar se usa el **AAB de release firmado** (abajo), que es `debuggable=false`.
 
 **Para el AAB de la tienda (firmado, vía CI):** generá el keystore UNA vez con
 `keytool` (viene con cualquier JDK — no hace falta Android Studio):
@@ -113,6 +120,17 @@ es posible. (Costo de la cuenta: **$25** una sola vez.)
 
 En `android/app/build.gradle`: subir `versionCode` (entero, +1 cada release) y `versionName`
 (texto visible). Play rechaza un AAB con `versionCode` repetido o menor.
+
+## ⚠️ Deuda técnica conocida: AGP vs compileSdk 35
+
+El scaffold de Capacitor 6 trae **AGP 8.2.1 + Gradle 8.2.1**, que oficialmente se
+probó hasta **compileSdk 34**; este proyecto usa **compileSdk/targetSdk 35** (lo que
+Play exige para apps nuevas desde 2025-08). El build compila **verde** (es un
+_warning_, no un error) y el AAB que produce es válido, pero corre en una combinación
+fuera de la matriz soportada. Antes de escalar la app (o si aparecen fallas raras de
+lint/D8/manifest-merger), **migrar a Capacitor 7** (trae AGP 8.7.2 / Gradle 8.11 con
+SDK 35 nativo) — es la vía limpia, no parchar AGP sobre Capacitor 6. `targetSdk` ya
+está en 35, así que no hay bloqueo para publicar hoy.
 
 ## Fase 2 (siguiente, no incluida acá)
 
