@@ -38,7 +38,10 @@ export interface Tenant {
   creditScore: number | null; // null = sin datos suficientes (tenant sin historial)
   creditLimit: number;
   walletBalance: number;
-  subscriptionStatus: 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
+  // 'TRIAL' (no 'TRIALING'): es el valor que usan la BD (schema.prisma), el
+  // backend, auth.ts, Billing y SuperAdmin. El type decía 'TRIALING' y por eso
+  // el banner de prueba del Dashboard nunca matcheaba el estado real.
+  subscriptionStatus: 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
   plan: string;
   trialEndsAt: string; 
 }
