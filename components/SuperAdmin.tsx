@@ -21,7 +21,11 @@ interface TenantInfo {
 
 interface AdminMetrics {
     totalTenants: number;
-    activeTenants: number;
+    activeTenants: number;        // uso real (venta o login 30d)
+    activeSubscriptions: number;  // suscripciones no morosas
+    activeUsers30d: number;
+    newTenantsThisMonth: number;
+    dormantTenants: number;       // registradas hace >7d, sin uso 30d
     morosos: number;
     activeUsers: number;
     monthlyTransactions: number;
@@ -271,12 +275,22 @@ const SuperAdmin: React.FC = () => {
             <div className="p-6 max-w-[1600px] mx-auto">
                 {/* KPI STRIP */}
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
-                    <KPICard icon={<Building2 size={18} />} label="EMPRESAS" value={String(metrics?.totalTenants ?? 0)} sub={`${metrics?.activeTenants ?? 0} activas`} color="blue" />
+                    <KPICard icon={<Building2 size={18} />} label="EMPRESAS" value={String(metrics?.totalTenants ?? 0)} sub={`${metrics?.activeSubscriptions ?? 0} suscripciones`} color="blue" />
                     <KPICard icon={<Ban size={18} />} label="MOROSOS" value={String(metrics?.morosos ?? 0)} sub="Suspendidos" color={metrics?.morosos ? "red" : "green"} />
                     <KPICard icon={<Users size={18} />} label="USUARIOS" value={String(metrics?.activeUsers ?? 0)} sub="Registrados" color="cyan" />
                     <KPICard icon={<DollarSign size={18} />} label="CAPITAL ASIGNADO" value={formatMoney(metrics?.totalDebtLent ?? 0)} sub="Riesgo actual" color="yellow" />
                     <KPICard icon={<BarChart3 size={18} />} label="VENTAS MES" value={formatMoney(metrics?.monthlySales ?? 0)} sub={`${metrics?.monthlyTransactions ?? 0} txns`} color="green" />
                     <KPICard icon={<TrendingUp size={18} />} label="TU GANANCIA" value={formatMoney(metrics?.monthlyRevenue ?? 0)} sub="Fees + Retención" color="emerald" highlight />
+                </div>
+
+                {/* RETENCIÓN — actividad REAL, no métricas de vanidad. "Activo" = vendió
+                    o entró en los últimos 30 días. "Dormidas" = registradas hace >7d
+                    sin ningún uso en 30d (el "se registran pero no se quedan", medido). */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                    <KPICard icon={<Building2 size={18} />} label="ACTIVAS (30d)" value={String(metrics?.activeTenants ?? 0)} sub="Vendió o entró" color="green" />
+                    <KPICard icon={<Ban size={18} />} label="DORMIDAS" value={String(metrics?.dormantTenants ?? 0)} sub="Registradas, sin uso 30d" color={metrics?.dormantTenants ? "red" : "green"} />
+                    <KPICard icon={<TrendingUp size={18} />} label="NUEVAS (mes)" value={String(metrics?.newTenantsThisMonth ?? 0)} sub="Altas del mes" color="blue" />
+                    <KPICard icon={<Users size={18} />} label="USUARIOS ACTIVOS" value={String(metrics?.activeUsers30d ?? 0)} sub="Login en 30d" color="cyan" />
                 </div>
 
                 {/* Revenue breakdown */}
