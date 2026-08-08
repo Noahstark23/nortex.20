@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 // @ts-ignore
 import NodeCache from 'node-cache';
 import { verifyAuthToken } from '../services/secrets';
+import { isBillingExempt } from './billingExempt';
 
 const prisma = new PrismaClient();
 
@@ -41,8 +42,8 @@ async function isVerifiedSuperAdmin(userId: string | undefined): Promise<boolean
   }
 }
 
-// Rutas que pasan siempre sin importar el estado de suscripción
-const ALWAYS_ALLOWED_PREFIXES = ['/api/billing', '/api/auth', '/api/admin'];
+// P1 retención — NUNCA bloquear el acto de vender por billing (política del CEO).
+// La lógica pura de exención vive en ./billingExempt (testeada en CI).
 
 export interface AuthRequest {
   userId?: string;
@@ -99,9 +100,9 @@ export const authenticate = async (req: any, res: any, next: any) => {
       return;
     }
 
-    // Rutas de billing, auth y admin siempre permitidas
-    const isExempt = ALWAYS_ALLOWED_PREFIXES.some(prefix => req.originalUrl.startsWith(prefix));
-    if (isExempt) {
+    // Exención de billing: billing/auth/admin + lecturas + camino de venta.
+    // Nunca bloqueamos el POS ni el acceso de lectura a los datos propios.
+    if (isBillingExempt(req.method, req.originalUrl || '')) {
       next();
       return;
     }
