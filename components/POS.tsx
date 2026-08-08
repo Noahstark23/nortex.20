@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
 import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark } from 'lucide-react';
@@ -165,7 +164,11 @@ const playErrorBeep = () => {
 };
 
 const POS: React.FC = () => {
-    const [products, setProducts] = useState<Product[]>(MOCK_PRODUCTS);
+    // Inicia VACÍO (no MOCK_PRODUCTS): los mocks de demo ("Cemento Sol", precios
+    // que no son del tenant) online desaparecían tras fetchProducts, pero OFFLINE
+    // persistían y se podían agregar al carrito → venta encolada con IDs mock
+    // inexistentes → el sync fallaba. El catálogo real llega de /api/products.
+    const [products, setProducts] = useState<Product[]>([]);
     const [cart, setCart] = useState<CartItem[]>([]);
 
     // 🅿️ PARQUEO DE VENTAS STATE

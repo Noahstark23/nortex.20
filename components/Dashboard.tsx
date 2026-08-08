@@ -147,12 +147,37 @@ const RetailDashboard: React.FC = () => {
   const activeDebt = activeLoans.reduce((acc, loan) => acc + Number(loan.totalDue), 0);
 
   // Loading spinner
-  if (isLoading || !tenantData) {
+  if (isLoading) {
     return (
       <div className="h-full flex items-center justify-center bg-surface-800/40">
         <div className="flex flex-col items-center gap-3">
           <RefreshCw className="animate-spin text-slate-400" size={32} />
           <span className="text-sm text-slate-500 font-medium">Cargando panel financiero...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Estado de error con reintento: si la carga TERMINÓ pero no hay datos del
+  // tenant, la primera llamada (/api/dashboard/stats) falló (red inestable, 500,
+  // timeout — común en 3G nica). Antes el guard `!tenantData` dejaba el spinner
+  // colgado PARA SIEMPRE, y este es el primer pantallazo tras registrarse
+  // (rompe-primer-uso). Mostramos un reintento en vez de un spinner eterno.
+  if (!tenantData) {
+    return (
+      <div className="h-full flex items-center justify-center bg-surface-800/40 p-6">
+        <div className="flex flex-col items-center gap-4 text-center max-w-sm">
+          <RefreshCw className="text-slate-500" size={32} />
+          <div>
+            <h3 className="text-white font-semibold">No pudimos cargar tu panel</h3>
+            <p className="text-sm text-slate-400 mt-1">Revisá tu conexión e intentá de nuevo.</p>
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-nortex-accent text-surface-950 text-sm font-bold rounded shadow-sm hover:opacity-90 transition-opacity"
+          >
+            Reintentar
+          </button>
         </div>
       </div>
     );
@@ -283,7 +308,11 @@ const RetailDashboard: React.FC = () => {
     <div className="p-6 h-full overflow-y-auto bg-surface-800/40 text-slate-100 relative">
 
       {/* BILLING BANNERS */}
-      {tenantData.subscriptionStatus === 'TRIALING' && (
+      {/* El estado real es 'TRIAL' (schema.prisma / server.ts), no 'TRIALING':
+          con el typo, el contador de días y el CTA "ACTIVAR PLAN PRO" NUNCA se
+          renderizaban → el usuario en prueba jamás veía el reloj ni la palanca
+          de conversión durante su ventana de máximo valor. */}
+      {tenantData.subscriptionStatus === 'TRIAL' && (
         <div className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex items-center justify-between">
           <div className="flex items-center gap-3 text-yellow-400">
             <Clock size={20} />
@@ -468,9 +497,6 @@ const RetailDashboard: React.FC = () => {
             <div className="p-2 bg-green-500/15 text-green-400 rounded-lg">
               <DollarSign size={20} />
             </div>
-          </div>
-          <div className="text-xs text-green-400 font-medium flex items-center gap-1">
-            <TrendingUp size={14} /> +12.5% vs mes anterior
           </div>
         </div>
 
