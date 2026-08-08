@@ -327,20 +327,22 @@ const RetailDashboard: React.FC = () => {
       )}
 
       {(tenantData.subscriptionStatus === 'PAST_DUE' || tenantData.subscriptionStatus === 'CANCELLED') && (
-        <div className="mb-6 p-4 bg-red-600 text-white rounded-lg shadow-lg flex items-center justify-between animate-pulse">
+        <div className="mb-6 p-4 bg-amber-500/15 border border-amber-500/40 text-amber-100 rounded-lg shadow-lg flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Lock size={24} />
+            <Clock size={24} className="text-amber-400" />
             <div>
-              <h3 className="font-bold text-lg">SERVICIO SUSPENDIDO</h3>
-              <p className="text-red-100 text-sm">No puedes registrar nuevas ventas ni solicitar préstamos.</p>
+              <h3 className="font-bold text-lg text-amber-300">Tu prueba venció — seguí vendiendo</h3>
+              {/* P1: NUNCA se bloquea el POS por billing. Se degrada lo accesorio,
+                  no el acto de vender. El texto refleja esa política. */}
+              <p className="text-amber-100/80 text-sm">Podés seguir facturando con normalidad. Activá el plan para recuperar reportes, préstamos y contabilidad.</p>
             </div>
           </div>
           <button
             onClick={handleReactivate}
             disabled={processingSub}
-            className="px-6 py-3 bg-surface-900 text-red-400 font-bold rounded shadow-lg hover:bg-white/[0.06] transition-colors"
+            className="px-6 py-3 bg-amber-500 text-surface-950 font-bold rounded shadow-lg hover:bg-amber-400 transition-colors disabled:opacity-60"
           >
-            {processingSub ? 'PROCESANDO...' : 'REACTIVAR SERVICIO ($50)'}
+            {processingSub ? 'PROCESANDO...' : 'Activar plan'}
           </button>
         </div>
       )}
