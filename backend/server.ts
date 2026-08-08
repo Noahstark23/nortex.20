@@ -5763,7 +5763,11 @@ app.post('/api/admin/motorizados/:id/wallet/payout', authenticate, requireSuperA
 // Todos los montos viajan como string con precisión Decimal(18,4): cero float en el cable.
 interface AdminMetricsResponse {
     totalTenants: number;
-    activeTenants: number;
+    activeTenants: number;       // RETENCIÓN: uso real (venta o login en 30d), NO "no suspendido"
+    activeSubscriptions: number; // suscripciones vigentes (no morosas) — métrica de negocio distinta
+    activeUsers30d: number;      // usuarios con login en 30d (actividad real)
+    newTenantsThisMonth: number; // altas del mes en curso
+    dormantTenants: number;      // registradas hace >7d y SIN uso en 30d (el "se registran pero no se quedan")
     morosos: number;
     activeUsers: number;
     monthlyTransactions: number;
@@ -5780,10 +5784,16 @@ app.get('/api/admin/metrics', authenticate, requireSuperAdmin, async (_req: expr
     try {
         const now = new Date();
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        const sevenDaysAgo  = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
         // Una sola ronda de queries reales; si la BD cae, el endpoint falla (el panel lo refleja).
-        const [tenants, loanAgg, salesAgg, activeUsers] = await Promise.all([
-            prisma.tenant.findMany({ select: { subscriptionStatus: true, walletBalance: true } }),
+        // RETENCIÓN: "activo" se mide por USO real (venta o login en 30d), no por
+        // "no suspendido". Los tenantIds activos salen de dos señales que ya viven
+        // en la BD —Sale.createdAt y User.lastLogin— agregadas en la BD (distinct),
+        // no traídas fila por fila (guardrail de escalabilidad #2).
+        const [tenants, loanAgg, salesAgg, activeUsers, activeUsers30d, newTenantsThisMonth, salesTenantIds, loginTenantIds] = await Promise.all([
+            prisma.tenant.findMany({ select: { id: true, subscriptionStatus: true, walletBalance: true, createdAt: true } }),
             prisma.b2BOrder.aggregate({
                 where: { status: { in: ['PENDING', 'APPROVED', 'DELIVERED'] } },
                 _sum: { total: true },
@@ -5794,9 +5804,22 @@ app.get('/api/admin/metrics', authenticate, requireSuperAdmin, async (_req: expr
                 _count: true,
             }),
             prisma.user.count(),
+            prisma.user.count({ where: { lastLogin: { gte: thirtyDaysAgo } } }),
+            prisma.tenant.count({ where: { createdAt: { gte: monthStart } } }),
+            prisma.sale.findMany({ where: { createdAt: { gte: thirtyDaysAgo } }, select: { tenantId: true }, distinct: ['tenantId'] }),
+            prisma.user.findMany({ where: { lastLogin: { gte: thirtyDaysAgo } }, select: { tenantId: true }, distinct: ['tenantId'] }),
         ]);
 
         const morosos = tenants.filter(t => t.subscriptionStatus === 'PAST_DUE' || t.subscriptionStatus === 'CANCELLED').length;
+
+        // Set de tenants ACTIVOS por uso (unión de "vendió en 30d" ∪ "entró en 30d").
+        const activeSet = new Set<string>();
+        for (const s of salesTenantIds) activeSet.add(s.tenantId);
+        for (const u of loginTenantIds) { if (u.tenantId) activeSet.add(u.tenantId); }
+        const activeByUsage = activeSet.size;
+        // DORMIDAS: registradas hace >7d (ya tuvieron tiempo de arrancar) y sin uso
+        // en 30d. Es la medida directa de "se registran pero no se quedan".
+        const dormantTenants = tenants.filter(t => t.createdAt < sevenDaysAgo && !activeSet.has(t.id)).length;
 
         // ── Todo el dinero con Decimal.js, extraído de columnas Decimal(18,4) ──
         const totalWallet    = tenants.reduce((acc, t) => acc.plus(new Decimal(t.walletBalance.toString())), new Decimal(0));
@@ -5810,7 +5833,11 @@ app.get('/api/admin/metrics', authenticate, requireSuperAdmin, async (_req: expr
 
         const body: AdminMetricsResponse = {
             totalTenants:        tenants.length,
-            activeTenants:       tenants.length - morosos,
+            activeTenants:       activeByUsage,            // uso real (venta o login 30d)
+            activeSubscriptions: tenants.length - morosos, // suscripciones no morosas (métrica de negocio)
+            activeUsers30d,
+            newTenantsThisMonth,
+            dormantTenants,
             morosos,
             activeUsers,
             monthlyTransactions: salesAgg._count,
