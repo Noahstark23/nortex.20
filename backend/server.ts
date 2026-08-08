@@ -16,6 +16,7 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { calculateTenantScore } from './services/scoring';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
+import { seedCatalogFor } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
@@ -979,6 +980,57 @@ app.post('/api/auth/reset-password/:token', forgotPasswordLimiter, validate(Rese
  * el checklist se auto-completa solo. Los pasos se ramifican por tipo de negocio.
  * Las banderas cosméticas (bienvenida vista / descartado) viven en localStorage.
  */
+// POST /api/onboarding/seed-catalog — Carga un catálogo de EJEMPLO del giro del
+// tenant (P1 retención): mata el arranque en frío (app vacía el día 1). Solo si
+// el inventario está VACÍO, para no duplicar. Productos editables/borrables.
+app.post('/api/onboarding/seed-catalog', authenticate, checkRole(['OWNER', 'ADMIN', 'SUPER_ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    try {
+        const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { type: true } });
+        if (!tenant) return res.status(404).json({ error: 'Negocio no encontrado' });
+
+        const catalog = seedCatalogFor(tenant.type);
+        if (!catalog || catalog.length === 0) {
+            return res.status(400).json({ error: 'Tu giro no tiene un catálogo de ejemplo disponible.' });
+        }
+
+        // Guard anti-duplicado: solo sembramos con el inventario en cero.
+        const existing = await prisma.product.count({ where: { tenantId } });
+        if (existing > 0) {
+            return res.status(409).json({ error: 'Ya tenés productos cargados; el catálogo de ejemplo es solo para empezar de cero.' });
+        }
+
+        const data = catalog.map((p, i) => ({
+            tenantId,
+            name:      p.name,
+            sku:       `EJ-${tenant.type.slice(0, 3).toUpperCase()}-${String(i + 1).padStart(3, '0')}`,
+            category:  p.category,
+            price:     p.price,
+            cost:      p.cost,
+            stock:     p.stock,
+            unit:      p.unit ?? 'unidad',
+            createdBy: authReq.userId!,
+        }));
+
+        await prisma.product.createMany({ data, skipDuplicates: true });
+
+        await prisma.auditLog.create({
+            data: {
+                tenantId,
+                userId:  authReq.userId!,
+                action:  'SEED_CATALOG',
+                details: JSON.stringify({ type: tenant.type, count: data.length }),
+            },
+        });
+
+        res.json({ message: `Cargamos ${data.length} productos de ejemplo. Editalos, borralos o sumá los tuyos.`, count: data.length });
+    } catch (error) {
+        console.error('Seed catalog error:', error);
+        res.status(500).json({ error: 'No se pudo cargar el catálogo de ejemplo.' });
+    }
+});
+
 app.get('/api/onboarding', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {

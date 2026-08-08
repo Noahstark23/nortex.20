@@ -325,6 +325,26 @@ const POS: React.FC = () => {
         }
     }, [headers]);
 
+    // Catálogo de EJEMPLO por giro (P1 retención): mata la app vacía del día 1.
+    const [seeding, setSeeding] = useState(false);
+    const [seedError, setSeedError] = useState('');
+    const seedCatalog = useCallback(async () => {
+        setSeeding(true); setSeedError('');
+        try {
+            const res = await fetch('/api/onboarding/seed-catalog', { method: 'POST', headers });
+            if (res.ok) {
+                await fetchProducts(); // el empty-state desaparece al llegar los productos
+            } else {
+                const d = await res.json().catch(() => ({}));
+                setSeedError(d.error || 'No se pudo cargar el catálogo de ejemplo.');
+            }
+        } catch {
+            setSeedError('No se pudo cargar el catálogo. Revisá tu conexión.');
+        } finally {
+            setSeeding(false);
+        }
+    }, [headers, fetchProducts]);
+
     // ==========================================
     // OFFLINE SYNC ENGINE
     // ==========================================
@@ -2507,6 +2527,16 @@ const POS: React.FC = () => {
                                         <PackagePlus size={20} />
                                         Agregá tu primer producto
                                     </Link>
+                                    <div className="mt-4">
+                                        <button
+                                            onClick={seedCatalog}
+                                            disabled={seeding}
+                                            className="text-sm text-slate-300 hover:text-white underline underline-offset-4 disabled:opacity-50 disabled:no-underline transition-colors"
+                                        >
+                                            {seeding ? 'Cargando catálogo…' : 'O cargá un catálogo de ejemplo de tu giro para probar'}
+                                        </button>
+                                        {seedError && <p className="text-red-400 text-sm mt-2">{seedError}</p>}
+                                    </div>
                                 </>
                             )}
                         </div>
