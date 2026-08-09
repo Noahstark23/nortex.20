@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import ImageUploader from './ImageUploader';
 import { sanitizeDecimalInput } from '../utils/money';
+import { trackEvent } from '../utils/analytics';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
     RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
@@ -109,6 +110,12 @@ const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', {
 
 export default function Inventory() {
     const [products, setProducts] = useState<Product[]>([]);
+    // Distingue "inventario vacío" de "no pudimos cargarlo" (auditoría C8).
+    const [productsError, setProductsError] = useState(false);
+    // Catálogo de ejemplo por giro también acá: el checklist manda PRIMERO a
+    // Inventario, pero el atajo solo existía en el POS (detrás del PIN de caja).
+    const [seeding, setSeeding] = useState(false);
+    const [seedError, setSeedError] = useState('');
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -208,9 +215,15 @@ export default function Inventory() {
                 const data = await res.json();
                 setProducts(data.products || []);
                 setTotal(data.total || 0);
+                setProductsError(false);
+            } else {
+                // Falso empty-state (auditoría C8): un 500 mostraba "inventario
+                // vacío" a quien SÍ tiene productos. Distinguimos error de vacío.
+                setProductsError(true);
             }
         } catch (e) {
             console.error('Error fetching products:', e);
+            setProductsError(true);
         } finally {
             setLoading(false);
             setSelectedProductIds([]); // Reset selection on fetch
@@ -242,6 +255,26 @@ export default function Inventory() {
 
     // Recarga todo (lista + KPIs) tras una mutación.
     const reload = useCallback(() => { fetchProducts(); fetchStats(); }, [fetchProducts, fetchStats]);
+
+    // Catálogo de EJEMPLO por giro (retención R2): mismo endpoint que el POS.
+    const seedCatalog = useCallback(async () => {
+        setSeeding(true); setSeedError('');
+        try {
+            const res = await fetch('/api/onboarding/seed-catalog', { method: 'POST', headers });
+            if (res.ok) {
+                trackEvent('seed_catalog_used', { source: 'inventory' });
+                window.dispatchEvent(new CustomEvent('nortex:data-changed'));
+                reload();
+            } else {
+                const d = await res.json().catch(() => ({}));
+                setSeedError(d.error || 'No se pudo cargar el catálogo de ejemplo.');
+            }
+        } catch {
+            setSeedError('No se pudo cargar el catálogo. Revisá tu conexión.');
+        } finally {
+            setSeeding(false);
+        }
+    }, [headers, reload]);
 
     // Exporta a Excel TODO lo que coincide con el filtro actual (no solo la página).
     const handleExport = async () => {
@@ -1115,7 +1148,18 @@ export default function Inventory() {
                                                 <Package size={40} className="text-blue-400" />
                                             </div>
 
-                                            {searchTerm ? (
+                                            {productsError ? (
+                                                <>
+                                                    <h3 className="text-2xl font-bold text-white mb-3">No pudimos cargar tu inventario</h3>
+                                                    <p className="text-slate-400 text-center mb-8">Puede ser tu conexión. Tus productos siguen ahí — reintentá.</p>
+                                                    <button
+                                                        onClick={() => fetchProducts()}
+                                                        className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-colors"
+                                                    >
+                                                        Reintentar
+                                                    </button>
+                                                </>
+                                            ) : searchTerm ? (
                                                 <>
                                                     <h3 className="text-xl font-bold text-white mb-2">No se encontraron resultados</h3>
                                                     <p className="text-slate-400 text-center mb-6">
@@ -1150,6 +1194,18 @@ export default function Inventory() {
                                                                 <Plus size={20} />
                                                                 Manual
                                                             </button>
+                                                        </div>
+                                                    )}
+                                                    {isOwner && (
+                                                        <div className="mt-4 text-center">
+                                                            <button
+                                                                onClick={seedCatalog}
+                                                                disabled={seeding}
+                                                                className="text-sm text-slate-300 hover:text-white underline underline-offset-4 disabled:opacity-50 disabled:no-underline transition-colors"
+                                                            >
+                                                                {seeding ? 'Cargando catálogo…' : 'O cargá un catálogo de ejemplo de tu giro para probar'}
+                                                            </button>
+                                                            {seedError && <p className="text-red-400 text-sm mt-2">{seedError}</p>}
                                                         </div>
                                                     )}
                                                 </>

@@ -65,6 +65,42 @@ const RetailDashboard: React.FC = () => {
   // ⚠️ Expiring Batches
   const [expiringBatches, setExpiringBatches] = useState<any[]>([]);
 
+  // 🚀 "Empezá acá" (retención R2): con CERO productos y CERO ventas, el panel
+  // financiero era puros ceros sin un solo CTA hacia vender (auditoría C9).
+  // Los conteos salen de GET /api/onboarding (ya deriva de datos reales).
+  const [starterSteps, setStarterSteps] = useState<{ product: boolean; sale: boolean } | null>(null);
+  const [seedingStarter, setSeedingStarter] = useState(false);
+  useEffect(() => {
+    const token = localStorage.getItem('nortex_token');
+    if (!token) return;
+    fetch('/api/onboarding', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (!d?.steps) return;
+        const product = d.steps.find((s: any) => s.key === 'product');
+        const sale = d.steps.find((s: any) => s.key === 'sale');
+        // Solo giros que venden productos (LENDER no trae estos pasos).
+        if (product && sale) setStarterSteps({ product: product.done, sale: sale.done });
+      })
+      .catch(() => { /* el bloque de arranque nunca rompe el panel */ });
+  }, []);
+  const seedStarterCatalog = async () => {
+    setSeedingStarter(true);
+    try {
+      const token = localStorage.getItem('nortex_token');
+      const res = await fetch('/api/onboarding/seed-catalog', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        window.dispatchEvent(new CustomEvent('nortex:data-changed'));
+        navigate('/app/pos?tour=pos'); // directo a probar la primera venta
+      }
+    } catch { /* silencioso */ } finally {
+      setSeedingStarter(false);
+    }
+  };
+
   // FETCH REAL DATA
   useEffect(() => {
     const initDashboard = async () => {
@@ -344,6 +380,45 @@ const RetailDashboard: React.FC = () => {
           >
             {processingSub ? 'PROCESANDO...' : 'Activar plan'}
           </button>
+        </div>
+      )}
+
+      {/* 🚀 EMPEZÁ ACÁ — arriba de TODO cuando el negocio aún no arrancó. */}
+      {starterSteps && !starterSteps.sale && (
+        <div className="mb-6 p-5 bg-nortex-900 border border-brand/30 rounded-xl">
+          <h2 className="text-xl font-bold text-white mb-1">Empezá acá 👇</h2>
+          <p className="text-slate-400 text-sm mb-4">
+            {starterSteps.product
+              ? 'Ya tenés productos. Te falta lo mejor: cobrar tu primera venta.'
+              : 'Dos caminos para ver a Nortex funcionando en menos de 2 minutos:'}
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3">
+            {starterSteps.product ? (
+              <button
+                onClick={() => navigate('/app/pos?tour=pos')}
+                className="flex-1 flex items-center justify-center gap-2 px-6 py-4 bg-brand hover:bg-brand-hover text-white font-bold rounded-xl transition-all shadow-glow shadow-brand/30"
+              >
+                <ShoppingCart size={20} /> Hacer mi primera venta
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={seedStarterCatalog}
+                  disabled={seedingStarter}
+                  className="flex-1 flex items-center justify-center gap-2 px-6 py-4 bg-brand hover:bg-brand-hover text-white font-bold rounded-xl transition-all shadow-glow shadow-brand/30 disabled:opacity-60"
+                >
+                  <ShoppingCart size={20} />
+                  {seedingStarter ? 'Cargando…' : 'Probar con un catálogo de ejemplo'}
+                </button>
+                <button
+                  onClick={() => navigate('/app/inventory?tour=inv')}
+                  className="flex-1 flex items-center justify-center gap-2 px-6 py-4 bg-surface-800 hover:bg-surface-700 border border-white/[0.08] text-white font-bold rounded-xl transition-colors"
+                >
+                  <FileText size={20} /> Cargar mi primer producto
+                </button>
+              </>
+            )}
+          </div>
         </div>
       )}
 

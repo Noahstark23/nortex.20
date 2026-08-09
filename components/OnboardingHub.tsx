@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, Circle, X, Rocket, ArrowRight, Sparkles, PartyPopper } from 'lucide-react';
+import { CheckCircle2, Circle, X, Rocket, ArrowRight, Sparkles, PartyPopper, RefreshCw } from 'lucide-react';
+import { trackEvent } from '../utils/analytics';
 
 /**
  * OnboardingHub — onboarding guiado de activación.
@@ -54,11 +55,16 @@ const OnboardingHub: React.FC = () => {
   const isEligible = role === 'OWNER' || role === 'ADMIN';
 
   const [data, setData] = React.useState<OnbData | null>(null);
+  const [fetchFailed, setFetchFailed] = React.useState(false);
   const [open, setOpen] = React.useState(false);
   const [showWelcome, setShowWelcome] = React.useState(false);
+  // 🎉 Cierre del loop "aha": cuando la primera venta se detecta en vivo.
+  const [celebration, setCelebration] = React.useState<string | null>(null);
   const [dismissed, setDismissed] = React.useState(
     () => localStorage.getItem(DISMISS_KEY) === '1'
   );
+  // Estado anterior, para detectar transiciones (pasos que se completan en vivo).
+  const prevStepsRef = React.useRef<Map<string, boolean> | null>(null);
 
   const fetchStatus = React.useCallback(async () => {
     try {
@@ -66,17 +72,42 @@ const OnboardingHub: React.FC = () => {
       const res = await fetch('/api/onboarding', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) return;
+      if (!res.ok) { setFetchFailed(true); return; }
       const json: OnbData = await res.json();
+      setFetchFailed(false);
+
+      // Transiciones: pasos que ACABAN de completarse (vs el fetch anterior).
+      const prev = prevStepsRef.current;
+      if (prev) {
+        for (const s of json.steps) {
+          if (s.done && prev.get(s.key) === false) {
+            trackEvent('onboarding_step_done', { step: s.key });
+            if (s.key === 'sale') {
+              // La primera venta es EL momento del producto: se celebra en vivo.
+              setCelebration('🎉 ¡Tu primera venta quedó registrada! El ticket, la caja y el inventario ya se movieron solos.');
+              trackEvent('first_sale', {});
+            }
+            if (s.key === 'product') trackEvent('first_product', {});
+          }
+        }
+      }
+      prevStepsRef.current = new Map(json.steps.map((s) => [s.key, s.done]));
       setData(json);
-      // La bienvenida solo se auto-muestra tras registrarse (?welcome=1) y una
-      // sola vez por navegador. Quien vuelve a entrar no la ve de nuevo; puede
-      // reabrirla desde Ayuda → "Ver mis primeros pasos".
+
+      // Bienvenida: se muestra al llegar con ?welcome=1 (registro) O cuando el
+      // negocio no completó NINGÚN paso — el hilo de ?welcome=1 era frágil (se
+      // perdía si no tocaban "Continuar" o entraban por login) y dejaba al
+      // usuario nuevo sin guía. Una sola vez por navegador, saltable siempre.
       const welcomeSeen = localStorage.getItem(WELCOME_KEY) === '1';
       const forced = new URLSearchParams(window.location.search).get('welcome') === '1';
-      if (forced && !welcomeSeen && !json.allDone) setShowWelcome(true);
+      if ((forced || json.completed === 0) && !welcomeSeen && !json.allDone) {
+        setShowWelcome(true);
+        trackEvent('onboarding_shown', { forced });
+      }
     } catch {
-      /* silencioso: el onboarding nunca debe romper la app */
+      // Sin red / error: NO desaparecemos en silencio — dejamos rastro visible
+      // (botón de reintento) en vez de fingir que el onboarding no existe.
+      setFetchFailed(true);
     }
   }, []);
 
@@ -84,10 +115,41 @@ const OnboardingHub: React.FC = () => {
     if (isEligible) fetchStatus();
   }, [isEligible, fetchStatus]);
 
+  // El POS (y cualquier pantalla) avisa "cambió la data" tras una venta/alta →
+  // el checklist se refresca EN VIVO, sin esperar un remount del Layout.
+  React.useEffect(() => {
+    if (!isEligible) return;
+    const onChange = () => fetchStatus();
+    window.addEventListener('nortex:data-changed', onChange);
+    return () => window.removeEventListener('nortex:data-changed', onChange);
+  }, [isEligible, fetchStatus]);
+
+  // Auto-ocultar la celebración a los 7s.
+  React.useEffect(() => {
+    if (!celebration) return;
+    const t = setTimeout(() => setCelebration(null), 7000);
+    return () => clearTimeout(t);
+  }, [celebration]);
+
   if (!isEligible || dismissed) return null;
-  // Nada que mostrar: sin datos todavía, o ya completó todo (y vio la bienvenida).
-  if (!data) return null;
-  if (data.allDone && !showWelcome) return null;
+
+  // Falló el fetch y no tenemos nada: rastro mínimo con reintento (antes: nada).
+  if (!data) {
+    if (!fetchFailed) return null; // cargando: sin parpadeos
+    return (
+      <div className="fixed bottom-36 right-4 lg:bottom-5 lg:right-5 z-40 print:hidden">
+        <button
+          onClick={fetchStatus}
+          className="flex items-center gap-2 px-4 py-3 bg-surface-900 border border-white/[0.08] text-slate-300 font-bold rounded-full shadow-xl hover:text-white transition-colors"
+          title="No pudimos cargar tus primeros pasos"
+        >
+          <RefreshCw size={16} />
+          <span className="text-sm">Primeros pasos — reintentar</span>
+        </button>
+      </div>
+    );
+  }
+  if (data.allDone && !showWelcome && !celebration) return null;
 
   const closeWelcome = (startTour: boolean) => {
     localStorage.setItem(WELCOME_KEY, '1');
@@ -110,6 +172,19 @@ const OnboardingHub: React.FC = () => {
 
   return (
     <>
+      {/* ---------- 🎉 CELEBRACIÓN EN VIVO (primera venta) ---------- */}
+      {celebration && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[70] max-w-md w-[calc(100vw-2rem)] print:hidden animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="bg-surface-900 border border-emerald-500/40 rounded-2xl shadow-2xl shadow-emerald-500/10 p-4 flex items-start gap-3">
+            <PartyPopper size={24} className="text-emerald-400 shrink-0 mt-0.5" />
+            <p className="text-sm text-slate-100 leading-relaxed flex-1">{celebration}</p>
+            <button onClick={() => setCelebration(null)} className="text-slate-500 hover:text-white transition-colors shrink-0">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ---------- MODAL DE BIENVENIDA ---------- */}
       {showWelcome && (
         <div className="fixed inset-0 z-[60] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">

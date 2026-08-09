@@ -1,5 +1,6 @@
 import { driver, type DriveStep } from 'driver.js';
 import 'driver.js/dist/driver.css';
+import { trackEvent } from './analytics';
 
 /**
  * Tours interactivos (coach-marks) con driver.js.
@@ -194,6 +195,7 @@ export function maybeAutostartTour() {
     const run = tour ? TOURS[tour] : undefined;
     if (!run) return;
     window.history.replaceState({}, '', window.location.pathname);
+    trackEvent('tour_started', { tour });
     setTimeout(run, 400);
   } catch {
     /* el tutorial nunca debe romper la pantalla */
