@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Building2, Mail, Lock, ArrowRight, Loader2, Check, AlertCircle } from 'lucide-react';
+import { Building2, Mail, Lock, ArrowRight, Loader2, Check, AlertCircle, Phone } from 'lucide-react';
 import { trackEvent } from '../utils/analytics';
 
 interface RegisterTenantProps {
@@ -34,13 +34,11 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
   // Errores por campo, mapeados desde `details` (validate() los devuelve como
   // { campo: [mensajes] }). Sin esto el usuario solo veía el genérico y quedaba mudo.
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
-  // PIN de éxito: se muestra en UI de marca (no alert() bloqueante). Al continuar navega.
-  const [successPin, setSuccessPin] = React.useState<string | null>(null);
-  const [pendingNav, setPendingNav] = React.useState<string>('/app/dashboard?welcome=1');
   const [formData, setFormData] = React.useState({
     companyName: '',
     email: '',
     password: '',
+    phone: '',
     type: 'FERRETERIA'
   });
 
@@ -115,6 +113,11 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
       trackEvent('sign_up', { method: 'email', business_type: formData.type });
       trackEvent('begin_trial', { business_type: formData.type });
 
+      // Navegación DIRECTA al valor (retención R1): el modal-peaje del PIN
+      // interrumpía el momento de máximo impulso con un concepto ("apertura de
+      // caja") que el usuario nuevo aún no tiene, y si no tocaba "Continuar"
+      // perdía la bienvenida para siempre. El PIN 1234 ahora viaja en el email
+      // de bienvenida y el POS ya lo muestra como hint al abrir caja.
       if (initialCart && initialCart.length > 0) {
         const persistentCart = initialCart.map(i => ({
           ...i.product,
@@ -125,14 +128,11 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
         }));
         localStorage.setItem('nortex_pending_cart', JSON.stringify(persistentCart));
         // Venía del catálogo con un carrito: lo llevamos directo a cobrar.
-        setPendingNav('/app/pos');
+        navigate('/app/pos');
       } else {
         // Registro normal: lo recibe el panel con la bienvenida + primeros pasos.
-        setPendingNav('/app/dashboard?welcome=1');
+        navigate('/app/dashboard?welcome=1');
       }
-
-      // Mostramos el PIN en un modal de marca en vez de un alert() nativo.
-      setSuccessPin('1234');
 
     } catch (err: any) {
       setError('No pudimos conectar con el servidor. Revisá tu internet e intentá de nuevo.');
@@ -230,6 +230,26 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
             )}
           </div>
 
+          {/* WhatsApp opcional (retención R1): el canal de rescate. Sin él, un
+              email con typo = tenant inalcanzable para siempre. */}
+          <div>
+            <label className="block text-xs font-mono text-slate-400 mb-1">WHATSAPP <span className="text-slate-600">(OPCIONAL — PARA AYUDARTE A ARRANCAR)</span></label>
+            <div className="relative">
+              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+              <input
+                type="tel"
+                inputMode="tel"
+                className={`w-full bg-nortex-800 border text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none transition-colors ${fieldErrors.phone ? 'border-red-500/70 focus:border-red-500' : 'border-nortex-700 focus:border-nortex-accent'}`}
+                placeholder="8888 8888"
+                value={formData.phone}
+                onChange={e => updateField('phone', e.target.value)}
+              />
+            </div>
+            {fieldErrors.phone && (
+              <p className="text-xs text-red-400 mt-1">{fieldErrors.phone}</p>
+            )}
+          </div>
+
           <div>
             <label className="block text-xs font-mono text-slate-400 mb-1">CONTRASEÑA</label>
             <div className="relative">
@@ -283,30 +303,6 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
         )}
       </div>
 
-      {/* Modal de marca con el PIN de apertura de caja (reemplaza el alert() nativo). */}
-      {successPin && (
-        <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-nortex-800 border border-nortex-700 rounded-2xl shadow-2xl p-6 text-center">
-            <div className="w-14 h-14 bg-nortex-accent/15 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Check className="text-nortex-accent" size={28} />
-            </div>
-            <h3 className="text-xl font-bold text-white mb-2">¡Cuenta creada con éxito!</h3>
-            <p className="text-slate-400 text-sm mb-4">Tu PIN de apertura de caja es:</p>
-            <div className="text-4xl font-mono font-black text-white tracking-[0.3em] bg-nortex-900 border border-nortex-700 rounded-xl py-4 mb-4">
-              {successPin}
-            </div>
-            <p className="text-xs text-slate-500 mb-6">
-              Podés cambiarlo en Recursos Humanos → Directorio de Personal.
-            </p>
-            <button
-              onClick={() => navigate(pendingNav)}
-              className="w-full bg-nortex-accent text-nortex-900 font-bold py-3 rounded-lg hover:bg-emerald-400 transition-all flex justify-center items-center gap-2"
-            >
-              Continuar <ArrowRight size={18} />
-            </button>
-          </div>
-        </div>
-      )}
     </PageWrapper>
   );
 };
