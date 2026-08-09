@@ -200,7 +200,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   ];
 
   return (
-    <div className="flex h-screen w-screen bg-surface-950 overflow-hidden [color-scheme:dark]">
+    // h-dvh (no h-screen): 100vh en Chrome Android no descuenta la barra de
+    // direcciones y con overflow-hidden el contenido quedaba recortado sin scroll.
+    // w-full (no w-screen): w-screen provoca overflow horizontal.
+    <div className="flex h-dvh w-full bg-surface-950 overflow-hidden [color-scheme:dark]">
       {/* DESKTOP SIDEBAR */}
       <aside className="hidden lg:flex w-64 bg-nortex-900 border-r border-white/[0.06] flex-col justify-between transition-all duration-300">
         <div>

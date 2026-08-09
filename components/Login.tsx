@@ -1,9 +1,13 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { Mail, Lock, LogIn, Loader2, ArrowRight } from 'lucide-react';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { Mail, Lock, LogIn, Loader2, ArrowRight, Clock } from 'lucide-react';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
+  // utils/auth.ts redirige acá con ?error=session_expired cuando el token vence;
+  // sin este aviso el usuario aterrizaba en un login mudo sin saber por qué.
+  const [searchParams] = useSearchParams();
+  const sessionExpired = searchParams.get('error') === 'session_expired';
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [formData, setFormData] = useState({
@@ -66,6 +70,12 @@ const Login: React.FC = () => {
           <h2 className="text-2xl font-bold text-white tracking-tight">Bienvenido a Nortex</h2>
           <p className="text-slate-400 text-xs mt-2 uppercase tracking-widest">Sistema Operativo Financiero</p>
         </div>
+
+        {sessionExpired && !error && (
+          <div className="mb-6 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-400 text-sm text-center flex items-center justify-center gap-2">
+            <Clock size={14} /> Tu sesión venció. Volvé a entrar y seguís donde quedaste.
+          </div>
+        )}
 
         {error && (
           <div className="mb-6 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm text-center flex items-center justify-center gap-2">

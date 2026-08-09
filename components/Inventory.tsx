@@ -1367,8 +1367,8 @@ export default function Inventory() {
                             </div>
                         </div>
 
-                        {/* Kardex Table */}
-                        <div className="overflow-y-auto max-h-[calc(90vh-250px)]">
+                        {/* Kardex Table — overflow-x: 6 columnas no caben en 360px */}
+                        <div className="overflow-y-auto overflow-x-auto max-h-[calc(90vh-250px)]">
                             {kardexLoading ? (
                                 <div className="flex flex-col items-center justify-center py-16">
                                     <div className="w-10 h-10 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-3" />
@@ -2187,7 +2187,7 @@ export default function Inventory() {
                             </form>
                         )}
 
-                        <div className="flex-1 overflow-y-auto p-0">
+                        <div className="flex-1 overflow-y-auto overflow-x-auto p-0">
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-slate-900/80 sticky top-0 z-10 shadow-md">
                                     <tr>

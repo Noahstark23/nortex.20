@@ -448,7 +448,7 @@ const Reports: React.FC = () => {
                             <h3 className="font-bold text-slate-100 mb-4 flex items-center gap-2">
                                 <Receipt size={18} className="text-amber-500" /> Desglose Fiscal (IVA 15%)
                             </h3>
-                            <div className="overflow-hidden rounded-lg border border-white/[0.04]">
+                            <div className="overflow-x-auto rounded-lg border border-white/[0.04]">
                                 <table className="w-full text-sm">
                                     <tbody className="divide-y divide-white/[0.04]">
                                         <tr className="hover:bg-surface-800/40">
@@ -643,7 +643,7 @@ const Reports: React.FC = () => {
                                 {/* Tabla desglose */}
                                 <div className="bg-surface-900 p-6 rounded-xl border border-white/[0.06] shadow-sm">
                                     <h3 className="font-bold text-slate-100 mb-4">Desglose del Período</h3>
-                                    <div className="overflow-hidden rounded-lg border border-white/[0.04]">
+                                    <div className="overflow-x-auto rounded-lg border border-white/[0.04]">
                                         <table className="w-full text-sm">
                                             <tbody className="divide-y divide-white/[0.04]">
                                                 <tr className="bg-blue-500/10">
@@ -976,7 +976,7 @@ const Reports: React.FC = () => {
                             {accountingSubTab === 'ESTADO' && estadoResultados && (
                                 <div className="bg-surface-900 p-6 rounded-xl border border-white/[0.06] shadow-sm max-w-2xl">
                                     <h3 className="font-bold text-slate-100 mb-4 text-lg">Estado de Resultados — {estadoResultados.period}</h3>
-                                    <div className="overflow-hidden rounded-lg border border-white/[0.04]">
+                                    <div className="overflow-x-auto rounded-lg border border-white/[0.04]">
                                         <table className="w-full text-sm">
                                             <tbody className="divide-y divide-white/[0.04]">
                                                 <tr className="bg-blue-500/10"><td className="px-4 py-3 font-bold text-blue-400" colSpan={2}>INGRESOS</td></tr>
@@ -1036,6 +1036,7 @@ const Reports: React.FC = () => {
                                                 </div>
                                                 <span className="text-xs text-slate-400 font-mono">{new Date(entry.date).toLocaleDateString('es-NI')}</span>
                                             </div>
+                                            <div className="overflow-x-auto">
                                             <table className="w-full text-xs">
                                                 <thead>
                                                     <tr className="text-slate-400">
@@ -1061,6 +1062,7 @@ const Reports: React.FC = () => {
                                                     ))}
                                                 </tbody>
                                             </table>
+                                            </div>
                                         </div>
                                     ))}
                                 </div>

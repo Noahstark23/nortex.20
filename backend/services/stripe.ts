@@ -1,6 +1,7 @@
 /**
  * NORTEX - Servicio de Stripe (Pasarela de Pagos)
- * Maneja suscripciones mensuales de $25 USD.
+ * Maneja suscripciones mensuales de $20 USD (el monto real vive en el Price
+ * de Stripe apuntado por STRIPE_PRICE_ID — verificar que diga $20 al activar).
  */
 import Stripe from 'stripe';
 // @ts-ignore
