@@ -72,6 +72,12 @@ export default {
                 sans: ['"Plus Jakarta Sans"', 'Inter', 'system-ui', 'sans-serif'],
                 mono: ['"JetBrains Mono"', 'monospace'], // SKUs, IDs, montos, tickets
             },
+            spacing: {
+                // `pb-safe` (bottom-nav de Layout): en Android con navegación por
+                // gestos, sin este inset el sistema se come los últimos ~16px de
+                // los botones. La clase ya se usaba pero no existía — era no-op.
+                'safe': 'env(safe-area-inset-bottom)',
+            },
             colors: {
                 // Override global: todo `slate-*` existente se vuelve obsidiana.
                 slate: obsidian,

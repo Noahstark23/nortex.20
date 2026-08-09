@@ -187,8 +187,20 @@ section { padding: clamp(72px, 10vw, 144px) 0; }
 }
 .nav-cta:hover { background: var(--warm); color: #fff; }
 
+/* Puerta de vuelta para el ya-registrado: visible también en móvil. */
+.nav-login {
+  font-size: 13px;
+  font-weight: 700 !important;
+  color: var(--ink) !important;
+  padding: 8px 14px;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+}
+.nav-login:hover { border-color: var(--ink-4); }
+
 @media (max-width: 800px) {
-  .nav-links > a:not(.nav-cta):not(.nav-whats) { display: none; }
+  .nav-links > a:not(.nav-cta):not(.nav-whats):not(.nav-login) { display: none; }
+  .nav-links { gap: 10px; }
 }
 
 /* ── BUTTONS ── */

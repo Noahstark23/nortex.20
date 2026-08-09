@@ -14,7 +14,7 @@ export default defineConfig(({ mode }) => {
         react(),
         VitePWA({
           registerType: 'autoUpdate',
-          includeAssets: ['icon-192.svg', 'favicon.svg', 'robots.txt'],
+          includeAssets: ['icon-192.svg', 'icon-192.png', 'icon-512.png', 'favicon.svg', 'robots.txt'],
           manifest: {
             name: 'Nortex — Punto de venta e inventario',
             short_name: 'Nortex',
@@ -25,14 +25,20 @@ export default defineConfig(({ mode }) => {
             background_color: '#09090b',
             lang: 'es',
             display: 'standalone',
-            start_url: '/',
+            // '/app/pos' y no '/': la raíz la sirve Express con landing.html
+            // (marketing) y además está en el navigateFallbackDenylist del SW —
+            // con start_url '/' la app instalada abría la landing y NO abría
+            // offline. /app/pos cae en el fallback al SPA (funciona offline) y,
+            // sin token, ProtectedApp redirige solo a /login.
+            start_url: '/app/pos',
             icons: [
-              {
-                src: '/icon-192.svg',
-                sizes: '192x192',
-                type: 'image/svg+xml',
-                purpose: 'any maskable',
-              },
+              // PNG 192+512: Chrome Android los exige para la splash screen y el
+              // diálogo de instalación completo (el SVG solo no basta en WebViews
+              // de gama baja).
+              { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+              { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+              { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+              { src: '/icon-192.svg', sizes: '192x192', type: 'image/svg+xml', purpose: 'any' },
             ],
           },
           workbox: {

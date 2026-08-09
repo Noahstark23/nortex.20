@@ -199,20 +199,31 @@ const globalLimiter = rateLimit({
 });
 app.use('/api/', globalLimiter as any);
 
-// Rate Limit Estricto para Login: 5 intentos / hora (anti brute-force)
+// Rate Limit Estricto para Login: 10 intentos / hora POR EMAIL (anti brute-force).
+// La llave es el email (no la IP): en Nicaragua el móvil va por CGNAT y los negocios
+// comparten WiFi — 5/hora por IP bloqueaba a locales enteros cuando dos personas
+// tipeaban mal la contraseña. Por email el brute-force sigue acotado (10/h por
+// cuenta) sin castigar a toda la red. Fallback a IP si el body no trae email.
+// (express.json ya corrió: este limiter se monta después, ver arriba.)
 const loginLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
-    max: 5,
-    message: { error: '🔒 Demasiados intentos de inicio de sesión. Espera 1 hora.' },
+    max: 10,
+    keyGenerator: (req: any) => {
+        const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+        return email ? `login:${email}` : `ip:${req.ip || 'unknown'}`;
+    },
+    message: { error: '🔒 Demasiados intentos de inicio de sesión con este correo. Espera 1 hora o restablecé tu contraseña.' },
     standardHeaders: true,
     legacyHeaders: false,
 });
 app.use('/api/auth/login', loginLimiter as any);
 
 // Registro: evita spam de cuentas / credential-stuffing desde una misma red.
+// 20/h (no 10): un cyber o WiFi compartido nica puede traer varios negocios
+// registrándose desde la misma IP en la misma tarde.
 const registerLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
-    max: 10,
+    max: 20,
     message: { error: '🔒 Demasiados registros desde esta red. Espera 1 hora.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -285,7 +296,9 @@ app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: a
                     // en 0 y el score en NULL ("sin datos") hasta que el motor real lo
                     // calcule desde historial. Los defaults del schema ya son 0/null.
                     subscriptionStatus: 'TRIAL',
-                    trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 días
+                    // 30 días: debe coincidir con la promesa pública de la landing
+                    // ("30 DÍAS GRATIS · NO SE COBRA HASTA EL DÍA 31").
+                    trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 días
                 }
             });
 
@@ -9548,7 +9561,7 @@ if (isProduction) {
 // ⏰ CRON: EXPIRACIÓN AUTOMÁTICA DE SUSCRIPCIONES
 // Corre cada hora — marca PAST_DUE a tenants con:
 //   1. status ACTIVE y subscriptionEndsAt vencido (webhook de Stripe perdido)
-//   2. status TRIAL y trialEndsAt vencido (14 días de prueba cumplidos)
+//   2. status TRIAL y trialEndsAt vencido (30 días de prueba cumplidos)
 // ==========================================
 async function checkExpiredSubscriptions() {
     try {

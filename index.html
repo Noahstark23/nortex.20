@@ -2,7 +2,9 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
+    <!-- Sin maximum-scale/user-scalable: el público es mayormente présbita y
+         necesita poder hacer zoom (WCAG 1.4.4). iOS moderno igual lo ignoraba. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     
     <!-- ===== SEO PRIMARIO ===== -->
     <title>Nortex | Sistema POS, Inventario y Facturación para Nicaragua</title>
@@ -47,6 +49,8 @@
     <meta name="apple-mobile-web-app-title" content="Nortex POS" />
     
     <!-- ===== FONTS ===== -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 
 
@@ -57,23 +61,8 @@
         color: #f4f4f5;
       }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "react": "https://esm.sh/react@^19.2.4",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "react-router-dom": "https://esm.sh/react-router-dom@6.22.0",
-    "recharts": "https://esm.sh/recharts@^3.7.0",
-    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
-    "express": "https://esm.sh/express@^5.2.1",
-    "@prisma/client": "https://esm.sh/@prisma/client@^7.3.0",
-    "cors": "https://esm.sh/cors@^2.8.6",
-    "bcryptjs": "https://esm.sh/bcryptjs@^3.0.3",
-    "jsonwebtoken": "https://esm.sh/jsonwebtoken@^9.0.3"
-  }
-}
-</script>
+<!-- El importmap a esm.sh que vivía aquí era código muerto (Vite bundlea todo)
+     y una superficie de supply-chain innecesaria; se eliminó. -->
 <link rel="stylesheet" href="/index.css">
 
   <!-- ===== SCHEMA.ORG STRUCTURED DATA ===== -->

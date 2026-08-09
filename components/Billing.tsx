@@ -21,7 +21,8 @@ interface ManualPaymentRecord {
     createdAt: string;
 }
 
-const PLAN_PRICE = 25;
+// Precio único público: DEBE coincidir con la landing ($20 USD/mes, 30 días gratis).
+const PLAN_PRICE = 20;
 
 const BANK_ACCOUNTS = [
     { bank: 'BAC Credomatic', type: 'Cuenta de Ahorro Dólares', number: 'XXXX-XXXX-XXXX-4521', name: 'NORTEX INC.' },
@@ -307,7 +308,7 @@ const Billing: React.FC = () => {
                                 ))}
                             </div>
                             <div className="mt-4 p-3 bg-blue-500/10 rounded-lg text-xs text-blue-400">
-                                <strong>Monto:</strong> $25.00 USD (o equivalente en C$ al tipo de cambio del día)
+                                <strong>Monto:</strong> ${PLAN_PRICE}.00 USD (o equivalente en C$ al tipo de cambio del día)
                             </div>
                         </div>
 
@@ -438,7 +439,7 @@ const Billing: React.FC = () => {
                             <div className="space-y-3 text-sm text-slate-300">
                                 <div className="flex gap-3">
                                     <div className="w-7 h-7 bg-blue-500/15 text-blue-400 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0">1</div>
-                                    <span>Deposita o transfiere <strong>$25 USD</strong> a cualquiera de nuestras cuentas.</span>
+                                    <span>Deposita o transfiere <strong>${PLAN_PRICE} USD</strong> a cualquiera de nuestras cuentas.</span>
                                 </div>
                                 <div className="flex gap-3">
                                     <div className="w-7 h-7 bg-blue-500/15 text-blue-400 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0">2</div>
