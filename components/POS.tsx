@@ -5,6 +5,7 @@ import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
 import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark } from 'lucide-react';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
+import { trackEvent } from '../utils/analytics';
 import { resolveUiMode, UI_MODE_KEY } from '../utils/navigation';
 import { ReceiptTicket } from './ReceiptTicket';
 import { thermalPrinter } from '../utils/thermalPrinter';
@@ -169,6 +170,8 @@ const POS: React.FC = () => {
     // persistían y se podían agregar al carrito → venta encolada con IDs mock
     // inexistentes → el sync fallaba. El catálogo real llega de /api/products.
     const [products, setProducts] = useState<Product[]>([]);
+    // Distingue "no tenés productos" de "no pudimos cargarlos" (auditoría C8).
+    const [productsError, setProductsError] = useState(false);
     const [cart, setCart] = useState<CartItem[]>([]);
 
     // 🅿️ PARQUEO DE VENTAS STATE
@@ -319,9 +322,15 @@ const POS: React.FC = () => {
                     unit: p.unit || 'unidad',
                 }));
                 setProducts(mapped);
+                setProductsError(false);
+            } else {
+                // Falso empty-state (auditoría C8): un 500/402 mostraba "no tenés
+                // productos" a quien SÍ tiene. Ahora se distingue error de vacío.
+                setProductsError(true);
             }
         } catch (e) {
             console.error('Error fetching products:', e);
+            setProductsError(true);
         }
     }, [headers]);
 
@@ -334,6 +343,8 @@ const POS: React.FC = () => {
             const res = await fetch('/api/onboarding/seed-catalog', { method: 'POST', headers });
             if (res.ok) {
                 await fetchProducts(); // el empty-state desaparece al llegar los productos
+                trackEvent('seed_catalog_used', { source: 'pos' });
+                window.dispatchEvent(new CustomEvent('nortex:data-changed'));
             } else {
                 const d = await res.json().catch(() => ({}));
                 setSeedError(d.error || 'No se pudo cargar el catálogo de ejemplo.');
@@ -391,7 +402,13 @@ const POS: React.FC = () => {
     }, []);
 
     // Tutorial guiado: si entran con ?tour=pos (desde Ayuda o el checklist).
-    useEffect(() => { maybeAutostartTour(); }, []);
+    // SOLO cuando la caja está visible: antes el tour se dibujaba ENCIMA del
+    // modal de apertura de turno (PIN), describiendo una pantalla tapada
+    // (auditoría C6). Si el modal está abierto, el ?tour queda en la URL y el
+    // tour arranca solo al abrir el turno (este efecto re-corre al cambiar).
+    useEffect(() => {
+        if (!shiftLoading && !showOpenShift) maybeAutostartTour();
+    }, [shiftLoading, showOpenShift]);
 
     useEffect(() => {
         refreshOfflineCount();
@@ -1340,6 +1357,9 @@ const POS: React.FC = () => {
             if (!res.ok) throw new Error(data.error);
 
             fetchProducts();
+            // Aviso global (retención R2): el checklist de primeros pasos se
+            // refresca en vivo y celebra la primera venta sin esperar un remount.
+            window.dispatchEvent(new CustomEvent('nortex:data-changed'));
 
             setCompletedSale({
                 items: [...cart],
@@ -2514,6 +2534,17 @@ const POS: React.FC = () => {
                                         className="px-6 py-2.5 bg-surface-800 hover:bg-surface-700 text-white font-semibold rounded-xl transition-colors border border-white/[0.08] focus:outline-none focus:ring-2 focus:ring-brand/40"
                                     >
                                         Limpiar búsqueda
+                                    </button>
+                                </>
+                            ) : productsError ? (
+                                <>
+                                    <h3 className="text-2xl font-bold text-white mb-3">No pudimos cargar tus productos</h3>
+                                    <p className="text-slate-400 mb-8">Puede ser tu conexión. Tus productos siguen ahí — reintentá.</p>
+                                    <button
+                                        onClick={() => fetchProducts()}
+                                        className="inline-flex items-center justify-center gap-2 px-6 py-4 bg-brand hover:bg-brand-hover text-white font-bold rounded-xl transition-all shadow-glow shadow-brand/30 hover:-translate-y-0.5"
+                                    >
+                                        Reintentar
                                     </button>
                                 </>
                             ) : (
