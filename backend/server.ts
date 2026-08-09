@@ -11,7 +11,8 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
-import { sendPasswordResetEmail } from './services/email';
+import { sendPasswordResetEmail, sendWelcomeEmail } from './services/email';
+import { runLifecycleEmails } from './services/lifecycleEmails';
 import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { calculateTenantScore } from './services/scoring';
@@ -259,7 +260,11 @@ app.use((req: any, res: any, next: any) => {
 // ==========================================
 
 app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: any) => {
-    const { companyName, email, password, type } = req.body;
+    const { companyName, email, password, type, phone } = req.body;
+    // Normalización del WhatsApp (retención R1): solo dígitos; si no llega a un
+    // número usable (8 dígitos locales NIC), se guarda null — nunca basura.
+    const phoneDigits = String(phone || '').replace(/\D/g, '');
+    const normalizedPhone = phoneDigits.length >= 8 ? phoneDigits : null;
 
     try {
         // 0. Reservar los emails con privilegio SUPER_ADMIN: no pueden auto-registrarse
@@ -299,6 +304,8 @@ app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: a
                     // 30 días: debe coincidir con la promesa pública de la landing
                     // ("30 DÍAS GRATIS · NO SE COBRA HASTA EL DÍA 31").
                     trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 días
+                    // WhatsApp del dueño (opcional) — el canal de seguimiento R1.
+                    phone: normalizedPhone,
                 }
             });
 
@@ -340,6 +347,12 @@ app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: a
             user: { id: result.user.id, email: result.user.email, name: result.user.name, role: result.user.role },
             tenant: result.tenant
         });
+
+        // Email de bienvenida (retención R1): fire-and-forget DESPUÉS de responder
+        // — un fallo de Resend jamás rompe ni retrasa el registro.
+        sendWelcomeEmail(email, companyName, '1234').catch((e) =>
+            console.error('⚠️ Welcome email falló (registro OK):', e)
+        );
 
     } catch (error) {
         console.error('Registration error:', error);
@@ -5921,40 +5934,71 @@ app.get('/api/admin/metrics', authenticate, requireSuperAdmin, async (_req: expr
 });
 
 // GET /api/admin/tenants - Lista completa de empresas
-app.get('/api/admin/tenants', authenticate, requireSuperAdmin, async (_req: express.Request, res: express.Response) => {
+// Retención R1: incluye contacto (email/phone), última actividad y la marca
+// `dormant` (>7 días registrada y sin venta NI login en 30 días — la misma
+// definición que el KPI "DORMIDAS" de /api/admin/metrics). Con ?dormant=1
+// devuelve solo esas: la lista de llamadas del CEO. Antes el KPI era un número
+// muerto: se sabía CUÁNTAS dormían pero no QUIÉNES ni cómo contactarlas.
+app.get('/api/admin/tenants', authenticate, requireSuperAdmin, async (req: any, res: express.Response) => {
     try {
-        const tenants = await prisma.tenant.findMany({
-            include: {
-                users: {
-                    select: { id: true, name: true, email: true, role: true },
-                    take: 1,
-                    orderBy: { createdAt: 'asc' }
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+        // Actividad agregada en la BD (guardrail #2): máx lastLogin por tenant y
+        // tenants con ventas en 30d (distinct) — sin traer filas de negocio.
+        const [tenants, lastLoginByTenant, salesTenantIds] = await Promise.all([
+            prisma.tenant.findMany({
+                include: {
+                    users: {
+                        select: { id: true, name: true, email: true, role: true },
+                        take: 1,
+                        orderBy: { createdAt: 'asc' }
+                    },
+                    _count: {
+                        select: { sales: true, products: true, employees: true }
+                    }
                 },
-                _count: {
-                    select: { sales: true, products: true, employees: true }
+                orderBy: { createdAt: 'desc' }
+            }),
+            prisma.user.groupBy({ by: ['tenantId'], _max: { lastLogin: true } }),
+            prisma.sale.findMany({ where: { createdAt: { gte: thirtyDaysAgo } }, select: { tenantId: true }, distinct: ['tenantId'] }),
+        ]);
+
+        const lastLoginMap = new Map(lastLoginByTenant.map(g => [g.tenantId, g._max.lastLogin]));
+        const soldRecently = new Set(salesTenantIds.map(s => s.tenantId));
+
+        const tenantsWithOwner = tenants.map(t => {
+            const lastLogin = lastLoginMap.get(t.id) || null;
+            const dormant =
+                t.createdAt < sevenDaysAgo &&
+                !soldRecently.has(t.id) &&
+                (!lastLogin || lastLogin < thirtyDaysAgo);
+            return {
+                id: t.id,
+                businessName: t.businessName,
+                taxId: t.taxId,
+                type: t.type,
+                phone: t.phone || null,
+                walletBalance: new Decimal(t.walletBalance.toString()).toFixed(4),
+                creditLimit: new Decimal(t.creditLimit.toString()).toFixed(4),
+                creditScore: t.creditScore,
+                subscriptionStatus: t.subscriptionStatus || 'ACTIVE',
+                createdAt: t.createdAt,
+                trialEndsAt: t.trialEndsAt,
+                lastLogin,
+                dormant,
+                owner: t.users[0] || null,
+                stats: {
+                    sales: t._count.sales,
+                    products: t._count.products,
+                    employees: t._count.employees,
                 }
-            },
-            orderBy: { createdAt: 'desc' }
+            };
         });
 
-        const tenantsWithOwner = tenants.map(t => ({
-            id: t.id,
-            businessName: t.businessName,
-            taxId: t.taxId,
-            walletBalance: new Decimal(t.walletBalance.toString()).toFixed(4),
-            creditLimit: new Decimal(t.creditLimit.toString()).toFixed(4),
-            creditScore: t.creditScore,
-            subscriptionStatus: t.subscriptionStatus || 'ACTIVE',
-            createdAt: t.createdAt,
-            owner: t.users[0] || null,
-            stats: {
-                sales: t._count.sales,
-                products: t._count.products,
-                employees: t._count.employees,
-            }
-        }));
-
-        res.json(tenantsWithOwner);
+        const onlyDormant = req.query?.dormant === '1' || req.query?.dormant === 'true';
+        res.json(onlyDormant ? tenantsWithOwner.filter(t => t.dormant) : tenantsWithOwner);
     } catch (error) {
         console.error('Admin tenants error:', error);
         res.status(500).json({ error: 'Error al obtener empresas' });
@@ -9594,6 +9638,12 @@ setInterval(checkExpiredSubscriptions, 60 * 60 * 1000); // cada hora
 // período/activo → correr a diario es seguro; solo postea la cuota una vez.
 runMonthlyDepreciationAllTenants();
 setInterval(runMonthlyDepreciationAllTenants, 24 * 60 * 60 * 1000); // cada 24h
+
+// ⏰ CRON: emails de ciclo de vida del trial (retención R1). Idempotente por
+// AuditLog (claim antes de enviar) → correr a diario es seguro. Arranque
+// diferido 60s para no competir con el boot.
+setTimeout(runLifecycleEmails, 60 * 1000);
+setInterval(runLifecycleEmails, 24 * 60 * 60 * 1000); // cada 24h
 
 // ==========================================
 // 🚀 START SERVER

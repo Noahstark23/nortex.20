@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import useSWR from 'swr';
 import Decimal from 'decimal.js';
-import { Shield, Users, Building2, DollarSign, TrendingUp, Ban, CheckCircle, Eye, RefreshCw, Skull, Activity, CreditCard, Clock, BarChart3, Target, XCircle, Banknote, FileCheck, X } from 'lucide-react';
+import { Shield, Users, Building2, DollarSign, TrendingUp, Ban, CheckCircle, Eye, RefreshCw, Skull, Activity, CreditCard, Clock, BarChart3, Target, XCircle, Banknote, FileCheck, X, Mail, MessageCircle, Download, Moon } from 'lucide-react';
 import AdminMotorizadosKYC from './AdminMotorizadosKYC';
 
 // ── Tipos de respuesta del backend (tipado estricto, sin any) ──
@@ -10,11 +10,16 @@ interface TenantInfo {
     id: string;
     businessName: string;
     taxId: string;
+    type?: string | null;
+    phone?: string | null;
     walletBalance: string;
     creditLimit: string;
     creditScore: number | null;
     subscriptionStatus: string;
     createdAt: string;
+    trialEndsAt?: string | null;
+    lastLogin?: string | null;   // máx lastLogin entre los usuarios del tenant
+    dormant?: boolean;           // >7d registrada, sin venta ni login en 30d
     owner: { id: string; name: string; email: string; role: string } | null;
     stats: { sales: number; products: number; employees: number };
 }
@@ -89,6 +94,43 @@ const authHeaders = (): Record<string, string> => ({
     'Content-Type': 'application/json',
 });
 
+// "hace N d" — recencia compacta para la columna de actividad (retención R1).
+const relativeDays = (iso: string | null | undefined): string => {
+    if (!iso) return 'nunca';
+    const days = Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 60 * 60 * 1000));
+    if (days <= 0) return 'hoy';
+    if (days === 1) return 'ayer';
+    return `hace ${days}d`;
+};
+
+// wa.me con prefijo 505 si el número viene local (8 dígitos). Mismo patrón que
+// el resto del repo (AccountsReceivable, QuotationManager, etc.).
+const waLink = (phone: string): string => {
+    const digits = phone.replace(/\D/g, '');
+    return `https://wa.me/${digits.length === 8 ? '505' + digits : digits}?text=${encodeURIComponent('Hola, soy Noel de Nortex 👋 Vi que creaste tu cuenta y quería ayudarte a arrancar. ¿Te trabaste con algo?')}`;
+};
+
+// CSV de la lista visible (retención R1): la salida manual hacia llamadas/Excel.
+const exportTenantsCsv = (rows: TenantInfo[]) => {
+    const header = ['Empresa', 'Giro', 'Email', 'WhatsApp', 'Estado', 'Ultima actividad', 'Registrada', 'Fin de prueba', 'Ventas', 'Productos', 'Dormida'];
+    const cells = rows.map(t => [
+        t.businessName, t.type || '', t.owner?.email || '', t.phone || '',
+        t.subscriptionStatus, t.lastLogin || '', t.createdAt, t.trialEndsAt || '',
+        String(t.stats.sales), String(t.stats.products), t.dormant ? 'SI' : 'NO',
+    ]);
+    const csv = [header, ...cells]
+        .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
+        .join('\n');
+    // BOM para que Excel abra el UTF-8 con tildes bien.
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nortex-tenants-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+};
+
 const getScoreColor = (score: number | null) => {
     if (score == null) return 'text-slate-500';
     if (score >= 700) return 'text-green-400';
@@ -119,6 +161,8 @@ const SuperAdmin: React.FC = () => {
     const [rejectModal, setRejectModal] = useState<{ id: string; reason: string } | null>(null);
     const [actionLoading, setActionLoading] = useState<string | null>(null);
     const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+    // Retención R1: filtro "solo dormidas" — convierte el KPI en lista de llamadas.
+    const [onlyDormant, setOnlyDormant] = useState(false);
 
     // ── Datos en vivo vía SWR (polling 30s, sin useEffect + fetch manual) ──
     const swrConfig = { refreshInterval: 30000, revalidateOnFocus: false, keepPreviousData: true };
@@ -319,9 +363,25 @@ const SuperAdmin: React.FC = () => {
                             <div className="px-4 py-3 border-b border-gray-800 flex justify-between items-center">
                                 <div className="flex items-center gap-2">
                                     <Skull size={16} className="text-red-500" />
-                                    <span className="font-bold text-sm text-gray-300">LISTA NEGRA - TODAS LAS EMPRESAS</span>
+                                    <span className="font-bold text-sm text-gray-300">TODAS LAS EMPRESAS</span>
                                 </div>
-                                <span className="text-[10px] text-gray-600">{tenants.length} registros</span>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setOnlyDormant(v => !v)}
+                                        className={`px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition-colors ${onlyDormant ? 'bg-amber-500/25 text-amber-300' : 'bg-gray-800 text-gray-500 hover:text-gray-300'}`}
+                                        title="Registradas hace >7 días, sin venta ni login en 30 días"
+                                    >
+                                        <Moon size={11} /> SOLO DORMIDAS ({tenants.filter(t => t.dormant).length})
+                                    </button>
+                                    <button
+                                        onClick={() => exportTenantsCsv(onlyDormant ? tenants.filter(t => t.dormant) : tenants)}
+                                        className="px-2 py-1 bg-gray-800 text-gray-400 hover:text-gray-200 rounded text-[10px] font-bold flex items-center gap-1 transition-colors"
+                                        title="Descargar la lista visible como CSV (Excel)"
+                                    >
+                                        <Download size={11} /> CSV
+                                    </button>
+                                    <span className="text-[10px] text-gray-600">{(onlyDormant ? tenants.filter(t => t.dormant) : tenants).length} registros</span>
+                                </div>
                             </div>
                             <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                                 <table className="w-full text-xs">
@@ -329,15 +389,17 @@ const SuperAdmin: React.FC = () => {
                                         <tr>
                                             <th className="px-3 py-2 text-left">Empresa</th>
                                             <th className="px-3 py-2 text-left">Dueño</th>
+                                            <th className="px-3 py-2 text-center">Actividad</th>
                                             <th className="px-3 py-2 text-center">Score</th>
                                             <th className="px-3 py-2 text-right">Wallet</th>
                                             <th className="px-3 py-2 text-center">Estado</th>
                                             <th className="px-3 py-2 text-center">Stats</th>
+                                            <th className="px-3 py-2 text-center">Contacto</th>
                                             <th className="px-3 py-2 text-center">Acciones</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-800/50">
-                                        {tenants.map(t => (
+                                        {(onlyDormant ? tenants.filter(t => t.dormant) : tenants).map(t => (
                                             <tr key={t.id} className={`hover:bg-gray-800/30 transition-colors ${t.subscriptionStatus === 'PAST_DUE' ? 'bg-red-900/10' : ''}`}>
                                                 <td className="px-3 py-3">
                                                     <div className="font-bold text-gray-200">{t.businessName}</div>
@@ -352,6 +414,14 @@ const SuperAdmin: React.FC = () => {
                                                     ) : <span className="text-gray-600">-</span>}
                                                 </td>
                                                 <td className="px-3 py-3 text-center">
+                                                    <div className={`font-mono text-[11px] ${t.dormant ? 'text-amber-400' : 'text-gray-400'}`}>{relativeDays(t.lastLogin)}</div>
+                                                    {t.dormant && (
+                                                        <span className="inline-flex items-center gap-0.5 mt-0.5 px-1.5 py-0.5 bg-amber-500/15 text-amber-400 text-[9px] font-bold rounded" title="Registrada hace >7 días, sin venta ni login en 30 días">
+                                                            <Moon size={8} /> DORMIDA
+                                                        </span>
+                                                    )}
+                                                </td>
+                                                <td className="px-3 py-3 text-center">
                                                     <div className={`font-bold text-lg ${getScoreColor(t.creditScore)}`}>{t.creditScore ?? 'S/D'}</div>
                                                     <div className={`text-[9px] font-bold ${getScoreColor(t.creditScore)}`}>{getScoreLabel(t.creditScore)}</div>
                                                 </td>
@@ -362,6 +432,35 @@ const SuperAdmin: React.FC = () => {
                                                 <td className="px-3 py-3 text-center">
                                                     <div className="text-[10px] text-gray-500">
                                                         <span title="Ventas">{t.stats.sales}v</span> / <span title="Productos">{t.stats.products}p</span> / <span title="Empleados">{t.stats.employees}e</span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-3 py-3">
+                                                    {/* Contacto directo (retención R1): de "17 dormidas" a poder escribirles. */}
+                                                    <div className="flex items-center justify-center gap-1">
+                                                        {t.owner?.email && (
+                                                            <a
+                                                                href={`mailto:${t.owner.email}?subject=${encodeURIComponent('¿Te ayudo a arrancar con Nortex?')}`}
+                                                                className="p-1.5 bg-blue-500/15 text-blue-400 rounded hover:bg-blue-500/30 transition-colors"
+                                                                title={`Email a ${t.owner.email}`}
+                                                            >
+                                                                <Mail size={12} />
+                                                            </a>
+                                                        )}
+                                                        {t.phone ? (
+                                                            <a
+                                                                href={waLink(t.phone)}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="p-1.5 bg-green-500/15 text-green-400 rounded hover:bg-green-500/30 transition-colors"
+                                                                title={`WhatsApp ${t.phone}`}
+                                                            >
+                                                                <MessageCircle size={12} />
+                                                            </a>
+                                                        ) : (
+                                                            <span className="p-1.5 text-gray-700" title="Sin WhatsApp registrado">
+                                                                <MessageCircle size={12} />
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </td>
                                                 <td className="px-3 py-3">
@@ -387,8 +486,8 @@ const SuperAdmin: React.FC = () => {
                                                 </td>
                                             </tr>
                                         ))}
-                                        {tenants.length === 0 && (
-                                            <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-600">Sin empresas registradas</td></tr>
+                                        {(onlyDormant ? tenants.filter(t => t.dormant) : tenants).length === 0 && (
+                                            <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-600">{onlyDormant ? 'Ninguna empresa dormida 🎉' : 'Sin empresas registradas'}</td></tr>
                                         )}
                                     </tbody>
                                 </table>

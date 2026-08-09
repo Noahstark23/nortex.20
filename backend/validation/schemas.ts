@@ -248,6 +248,11 @@ export const RegisterSchema = z.object({
     email:       z.string().trim().email('Correo inválido'),
     password:    z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(200),
     type:        businessType.optional(),
+    // Retención R1: el WhatsApp del dueño es EL canal de rescate en Nicaragua.
+    // Opcional para no bajar la conversión del formulario; '' cuenta como vacío.
+    phone:       z.string().trim().max(20, 'Teléfono demasiado largo')
+                     .regex(/^[0-9+\-\s()]*$/, 'Teléfono inválido — solo números')
+                     .optional().or(z.literal('')),
 });
 
 // POST /api/auth/login — sin mínimo de contraseña para no bloquear cuentas viejas.
