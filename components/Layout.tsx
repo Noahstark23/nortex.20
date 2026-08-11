@@ -1,8 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle } from 'lucide-react';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { LayoutGrid, ShoppingCart, LogOut, Wallet, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle, Home, ChevronDown, SlidersHorizontal } from 'lucide-react';
 import { PinPadClock } from './PinPadClock';
 import OnboardingHub from './OnboardingHub';
+import { buildNavigation, resolveUiMode, UI_MODE_KEY, type UiMode, type NavEntry } from '../utils/navigation';
+
+// El módulo de navegación es puro (sin React): mapa iconKey → componente lucide.
+const NAV_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
+  home: Home, shoppingCart: ShoppingCart, monitor: Monitor, package: Package,
+  clipboardList: ClipboardList, truck: Truck, fileText: FileText, users: Users,
+  zap: Zap, layoutGrid: LayoutGrid, wallet: Wallet, creditCard: CreditCard,
+  bookOpen: BookOpen, pieChart: PieChart, barChart3: BarChart3, shield: Shield,
+  userCircle: UserCircle, briefcase: Briefcase, userPlus: UserPlus,
+};
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -10,8 +20,23 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [showClock, setShowClock] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+
+  // ── Modo de menú (simple | full) — persistido; lo guardado siempre gana ──
+  const [uiMode, setUiMode] = useState<UiMode>(() => {
+    let type = '';
+    try { type = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.tenant?.type || ''; } catch { /* sin tenant → simple */ }
+    return resolveUiMode(type, localStorage.getItem(UI_MODE_KEY));
+  });
+  const toggleUiMode = () => setUiMode(prev => {
+    const next: UiMode = prev === 'simple' ? 'full' : 'simple';
+    localStorage.setItem(UI_MODE_KEY, next);
+    return next;
+  });
+  // "Más opciones" del sidebar: abierto si la ruta actual vive ahí adentro.
+  const [showMore, setShowMore] = useState(false);
 
   // ── Toast de notificaciones ──────────────────────────────────────────────
   interface AppToast { id: string; message: string; }
@@ -101,6 +126,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   // Decode JWT to get user role for sidebar gating
   const token = localStorage.getItem('nortex_token');
   let userRole = '';
+  let tenantType = '';
   try {
     if (token) {
       const payload = JSON.parse(atob(token.split('.')[1]));
@@ -110,7 +136,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         const userStr = localStorage.getItem('nortex_user');
         if (userStr) {
           const user = JSON.parse(userStr);
-          if (user.tenant?.type === 'LENDER') {
+          tenantType = user.tenant?.type || '';
+          if (tenantType === 'LENDER') {
             userRole = `LENDER_${userRole}`; // Prefix to distinguish in layout
           }
         }
@@ -135,77 +162,20 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     icon: React.ComponentType<{ size?: number; className?: string }>;
   };
 
-  const navItems: NavItem[] = [
-    // --- LENDER TENANT MODO ---
-    ...(userRole.startsWith('LENDER_')
-      ? [
-        // Rutas PROPIAS del modo prestamista (App.tsx las mapea a las
-        // pestañas del LenderDashboard). Antes apuntaban a /app/clients,
-        // /app/reports y /app/team — el CRM de retail, los reportes fiscales
-        // de mostrador y el equipo de tienda: 3 de 4 clics del prestamista
-        // aterrizaban en pantallas de ferretería sin conciencia de LENDER.
-        { path: '/app/dashboard',  label: 'Dashboard Financiero', shortLabel: 'Finanzas',   group: 'Finanzas',       icon: Wallet   },
-        { path: '/app/cartera',    label: 'Cartera de Clientes',  shortLabel: 'Cartera',    group: 'Clientes',       icon: Users    },
-        { path: '/app/cobros',     label: 'Reportes de Cobro',    shortLabel: 'Cobros',     group: 'Reportes',       icon: PieChart },
-        { path: '/app/cobradores', label: 'Cobradores',           shortLabel: 'Cobradores', group: 'Administración', icon: UserPlus },
-      ]
-      : userRole === 'ACCOUNTANT'
-      ? [
-        // ── CONTADOR — vista reducida ────────────────────
-        { path: '/app/accounting', label: 'Contabilidad',      shortLabel: 'Contab.',    group: 'Fiscal',    icon: BookOpen },
-        { path: '/app/reports',   label: 'Reportes / Fiscal', shortLabel: 'Fiscal',     group: 'Fiscal',    icon: PieChart },
-        { path: '/app/purchases', label: 'Compras',           shortLabel: 'Compras',    group: 'Fiscal',    icon: Truck    },
-        { path: '/app/audit',     label: 'Auditoría',         shortLabel: 'Auditoría',  group: 'Fiscal',    icon: Shield   },
-      ]
-      : [
-        // ── VENTAS ──────────────────────────────────────
-        { path: '/app/pos',         label: 'Punto de Venta',  shortLabel: 'POS',      group: 'Ventas', icon: ShoppingCart },
-        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(userRole)
-          ? [{ path: '/app/cash-registers', label: 'Cajas y Arqueos', shortLabel: 'Cajas', group: 'Ventas', icon: Monitor }]
-          : []),
-        { path: '/app/inventory',   label: 'Inventario',      shortLabel: 'Stock',    group: 'Ventas', icon: Package  },
-        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
-          ? [{ path: '/app/inventory-count', label: 'Toma Física', shortLabel: 'Conteo', group: 'Ventas', icon: ClipboardList }]
-          : []),
-        { path: '/app/delivery',    label: 'Entregas',        shortLabel: 'Entregas', group: 'Ventas', icon: Truck    },
-        { path: '/app/quotations',  label: 'Cotizaciones',    shortLabel: 'Cotiz.',   group: 'Ventas', icon: FileText },
-        { path: '/app/clients',     label: 'Clientes (CRM)',  shortLabel: 'Clientes', group: 'Ventas', icon: Users    },
-
-        // ── COMPRAS ─────────────────────────────────────
-        { path: '/app/purchases',   label: 'Compras',                shortLabel: 'Compras',   group: 'Compras', icon: Truck        },
-        { path: '/app/suppliers',   label: 'Proveedores',            shortLabel: 'Proveed.',  group: 'Compras', icon: ClipboardList},
-        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
-          ? [{ path: '/app/smart-purchases', label: 'Compras Inteligentes', shortLabel: 'Smart', group: 'Compras', icon: Zap }]
-          : []),
-        { path: '/app/marketplace', label: 'Mercado B2B',           shortLabel: 'B2B',       group: 'Compras', icon: ShoppingBag  },
-
-        // ── FINANZAS ────────────────────────────────────
-        { path: '/app/dashboard',   label: 'Finanzas',       shortLabel: 'Finanzas', group: 'Finanzas', icon: LayoutGrid },
-        { path: '/app/receivables', label: 'Cobranza',       shortLabel: 'Cobros',   group: 'Finanzas', icon: Wallet     },
-        { path: '/app/billing',     label: 'Facturación',    shortLabel: 'Facturas', group: 'Finanzas', icon: CreditCard },
-        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
-          ? [{ path: '/app/accounting', label: 'Contabilidad', shortLabel: 'Contab.', group: 'Finanzas', icon: BookOpen }]
-          : []),
-        { path: '/app/reports',     label: 'Reportes',       shortLabel: 'Reportes', group: 'Finanzas', icon: PieChart   },
-        ...(['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(userRole)
-          ? [
-            { path: '/app/financial-health', label: 'Salud Financiera', shortLabel: 'Salud',    group: 'Finanzas',       icon: BarChart3 },
-            { path: '/app/audit',            label: 'Auditoría',        shortLabel: 'Auditoría',group: 'Finanzas',       icon: Shield    },
-          ]
-          : []),
-
-        // ── PERSONAL ────────────────────────────────────
-        { path: '/app/mi-espacio', label: 'Mi Espacio',       shortLabel: 'Mi Espacio', group: 'Personal', icon: UserCircle },
-
-        // ── ADMINISTRACIÓN ──────────────────────────────
-        { path: '/app/hr',        label: 'Recursos Humanos', shortLabel: 'RRHH',   group: 'Administración', icon: Briefcase },
-        { path: '/app/team',      label: 'Mi Equipo',        shortLabel: 'Equipo', group: 'Administración', icon: UserPlus  },
-        // "Panel Admin" (/app/blueprint) salió del menú: era el BlueprintViewer
-        // — una pantalla de desarrollador ("CTO_MODE: ARQUITECTURA", volcado
-        // del schema con botón COPIAR CÓDIGO) visible hasta para el cajero.
-        // La ruta sigue existiendo por URL directa para uso interno.
-      ])
-  ];
+  // R2.6 (auditoría D1): el menú lo decide utils/navigation.ts — módulo puro y
+  // testeado que estaba escrito y desconectado. buildNavigation conserva el
+  // gating por rol y los menús reducidos de LENDER/CONTADOR; en modo simple
+  // devuelve el set corto por giro (el orden ES la jerarquía: la barra móvil
+  // toma los primeros 4) y pliega el resto en "Más opciones".
+  const nav = buildNavigation({ tenantType, role: userRole, simple: uiMode === 'simple' });
+  const toNavItem = (e: NavEntry): NavItem => ({ ...e, icon: NAV_ICONS[e.iconKey] ?? Package });
+  const navItems: NavItem[] = nav.primary.map(toNavItem);
+  const moreItems: NavItem[] = nav.more.map(toNavItem);
+  // El overlay móvil muestra TODO (primary ∪ more) agrupado — nada se pierde.
+  const allItems: NavItem[] = [...navItems, ...moreItems];
+  // LENDER y CONTADOR no tienen modo simple: ocultar el toggle.
+  const canToggleMode = !userRole.startsWith('LENDER_') && userRole !== 'ACCOUNTANT';
+  const isMoreActive = moreItems.some(it => location.pathname.startsWith(it.path));
 
   return (
     // h-dvh (no h-screen): 100vh en Chrome Android no descuenta la barra de
@@ -241,6 +211,51 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 </NavLink>
               );
             })}
+
+            {/* "Más opciones" (modo simple): el resto del menú, plegado pero a un clic */}
+            {moreItems.length > 0 && (
+              <>
+                <button
+                  onClick={() => setShowMore(v => !v)}
+                  className={`w-full flex items-center justify-start gap-3 px-3 py-2.5 rounded-xl transition-colors mt-2 border-t border-white/[0.06] pt-3
+                    ${(showMore || isMoreActive) ? 'text-slate-300' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  <ChevronDown size={20} className={`transition-transform ${(showMore || isMoreActive) ? 'rotate-180' : ''}`} />
+                  <span className="font-medium text-sm">Más opciones</span>
+                </button>
+                {(showMore || isMoreActive) && moreItems.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <NavLink
+                      key={item.path}
+                      to={item.path}
+                      className={({ isActive }) => `
+                        w-full flex items-center justify-start gap-3 px-3 py-2 rounded-xl transition-all duration-200
+                        ${isActive
+                          ? 'bg-brand text-white shadow-glow shadow-brand/25'
+                          : 'text-slate-500 hover:bg-white/[0.04] hover:text-white'}
+                      `}
+                    >
+                      <Icon size={18} />
+                      <span className="font-medium text-[13px]">{item.label}</span>
+                    </NavLink>
+                  );
+                })}
+              </>
+            )}
+
+            {/* Toggle de modo: visible siempre para retail, cambia y persiste */}
+            {canToggleMode && (
+              <button
+                onClick={toggleUiMode}
+                className="w-full flex items-center justify-start gap-3 px-3 py-2 rounded-xl text-slate-600 hover:text-slate-300 transition-colors mt-1"
+              >
+                <SlidersHorizontal size={16} />
+                <span className="font-medium text-xs">
+                  {uiMode === 'simple' ? 'Ver menú completo' : 'Ver menú simple'}
+                </span>
+              </button>
+            )}
           </nav>
         </div >
 
@@ -320,9 +335,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 custom-scrollbar pb-24">
-            {/* Agrupar items por grupo y renderizar con headers */}
+            {/* Agrupar items por grupo y renderizar con headers (primary ∪ more: nada se pierde) */}
             {(() => {
-              const groups = navItems.reduce<Record<string, NavItem[]>>((acc, item) => {
+              const groups = allItems.reduce<Record<string, NavItem[]>>((acc, item) => {
                 if (!acc[item.group]) acc[item.group] = [];
                 acc[item.group].push(item);
                 return acc;
@@ -359,6 +374,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
 
           <div className="flex-none p-4 pt-2 border-t border-slate-800 space-y-2">
+            {/* La Ayuda solo existía en el sidebar de escritorio (hidden lg:flex):
+                el usuario que más la necesita —el del Android— no la tenía. */}
+            <button
+              onClick={() => { setShowMobileMenu(false); navigate('/app/ayuda'); }}
+              className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-white/[0.04] text-slate-300 font-bold border border-white/[0.08]"
+            >
+              <BookOpen size={18} />
+              ¿Cómo hago…? (Ayuda)
+            </button>
             <button
               onClick={() => { setShowMobileMenu(false); setShowClock(true); }}
               className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-indigo-500/10 text-indigo-400 font-bold border border-indigo-500/20"
@@ -373,6 +397,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <LogOut size={18} />
               Cerrar Sesión
             </button>
+            {canToggleMode && (
+              <button
+                onClick={toggleUiMode}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl text-slate-500 text-xs font-semibold"
+              >
+                <SlidersHorizontal size={14} />
+                {uiMode === 'simple' ? 'Ver menú completo' : 'Ver menú simple'}
+              </button>
+            )}
           </div>
         </div>
       )}

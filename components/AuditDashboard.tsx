@@ -165,7 +165,7 @@ const AuditDashboard: React.FC = () => {
             <div className="flex items-center justify-between mb-6">
                 <div>
                     <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                        <Shield className="text-red-500" /> Auditoría Forense
+                        <Shield className="text-red-500" /> Auditoría
                     </h1>
                     <p className="text-sm text-slate-500 mt-1">Detección de anomalías — últimos 30 días</p>
                 </div>

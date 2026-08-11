@@ -4,6 +4,7 @@ import {
   BookOpen, ShoppingCart, Package, PlayCircle, ArrowRight, Sparkles,
   Banknote, Users, Calculator, Truck, HandCoins,
 } from 'lucide-react';
+import { homePathFor, resolveUiMode, UI_MODE_KEY } from '../utils/navigation';
 
 /**
  * Centro de Ayuda / Tutoriales.
@@ -90,7 +91,15 @@ const HelpCenter: React.FC = () => {
     localStorage.removeItem('nortex_onb_welcome');
     localStorage.removeItem('nortex_onb_dismissed');
     // Recargamos para que el OnboardingHub (montado en Layout) lo vuelva a leer.
-    window.location.assign('/app/dashboard?welcome=1');
+    // A la pantalla de inicio del ROL (antes: siempre /app/dashboard, que para
+    // un cajero no es su pantalla).
+    let home = '/app/dashboard';
+    try {
+      const role = JSON.parse(atob((localStorage.getItem('nortex_token') || '').split('.')[1])).role || '';
+      const type = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.tenant?.type || '';
+      home = homePathFor(role, resolveUiMode(type, localStorage.getItem(UI_MODE_KEY)));
+    } catch { /* token ilegible → dashboard */ }
+    window.location.assign(`${home}?welcome=1`);
   };
 
   return (

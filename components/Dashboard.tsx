@@ -396,7 +396,9 @@ const RetailDashboard: React.FC = () => {
 
       <header className="mb-8 flex justify-between items-start">
         <div>
-          <h1 className="text-3xl font-bold text-slate-100">Panel Financiero</h1>
+          {/* El menú dice "Mi Plata"; si la pantalla dijera otra cosa, el usuario
+              cree que se equivocó de link (auditoría D1). */}
+          <h1 className="text-3xl font-bold text-slate-100">Mi Plata</h1>
           <div className="flex items-center gap-2 mt-2">
             <span className="px-2 py-1 bg-blue-500/15 text-blue-400 rounded text-xs font-bold uppercase tracking-wider">{tenantData.type}</span>
             <span className="text-slate-500">{tenantData.name}</span>
@@ -433,7 +435,9 @@ const RetailDashboard: React.FC = () => {
               </div>
             </div>
             <button
-              onClick={() => navigate('/app/marketplace')}
+              // Antes iba a /app/marketplace → "Próximamente": la alerta más
+              // urgente del dashboard creaba urgencia y cerraba la puerta.
+              onClick={() => navigate('/app/smart-purchases')}
               className="px-6 py-3 bg-surface-900 text-slate-100 font-bold rounded-lg hover:bg-nortex-accent transition-colors flex items-center gap-2 shadow-lg"
             >
               <ShoppingCart size={18} /> Pedir Reabastecimiento <ArrowRight size={18} />

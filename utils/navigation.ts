@@ -15,8 +15,11 @@
  *   - primary ∪ more = exactamente el menú actual para ese rol (nada se pierde).
  *   - modo 'full' → primary = menú completo de siempre, more = [].
  *   - LENDER y ACCOUNTANT conservan sus menús reducidos actuales sin cambios.
- *   - El default de modo solo cambia para PULPERIA (simple); el resto sigue
- *     viendo el menú completo salvo que elija "Ver menos".
+ *   - Default (R2.6): TODO giro retail arranca en simple — la auditoría UX
+ *     mostró que 12 de 22 etiquetas no pasan la prueba del pulpero y que
+ *     ferretería/farmacia (los nichos con landing propia) seguían viendo el
+ *     menú completo. Lo guardado en localStorage siempre gana, y el Layout
+ *     ahora expone el toggle "Ver menú completo/simple".
  */
 
 export type UiMode = 'simple' | 'full';
@@ -56,9 +59,9 @@ export interface NavContext {
 // prestamista (LenderDashboard), vía rutas dedicadas que no chocan con retail.
 const LENDER_ITEMS: NavEntry[] = [
     { path: '/app/dashboard', label: 'Dashboard Financiero', shortLabel: 'Finanzas', group: 'Finanzas', iconKey: 'wallet' },
-    { path: '/app/cartera', label: 'Cartera de Clientes', shortLabel: 'Clientes', group: 'Clientes', iconKey: 'users' },
-    { path: '/app/cobros', label: 'Reportes de Cobro', shortLabel: 'Reportes', group: 'Reportes', iconKey: 'pieChart' },
-    { path: '/app/cobradores', label: 'Cobradores', shortLabel: 'Equipo', group: 'Administración', iconKey: 'userPlus' },
+    { path: '/app/cartera', label: 'Cartera de Clientes', shortLabel: 'Cartera', group: 'Clientes', iconKey: 'users' },
+    { path: '/app/cobros', label: 'Reportes de Cobro', shortLabel: 'Cobros', group: 'Reportes', iconKey: 'pieChart' },
+    { path: '/app/cobradores', label: 'Cobradores', shortLabel: 'Cobradores', group: 'Administración', iconKey: 'userPlus' },
 ];
 
 const ACCOUNTANT_ITEMS: NavEntry[] = [
@@ -97,7 +100,9 @@ const RETAIL_CATALOG: CatalogEntry[] = [
     // ── FINANZAS ──
     { path: '/app/dashboard', label: 'Mi Plata', shortLabel: 'Mi Plata', group: 'Finanzas', iconKey: 'layoutGrid' },
     { path: '/app/receivables', label: 'Fiado y Cobros', shortLabel: 'Fiado', group: 'Finanzas', iconKey: 'wallet' },
-    { path: '/app/billing', label: 'Facturación', shortLabel: 'Facturas', group: 'Finanzas', iconKey: 'creditCard' },
+    // "Facturación" era el peor label del sistema: no es facturarle a clientes,
+    // es pagarle la suscripción a Nortex. Ahora dice lo que es.
+    { path: '/app/billing', label: 'Mi Plan de Nortex', shortLabel: 'Mi Plan', group: 'Finanzas', iconKey: 'creditCard' },
     { path: '/app/accounting', label: 'Contabilidad', shortLabel: 'Contab.', group: 'Finanzas', iconKey: 'bookOpen', roles: GATE_ADMIN },
     { path: '/app/reports', label: 'Reportes', shortLabel: 'Reportes', group: 'Finanzas', iconKey: 'pieChart' },
     { path: '/app/financial-health', label: 'Salud Financiera', shortLabel: 'Salud', group: 'Finanzas', iconKey: 'barChart3', roles: GATE_ADMIN },
@@ -107,7 +112,8 @@ const RETAIL_CATALOG: CatalogEntry[] = [
     // ── ADMINISTRACIÓN ──
     { path: '/app/hr', label: 'Mi Personal', shortLabel: 'Personal', group: 'Administración', iconKey: 'briefcase' },
     { path: '/app/team', label: 'Mi Equipo', shortLabel: 'Equipo', group: 'Administración', iconKey: 'userPlus' },
-    { path: '/app/blueprint', label: 'Panel Admin', shortLabel: 'Admin', group: 'Administración', iconKey: 'code2' },
+    // "Panel Admin" (/app/blueprint) fuera del catálogo (R2.5 D4): es el
+    // BlueprintViewer, una pantalla de desarrollador. La ruta sigue por URL.
 ];
 
 // ── Sets simples por giro (rutas; el orden ES el orden del menú) ─────────────
@@ -184,10 +190,25 @@ export function homePathFor(role: string, uiMode: UiMode = 'full'): string {
 export const UI_MODE_KEY = 'nortex_ui_mode';
 
 /**
- * Modo por defecto: lo guardado gana; si no hay nada guardado, SOLO la
- * pulpería arranca en simple — el resto conserva el menú completo de siempre.
+ * Modo por defecto: lo guardado gana; si no hay nada guardado, todo giro
+ * retail arranca en simple (R2.6 — antes solo la pulpería, y ferretería/
+ * farmacia quedaban con las 22 etiquetas de ERP). LENDER no tiene modo
+ * simple: su menú ya es reducido y su home no es /app/inicio.
  */
 export function resolveUiMode(tenantType: string, stored: string | null): UiMode {
     if (stored === 'simple' || stored === 'full') return stored;
-    return tenantType === 'PULPERIA' ? 'simple' : 'full';
+    return tenantType === 'LENDER' ? 'full' : 'simple';
+}
+
+/**
+ * Modo simple del POS — desacoplado del menú (QA R2.6): el POS simple esconde
+ * tiquetera, parqueo, devoluciones e importación. Que el MENÚ de una ferretería
+ * arranque simple está bien; esconderle Devoluciones y la tiquetera al
+ * mostrador sería una regresión real. Por eso el POS solo se simplifica por
+ * defecto en PULPERIA (el comportamiento de siempre); la elección explícita
+ * del usuario (mismo UI_MODE_KEY) sí aplica en todos lados.
+ */
+export function resolvePosSimple(tenantType: string, stored: string | null): boolean {
+    if (stored === 'simple' || stored === 'full') return stored === 'simple';
+    return tenantType === 'PULPERIA';
 }

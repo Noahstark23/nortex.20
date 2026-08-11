@@ -256,7 +256,7 @@ const QuotationManager: React.FC = () => {
             <div className="flex-1 flex flex-col border-r border-white/[0.06] bg-surface-900 text-slate-100">
                 <div className="p-6 border-b border-white/[0.06] text-slate-100">
                     <h1 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
-                        <FileText className="text-nortex-500" /> Cotizaciones B2B
+                        <FileText className="text-nortex-500" /> Proformas
                     </h1>
                     <div className="flex gap-2 mt-6">
                         <button
