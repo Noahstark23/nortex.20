@@ -3112,14 +3112,19 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
                         const category = String(item.category || item.categoria || 'General').trim();
                         const unit = String(item.unit || item.unidad || 'unidad').trim();
 
+                        // ⚠️ continue, NO return: un `return` acá sale del
+                        // callback COMPLETO de la transacción (no de la
+                        // iteración) — una sola fila mala descartaba en
+                        // silencio hasta 49 productos restantes del lote y
+                        // el resumen igual decía "Importación exitosa".
                         if (!sku || !name) {
                             errors.push(`Fila ${i + batch.indexOf(item) + 1}: SKU o Nombre vacío`);
-                            return;
+                            continue;
                         }
 
                         if (price <= 0) {
                             errors.push(`${sku}: Precio inválido`);
-                            return;
+                            continue;
                         }
 
                         // Upsert: si SKU existe, actualiza; si no, crea
@@ -6215,6 +6220,29 @@ app.post('/api/billing/portal', authenticate, async (req: any, res: any) => {
 });
 
 // GET /api/billing/status - Estado de suscripción del tenant actual
+// Cuentas de depósito desde env (BANK_ACCOUNTS_JSON). Validación defensiva:
+// un JSON malformado en Coolify no debe tumbar el endpoint de billing —
+// se loguea y se devuelve [] (el frontend cae al canal de WhatsApp).
+function parseBankAccounts(): Array<{ bank: string; type: string; number: string; name: string }> {
+    const raw = process.env.BANK_ACCOUNTS_JSON;
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed
+            .filter((a: any) => a && typeof a.bank === 'string' && typeof a.number === 'string')
+            .map((a: any) => ({
+                bank: String(a.bank),
+                type: String(a.type || 'Cuenta'),
+                number: String(a.number),
+                name: String(a.name || 'NORTEX'),
+            }));
+    } catch (e) {
+        console.error('BANK_ACCOUNTS_JSON malformado:', e);
+        return [];
+    }
+}
+
 app.get('/api/billing/status', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
@@ -6240,6 +6268,15 @@ app.get('/api/billing/status', authenticate, async (req: any, res: any) => {
             endsAt: tenant.subscriptionEndsAt,
             businessName: tenant.businessName,
             stripeConfigured: !!getStripe(),
+            // Cuentas bancarias REALES para el pago por depósito (el único
+            // método viable en Nicaragua). Vienen de env — nunca hardcodeadas
+            // en el bundle del cliente. Antes el frontend mostraba cuentas
+            // placeholder XXXX-XXXX-XXXX-4521: el cliente que quería pagar
+            // no tenía a dónde transferir. Sin configurar → [] y el frontend
+            // manda al WhatsApp (fallback honesto, no números falsos).
+            // Formato: BANK_ACCOUNTS_JSON = [{"bank","type","number","name"}]
+            bankAccounts: parseBankAccounts(),
+            supportWhatsapp: process.env.SUPPORT_WHATSAPP || '+505 7664-4030',
         });
     } catch (error) {
         res.status(500).json({ error: 'Error al obtener estado de suscripción' });

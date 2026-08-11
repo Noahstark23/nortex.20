@@ -118,6 +118,7 @@ interface HeldCart {
 interface CompletedSale {
     items: CartItem[];
     subtotal: number;
+    discount: number; // monto rebajado (línea + global) para que el ticket cuadre
     tax: number;
     grandTotal: number;
     paymentMethod: string;
@@ -320,6 +321,15 @@ const POS: React.FC = () => {
                     stock: p.stock,
                     category: p.category || 'General',
                     unit: p.unit || 'unidad',
+                    // Mayoreo y empaque: sin estos campos, effectiveUnitPrice
+                    // nunca sale de DETALLE y la regla de precios por cantidad
+                    // (testeada en tests/pricing.test.ts) queda muerta — la
+                    // docena configurada a C$90 se cobraba 12 × detalle.
+                    wholesalePrice: p.wholesalePrice ?? null,
+                    wholesaleMinQty: p.wholesaleMinQty ?? null,
+                    packUnit: p.packUnit ?? null,
+                    packSize: p.packSize ?? null,
+                    packPrice: p.packPrice ?? null,
                 }));
                 setProducts(mapped);
                 setProductsError(false);
@@ -1016,6 +1026,13 @@ const POS: React.FC = () => {
                     return;
                 case 'F9':
                     e.preventDefault();
+                    // Guarda anti-doble-cobro: sin esto, el auto-repeat del
+                    // teclado (dedo apoyado medio segundo) o un F9 por
+                    // costumbre con el modal de venta completada abierto
+                    // disparaba N POST /api/sales = N cobros y N descuentos
+                    // de stock. El botón EFECTIVO ya estaba protegido con
+                    // disabled={processing}; el atajo documentado, no.
+                    if (e.repeat || processing || completedSale || showCashPreModal) return;
                     if (currentShift && cart.length > 0) handleCheckout('CASH');
                     return;
                 case 'Escape':
@@ -1035,7 +1052,7 @@ const POS: React.FC = () => {
         };
         window.addEventListener('keydown', handleHotkey);
         return () => window.removeEventListener('keydown', handleHotkey);
-    }, [handleHoldCart, currentShift, cart, completedSale, showCashModal, showCreditPanel, showHeldCarts, showQuickCreate, showAddModal, showImportModal, showCloseShift, showMovementsList]);
+    }, [handleHoldCart, currentShift, cart, completedSale, processing, showCashPreModal, showCashModal, showCreditPanel, showHeldCarts, showQuickCreate, showAddModal, showImportModal, showCloseShift, showMovementsList]);
 
     // ==========================================
     // 🔴 FIADO INTELIGENTE (Credit Override)
@@ -1099,6 +1116,11 @@ const POS: React.FC = () => {
                 costPrice: data.cost,
                 stock: data.stock,
                 category: data.category || 'General',
+                wholesalePrice: data.wholesalePrice ?? null,
+                wholesaleMinQty: data.wholesaleMinQty ?? null,
+                packUnit: data.packUnit ?? null,
+                packSize: data.packSize ?? null,
+                packPrice: data.packPrice ?? null,
             };
 
             setProducts(prev => [newProd, ...prev]);
@@ -1228,6 +1250,11 @@ const POS: React.FC = () => {
                 price: data.price,
                 costPrice: data.cost,
                 stock: data.stock,
+                wholesalePrice: data.wholesalePrice ?? null,
+                wholesaleMinQty: data.wholesaleMinQty ?? null,
+                packUnit: data.packUnit ?? null,
+                packSize: data.packSize ?? null,
+                packPrice: data.packPrice ?? null,
             };
             setProducts(prev => [productToAdd, ...prev]);
             setShowAddModal(false);
@@ -1246,11 +1273,18 @@ const POS: React.FC = () => {
         return acc.plus(toDecimal(item.price).mul(item.quantity).mul(factor));
     }, new Decimal(0));
     const discountedTotalD = totalD.mul(new Decimal(1).minus(globalDiscountD.div(100)));
-    const taxD = discountedTotalD.mul('0.15'); // IVA 15% Nicaragua
-    const grandTotalD = discountedTotalD.plus(taxD);
+    // IVA 15% Nicaragua — DESGLOSE, no recargo. El precio de mostrador ya
+    // incluye el IVA (convención nica) y el backend registra exactamente
+    // discountedTotal como Sale.total (executeSale ignora el total del
+    // cliente; nicaTax trata Sale.total como IVA incluido). Antes se sumaba
+    // 15% encima: el cliente pagaba C$115 y la BD guardaba C$100 → sobrante
+    // fantasma en todos los arqueos y fiado registrado 15% por debajo.
+    const grandTotalD = discountedTotalD;
+    const taxD = grandTotalD.minus(grandTotalD.div('1.15')); // informativo (incluido)
 
     // Proyecciones numéricas (2 decimales) para UI y payload; la verdad es Decimal.
     const total = totalD.toDecimalPlaces(2).toNumber();
+    const discountAmount = totalD.minus(grandTotalD).toDecimalPlaces(2).toNumber();
     const discountedTotal = discountedTotalD.toDecimalPlaces(2).toNumber();
     const tax = taxD.toDecimalPlaces(2).toNumber();
     const grandTotal = grandTotalD.toDecimalPlaces(2).toNumber();
@@ -1289,60 +1323,78 @@ const POS: React.FC = () => {
         }
 
         setProcessing(true);
+        // Una sola clave de idempotencia por intento de cobro: viaja también
+        // en el POST online (el backend ya deduplica por offlineId), así que
+        // si la respuesta se pierde en lie-fi y la venta se re-encola, el
+        // sync posterior la marca 'skipped' en vez de duplicarla.
+        const offlineId = generateOfflineId();
+
+        // Encolar la venta en IndexedDB (camino offline Y rescate de fallos
+        // de red del camino online — antes un "Failed to fetch" tiraba la
+        // venta a un alert y se perdía con el cliente ya servido).
+        const queueSaleOffline = async () => {
+            const tenantRaw = localStorage.getItem('nortex_tenant_data');
+            const tenantId = tenantRaw ? JSON.parse(tenantRaw).id : '';
+            const userRaw = localStorage.getItem('nortex_user');
+            const userId = userRaw ? JSON.parse(userRaw).id : '';
+
+            await saveSaleOffline({
+                offlineId,
+                tenantId,
+                userId,
+                shiftId: currentShift?.id ?? null,
+                employeeId: currentShift?.employeeId ?? currentShift?.employee?.id ?? null,
+                customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
+                customerId: selectedCustomer?.id ?? null,
+                paymentMethod: method,
+                total: grandTotal,
+                globalDiscount: globalDiscountNum,
+                items: cart.map(c => ({
+                    id: c.id,
+                    name: c.name,
+                    quantity: c.quantity,
+                    price: c.price,
+                    costPrice: c.costPrice,
+                    discount: (c as any).discount || 0,
+                })),
+                createdAt: new Date().toISOString(),
+            });
+            setPendingOfflineCount(p => p + 1);
+
+            setCompletedSale({
+                items: [...cart],
+                subtotal: total,
+                discount: discountAmount,
+                tax,
+                grandTotal,
+                paymentMethod: method,
+                customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
+                customerPhone: selectedCustomer?.phone,
+                saleId: offlineId,
+                date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+            });
+            setCashReceived('');
+        };
+
         try {
             const token = localStorage.getItem('nortex_token');
 
             // ── OFFLINE PATH ──────────────────────────────────────────
             if (!navigator.onLine) {
-                const tenantRaw = localStorage.getItem('nortex_tenant_data');
-                const tenantId = tenantRaw ? JSON.parse(tenantRaw).id : '';
-                const userRaw = localStorage.getItem('nortex_user');
-                const userId = userRaw ? JSON.parse(userRaw).id : '';
-
-                const offlineId = generateOfflineId();
-                await saveSaleOffline({
-                    offlineId,
-                    tenantId,
-                    userId,
-                    shiftId: currentShift?.id ?? null,
-                    employeeId: currentShift?.employeeId ?? currentShift?.employee?.id ?? null,
-                    customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
-                    customerId: selectedCustomer?.id ?? null,
-                    paymentMethod: method,
-                    total: grandTotal,
-                    globalDiscount: globalDiscountNum,
-                    items: cart.map(c => ({
-                        id: c.id,
-                        name: c.name,
-                        quantity: c.quantity,
-                        price: c.price,
-                        costPrice: c.costPrice,
-                        discount: (c as any).discount || 0,
-                    })),
-                    createdAt: new Date().toISOString(),
-                });
-                setPendingOfflineCount(p => p + 1);
-
-                setCompletedSale({
-                    items: [...cart],
-                    subtotal: total,
-                    tax,
-                    grandTotal,
-                    paymentMethod: method,
-                    customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
-                    customerPhone: selectedCustomer?.phone,
-                    saleId: offlineId,
-                    date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-                });
-                setCashReceived('');
+                await queueSaleOffline();
                 return;
             }
 
             // ── ONLINE PATH ───────────────────────────────────────────
+            // Timeout de 8 s: en lie-fi (wifi "conectado" que no pasa datos)
+            // el fetch no resuelve nunca y el cobro quedaba congelado para
+            // siempre; al vencer, la venta cae a la cola offline.
             const res = await fetch('/api/sales', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                signal: AbortSignal.timeout(8000),
                 body: JSON.stringify({
+                    offlineId,
                     items: cart.map(c => ({ id: c.id, quantity: c.quantity, price: c.price, costPrice: c.costPrice, discount: (c as any).discount || 0 })),
                     paymentMethod: method,
                     customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
@@ -1364,6 +1416,7 @@ const POS: React.FC = () => {
             setCompletedSale({
                 items: [...cart],
                 subtotal: total,
+                discount: discountAmount,
                 tax,
                 grandTotal,
                 paymentMethod: method,
@@ -1377,6 +1430,21 @@ const POS: React.FC = () => {
             setCashReceived('');
 
         } catch (error: any) {
+            // Fallo de RED (timeout, servidor caído, DNS): la venta NO se
+            // pierde — va a la cola offline y el sync la reintenta con la
+            // misma clave de idempotencia. Un rechazo de NEGOCIO (stock
+            // insuficiente, caja cerrada) sí se muestra: reintentarlo a
+            // ciegas duplicaría el problema, no lo resolvería.
+            const isNetworkFailure =
+                error?.name === 'TimeoutError' ||
+                error?.name === 'AbortError' ||
+                error instanceof TypeError; // fetch: "Failed to fetch"
+            if (isNetworkFailure) {
+                try {
+                    await queueSaleOffline();
+                    return;
+                } catch { /* IndexedDB también falló: cae al alert */ }
+            }
             alert(error.message);
         } finally {
             setProcessing(false);
@@ -1405,6 +1473,7 @@ const POS: React.FC = () => {
                 lineTotal: i.price * i.quantity,
             })),
             subtotal: completedSale.subtotal,
+            discount: completedSale.discount,
             tax: completedSale.tax,
             grandTotal: completedSale.grandTotal,
             paymentMethod: completedSale.paymentMethod,
@@ -2820,7 +2889,7 @@ const POS: React.FC = () => {
                     </div>}
                     <div className="flex justify-between text-sm text-slate-500 mb-1"><span>Subtotal</span><span className="font-mono tabular-nums">C$ {total.toFixed(2)}</span></div>
                     {globalDiscountD.greaterThan(0) && <div className="flex justify-between text-sm text-red-500 mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="font-mono tabular-nums">-C$ {totalD.mul(globalDiscountD).div(100).toFixed(2)}</span></div>}
-                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>IVA (15%)</span><span className="font-mono tabular-nums">C$ {tax.toFixed(2)}</span></div>
+                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>IVA incluido (15%)</span><span className="font-mono tabular-nums">C$ {tax.toFixed(2)}</span></div>
                     <div className="flex justify-between text-xl font-bold text-white mb-4 pt-2 border-t border-white/[0.06]"><span>Total</span><span className="font-mono tabular-nums">C$ {grandTotal.toFixed(2)}</span></div>
 
                     {/* 💥 MASSIVE PAYMENT BUTTONS - FAT FINGER FRIENDLY */}
@@ -3333,6 +3402,7 @@ const POS: React.FC = () => {
                 customerName: completedSale.customerName,
                 items: completedSale.items,
                 subtotal: completedSale.subtotal,
+                discount: completedSale.discount,
                 tax: completedSale.tax,
                 total: completedSale.grandTotal,
                 paymentMethod: completedSale.paymentMethod,

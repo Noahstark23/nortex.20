@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, Code2, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle } from 'lucide-react';
+import { LayoutGrid, ShoppingCart, LogOut, Wallet, ShoppingBag, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle } from 'lucide-react';
 import { PinPadClock } from './PinPadClock';
 import OnboardingHub from './OnboardingHub';
 
@@ -139,10 +139,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     // --- LENDER TENANT MODO ---
     ...(userRole.startsWith('LENDER_')
       ? [
-        { path: '/app/dashboard', label: 'Dashboard Financiero', shortLabel: 'Finanzas', group: 'Finanzas',       icon: Wallet   },
-        { path: '/app/clients',   label: 'Cartera de Clientes',  shortLabel: 'Clientes', group: 'Clientes',       icon: Users    },
-        { path: '/app/reports',   label: 'Reportes de Cobro',    shortLabel: 'Reportes', group: 'Reportes',       icon: PieChart },
-        { path: '/app/team',      label: 'Cobradores',           shortLabel: 'Equipo',   group: 'Administración', icon: UserPlus },
+        // Rutas PROPIAS del modo prestamista (App.tsx las mapea a las
+        // pestañas del LenderDashboard). Antes apuntaban a /app/clients,
+        // /app/reports y /app/team — el CRM de retail, los reportes fiscales
+        // de mostrador y el equipo de tienda: 3 de 4 clics del prestamista
+        // aterrizaban en pantallas de ferretería sin conciencia de LENDER.
+        { path: '/app/dashboard',  label: 'Dashboard Financiero', shortLabel: 'Finanzas',   group: 'Finanzas',       icon: Wallet   },
+        { path: '/app/cartera',    label: 'Cartera de Clientes',  shortLabel: 'Cartera',    group: 'Clientes',       icon: Users    },
+        { path: '/app/cobros',     label: 'Reportes de Cobro',    shortLabel: 'Cobros',     group: 'Reportes',       icon: PieChart },
+        { path: '/app/cobradores', label: 'Cobradores',           shortLabel: 'Cobradores', group: 'Administración', icon: UserPlus },
       ]
       : userRole === 'ACCOUNTANT'
       ? [
@@ -195,7 +200,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         // ── ADMINISTRACIÓN ──────────────────────────────
         { path: '/app/hr',        label: 'Recursos Humanos', shortLabel: 'RRHH',   group: 'Administración', icon: Briefcase },
         { path: '/app/team',      label: 'Mi Equipo',        shortLabel: 'Equipo', group: 'Administración', icon: UserPlus  },
-        { path: '/app/blueprint', label: 'Panel Admin',      shortLabel: 'Admin',  group: 'Administración', icon: Code2     },
+        // "Panel Admin" (/app/blueprint) salió del menú: era el BlueprintViewer
+        // — una pantalla de desarrollador ("CTO_MODE: ARQUITECTURA", volcado
+        // del schema con botón COPIAR CÓDIGO) visible hasta para el cajero.
+        // La ruta sigue existiendo por URL directa para uso interno.
       ])
   ];
 

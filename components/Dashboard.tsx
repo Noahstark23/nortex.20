@@ -33,7 +33,6 @@ const RetailDashboard: React.FC = () => {
   const [tenantData, setTenantData] = useState<Tenant | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [activeLoans, setActiveLoans] = useState<Loan[]>([]);
-  const [processingSub, setProcessingSub] = useState(false);
   const [refreshingScore, setRefreshingScore] = useState(false);
   const [scoreFactors, setScoreFactors] = useState<string[]>([]);
 
@@ -224,38 +223,12 @@ const RetailDashboard: React.FC = () => {
     ? Math.ceil((new Date(tenantData.trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
     : 0;
 
-  const handleReactivate = async () => {
-    setProcessingSub(true);
-    try {
-      const token = localStorage.getItem('nortex_token');
-      const res = await fetch('/api/billing/subscribe', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ planId: 'PRO_MONTHLY' })
-      });
-
-      if (!res.ok) throw new Error('Falló el pago simulado');
-
-      // Update Local State immediately
-      const updatedTenant = {
-        ...tenantData,
-        subscriptionStatus: 'ACTIVE' as const,
-        trialEndsAt: '' // Clear trial
-      };
-      setTenantData(updatedTenant);
-      localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
-
-      alert("¡Cuenta Reactivada! El sistema está operativo.");
-
-    } catch (e) {
-      alert("Error al procesar la suscripción.");
-    } finally {
-      setProcessingSub(false);
-    }
-  };
+  // Los CTAs de pago llevan a la pantalla de pago real. Antes esto hacía
+  // POST /api/billing/subscribe — una ruta que NUNCA existió en el backend
+  // (404 → "Error al procesar la suscripción"): los dos únicos botones de
+  // conversión del producto estaban rotos, y encima marcaban el tenant como
+  // ACTIVE en localStorage sin que hubiera pago alguno.
+  const handleReactivate = () => navigate('/app/billing');
 
   const handleRequestLoan = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -375,10 +348,9 @@ const RetailDashboard: React.FC = () => {
           </div>
           <button
             onClick={handleReactivate}
-            disabled={processingSub}
-            className="px-6 py-3 bg-amber-500 text-surface-950 font-bold rounded shadow-lg hover:bg-amber-400 transition-colors disabled:opacity-60"
+            className="px-6 py-3 bg-amber-500 text-surface-950 font-bold rounded shadow-lg hover:bg-amber-400 transition-colors"
           >
-            {processingSub ? 'PROCESANDO...' : 'Activar plan'}
+            Activar plan
           </button>
         </div>
       )}

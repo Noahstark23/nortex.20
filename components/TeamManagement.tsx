@@ -92,7 +92,12 @@ const TeamManagement: React.FC = () => {
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
 
-    const token = localStorage.getItem('token');
+    // 'nortex_token' es LA llave del JWT en todo el repo (Login.tsx la
+    // escribe). Acá decía 'token' — que no se escribe en ningún lado — así
+    // que toda la pantalla operaba con Bearer null → 401: lista vacía,
+    // invitaciones que "fallaban" y botones mudos. La única vía de dar de
+    // alta a un empleado estaba muerta.
+    const token = localStorage.getItem('nortex_token');
 
     const fetchTeam = async () => {
         try {
@@ -158,9 +163,12 @@ const TeamManagement: React.FC = () => {
                 setSuccessMsg(data.message);
                 fetchTeam();
                 setTimeout(() => setSuccessMsg(''), 3000);
+            } else {
+                setError(data.error || 'No se pudo desactivar el usuario.');
             }
         } catch (err) {
             console.error(err);
+            setError('No se pudo desactivar el usuario. Revisá tu conexión.');
         }
     };
 
@@ -179,9 +187,12 @@ const TeamManagement: React.FC = () => {
                 setSuccessMsg(data.message);
                 fetchTeam();
                 setTimeout(() => setSuccessMsg(''), 3000);
+            } else {
+                setError(data.error || 'No se pudo cambiar el rol.');
             }
         } catch (err) {
             console.error(err);
+            setError('No se pudo cambiar el rol. Revisá tu conexión.');
         }
     };
 
@@ -196,9 +207,13 @@ const TeamManagement: React.FC = () => {
                 fetchTeam();
                 setSuccessMsg('Invitación cancelada.');
                 setTimeout(() => setSuccessMsg(''), 3000);
+            } else {
+                const data = await res.json().catch(() => ({}));
+                setError(data.error || 'No se pudo cancelar la invitación.');
             }
         } catch (err) {
             console.error(err);
+            setError('No se pudo cancelar la invitación. Revisá tu conexión.');
         }
     };
 
@@ -247,6 +262,15 @@ const TeamManagement: React.FC = () => {
             {successMsg && (
                 <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 text-emerald-400 text-sm flex items-center gap-2">
                     <Check size={16} /> {successMsg}
+                </div>
+            )}
+
+            {/* Error a nivel de página: los fallos de desactivar/cambiar rol/
+                cancelar invitación eran mudos (solo console.error) — el botón
+                parecía no hacer nada. */}
+            {error && !showInviteModal && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-400 text-sm flex items-center gap-2">
+                    <AlertCircle size={16} /> {error}
                 </div>
             )}
 

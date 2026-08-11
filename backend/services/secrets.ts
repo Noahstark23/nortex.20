@@ -27,7 +27,11 @@ export interface AuthTokenPayload {
     email?: string;
 }
 
-const TOKEN_TTL = '7d';
+// 30d: debe cubrir el trial completo (30 días, server.ts registro). Con 7d
+// el dueño quedaba fuera el día 8 — a mitad de la prueba y con su inventario
+// cargado — viendo "revisá tu conexión" en vez de "volvé a iniciar sesión".
+// (El token del repartidor ya era 30d; el del dueño no podía ser menor.)
+const TOKEN_TTL = '30d';
 
 export function signAuthToken(payload: AuthTokenPayload): string {
     return jwt.sign(payload, KEYRING[0], { expiresIn: TOKEN_TTL });

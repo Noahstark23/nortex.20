@@ -17,6 +17,7 @@ interface ReceiptTicketProps {
         customerRuc?: string;   // Cédula/RUC del cliente
         items: CartItem[];
         subtotal: number;
+        discount?: number; // monto rebajado; el IVA va incluido en los precios
         tax: number;
         total: number;
         paymentMethod: string;
@@ -113,8 +114,14 @@ export const ReceiptTicket: React.FC<ReceiptTicketProps> = ({ data }) => {
                         <span>Subtotal:</span>
                         <span>C$ {data.subtotal.toFixed(2)}</span>
                     </div>
+                    {(data.discount ?? 0) > 0 && (
+                        <div className="flex justify-between">
+                            <span>Descuento:</span>
+                            <span>-C$ {(data.discount ?? 0).toFixed(2)}</span>
+                        </div>
+                    )}
                     <div className="flex justify-between">
-                        <span>IVA (15%):</span>
+                        <span>IVA incluido (15%):</span>
                         <span>C$ {data.tax.toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between font-bold text-sm mt-1">
