@@ -161,7 +161,7 @@ const Billing: React.FC = () => {
             <div className="flex justify-between items-center mb-6">
                 <div>
                     <h1 className="text-3xl font-bold text-slate-100 flex items-center gap-2">
-                        <CreditCard className="text-nortex-500" /> Facturación & Suscripción
+                        <CreditCard className="text-nortex-500" /> Mi Plan de Nortex
                     </h1>
                     <p className="text-slate-500 text-sm mt-1">{billing?.businessName}</p>
                 </div>

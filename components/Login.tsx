@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { Mail, Lock, LogIn, Loader2, ArrowRight, Clock } from 'lucide-react';
+import { homePathFor, resolveUiMode, UI_MODE_KEY } from '../utils/navigation';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
@@ -44,7 +45,12 @@ const Login: React.FC = () => {
       if (data.user.role === 'SUPER_ADMIN') {
         navigate('/admin');
       } else {
-        navigate('/app/dashboard');
+        // Aterrizaje por rol y modo (auditoría F4): antes TODOS caían en
+        // /app/dashboard — el cajero pagaba la cascada del panel financiero
+        // para recién ahí tocar "Vender". App.tsx ya calculaba homePathFor
+        // para la ruta *; el login lo ignoraba.
+        const uiMode = resolveUiMode(data.tenant?.type || '', localStorage.getItem(UI_MODE_KEY));
+        navigate(homePathFor(data.user.role, uiMode));
       }
 
     } catch (err: any) {

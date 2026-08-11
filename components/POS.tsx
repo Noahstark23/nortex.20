@@ -6,7 +6,7 @@ import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Sear
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
-import { resolveUiMode, UI_MODE_KEY } from '../utils/navigation';
+import { resolvePosSimple, UI_MODE_KEY } from '../utils/navigation';
 import { ReceiptTicket } from './ReceiptTicket';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import * as XLSX from 'xlsx';
@@ -180,11 +180,13 @@ const POS: React.FC = () => {
     const [showHeldCarts, setShowHeldCarts] = useState(false);
 
     // ── Modo simple (Fase C-2 UX): esconde acciones avanzadas del POS ──
-    // Mismo criterio que el menú (utils/navigation.ts); se lee una vez al montar.
+    // Desacoplado del menú (utils/navigation.ts): el default simple del POS es
+    // solo pulpería — ferretería/farmacia conservan tiquetera/parqueo/devoluciones
+    // aunque su menú arranque simple. Se lee una vez al montar.
     const [simpleMode] = useState<boolean>(() => {
         try {
             const type = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.tenant?.type || '';
-            return resolveUiMode(type, localStorage.getItem(UI_MODE_KEY)) === 'simple';
+            return resolvePosSimple(type, localStorage.getItem(UI_MODE_KEY));
         } catch { return false; }
     });
     // Solo Dueño/Admin ven el hint del PIN inicial en la apertura de caja.

@@ -910,12 +910,12 @@ export default function Inventory() {
                         <Shield size={24} className="text-white" />
                     </div>
                     <div>
-                        <h1 className="text-2xl font-bold text-white">Inventario Blindado</h1>
+                        <h1 className="text-2xl font-bold text-white">Mis Productos</h1>
                         <span className="ml-3 inline-flex gap-2">
                             <a href="/app/warehouses" className="px-3 py-1.5 bg-slate-800 border border-slate-600 text-slate-200 rounded-lg text-xs font-bold hover:border-brand transition-colors">Bodegas</a>
                             <a href="/app/serials" className="px-3 py-1.5 bg-slate-800 border border-slate-600 text-slate-200 rounded-lg text-xs font-bold hover:border-brand transition-colors">Series</a>
                         </span>
-                        <p className="text-sm text-slate-400">Sistema Kardex con auditoría inmutable</p>
+                        <p className="text-sm text-slate-400">Tu catálogo, precios y existencias — cada movimiento queda registrado</p>
                     </div>
                 </div>
 

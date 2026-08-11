@@ -164,7 +164,7 @@ const MiNegocio: React.FC = () => {
                 </section>
 
                 <p className="text-slate-500 text-xs mt-8 text-center">
-                    ¿Buscás algo más? Está en el menú de la izquierda, en "Más opciones".
+                    ¿Buscás algo más? En la compu está en "Más opciones" del menú; en el teléfono, en el botón "Menú" de abajo.
                 </p>
             </div>
         </div>
