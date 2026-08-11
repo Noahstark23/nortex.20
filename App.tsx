@@ -61,6 +61,18 @@ const ProtectedApp = () => {
   const token = localStorage.getItem('nortex_token');
   if (!token) return <Navigate to="/login" replace />;
 
+  // Sesión vencida → expulsión LIMPIA hacia el login con su aviso ("Tu sesión
+  // venció, volvé a entrar"). Antes solo se chequeaba que la cadena existiera:
+  // con el JWT expirado, cada pantalla fallaba por su lado con "revisá tu
+  // conexión" o alerts de "Token inválido" y nadie decía la verdad simple.
+  try {
+    const exp: number | undefined = JSON.parse(atob(token.split('.')[1])).exp;
+    if (exp && exp * 1000 < Date.now()) {
+      localStorage.removeItem('nortex_token');
+      return <Navigate to="/login?error=session_expired" replace />;
+    }
+  } catch { /* token ilegible: lo dejará caer el backend con 401 */ }
+
   // Aterrizaje por rol (Fase A UX): el cajero empieza en el POS y el contador
   // en Contabilidad. En modo simple (Fase B), quien administra aterriza en
   // "Mi Negocio"; en modo completo se conserva el dashboard de siempre.

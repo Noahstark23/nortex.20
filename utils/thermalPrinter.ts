@@ -155,7 +155,10 @@ export class ThermalPrinterService {
         // --- TOTALES ---
         cmd.align('R');
         cmd.textLine(`Subtotal: C$ ${data.subtotal.toFixed(2)}`);
-        cmd.textLine(`IVA 15%: C$ ${data.tax.toFixed(2)}`);
+        if (data.discount && data.discount > 0) {
+            cmd.textLine(`Descuento: -C$ ${data.discount.toFixed(2)}`);
+        }
+        cmd.textLine(`IVA incl. 15%: C$ ${data.tax.toFixed(2)}`);
         cmd.bold(true).textLine(`TOTAL: C$ ${data.total.toFixed(2)}`).bold(false);
         
         cmd.align('C');

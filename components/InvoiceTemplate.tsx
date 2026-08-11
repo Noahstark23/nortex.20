@@ -7,6 +7,7 @@ export interface InvoiceData {
     customerPhone?: string;
     items: { name: string; quantity: number; price: number; lineTotal: number }[];
     subtotal: number;
+    discount?: number; // monto rebajado; el IVA va INCLUIDO en los precios (desglose)
     tax: number;
     grandTotal: number;
     paymentMethod: string;
@@ -77,7 +78,8 @@ ${data.saleId ? `<div style="font-size:9px;color:#999">ID: ${data.saleId.slice(0
 
 <table>
     <tr><td>Subtotal</td><td class="right">C$ ${data.subtotal.toFixed(2)}</td></tr>
-    <tr><td>IVA (15%)</td><td class="right">C$ ${data.tax.toFixed(2)}</td></tr>
+    ${data.discount && data.discount > 0 ? `<tr><td>Descuento</td><td class="right">-C$ ${data.discount.toFixed(2)}</td></tr>` : ''}
+    <tr><td>IVA incluido (15%)</td><td class="right">C$ ${data.tax.toFixed(2)}</td></tr>
 </table>
 
 <div class="divider"></div>
@@ -191,8 +193,12 @@ export function printA4(data: InvoiceData) {
             <span style="color:#64748b">Subtotal</span>
             <span style="font-family:monospace;font-weight:500">C$ ${data.subtotal.toFixed(2)}</span>
         </div>
+        ${data.discount && data.discount > 0 ? `<div style="display:flex;justify-content:space-between;padding:4px 0">
+            <span style="color:#64748b">Descuento</span>
+            <span style="font-family:monospace;font-weight:500">-C$ ${data.discount.toFixed(2)}</span>
+        </div>` : ''}
         <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e2e8f0">
-            <span style="color:#64748b">IVA (15%)</span>
+            <span style="color:#64748b">IVA incluido (15%)</span>
             <span style="font-family:monospace;font-weight:500">C$ ${data.tax.toFixed(2)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;padding:12px 0;font-size:18px;font-weight:800;color:#0f172a;border-top:2px solid #0f172a;margin-top:4px">
@@ -252,7 +258,8 @@ export function sendToWhatsApp(data: InvoiceData, phone?: string) {
         itemLines,
         `--------------------------------`,
         `   Subtotal: C$ ${data.subtotal.toFixed(2)}`,
-        `   IVA 15%:  C$ ${data.tax.toFixed(2)}`,
+        ...(data.discount && data.discount > 0 ? [`   Descuento: -C$ ${data.discount.toFixed(2)}`] : []),
+        `   IVA incl.: C$ ${data.tax.toFixed(2)}`,
         `*TOTAL: C$ ${data.grandTotal.toFixed(2)}*`,
         `Estado: ${payLabel}`,
         `--------------------------------`,

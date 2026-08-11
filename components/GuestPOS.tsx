@@ -37,8 +37,8 @@ const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
   const removeFromCart = (id: string) => setCart(prev => prev.filter(item => item.product.id !== id));
 
   const total = cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
-  const tax = total * 0.15;
-  const grandTotal = total + tax;
+  // IVA incluido en el precio (misma convención que el POS real): sin recargo.
+  const grandTotal = total;
 
   return (
     <div className="flex h-[480px] w-full max-w-4xl bg-surface-900 rounded-xl shadow-2xl overflow-hidden border border-slate-700 mx-auto">
