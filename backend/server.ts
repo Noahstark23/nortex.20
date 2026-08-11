@@ -3101,7 +3101,15 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
             const batch = productList.slice(i, i + batchSize);
 
             await prisma.$transaction(async (tx: any) => {
-                for (const item of batch) {
+                for (const [batchIdx, item] of batch.entries()) {
+                    // Fila REAL del Excel para el mensaje de error (R2.7): el
+                    // cliente la manda como excelRow; si no viene (integraciones
+                    // viejas), se calcula por posición — antes se usaba
+                    // batch.indexOf(item), que ni compensaba el encabezado y
+                    // con filas repetidas devolvía siempre la primera.
+                    const filaExcel = Number.isFinite(Number(item.excelRow))
+                        ? Number(item.excelRow)
+                        : i + batchIdx + 2; // +2: 1-based + fila de encabezado
                     try {
                         const sku = String(item.sku || '').trim().toUpperCase();
                         const name = String(item.name || item.nombre || '').trim();
@@ -3118,12 +3126,12 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
                         // silencio hasta 49 productos restantes del lote y
                         // el resumen igual decía "Importación exitosa".
                         if (!sku || !name) {
-                            errors.push(`Fila ${i + batch.indexOf(item) + 1}: SKU o Nombre vacío`);
+                            errors.push(`Fila ${filaExcel}: sin código o sin nombre`);
                             continue;
                         }
 
-                        if (price <= 0) {
-                            errors.push(`${sku}: Precio inválido`);
+                        if (!Number.isFinite(price) || price <= 0) {
+                            errors.push(`Fila ${filaExcel} (${sku}): precio inválido`);
                             continue;
                         }
 
@@ -3206,7 +3214,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
                             created++;
                         }
                     } catch (itemError: any) {
-                        errors.push(`Error en ${item.sku || 'sin SKU'}: ${itemError.message}`);
+                        errors.push(`Fila ${filaExcel} (${item.sku || 'sin código'}): ${itemError.message}`);
                     }
                 }
             });
@@ -3216,7 +3224,9 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
             message: `Importación completada: ${created} creados, ${updated} actualizados`,
             created,
             updated,
-            errors: errors.length > 0 ? errors.slice(0, 20) : [],
+            // Antes se cortaba en 20: "Errores: 47" sin decir cuáles. El lote
+            // máximo es 500, la lista completa cabe en la respuesta.
+            errors: errors.length > 0 ? errors.slice(0, 500) : [],
             total: productList.length
         });
     } catch (error: any) {

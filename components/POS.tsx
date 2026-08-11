@@ -7,6 +7,7 @@ import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemp
 import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
 import { resolvePosSimple, UI_MODE_KEY } from '../utils/navigation';
+import { parseWorkbookRows, importInChunks } from '../utils/importProducts';
 import { ReceiptTicket } from './ReceiptTicket';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import * as XLSX from 'xlsx';
@@ -1159,21 +1160,29 @@ const POS: React.FC = () => {
 
                 setImportProgress({ step: `${jsonData.length} filas leídas`, pct: 30 });
 
-                // Map columns (flexible naming)
-                const mapped = jsonData.map((row: any) => ({
-                    name: row['Nombre'] || row['nombre'] || row['Name'] || row['name'] || row['Producto'] || row['producto'] || '',
-                    sku: row['SKU'] || row['sku'] || row['Codigo'] || row['codigo'] || row['Código'] || row['código'] || row['Barcode'] || row['barcode'] || '',
-                    price: row['Precio'] || row['precio'] || row['Price'] || row['price'] || row['PrecioVenta'] || row['precio_venta'] || 0,
-                    cost: row['Costo'] || row['costo'] || row['Cost'] || row['cost'] || row['CostoCompra'] || row['costo_compra'] || 0,
-                    stock: row['Stock'] || row['stock'] || row['Cantidad'] || row['cantidad'] || row['Qty'] || 0,
-                    category: row['Categoria'] || row['categoria'] || row['Category'] || row['category'] || row['Categoría'] || 'General',
-                    unit: row['Unidad'] || row['unidad'] || row['Unit'] || row['unit'] || 'unidad',
-                    minStock: row['StockMinimo'] || row['stock_minimo'] || row['MinStock'] || 5,
+                // Parser compartido (utils/importProducts.ts): sinónimos de
+                // encabezados nicas, dinero con "C$"/comas, códigos en notación
+                // científica y duplicados — mismo criterio que Inventario.
+                const parsed = parseWorkbookRows(jsonData as Record<string, unknown>[]);
+                const valid = parsed.rows.filter(r => r.valid).map(r => ({
+                    sku: r.data.sku,
+                    name: r.data.nombre,
+                    price: r.data.precio,
+                    cost: r.data.costo,
+                    stock: r.data.stock,
+                    minStock: r.data.minStock,
+                    category: r.data.categoria,
+                    unit: r.data.unidad,
+                    excelRow: r.excelRow,
                 }));
-
-                const valid = mapped.filter((p: any) => p.name && p.sku);
+                const skipped = parsed.rows.length - valid.length;
                 setImportData(valid);
-                setImportProgress({ step: `${valid.length} productos válidos listos`, pct: 50 });
+                setImportProgress({
+                    step: skipped > 0
+                        ? `${valid.length} productos listos (${skipped} filas con problemas — usá el importador de Inventario para ver el detalle)`
+                        : `${valid.length} productos válidos listos`,
+                    pct: 50,
+                });
             } catch (err: any) {
                 setImportProgress({ step: `Error: ${err.message}`, pct: 0 });
             }
@@ -1184,28 +1193,33 @@ const POS: React.FC = () => {
     const executeImport = async () => {
         if (importData.length === 0) return;
 
+        // En lotes de 200 (R2.7): un solo POST reventaba contra el tope de 500
+        // del server al final, con 0 productos cargados.
         setImportProgress({ step: 'Enviando al servidor...', pct: 60 });
 
-        try {
-            const res = await fetch('/api/products/bulk', {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({ products: importData })
-            });
+        const result = await importInChunks(
+            importData,
+            async (chunk) => {
+                const res = await fetch('/api/products/bulk', {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ products: chunk })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+                return data;
+            },
+            (done, total) => setImportProgress({
+                step: `Importando… ${done} de ${total}`,
+                pct: 60 + Math.round((done / Math.max(1, total)) * 40),
+            }),
+        );
 
-            setImportProgress({ step: 'Procesando...', pct: 85 });
+        setImportProgress({ step: 'Completado', pct: 100 });
+        setImportResult({ created: result.created, updated: result.updated, errors: result.serverErrors });
 
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error);
-
-            setImportProgress({ step: 'Completado', pct: 100 });
-            setImportResult({ created: data.created, updated: data.updated, errors: data.errors });
-
-            // Refresh products list
-            fetchProducts();
-        } catch (error: any) {
-            setImportProgress({ step: `Error: ${error.message}`, pct: 0 });
-        }
+        // Refresh products list
+        fetchProducts();
     };
 
     const closeImportModal = () => {
