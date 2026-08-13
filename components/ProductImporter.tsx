@@ -1,73 +1,46 @@
 import React, { useState, useRef } from 'react';
-import { Upload, Download, FileSpreadsheet, AlertCircle, CheckCircle, XCircle, Loader2, X } from 'lucide-react';
+import { Upload, Download, FileSpreadsheet, AlertCircle, CheckCircle, XCircle, Loader2, X, Columns3 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-
-interface ProductRow {
-    sku: string;
-    nombre: string;
-    categoria?: string;
-    precio: number;
-    costo: number;
-    stock: number;
-    minStock: number;
-    unidad: string;
-    descripcion?: string;
-    valid: boolean;
-    errors: string[];
-}
+import {
+    parseWorkbookRows, acceptedHeaders, importInChunks,
+    type ParsedRow, type ColumnResolution, type CanonicalField,
+} from '../utils/importProducts';
 
 interface ProductImporterProps {
     onClose: () => void;
     onSuccess: () => void;
 }
 
+/** Etiquetas humanas de los campos canónicos para el resumen de mapeo. */
+const FIELD_LABELS: Record<CanonicalField, string> = {
+    sku: 'Código', nombre: 'Nombre', precio: 'Precio', costo: 'Costo',
+    stock: 'Existencia', minStock: 'Mínimo', categoria: 'Categoría',
+    unidad: 'Unidad', descripcion: 'Descripción',
+};
+
+interface ImportSummary {
+    created: number;
+    updated: number;
+    /** Rechazados: los inválidos del archivo + los errores del servidor. */
+    rejected: { excelRow: number | null; sku: string; motivo: string }[];
+    failedChunks: number;
+}
+
 const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess }) => {
-    const [products, setProducts] = useState<ProductRow[]>([]);
+    const [rows, setRows] = useState<ParsedRow[]>([]);
+    const [resolution, setResolution] = useState<ColumnResolution | null>(null);
     const [loading, setLoading] = useState(false);
     const [importing, setImporting] = useState(false);
+    const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+    const [summary, setSummary] = useState<ImportSummary | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // Validar fila
-    const validateRow = (row: any, index: number): ProductRow => {
-        const errors: string[] = [];
-        const sku = String(row.sku || row.SKU || '').trim().toUpperCase();
-        const nombre = String(row.nombre || row.Nombre || row.name || row.Name || '').trim();
-        const precio = parseFloat(row.precio || row.Precio || row.price || row.Price || 0);
-        const costo = parseFloat(row.costo || row.Costo || row.cost || row.Cost || 0);
-        const stock = parseFloat(row.stock || row.Stock || 0) || 0;
-        const minStock = parseFloat(row.minStock || row['Min Stock'] || row.minimo || 5) || 5;
-        const categoria = String(row.categoria || row.Categoria || row.category || 'General').trim();
-        const unidad = String(row.unidad || row.Unidad || row.unit || 'unidad').trim();
-        const descripcion = String(row.descripcion || row.Descripcion || row.description || '').trim();
-
-        // Validaciones
-        if (!sku || sku.length === 0) errors.push('SKU vacío');
-        if (sku.length > 50) errors.push('SKU muy largo (max 50)');
-        if (!nombre || nombre.length === 0) errors.push('Nombre vacío');
-        if (nombre.length > 200) errors.push('Nombre muy largo (max 200)');
-        if (precio <= 0) errors.push('Precio debe ser > 0');
-        if (costo < 0) errors.push('Costo no puede ser negativo');
-        if (stock < 0) errors.push('Stock no puede ser negativo');
-        if (minStock < 0) errors.push('Min Stock no puede ser negativo');
-
-        return {
-            sku,
-            nombre,
-            categoria,
-            precio,
-            costo,
-            stock,
-            minStock,
-            unidad,
-            descripcion,
-            valid: errors.length === 0,
-            errors
-        };
-    };
-
-    // Manejar archivo
+    // Manejar archivo — el parseo/validación vive en utils/importProducts.ts
+    // (puro y testeado): sinónimos de encabezados nicas, dinero con "C$"/comas,
+    // códigos en notación científica, duplicados dentro del archivo.
     const handleFile = (file: File) => {
         setLoading(true);
+        setSummary(null);
         const reader = new FileReader();
 
         reader.onload = (e) => {
@@ -76,12 +49,13 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                 const workbook = XLSX.read(data, { type: 'binary' });
                 const sheetName = workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[sheetName];
-                const jsonData = XLSX.utils.sheet_to_json(worksheet);
+                const jsonData = XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[];
 
-                const validated = jsonData.map((row, i) => validateRow(row, i));
-                setProducts(validated);
+                const result = parseWorkbookRows(jsonData);
+                setRows(result.rows);
+                setResolution(result.resolution);
             } catch (error) {
-                alert('Error leyendo archivo. Verifica que sea un Excel/CSV válido.');
+                alert('Error leyendo archivo. Verificá que sea un Excel/CSV válido.');
             } finally {
                 setLoading(false);
             }
@@ -149,57 +123,80 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
         XLSX.writeFile(workbook, 'plantilla_productos_nortex.xlsx');
     };
 
-    // Importar a backend
+    // Importar a backend en LOTES de 200 secuenciales (auditoría E4: antes un
+    // solo POST y el tope de 500 del server se descubría al final, con 0
+    // productos cargados y un alert).
     const handleImport = async () => {
-        const validProducts = products.filter(p => p.valid);
-        if (validProducts.length === 0) {
-            alert('No hay productos válidos para importar');
-            return;
-        }
+        const validRows = rows.filter(r => r.valid);
+        if (validRows.length === 0) return;
 
         setImporting(true);
+        setProgress({ done: 0, total: validRows.length });
 
-        try {
-            const token = localStorage.getItem('nortex_token');
-            const res = await fetch('/api/products/bulk', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    products: validProducts.map(p => ({
-                        sku: p.sku,
-                        name: p.nombre,
-                        category: p.categoria,
-                        price: p.precio,
-                        cost: p.costo,
-                        stock: p.stock,
-                        minStock: p.minStock,
-                        unit: p.unidad,
-                        description: p.descripcion
-                    }))
-                })
-            });
+        const token = localStorage.getItem('nortex_token');
+        const result = await importInChunks(
+            validRows,
+            async (chunk) => {
+                const res = await fetch('/api/products/bulk', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        products: chunk.map(r => ({
+                            sku: r.data.sku,
+                            name: r.data.nombre,
+                            category: r.data.categoria,
+                            price: r.data.precio,
+                            cost: r.data.costo,
+                            stock: r.data.stock,
+                            minStock: r.data.minStock,
+                            unit: r.data.unidad,
+                            description: r.data.descripcion,
+                            excelRow: r.excelRow,
+                        }))
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+                return data;
+            },
+            (done, total) => setProgress({ done, total }),
+        );
 
-            const data = await res.json();
-
-            if (res.ok) {
-                alert(`Importación exitosa!\n\nCreados: ${data.created}\nActualizados: ${data.updated}\nErrores: ${data.errors?.length || 0}`);
-                onSuccess();
-                onClose();
-            } else {
-                alert(`Error: ${data.error}`);
-            }
-        } catch (error) {
-            alert('Error de conexión al servidor');
-        } finally {
-            setImporting(false);
-        }
+        // Resumen: rechazados del archivo (con su fila real) + errores del server.
+        const rejected: ImportSummary['rejected'] = [
+            ...rows.filter(r => !r.valid).map(r => ({
+                excelRow: r.excelRow,
+                sku: r.data.sku || '—',
+                motivo: r.errors.join(' · '),
+            })),
+            ...result.serverErrors.map(msg => ({ excelRow: null, sku: '—', motivo: msg })),
+        ];
+        setSummary({ created: result.created, updated: result.updated, rejected, failedChunks: result.failedChunks });
+        setImporting(false);
+        setProgress(null);
+        if (result.created + result.updated > 0) onSuccess();
     };
 
-    const validCount = products.filter(p => p.valid).length;
-    const errorCount = products.filter(p => !p.valid).length;
+    // Descargar los rechazados como Excel para corregir y re-subir SOLO eso.
+    const downloadRejected = () => {
+        if (!summary || summary.rejected.length === 0) return;
+        const sheetRows = summary.rejected.map(r => ({
+            fila_excel: r.excelRow ?? '',
+            codigo: r.sku,
+            motivo: r.motivo,
+        }));
+        const worksheet = XLSX.utils.json_to_sheet(sheetRows);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Rechazados');
+        XLSX.writeFile(workbook, 'productos_rechazados_nortex.xlsx');
+    };
+
+    const validCount = rows.filter(r => r.valid).length;
+    const errorCount = rows.filter(r => !r.valid).length;
+    const missingCols = resolution?.missing.filter(f => f !== 'sku') ?? [];
 
     return (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
@@ -221,7 +218,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                 {/* Body */}
                 <div className="p-6 space-y-6 overflow-y-auto max-h-[calc(90vh-180px)]">
                     {/* Upload Zone */}
-                    {products.length === 0 && (
+                    {rows.length === 0 && !summary && (
                         <div>
                             <div
                                 onDrop={handleDrop}
@@ -264,9 +261,129 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                         </div>
                     )}
 
+                    {/* Resultado de la importación */}
+                    {summary && (
+                        <div className="space-y-4">
+                            <div className="flex items-center gap-4 flex-wrap">
+                                <div className="flex items-center gap-2 bg-emerald-900/40 border border-emerald-700 text-emerald-300 px-3 py-1.5 rounded-lg">
+                                    <CheckCircle size={16} />
+                                    <span className="font-bold">{summary.created}</span>
+                                    <span className="text-sm">creados</span>
+                                </div>
+                                <div className="flex items-center gap-2 bg-sky-900/40 border border-sky-700 text-sky-300 px-3 py-1.5 rounded-lg">
+                                    <CheckCircle size={16} />
+                                    <span className="font-bold">{summary.updated}</span>
+                                    <span className="text-sm">actualizados</span>
+                                </div>
+                                {summary.rejected.length > 0 && (
+                                    <div className="flex items-center gap-2 bg-red-900/40 border border-red-700 text-red-300 px-3 py-1.5 rounded-lg">
+                                        <XCircle size={16} />
+                                        <span className="font-bold">{summary.rejected.length}</span>
+                                        <span className="text-sm">rechazados</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            {summary.failedChunks > 0 && (
+                                <div className="bg-red-950/40 border border-red-800/50 rounded-lg p-3 text-sm text-red-300">
+                                    {summary.failedChunks} lote{summary.failedChunks > 1 ? 's' : ''} no se pudo enviar (¿se cayó el internet?).
+                                    Los productos ya creados quedaron guardados; volvé a subir el archivo — los existentes solo se actualizan, no se duplican.
+                                </div>
+                            )}
+
+                            {summary.rejected.length > 0 && (
+                                <div className="bg-surface-900/60 rounded-xl border border-surface-700 overflow-hidden">
+                                    <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700">
+                                        <p className="text-sm font-semibold text-white">Filas que NO entraron (corregilas en tu Excel y volvé a subir solo esas)</p>
+                                        <button
+                                            onClick={downloadRejected}
+                                            className="flex items-center gap-2 px-3 py-1.5 bg-amber-600/20 border border-amber-600/40 hover:bg-amber-600/30 rounded-lg text-amber-300 text-sm font-semibold transition-colors"
+                                        >
+                                            <Download size={16} />
+                                            Descargar los {summary.rejected.length} que fallaron
+                                        </button>
+                                    </div>
+                                    <div className="overflow-x-auto max-h-72">
+                                        <table className="w-full text-sm">
+                                            <thead className="bg-surface-900/80 sticky top-0">
+                                                <tr>
+                                                    <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Fila Excel</th>
+                                                    <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Código</th>
+                                                    <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Motivo</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-surface-700/50">
+                                                {summary.rejected.map((r, i) => (
+                                                    <tr key={i} className="bg-red-950/10">
+                                                        <td className="px-3 py-2 font-mono text-surface-300">{r.excelRow ?? '—'}</td>
+                                                        <td className="px-3 py-2 font-mono text-surface-300">{r.sku}</td>
+                                                        <td className="px-3 py-2 text-red-300">{r.motivo}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="flex justify-between items-center">
+                                <button
+                                    onClick={() => { setRows([]); setResolution(null); setSummary(null); }}
+                                    className="text-sm text-surface-400 hover:text-white underline"
+                                >
+                                    Importar otro archivo
+                                </button>
+                                <button
+                                    onClick={onClose}
+                                    className="px-6 py-2.5 bg-brand-600 hover:bg-brand-700 rounded-lg text-white font-bold transition-colors"
+                                >
+                                    Listo
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Preview Table */}
-                    {products.length > 0 && (
+                    {rows.length > 0 && !summary && (
                         <div>
+                            {/* Cómo se leyeron las columnas del archivo */}
+                            {resolution && (
+                                <div className="bg-surface-900/60 border border-surface-700 rounded-lg p-3 mb-4">
+                                    <p className="text-xs text-surface-400 uppercase font-semibold flex items-center gap-1.5 mb-2">
+                                        <Columns3 size={14} /> Así leímos tu archivo
+                                    </p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {(Object.entries(resolution.mapping) as [CanonicalField, string | null][])
+                                            .filter(([, header]) => header !== null)
+                                            .map(([field, header]) => (
+                                                <span key={field} className="text-xs bg-surface-700/60 border border-surface-600 rounded px-2 py-0.5 text-surface-300">
+                                                    <span className="font-mono text-white">{header}</span> → {FIELD_LABELS[field]}
+                                                </span>
+                                            ))}
+                                        {resolution.unknown.map(h => (
+                                            <span key={h} className="text-xs bg-surface-800 border border-surface-700 rounded px-2 py-0.5 text-surface-500 line-through">
+                                                {h}
+                                            </span>
+                                        ))}
+                                    </div>
+                                    {missingCols.length > 0 && (
+                                        <div className="mt-3 bg-red-950/40 border border-red-800/50 rounded-lg p-3">
+                                            <p className="text-sm text-red-300 font-semibold">
+                                                No encontramos la columna de {missingCols.map(f => FIELD_LABELS[f].toLowerCase()).join(' ni de ')}.
+                                            </p>
+                                            <p className="text-xs text-red-400/80 mt-1">
+                                                Renombrá el encabezado en tu Excel a alguno de estos y volvé a subirlo:{' '}
+                                                {missingCols.map(f => acceptedHeaders(f).slice(0, 6).join(', ')).join(' — ')}
+                                            </p>
+                                        </div>
+                                    )}
+                                    {resolution.missing.includes('sku') && (
+                                        <p className="text-xs text-amber-400/90 mt-2">
+                                            Sin columna de código: aceptamos <span className="font-mono">codigo, barra, barcode, upc, referencia…</span>
+                                        </p>
+                                    )}
+                                </div>
+                            )}
                             <div className="flex items-center justify-between mb-4">
                                 <div className="flex items-center gap-4">
                                     <div className="flex items-center gap-2 bg-emerald-900/40 border border-emerald-700 text-emerald-300 px-3 py-1.5 rounded-lg">
@@ -283,7 +400,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                     )}
                                 </div>
                                 <button
-                                    onClick={() => setProducts([])}
+                                    onClick={() => { setRows([]); setResolution(null); }}
                                     className="text-sm text-surface-400 hover:text-white underline"
                                 >
                                     Cargar otro archivo
@@ -296,37 +413,39 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                         <thead className="bg-surface-900/80 sticky top-0">
                                             <tr>
                                                 <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Estado</th>
-                                                <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">SKU</th>
+                                                <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Fila</th>
+                                                <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Código</th>
                                                 <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Nombre</th>
                                                 <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Categoría</th>
                                                 <th className="text-right px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Precio</th>
                                                 <th className="text-right px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Costo</th>
-                                                <th className="text-right px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Stock</th>
+                                                <th className="text-right px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Existencia</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-surface-700/50">
-                                            {products.map((p, i) => (
-                                                <tr key={i} className={p.valid ? 'hover:bg-surface-700/20' : 'bg-red-950/20'}>
+                                            {rows.map((r) => (
+                                                <tr key={r.excelRow} className={r.valid ? 'hover:bg-surface-700/20' : 'bg-red-950/20'}>
                                                     <td className="px-3 py-2">
-                                                        {p.valid ? (
+                                                        {r.valid ? (
                                                             <CheckCircle size={16} className="text-emerald-400" />
                                                         ) : (
                                                             <div className="group relative">
                                                                 <AlertCircle size={16} className="text-red-400 cursor-help" />
-                                                                <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block bg-red-900 text-red-200 text-xs p-2 rounded shadow-lg w-48 z-10">
-                                                                    {p.errors.join(', ')}
+                                                                <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block bg-red-900 text-red-200 text-xs p-2 rounded shadow-lg w-56 z-10">
+                                                                    {r.errors.join(' · ')}
                                                                 </div>
                                                             </div>
                                                         )}
                                                     </td>
-                                                    <td className="px-3 py-2 font-mono text-surface-300">{p.sku}</td>
-                                                    <td className="px-3 py-2 text-white">{p.nombre}</td>
-                                                    <td className="px-3 py-2 text-surface-400">{p.categoria}</td>
-                                                    <td className="px-3 py-2 text-right text-emerald-400 font-semibold">
-                                                        C$ {p.precio.toFixed(2)}
+                                                    <td className="px-3 py-2 font-mono text-surface-500">{r.excelRow}</td>
+                                                    <td className="px-3 py-2 font-mono text-surface-300">{r.data.sku}</td>
+                                                    <td className="px-3 py-2 text-white">{r.data.nombre}</td>
+                                                    <td className="px-3 py-2 text-surface-400">{r.data.categoria}</td>
+                                                    <td className={`px-3 py-2 text-right font-semibold ${r.valid ? 'text-emerald-400' : 'text-red-300'}`}>
+                                                        {r.valid ? `C$ ${r.data.precio.toFixed(2)}` : '—'}
                                                     </td>
-                                                    <td className="px-3 py-2 text-right text-surface-400">C$ {p.costo.toFixed(2)}</td>
-                                                    <td className="px-3 py-2 text-right text-white font-bold">{p.stock}</td>
+                                                    <td className="px-3 py-2 text-right text-surface-400">C$ {r.data.costo.toFixed(2)}</td>
+                                                    <td className="px-3 py-2 text-right text-white font-bold">{r.data.stock}</td>
                                                 </tr>
                                             ))}
                                         </tbody>
@@ -352,10 +471,25 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                 </div>
 
                 {/* Footer */}
-                {products.length > 0 && (
-                    <div className="bg-surface-900/80 px-6 py-4 border-t border-surface-700 flex items-center justify-between">
-                        <div className="text-sm text-surface-400">
-                            Se importarán <span className="font-bold text-white">{validCount}</span> producto{validCount !== 1 ? 's' : ''}
+                {rows.length > 0 && !summary && (
+                    <div className="bg-surface-900/80 px-6 py-4 border-t border-surface-700 flex items-center justify-between gap-4">
+                        <div className="text-sm text-surface-400 flex-1 min-w-0">
+                            {progress ? (
+                                <div>
+                                    <div className="flex justify-between text-xs mb-1">
+                                        <span>Importando en lotes…</span>
+                                        <span className="font-bold text-white">{progress.done} de {progress.total}</span>
+                                    </div>
+                                    <div className="h-2 bg-surface-700 rounded-full overflow-hidden">
+                                        <div
+                                            className="h-full bg-brand-500 transition-all duration-300"
+                                            style={{ width: `${Math.round((progress.done / Math.max(1, progress.total)) * 100)}%` }}
+                                        />
+                                    </div>
+                                </div>
+                            ) : (
+                                <>Se importarán <span className="font-bold text-white">{validCount}</span> producto{validCount !== 1 ? 's' : ''} (en lotes de 200)</>
+                            )}
                         </div>
                         <div className="flex gap-3">
                             <button
