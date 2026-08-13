@@ -8926,6 +8926,53 @@ const publicLimiter = rateLimit({
     message: { error: 'Demasiadas solicitudes. Intenta en unos minutos.' }
 });
 
+// ── Agente de ventas de la landing (R2.8) ────────────────────────────────────
+// Chat público SIN auth y SIN datos de negocio (cero Prisma): solo el pitch.
+// El costo se acota acá (por IP) + historial recortado + max_tokens en el
+// servicio. MemoryStore per-proceso, igual que el resto de limiters (A1).
+const landingChatLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 8, // 8 mensajes/minuto por IP: sobra para conversar, corta el abuso
+    message: { error: 'Muy rápido. Esperá un momento y seguimos.' },
+});
+const landingChatDailyLimiter = rateLimit({
+    windowMs: 24 * 60 * 60 * 1000,
+    max: 120, // techo diario por IP contra scripts de drenaje de tokens
+    message: { error: 'Llegaste al límite de hoy. Escribinos al WhatsApp +505 7664-4030.' },
+});
+
+app.post('/api/landing-chat', landingChatLimiter, landingChatDailyLimiter, async (req: any, res: any) => {
+    const { landingChatAvailable, landingChatSchema, sanitizeHistory, landingChatReply } =
+        await import('./services/landingChat');
+
+    if (!landingChatAvailable()) {
+        // Sin API key configurada: la landing degrada al WhatsApp, sin romper.
+        return res.status(503).json({
+            error: 'El chat no está disponible ahora. Escribinos al WhatsApp +505 7664-4030.',
+        });
+    }
+
+    const parsed = landingChatSchema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ error: 'Mensaje inválido.' });
+    }
+
+    const history = sanitizeHistory(parsed.data.messages);
+    if (!history) {
+        return res.status(400).json({ error: 'Mensaje inválido.' });
+    }
+
+    try {
+        const reply = await landingChatReply(history);
+        res.json({ reply });
+    } catch (error) {
+        console.error('🟥 [landing-chat]', error);
+        res.status(502).json({
+            error: 'Se nos trabó el chat. Escribinos al WhatsApp +505 7664-4030 y te respondemos ya.',
+        });
+    }
+});
+
 // GET /api/debug/catalog/:slug — Diagnóstico del catálogo (solo SUPER_ADMIN)
 app.get('/api/debug/catalog/:slug', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
