@@ -80,38 +80,47 @@ interface CatalogEntry extends NavEntry {
     roles?: string[];
 }
 
+// ── 5 secciones (rediseño Fase 2) ───────────────────────────────────────────
+// Antes eran 8 grupos con solapamiento que el usuario no podía resolver solo:
+// Finanzas / Salud Financiera / Contabilidad / Reportes vivían mezcladas, y
+// Compras / Compras Inteligentes / Proveedores estaban repartidas. Ahora el
+// menú responde a una pregunta por sección: qué vendo, qué tengo, a quién le
+// vendo, cuánta plata hay, cómo se administra el negocio.
+export const NAV_SECTIONS = ['VENDER', 'STOCK', 'CLIENTES', 'DINERO', 'NEGOCIO'] as const;
+export type NavSection = (typeof NAV_SECTIONS)[number];
+
 const RETAIL_CATALOG: CatalogEntry[] = [
-    // ── INICIO ── (Fase B: home de acciones para quien administra)
+    // ── INICIO ── (home de acciones para quien administra; fuera de sección)
     { path: '/app/inicio', label: 'Mi Negocio', shortLabel: 'Inicio', group: 'Inicio', iconKey: 'home', roles: GATE_MANAGER },
-    // ── VENTAS ──
-    { path: '/app/pos', label: 'Vender', shortLabel: 'Vender', group: 'Ventas', iconKey: 'shoppingCart' },
-    { path: '/app/cash-registers', label: 'Caja y Arqueos', shortLabel: 'Caja', group: 'Ventas', iconKey: 'monitor', roles: GATE_MANAGER },
-    { path: '/app/inventory', label: 'Mis Productos', shortLabel: 'Productos', group: 'Ventas', iconKey: 'package' },
-    { path: '/app/inventory-count', label: 'Contar Productos', shortLabel: 'Conteo', group: 'Ventas', iconKey: 'clipboardList', roles: GATE_ADMIN },
-    { path: '/app/delivery', label: 'Entregas', shortLabel: 'Entregas', group: 'Ventas', iconKey: 'truck' },
-    { path: '/app/quotations', label: 'Proformas', shortLabel: 'Proformas', group: 'Ventas', iconKey: 'fileText' },
-    { path: '/app/clients', label: 'Clientes', shortLabel: 'Clientes', group: 'Ventas', iconKey: 'users' },
-    // ── COMPRAS ──
-    { path: '/app/purchases', label: 'Compras', shortLabel: 'Compras', group: 'Compras', iconKey: 'truck' },
-    { path: '/app/suppliers', label: 'Proveedores', shortLabel: 'Proveed.', group: 'Compras', iconKey: 'clipboardList' },
-    { path: '/app/smart-purchases', label: 'Compras Inteligentes', shortLabel: 'Smart', group: 'Compras', iconKey: 'zap', roles: GATE_ADMIN },
+    // ── VENDER ──
+    { path: '/app/pos', label: 'Vender', shortLabel: 'Vender', group: 'VENDER', iconKey: 'shoppingCart' },
+    { path: '/app/cash-registers', label: 'Caja y Arqueos', shortLabel: 'Caja', group: 'VENDER', iconKey: 'monitor', roles: GATE_MANAGER },
+    { path: '/app/quotations', label: 'Proformas', shortLabel: 'Proformas', group: 'VENDER', iconKey: 'fileText' },
+    { path: '/app/delivery', label: 'Entregas', shortLabel: 'Entregas', group: 'VENDER', iconKey: 'truck' },
+    // ── STOCK ──
+    { path: '/app/inventory', label: 'Mis Productos', shortLabel: 'Productos', group: 'STOCK', iconKey: 'package' },
+    { path: '/app/inventory-count', label: 'Contar Productos', shortLabel: 'Conteo', group: 'STOCK', iconKey: 'clipboardList', roles: GATE_ADMIN },
+    { path: '/app/purchases', label: 'Compras', shortLabel: 'Compras', group: 'STOCK', iconKey: 'truck' },
+    { path: '/app/smart-purchases', label: 'Compras Inteligentes', shortLabel: 'Smart', group: 'STOCK', iconKey: 'zap', roles: GATE_ADMIN },
+    { path: '/app/suppliers', label: 'Proveedores', shortLabel: 'Proveed.', group: 'STOCK', iconKey: 'clipboardList' },
     // Mercado B2B oculto del nav hasta tener catálogo real (no mock que debite
     // el wallet). La ruta sigue existiendo con un placeholder "próximamente".
-    // ── FINANZAS ──
-    { path: '/app/dashboard', label: 'Mi Plata', shortLabel: 'Mi Plata', group: 'Finanzas', iconKey: 'layoutGrid' },
-    { path: '/app/receivables', label: 'Fiado y Cobros', shortLabel: 'Fiado', group: 'Finanzas', iconKey: 'wallet' },
+    // ── CLIENTES ──
+    { path: '/app/clients', label: 'Clientes', shortLabel: 'Clientes', group: 'CLIENTES', iconKey: 'users' },
+    { path: '/app/receivables', label: 'Fiado y Cobros', shortLabel: 'Fiado', group: 'CLIENTES', iconKey: 'wallet' },
+    // ── DINERO ──
+    { path: '/app/dashboard', label: 'Mi Plata', shortLabel: 'Mi Plata', group: 'DINERO', iconKey: 'layoutGrid' },
+    { path: '/app/financial-health', label: 'Salud Financiera', shortLabel: 'Salud', group: 'DINERO', iconKey: 'barChart3', roles: GATE_ADMIN },
+    { path: '/app/accounting', label: 'Contabilidad', shortLabel: 'Contab.', group: 'DINERO', iconKey: 'bookOpen', roles: GATE_ADMIN },
+    { path: '/app/reports', label: 'Reportes', shortLabel: 'Reportes', group: 'DINERO', iconKey: 'pieChart' },
+    // ── NEGOCIO ──
+    { path: '/app/mi-espacio', label: 'Mi Espacio', shortLabel: 'Mi Espacio', group: 'NEGOCIO', iconKey: 'userCircle' },
+    { path: '/app/team', label: 'Mi Equipo', shortLabel: 'Equipo', group: 'NEGOCIO', iconKey: 'userPlus' },
+    { path: '/app/hr', label: 'Mi Personal', shortLabel: 'Personal', group: 'NEGOCIO', iconKey: 'briefcase' },
+    { path: '/app/audit', label: 'Auditoría', shortLabel: 'Auditoría', group: 'NEGOCIO', iconKey: 'shield', roles: GATE_ADMIN },
     // "Facturación" era el peor label del sistema: no es facturarle a clientes,
     // es pagarle la suscripción a Nortex. Ahora dice lo que es.
-    { path: '/app/billing', label: 'Mi Plan de Nortex', shortLabel: 'Mi Plan', group: 'Finanzas', iconKey: 'creditCard' },
-    { path: '/app/accounting', label: 'Contabilidad', shortLabel: 'Contab.', group: 'Finanzas', iconKey: 'bookOpen', roles: GATE_ADMIN },
-    { path: '/app/reports', label: 'Reportes', shortLabel: 'Reportes', group: 'Finanzas', iconKey: 'pieChart' },
-    { path: '/app/financial-health', label: 'Salud Financiera', shortLabel: 'Salud', group: 'Finanzas', iconKey: 'barChart3', roles: GATE_ADMIN },
-    { path: '/app/audit', label: 'Auditoría', shortLabel: 'Auditoría', group: 'Finanzas', iconKey: 'shield', roles: GATE_ADMIN },
-    // ── PERSONAL ──
-    { path: '/app/mi-espacio', label: 'Mi Espacio', shortLabel: 'Mi Espacio', group: 'Personal', iconKey: 'userCircle' },
-    // ── ADMINISTRACIÓN ──
-    { path: '/app/hr', label: 'Mi Personal', shortLabel: 'Personal', group: 'Administración', iconKey: 'briefcase' },
-    { path: '/app/team', label: 'Mi Equipo', shortLabel: 'Equipo', group: 'Administración', iconKey: 'userPlus' },
+    { path: '/app/billing', label: 'Mi Plan de Nortex', shortLabel: 'Mi Plan', group: 'NEGOCIO', iconKey: 'creditCard' },
     // "Panel Admin" (/app/blueprint) fuera del catálogo (R2.5 D4): es el
     // BlueprintViewer, una pantalla de desarrollador. La ruta sigue por URL.
 ];
@@ -171,6 +180,31 @@ export function buildNavigation(ctx: NavContext): Navigation {
     const more = all.filter(it => !primaryPaths.has(it.path));
 
     return { primary, more, homePath };
+}
+
+/**
+ * Agrupa entradas en las 5 secciones del menú, en el orden canónico de
+ * NAV_SECTIONS. Pura y sin React: el Layout solo la pinta.
+ *
+ * - Devuelve únicamente las secciones que quedaron con items (un CASHIER no ve
+ *   una sección DINERO vacía).
+ * - Lo que no cae en ninguna sección (p. ej. "Mi Negocio", o los menús de
+ *   LENDER/CONTADOR que traen sus propios grupos) sale en `loose`, para
+ *   renderizarse suelto arriba. Así ninguna entrada se pierde, que es la
+ *   invariante del módulo.
+ */
+// Genérica sobre `{ group }`: el Layout enriquece las entradas con el componente
+// de ícono antes de agrupar, así que el tipo que entra no es NavEntry exacto.
+export function groupBySection<T extends { group: string }>(entries: T[]): {
+    sections: { section: NavSection; items: T[] }[];
+    loose: T[];
+} {
+    const known = new Set<string>(NAV_SECTIONS);
+    const sections = NAV_SECTIONS
+        .map(section => ({ section, items: entries.filter(e => e.group === section) }))
+        .filter(s => s.items.length > 0);
+    const loose = entries.filter(e => !known.has(e.group));
+    return { sections, loose };
 }
 
 /**

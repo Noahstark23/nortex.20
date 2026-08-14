@@ -3,7 +3,7 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { LayoutGrid, ShoppingCart, LogOut, Wallet, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle, Home, ChevronDown, SlidersHorizontal } from 'lucide-react';
 import { PinPadClock } from './PinPadClock';
 import OnboardingHub from './OnboardingHub';
-import { buildNavigation, resolveUiMode, UI_MODE_KEY, type UiMode, type NavEntry } from '../utils/navigation';
+import { buildNavigation, groupBySection, resolveUiMode, UI_MODE_KEY, type UiMode, type NavEntry, type NavSection } from '../utils/navigation';
 
 // El módulo de navegación es puro (sin React): mapa iconKey → componente lucide.
 const NAV_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
@@ -37,6 +37,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   });
   // "Más opciones" del sidebar: abierto si la ruta actual vive ahí adentro.
   const [showMore, setShowMore] = useState(false);
+  // Secciones del menú abiertas/cerradas. Sin entrada = se decide por la ruta
+  // activa (la sección donde estás parado arranca abierta).
+  const [openSections, setOpenSections] = useState<Partial<Record<NavSection, boolean>>>({});
 
   // ── Toast de notificaciones ──────────────────────────────────────────────
   interface AppToast { id: string; message: string; }
@@ -177,6 +180,18 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const canToggleMode = !userRole.startsWith('LENDER_') && userRole !== 'ACCOUNTANT';
   const isMoreActive = moreItems.some(it => location.pathname.startsWith(it.path));
 
+  // ── Navegación en 5 secciones (rediseño Fase 2) ───────────────────────────
+  const { sections: sectionGroups, loose: looseItems } = groupBySection(navItems);
+  const sectionHasActive = (items: NavItem[]) => items.some(it => location.pathname.startsWith(it.path));
+
+  /** Item de nav: fondo suave + barra izquierda. Nunca un bloque sólido de color. */
+  const navItemClass = ({ isActive }: { isActive: boolean }) => `
+    w-full flex items-center justify-start gap-3 px-3 h-touch rounded-control transition-colors duration-150 group active:scale-[0.98]
+    ${isActive
+      ? 'bg-brand/10 text-white shadow-nav-active'
+      : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'}
+  `;
+
   return (
     // h-dvh (no h-screen): 100vh en Chrome Android no descuenta la barra de
     // direcciones y con overflow-hidden el contenido quedaba recortado sin scroll.
@@ -193,22 +208,48 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
 
           <nav className="p-4 space-y-1 mt-4 overflow-y-auto max-h-[calc(100vh-160px)] custom-scrollbar">
-            {navItems.map((item) => {
+            {/* Items sueltos (Mi Negocio, y los menús propios de LENDER/CONTADOR
+                que traen sus propias etiquetas de grupo). */}
+            {looseItems.map((item) => {
               const Icon = item.icon;
               return (
-                <NavLink
-                  key={item.path}
-                  to={item.path}
-                  className={({ isActive }) => `
-                    w-full flex items-center justify-start gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group active:scale-[0.98]
-                    ${isActive
-                      ? 'bg-brand text-white shadow-glow shadow-brand/25'
-                      : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'}
-                  `}
-                >
+                <NavLink key={item.path} to={item.path} className={navItemClass}>
                   <Icon size={20} />
                   <span className="font-medium text-sm">{item.label}</span>
                 </NavLink>
+              );
+            })}
+
+            {/* ── 5 secciones colapsables ──────────────────────────────────
+                Antes: 22 items planos con el mismo peso visual. La sección
+                que contiene la ruta activa se abre sola, así el usuario nunca
+                queda mirando un menú cerrado sin saber dónde está parado. */}
+            {sectionGroups.map(({ section, items }) => {
+              const isOpen = openSections[section] ?? sectionHasActive(items);
+              return (
+                <div key={section} className="pt-1">
+                  <button
+                    onClick={() => setOpenSections(prev => ({ ...prev, [section]: !isOpen }))}
+                    className="w-full flex items-center gap-2 px-3 pt-3 pb-1.5 text-slate-500 hover:text-slate-300 transition-colors"
+                    aria-expanded={isOpen}
+                  >
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.1em]">{section}</span>
+                    <ChevronDown size={14} className={`ml-auto transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {isOpen && (
+                    <div className="space-y-1">
+                      {items.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                          <NavLink key={item.path} to={item.path} className={navItemClass}>
+                            <Icon size={20} />
+                            <span className="font-medium text-sm">{item.label}</span>
+                          </NavLink>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               );
             })}
 

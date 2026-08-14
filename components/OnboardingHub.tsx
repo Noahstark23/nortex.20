@@ -137,7 +137,7 @@ const OnboardingHub: React.FC = () => {
   if (!data) {
     if (!fetchFailed) return null; // cargando: sin parpadeos
     return (
-      <div className="fixed bottom-36 right-4 lg:bottom-5 lg:right-5 z-40 print:hidden">
+      <div className="fixed top-[4.5rem] right-4 lg:right-6 z-sticky print:hidden">
         <button
           onClick={fetchStatus}
           className="flex items-center gap-2 px-4 py-3 bg-surface-900 border border-white/[0.08] text-slate-300 font-bold rounded-full shadow-xl hover:text-white transition-colors"
@@ -235,11 +235,14 @@ const OnboardingHub: React.FC = () => {
         </div>
       )}
 
-      {/* ---------- LANZADOR FLOTANTE + PANEL ---------- */}
-      {/* En móvil lo subimos por encima de la barra inferior (h-16); en desktop, abajo. */}
-      <div className="fixed bottom-36 right-4 lg:bottom-5 lg:right-5 z-40 print:hidden">
+      {/* ---------- LANZADOR + PANEL ---------- */}
+      {/* Anclado BAJO EL HEADER, no abajo a la derecha: ahí se superponía al
+          botón EFECTIVO del POS y cortaba el texto de CRÉDITO. La zona de cobro
+          es intocable — por eso z-sticky (10), por debajo de --nx-z-checkout (20).
+          Ningún flotante persistente puede vivir encima del cobro. */}
+      <div className="fixed top-[4.5rem] right-4 lg:right-6 z-sticky print:hidden flex flex-col items-end">
         {open && (
-          <div className="mb-3 w-[22rem] max-w-[calc(100vw-2.5rem)] bg-surface-900 rounded-2xl shadow-2xl border border-white/[0.06] overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <div className="order-2 mt-3 w-[22rem] max-w-[calc(100vw-2.5rem)] bg-surface-900 rounded-card shadow-2xl border border-white/[0.06] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
             <div className="bg-nortex-900 px-5 py-4 flex items-center justify-between">
               <div className="flex items-center gap-2 text-white">
                 <Sparkles size={18} className="text-nortex-accent" />
@@ -325,7 +328,7 @@ const OnboardingHub: React.FC = () => {
             setOpen(next);
             if (next) fetchStatus();
           }}
-          className="flex items-center gap-2 pl-4 pr-5 py-3 bg-nortex-900 hover:bg-nortex-800 text-white font-bold rounded-full shadow-xl shadow-nortex-900/30 transition-colors"
+          className="order-1 flex items-center gap-2 pl-4 pr-5 h-touch bg-surface-800 hover:bg-surface-700 text-white font-semibold rounded-pill shadow-premium border border-white/[0.08] transition-colors"
         >
           <Sparkles size={18} className="text-nortex-accent" />
           <span className="text-sm">Primeros pasos</span>
