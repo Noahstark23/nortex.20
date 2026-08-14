@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
 import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown } from 'lucide-react';
 import { formatMoney, formatUSD } from '../utils/money';
+import { EmptyState } from './ui/EmptyState';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
@@ -168,6 +169,7 @@ const playErrorBeep = () => {
 };
 
 const POS: React.FC = () => {
+    const navigate = useNavigate();
     // Inicia VACÍO (no MOCK_PRODUCTS): los mocks de demo ("Cemento Sol", precios
     // que no son del tenant) online desaparecían tras fetchProducts, pero OFFLINE
     // persistían y se podían agregar al carrito → venta encolada con IDs mock
@@ -1779,7 +1781,7 @@ const POS: React.FC = () => {
                                         {showCashModal === 'IN' ? 'Entrada de Efectivo' : 'Salida de Efectivo'}
                                     </h2>
                                     {showCashModal === 'OUT' && cashBalance !== null && (
-                                        <p className="text-xs text-slate-500">Disponible: <span className="font-bold text-slate-200">C${cashBalance.toFixed(2)}</span></p>
+                                        <p className="text-xs text-slate-500">Disponible: <span className="font-bold text-slate-200">{formatMoney(cashBalance)}</span></p>
                                     )}
                                 </div>
                             </div>
@@ -1983,7 +1985,7 @@ const POS: React.FC = () => {
                                         required
                                     />
                                     {agentOps.find(o => o.value === agentData.operation)?.dir === 'OUT' && cashBalance !== null && agentData.currency === 'NIO' && (
-                                        <p className="text-xs text-slate-500 mt-1">Efectivo disponible en gaveta: <span className="font-bold text-slate-200">C${cashBalance.toFixed(2)}</span></p>
+                                        <p className="text-xs text-slate-500 mt-1">Efectivo disponible en gaveta: <span className="font-bold text-slate-200">{formatMoney(cashBalance)}</span></p>
                                     )}
                                 </div>
 
@@ -2001,7 +2003,7 @@ const POS: React.FC = () => {
                                             required
                                         />
                                         {parseFloat(agentData.amount) > 0 && parseFloat(agentData.exchangeRate) > 0 && (
-                                            <p className="text-xs text-slate-500 mt-1">Equivale a <span className="font-bold text-slate-200">C${(parseFloat(agentData.amount) * parseFloat(agentData.exchangeRate)).toFixed(2)}</span> — así se asienta en tu contabilidad.</p>
+                                            <p className="text-xs text-slate-500 mt-1">Equivale a <span className="font-bold text-slate-200">{formatMoney((parseFloat(agentData.amount) * parseFloat(agentData.exchangeRate)))}</span> — así se asienta en tu contabilidad.</p>
                                         )}
                                     </div>
                                 )}
@@ -2072,7 +2074,7 @@ const POS: React.FC = () => {
                                         </div>
                                     </div>
                                     <span className={`text-sm font-bold ${m.type === 'IN' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                                        {m.type === 'IN' ? '+' : '-'}C${Number(m.amount).toFixed(2)}
+                                        {m.type === 'IN' ? '+' : '-'}{formatMoney(Number(m.amount))}
                                     </span>
                                 </div>
                             ))}
@@ -2107,7 +2109,7 @@ const POS: React.FC = () => {
                                             <div className="flex-1 min-w-0">
                                                 <p className="text-sm font-bold text-slate-100 truncate">{held.label}</p>
                                                 <p className="text-[11px] text-slate-500">
-                                                    {held.items.length} {held.items.length === 1 ? 'item' : 'items'} · C${heldTotal.toFixed(2)} · Hace {minutesAgo < 1 ? '<1' : minutesAgo} min
+                                                    {held.items.length} {held.items.length === 1 ? 'item' : 'items'} · {formatMoney(heldTotal)} · Hace {minutesAgo < 1 ? '<1' : minutesAgo} min
                                                 </p>
                                             </div>
                                             <div className="flex items-center gap-1.5 ml-2">
@@ -2281,11 +2283,11 @@ const POS: React.FC = () => {
                                 <div className="p-8 space-y-4">
                                     <div className="flex justify-between text-sm">
                                         <span className="text-slate-500">Esperado (Sistema)</span>
-                                        <span className="font-mono font-bold">${shiftReport.expected.toFixed(2)}</span>
+                                        <span className="font-bold nx-num">{formatMoney(shiftReport.expected)}</span>
                                     </div>
                                     <div className="flex justify-between text-sm">
                                         <span className="text-slate-500">Declarado (Cajero)</span>
-                                        <span className="font-mono font-bold">${parseFloat(declaredCash).toFixed(2)}</span>
+                                        <span className="font-bold nx-num">{formatMoney(parseFloat(declaredCash))}</span>
                                     </div>
                                     <div className="border-t border-white/[0.06] pt-3 flex justify-between text-base text-slate-100">
                                         <span className="font-bold text-slate-200">Diferencia</span>
@@ -2633,7 +2635,7 @@ const POS: React.FC = () => {
                                 >
                                     <Package size={24} className="text-blue-400 group-hover:text-blue-300 transition-colors mb-1" />
                                     <span className="text-[10px] font-bold text-slate-300 leading-tight line-clamp-2">{product.name}</span>
-                                    <span className="text-xs font-black text-emerald-400 mt-auto">C${product.price}</span>
+                                    <span className="text-xs font-black text-emerald-400 mt-auto">{formatMoney(product.price)}</span>
                                 </button>
                             ))}
                         </div>
@@ -2642,56 +2644,30 @@ const POS: React.FC = () => {
 
                 {filteredProducts.length === 0 ? (
                     <div className="flex-1 min-h-0 flex items-center justify-center pb-4">
-                        <div className="flex flex-col items-center justify-center max-w-sm text-center px-4">
-                            <div className="w-20 h-20 bg-brand-500/10 rounded-full flex items-center justify-center mb-6 shadow-glow shadow-brand/20">
-                                <Package size={40} className="text-brand-400" />
-                            </div>
-                            {searchTerm ? (
-                                <>
-                                    <h3 className="text-xl font-bold text-white mb-2">Sin resultados</h3>
-                                    <p className="text-slate-400 mb-6">No hay ningún producto que coincida con "{searchTerm}".</p>
-                                    <button
-                                        onClick={() => setSearchTerm('')}
-                                        className="px-6 py-2.5 bg-surface-800 hover:bg-surface-700 text-white font-semibold rounded-xl transition-colors border border-white/[0.08] focus:outline-none focus:ring-2 focus:ring-brand/40"
-                                    >
-                                        Limpiar búsqueda
-                                    </button>
-                                </>
-                            ) : productsError ? (
-                                <>
-                                    <h3 className="text-2xl font-bold text-white mb-3">No pudimos cargar tus productos</h3>
-                                    <p className="text-slate-400 mb-8">Puede ser tu conexión. Tus productos siguen ahí — reintentá.</p>
-                                    <button
-                                        onClick={() => fetchProducts()}
-                                        className="inline-flex items-center justify-center gap-2 px-6 py-4 bg-brand hover:bg-brand-hover text-white font-bold rounded-xl transition-all shadow-glow shadow-brand/30 hover:-translate-y-0.5"
-                                    >
-                                        Reintentar
-                                    </button>
-                                </>
-                            ) : (
-                                <>
-                                    <h3 className="text-2xl font-bold text-white mb-3">Todavía no tenés productos</h3>
-                                    <p className="text-slate-400 mb-8">Agregá tu primer producto para empezar a vender. Toma menos de 10 segundos.</p>
-                                    <Link
-                                        to="/app/inventory"
-                                        className="inline-flex items-center justify-center gap-2 px-6 py-4 bg-brand hover:bg-brand-hover text-white font-bold rounded-xl transition-all shadow-glow shadow-brand/30 hover:-translate-y-0.5"
-                                    >
-                                        <PackagePlus size={20} />
-                                        Agregá tu primer producto
-                                    </Link>
-                                    <div className="mt-4">
-                                        <button
-                                            onClick={seedCatalog}
-                                            disabled={seeding}
-                                            className="text-sm text-slate-300 hover:text-white underline underline-offset-4 disabled:opacity-50 disabled:no-underline transition-colors"
-                                        >
-                                            {seeding ? 'Cargando catálogo…' : 'O cargá un catálogo de ejemplo de tu giro para probar'}
-                                        </button>
-                                        {seedError && <p className="text-red-400 text-sm mt-2">{seedError}</p>}
-                                    </div>
-                                </>
-                            )}
-                        </div>
+                        {searchTerm ? (
+                            <EmptyState
+                                mode="no-results"
+                                title="Sin resultados"
+                                description={`Ningún producto coincide con "${searchTerm}".`}
+                                action={{ label: 'Limpiar búsqueda', onClick: () => setSearchTerm('') }}
+                            />
+                        ) : productsError ? (
+                            <EmptyState
+                                mode="error"
+                                title="No pudimos cargar tus productos"
+                                description="Puede ser tu conexión. Tus productos siguen ahí — reintentá."
+                                action={{ label: 'Reintentar', onClick: () => fetchProducts() }}
+                            />
+                        ) : (
+                            <EmptyState
+                                icon={<Package size={32} />}
+                                title="Todavía no tenés productos"
+                                description="Importá tu lista desde Excel y Nortex arma el catálogo solo. También podés cargar el primero a mano."
+                                action={{ label: 'Agregá tu primer producto', icon: <PackagePlus size={18} />, onClick: () => navigate('/app/inventory') }}
+                                linkAction={{ label: 'O cargá un catálogo de ejemplo de tu giro para probar', onClick: seedCatalog, loading: seeding, loadingLabel: 'Cargando catálogo…' }}
+                                errorText={seedError}
+                            />
+                        )}
                     </div>
                 ) : (
                 /* Grilla compacta: la tarjeta era `aspect-square` (≈230px en desktop)
@@ -2760,7 +2736,7 @@ const POS: React.FC = () => {
                         </div>
                         <span>Ver Carrito ({cart.reduce((a, b) => a + b.quantity, 0)})</span>
                     </div>
-                    <span>C$ {grandTotal.toFixed(2)}</span>
+                    <span>{formatMoney(grandTotal)}</span>
                 </button>
             </div>
 
@@ -2836,7 +2812,7 @@ const POS: React.FC = () => {
                                         className="w-full text-left px-4 py-3 hover:bg-indigo-500/10 border-b border-white/[0.04] last:border-0 text-slate-100 transition-colors"
                                     >
                                         <div className="font-bold text-slate-100 text-sm">{c.name}</div>
-                                        <div className="text-[11px] text-slate-500 mt-0.5">Limite: C${c.creditLimit} | Deuda: C${c.currentDebt}</div>
+                                        <div className="text-[11px] text-slate-500 mt-0.5">Límite: {formatMoney(c.creditLimit)} | Deuda: {formatMoney(c.currentDebt)}</div>
                                     </button>
                                 ))
                             )}
@@ -2848,7 +2824,7 @@ const POS: React.FC = () => {
                         <div className={`mt-2.5 p-3 rounded-xl text-xs border-2 ${selectedCustomer.isBlocked ? 'bg-red-500/10 border-red-300 text-red-400' : 'bg-blue-500/10 border-blue-500/20 text-blue-400'}`}>
                             <div className="flex justify-between font-bold mb-1.5">
                                 <span className="flex items-center gap-1">{selectedCustomer.isBlocked ? 'BLOQUEADO' : 'Linea Disponible:'}</span>
-                                {!selectedCustomer.isBlocked && <span className="text-sm">C${(selectedCustomer.creditLimit - selectedCustomer.currentDebt).toFixed(2)}</span>}
+                                {!selectedCustomer.isBlocked && <span className="text-sm">{formatMoney((selectedCustomer.creditLimit - selectedCustomer.currentDebt))}</span>}
                             </div>
                             {!selectedCustomer.isBlocked && (
                                 <div className="w-full bg-blue-200 h-2 rounded-full overflow-hidden">
@@ -2879,7 +2855,7 @@ const POS: React.FC = () => {
                                         <div className="flex-1 min-w-0">
                                             <h4 className="text-sm font-medium text-slate-100 line-clamp-1">{item.name}</h4>
                                             <div className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums flex items-center gap-1.5 flex-wrap">
-                                                <span>C$ {item.price.toFixed(2)} / {(item as CartLine).unit || 'und'}</span>
+                                                <span>{formatMoney(item.price)} / {(item as CartLine).unit || 'und'}</span>
                                                 {tierBadge && (
                                                     <span className="px-1.5 py-0.5 bg-indigo-500/15 text-indigo-400 rounded text-[9px] font-bold tracking-wide">{tierBadge}</span>
                                                 )}
@@ -2905,7 +2881,7 @@ const POS: React.FC = () => {
                                             <button onClick={() => updateQuantity(item.id, 0.5)} className="p-1 hover:bg-white/[0.06] rounded text-slate-300"><Plus size={14} /></button>
                                         </div>
                                         <div className="text-right min-w-[60px]">
-                                            <div className="text-sm font-bold text-white font-mono tabular-nums">C$ {lineTotalD.toFixed(2)}</div>
+                                            <div className="text-sm font-bold text-white font-mono tabular-nums">{formatMoney(lineTotalD)}</div>
                                             <button onClick={() => removeFromCart(item.id)} className="text-red-400 hover:text-red-400 mt-1"><Trash2 size={14} className="ml-auto" /></button>
                                         </div>
                                     </div>
@@ -2922,7 +2898,7 @@ const POS: React.FC = () => {
                                         />
                                         <span className="text-[10px] text-slate-400">% desc</span>
                                         {lineDiscountD.greaterThan(0) && (
-                                            <span className="text-[10px] text-red-500 font-bold ml-auto">-C${toDecimal(item.price).mul(item.quantity).mul(lineDiscountD).div(100).toFixed(2)}</span>
+                                            <span className="text-[10px] text-red-500 font-bold ml-auto">-{formatMoney(toDecimal(item.price).mul(item.quantity).mul(lineDiscountD).div(100))}</span>
                                         )}
                                     </div>
                                 </div>
@@ -2948,7 +2924,7 @@ const POS: React.FC = () => {
                         />
                         <span className="text-xs text-slate-400">%</span>
                         {globalDiscountD.greaterThan(0) && (
-                            <span className="text-xs text-red-500 font-bold ml-auto">-C${totalD.mul(globalDiscountD).div(100).toFixed(2)}</span>
+                            <span className="text-xs text-red-500 font-bold ml-auto">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span>
                         )}
                     </div>}
                     <div className="flex justify-between text-sm text-slate-500 mb-1"><span>Subtotal</span><span className="nx-num">{formatMoney(total)}</span></div>
@@ -3045,7 +3021,7 @@ const POS: React.FC = () => {
                                         </div>
                                         <div className="flex justify-between text-xs mb-1">
                                             <span className="text-slate-500">Total:</span>
-                                            <span className="font-bold text-slate-100">C$ {Number(returnSaleData.total).toFixed(2)}</span>
+                                            <span className="font-bold text-slate-100">{formatMoney(Number(returnSaleData.total))}</span>
                                         </div>
                                         <div className="flex justify-between text-xs">
                                             <span className="text-slate-500">Método:</span>
@@ -3061,7 +3037,7 @@ const POS: React.FC = () => {
                                                 <div key={idx} className="flex items-center gap-3 bg-surface-800/40 p-2 rounded-lg border border-white/[0.04]">
                                                     <div className="flex-1 min-w-0">
                                                         <p className="text-xs font-medium text-slate-200 truncate">{returnSaleData.items[idx]?.productId?.slice(0, 8) || item.productId.slice(0, 8)}...</p>
-                                                        <p className="text-[10px] text-slate-400">C$ {item.price.toFixed(2)} · Max: {item.maxQty}</p>
+                                                        <p className="text-[10px] text-slate-400">{formatMoney(item.price)} · Max: {item.maxQty}</p>
                                                     </div>
                                                     <div className="flex items-center gap-1">
                                                         <button
@@ -3097,7 +3073,7 @@ const POS: React.FC = () => {
                                             <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-3">
                                                 <div className="flex justify-between font-bold">
                                                     <span className="text-amber-300">Total Devolución:</span>
-                                                    <span className="text-amber-400">C$ {returnItems.reduce((sum, i) => sum + i.price * i.quantity, 0).toFixed(2)}</span>
+                                                    <span className="text-amber-400">{formatMoney(returnItems.reduce((sum, i) => sum + i.price * i.quantity, 0))}</span>
                                                 </div>
                                             </div>
                                             <button
@@ -3164,25 +3140,25 @@ const POS: React.FC = () => {
                             <div>
                                 <div className="flex justify-between text-xs mb-1">
                                     <span className="text-slate-500">Deuda Actual</span>
-                                    <span className="font-bold text-slate-100">C$ {creditInfo.currentDebt.toFixed(2)}</span>
+                                    <span className="font-bold text-slate-100">{formatMoney(creditInfo.currentDebt)}</span>
                                 </div>
                                 <div className="w-full bg-white/[0.06] h-3 rounded-full overflow-hidden">
                                     <div className={`h-full rounded-full transition-all duration-500 ${creditInfo.color === 'red' ? 'bg-red-500' : creditInfo.color === 'yellow' ? 'bg-amber-400' : 'bg-emerald-500'
                                         }`} style={{ width: `${Math.min(creditInfo.debtPct, 100)}%` }} />
                                 </div>
                                 <div className="flex justify-between text-[10px] mt-1">
-                                    <span className="text-slate-400">Límite: C$ {creditInfo.limit.toFixed(2)}</span>
+                                    <span className="text-slate-400">Límite: {formatMoney(creditInfo.limit)}</span>
                                     <span className="font-bold text-slate-300">{Math.round(creditInfo.debtPct)}%</span>
                                 </div>
                             </div>
 
                             {/* Projected */}
                             <div className="bg-surface-800/40 rounded-lg p-3 border border-white/[0.04]">
-                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+C$ {grandTotal.toFixed(2)}):</p>
+                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+{formatMoney(grandTotal)}):</p>
                                 <div className="flex justify-between">
                                     <span className="text-sm font-bold text-slate-200">Nuevo total:</span>
                                     <span className={`text-sm font-bold ${creditInfo.projectedColor === 'red' ? 'text-red-400' : creditInfo.projectedColor === 'yellow' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                                        C$ {creditInfo.projectedDebt.toFixed(2)} ({Math.round(creditInfo.projectedPct)}%)
+                                        {formatMoney(creditInfo.projectedDebt)} ({Math.round(creditInfo.projectedPct)}%)
                                     </span>
                                 </div>
                             </div>
@@ -3261,7 +3237,7 @@ const POS: React.FC = () => {
                         <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-5 text-center">
                             <Banknote size={32} className="text-white mx-auto mb-2" />
                             <h2 className="text-lg font-bold text-white">Cobro en Efectivo</h2>
-                            <p className="text-emerald-100 text-2xl font-black mt-1">C$ {grandTotal.toFixed(2)}</p>
+                            <p className="text-emerald-100 text-2xl font-black mt-1">{formatMoney(grandTotal)}</p>
                         </div>
                         <div className="p-5 space-y-4">
                             {/* USD toggle */}
@@ -3294,14 +3270,14 @@ const POS: React.FC = () => {
                                             }}
                                         />
                                     </div>
-                                    <div className="text-xs text-blue-400 text-center font-medium">Tasa: 1 USD = C${exchangeRate.toFixed(2)} NIO</div>
+                                    <div className="text-xs text-blue-400 text-center font-medium">Tasa: 1 USD = {formatMoney(exchangeRate)} NIO</div>
                                     {toDecimal(usdAmount).greaterThan(0) && (
                                         <div className="bg-blue-500/10 px-3 py-2 rounded-lg border border-blue-500/20 text-sm">
-                                            <div className="flex justify-between"><span className="text-blue-400">Equivalente NIO:</span><span className="font-bold text-blue-300 font-mono tabular-nums">C$ {toDecimal(usdAmount).mul(exchangeRate).toFixed(2)}</span></div>
+                                            <div className="flex justify-between"><span className="text-blue-400">Equivalente NIO:</span><span className="font-bold text-blue-300 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate))}</span></div>
                                             {toDecimal(usdAmount).mul(exchangeRate).greaterThanOrEqualTo(grandTotal) && (
                                                 <>
-                                                    <div className="flex justify-between mt-1 pt-1 border-t border-blue-500/20"><span className="font-bold text-emerald-400">Cambio NIO:</span><span className="font-bold text-emerald-400 font-mono tabular-nums">C$ {toDecimal(usdAmount).mul(exchangeRate).minus(grandTotal).toFixed(2)}</span></div>
-                                                    <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-emerald-500 text-xs font-mono tabular-nums">$ {toDecimal(usdAmount).minus(toDecimal(grandTotal).div(exchangeRate)).toFixed(2)}</span></div>
+                                                    <div className="flex justify-between mt-1 pt-1 border-t border-blue-500/20"><span className="font-bold text-emerald-400">Cambio NIO:</span><span className="font-bold text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate).minus(grandTotal))}</span></div>
+                                                    <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-brand text-xs nx-num">{formatUSD(toDecimal(usdAmount).minus(toDecimal(grandTotal).div(exchangeRate)))}</span></div>
                                                 </>
                                             )}
                                         </div>
@@ -3312,7 +3288,7 @@ const POS: React.FC = () => {
                                     <div className="flex gap-2 flex-wrap">
                                         <button onClick={() => setCashReceived(grandTotal.toFixed(2))} className="flex-shrink-0 px-3 py-1.5 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-200 font-bold rounded-lg text-xs border border-emerald-500/20 transition-colors">Monto Exacto</button>
                                         {[100, 200, 500, 1000].map(amt => (
-                                            <button key={amt} onClick={() => setCashReceived(amt.toString())} className="flex-shrink-0 px-3 py-1.5 bg-white/[0.04] text-slate-200 hover:bg-white/[0.06] font-bold rounded-lg text-xs border border-white/[0.06] transition-colors">C$ {amt}</button>
+                                            <button key={amt} onClick={() => setCashReceived(amt.toString())} className="flex-shrink-0 px-3 py-1.5 bg-white/[0.04] text-slate-200 hover:bg-white/[0.06] font-bold rounded-lg text-xs border border-white/[0.06] transition-colors">{formatMoney(amt, 'NIO', { decimals: 0 })}</button>
                                         ))}
                                     </div>
                                     <div className="relative">
@@ -3331,13 +3307,13 @@ const POS: React.FC = () => {
                                     {cashReceived !== '' && toDecimal(cashReceived).greaterThanOrEqualTo(grandTotal) && (
                                         <div className="flex justify-between items-center bg-emerald-500/10 px-3 py-2 rounded-lg border border-emerald-500/20">
                                             <span className="font-bold text-emerald-400 text-sm">CAMBIO</span>
-                                            <span className="text-2xl font-black text-emerald-400 font-mono tabular-nums">C$ {toDecimal(cashReceived).minus(grandTotal).toFixed(2)}</span>
+                                            <span className="text-2xl font-black text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(cashReceived).minus(grandTotal))}</span>
                                         </div>
                                     )}
                                     {cashReceived !== '' && toDecimal(cashReceived).lessThan(grandTotal) && (
                                         <div className="flex justify-between items-center bg-red-500/10 px-3 py-2 rounded-lg border border-red-500/20">
                                             <span className="font-bold text-red-400 text-sm">FALTANTE</span>
-                                            <span className="text-xl font-bold text-red-400 font-mono tabular-nums">C$ {toDecimal(grandTotal).minus(toDecimal(cashReceived)).toFixed(2)}</span>
+                                            <span className="text-xl font-bold text-red-400 font-mono tabular-nums">{formatMoney(toDecimal(grandTotal).minus(toDecimal(cashReceived)))}</span>
                                         </div>
                                     )}
                                 </>
@@ -3396,7 +3372,7 @@ const POS: React.FC = () => {
                                 <div className="border-t border-white/[0.06] pt-2 mt-2">
                                     <div className="flex justify-between items-center">
                                         <span className="text-lg font-bold text-slate-100">Total Cobrado</span>
-                                        <span className="text-2xl font-bold text-emerald-400">C$ {completedSale.grandTotal.toFixed(2)}</span>
+                                        <span className="text-2xl font-bold text-emerald-400">{formatMoney(completedSale.grandTotal)}</span>
                                     </div>
                                 </div>
 
@@ -3412,7 +3388,7 @@ const POS: React.FC = () => {
                                         {toDecimal(cashReceived).greaterThanOrEqualTo(completedSale.grandTotal) && (
                                             <div className="flex justify-between items-center bg-emerald-500/10 px-3 py-2 rounded-lg border border-emerald-500/20">
                                                 <span className="font-bold text-emerald-400 text-sm">CAMBIO</span>
-                                                <span className="text-xl font-black text-emerald-400 font-mono tabular-nums">C$ {toDecimal(cashReceived).minus(completedSale.grandTotal).toFixed(2)}</span>
+                                                <span className="text-xl font-black text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(cashReceived).minus(completedSale.grandTotal))}</span>
                                             </div>
                                         )}
                                     </div>
