@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "mobile:sync": "npm run build && cap sync android",
     "mobile:assets": "npx @capacitor/assets generate --android",
-    "mobile:open": "cap open android"
+    "mobile:open": "cap open android",
+    "check:design": "node scripts/check-design-system.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.1",

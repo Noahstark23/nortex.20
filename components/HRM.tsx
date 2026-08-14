@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Users, Briefcase, DollarSign, Plus, UserPlus, CheckCircle, Clock, KeyRound, FileText, AlertTriangle, Calculator, CreditCard, Printer, X, Shield, Calendar, TrendingDown, Wallet, FileSpreadsheet, Gift, BarChart3 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { formatMoney } from '../utils/money';
 
 interface Employee {
     id: string;
@@ -159,7 +160,7 @@ interface ExpedienteData {
 interface AttendanceRow { employeeId: string; name: string; jornada: string; diasTrabajados: number; horasRegulares: number; horasExtra: number; diasFeriados: number; diasAusencia: number; }
 interface AttendanceData { period: string; items: AttendanceRow[]; }
 
-const formatC = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const formatC = (n: number) => formatMoney(n);
 const fmtDate = (s: string) => new Date(s).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: '2-digit' });
 const LEAVE_LABELS: Record<string, string> = { UNPAID: 'Permiso sin goce', VACATION: 'Vacaciones', SICK: 'Incapacidad (INSS)', MATERNITY: 'Maternidad' };
 const LEAVE_BADGE: Record<string, string> = { UNPAID: 'bg-amber-500/15 text-amber-400', VACATION: 'bg-emerald-500/15 text-emerald-400', SICK: 'bg-orange-500/15 text-orange-400', MATERNITY: 'bg-pink-100 text-pink-700' };
@@ -421,15 +422,15 @@ const HRM: React.FC = () => {
           <div><span class="label">Ingreso:</span> <strong>${new Date(data.employee.hireDate).toLocaleDateString('es-NI')}</strong></div>
           <div><span class="label">Antigüedad:</span> <strong>${s.antiguedadTexto}</strong></div>
           <div><span class="label">Causa:</span> <strong>${REASON_LABELS[s.reason] || s.reason}</strong></div>
-          <div><span class="label">Salario base (prom. 6m):</span> <strong>C$ ${s.salarioMensual.toFixed(2)}</strong></div>
+          <div><span class="label">Salario base (prom. 6m):</span> <strong>${formatMoney(s.salarioMensual)}</strong></div>
         </div>
         <table>
           <thead><tr><th>Concepto</th><th style="text-align:right">Monto</th></tr></thead>
           <tbody>
-            <tr><td>Indemnización por antigüedad (Art. 45)${s.aplicaIndemnizacion ? ` — ${s.indemnizacionDias.toFixed(0)} días` : ' — no aplica'}</td><td class="amount">C$ ${s.indemnizacion.toFixed(2)}</td></tr>
-            <tr><td>Vacaciones pendientes (${s.diasVacaciones.toFixed(1)} días)</td><td class="amount">C$ ${s.vacaciones.toFixed(2)}</td></tr>
-            <tr><td>Aguinaldo proporcional (${s.diasAguinaldo} días)</td><td class="amount">C$ ${s.aguinaldo.toFixed(2)}</td></tr>
-            <tr class="net-row"><td><strong>TOTAL A PAGAR</strong></td><td class="amount"><strong>C$ ${s.total.toFixed(2)}</strong></td></tr>
+            <tr><td>Indemnización por antigüedad (Art. 45)${s.aplicaIndemnizacion ? ` — ${s.indemnizacionDias.toFixed(0)} días` : ' — no aplica'}</td><td class="amount">${formatMoney(s.indemnizacion)}</td></tr>
+            <tr><td>Vacaciones pendientes (${s.diasVacaciones.toFixed(1)} días)</td><td class="amount">${formatMoney(s.vacaciones)}</td></tr>
+            <tr><td>Aguinaldo proporcional (${s.diasAguinaldo} días)</td><td class="amount">${formatMoney(s.aguinaldo)}</td></tr>
+            <tr class="net-row"><td><strong>TOTAL A PAGAR</strong></td><td class="amount"><strong>${formatMoney(s.total)}</strong></td></tr>
           </tbody>
         </table>
         <div class="signatures">
@@ -750,43 +751,43 @@ const HRM: React.FC = () => {
         <table>
           <thead><tr><th colspan="2">INGRESOS</th></tr></thead>
           <tbody>
-            <tr><td>Salario Base</td><td class="amount">C$ ${Number(p.grossSalary).toFixed(2)}</td></tr>
-            <tr><td>Comisiones del Periodo</td><td class="amount">C$ ${Number(p.commissions).toFixed(2)}</td></tr>
-            ${Number(p.overtimePay || 0) > 0 ? `<tr><td>Horas Extra (${Number(p.horasExtra || 0)} h al doble · Art. 62)</td><td class="amount">C$ ${Number(p.overtimePay).toFixed(2)}</td></tr>` : ''}
-            ${Number(p.holidayPay || 0) > 0 ? `<tr><td>Feriado trabajado (${Number(p.diasFeriados || 0)} día${Number(p.diasFeriados || 0) === 1 ? '' : 's'} · recargo Art. 68)</td><td class="amount">C$ ${Number(p.holidayPay).toFixed(2)}</td></tr>` : ''}
-            ${Number(p.absenceDeduction || 0) > 0 ? `<tr><td>Ausencias sin goce (${Number(p.diasAusencia || 0)} día${Number(p.diasAusencia || 0) === 1 ? '' : 's'})</td><td class="amount">- C$ ${Number(p.absenceDeduction).toFixed(2)}</td></tr>` : ''}
-            <tr class="total-row"><td>TOTAL DEVENGADO</td><td class="amount">C$ ${Number(p.totalIncome).toFixed(2)}</td></tr>
+            <tr><td>Salario Base</td><td class="amount">${formatMoney(Number(p.grossSalary))}</td></tr>
+            <tr><td>Comisiones del Periodo</td><td class="amount">${formatMoney(Number(p.commissions))}</td></tr>
+            ${Number(p.overtimePay || 0) > 0 ? `<tr><td>Horas Extra (${Number(p.horasExtra || 0)} h al doble · Art. 62)</td><td class="amount">${formatMoney(Number(p.overtimePay))}</td></tr>` : ''}
+            ${Number(p.holidayPay || 0) > 0 ? `<tr><td>Feriado trabajado (${Number(p.diasFeriados || 0)} día${Number(p.diasFeriados || 0) === 1 ? '' : 's'} · recargo Art. 68)</td><td class="amount">${formatMoney(Number(p.holidayPay))}</td></tr>` : ''}
+            ${Number(p.absenceDeduction || 0) > 0 ? `<tr><td>Ausencias sin goce (${Number(p.diasAusencia || 0)} día${Number(p.diasAusencia || 0) === 1 ? '' : 's'})</td><td class="amount">- ${formatMoney(Number(p.absenceDeduction))}</td></tr>` : ''}
+            <tr class="total-row"><td>TOTAL DEVENGADO</td><td class="amount">${formatMoney(Number(p.totalIncome))}</td></tr>
           </tbody>
         </table>
 
         <table>
           <thead><tr><th colspan="2">DEDUCCIONES DE LEY</th></tr></thead>
           <tbody>
-            <tr><td>INSS Laboral (7%)</td><td class="amount">- C$ ${Number(p.inssLaboral).toFixed(2)}</td></tr>
-            <tr><td>IR Laboral (Tabla DGI)</td><td class="amount">- C$ ${Number(p.irLaboral).toFixed(2)}</td></tr>
-            <tr class="total-row"><td>TOTAL DEDUCCIONES</td><td class="amount">- C$ ${Number(p.totalDeductions).toFixed(2)}</td></tr>
+            <tr><td>INSS Laboral (7%)</td><td class="amount">- ${formatMoney(Number(p.inssLaboral))}</td></tr>
+            <tr><td>IR Laboral (Tabla DGI)</td><td class="amount">- ${formatMoney(Number(p.irLaboral))}</td></tr>
+            <tr class="total-row"><td>TOTAL DEDUCCIONES</td><td class="amount">- ${formatMoney(Number(p.totalDeductions))}</td></tr>
           </tbody>
         </table>
 
         ${(Number(p.advanceDeduction || 0) > 0 || Number(p.judicialDeduction || 0) > 0) ? `<table>
           <thead><tr><th colspan="2">OTROS DESCUENTOS</th></tr></thead>
           <tbody>
-            ${Number(p.judicialDeduction || 0) > 0 ? `<tr><td>Deducción judicial (pensión / embargo)</td><td class="amount">- C$ ${Number(p.judicialDeduction).toFixed(2)}</td></tr>` : ''}
-            ${Number(p.advanceDeduction || 0) > 0 ? `<tr><td>Adelanto de salario</td><td class="amount">- C$ ${Number(p.advanceDeduction).toFixed(2)}</td></tr>` : ''}
+            ${Number(p.judicialDeduction || 0) > 0 ? `<tr><td>Deducción judicial (pensión / embargo)</td><td class="amount">- ${formatMoney(Number(p.judicialDeduction))}</td></tr>` : ''}
+            ${Number(p.advanceDeduction || 0) > 0 ? `<tr><td>Adelanto de salario</td><td class="amount">- ${formatMoney(Number(p.advanceDeduction))}</td></tr>` : ''}
           </tbody>
         </table>` : ''}
 
         <table>
           <tbody>
-            <tr class="net-row"><td><strong>NETO A RECIBIR</strong></td><td class="amount"><strong>C$ ${Number(p.netSalary).toFixed(2)}</strong></td></tr>
+            <tr class="net-row"><td><strong>NETO A RECIBIR</strong></td><td class="amount"><strong>${formatMoney(Number(p.netSalary))}</strong></td></tr>
           </tbody>
         </table>
 
         <table>
           <thead><tr><th colspan="2">APORTES PATRONALES (Informativo)</th></tr></thead>
           <tbody>
-            <tr><td>INSS Patronal (22.5%)</td><td class="amount">C$ ${Number(p.inssPatronal).toFixed(2)}</td></tr>
-            <tr><td>INATEC (2%)</td><td class="amount">C$ ${Number(p.inatec).toFixed(2)}</td></tr>
+            <tr><td>INSS Patronal (22.5%)</td><td class="amount">${formatMoney(Number(p.inssPatronal))}</td></tr>
+            <tr><td>INATEC (2%)</td><td class="amount">${formatMoney(Number(p.inatec))}</td></tr>
           </tbody>
         </table>
 
@@ -833,14 +834,14 @@ const HRM: React.FC = () => {
         <div class="info-grid">
           <div><span class="label">Empleado:</span> <strong>${item.name}</strong></div>
           <div><span class="label">Cédula:</span> <strong>${item.cedula || 'N/A'}</strong></div>
-          <div><span class="label">Salario Base:</span> <strong>C$ ${Number(item.baseSalary).toFixed(2)}</strong></div>
+          <div><span class="label">Salario Base:</span> <strong>${formatMoney(Number(item.baseSalary))}</strong></div>
           <div><span class="label">Días laborados:</span> <strong>${item.diasLaborados} días</strong></div>
         </div>
         <table>
           <tbody>
-            <tr><td>Aguinaldo proporcional (Art. 93)</td><td class="amount">C$ ${Number(item.monto).toFixed(2)}</td></tr>
-            <tr><td>Deducciones (exento de INSS e IR)</td><td class="amount">C$ 0.00</td></tr>
-            <tr class="net-row"><td><strong>NETO A RECIBIR</strong></td><td class="amount"><strong>C$ ${Number(item.monto).toFixed(2)}</strong></td></tr>
+            <tr><td>Aguinaldo proporcional (Art. 93)</td><td class="amount">${formatMoney(Number(item.monto))}</td></tr>
+            <tr><td>Deducciones (exento de INSS e IR)</td><td class="amount">${formatMoney(0)}</td></tr>
+            <tr class="net-row"><td><strong>NETO A RECIBIR</strong></td><td class="amount"><strong>${formatMoney(Number(item.monto))}</strong></td></tr>
           </tbody>
         </table>
         <div class="signatures">

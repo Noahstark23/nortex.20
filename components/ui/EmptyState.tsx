@@ -59,7 +59,7 @@ const ActionButton: React.FC<{ action: EmptyStateAction; variant: 'primary' | 's
         disabled={action.loading}
         className={
             variant === 'primary'
-                ? 'h-touch inline-flex items-center justify-center gap-2 px-5 rounded-control bg-brand text-[#06231A] font-semibold hover:bg-brand-hover transition-colors disabled:opacity-45 disabled:cursor-not-allowed'
+                ? 'h-touch inline-flex items-center justify-center gap-2 px-5 rounded-control bg-brand text-brand-on font-semibold hover:bg-brand-hover transition-colors disabled:opacity-45 disabled:cursor-not-allowed'
                 : 'h-touch inline-flex items-center justify-center gap-2 px-5 rounded-control bg-transparent text-slate-100 border border-slate-700 font-semibold hover:bg-white/[0.04] transition-colors disabled:opacity-45'
         }
     >

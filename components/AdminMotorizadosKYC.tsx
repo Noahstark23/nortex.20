@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Bike, CheckCircle, XCircle, Phone, MapPin, CreditCard, Hash, ExternalLink, Loader2, ShieldCheck, Wallet, Banknote, Link2 } from 'lucide-react';
+import { formatMoney } from '../utils/money';
 
 /**
  * Cola de revisión KYC de la Red NORTEX (panel SUPER_ADMIN).
@@ -71,7 +72,7 @@ const AdminMotorizadosKYC: React.FC = () => {
     const [walletActionId, setWalletActionId] = useState<string | null>(null);
 
     const payDriver = async (m: MotorizadoKYC) => {
-        const raw = prompt(`Pagar comisiones a ${m.nombre}\nSaldo: C$${(m.walletBalance ?? 0).toFixed(2)}\n\nMonto a pagar:`);
+        const raw = prompt(`Pagar comisiones a ${m.nombre}\nSaldo: ${formatMoney((m.walletBalance ?? 0))}\n\nMonto a pagar:`);
         if (raw === null) return;
         const monto = Number(raw.replace(/[^\d.]/g, ''));
         if (!Number.isFinite(monto) || monto <= 0) return alert('Monto inválido');
@@ -86,7 +87,7 @@ const AdminMotorizadosKYC: React.FC = () => {
             });
             const d = await res.json();
             if (!res.ok) return alert(d.error || 'Error registrando el pago');
-            alert(`Pago de C$${monto.toFixed(2)} registrado y firmado en el libro.`);
+            alert(`Pago de ${formatMoney(monto)} registrado y firmado en el libro.`);
             await fetchMotorizados();
         } catch { alert('Error de conexión'); }
         finally { setWalletActionId(null); }
@@ -102,9 +103,9 @@ const AdminMotorizadosKYC: React.FC = () => {
             if (res.status === 404) return alert(d.error || 'No encontrado');
             const v = d.verification;
             if (v?.ok) {
-                alert(`Cadena ÍNTEGRA\n\nMovimientos verificados: ${v.checked}\nSin firmar (legacy): ${v.unsigned}\nSaldo libro: C$${v.computedBalance}\nSaldo proyección: C$${v.storedBalance} `);
+                alert(`Cadena ÍNTEGRA\n\nMovimientos verificados: ${v.checked}\nSin firmar (legacy): ${v.unsigned}\nSaldo libro: ${formatMoney(v.computedBalance)}\nSaldo proyección: ${formatMoney(v.storedBalance)}`);
             } else {
-                alert(`CADENA COMPROMETIDA\n\n${v?.reason ?? 'desconocido'}\nRoto en seq: ${v?.brokenAtSeq ?? '—'}\nSaldo libro: C$${v?.computedBalance} vs proyección: C$${v?.storedBalance}`);
+                alert(`CADENA COMPROMETIDA\n\n${v?.reason ?? 'desconocido'}\nRoto en seq: ${v?.brokenAtSeq ?? '—'}\nSaldo libro: ${formatMoney(v?.computedBalance)} vs proyección: ${formatMoney(v?.storedBalance)}`);
             }
         } catch { alert('Error de conexión'); }
         finally { setWalletActionId(null); }
@@ -219,7 +220,7 @@ const AdminMotorizadosKYC: React.FC = () => {
                                 </div>
                                 <div className="flex items-center gap-3 flex-shrink-0">
                                     <span className={`font-mono font-black text-lg ${(m.walletBalance ?? 0) > 0 ? 'text-amber-400' : 'text-gray-500'}`}>
-                                        C${(m.walletBalance ?? 0).toFixed(2)}
+                                        {formatMoney((m.walletBalance ?? 0))}
                                     </span>
                                     <button
                                         onClick={() => payDriver(m)}

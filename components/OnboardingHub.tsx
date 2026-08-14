@@ -174,7 +174,7 @@ const OnboardingHub: React.FC = () => {
     <>
       {/* ---------- 🎉 CELEBRACIÓN EN VIVO (primera venta) ---------- */}
       {celebration && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[70] max-w-md w-[calc(100vw-2rem)] print:hidden animate-in fade-in slide-in-from-top-2 duration-300">
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-toast max-w-md w-[calc(100vw-2rem)] print:hidden animate-in fade-in slide-in-from-top-2 duration-300 pointer-events-none [&>*]:pointer-events-auto">
           <div className="bg-surface-900 border border-emerald-500/40 rounded-2xl shadow-2xl shadow-emerald-500/10 p-4 flex items-start gap-3">
             <PartyPopper size={24} className="text-emerald-400 shrink-0 mt-0.5" />
             <p className="text-sm text-slate-100 leading-relaxed flex-1">{celebration}</p>
@@ -187,7 +187,7 @@ const OnboardingHub: React.FC = () => {
 
       {/* ---------- MODAL DE BIENVENIDA ---------- */}
       {showWelcome && (
-        <div className="fixed inset-0 z-[60] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-modal bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/[0.06]">
             <div className="bg-nortex-900 p-8 relative overflow-hidden">
               <div className="absolute -top-10 -right-10 w-48 h-48 bg-nortex-accent blur-[70px] opacity-25" />

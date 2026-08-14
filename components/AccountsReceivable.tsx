@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { maybeAutostartTour } from '../utils/tours';
+import { formatMoney } from '../utils/money';
 import { DollarSign, Calendar, User, CheckCircle, Clock, Wallet, MessageCircle, AlertTriangle, Printer, FileText, RefreshCw, Loader2 } from 'lucide-react';
 
 // ==========================================
@@ -36,7 +37,10 @@ interface Statement {
   generatedAt: string;
 }
 
-const fmt = (n: number) => `C$ ${Number(n).toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// El símbolo sale de formatMoney, nunca de una plantilla local: es lo que evita
+// que la misma cifra aparezca como "C$ 2,042,190.31" acá y "$2,042,190.31" en
+// Reportes, que era el bug de credibilidad más caro del producto.
+const fmt = (n: number) => formatMoney(n);
 const fmtDate = (d: string | null) => d ? new Date(d).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
 
 // Etiqueta de urgencia a partir de los días vencidos.
@@ -430,7 +434,11 @@ const AccountsReceivable: React.FC = () => {
         {/* PAYMENT MODAL */}
         {showPayModal && paySale && (
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 no-print">
-            <div className="bg-surface-900 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden" style={{ color: '#1e293b' }}>
+            {/* Este modal había quedado a medio migrar: superficie oscura con
+                texto e inputs de tema claro forzados por estilos inline. Las
+                etiquetas (#475569 sobre fondo oscuro) eran prácticamente
+                ilegibles. Ahora todo sale de los tokens. */}
+            <div className="bg-surface-900 w-full max-w-md rounded-card shadow-2xl overflow-hidden text-slate-100">
               <div className="bg-nortex-900 px-6 py-5 text-white flex items-center justify-between">
                 <div>
                   <h3 className="text-lg font-bold">Registrar Abono</h3>
@@ -445,23 +453,22 @@ const AccountsReceivable: React.FC = () => {
                   <span className="inline-block px-4 py-2 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 font-bold text-lg">{fmt(paySale.balance)}</span>
                 </div>
                 <div className="mb-4">
-                  <label className="block text-sm font-bold mb-2" style={{ color: '#475569' }}>Monto a cobrar (C$)</label>
+                  <label className="block text-sm font-bold mb-2 text-slate-400">Monto a cobrar (C$)</label>
                   <input type="number" step="0.01" autoFocus value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)}
-                    className="w-full px-4 py-3 text-2xl font-bold border-2 border-white/10 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                    style={{ color: '#0f172a', backgroundColor: '#ffffff' }} placeholder="0.00" />
+                    className="w-full px-4 py-3 text-2xl font-bold bg-slate-800 text-slate-100 border-2 border-slate-700 rounded-control focus:ring-2 focus:ring-brand focus:border-brand outline-none tabular-nums"
+                    placeholder="0.00" />
                 </div>
                 <div className="mb-6">
-                  <label className="block text-sm font-bold mb-2" style={{ color: '#475569' }}>Método</label>
+                  <label className="block text-sm font-bold mb-2 text-slate-400">Método</label>
                   <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}
-                    className="w-full px-4 py-3 border border-white/10 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
-                    style={{ color: '#0f172a', backgroundColor: '#ffffff' }}>
+                    className="w-full px-4 py-3 bg-slate-800 text-slate-100 border border-slate-700 rounded-control outline-none focus:ring-2 focus:ring-brand">
                     <option value="CASH">Efectivo</option>
                     <option value="TRANSFER">Transferencia</option>
                     <option value="CARD">Tarjeta</option>
                   </select>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <button type="button" onClick={() => setShowPayModal(false)} className="py-3 px-4 rounded-xl border border-white/10 font-medium hover:bg-surface-800/40" style={{ color: '#475569' }}>Cancelar</button>
+                  <button type="button" onClick={() => setShowPayModal(false)} className="py-3 px-4 rounded-control border border-slate-700 font-medium text-slate-300 hover:bg-white/[0.06]">Cancelar</button>
                   <button type="submit" disabled={submitting} className="py-3 px-4 rounded-xl bg-nortex-500 font-bold text-white hover:bg-nortex-400 disabled:opacity-50 flex items-center justify-center gap-2">
                     {submitting ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle size={18} />} Confirmar
                   </button>

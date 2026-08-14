@@ -5,6 +5,7 @@ import {
     parseWorkbookRows, acceptedHeaders, importInChunks,
     type ParsedRow, type ColumnResolution, type CanonicalField,
 } from '../utils/importProducts';
+import { formatMoney } from '../utils/money';
 
 interface ProductImporterProps {
     onClose: () => void;
@@ -442,9 +443,9 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                                     <td className="px-3 py-2 text-white">{r.data.nombre}</td>
                                                     <td className="px-3 py-2 text-surface-400">{r.data.categoria}</td>
                                                     <td className={`px-3 py-2 text-right font-semibold ${r.valid ? 'text-emerald-400' : 'text-red-300'}`}>
-                                                        {r.valid ? `C$ ${r.data.precio.toFixed(2)}` : '—'}
+                                                        {r.valid ? `${formatMoney(r.data.precio)}` : '—'}
                                                     </td>
-                                                    <td className="px-3 py-2 text-right text-surface-400">C$ {r.data.costo.toFixed(2)}</td>
+                                                    <td className="px-3 py-2 text-right text-surface-400">{formatMoney(r.data.costo)}</td>
                                                     <td className="px-3 py-2 text-right text-white font-bold">{r.data.stock}</td>
                                                 </tr>
                                             ))}

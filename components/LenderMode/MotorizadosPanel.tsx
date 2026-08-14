@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Banknote, Save, AlertCircle, CheckCircle2, LogOut, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { formatMoney } from '../../utils/money';
 
 const MotorizadosPanel: React.FC = () => {
     const [loans, setLoans] = useState<any[]>([]);
@@ -186,10 +187,10 @@ const MotorizadosPanel: React.FC = () => {
                         onClick={() => {
                             const clientName = loans.find(l => l.id === selectedLoan)?.clientName || 'Cliente';
                             const userName = JSON.parse(localStorage.getItem('nortex_user') || '{}').name || 'Tu Cobrador';
-                            const text = `*NORTEX CAPITAL* \n\nHola *${clientName}* ,\nConfirmamos la recepción de tu pago.\n\n*Monto:* $${parseFloat(amount || '0').toFixed(2)}\n*Cobrador:* ${userName}\n*Fecha:* ${new Date().toLocaleString()}\n\n_Gracias por tu puntualidad. Tu saldo ha sido actualizado._`;
+                            const text = `*NORTEX CAPITAL* \n\nHola *${clientName}* ,\nConfirmamos la recepción de tu pago.\n\n*Monto:* ${formatMoney(parseFloat(amount || '0'))}\n*Cobrador:* ${userName}\n*Fecha:* ${new Date().toLocaleString()}\n\n_Gracias por tu puntualidad. Tu saldo ha sido actualizado._`;
                             window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
                         }}
-                        className="w-full py-4 bg-[#25D366] hover:bg-[#1ebe57] text-white font-bold rounded-xl flex items-center justify-center gap-3 shadow-lg shadow-[#25D366]/20 transition-all active:scale-95"
+                        className="w-full py-4 bg-whatsapp hover:bg-whatsapp-hover text-white font-bold rounded-xl flex items-center justify-center gap-3 shadow-lg shadow-whatsapp/20 transition-all active:scale-95"
                     >
                         <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>
                         ENVIAR RECIBO (WHATSAPP)

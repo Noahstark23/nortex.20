@@ -2942,7 +2942,7 @@ const POS: React.FC = () => {
                         <button
                             onClick={() => { setCashReceived(''); setPayingInUSD(false); setUsdAmount(''); setShowCashPreModal(true); }}
                             disabled={!currentShift || processing || cart.length === 0}
-                            className="h-pay bg-brand text-[#06231A] font-bold rounded-control hover:bg-brand-hover text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/40"
+                            className="h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/40"
                         >
                             <Banknote size={24} strokeWidth={2.5} /> EFECTIVO
                         </button>
@@ -3382,7 +3382,9 @@ const POS: React.FC = () => {
                                         <div className="flex justify-between items-center">
                                             <span className="text-sm text-slate-500">Efectivo recibido</span>
                                             <span className="font-bold text-slate-200 font-mono tabular-nums">
-                                                {payingInUSD && usdAmount ? `$ ${usdAmount} (C$ ${cashReceived})` : `C$ ${toDecimal(cashReceived).toFixed(2)}`}
+                                                {payingInUSD && usdAmount
+                                                    ? `${formatUSD(toDecimal(usdAmount))} (${formatMoney(toDecimal(cashReceived))})`
+                                                    : formatMoney(toDecimal(cashReceived))}
                                             </span>
                                         </div>
                                         {toDecimal(cashReceived).greaterThanOrEqualTo(completedSale.grandTotal) && (

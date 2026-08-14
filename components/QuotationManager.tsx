@@ -3,6 +3,7 @@ import { FileText, Plus, Search, ShoppingCart, Calendar, User, Printer, ArrowRig
 import { MOCK_PRODUCTS } from '../constants';
 import { Product, CartItem, Quotation, PublicOrder } from '../types';
 import { useNavigate } from 'react-router-dom';
+import { formatMoney } from '../utils/money';
 
 const QuotationManager: React.FC = () => {
     const navigate = useNavigate();
@@ -392,7 +393,7 @@ const QuotationManager: React.FC = () => {
                                             href={`https://wa.me/?text=${encodeURIComponent(`¡Hola! Visita nuestro catálogo en línea y haz tu pedido aquí: ${window.location.origin}/pedidos/${tenantSlug}`)}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="px-4 py-2 bg-[#25D366] hover:bg-[#1ebd5a] text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"
+                                            className="px-4 py-2 bg-whatsapp hover:bg-whatsapp-hover text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"
                                         >
                                             <Phone size={16} />
                                             Enviar por WhatsApp
@@ -485,7 +486,7 @@ const QuotationManager: React.FC = () => {
                                             {orderItems.slice(0, 4).map((item: any, idx: number) => (
                                                 <div key={idx} className="flex justify-between text-xs text-slate-300">
                                                     <span className="truncate flex-1">{item.quantity}× {item.name}</span>
-                                                    <span className="font-medium ml-2">C${(Number(item.price) * Number(item.quantity)).toFixed(2)}</span>
+                                                    <span className="font-medium ml-2">{formatMoney((Number(item.price) * Number(item.quantity)))}</span>
                                                 </div>
                                             ))}
                                             {orderItems.length > 4 && (
@@ -499,7 +500,7 @@ const QuotationManager: React.FC = () => {
                                                 {new Date(order.createdAt).toLocaleString()}
                                             </div>
                                             <div className="flex items-center gap-3">
-                                                <span className="font-bold text-white">C${orderTotal.toFixed(2)}</span>
+                                                <span className="font-bold text-white">{formatMoney(orderTotal)}</span>
                                                 {order.status === 'PENDING' && (
                                                     <button
                                                         onClick={() => convertWebOrder(order)}
@@ -578,9 +579,9 @@ const QuotationManager: React.FC = () => {
 
                     <div className="p-6 bg-surface-900 border-t border-white/[0.06] text-slate-100">
                         <div className="space-y-2 text-sm mb-4">
-                            <div className="flex justify-between text-slate-500"><span>Subtotal</span><span className="font-mono tabular-nums">C$ {total.toFixed(2)}</span></div>
-                            <div className="flex justify-between text-slate-500"><span>IVA (15%)</span><span className="font-mono tabular-nums">C$ {tax.toFixed(2)}</span></div>
-                            <div className="flex justify-between font-bold text-slate-100 text-lg pt-2 border-t border-white/[0.04]"><span>Total</span><span className="font-mono tabular-nums">C$ {grandTotal.toFixed(2)}</span></div>
+                            <div className="flex justify-between text-slate-500"><span>Subtotal</span><span className="font-mono tabular-nums">{formatMoney(total)}</span></div>
+                            <div className="flex justify-between text-slate-500"><span>IVA (15%)</span><span className="font-mono tabular-nums">{formatMoney(tax)}</span></div>
+                            <div className="flex justify-between font-bold text-slate-100 text-lg pt-2 border-t border-white/[0.04]"><span>Total</span><span className="font-mono tabular-nums">{formatMoney(grandTotal)}</span></div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">

@@ -11,6 +11,9 @@ import {
     Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers, Download, ChevronLeft, ChevronRight,
     Tag, DollarSign, Printer
 } from 'lucide-react';
+import { ModuleHeader, ModuleHeaderLink } from './ui/ModuleHeader';
+import { IconButton } from './ui/IconButton';
+import { ActionMenu } from './ui/ActionMenu';
 import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
 import { maybeAutostartTour } from '../utils/tours';
@@ -907,23 +910,20 @@ export default function Inventory() {
 
     return (
         <div className="h-full overflow-y-auto p-6 space-y-6">
-            {/* HEADER */}
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-cyan-500 rounded-xl flex items-center justify-center shadow-lg shadow-blue-900/30">
-                        <Shield size={24} className="text-white" />
-                    </div>
-                    <div>
-                        <h1 className="text-2xl font-bold text-white">Mis Productos</h1>
-                        <span className="ml-3 inline-flex gap-2">
-                            <a href="/app/warehouses" className="px-3 py-1.5 bg-slate-800 border border-slate-600 text-slate-200 rounded-lg text-xs font-bold hover:border-brand transition-colors">Bodegas</a>
-                            <a href="/app/serials" className="px-3 py-1.5 bg-slate-800 border border-slate-600 text-slate-200 rounded-lg text-xs font-bold hover:border-brand transition-colors">Series</a>
-                        </span>
-                        <p className="text-sm text-slate-400">Tu catálogo, precios y existencias — cada movimiento queda registrado</p>
-                    </div>
-                </div>
-
-                {isOwner && (
+            {/* HEADER — altura única de módulo (antes: bloque de ~110px con un
+                cuadrado degradado azul→cian y los enlaces incrustados entre el
+                título y el subtítulo). */}
+            <ModuleHeader
+                icon={<Shield size={20} />}
+                title="Mis Productos"
+                subtitle="Tu catálogo, precios y existencias — cada movimiento queda registrado"
+                contextLinks={
+                    <>
+                        <ModuleHeaderLink href="/app/warehouses">Bodegas</ModuleHeaderLink>
+                        <ModuleHeaderLink href="/app/serials">Series</ModuleHeaderLink>
+                    </>
+                }
+                actions={isOwner && (
                     <div className="relative">
                         <button
                             data-tour="inv-new"
@@ -976,7 +976,7 @@ export default function Inventory() {
                         )}
                     </div>
                 )}
-            </div>
+            />
 
             {/* KPI CARDS */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -985,7 +985,7 @@ export default function Inventory() {
                         <Package size={16} className="text-blue-400" />
                         <span className="text-xs text-slate-400 uppercase tracking-wider">Productos</span>
                     </div>
-                    <p className="text-2xl font-bold text-white">{(stats?.totalProducts ?? 0).toLocaleString()}</p>
+                    <p className="text-kpi font-bold text-slate-100 tabular-nums">{(stats?.totalProducts ?? 0).toLocaleString()}</p>
                     <p className="text-xs text-slate-500">{totals.totalItems.toLocaleString()} unidades en bodega</p>
                 </div>
 
@@ -994,7 +994,7 @@ export default function Inventory() {
                         <TrendingUp size={16} className="text-emerald-400" />
                         <span className="text-xs text-slate-400 uppercase tracking-wider">Valor Inventario</span>
                     </div>
-                    <p className="text-2xl font-bold text-emerald-400">{formatCurrency(totals.totalValue)}</p>
+                    <p className="text-kpi font-bold text-slate-100 tabular-nums">{formatCurrency(totals.totalValue)}</p>
                     <p className="text-xs text-slate-500">Al costo de compra</p>
                 </div>
 
@@ -1003,7 +1003,7 @@ export default function Inventory() {
                         <AlertTriangle size={16} className="text-amber-400" />
                         <span className="text-xs text-slate-400 uppercase tracking-wider">Stock Bajo</span>
                     </div>
-                    <p className={`text-2xl font-bold ${totals.lowStockCount > 0 ? 'text-amber-400' : 'text-white'}`}>
+                    <p className="text-kpi font-bold text-slate-100 tabular-nums">
                         {totals.lowStockCount}
                     </p>
                     <p className="text-xs text-slate-500">Productos bajo mínimo</p>
@@ -1014,7 +1014,7 @@ export default function Inventory() {
                         <FileWarning size={16} className="text-red-400" />
                         <span className="text-xs text-slate-400 uppercase tracking-wider">Agotados</span>
                     </div>
-                    <p className={`text-2xl font-bold ${totals.outOfStockCount > 0 ? 'text-red-400' : 'text-white'}`}>
+                    <p className="text-kpi font-bold text-slate-100 tabular-nums">
                         {totals.outOfStockCount}
                     </p>
                     <p className="text-xs text-slate-500">Stock en cero</p>
@@ -1241,53 +1241,51 @@ export default function Inventory() {
                                                 </>
                                             )}
                                             <td className="px-4 py-3">
+                                                {/* Antes había 6 íconos de ~33px pegados, con "Eliminar"
+                                                    al lado de "Ajustar stock". Con el dedo y con prisa,
+                                                    esa vecindad borra productos. Ahora quedan visibles
+                                                    las dos acciones de uso diario y el resto —incluida
+                                                    la destructiva, separada— vive en el menú. */}
                                                 <div className="flex items-center justify-center gap-1">
                                                     {isOwner && (
                                                         <>
-                                                            <button
-                                                                onClick={() => handleTogglePublish(product.id, product.isPublished || false, product.name)}
-                                                                className={`p-2 rounded-lg transition-colors ${product.isPublished ? 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/40' : 'hover:bg-slate-700/60 text-slate-400 hover:text-white'}`}
-                                                                title={product.isPublished ? "Ocultar del catálogo público" : "Publicar en catálogo público"}
-                                                            >
-                                                                <Globe size={17} />
-                                                            </button>
-                                                            <button
+                                                            <IconButton
+                                                                icon={<Eye size={16} />}
+                                                                label={`Auditar kardex de ${product.name}`}
                                                                 onClick={() => openKardex(product)}
-                                                                className="btn-ghost p-2 rounded-lg"
-                                                                title="Auditar Kardex"
-                                                            >
-                                                                <Eye size={17} />
-                                                            </button>
-                                                            <button
+                                                            />
+                                                            <IconButton
+                                                                icon={<Edit size={16} />}
+                                                                label={`Editar ${product.name}`}
                                                                 onClick={() => openEditModal(product)}
-                                                                className="btn-ghost p-2 rounded-lg"
-                                                                title="Editar Producto"
-                                                            >
-                                                                <Edit size={17} />
-                                                            </button>
-                                                            {product.requiresBatchTracking && (
-                                                                <button
-                                                                    onClick={() => openBatches(product)}
-                                                                    className="p-2 hover:bg-orange-500/20 rounded-lg text-orange-400 transition-colors"
-                                                                    title="Ver Lotes y Vencimientos"
-                                                                >
-                                                                    <Layers size={17} />
-                                                                </button>
-                                                            )}
-                                                            <button
-                                                                onClick={() => openAdjust(product)}
-                                                                className="btn-ghost p-2 rounded-lg"
-                                                                title="Ajuste de Stock (Kardex)"
-                                                            >
-                                                                <Wrench size={17} />
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleDelete(product.id, product.name)}
-                                                                className="p-2 hover:bg-red-500/20 rounded-lg text-red-400 transition-colors"
-                                                                title="Eliminar"
-                                                            >
-                                                                <Trash2 size={17} />
-                                                            </button>
+                                                            />
+                                                            <ActionMenu
+                                                                label={`Más acciones de ${product.name}`}
+                                                                items={[
+                                                                    {
+                                                                        label: product.isPublished ? 'Ocultar del catálogo' : 'Publicar en catálogo',
+                                                                        icon: <Globe size={16} />,
+                                                                        onClick: () => handleTogglePublish(product.id, product.isPublished || false, product.name),
+                                                                    },
+                                                                    {
+                                                                        label: 'Lotes y vencimientos',
+                                                                        icon: <Layers size={16} />,
+                                                                        onClick: () => openBatches(product),
+                                                                        hidden: !product.requiresBatchTracking,
+                                                                    },
+                                                                    {
+                                                                        label: 'Ajuste de stock (Kardex)',
+                                                                        icon: <Wrench size={16} />,
+                                                                        onClick: () => openAdjust(product),
+                                                                    },
+                                                                    {
+                                                                        label: 'Eliminar producto',
+                                                                        icon: <Trash2 size={16} />,
+                                                                        onClick: () => handleDelete(product.id, product.name),
+                                                                        danger: true,
+                                                                    },
+                                                                ]}
+                                                            />
                                                         </>
                                                     )}
                                                 </div>

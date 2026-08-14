@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { formatMoney } from '../utils/money';
 import {
     TrendingUp, TrendingDown, DollarSign, Shield, Target, BarChart3, PieChart,
     ArrowUpRight, ArrowDownRight, Loader2, RefreshCw, AlertTriangle, CheckCircle,
@@ -69,7 +70,9 @@ const FinancialHealth: React.FC = () => {
 
     useEffect(() => { fetchData(); }, []);
 
-    const formatC = (n: number) => `C$${n.toLocaleString('es-NI', { minimumFractionDigits: 2 })}`;
+    // Además de unificar el símbolo, fija 2 decimales: el toLocaleString anterior
+    // permitía un tercero y la misma cifra se veía distinta según el monto.
+    const formatC = (n: number) => formatMoney(n);
 
     const getScoreColor = (score: number) => {
         if (score >= 800) return 'text-emerald-500';

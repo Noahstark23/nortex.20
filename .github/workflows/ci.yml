@@ -25,6 +25,13 @@ jobs:
       - name: Tests (vitest)
         run: npm test
 
+      # Sistema de diseño: cero hex fuera de los tokens, cero símbolo de moneda
+      # escrito a mano, solo los 3 radios, nada flotante sobre la zona de cobro.
+      # Sin este chequeo el rediseño se deshace solo, un "#8B5CF6 nada más para
+      # este badge" a la vez.
+      - name: Sistema de diseño
+        run: npm run check:design
+
       # Pruebas de MUTACIÓN sobre los módulos de dinero: no basta con que los
       # tests pasen, tienen que MATAR bugs. Stryker introduce fallas (invierte
       # comparaciones, cambia signos, vacía cuerpos) y falla el CI si un mutante

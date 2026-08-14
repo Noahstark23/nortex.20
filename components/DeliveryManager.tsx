@@ -3,6 +3,7 @@ import {
     Package, Truck, CheckCircle, Clock, MapPin, Phone, ChevronRight,
     Plus, X, Copy, Check, Link2, Loader2, User, AlertCircle
 } from 'lucide-react';
+import { formatMoney } from '../utils/money';
 
 interface Pedido {
     id: string;
@@ -266,7 +267,7 @@ const DeliveryManager: React.FC = () => {
                                                         {pedido.clienteNombre}
                                                     </span>
                                                     <span className="font-black text-blue-400 text-sm ml-2 flex-shrink-0">
-                                                        C${Number(pedido.total).toFixed(2)}
+                                                        {formatMoney(Number(pedido.total))}
                                                     </span>
                                                 </div>
 

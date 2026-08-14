@@ -3,6 +3,7 @@ import {
     AlertTriangle, Zap, ShoppingCart, TrendingDown, Package, DollarSign,
     CheckCircle, XCircle, Loader2, ArrowRight, Shield, Clock
 } from 'lucide-react';
+import { formatMoney } from '../utils/money';
 
 interface OracleAlert {
     productId: string;
@@ -136,11 +137,11 @@ const InventoryOracle: React.FC = () => {
                         <div className="grid grid-cols-2 gap-4 mb-8">
                             <div className="bg-slate-800/50 rounded-2xl p-5 border border-slate-700">
                                 <p className="text-slate-400 text-xs font-bold uppercase mb-1">Monto del Préstamo</p>
-                                <p className="text-2xl font-black text-white">C$ {loanResult.loanTerms.amount.toLocaleString()}</p>
+                                <p className="text-2xl font-black text-white">{formatMoney(loanResult.loanTerms.amount)}</p>
                             </div>
                             <div className="bg-slate-800/50 rounded-2xl p-5 border border-slate-700">
                                 <p className="text-slate-400 text-xs font-bold uppercase mb-1">Total a Pagar</p>
-                                <p className="text-2xl font-black text-amber-400">C$ {loanResult.loanTerms.totalDue.toLocaleString()}</p>
+                                <p className="text-2xl font-black text-amber-400">{formatMoney(loanResult.loanTerms.totalDue)}</p>
                             </div>
                             <div className="bg-slate-800/50 rounded-2xl p-5 border border-slate-700">
                                 <p className="text-slate-400 text-xs font-bold uppercase mb-1">Interés</p>
@@ -254,7 +255,7 @@ const InventoryOracle: React.FC = () => {
                                         </div>
                                         <div className="bg-slate-800/50 rounded-lg p-2">
                                             <span className="text-slate-500 block">Costo Est.</span>
-                                            <span className="text-amber-400 font-bold">C$ {alert.suggestedCost.toLocaleString()}</span>
+                                            <span className="text-amber-400 font-bold">{formatMoney(alert.suggestedCost)}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -270,7 +271,7 @@ const InventoryOracle: React.FC = () => {
                                     {selectedAlerts.length} de {data.alerts.length} productos seleccionados
                                 </p>
                                 <p className="text-white font-black text-2xl">
-                                    Total: C$ {selectedTotal.toLocaleString()}
+                                    Total: {formatMoney(selectedTotal)}
                                 </p>
                             </div>
 

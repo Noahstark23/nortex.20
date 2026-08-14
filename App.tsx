@@ -151,7 +151,7 @@ function App() {
   return (
     <BrowserRouter>
       <RouteAnalytics />
-      <Suspense fallback={<div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>Cargando…</div>}>
+      <Suspense fallback={<div className="min-h-[60vh] flex items-center justify-center text-slate-400">Cargando…</div>}>
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/register" element={<RegisterTenant />} />

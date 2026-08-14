@@ -134,6 +134,13 @@ export default {
                 amber: warning,
                 yellow: warning,
 
+                // Marcas de terceros: SOLO para el botón que abre esa app.
+                whatsapp: {
+                    DEFAULT: t('whatsapp'),
+                    hover: t('whatsapp-hover'),
+                },
+                waze: t('waze'),
+
                 nortex: {
                     50:  t('brand-50'),
                     100: t('brand-100'),
@@ -168,6 +175,16 @@ export default {
                 compact: 'var(--nx-h-compact)',
                 touch: 'var(--nx-h-touch)',
                 pay: 'var(--nx-h-pay)',
+                // Altura única de header de módulo: antes convivían 56px (POS) y
+                // ~110px (Inventario), y el contenido "saltaba" al navegar.
+                module: 'var(--nx-h-module-header)',
+            },
+            width: {
+                // Los botones de ícono son cuadrados: el ancho sale del mismo
+                // token que la altura, para que 44×44 no dependa de un padding.
+                compact: 'var(--nx-h-compact)',
+                touch: 'var(--nx-h-touch)',
+                pay: 'var(--nx-h-pay)',
             },
             minHeight: {
                 tap: 'var(--nx-tap-min)',
@@ -185,6 +202,7 @@ export default {
                 sticky:   'var(--nx-z-sticky)',
                 checkout: 'var(--nx-z-checkout)',
                 modal:    'var(--nx-z-modal)',
+                toast:    'var(--nx-z-toast)',
             },
             transitionTimingFunction: {
                 nx: 'cubic-bezier(0.2, 0, 0, 1)',
