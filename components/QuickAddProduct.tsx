@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Zap, Check, AlertCircle, History, Volume2, VolumeX } from 'lucide-react';
 import ImageUploader from './ImageUploader';
+import { formatMoney } from '../utils/money';
 
 interface Product {
     id: string;
@@ -405,7 +406,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                                                 <p className="text-white font-semibold text-sm truncate">{product.name}</p>
                                                 <p className="text-xs text-surface-400 font-mono">{product.sku}</p>
                                                 <p className="text-xs text-emerald-400 font-bold mt-1">
-                                                    C$ {product.price.toFixed(2)}
+                                                    {formatMoney(product.price)}
                                                 </p>
                                             </div>
                                         </div>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Monitor, RefreshCw, Clock, ShoppingCart, ArrowDownCircle, ArrowUpCircle, DollarSign, AlertTriangle, CheckCircle, X, Printer, User, TrendingUp, Banknote, Lock, Calculator, Loader2, Landmark, Undo2 } from 'lucide-react';
+import { formatMoney, formatUSD } from '../utils/money';
 
 interface LiveShift {
     id: string;
@@ -179,7 +180,7 @@ const CashRegisters: React.FC = () => {
     const handleSettleCommissions = async (agreement: any) => {
         const accrued = Number(agreement.commissionAccrued);
         if (!(accrued > 0)) { alert('No hay comisiones por liquidar en este convenio.'); return; }
-        if (!confirm(`¿Registrar que ${agreement.name} liquidó C$${accrued.toFixed(2)} de comisiones a tu cuenta bancaria?`)) return;
+        if (!confirm(`¿Registrar que ${agreement.name} liquidó ${formatMoney(accrued)} de comisiones a tu cuenta bancaria?`)) return;
         setAgentBusy(true);
         try {
             const res = await fetch(`/api/agent-banking/agreements/${agreement.id}/settle-commissions`, {
@@ -251,7 +252,7 @@ const CashRegisters: React.FC = () => {
 
     // Reversar una operación (falló/se anuló en el dispositivo del banco).
     const handleReverseTx = async (txItem: any) => {
-        const reason = prompt(`Motivo de la reversa de ${txItem.operation} C$${Number(txItem.amount).toFixed(2)} (${txItem.agreement?.name || ''}):`);
+        const reason = prompt(`Motivo de la reversa de ${txItem.operation} ${formatMoney(Number(txItem.amount))} (${txItem.agreement?.name || ''}):`);
         if (reason === null) return;
         if (reason.trim().length < 3) { alert('Indicá un motivo (mínimo 3 caracteres).'); return; }
         setAgentBusy(true);
@@ -406,7 +407,7 @@ const CashRegisters: React.FC = () => {
                                                 <ShoppingCart size={14} className="text-blue-500" />
                                                 <span>Ventas Efectivo</span>
                                             </div>
-                                            <span className="font-bold text-slate-100">C${shift.vaultCashSales.toFixed(2)}</span>
+                                            <span className="font-bold text-slate-100">{formatMoney(shift.vaultCashSales)}</span>
                                         </div>
 
                                         {/* Vault: Manual INs */}
@@ -415,7 +416,7 @@ const CashRegisters: React.FC = () => {
                                                 <ArrowDownCircle size={14} className="text-emerald-500" />
                                                 <span>Entradas Manuales</span>
                                             </div>
-                                            <span className="font-bold text-emerald-400">+C${shift.vaultManualINs.toFixed(2)}</span>
+                                            <span className="font-bold text-emerald-400">+{formatMoney(shift.vaultManualINs)}</span>
                                         </div>
 
                                         {/* Vault: Manual OUTs */}
@@ -424,7 +425,7 @@ const CashRegisters: React.FC = () => {
                                                 <ArrowUpCircle size={14} className="text-amber-500" />
                                                 <span>Salidas</span>
                                             </div>
-                                            <span className="font-bold text-amber-400">-C${shift.vaultManualOUTs.toFixed(2)}</span>
+                                            <span className="font-bold text-amber-400">-{formatMoney(shift.vaultManualOUTs)}</span>
                                         </div>
 
                                         {/* Vault: Agente Bancario (Fase B) — plata del banco, separada */}
@@ -435,7 +436,7 @@ const CashRegisters: React.FC = () => {
                                                     <span>Agente Bancario</span>
                                                 </div>
                                                 <span className="font-bold text-sky-400">
-                                                    +C${(shift.vaultAgentINs ?? 0).toFixed(2)} / -C${(shift.vaultAgentOUTs ?? 0).toFixed(2)}
+                                                    +{formatMoney((shift.vaultAgentINs ?? 0))} / -{formatMoney((shift.vaultAgentOUTs ?? 0))}
                                                 </span>
                                             </div>
                                         )}
@@ -447,9 +448,9 @@ const CashRegisters: React.FC = () => {
                                                     <Banknote size={16} className="text-nortex-600" />
                                                     Efectivo en Gaveta
                                                 </div>
-                                                <span className="text-xl font-black text-white font-mono tabular-nums">C${shift.estimatedPhysicalCash.toFixed(2)}</span>
+                                                <span className="text-xl font-black text-white font-mono tabular-nums">{formatMoney(shift.estimatedPhysicalCash)}</span>
                                             </div>
-                                            <p className="text-[10px] text-slate-400 mt-1">Fondo: C${shift.initialCash.toFixed(2)} · {shift.salesCount} ventas · {shift.movementsCount} movimientos</p>
+                                            <p className="text-[10px] text-slate-400 mt-1">Fondo: {formatMoney(shift.initialCash)} · {shift.salesCount} ventas · {shift.movementsCount} movimientos</p>
                                             {/* Alertas de gaveta del agente (Fase C) */}
                                             {agentThresholds.min !== '' && shift.estimatedPhysicalCash < parseFloat(agentThresholds.min) && (
                                                 <p className="mt-2 text-[11px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2 py-1 flex items-center gap-1">
@@ -465,7 +466,7 @@ const CashRegisters: React.FC = () => {
                                             {(shift.estimatedPhysicalUsd ?? 0) !== 0 && (
                                                 <div className="mt-2 flex items-center justify-between text-sm">
                                                     <span className="text-slate-500 flex items-center gap-1"><DollarSign size={13} className="text-emerald-500" /> Dólares en gaveta</span>
-                                                    <span className="font-bold text-emerald-400 font-mono">US${(shift.estimatedPhysicalUsd ?? 0).toFixed(2)}</span>
+                                                    <span className="font-bold text-emerald-400 font-mono">{formatUSD((shift.estimatedPhysicalUsd ?? 0))}</span>
                                                 </div>
                                             )}
                                         </div>
@@ -475,8 +476,8 @@ const CashRegisters: React.FC = () => {
                                     <div className="bg-surface-800/40 px-4 py-3 border-t border-white/[0.04] flex items-center justify-between">
                                         <div className="text-[10px] text-slate-400">
                                             <span className="flex items-center gap-1 mb-1">
-                                                {shift.vaultCardSales > 0 && <span>C${shift.vaultCardSales.toFixed(0)}</span>}
-                                                {shift.vaultCreditSales > 0 && <span> · C${shift.vaultCreditSales.toFixed(0)} crédito</span>}
+                                                {shift.vaultCardSales > 0 && <span>{formatMoney(shift.vaultCardSales, 'NIO', { decimals: 0 })}</span>}
+                                                {shift.vaultCreditSales > 0 && <span> · {formatMoney(shift.vaultCreditSales, 'NIO', { decimals: 0 })} crédito</span>}
                                             </span>
                                             <span>{shift.lastSaleAt ? `Última venta: ${timeAgo(shift.lastSaleAt)}` : 'Sin ventas'}</span>
                                         </div>
@@ -549,11 +550,11 @@ const CashRegisters: React.FC = () => {
                                         <div className="space-y-2 text-sm">
                                             <div className="flex justify-between">
                                                 <span className="text-slate-500">{saldo >= 0 ? 'Le debés al banco:' : 'El banco te debe:'}</span>
-                                                <span className={`font-bold font-mono ${saldo >= 0 ? 'text-amber-400' : 'text-emerald-400'}`}>C${Math.abs(saldo).toFixed(2)}</span>
+                                                <span className={`font-bold font-mono ${saldo >= 0 ? 'text-amber-400' : 'text-emerald-400'}`}>{formatMoney(Math.abs(saldo))}</span>
                                             </div>
                                             <div className="flex justify-between">
                                                 <span className="text-slate-500">Comisiones por cobrar:</span>
-                                                <span className="font-bold font-mono text-sky-400">C${comisiones.toFixed(2)}</span>
+                                                <span className="font-bold font-mono text-sky-400">{formatMoney(comisiones)}</span>
                                             </div>
                                         </div>
                                         <div className="grid grid-cols-2 gap-2 mt-4">
@@ -622,8 +623,8 @@ const CashRegisters: React.FC = () => {
                                                         <td className="px-4 py-2 text-slate-200">{agr?.name || '—'}</td>
                                                         <td className="px-4 py-2 text-slate-300 text-xs">{b.operation.replace(/_/g, ' ')}</td>
                                                         <td className="px-4 py-2 text-right font-mono text-slate-200">{b.count}</td>
-                                                        <td className="px-4 py-2 text-right font-mono font-bold text-slate-100">C${b.totalAmount.toFixed(2)}</td>
-                                                        <td className="px-4 py-2 text-right font-mono text-sky-400">C${b.totalCommission.toFixed(2)}</td>
+                                                        <td className="px-4 py-2 text-right font-mono font-bold text-slate-100">{formatMoney(b.totalAmount)}</td>
+                                                        <td className="px-4 py-2 text-right font-mono text-sky-400">{formatMoney(b.totalCommission)}</td>
                                                         <td className="px-4 py-2 text-center">
                                                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${b.status === 'COMPLETED' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
                                                                 {b.status === 'COMPLETED' ? 'OK' : 'REVERSADAS'}
@@ -669,9 +670,9 @@ const CashRegisters: React.FC = () => {
                                                         </span>
                                                     </td>
                                                     <td className="px-4 py-2 text-right font-mono font-bold text-slate-100">
-                                                        {t.direction === 'IN' ? '+' : '-'}C${Number(t.amount).toFixed(2)}
+                                                        {t.direction === 'IN' ? '+' : '-'}{formatMoney(Number(t.amount))}
                                                     </td>
-                                                    <td className="px-4 py-2 text-right font-mono text-sky-400">C${Number(t.commission).toFixed(2)}</td>
+                                                    <td className="px-4 py-2 text-right font-mono text-sky-400">{formatMoney(Number(t.commission))}</td>
                                                     <td className="px-4 py-2 text-slate-400 text-xs">{t.externalRef || '—'}</td>
                                                     <td className="px-4 py-2 text-center">
                                                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${t.status === 'COMPLETED' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
@@ -748,13 +749,13 @@ const CashRegisters: React.FC = () => {
                                                         </span>
                                                     </div>
                                                 </td>
-                                                <td className="px-4 py-3 text-right text-slate-300">C${shift.initialCash.toFixed(2)}</td>
-                                                <td className="px-4 py-3 text-right text-slate-300">{shift.systemExpectedCash !== null ? `C$${shift.systemExpectedCash.toFixed(2)}` : '—'}</td>
-                                                <td className="px-4 py-3 text-right text-slate-300">{shift.finalCashDeclared !== null ? `C$${shift.finalCashDeclared.toFixed(2)}` : '—'}</td>
+                                                <td className="px-4 py-3 text-right text-slate-300">{formatMoney(shift.initialCash)}</td>
+                                                <td className="px-4 py-3 text-right text-slate-300">{shift.systemExpectedCash !== null ? `${formatMoney(shift.systemExpectedCash)}` : '—'}</td>
+                                                <td className="px-4 py-3 text-right text-slate-300">{shift.finalCashDeclared !== null ? `${formatMoney(shift.finalCashDeclared)}` : '—'}</td>
                                                 <td className={`px-4 py-3 text-right font-bold ${shift.status === 'PERFECT' ? 'text-green-400' :
                                                     shift.status === 'WARNING' ? 'text-amber-400' : 'text-red-400'
                                                     }`}>
-                                                    {shift.difference > 0 ? '+' : ''}C${shift.difference.toFixed(2)}
+                                                    {shift.difference > 0 ? '+' : ''}{formatMoney(shift.difference)}
                                                 </td>
                                                 <td className="px-4 py-3 text-center">
                                                     {shift.status === 'PERFECT' && <span className="inline-flex items-center gap-1 text-[10px] bg-green-500/15 text-green-400 px-2 py-0.5 rounded-full font-bold"><CheckCircle size={10} /> OK</span>}
@@ -804,10 +805,10 @@ const CashRegisters: React.FC = () => {
                                 <p className={`text-3xl font-black ${selectedShift.status === 'PERFECT' ? 'text-green-400' :
                                     selectedShift.status === 'WARNING' ? 'text-amber-400' : 'text-red-400'
                                     }`}>
-                                    {selectedShift.difference > 0 ? '+' : ''}C${selectedShift.difference.toFixed(2)}
+                                    {selectedShift.difference > 0 ? '+' : ''}{formatMoney(selectedShift.difference)}
                                 </p>
                                 {selectedShift.status === 'ALERT' && (
-                                    <p className="text-xs text-red-500 mt-2 font-medium">Excede umbral de C${theftThreshold.toFixed(2)}</p>
+                                    <p className="text-xs text-red-500 mt-2 font-medium">Excede umbral de {formatMoney(theftThreshold)}</p>
                                 )}
                             </div>
 
@@ -817,31 +818,31 @@ const CashRegisters: React.FC = () => {
                                 <div className="bg-surface-800/40 rounded-xl p-4 space-y-2.5">
                                     <div className="flex justify-between text-sm">
                                         <span className="text-slate-500">Fondo Inicial</span>
-                                        <span className="font-bold text-slate-200">C${selectedShift.initialCash.toFixed(2)}</span>
+                                        <span className="font-bold text-slate-200">{formatMoney(selectedShift.initialCash)}</span>
                                     </div>
                                     <div className="flex justify-between text-sm">
                                         <span className="text-slate-500">Ventas Efectivo</span>
-                                        <span className="font-bold text-blue-400">+C${selectedShift.cashTotal.toFixed(2)}</span>
+                                        <span className="font-bold text-blue-400">+{formatMoney(selectedShift.cashTotal)}</span>
                                     </div>
                                     {selectedShift.cardTotal > 0 && (
                                         <div className="flex justify-between text-sm">
                                             <span className="text-slate-500">Ventas Tarjeta</span>
-                                            <span className="font-bold text-slate-300">C${selectedShift.cardTotal.toFixed(2)}</span>
+                                            <span className="font-bold text-slate-300">{formatMoney(selectedShift.cardTotal)}</span>
                                         </div>
                                     )}
                                     {selectedShift.creditTotal > 0 && (
                                         <div className="flex justify-between text-sm">
                                             <span className="text-slate-500">Ventas Crédito</span>
-                                            <span className="font-bold text-slate-300">C${selectedShift.creditTotal.toFixed(2)}</span>
+                                            <span className="font-bold text-slate-300">{formatMoney(selectedShift.creditTotal)}</span>
                                         </div>
                                     )}
                                     <div className="border-t border-white/[0.06] pt-2 flex justify-between text-sm">
                                         <span className="font-bold text-slate-200">Sistema Esperaba</span>
-                                        <span className="font-bold text-white">{selectedShift.systemExpectedCash !== null ? `C$${selectedShift.systemExpectedCash.toFixed(2)}` : '—'}</span>
+                                        <span className="font-bold text-white">{selectedShift.systemExpectedCash !== null ? `${formatMoney(selectedShift.systemExpectedCash)}` : '—'}</span>
                                     </div>
                                     <div className="flex justify-between text-sm">
                                         <span className="font-bold text-slate-200">Cajero Declaró</span>
-                                        <span className="font-bold text-white">{selectedShift.finalCashDeclared !== null ? `C$${selectedShift.finalCashDeclared.toFixed(2)}` : '—'}</span>
+                                        <span className="font-bold text-white">{selectedShift.finalCashDeclared !== null ? `${formatMoney(selectedShift.finalCashDeclared)}` : '—'}</span>
                                     </div>
                                 </div>
                             </div>
@@ -858,7 +859,7 @@ const CashRegisters: React.FC = () => {
                                     </div>
                                 </div>
                                 <span className="text-xl font-black text-slate-100">
-                                    C${selectedShift.salesCount > 0 ? (selectedShift.grandTotal / selectedShift.salesCount).toFixed(2) : '0.00'}
+                                    {formatMoney(selectedShift.salesCount > 0 ? selectedShift.grandTotal / selectedShift.salesCount : 0)}
                                 </span>
                             </div>
 
@@ -877,7 +878,7 @@ const CashRegisters: React.FC = () => {
                                                     <p className="text-[10px] text-slate-400 mt-0.5">{formatTime(mov.createdAt)}</p>
                                                 </div>
                                                 <span className={`font-bold ${mov.type === 'IN' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                                                    {mov.type === 'IN' ? '+' : '-'}C${mov.amount.toFixed(2)}
+                                                    {mov.type === 'IN' ? '+' : '-'}{formatMoney(mov.amount)}
                                                 </span>
                                             </div>
                                         ))}
@@ -893,7 +894,7 @@ const CashRegisters: React.FC = () => {
                                 </div>
                                 <div className="bg-emerald-500/10 rounded-xl p-3 text-center">
                                     <p className="text-xs text-emerald-500 font-bold">TOTAL BRUTO</p>
-                                    <p className="text-lg font-black text-emerald-400">C${selectedShift.grandTotal.toFixed(2)}</p>
+                                    <p className="text-lg font-black text-emerald-400">{formatMoney(selectedShift.grandTotal)}</p>
                                 </div>
                             </div>
                         </div>
@@ -935,7 +936,7 @@ const CashRegisters: React.FC = () => {
                                     <div className="bg-surface-900 border border-white/[0.06] rounded-2xl p-4 shadow-sm grid grid-cols-2 gap-x-4 gap-y-3">
                                         {[1000, 500, 200, 100, 50, 20, 10, 5, 1].map(den => (
                                             <div key={den} className="flex items-center gap-2">
-                                                <span className="text-xs font-bold text-slate-500 w-12 text-right">C$ {den}</span>
+                                                <span className="text-xs font-bold text-slate-500 w-12 text-right">{formatMoney(den, 'NIO', { decimals: 0 })}</span>
                                                 <input
                                                     type="number"
                                                     min="0"
@@ -956,14 +957,14 @@ const CashRegisters: React.FC = () => {
                                         <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2" />
                                         <p className="text-nortex-accent text-xs font-bold uppercase tracking-widest mb-2 relative z-10">Total Declarado</p>
                                         <p className="text-4xl font-black text-white tracking-tight relative z-10">
-                                            C${calculateTotalDeclared().toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            {formatMoney(calculateTotalDeclared())}
                                         </p>
                                     </div>
 
                                     {/* Expectativa del Sistema (Opcional, puede ocultarse si el cajero no debe verlo, pero al ser Admin, es útil) */}
                                     <div className="bg-surface-900 border border-white/[0.06] rounded-2xl p-4 flex justify-between items-center shadow-sm">
                                         <span className="text-xs font-bold text-slate-500 uppercase">Aprox. Sistema</span>
-                                        <span className="font-bold text-slate-100">C${shiftToClose.estimatedPhysicalCash.toFixed(2)}</span>
+                                        <span className="font-bold text-slate-100">{formatMoney(shiftToClose.estimatedPhysicalCash)}</span>
                                     </div>
 
                                     {/* Gaveta USD (Fase D): solo si el turno manejó dólares */}
@@ -971,7 +972,7 @@ const CashRegisters: React.FC = () => {
                                         <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 shadow-sm space-y-2">
                                             <div className="flex justify-between items-center">
                                                 <span className="text-xs font-bold text-emerald-400 uppercase">Dólares esperados</span>
-                                                <span className="font-bold text-emerald-300">US${(shiftToClose.estimatedPhysicalUsd ?? 0).toFixed(2)}</span>
+                                                <span className="font-bold text-emerald-300">{formatUSD((shiftToClose.estimatedPhysicalUsd ?? 0))}</span>
                                             </div>
                                             <input
                                                 type="number" min="0" step="0.01"

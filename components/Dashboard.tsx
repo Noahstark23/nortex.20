@@ -440,7 +440,7 @@ const RetailDashboard: React.FC = () => {
               // Antes iba a /app/marketplace → "Próximamente": la alerta más
               // urgente del dashboard creaba urgencia y cerraba la puerta.
               onClick={() => navigate('/app/smart-purchases')}
-              className="h-touch px-5 bg-brand text-[#06231A] font-semibold rounded-control hover:bg-brand-hover transition-colors flex items-center gap-2"
+              className="h-touch px-5 bg-brand text-brand-on font-semibold rounded-control hover:bg-brand-hover transition-colors flex items-center gap-2"
             >
               <ShoppingCart size={18} /> Pedir Reabastecimiento <ArrowRight size={18} />
             </button>

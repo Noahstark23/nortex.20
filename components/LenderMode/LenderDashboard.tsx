@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DollarSign, Activity, AlertTriangle, Plus, Users, Wallet, X, Banknote } from 'lucide-react';
+import { formatMoney } from '../../utils/money';
 
 // Fase 2 H7: cada tab del panel tiene su propia ruta en el menú lateral del
 // prestamista. Estas rutas dedicadas (no /app/clients|reports|team de retail)
@@ -216,7 +217,7 @@ const LenderDashboard: React.FC = () => {
             if (data.success) {
                 setShowDepositModal(false);
                 setDepositData({ collectorId: '', motoName: '', amount: '', notes: '' });
-                alert(`¡Exito! Se han ingresado $${depositData.amount} a la Bóveda General Nortex.`);
+                alert(`¡Exito! Se han ingresado ${formatMoney(depositData.amount)} a la Bóveda General Nortex.`);
             } else {
                 alert("Error: " + data.error);
             }
@@ -259,7 +260,7 @@ const LenderDashboard: React.FC = () => {
             if (data.success) {
                 setShowPenaltyModal(false);
                 setPenaltyData({ loanId: '', clientName: '', amount: '', reason: 'Multa por atraso' });
-                alert(`¡Multa aplicada! El saldo deudor ha incrementado en $${penaltyData.amount}.`);
+                alert(`¡Multa aplicada! El saldo deudor ha incrementado en ${formatMoney(penaltyData.amount)}.`);
                 fetchPortfolio();
             } else {
                 alert("Error aplicando multa: " + data.error);
@@ -309,7 +310,7 @@ const LenderDashboard: React.FC = () => {
             if (data.success) {
                 setShowPaymentModal(false);
                 setPaymentData({ loanId: '', clientName: '', balance: 0, amount: '' });
-                alert(`¡Abono registrado! Se aplicó $${paymentData.amount} al crédito.`);
+                alert(`¡Abono registrado! Se aplicó ${formatMoney(paymentData.amount)} al crédito.`);
                 fetchPortfolio();
             } else {
                 alert('Error registrando el abono: ' + data.error);
@@ -1074,7 +1075,7 @@ const LenderDashboard: React.FC = () => {
                                 disabled={submitting}
                                 className="w-full bg-purple-500 hover:bg-purple-400 text-white font-bold py-4 rounded-xl mt-4 transition-all disabled:opacity-50"
                             >
-                                {submitting ? 'PROCESANDO...' : `RENOVAR TARJETA (+$${refiData.newPrincipal || '0'})`}
+                                {submitting ? 'PROCESANDO...' : `RENOVAR TARJETA (+${formatMoney(refiData.newPrincipal || 0)})`}
                             </button>
                         </form>
                     </div>

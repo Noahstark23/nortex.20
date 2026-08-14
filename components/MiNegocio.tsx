@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShoppingCart, Wallet, PackagePlus, LayoutGrid, ArrowRight } from 'lucide-react';
+import { formatMoney } from '../utils/money';
 
 /**
  * Mi Negocio — pantalla de inicio del modo simple (Fase B del plan UX Simple).
@@ -25,7 +26,7 @@ interface DayNumbers {
 
 const formatCordobas = (n: number | null): string => {
     if (n === null) return '—';
-    return `C$${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return formatMoney(n);
 };
 
 const MiNegocio: React.FC = () => {

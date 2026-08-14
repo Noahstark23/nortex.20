@@ -5,6 +5,7 @@ import {
     Calendar, Hash, X, Check, AlertTriangle, Clock, ArrowRight, Trash2,
     ShoppingCart, TrendingUp, Wallet, Printer, Eye, Stamp
 } from 'lucide-react';
+import { formatMoney } from '../utils/money';
 
 // ==========================================
 // TYPES
@@ -62,7 +63,7 @@ interface Purchase {
 // HELPERS
 // ==========================================
 
-const formatCurrency = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const formatCurrency = (n: number) => formatMoney(n);
 const formatDate = (d: string) => new Date(d).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: 'numeric' });
 
 // ==========================================
@@ -293,8 +294,8 @@ export default function Purchases() {
             <tr>
                 <td style="padding:4px 8px;border-bottom:1px solid #ddd;font-size:${format === 'ticket' ? '11px' : '13px'}">${item.productName}</td>
                 <td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:center;font-size:${format === 'ticket' ? '11px' : '13px'}">${item.quantity}</td>
-                <td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:right;font-size:${format === 'ticket' ? '11px' : '13px'}">C$ ${parseFloat(item.unitCost as any).toFixed(2)}</td>
-                <td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:right;font-weight:bold;font-size:${format === 'ticket' ? '11px' : '13px'}">C$ ${parseFloat(item.totalCost as any).toFixed(2)}</td>
+                <td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:right;font-size:${format === 'ticket' ? '11px' : '13px'}">${formatMoney(parseFloat(item.unitCost as any))}</td>
+                <td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:right;font-weight:bold;font-size:${format === 'ticket' ? '11px' : '13px'}">${formatMoney(parseFloat(item.totalCost as any))}</td>
             </tr>
         `).join('');
 
@@ -351,9 +352,9 @@ export default function Purchases() {
     </table>
 
     <div class="totals">
-        <div class="total-row"><span>Subtotal:</span><span>C$ ${parseFloat(p.subtotal as any).toFixed(2)}</span></div>
-        <div class="total-row"><span>IVA (15%):</span><span>C$ ${parseFloat(p.tax as any).toFixed(2)}</span></div>
-        <div class="total-row grand-total"><span>TOTAL:</span><span>C$ ${parseFloat(p.total as any).toFixed(2)}</span></div>
+        <div class="total-row"><span>Subtotal:</span><span>${formatMoney(parseFloat(p.subtotal as any))}</span></div>
+        <div class="total-row"><span>IVA (15%):</span><span>${formatMoney(parseFloat(p.tax as any))}</span></div>
+        <div class="total-row grand-total"><span>TOTAL:</span><span>${formatMoney(parseFloat(p.total as any))}</span></div>
     </div>
 
     ${p.notes ? `<div style="margin-top:10px;font-size:${isTicket ? '10px' : '12px'};color:#666"><strong>Notas:</strong> ${p.notes}</div>` : ''}

@@ -5,7 +5,7 @@ import {
     Landmark, FileBarChart, Play, ListChecks, Clock, ShieldCheck, ChevronLeft, ChevronRight,
     Hourglass, Phone, ChevronDown, Wallet, TrendingUp, TrendingDown
 } from 'lucide-react';
-import { sanitizeDecimalInput, toDecimal } from '../utils/money';
+import { sanitizeDecimalInput, toDecimal, formatMoney } from '../utils/money';
 
 /**
  * FASE A — Contabilidad del contador.
@@ -49,7 +49,7 @@ const BUCKET_META: { key: 'corriente' | 'b1_30' | 'b31_60' | 'b61_90' | 'b90'; l
     { key: 'b90', label: '+90 d', cls: 'text-rose-400' },
 ];
 
-const C = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const C = (n: number) => formatMoney(n);
 const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
 const Contabilidad: React.FC = () => {
@@ -999,7 +999,7 @@ const Contabilidad: React.FC = () => {
                         <div className="panel-premium p-6">
                             <h3 className="text-white font-bold mb-1 flex items-center gap-2"><Coins size={18} className="text-emerald-400" /> Tipo de cambio (C$/US$)</h3>
                             <p className="text-slate-400 text-xs mb-4">
-                                Vigente: <span className="font-mono text-white font-bold">{exLatest.rate ? `C$ ${exLatest.rate.toFixed(4)}` : '— sin registrar —'}</span>
+                                Vigente: <span className="font-mono text-white font-bold">{exLatest.rate ? `${formatMoney(exLatest.rate, 'NIO', { decimals: 4 })}` : '— sin registrar —'}</span>
                                 {exLatest.fecha ? <span className="text-slate-500"> (del {new Date(exLatest.fecha).toLocaleDateString('es-NI')})</span> : ''}. El POS lo usa para pagos en dólares.
                             </p>
                             <div className="flex flex-wrap items-end gap-3">

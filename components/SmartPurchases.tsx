@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Zap, Loader2, AlertTriangle, ShoppingCart, Check, RefreshCw, Truck, Package, X, TrendingDown
 } from 'lucide-react';
-import { sanitizeDecimalInput } from '../utils/money';
+import { sanitizeDecimalInput, formatMoney } from '../utils/money';
 
 // ==========================================
 // TYPES
@@ -30,7 +30,7 @@ interface Supplier { id: string; name: string; }
 
 interface RowEdit { selected: boolean; qty: string; cost: string; supplierId: string; }
 
-const formatCurrency = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const formatCurrency = (n: number) => formatMoney(n);
 
 const REASON_META: Record<string, { label: string; color: string }> = {
     BOTH: { label: 'Reorden + Rotación', color: 'bg-red-900/50 text-red-300 border-red-700' },

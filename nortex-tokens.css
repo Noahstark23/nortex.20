@@ -71,6 +71,7 @@
   --nx-h-touch:   44px;   /* default en POS: se usa con los dedos */
   --nx-h-pay:     56px;   /* botones de cobro y buscador principal */
   --nx-tap-min:   44px;   /* objetivo táctil mínimo */
+  --nx-h-module-header: 64px; /* altura única del header de módulo (Fase 5) */
 
   /* ---------- Movimiento ---------- */
   --nx-t-fast: 140ms cubic-bezier(0.2, 0, 0, 1);
@@ -83,6 +84,12 @@
   --nx-z-sticky:   10;
   --nx-z-checkout: 20;
   --nx-z-modal:    50;
+  /* Aviso TRANSITORIO anclado arriba (toast de pedido web, celebración de la
+     primera venta). Vive sobre el modal porque tiene que verse aunque haya uno
+     abierto, y no compite con el cobro por tres razones que son condición de
+     uso de esta capa: es efímero, se ancla al TOPE de la pantalla y no captura
+     el puntero. Un elemento PERSISTENTE nunca puede usarla. */
+  --nx-z-toast:    60;
   /* NO existe una capa flotante persistente por encima de --nx-z-checkout */
 
   /* ============================================================
@@ -114,6 +121,18 @@
 
   --nx-danger-rgb:        240 72 62;
   --nx-warning-rgb:       245 165 36;
+
+  /* ---------- Marcas de TERCEROS ----------
+     No son decoración ni parte de la paleta: son la identidad de otra app, y el
+     usuario reconoce el botón por ese color (el verde de WhatsApp, el cian de
+     Waze). Viven acá —y no como hex suelto en un componente— justamente para
+     que la regla "ningún color fuera de los tokens" siga siendo cierta y para
+     que quede claro que su uso está limitado al botón que abre esa app. */
+  --nx-whatsapp:       #25D366;
+  --nx-whatsapp-rgb:      37 211 102;
+  --nx-whatsapp-hover-rgb: 30 190 87;
+  --nx-waze:           #00CFFF;
+  --nx-waze-rgb:           0 207 255;
 
   /* Escalas derivadas: la app usa gradaciones (surface-700/800/900,
      brand-400/500/600…). Se derivan del mismo acento para que no

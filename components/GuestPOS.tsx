@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ShoppingCart, Plus, Minus, Trash2, Banknote, Package, Search } from 'lucide-react';
+import { formatMoney } from '../utils/money';
 
 interface MockProduct {
   id: string;
@@ -60,7 +61,7 @@ const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
                     <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">{product.category}</div>
                     <div className="font-bold text-slate-100 text-sm mb-1.5 group-hover:text-nortex-600 line-clamp-1">{product.name}</div>
                     <div className="flex justify-between items-center">
-                        <span className="bg-white/[0.04] text-slate-300 text-xs px-2 py-1 rounded font-mono font-bold">C$ {product.price.toFixed(2)}</span>
+                        <span className="bg-white/[0.04] text-slate-300 text-xs px-2 py-1 rounded font-mono font-bold">{formatMoney(product.price)}</span>
                         <div className="w-6 h-6 bg-nortex-100 text-nortex-600 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                             <Plus size={14} />
                         </div>
@@ -89,9 +90,9 @@ const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
                     <div key={product.id} className="flex items-center gap-2 text-sm">
                         <div className="flex-1 min-w-0">
                             <div className="font-medium text-slate-200 text-xs line-clamp-1">{product.name}</div>
-                            <div className="text-[11px] text-slate-500">C$ {product.price} x {quantity}</div>
+                            <div className="text-[11px] text-slate-500">{formatMoney(product.price)} x {quantity}</div>
                         </div>
-                        <div className="font-bold text-slate-100 text-xs">C$ {(product.price * quantity).toFixed(2)}</div>
+                        <div className="font-bold text-slate-100 text-xs">{formatMoney((product.price * quantity))}</div>
                         <button onClick={() => removeFromCart(product.id)} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={13}/></button>
                     </div>
                 ))
@@ -101,7 +102,7 @@ const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
         <div className="p-3 bg-surface-800/40 border-t border-white/[0.04]">
             <div className="flex justify-between items-center mb-3">
                 <span className="text-slate-500 text-xs font-medium">Total</span>
-                <span className="text-lg font-bold text-slate-100">C$ {grandTotal.toFixed(2)}</span>
+                <span className="text-lg font-bold text-slate-100">{formatMoney(grandTotal)}</span>
             </div>
             <button 
                 onClick={() => onHook(cart)}

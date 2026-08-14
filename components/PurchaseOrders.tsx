@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { ClipboardList, Plus, CheckCircle, XCircle, PackageCheck, X, RefreshCw } from 'lucide-react';
+import { formatMoney } from '../utils/money';
 
 /** Órdenes de Compra (issue #77): DRAFT→APPROVED→PARTIALLY_RECEIVED→RECEIVED. */
 interface POItem { id: string; productId: string; productName: string; quantityOrdered: number; quantityReceived: number; unitCost: string | number; }
@@ -106,7 +107,7 @@ const PurchaseOrders: React.FC = () => {
                                     <tr key={it.id} className="text-slate-300">
                                         <td className="py-1.5">{it.productName}</td>
                                         <td className="py-1.5 text-right font-mono">{it.quantityReceived}/{it.quantityOrdered} und</td>
-                                        <td className="py-1.5 text-right font-mono text-slate-400">C$ {Number(it.unitCost).toFixed(2)}</td>
+                                        <td className="py-1.5 text-right font-mono text-slate-400">{formatMoney(Number(it.unitCost))}</td>
                                     </tr>
                                 ))}
                             </tbody>

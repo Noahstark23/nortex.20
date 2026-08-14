@@ -3,7 +3,7 @@ import {
     ClipboardList, Plus, X, Search, Check, AlertTriangle, Loader2, ScanLine,
     TrendingDown, TrendingUp, Lock, ChevronLeft, Package, Trash2
 } from 'lucide-react';
-import { sanitizeDecimalInput } from '../utils/money';
+import { sanitizeDecimalInput, formatMoney } from '../utils/money';
 
 // ==========================================
 // TYPES
@@ -36,7 +36,7 @@ interface CountDetail {
     items: CountItem[];
 }
 
-const formatCurrency = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const formatCurrency = (n: number) => formatMoney(n);
 const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 const STATUS_META: Record<string, { label: string; color: string }> = {

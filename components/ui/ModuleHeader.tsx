@@ -1,0 +1,89 @@
+/**
+ * NORTEX — Header único de módulo.
+ *
+ * PROBLEMA QUE RESUELVE: cada módulo inventaba su propio encabezado. El POS
+ * usaba 56px; Inventario armaba un bloque de ~110px con un cuadrado degradado
+ * azul→cian de 48px, título, subtítulo y dos enlaces sueltos metidos entre
+ * medio. Al navegar, el contenido saltaba varias decenas de píxeles y cada
+ * pantalla parecía de un producto distinto.
+ *
+ * REGLA (Fase 5): una sola altura (--nx-h-module-header), un solo lugar para
+ * el título, una sola zona de acciones a la derecha. El ícono va en neutro
+ * dentro de la superficie —sin degradados de dos colores, que eran el resto
+ * del look genérico— y el subtítulo es opcional y de una línea.
+ *
+ * Anatomía:
+ *   [ícono] Título · píldoras de contexto        [acciones secundarias] [primaria]
+ *           subtítulo de una línea
+ *   ── barra opcional de filtros/buscador (`toolbar`) ──
+ */
+import React from 'react';
+
+export interface ModuleHeaderProps {
+    /** Ícono lucide ya instanciado (usar size={20}). */
+    icon?: React.ReactNode;
+    title: string;
+    /** Una línea. Qué hace el módulo, no un párrafo de ayuda. */
+    subtitle?: string;
+    /** Píldoras/enlaces de contexto al lado del título (p. ej. Bodegas, Series). */
+    contextLinks?: React.ReactNode;
+    /** Acciones de la derecha. La primaria va última y es la única en verde. */
+    actions?: React.ReactNode;
+    /** Fila inferior opcional: buscador, filtros, chips. No afecta la altura del header. */
+    toolbar?: React.ReactNode;
+    /** Se pega al tope al hacer scroll. Nunca por encima del bloque de cobro. */
+    sticky?: boolean;
+    className?: string;
+}
+
+export const ModuleHeader: React.FC<ModuleHeaderProps> = ({
+    icon,
+    title,
+    subtitle,
+    contextLinks,
+    actions,
+    toolbar,
+    sticky = false,
+    className = '',
+}) => (
+    <header
+        className={`${sticky ? 'sticky top-0 z-sticky bg-slate-950/95 backdrop-blur' : ''} ${className}`}
+    >
+        <div className="h-module flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+                {icon && (
+                    <div className="w-10 h-10 shrink-0 rounded-control bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300">
+                        {icon}
+                    </div>
+                )}
+                <div className="min-w-0">
+                    <div className="flex items-center gap-3 min-w-0">
+                        <h1 className="text-title font-bold text-slate-100 truncate">{title}</h1>
+                        {contextLinks && <div className="flex items-center gap-2 shrink-0">{contextLinks}</div>}
+                    </div>
+                    {subtitle && <p className="text-sm text-slate-400 truncate">{subtitle}</p>}
+                </div>
+            </div>
+
+            {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+        </div>
+
+        {toolbar && <div className="pb-4">{toolbar}</div>}
+    </header>
+);
+
+/**
+ * Enlace de contexto del header (Bodegas, Series, Lotes…). Existe para que los
+ * módulos no vuelvan a escribir a mano un `px-3 py-1.5` que queda por debajo
+ * del objetivo táctil.
+ */
+export const ModuleHeaderLink: React.FC<{ href: string; children: React.ReactNode }> = ({ href, children }) => (
+    <a
+        href={href}
+        className="inline-flex items-center min-h-tap px-3 rounded-control border border-slate-700 bg-slate-800 text-xs font-semibold text-slate-200 hover:border-brand hover:text-slate-100 transition-colors"
+    >
+        {children}
+    </a>
+);
+
+export default ModuleHeader;

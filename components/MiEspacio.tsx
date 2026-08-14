@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { UserCircle, CalendarDays, FileText, Loader2, Printer, Briefcase, Wallet, AlertTriangle } from 'lucide-react';
+import { formatMoney } from '../utils/money';
 
 interface MeProfile {
     id: string;
@@ -36,7 +37,7 @@ interface MePayroll {
 interface MeLeave { id: string; type: string; startDate: string; endDate: string; status: string; reason?: string | null; }
 interface MeAdvance { id: string; amount: number; fee: number; status: string; }
 
-const C = (n: number) => `C$ ${Number(n).toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const C = (n: number) => formatMoney(n);
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const JORNADA: Record<string, string> = { DIURNA: 'Diurna (8h)', NOCTURNA: 'Nocturna (7h)', MIXTA: 'Mixta (7.5h)' };
 const LEAVE_LABELS: Record<string, string> = { UNPAID: 'Permiso sin goce', VACATION: 'Vacaciones', SICK: 'Incapacidad', MATERNITY: 'Maternidad' };
@@ -117,7 +118,7 @@ const MiEspacio: React.FC = () => {
 
     const printColilla = (p: MePayroll) => {
         const nombre = profile?.name || 'Colaborador';
-        const fila = (label: string, val: number, neg = false) => `<tr><td>${label}</td><td class="amount">${neg ? '- ' : ''}C$ ${Number(val).toFixed(2)}</td></tr>`;
+        const fila = (label: string, val: number, neg = false) => `<tr><td>${label}</td><td class="amount">${neg ? '- ' : ''}${formatMoney(Number(val))}</td></tr>`;
         const html = `<!DOCTYPE html><html><head><title>Colilla - ${nombre}</title>
       <style>
         *{margin:0;padding:0;box-sizing:border-box}
@@ -138,7 +139,7 @@ const MiEspacio: React.FC = () => {
           ${Number(p.overtimePay || 0) > 0 ? fila('Horas extra (Art. 62)', p.overtimePay || 0) : ''}
           ${Number(p.holidayPay || 0) > 0 ? fila('Feriado trabajado (Art. 68)', p.holidayPay || 0) : ''}
           ${Number(p.absenceDeduction || 0) > 0 ? fila('Ausencias sin goce', p.absenceDeduction || 0, true) : ''}
-          <tr class="total-row"><td>Total devengado</td><td class="amount">C$ ${Number(p.totalIncome).toFixed(2)}</td></tr>
+          <tr class="total-row"><td>Total devengado</td><td class="amount">${formatMoney(Number(p.totalIncome))}</td></tr>
         </tbody></table>
         <table><thead><tr><th colspan="2">Deducciones</th></tr></thead><tbody>
           ${fila('INSS Laboral (7%)', p.inssLaboral, true)}
@@ -146,7 +147,7 @@ const MiEspacio: React.FC = () => {
           ${Number(p.judicialDeduction || 0) > 0 ? fila('Deducción judicial', p.judicialDeduction || 0, true) : ''}
           ${Number(p.advanceDeduction || 0) > 0 ? fila('Adelanto de salario', p.advanceDeduction || 0, true) : ''}
         </tbody></table>
-        <table><tbody><tr class="net-row"><td><strong>Neto a recibir</strong></td><td class="amount"><strong>C$ ${Number(p.netSalary).toFixed(2)}</strong></td></tr></tbody></table>
+        <table><tbody><tr class="net-row"><td><strong>Neto a recibir</strong></td><td class="amount"><strong>${formatMoney(Number(p.netSalary))}</strong></td></tr></tbody></table>
         <div class="footer">Generado por NORTEX ERP · Ley 185 Código del Trabajo de Nicaragua</div>
       </body></html>`;
         const w = window.open('', '_blank');

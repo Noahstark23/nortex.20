@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { ShoppingCart, Plus, Minus, X, Send, Phone, User, Store, Search, Share2, Package, Loader2, CheckCircle } from 'lucide-react';
+import { formatMoney } from '../utils/money';
 
 interface CatalogProduct {
     id: string;
@@ -146,10 +147,10 @@ const PublicCatalog: React.FC = () => {
     ): string => {
         const orderNum = orderId.slice(-8).toUpperCase();
         const itemLines = cartItems
-            .map(item => `- ${item.quantity}x ${item.name} (C$ ${(item.price * item.quantity).toFixed(2)})`)
+            .map(item => `- ${item.quantity}x ${item.name} (${formatMoney((item.price * item.quantity))})`)
             .join('\n');
         const message =
-            `Hola ${businessInfo.name}, quiero hacer el pedido #${orderNum} por un total de C$ ${total.toFixed(2)}.\n\n` +
+            `Hola ${businessInfo.name}, quiero hacer el pedido #${orderNum} por un total de ${formatMoney(total)}.\n\n` +
             `Detalles:\n${itemLines}\n\n` +
             (trackingUrl ? `Seguimiento en vivo: ${trackingUrl}\n\n` : '') +
             `Por favor, confírmenme mi pedido.`;
@@ -477,7 +478,7 @@ const PublicCatalog: React.FC = () => {
                                         <div className="flex items-center justify-between mt-2">
                                             <div>
                                                 <span className="text-lg font-bold text-slate-900">
-                                                    C${product.price.toFixed(2)}
+                                                    {formatMoney(product.price)}
                                                 </span>
                                                 {product.unit && product.unit !== 'unidad' && (
                                                     <span className="text-xs text-slate-400 ml-1">/{product.unit}</span>
@@ -527,7 +528,7 @@ const PublicCatalog: React.FC = () => {
                             <ShoppingCart size={20} />
                             <span className="font-bold">{cartCount} {cartCount === 1 ? 'item' : 'items'}</span>
                         </div>
-                        <span className="font-bold text-lg">C${cartTotal.toFixed(2)}</span>
+                        <span className="font-bold text-lg">{formatMoney(cartTotal)}</span>
                     </button>
                 </div>
             )}
@@ -569,7 +570,7 @@ const PublicCatalog: React.FC = () => {
                                                 </div>
                                                 <div className="flex-1 min-w-0">
                                                     <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
-                                                    <p className="text-xs text-slate-400">C${item.price.toFixed(2)} × {item.quantity}</p>
+                                                    <p className="text-xs text-slate-400">{formatMoney(item.price)} × {item.quantity}</p>
                                                 </div>
                                                 <div className="flex items-center gap-1">
                                                     <button onClick={() => updateQuantity(item.id, -1)} className="p-1 rounded-lg bg-white border border-slate-200 text-slate-500 hover:border-red-300 hover:text-red-500">
@@ -593,7 +594,7 @@ const PublicCatalog: React.FC = () => {
                                     <div className="p-5 border-t border-slate-100 space-y-3">
                                         <div className="flex justify-between items-center">
                                             <span className="text-slate-500 font-medium">Total</span>
-                                            <span className="text-2xl font-bold text-slate-900">C${cartTotal.toFixed(2)}</span>
+                                            <span className="text-2xl font-bold text-slate-900">{formatMoney(cartTotal)}</span>
                                         </div>
                                         <button
                                             onClick={() => setShowCheckout(true)}
@@ -712,12 +713,12 @@ const PublicCatalog: React.FC = () => {
                                     {cart.map(item => (
                                         <div key={item.id} className="flex justify-between text-sm">
                                             <span className="text-slate-600">{item.quantity}× {item.name}</span>
-                                            <span className="font-medium text-slate-800">C${(item.price * item.quantity).toFixed(2)}</span>
+                                            <span className="font-medium text-slate-800">{formatMoney((item.price * item.quantity))}</span>
                                         </div>
                                     ))}
                                     <div className="flex justify-between text-base font-bold pt-2 border-t border-slate-200 mt-2">
                                         <span className="text-slate-700">Total</span>
-                                        <span className="text-slate-900">C${cartTotal.toFixed(2)}</span>
+                                        <span className="text-slate-900">{formatMoney(cartTotal)}</span>
                                     </div>
                                 </div>
 

@@ -4,6 +4,7 @@ import {
     Truck, MapPin, Phone, CheckCircle, Package, Clock,
     Loader2, Navigation, MessageCircle, X, Wallet, AlertTriangle, Lock, LogOut
 } from 'lucide-react';
+import { formatMoney } from '../utils/money';
 
 // Sesión del repartidor: token firmado (teléfono+PIN). Reemplaza el
 // magic-link /driver/:id — cualquiera que reenviara ese link podía entrar.
@@ -93,7 +94,7 @@ const ConfirmDeliveryModal: React.FC<ConfirmDeliveryModalProps> = ({
                         Efectivo a cobrar
                     </p>
                     <p className="text-6xl font-black text-emerald-400 tracking-tight leading-none">
-                        C${Number(order.total).toFixed(2)}
+                        {formatMoney(Number(order.total))}
                     </p>
                 </div>
 
@@ -127,7 +128,7 @@ const ConfirmDeliveryModal: React.FC<ConfirmDeliveryModalProps> = ({
                 >
                     {isProcessing
                         ? <><Loader2 className="animate-spin" size={22} /> Procesando...</>
-                        : <><CheckCircle size={22} /> Sí, cobré C${Number(order.total).toFixed(2)}</>
+                        : <><CheckCircle size={22} /> Sí, cobré {formatMoney(Number(order.total))}</>
                     }
                 </button>
                 <button
@@ -474,7 +475,7 @@ const DriverView: React.FC = () => {
                                 <div>
                                     <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Cobrar en efectivo</p>
                                     <p className="text-5xl font-black text-slate-900 leading-none mt-1">
-                                        C${Number(order.total).toFixed(2)}
+                                        {formatMoney(Number(order.total))}
                                     </p>
                                 </div>
                                 <span className={`text-xs font-black uppercase tracking-widest px-3 py-1.5 rounded-xl ${
@@ -540,7 +541,7 @@ const DriverView: React.FC = () => {
                                             href={wazeUrl(order.direccionEntrega)}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="flex-1 flex items-center justify-center gap-1.5 bg-[#00CFFF]/10 border border-[#00CFFF]/30 text-[#0099BB] py-2.5 rounded-xl font-bold text-xs active:scale-95 transition-transform hover:bg-[#00CFFF]/20"
+                                            className="flex-1 flex items-center justify-center gap-1.5 bg-waze/10 border border-waze/30 text-waze py-2.5 rounded-xl font-bold text-xs active:scale-95 transition-transform hover:bg-waze/20"
                                         >
                                             <Navigation size={14} /> Waze
                                         </a>
@@ -634,7 +635,7 @@ const DriverView: React.FC = () => {
                                         Entregar a Caja
                                     </p>
                                     <p className="text-2xl font-black text-amber-400 leading-none truncate">
-                                        C${Number(liquidacion.netoADepositarA_Tienda).toFixed(2)}
+                                        {formatMoney(Number(liquidacion.netoADepositarA_Tienda))}
                                     </p>
                                 </div>
                             </div>
@@ -648,7 +649,7 @@ const DriverView: React.FC = () => {
                                             Tu ganancia
                                         </p>
                                         <p className="text-xl font-black text-emerald-400 leading-none">
-                                            C${Number(liquidacion.comisionesGanadas).toFixed(2)}
+                                            {formatMoney(Number(liquidacion.comisionesGanadas))}
                                         </p>
                                     </div>
                                 </>
@@ -678,7 +679,7 @@ const DriverView: React.FC = () => {
                                 <Loader2 className="animate-spin text-amber-400 mx-auto my-3" size={28} />
                             ) : (
                                 <p className="text-5xl font-black text-amber-400 tracking-tight leading-none">
-                                    C${(wallet?.walletBalance ?? 0).toFixed(2)}
+                                    {formatMoney((wallet?.walletBalance ?? 0))}
                                 </p>
                             )}
                             <p className="text-[11px] text-slate-500 mt-2">
@@ -701,7 +702,7 @@ const DriverView: React.FC = () => {
                                         </p>
                                     </div>
                                     <span className={`font-black text-lg flex-shrink-0 ${m.amount >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                        {m.amount >= 0 ? '+' : ''}C${m.amount.toFixed(2)}
+                                        {m.amount >= 0 ? '+' : ''}{formatMoney(m.amount)}
                                     </span>
                                 </div>
                             ))}

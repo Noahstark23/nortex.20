@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { formatMoney } from '../utils/money';
 import {
     AlertTriangle, Shield, Package, XCircle, Percent, Clock, User, ChevronDown,
     Loader2, RefreshCw, Filter, Eye, FileSpreadsheet, Download, Stamp
@@ -131,7 +132,8 @@ const AuditDashboard: React.FC = () => {
         }
     };
 
-    const formatC = (n: number) => `C$${Math.abs(n).toLocaleString('es-NI', { minimumFractionDigits: 2 })}`;
+    // Valor absoluto a propósito: el signo lo comunica el ícono de la fila.
+    const formatC = (n: number) => formatMoney(Math.abs(n));
     const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
     const severityConfig: Record<string, { bg: string; text: string; dot: string; label: string }> = {
