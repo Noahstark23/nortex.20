@@ -23,3 +23,89 @@ export const toDecimal = (v: string | number): Decimal => {
         return new Decimal(0);
     }
 };
+
+// ============================================================================
+// FORMATEO DE DINERO — vía única para renderizar un monto en la UI
+// ============================================================================
+//
+// PROBLEMA QUE RESUELVE: el mismo dato salía "C$ 2,042,190.31" en Inventario y
+// "$2,042,190.31" en Reportes, y en Finanzas convivían "C$0.00", "$10000" y
+// "$200" en una sola pantalla. Para el usuario eso no lee como inconsistencia
+// de formato: lee como "el sistema calcula mal". Es el problema de credibilidad
+// más caro del producto, y se arregla con un solo helper obligatorio.
+//
+// REGLAS (no negociables):
+//   - Córdobas → "C$ 1,234.56"   · Dólares → "US$ 1,234.56"
+//   - NUNCA "$" solo: en Nicaragua es ambiguo (córdoba y dólar comparten glifo).
+//   - Siempre 2 decimales y separador de miles.
+//   - Redondeo por Decimal.js (ROUND_HALF_UP), nunca por float.
+
+export type Currency = 'NIO' | 'USD';
+
+/** Símbolo por moneda. `$` a secas no existe en el sistema, a propósito. */
+const CURRENCY_SYMBOL: Record<Currency, string> = {
+    NIO: 'C$',
+    USD: 'US$',
+};
+
+export interface FormatMoneyOptions {
+    /** Oculta el símbolo (para celdas de tabla que ya lo llevan en el encabezado). */
+    symbol?: boolean;
+    /** Cifras decimales. Default 2; 0 para totales redondos de dashboards. */
+    decimals?: number;
+    /** Antepone el signo + en positivos (deltas de KPI, movimientos de caja). */
+    signed?: boolean;
+}
+
+/**
+ * Única vía para renderizar dinero en la UI de Nortex.
+ *
+ * @example
+ * formatMoney(1234.5)                    // "C$ 1,234.50"
+ * formatMoney(1234.5, 'USD')             // "US$ 1,234.50"
+ * formatMoney(-80, 'NIO', { signed: true })  // "-C$ 80.00"
+ * formatMoney(1234.5, 'NIO', { symbol: false })  // "1,234.50"
+ */
+export const formatMoney = (
+    value: Decimal.Value | null | undefined,
+    currency: Currency = 'NIO',
+    options: FormatMoneyOptions = {},
+): string => {
+    const { symbol = true, decimals = 2, signed = false } = options;
+
+    // null/undefined/NaN → cero explícito. Un monto vacío en un ERP se muestra
+    // como "C$ 0.00", nunca como "-" ni como cadena vacía: el usuario tiene que
+    // poder distinguir "no hay plata" de "no cargó".
+    const amount = value === null || value === undefined ? new Decimal(0) : toDecimal(value as string | number);
+
+    const isNegative = amount.isNegative() && !amount.isZero();
+    const absolute = amount.abs().toFixed(decimals, Decimal.ROUND_HALF_UP);
+
+    // Separador de miles sobre la parte entera (es-NI usa coma para miles y
+    // punto para decimales, igual que el formato de la DGI).
+    const [integerPart, decimalPart] = absolute.split('.');
+    const withThousands = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const number = decimalPart ? `${withThousands}.${decimalPart}` : withThousands;
+
+    const sign = isNegative ? '-' : signed ? '+' : '';
+    return symbol ? `${sign}${CURRENCY_SYMBOL[currency]} ${number}` : `${sign}${number}`;
+};
+
+/** Atajo para dólares — evita que un call-site escriba 'USD' mal. */
+export const formatUSD = (value: Decimal.Value | null | undefined, options: FormatMoneyOptions = {}): string =>
+    formatMoney(value, 'USD', options);
+
+/**
+ * Formato corto para ejes de gráficos y KPIs apretados: C$ 1.2k / C$ 3.4M.
+ * Solo para lectura visual — nunca para un monto que el usuario deba cuadrar.
+ */
+export const formatMoneyShort = (value: Decimal.Value | null | undefined, currency: Currency = 'NIO'): string => {
+    const amount = value === null || value === undefined ? new Decimal(0) : toDecimal(value as string | number);
+    const abs = amount.abs();
+    const sign = amount.isNegative() && !amount.isZero() ? '-' : '';
+    const symbol = CURRENCY_SYMBOL[currency];
+
+    if (abs.gte(1_000_000)) return `${sign}${symbol} ${abs.div(1_000_000).toFixed(1)}M`;
+    if (abs.gte(1_000)) return `${sign}${symbol} ${abs.div(1_000).toFixed(1)}k`;
+    return `${sign}${symbol} ${abs.toFixed(0)}`;
+};
