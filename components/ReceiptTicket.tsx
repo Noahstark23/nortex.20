@@ -21,6 +21,11 @@ interface ReceiptTicketProps {
         tax: number;
         total: number;
         paymentMethod: string;
+        // Efectivo recibido y vuelto (solo cobro en efectivo con vuelto). Van en
+        // el ticket porque es el papel que el cliente usa para reclamar si el
+        // cambio no cuadra — y el cajero para defenderse.
+        cashReceived?: number;
+        change?: number;
         user: string;
     } | null;
 }
@@ -128,6 +133,20 @@ export const ReceiptTicket: React.FC<ReceiptTicketProps> = ({ data }) => {
                         <span>TOTAL:</span>
                         <span>C$ {data.total.toFixed(2)}</span>
                     </div>
+
+                    {/* ═══ EFECTIVO Y VUELTO ═══ */}
+                    {typeof data.cashReceived === 'number' && data.cashReceived > 0 && (
+                        <>
+                            <div className="flex justify-between">
+                                <span>Efectivo recibido:</span>
+                                <span>C$ {new Decimal(data.cashReceived).toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between font-bold">
+                                <span>Vuelto:</span>
+                                <span>C$ {new Decimal(data.change ?? 0).toFixed(2)}</span>
+                            </div>
+                        </>
+                    )}
 
                     <div className="border-b border-black border-dashed my-1"></div>
 
