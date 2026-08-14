@@ -1,0 +1,279 @@
+/* ============================================================
+   Nortex — Design tokens
+   Fuente única de verdad para el rediseño.
+   Regla: ningún componente usa un valor de color, radio o
+   espaciado que no esté en este archivo.
+   ============================================================ */
+
+:root {
+  /* ---------- Superficies ---------- */
+  --nx-bg:            #0B0D10;  /* fondo de la app */
+  --nx-surface:       #14171C;  /* tarjetas, paneles */
+  --nx-surface-2:     #1B1F26;  /* elevado: bloque de cobro, modales */
+  --nx-border:        #262B33;
+  --nx-border-strong: #343A44;
+
+  /* ---------- Texto ---------- */
+  --nx-text:          #E8EBF0;
+  --nx-text-muted:    #98A1AE;
+  --nx-text-faint:    #69727F;
+
+  /* ---------- Acento único de marca ----------
+     Verde = acción principal y dinero que ENTRA. */
+  --nx-brand:         #16C784;
+  --nx-brand-hover:   #13B476;
+  --nx-brand-soft:    rgba(22, 199, 132, 0.10);  /* fondo de item activo */
+  --nx-brand-ring:    rgba(22, 199, 132, 0.40);  /* focus ring */
+  --nx-on-brand:      #06231A;                    /* texto sobre verde */
+
+  /* ---------- Semánticos (uso restringido) ----------
+     Rojo   = destructivo o dinero que SALE.
+     Ámbar  = requiere atención.
+     Ningún otro color decorativo. Sin morado, sin cian. */
+  --nx-danger:        #F0483E;
+  --nx-danger-soft:   rgba(240, 72, 62, 0.12);
+  --nx-warning:       #F5A524;
+  --nx-warning-soft:  rgba(245, 165, 36, 0.12);
+  --nx-success:       var(--nx-brand);
+
+  /* ---------- Tipografía ---------- */
+  --nx-font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --nx-font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace; /* SOLO SKU y códigos */
+
+  --nx-fs-display: 40px;  --nx-lh-display: 1.05;  /* TOTAL a cobrar, ganancia del día */
+  --nx-fs-title:   24px;  --nx-lh-title:   1.2;
+  --nx-fs-kpi:     28px;  --nx-lh-kpi:     1.15;
+  --nx-fs-body:    15px;  --nx-lh-body:    1.5;
+  --nx-fs-sm:      13px;
+  --nx-fs-label:   12px;  --nx-ls-label:   0.08em;
+
+  --nx-fw-regular: 400;
+  --nx-fw-medium:  500;
+  --nx-fw-semi:    650;
+  --nx-fw-bold:    700;
+
+  /* ---------- Espaciado (escala de 4px, sin intermedios) ---------- */
+  --nx-1:  4px;
+  --nx-2:  8px;
+  --nx-3:  12px;
+  --nx-4:  16px;
+  --nx-6:  24px;
+  --nx-8:  32px;
+  --nx-12: 48px;
+
+  /* ---------- Radios ---------- */
+  --nx-r-control: 8px;
+  --nx-r-card:    12px;
+  --nx-r-pill:    999px;
+
+  /* ---------- Controles ---------- */
+  --nx-h-compact: 36px;
+  --nx-h-touch:   44px;   /* default en POS: se usa con los dedos */
+  --nx-h-pay:     56px;   /* botones de cobro y buscador principal */
+  --nx-tap-min:   44px;   /* objetivo táctil mínimo */
+
+  /* ---------- Movimiento ---------- */
+  --nx-t-fast: 140ms cubic-bezier(0.2, 0, 0, 1);
+  --nx-t-slow: 200ms cubic-bezier(0.2, 0, 0, 1);
+
+  /* ---------- Capas ----------
+     La zona de cobro es intocable: ningún overlay flotante
+     (onboarding, toasts, chat) puede vivir encima de ella. */
+  --nx-z-content:  1;
+  --nx-z-sticky:   10;
+  --nx-z-checkout: 20;
+  --nx-z-modal:    50;
+  /* NO existe una capa flotante persistente por encima de --nx-z-checkout */
+
+  /* ============================================================
+     Canales RGB — puente hacia Tailwind
+     ------------------------------------------------------------
+     Tailwind necesita el color en canales sueltos para poder
+     aplicar el modificador de opacidad (`bg-surface-800/40`, que
+     la app usa en 360 lugares). Con `var(--nx-surface)` en hex,
+     `/40` genera un color inválido y la clase se cae en silencio.
+     Por eso cada token que Tailwind consume se declara también
+     como triplete "R G B" y el config lo lee con
+     `rgb(var(--nx-*-rgb) / <alpha-value>)`.
+     Los hex de arriba siguen siendo la fuente de verdad: estos
+     son el MISMO color, en el formato que exige la herramienta.
+     ============================================================ */
+  --nx-bg-rgb:            11 13 16;
+  --nx-surface-rgb:       20 23 28;
+  --nx-surface-2-rgb:     27 31 38;
+  --nx-border-rgb:        38 43 51;
+  --nx-border-strong-rgb: 52 58 68;
+
+  --nx-text-rgb:          232 235 240;
+  --nx-text-muted-rgb:    152 161 174;
+  --nx-text-faint-rgb:    105 114 127;
+
+  --nx-brand-rgb:         22 199 132;
+  --nx-brand-hover-rgb:   19 180 118;
+  --nx-on-brand-rgb:      6 35 26;
+
+  --nx-danger-rgb:        240 72 62;
+  --nx-warning-rgb:       245 165 36;
+
+  /* Escalas derivadas: la app usa gradaciones (surface-700/800/900,
+     brand-400/500/600…). Se derivan del mismo acento para que no
+     aparezca ningún color fuera del sistema. */
+  --nx-brand-50-rgb:   230 250 242;
+  --nx-brand-100-rgb:  201 245 227;
+  --nx-brand-200-rgb:  152 235 203;
+  --nx-brand-300-rgb:  103 223 177;
+  --nx-brand-400-rgb:   58 212 155;
+  --nx-brand-500-rgb:   22 199 132;
+  --nx-brand-600-rgb:   19 180 118;
+  --nx-brand-700-rgb:   15 148  97;
+  --nx-brand-800-rgb:   12 114  75;
+  --nx-brand-900-rgb:    9  84  56;
+  --nx-brand-950-rgb:    6  45  30;
+
+  --nx-neutral-50-rgb:  244 246 249;
+  --nx-neutral-100-rgb: 232 235 240;
+  --nx-neutral-200-rgb: 205 211 220;
+  --nx-neutral-300-rgb: 168 176 188;
+  --nx-neutral-400-rgb: 152 161 174;
+  --nx-neutral-500-rgb: 105 114 127;
+  --nx-neutral-600-rgb:  74  82  94;
+  --nx-neutral-700-rgb:  52  58  68;
+  --nx-neutral-800-rgb:  27  31  38;
+  --nx-neutral-900-rgb:  20  23  28;
+  --nx-neutral-950-rgb:  11  13  16;
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+html, body {
+  background: var(--nx-bg);
+  color: var(--nx-text);
+  font-family: var(--nx-font);
+  font-size: var(--nx-fs-body);
+  line-height: var(--nx-lh-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Toda cifra se alinea en columna sin usar monoespaciada */
+.nx-num, td.nx-num, .nx-kpi, .nx-total {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Monoespaciada SOLO acá */
+.nx-sku, .nx-barcode {
+  font-family: var(--nx-font-mono);
+  font-size: var(--nx-fs-sm);
+  color: var(--nx-text-faint);
+}
+
+/* ============================================================
+   Componentes clave
+   ============================================================ */
+
+.nx-total {
+  font-size: var(--nx-fs-display);
+  line-height: var(--nx-lh-display);
+  font-weight: var(--nx-fw-bold);
+  color: var(--nx-text);       /* el número NO va coloreado */
+  letter-spacing: -0.02em;
+}
+
+.nx-kpi {
+  font-size: var(--nx-fs-kpi);
+  font-weight: var(--nx-fw-bold);
+  color: var(--nx-text);       /* el color va en el delta, no en la cifra */
+}
+.nx-delta-up   { color: var(--nx-brand); }
+.nx-delta-down { color: var(--nx-danger); }
+
+.nx-label {
+  font-size: var(--nx-fs-label);
+  font-weight: var(--nx-fw-semi);
+  letter-spacing: var(--nx-ls-label);
+  text-transform: uppercase;
+  color: var(--nx-text-faint);
+}
+
+.nx-btn {
+  height: var(--nx-h-touch);
+  min-width: var(--nx-tap-min);
+  border-radius: var(--nx-r-control);
+  font: var(--nx-fw-semi) var(--nx-fs-body)/1 var(--nx-font);
+  padding: 0 var(--nx-4);
+  transition: background var(--nx-t-fast), border-color var(--nx-t-fast);
+  cursor: pointer;
+}
+.nx-btn--primary   { background: var(--nx-brand); color: var(--nx-on-brand); border: none; }
+.nx-btn--primary:hover { background: var(--nx-brand-hover); }
+.nx-btn--secondary { background: transparent; color: var(--nx-text); border: 1px solid var(--nx-border-strong); }
+.nx-btn--danger    { background: transparent; color: var(--nx-danger); border: 1px solid var(--nx-danger); }
+.nx-btn--pay       { height: var(--nx-h-pay); font-size: 17px; }
+.nx-btn:focus-visible { outline: 2px solid var(--nx-brand-ring); outline-offset: 2px; }
+.nx-btn:disabled   { opacity: .45; cursor: not-allowed; }
+
+/* Item de navegación activo: nunca un bloque sólido de color */
+.nx-nav-item {
+  height: var(--nx-h-touch);
+  border-radius: var(--nx-r-control);
+  color: var(--nx-text-muted);
+  padding: 0 var(--nx-3);
+  transition: background var(--nx-t-fast), color var(--nx-t-fast);
+}
+.nx-nav-item:hover    { background: rgba(255,255,255,.04); color: var(--nx-text); }
+.nx-nav-item--active  {
+  background: var(--nx-brand-soft);
+  color: var(--nx-text);
+  box-shadow: inset 3px 0 0 var(--nx-brand);
+}
+.nx-nav-group-label {
+  font-size: 11px;
+  font-weight: var(--nx-fw-semi);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--nx-text-faint);
+  padding: var(--nx-4) var(--nx-3) var(--nx-2);
+}
+
+.nx-card {
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-border);
+  border-radius: var(--nx-r-card);
+  padding: var(--nx-4);
+}
+
+/* Tarjeta de producto compacta: 96px, sin hueco para imagen */
+.nx-product {
+  height: 96px;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--nx-1);
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-border);
+  border-radius: var(--nx-r-card);
+  padding: var(--nx-2) var(--nx-3);
+  transition: border-color var(--nx-t-fast), background var(--nx-t-fast);
+}
+.nx-product:hover { border-color: var(--nx-brand); background: var(--nx-surface-2); }
+.nx-product__price { font-size: 18px; font-weight: var(--nx-fw-bold); color: var(--nx-brand); font-variant-numeric: tabular-nums; }
+
+.nx-pill {
+  border-radius: var(--nx-r-pill);
+  font-size: 11px;
+  font-weight: var(--nx-fw-semi);
+  padding: 3px 9px;
+}
+.nx-pill--ok    { background: var(--nx-brand-soft);   color: var(--nx-brand); }
+.nx-pill--warn  { background: var(--nx-warning-soft); color: var(--nx-warning); }
+.nx-pill--crit  { background: var(--nx-danger-soft);  color: var(--nx-danger); }
+
+/* Bloque de cobro: fijo, y nada por encima */
+.nx-checkout {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--nx-z-checkout);
+  background: var(--nx-surface-2);
+  border-top: 1px solid var(--nx-border);
+  padding: var(--nx-4);
+}

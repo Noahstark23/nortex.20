@@ -1,3 +1,5 @@
+import { TableEmptyState } from './ui/EmptyState';
+import { SkeletonTableRows } from './ui/Skeleton';
 import React, { useState, useEffect } from 'react';
 import { Users, Plus, Search, AlertCircle, CheckCircle, Shield, X, Save, Ban } from 'lucide-react';
 import { authFetch } from '../utils/auth';
@@ -139,46 +141,25 @@ const Clients: React.FC = () => {
                     </thead>
                     <tbody className="divide-y divide-white/[0.04]">
                         {loading ? (
-                            <tr><td colSpan={5} className="p-8 text-center text-slate-400">Cargando...</td></tr>
+                            <SkeletonTableRows rows={5} cols={5} />
                         ) : filtered.length === 0 ? (
-                            <tr>
-                                <td colSpan={5} className="py-16 px-4">
-                                    <div className="flex flex-col items-center justify-center max-w-md mx-auto text-center">
-                                        <div className="w-20 h-20 bg-nortex-100 rounded-full flex items-center justify-center mb-6 border border-nortex-200">
-                                            <Users size={40} className="text-nortex-500" />
-                                        </div>
-
-                                        {searchTerm ? (
-                                            <>
-                                                <h3 className="text-xl font-bold text-slate-100 mb-2">No se encontraron clientes</h3>
-                                                <p className="text-slate-500 mb-6">
-                                                    No hay ningún cliente que coincida con "{searchTerm}". Intenta con otro nombre o documento.
-                                                </p>
-                                                <button
-                                                    onClick={() => setSearchTerm('')}
-                                                    className="px-6 py-2.5 bg-surface-900 hover:bg-surface-800/40 text-slate-200 font-semibold rounded-xl transition-colors border border-white/10 shadow-sm"
-                                                >
-                                                    Limpiar Búsqueda
-                                                </button>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <h3 className="text-2xl font-bold text-slate-100 mb-3">Sin clientes registrados</h3>
-                                                <p className="text-slate-500 mb-8">
-                                                    Construye tu cartera de clientes desde el día 1. Regístralos para asignarles crédito y empezar a facturar de inmediato.
-                                                </p>
-                                                <button
-                                                    onClick={() => setShowModal(true)}
-                                                    className="flex items-center justify-center gap-2 px-8 py-4 bg-nortex-900 hover:bg-nortex-800 text-white font-bold rounded-xl transition-all shadow-md hover:shadow-lg hover:-translate-y-1"
-                                                >
-                                                    <Plus size={20} />
-                                                    Registrar Mi Primer Cliente
-                                                </button>
-                                            </>
-                                        )}
-                                    </div>
-                                </td>
-                            </tr>
+                            searchTerm ? (
+                                <TableEmptyState
+                                    colSpan={5}
+                                    mode="no-results"
+                                    title="No se encontraron clientes"
+                                    description={`Ningún cliente coincide con "${searchTerm}". Probá con otro nombre o documento.`}
+                                    action={{ label: 'Limpiar búsqueda', onClick: () => setSearchTerm('') }}
+                                />
+                            ) : (
+                                <TableEmptyState
+                                    colSpan={5}
+                                    icon={<Users size={32} />}
+                                    title="Todavía no tenés clientes con crédito"
+                                    description="Registrá el primero y Nortex te avisa antes de que se pase del límite."
+                                    action={{ label: 'Nuevo cliente', icon: <Plus size={18} />, onClick: () => setShowModal(true) }}
+                                />
+                            )
                         ) : filtered.map(c => {
                             const usage = c.creditLimit > 0 ? (c.currentDebt / c.creditLimit) * 100 : 0;
                             const isOverLimit = c.currentDebt > c.creditLimit;
