@@ -1004,6 +1004,212 @@
   <span class="wa-label">¿Hablamos?</span>
 </a>
 
+<!-- ===================== CHAT DE VENTAS (R2.8) ===================== -->
+<button class="nx-chat-fab" id="nxChatFab" aria-label="Chatear con el asesor de Nortex" data-loc="chat-fab">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+  <span>Preguntá aquí</span>
+</button>
+
+<div class="nx-chat" id="nxChat" role="dialog" aria-label="Chat con el asesor de Nortex">
+  <div class="nx-chat-head">
+    <div class="nx-avatar">N</div>
+    <div class="nx-title">
+      <strong>Asesor de Nortex</strong>
+      <span>● En línea — respondé al instante</span>
+    </div>
+    <button class="nx-chat-close" id="nxChatClose" aria-label="Cerrar chat">✕</button>
+  </div>
+  <div class="nx-chat-msgs" id="nxChatMsgs"></div>
+  <div class="nx-chips" id="nxChips"></div>
+  <div class="nx-ctas">
+    <a class="nx-cta reg" href="/register" data-loc="chat-cta" id="nxCtaReg">🚀 Probar 30 días gratis</a>
+    <a class="nx-cta wa" href="https://wa.me/50576644030?text=Hola%20Nortex%2C%20vengo%20del%20chat%20de%20la%20p%C3%A1gina" target="_blank" rel="noopener" id="nxCtaWa">WhatsApp</a>
+  </div>
+  <div class="nx-chat-input">
+    <input id="nxChatInput" type="text" maxlength="600" placeholder="Escribí tu pregunta…" autocomplete="off" />
+    <button id="nxChatSend" aria-label="Enviar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg>
+    </button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var fab = document.getElementById('nxChatFab');
+  var panel = document.getElementById('nxChat');
+  var msgsEl = document.getElementById('nxChatMsgs');
+  var chipsEl = document.getElementById('nxChips');
+  var inputEl = document.getElementById('nxChatInput');
+  var sendBtn = document.getElementById('nxChatSend');
+
+  var STORE_KEY = 'nx_chat_v1';
+  var GREETING = '¡Hola! Soy el asesor de Nortex. ¿Qué tipo de negocio tenés? Te cuento en dos minutos cómo te ayuda y probás 30 días gratis, sin tarjeta.';
+  var GIROS = ['Pulpería', 'Ferretería', 'Farmacia', 'Distribuidora', 'Presto dinero', 'Otro negocio'];
+  var WA_FALLBACK = 'Se nos trabó el chat 😅. Escribinos al WhatsApp +505 7664-4030 y te respondemos ya.';
+
+  var history = [];
+  try { history = JSON.parse(sessionStorage.getItem(STORE_KEY) || '[]'); } catch (e) { history = []; }
+  var sending = false;
+
+  function track(name, params) {
+    if (typeof window.gtag === 'function') window.gtag('event', name, params || {});
+  }
+
+  function save() {
+    try { sessionStorage.setItem(STORE_KEY, JSON.stringify(history.slice(-24))); } catch (e) {}
+  }
+
+  // El asesor menciona el registro y el WhatsApp en texto plano: volverlos link.
+  function linkify(text) {
+    var frag = document.createDocumentFragment();
+    var parts = text.split(/(somosnortex\.com\/register|\/register\b|\+505\s?7664[- ]?4030)/g);
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      if (!p) continue;
+      if (/^(somosnortex\.com\/register|\/register)$/.test(p)) {
+        var a = document.createElement('a');
+        a.href = '/register';
+        a.textContent = p;
+        a.setAttribute('data-loc', 'chat-msg');
+        a.addEventListener('click', function () { track('landing_chat_cta', { cta: 'registro' }); });
+        frag.appendChild(a);
+      } else if (/^\+505/.test(p)) {
+        var w = document.createElement('a');
+        w.href = 'https://wa.me/50576644030';
+        w.target = '_blank';
+        w.rel = 'noopener';
+        w.textContent = p;
+        w.addEventListener('click', function () { track('landing_chat_cta', { cta: 'whatsapp' }); });
+        frag.appendChild(w);
+      } else {
+        frag.appendChild(document.createTextNode(p));
+      }
+    }
+    return frag;
+  }
+
+  function bubble(role, text) {
+    var div = document.createElement('div');
+    div.className = 'nx-msg ' + (role === 'user' ? 'user' : role === 'err' ? 'err' : 'bot');
+    if (role === 'user') div.textContent = text;
+    else div.appendChild(linkify(text));
+    msgsEl.appendChild(div);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+    return div;
+  }
+
+  function showTyping() {
+    var t = document.createElement('div');
+    t.className = 'nx-typing';
+    t.id = 'nxTyping';
+    t.innerHTML = '<i></i><i></i><i></i>';
+    msgsEl.appendChild(t);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+  }
+  function hideTyping() {
+    var t = document.getElementById('nxTyping');
+    if (t) t.remove();
+  }
+
+  function renderChips() {
+    chipsEl.innerHTML = '';
+    if (history.length > 1) return; // solo al arranque
+    GIROS.forEach(function (g) {
+      var b = document.createElement('button');
+      b.className = 'nx-chip';
+      b.textContent = g;
+      b.addEventListener('click', function () { send(g); });
+      chipsEl.appendChild(b);
+    });
+  }
+
+  function renderAll() {
+    msgsEl.innerHTML = '';
+    history.forEach(function (m) { bubble(m.role === 'user' ? 'user' : 'bot', m.text); });
+    renderChips();
+  }
+
+  function setSending(v) {
+    sending = v;
+    sendBtn.disabled = v;
+    inputEl.disabled = v;
+  }
+
+  function send(text) {
+    text = (text || '').trim().slice(0, 600);
+    if (!text || sending) return;
+
+    history.push({ role: 'user', text: text });
+    save();
+    bubble('user', text);
+    chipsEl.innerHTML = '';
+    inputEl.value = '';
+    setSending(true);
+    showTyping();
+    track('landing_chat_message', { turn: history.length });
+
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, 25000);
+
+    fetch('/api/landing-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // El server igual recorta: acá solo evitamos mandar de más.
+      body: JSON.stringify({ messages: history.slice(-16) }),
+      signal: controller.signal
+    })
+      .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+      .then(function (r) {
+        clearTimeout(timer);
+        hideTyping();
+        if (r.ok && r.data && r.data.reply) {
+          history.push({ role: 'assistant', text: r.data.reply });
+          save();
+          bubble('bot', r.data.reply);
+          track('landing_chat_reply', { turn: history.length });
+        } else {
+          bubble('err', (r.data && r.data.error) || WA_FALLBACK);
+        }
+      })
+      .catch(function () {
+        clearTimeout(timer);
+        hideTyping();
+        bubble('err', WA_FALLBACK);
+      })
+      .then(function () {
+        setSending(false);
+        inputEl.focus();
+      });
+  }
+
+  function open() {
+    panel.classList.add('open');
+    fab.style.display = 'none';
+    if (history.length === 0) {
+      history.push({ role: 'assistant', text: GREETING });
+      save();
+    }
+    renderAll();
+    track('landing_chat_open', {});
+    setTimeout(function () { inputEl.focus(); }, 100);
+  }
+  function close() {
+    panel.classList.remove('open');
+    fab.style.display = '';
+  }
+
+  fab.addEventListener('click', open);
+  document.getElementById('nxChatClose').addEventListener('click', close);
+  sendBtn.addEventListener('click', function () { send(inputEl.value); });
+  inputEl.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') send(inputEl.value);
+  });
+  document.getElementById('nxCtaReg').addEventListener('click', function () { track('landing_chat_cta', { cta: 'registro' }); });
+  document.getElementById('nxCtaWa').addEventListener('click', function () { track('landing_chat_cta', { cta: 'whatsapp' }); });
+})();
+</script>
+
 <!-- ===================== TABS JS ===================== -->
 <script>
 (function() {
