@@ -7,6 +7,10 @@ export interface Product {
   stock: number;
   sku: string;
   category: string;
+  // Foto del producto (opcional). El schema ya la tiene (`Product.imageUrl`);
+  // el tipo compartido no la exponía, así que el POS no podía mostrar
+  // miniatura en la grilla y quedaba un hueco donde nunca iba a haber imagen.
+  imageUrl?: string | null;
   requiresBatchTracking?: boolean; // Control de lotes
   // Venta por mayor (distribuidora/miscelánea)
   wholesalePrice?: number | null;  // precio de mayoreo (null = sin mayoreo)

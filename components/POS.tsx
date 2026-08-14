@@ -2,7 +2,8 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
-import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown } from 'lucide-react';
+import { formatMoney, formatUSD } from '../utils/money';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
@@ -292,6 +293,10 @@ const POS: React.FC = () => {
     const [cashBalance, setCashBalance] = useState<number | null>(null);
     const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
     const [showMovementsList, setShowMovementsList] = useState(false);
+    // Menú único "Acciones de caja": el header tenía 8 botones de 7 colores
+    // distintos compitiendo con el cobro. Lo operativo se agrupa acá y el rojo
+    // queda reservado para lo irreversible (cerrar caja).
+    const [showCashActions, setShowCashActions] = useState(false);
 
     // ==========================================
     // OFFLINE / PWA STATE
@@ -1587,25 +1592,10 @@ const POS: React.FC = () => {
                     )}
                 </div>
 
-                <div className="flex items-center gap-2 flex-1 min-w-0 justify-end overflow-x-auto custom-scrollbar whitespace-nowrap pl-4">
-                    {/* 🖨️ TIQUETERA BT/USB */}
-                    {!simpleMode && <button
-                        onClick={async () => {
-                            if (!thermalConnected) {
-                                const success = await thermalPrinter.connect();
-                                setThermalConnected(success);
-                            }
-                        }}
-                        className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg transition-all shadow-sm ${thermalConnected ? 'bg-indigo-500 text-white hover:bg-indigo-600' : 'bg-white/[0.04] text-slate-500 hover:bg-white/[0.06] border border-white/[0.06]'}`}
-                        title={thermalConnected ? 'Tiquetera Conectada' : 'Vincular Tiquetera'}
-                    >
-                        <Printer size={14} />
-                        <span className="hidden lg:inline">{thermalConnected ? 'Tiquetera lista' : 'Vincular Tiquetera'}</span>
-                    </button>}
-
-                    {/* 📶 OFFLINE INDICATOR */}
+                <div className="flex items-center gap-2 min-w-0 justify-end whitespace-nowrap pl-4">
+                    {/* Estado de conexión: informativo, no es una acción. Ámbar = requiere atención. */}
                     {!isOnline && (
-                        <div className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-amber-500 text-white shadow-sm">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-warning-soft text-amber-400 border border-amber-500/20">
                             <WifiOff size={14} />
                             <span className="hidden lg:inline">Sin internet</span>
                             {pendingOfflineCount > 0 && (
@@ -1617,7 +1607,7 @@ const POS: React.FC = () => {
                         <button
                             onClick={syncOfflineSales}
                             disabled={syncingOffline}
-                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-green-500 text-white hover:bg-green-600 shadow-sm disabled:opacity-60"
+                            className="flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-brand-soft text-brand border border-brand/20 hover:bg-brand/15 transition-colors disabled:opacity-60"
                             title="Sincronizar ventas offline"
                         >
                             <RefreshCw size={14} className={syncingOffline ? 'animate-spin' : ''} />
@@ -1625,100 +1615,142 @@ const POS: React.FC = () => {
                         </button>
                     )}
 
-                    {/* 🅿️ PARQUEO BADGE */}
-                    {currentShift && !simpleMode && (
-                        <button
-                            onClick={() => setShowHeldCarts(!showHeldCarts)}
-                            className={`relative flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg transition-all shadow-sm ${heldCarts.length > 0 ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-white/[0.04] text-slate-500 hover:bg-white/[0.06] border border-white/[0.06]'}`}
-                            title={`Carritos aparcados (F4 para aparcar)`}
-                        >
-                            <ParkingCircle size={14} />
-                            {heldCarts.length > 0 && (
-                                <span className="bg-surface-900 text-blue-400 text-[10px] font-black w-4 h-4 rounded-full flex items-center justify-center">{heldCarts.length}</span>
-                            )}
-                            <span className="hidden lg:inline">{heldCarts.length > 0 ? 'Aparcados' : 'Aparcar'}</span>
-                        </button>
-                    )}
-                    {/* 💰 CASH BALANCE INDICATOR */}
+                    {/* Saldo en caja: dato, en neutro. Abre el detalle de movimientos. */}
                     {currentShift && cashBalance !== null && (
                         <button
                             onClick={() => setShowMovementsList(!showMovementsList)}
-                            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-all cursor-pointer"
+                            className="flex items-center gap-1.5 text-xs px-3 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
                             title="Efectivo en caja"
                         >
                             <Wallet size={14} />
-                            <span className="font-bold">C${cashBalance.toFixed(2)}</span>
+                            <span className="font-bold nx-num">{formatMoney(cashBalance)}</span>
                         </button>
                     )}
 
-                    {/* 💰 QUICK ACTION: ENTRADA DE EFECTIVO */}
+                    {/* Carritos aparcados: badge de estado, solo si hay alguno esperando. */}
+                    {currentShift && !simpleMode && heldCarts.length > 0 && (
+                        <button
+                            onClick={() => setShowHeldCarts(!showHeldCarts)}
+                            className="relative flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
+                            title="Carritos aparcados (F4 para aparcar)"
+                        >
+                            <ParkingCircle size={14} />
+                            <span className="text-[10px] font-black">{heldCarts.length}</span>
+                            <span className="hidden lg:inline">Aparcados</span>
+                        </button>
+                    )}
+
+                    {/* ── MENÚ ÚNICO DE ACCIONES DE CAJA ──────────────────────────
+                        Antes: 8 botones sólidos (verde/ámbar/cian/naranja/índigo…)
+                        peleando por atención con el cobro. Ahora: un solo botón
+                        neutro que despliega lo operativo. El color vuelve a
+                        significar algo porque casi no se usa. */}
                     {currentShift && (
-                        <button
-                            onClick={() => { setShowCashModal('IN'); setCashCategory(''); }}
-                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-all shadow-sm"
-                            title="Entrada de Efectivo"
-                        >
-                            <ArrowDownCircle size={14} />
-                            Entrada
-                        </button>
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowCashActions(v => !v)}
+                                className="flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
+                                title="Acciones de caja"
+                            >
+                                <SlidersHorizontal size={14} />
+                                <span className="hidden lg:inline">Acciones de caja</span>
+                                <ChevronDown size={14} className={`transition-transform ${showCashActions ? 'rotate-180' : ''}`} />
+                            </button>
+
+                            {showCashActions && (
+                                <>
+                                    {/* Capa de cierre: click afuera cierra el menú. Por debajo
+                                        del menú pero por encima del contenido. */}
+                                    <div className="fixed inset-0 z-sticky" onClick={() => setShowCashActions(false)} />
+                                    <div className="absolute right-0 top-full mt-2 w-64 bg-surface-800 border border-white/[0.08] rounded-card shadow-premium overflow-hidden z-checkout animate-fade-in-up">
+                                        <button
+                                            onClick={() => { setShowCashModal('IN'); setCashCategory(''); setShowCashActions(false); }}
+                                            className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                        >
+                                            <ArrowDownCircle size={16} className="text-brand shrink-0" />
+                                            <span>Entrada de efectivo</span>
+                                            <span className="ml-auto text-[10px] text-slate-500 font-mono">F8</span>
+                                        </button>
+                                        <button
+                                            onClick={() => { setShowCashModal('OUT'); setCashCategory(''); setShowCashActions(false); }}
+                                            className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                        >
+                                            <ArrowUpCircle size={16} className="text-slate-400 shrink-0" />
+                                            <span>Salida de efectivo</span>
+                                            <span className="ml-auto text-[10px] text-slate-500 font-mono">F7</span>
+                                        </button>
+                                        <button
+                                            onClick={() => { setShowAgentModal(true); fetchAgentAgreements(); setShowCashActions(false); }}
+                                            className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                        >
+                                            <Landmark size={16} className="text-slate-400 shrink-0" />
+                                            <span>Agente bancario</span>
+                                        </button>
+                                        {!simpleMode && (
+                                            <button
+                                                onClick={() => { setShowReturnModal(true); setShowCashActions(false); }}
+                                                className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                            >
+                                                <RefreshCw size={16} className="text-slate-400 shrink-0" />
+                                                <span>Devolución de producto</span>
+                                            </button>
+                                        )}
+                                        {!simpleMode && (
+                                            <button
+                                                onClick={() => { setShowHeldCarts(true); setShowCashActions(false); }}
+                                                className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                            >
+                                                <ParkingCircle size={16} className="text-slate-400 shrink-0" />
+                                                <span>Carritos aparcados</span>
+                                                <span className="ml-auto text-[10px] text-slate-500 font-mono">F4</span>
+                                            </button>
+                                        )}
+
+                                        {!simpleMode && (
+                                            <div className="border-t border-white/[0.06]">
+                                                <button
+                                                    onClick={() => setScannerActive(!scannerActive)}
+                                                    className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-300 hover:bg-white/[0.05] transition-colors text-left"
+                                                >
+                                                    <ScanBarcode size={16} className="text-slate-400 shrink-0" />
+                                                    <span>Escáner</span>
+                                                    <span className={`ml-auto text-[11px] font-semibold ${scannerActive ? 'text-brand' : 'text-slate-500'}`}>
+                                                        {scannerActive ? 'Activo' : 'Apagado'}
+                                                    </span>
+                                                </button>
+                                                <button
+                                                    onClick={async () => {
+                                                        if (!thermalConnected) {
+                                                            const success = await thermalPrinter.connect();
+                                                            setThermalConnected(success);
+                                                        }
+                                                        setShowCashActions(false);
+                                                    }}
+                                                    className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-300 hover:bg-white/[0.05] transition-colors text-left"
+                                                >
+                                                    <Printer size={16} className="text-slate-400 shrink-0" />
+                                                    {/* Antes se cortaba como "ar Tiquetera": el texto largo
+                                                        vivía en una fila horizontal con overflow oculto. */}
+                                                    <span className="truncate">Tiquetera</span>
+                                                    <span className={`ml-auto text-[11px] font-semibold shrink-0 ${thermalConnected ? 'text-brand' : 'text-slate-500'}`}>
+                                                        {thermalConnected ? 'Lista' : 'Vincular'}
+                                                    </span>
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     )}
 
-                    {/* 💸 QUICK ACTION: SALIDA DE EFECTIVO */}
-                    {currentShift && (
-                        <button
-                            onClick={() => { setShowCashModal('OUT'); setCashCategory(''); }}
-                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-all shadow-sm"
-                            title="Salida de Efectivo"
-                        >
-                            <ArrowUpCircle size={14} />
-                            Salida
-                        </button>
-                    )}
-
-                    {/* 🏦 QUICK ACTION: AGENTE BANCARIO (corresponsalía) */}
-                    {currentShift && (
-                        <button
-                            onClick={() => { setShowAgentModal(true); fetchAgentAgreements(); }}
-                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-sky-600 text-white hover:bg-sky-700 transition-all shadow-sm"
-                            title="Operación de agente bancario (Banpro, BAC, Lafise, Puntoxpress...)"
-                        >
-                            <Landmark size={14} />
-                            Agente
-                        </button>
-                    )}
-
-                    {/* 🔄 QUICK ACTION: DEVOLUCIÓN */}
-                    {currentShift && !simpleMode && (
-                        <button
-                            onClick={() => setShowReturnModal(true)}
-                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-all shadow-sm"
-                            title="Devolución de Producto"
-                        >
-                            <RefreshCw size={14} />
-                            Dev.
-                        </button>
-                    )}
-
-                    {/* Scanner indicator */}
-                    {!simpleMode && <button
-                        onClick={() => setScannerActive(!scannerActive)}
-                        className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full transition-all ${scannerActive
-                            ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'
-                            : 'bg-white/[0.04] text-slate-500 border border-white/[0.06]'
-                            }`}
-                        title={scannerActive ? 'Escáner activo' : 'Escáner desactivado'}
-                    >
-                        <ScanBarcode size={14} />
-                        {scannerActive ? <Volume2 size={12} /> : <VolumeX size={12} />}
-                        <span className="hidden xl:inline">{scannerActive ? 'Escáner ON' : 'Escáner OFF'}</span>
-                    </button>}
-
+                    {/* Cerrar caja: lo único irreversible del header → único uso del rojo. */}
                     {currentShift ? (
-                        <button onClick={() => setShowCloseShift(true)} className="text-xs font-bold text-red-500 hover:bg-red-500/10 px-3 py-1.5 rounded transition-colors flex items-center gap-1">
-                            <Lock size={14} /> CERRAR CAJA
+                        <button onClick={() => setShowCloseShift(true)} className="text-xs font-semibold text-danger hover:bg-danger-soft px-3 h-8 rounded-control transition-colors flex items-center gap-1.5">
+                            <Lock size={14} /> Cerrar caja
                         </button>
                     ) : (
-                        <span className="text-xs font-bold text-red-500 flex items-center gap-1"><AlertTriangle size={14} /> CAJA CERRADA</span>
+                        <span className="text-xs font-semibold text-danger flex items-center gap-1.5"><AlertTriangle size={14} /> CAJA CERRADA</span>
                     )}
                 </div>
             </div>
@@ -2545,12 +2577,16 @@ const POS: React.FC = () => {
             <div className="w-full flex-1 flex flex-col p-4 lg:p-6 mt-14 overflow-hidden mb-16 lg:mb-0">
                 <div className="mb-4 flex gap-2">
                     <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                        {/* 56px + foco automático al montar: es el primer control de la
+                            pantalla donde el cajero pasa el 80% del turno. Antes había
+                            que hacer clic (o saber F2) antes de poder escanear. */}
                         <input
                             ref={searchRef}
                             type="text"
-                            placeholder="Buscar producto o escanear codigo..."
-                            className="w-full pl-10 pr-4 py-3 rounded-xl border border-white/[0.06] focus:outline-none focus:ring-2 focus:ring-nortex-500 shadow-sm text-slate-100 font-medium"
+                            autoFocus
+                            placeholder="Buscar producto o escanear código..."
+                            className="w-full h-pay pl-11 pr-4 rounded-control bg-surface-900 border border-white/[0.06] focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/50 text-slate-100 font-medium transition-colors"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             onKeyDown={handleSearchKeyDown}
@@ -2658,25 +2694,35 @@ const POS: React.FC = () => {
                         </div>
                     </div>
                 ) : (
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 overflow-y-auto pb-4 custom-scrollbar flex-1 min-h-0">
+                /* Grilla compacta: la tarjeta era `aspect-square` (≈230px en desktop)
+                   y esperaba una imagen que este componente nunca renderiza — 60%
+                   de vacío y solo ~6 productos visibles. A 96px de alto y hasta 5
+                   columnas entran ~20 sin scrollear, que es lo que hace rápido al
+                   mostrador. */
+                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 overflow-y-auto pb-4 custom-scrollbar flex-1 min-h-0 content-start">
                     {filteredProducts.map(product => (
                         <button
                             key={product.id}
                             onClick={() => { addToCart(product); playBeep(); }}
                             disabled={product.stock === 0}
-                            className="bg-surface-800 hover:bg-surface-700 border border-white/[0.06] rounded-2xl shadow-premium aspect-square p-4 hover:border-brand/40 hover:shadow-glow shadow-brand/10 transition-all text-left flex flex-col justify-between text-slate-100 active:scale-95 disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand/40"
+                            className="h-24 bg-surface-900 hover:bg-surface-800 border border-white/[0.06] rounded-card px-3 py-2 hover:border-brand/50 transition-colors text-left flex flex-col justify-between text-slate-100 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand/40"
                         >
-                            <div className="min-w-0">
-                                <div className="flex justify-between items-start mb-1 gap-1">
-                                    <span className="text-xs font-mono tabular-nums text-slate-400 truncate">{product.sku}</span>
-                                    <span className="text-[10px] px-1.5 py-0.5 bg-white/[0.04] text-slate-500 rounded font-medium flex-shrink-0">{product.category}</span>
-                                </div>
-                                <h3 className="font-semibold text-slate-100 leading-tight mt-1 line-clamp-3">{product.name}</h3>
+                            <div className="min-w-0 flex items-start gap-2">
+                                {/* Miniatura solo si el producto TIENE foto: nunca un hueco vacío. */}
+                                {product.imageUrl && (
+                                    <img
+                                        src={product.imageUrl}
+                                        alt=""
+                                        loading="lazy"
+                                        className="w-10 h-10 rounded-control object-cover border border-white/[0.06] shrink-0"
+                                    />
+                                )}
+                                <h3 className="font-semibold text-sm text-slate-100 leading-tight line-clamp-2 min-w-0">{product.name}</h3>
                             </div>
-                            <div className="mt-3 flex justify-between items-end gap-1">
-                                <span className="text-lg font-bold text-white font-mono tabular-nums">C$ {product.price.toFixed(2)}</span>
-                                <span className={`text-xs px-2 py-1 rounded flex-shrink-0 ${product.stock === 0 ? 'bg-red-500/15 text-red-400 font-bold' : product.stock <= 5 ? 'bg-amber-500/15 text-amber-400' : 'bg-white/[0.04] text-slate-500'}`}>
-                                    {product.stock === 0 ? 'AGOTADO' : `Stock: ${product.stock}`}
+                            <div className="flex justify-between items-end gap-1">
+                                <span className="text-[17px] font-bold text-brand nx-num">{formatMoney(product.price)}</span>
+                                <span className={`text-[11px] px-1.5 py-0.5 rounded-control shrink-0 ${product.stock === 0 ? 'bg-danger-soft text-danger font-bold' : product.stock <= 5 ? 'bg-warning-soft text-amber-400' : 'text-slate-500'}`}>
+                                    {product.stock === 0 ? 'AGOTADO' : product.stock}
                                 </span>
                             </div>
                         </button>
@@ -2685,8 +2731,8 @@ const POS: React.FC = () => {
                 )}
 
                 {/* ⌨️ HOTKEY CHEAT SHEET */}
-                <div className="hidden lg:flex items-center gap-3 mt-2 px-2 py-1.5 text-[10px] text-slate-400 font-mono select-none flex-shrink-0">
-                    <Keyboard size={12} className="text-slate-300" />
+                <div className="hidden md:flex items-center gap-3 mt-2 px-2 py-1.5 text-[11px] text-slate-500 select-none flex-shrink-0">
+                    <Keyboard size={13} className="text-slate-500" />
                     <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F2</span> Buscar
                     <span className="text-slate-300">·</span>
                     <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F4</span> Aparcar
@@ -2884,7 +2930,9 @@ const POS: React.FC = () => {
                         })
                     )}
                 </div>
-                <div className="p-5 border-t border-white/[0.04] bg-surface-800/40 text-slate-100">
+                {/* Bloque de cobro: sticky al fondo del panel, superficie elevada y
+                    z-checkout. Ningún flotante puede vivir por encima de esto. */}
+                <div className="sticky bottom-0 z-checkout p-5 border-t border-white/[0.06] bg-surface-800 text-slate-100">
                     {/* 💸 Global Discount (oculto en modo simple para no invitar al error) */}
                     {!simpleMode && <div className="flex items-center gap-2 mb-2">
                         <Percent size={14} className="text-slate-400" />
@@ -2903,30 +2951,35 @@ const POS: React.FC = () => {
                             <span className="text-xs text-red-500 font-bold ml-auto">-C${totalD.mul(globalDiscountD).div(100).toFixed(2)}</span>
                         )}
                     </div>}
-                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>Subtotal</span><span className="font-mono tabular-nums">C$ {total.toFixed(2)}</span></div>
-                    {globalDiscountD.greaterThan(0) && <div className="flex justify-between text-sm text-red-500 mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="font-mono tabular-nums">-C$ {totalD.mul(globalDiscountD).div(100).toFixed(2)}</span></div>}
-                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>IVA incluido (15%)</span><span className="font-mono tabular-nums">C$ {tax.toFixed(2)}</span></div>
-                    <div className="flex justify-between text-xl font-bold text-white mb-4 pt-2 border-t border-white/[0.06]"><span>Total</span><span className="font-mono tabular-nums">C$ {grandTotal.toFixed(2)}</span></div>
+                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>Subtotal</span><span className="nx-num">{formatMoney(total)}</span></div>
+                    {globalDiscountD.greaterThan(0) && <div className="flex justify-between text-sm text-danger mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="nx-num">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span></div>}
+                    <div className="flex justify-between text-sm text-slate-500 mb-2"><span>IVA incluido (15%)</span><span className="nx-num">{formatMoney(tax)}</span></div>
+                    {/* El TOTAL es la cifra que decide la operación: tamaño display,
+                        en color de texto principal (no coloreado). */}
+                    <div className="flex justify-between items-baseline mb-4 pt-3 border-t border-white/[0.06]">
+                        <span className="nx-label">Total</span>
+                        <span className="nx-total">{formatMoney(grandTotal)}</span>
+                    </div>
 
-                    {/* 💥 MASSIVE PAYMENT BUTTONS - FAT FINGER FRIENDLY */}
+                    {/* Botones de cobro a 56px (--nx-h-pay): objetivo táctil de mostrador. */}
                     <div className="grid grid-cols-2 gap-3 mb-3">
                         <button
                             onClick={() => { setCashReceived(''); setPayingInUSD(false); setUsdAmount(''); setShowCashPreModal(true); }}
                             disabled={!currentShift || processing || cart.length === 0}
-                            className="h-16 bg-gradient-to-b from-green-500 to-green-700 text-white font-black rounded-xl hover:from-green-600 hover:to-green-800 text-xl flex items-center justify-center gap-2.5 shadow-lg hover:shadow-xl active:scale-[0.97] transition-all disabled:opacity-50 disabled:cursor-not-allowed border-2 border-green-400/30"
+                            className="h-pay bg-brand text-[#06231A] font-bold rounded-control hover:bg-brand-hover text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/40"
                         >
-                            <Banknote size={28} strokeWidth={2.5} /> EFECTIVO
+                            <Banknote size={24} strokeWidth={2.5} /> EFECTIVO
                         </button>
                         <button
                             onClick={() => handleCheckout('CREDIT')}
                             disabled={!currentShift || processing || isCreditBlocked}
-                            className={`h-16 font-black rounded-xl text-xl flex items-center justify-center gap-2.5 shadow-lg active:scale-[0.97] transition-all border-2 ${
+                            className={`h-pay font-bold rounded-control text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors border ${
                                 isCreditBlocked
-                                    ? 'bg-white/10 text-slate-500 cursor-not-allowed border-white/[0.06]'
-                                    : 'bg-gradient-to-b from-indigo-500 to-indigo-700 text-white hover:from-indigo-600 hover:to-indigo-800 hover:shadow-xl border-indigo-400/30'
+                                    ? 'bg-transparent text-slate-500 cursor-not-allowed border-white/[0.06]'
+                                    : 'bg-transparent text-slate-100 border-slate-700 hover:bg-white/[0.04]'
                             }`}
                         >
-                            {isCreditBlocked ? <Ban size={28} strokeWidth={2.5} /> : <CreditCard size={28} strokeWidth={2.5} />} CRÉDITO
+                            {isCreditBlocked ? <Ban size={24} strokeWidth={2.5} /> : <CreditCard size={24} strokeWidth={2.5} />} CRÉDITO
                         </button>
                     </div>
                     {isCreditBlocked && selectedCustomer && (
