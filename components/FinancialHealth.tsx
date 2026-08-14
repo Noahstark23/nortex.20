@@ -198,7 +198,7 @@ const FinancialHealth: React.FC = () => {
                     <div className="space-y-1.5">
                         {data.score.factors.slice(0, 5).map((f, i) => (
                             <div key={i} className="text-xs text-slate-500 flex items-start gap-1.5">
-                                {f.includes('') || f.includes('RIESGO') ? (
+                                {f.includes('RIESGO') ? (
                                     <AlertTriangle size={12} className="text-amber-500 flex-shrink-0 mt-0.5" />
                                 ) : (
                                     <CheckCircle size={12} className="text-emerald-500 flex-shrink-0 mt-0.5" />
@@ -284,37 +284,47 @@ const FinancialHealth: React.FC = () => {
 };
 
 // KPI Card Component
+// La tarjeta ya NO se tiñe entera del color del estado: con 4 tarjetas en fila,
+// cada una de un color, la vista se vuelve inescaneable. La superficie es
+// neutra y el color queda reservado al indicador de tendencia.
 const KPICard = ({ title, value, icon, trend, color }: {
     title: string; value: string; icon: React.ReactNode;
     trend?: 'up' | 'down'; color: string;
 }) => {
-    const colorMap: Record<string, string> = {
-        emerald: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-        blue: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-        amber: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-        red: 'bg-red-500/10 text-red-400 border-red-500/20',
-    };
+    // El color califica el estado del indicador (solo el chip del ícono).
     const iconColorMap: Record<string, string> = {
-        emerald: 'bg-emerald-500/15 text-emerald-400',
-        blue: 'bg-blue-500/15 text-blue-400',
-        amber: 'bg-amber-500/15 text-amber-400',
-        red: 'bg-red-500/15 text-red-400',
+        emerald: 'bg-brand-soft text-brand',
+        blue: 'bg-white/[0.05] text-slate-300',
+        amber: 'bg-warning-soft text-amber-400',
+        red: 'bg-danger-soft text-danger',
     };
 
     return (
-        <div className={`rounded-2xl border p-4 ${colorMap[color]}`}>
+        <div className="rounded-card border border-white/[0.06] bg-surface-900 p-4">
             <div className="flex items-center justify-between mb-2">
-                <div className={`p-2 rounded-xl ${iconColorMap[color]}`}>{icon}</div>
+                <div className={`p-2 rounded-control ${iconColorMap[color] ?? iconColorMap.blue}`}>{icon}</div>
                 {trend && (
                     trend === 'up'
-                        ? <ArrowUpRight size={16} className="text-emerald-500" />
-                        : <ArrowDownRight size={16} className="text-red-500" />
+                        ? <ArrowUpRight size={16} className="text-brand" />
+                        : <ArrowDownRight size={16} className="text-danger" />
                 )}
             </div>
-            <div className="font-bold text-lg text-white">{value}</div>
-            <div className="text-xs font-medium opacity-70">{title}</div>
+            {/* La cifra siempre en color de texto principal. */}
+            <div className="nx-kpi text-lg">{value}</div>
+            <div className="text-xs font-medium text-slate-500">{title}</div>
         </div>
     );
+};
+
+// Mapa estático de colores: una clase construida en runtime (`text-${color}-600`)
+// no la ve el escaneo de contenido de Tailwind y nunca se genera.
+const RESULT_ROW_COLOR: Record<string, string> = {
+    emerald: 'text-brand',
+    green: 'text-brand',
+    red: 'text-danger',
+    amber: 'text-amber-400',
+    blue: 'text-slate-100',
+    slate: 'text-slate-300',
 };
 
 // Result Row Component
@@ -324,7 +334,7 @@ const ResultRow = ({ label, value, color, bold, large, formatC }: {
 }) => (
     <div className={`flex justify-between items-center ${bold ? 'font-bold' : ''} ${large ? 'text-base' : 'text-sm'}`}>
         <span className="text-slate-300">{label}</span>
-        <span className={`text-${color}-600`}>
+        <span className={RESULT_ROW_COLOR[color] ?? 'text-slate-100'}>
             {value >= 0 ? formatC(value) : `(${formatC(Math.abs(value))})`}
         </span>
     </div>

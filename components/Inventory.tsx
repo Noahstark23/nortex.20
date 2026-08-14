@@ -1,7 +1,9 @@
+import { TableEmptyState } from './ui/EmptyState';
+import { SkeletonTableRows } from './ui/Skeleton';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import ImageUploader from './ImageUploader';
-import { sanitizeDecimalInput } from '../utils/money';
+import { sanitizeDecimalInput, formatMoney } from '../utils/money';
 import { trackEvent } from '../utils/analytics';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
@@ -88,7 +90,9 @@ const getMovementMeta = (type: string) => {
     return MOVEMENT_LABELS[type] || { label: type, color: 'bg-slate-700 text-slate-300 border-slate-600', icon: '' };
 };
 
-const formatCurrency = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Delegado en el formateador único (utils/money.ts): este helper local era una
+// de las cinco convenciones de moneda que convivían en la app.
+const formatCurrency = (n: number) => formatMoney(n);
 
 /** Como sanitizeDecimalInput pero admite un '-' inicial (para ajustes porcentuales). */
 const sanitizeSignedDecimal = (raw: string): string => {
@@ -1132,87 +1136,36 @@ export default function Inventory() {
                         </thead>
                         <tbody>
                             {loading ? (
-                                <tr>
-                                    <td colSpan={isOwner ? 8 : 6} className="text-center py-12 text-slate-400">
-                                        <div className="flex flex-col items-center gap-2">
-                                            <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                                            <span>Cargando inventario...</span>
-                                        </div>
-                                    </td>
-                                </tr>
+                                <SkeletonTableRows rows={6} cols={isOwner ? 8 : 6} />
                             ) : filteredProducts.length === 0 ? (
-                                <tr>
-                                    <td colSpan={isOwner ? 8 : 6} className="text-center py-16 px-4">
-                                        <div className="flex flex-col items-center justify-center max-w-md mx-auto">
-                                            <div className="w-20 h-20 bg-blue-900/30 rounded-full flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(59,130,246,0.2)]">
-                                                <Package size={40} className="text-blue-400" />
-                                            </div>
-
-                                            {productsError ? (
-                                                <>
-                                                    <h3 className="text-2xl font-bold text-white mb-3">No pudimos cargar tu inventario</h3>
-                                                    <p className="text-slate-400 text-center mb-8">Puede ser tu conexión. Tus productos siguen ahí — reintentá.</p>
-                                                    <button
-                                                        onClick={() => fetchProducts()}
-                                                        className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-colors"
-                                                    >
-                                                        Reintentar
-                                                    </button>
-                                                </>
-                                            ) : searchTerm ? (
-                                                <>
-                                                    <h3 className="text-xl font-bold text-white mb-2">No se encontraron resultados</h3>
-                                                    <p className="text-slate-400 text-center mb-6">
-                                                        No hay ningún producto que coincida con "{searchTerm}". Intenta con otro nombre o SKU.
-                                                    </p>
-                                                    <button
-                                                        onClick={() => setSearchTerm('')}
-                                                        className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-xl transition-colors border border-slate-700"
-                                                    >
-                                                        Limpiar Búsqueda
-                                                    </button>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <h3 className="text-2xl font-bold text-white mb-3">Tu inventario está vacío</h3>
-                                                    <p className="text-slate-400 text-center mb-8">
-                                                        ¡Bienvenido a Nortex! Comienza a facturar agregando tu primer producto al sistema en menos de 10 segundos.
-                                                    </p>
-
-                                                    {isOwner && (
-                                                        <div className="flex flex-col sm:flex-row gap-4 w-full">
-                                                            <button
-                                                                onClick={() => { setShowQuickAddModal(true); setQuickAddSKU(''); }}
-                                                                className="flex-1 flex items-center justify-center gap-2 px-6 py-4 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-bold rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.4)] hover:shadow-[0_0_30px_rgba(59,130,246,0.6)] hover:-translate-y-1"
-                                                            >
-                                                                <Zap size={20} />
-                                                                Modo Rápido                                                             </button>
-                                                            <button
-                                                                onClick={() => setShowCreateModal(true)}
-                                                                className="flex items-center justify-center gap-2 px-6 py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-all border border-slate-700 hover:border-slate-500"
-                                                            >
-                                                                <Plus size={20} />
-                                                                Manual
-                                                            </button>
-                                                        </div>
-                                                    )}
-                                                    {isOwner && (
-                                                        <div className="mt-4 text-center">
-                                                            <button
-                                                                onClick={seedCatalog}
-                                                                disabled={seeding}
-                                                                className="text-sm text-slate-300 hover:text-white underline underline-offset-4 disabled:opacity-50 disabled:no-underline transition-colors"
-                                                            >
-                                                                {seeding ? 'Cargando catálogo…' : 'O cargá un catálogo de ejemplo de tu giro para probar'}
-                                                            </button>
-                                                            {seedError && <p className="text-red-400 text-sm mt-2">{seedError}</p>}
-                                                        </div>
-                                                    )}
-                                                </>
-                                            )}
-                                        </div>
-                                    </td>
-                                </tr>
+                                productsError ? (
+                                    <TableEmptyState
+                                        colSpan={isOwner ? 8 : 6}
+                                        mode="error"
+                                        title="No pudimos cargar tu inventario"
+                                        description="Puede ser tu conexión. Tus productos siguen ahí — reintentá."
+                                        action={{ label: 'Reintentar', onClick: () => fetchProducts() }}
+                                    />
+                                ) : searchTerm ? (
+                                    <TableEmptyState
+                                        colSpan={isOwner ? 8 : 6}
+                                        mode="no-results"
+                                        title="No se encontraron resultados"
+                                        description={`Ningún producto coincide con "${searchTerm}". Probá con otro nombre o SKU.`}
+                                        action={{ label: 'Limpiar búsqueda', onClick: () => setSearchTerm('') }}
+                                    />
+                                ) : (
+                                    <TableEmptyState
+                                        colSpan={isOwner ? 8 : 6}
+                                        icon={<Package size={32} />}
+                                        title="Tu inventario está vacío"
+                                        description="Importá tu lista desde Excel y Nortex arma el catálogo solo."
+                                        action={isOwner ? { label: 'Modo rápido', icon: <Zap size={18} />, onClick: () => { setShowQuickAddModal(true); setQuickAddSKU(''); } } : undefined}
+                                        secondaryAction={isOwner ? { label: 'Cargar manual', icon: <Plus size={18} />, onClick: () => setShowCreateModal(true) } : undefined}
+                                        linkAction={isOwner ? { label: 'O cargá un catálogo de ejemplo de tu giro para probar', onClick: seedCatalog, loading: seeding, loadingLabel: 'Cargando catálogo…' } : undefined}
+                                        errorText={seedError}
+                                    />
+                                )
                             ) : (
                                 filteredProducts.map((product) => {
                                     const isLow = product.stock <= product.minStock && product.stock > 0;

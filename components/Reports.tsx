@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { formatMoney } from '../utils/money';
+import { chartColors, gridProps, axisProps, tooltipProps } from '../utils/chartTheme';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { ShieldCheck, TrendingUp, TrendingDown, Package, DollarSign, Receipt, Warehouse, FileSpreadsheet, Loader2, Calendar, AlertTriangle, RefreshCw, Landmark, Scale, Copy, CheckCircle, Building2, Printer, Clock, Users, BookOpen, BarChart3, ArrowRight, Download } from 'lucide-react';
 import { ShiftReportTicket, type ShiftReportData } from './ShiftReportTicket';
@@ -6,14 +8,12 @@ import { ShiftReportTicket, type ShiftReportData } from './ShiftReportTicket';
 // Helpers
 const IVA_RATE = 0.15;
 
-const formatCurrency = (n: number) =>
-    n.toLocaleString('es-NI', { style: 'currency', currency: 'NIO', minimumFractionDigits: 2 }).replace('NIO', 'C$');
-
-const formatUSD = (n: number) =>
-    '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-const formatC = (n: number) =>
-    `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Un solo formateador para toda la pantalla (utils/money.ts). Antes había tres:
+// formatCurrency (código muerto), formatUSD (que renderizaba CÓRDOBAS con "$")
+// y formatC. El resultado era que el mismo córdoba salía "$1,234.00" en el tab
+// Dashboard y "C$ 1,234.00" en el tab Contador: el usuario no lee eso como un
+// formato inconsistente, lo lee como que el sistema calcula mal.
+const formatC = (n: number) => formatMoney(n);
 
 const getDefaultDates = () => {
     const end = new Date();
@@ -310,7 +310,7 @@ const Reports: React.FC = () => {
                                 <span className="text-[10px] font-mono bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded font-bold">SIN IVA</span>
                             </div>
                             <div className="text-xs font-mono text-slate-500 mb-1">VENTAS NETAS</div>
-                            <div className="text-2xl font-bold text-slate-100">{formatUSD(salesData?.ventasNetas ?? 0)}</div>
+                            <div className="text-2xl font-bold text-slate-100">{formatC(salesData?.ventasNetas ?? 0)}</div>
                             <div className="text-xs text-slate-400 mt-1">{salesData?.totalTransacciones ?? 0} transacciones</div>
                         </div>
 
@@ -324,7 +324,7 @@ const Reports: React.FC = () => {
                                 <span className="text-[10px] font-mono bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded font-bold">DGI</span>
                             </div>
                             <div className="text-xs font-mono text-slate-500 mb-1">IVA RECAUDADO (15%)</div>
-                            <div className="text-2xl font-bold text-amber-400">{formatUSD(salesData?.ivaRecaudado ?? 0)}</div>
+                            <div className="text-2xl font-bold text-amber-400">{formatC(salesData?.ivaRecaudado ?? 0)}</div>
                             <div className="text-xs text-amber-400 mt-1">Para declarar a la DGI</div>
                         </div>
 
@@ -341,7 +341,7 @@ const Reports: React.FC = () => {
                             </div>
                             <div className="text-xs font-mono text-slate-500 mb-1">UTILIDAD NETA</div>
                             <div className={`text-2xl font-bold ${utilidadNeta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                {formatUSD(utilidadNeta)}
+                                {formatC(utilidadNeta)}
                             </div>
                             <div className="text-xs text-slate-400 mt-1">Ventas - Costo - Gastos</div>
                         </div>
@@ -354,7 +354,7 @@ const Reports: React.FC = () => {
                                 </div>
                             </div>
                             <div className="text-xs font-mono text-slate-500 mb-1">GASTOS OPERATIVOS</div>
-                            <div className="text-2xl font-bold text-red-400">{formatUSD(expensesData?.totalExpenses ?? 0)}</div>
+                            <div className="text-2xl font-bold text-red-400">{formatC(expensesData?.totalExpenses ?? 0)}</div>
                             <div className="text-xs text-slate-400 mt-1">{expensesData?.count ?? 0} registros</div>
                         </div>
 
@@ -370,7 +370,7 @@ const Reports: React.FC = () => {
                                 </span>
                             </div>
                             <div className="text-xs font-mono text-slate-400 mb-1 relative z-10">VALOR EN BODEGA</div>
-                            <div className="text-2xl font-bold text-white relative z-10">{formatUSD(inventoryData?.inventoryValue ?? 0)}</div>
+                            <div className="text-2xl font-bold text-white relative z-10">{formatC(inventoryData?.inventoryValue ?? 0)}</div>
                             <div className="text-xs text-slate-400 mt-1 relative z-10">Costo total inventario</div>
                         </div>
                     </div>
@@ -385,17 +385,17 @@ const Reports: React.FC = () => {
                                 {salesData && salesData.chartData.length > 0 ? (
                                     <ResponsiveContainer width="100%" height="100%">
                                         <BarChart data={salesData.chartData}>
-                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11 }} dy={10} />
-                                            <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11 }} />
+                                            <CartesianGrid {...gridProps} />
+                                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: chartColors.muted, fontSize: 11 }} dy={10} />
+                                            <YAxis axisLine={false} tickLine={false} tick={{ fill: chartColors.muted, fontSize: 11 }} />
                                             <Tooltip
-                                                cursor={{ fill: '#f1f5f9' }}
+                                                {...tooltipProps()}
                                                 contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}
-                                                formatter={(value: number) => ['$' + value.toFixed(2)]}
+                                                formatter={(value: number) => [formatC(value)]}
                                             />
                                             <Legend />
-                                            <Bar dataKey="ventas" fill="#3b82f6" name="Ventas" radius={[4, 4, 0, 0]} />
-                                            <Bar dataKey="gastos" fill="#ef4444" name="Gastos" radius={[4, 4, 0, 0]} />
+                                            <Bar dataKey="ventas" fill={chartColors.brand} name="Ventas" radius={[4, 4, 0, 0]} />
+                                            <Bar dataKey="gastos" fill={chartColors.expense} name="Gastos" radius={[4, 4, 0, 0]} />
                                         </BarChart>
                                     </ResponsiveContainer>
                                 ) : (
@@ -424,7 +424,7 @@ const Reports: React.FC = () => {
                                                 <div key={cat}>
                                                     <div className="flex justify-between text-sm mb-1">
                                                         <span className="text-slate-300 font-medium">{cat}</span>
-                                                        <span className="font-mono font-bold text-slate-100">{formatUSD(amount)}</span>
+                                                        <span className="font-mono font-bold text-slate-100">{formatC(amount)}</span>
                                                     </div>
                                                     <div className="w-full bg-white/[0.04] h-2 rounded-full overflow-hidden">
                                                         <div className="bg-red-400 h-full rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
@@ -454,31 +454,31 @@ const Reports: React.FC = () => {
                                         <tr className="hover:bg-surface-800/40">
                                             <td className="px-4 py-3 text-slate-300">Ventas Brutas (con IVA)</td>
                                             <td className="px-4 py-3 text-right font-mono font-bold text-slate-100">
-                                                {formatUSD(salesData?.totalVentas ?? 0)}
+                                                {formatC(salesData?.totalVentas ?? 0)}
                                             </td>
                                         </tr>
                                         <tr className="hover:bg-surface-800/40">
                                             <td className="px-4 py-3 text-slate-300">(-) IVA 15%</td>
                                             <td className="px-4 py-3 text-right font-mono font-bold text-amber-400">
-                                                -{formatUSD(salesData?.ivaRecaudado ?? 0)}
+                                                -{formatC(salesData?.ivaRecaudado ?? 0)}
                                             </td>
                                         </tr>
                                         <tr className="hover:bg-surface-800/40 bg-blue-500/10">
                                             <td className="px-4 py-3 font-bold text-blue-400">= Ventas Netas</td>
                                             <td className="px-4 py-3 text-right font-mono font-bold text-blue-400">
-                                                {formatUSD(salesData?.ventasNetas ?? 0)}
+                                                {formatC(salesData?.ventasNetas ?? 0)}
                                             </td>
                                         </tr>
                                         <tr className="hover:bg-surface-800/40">
                                             <td className="px-4 py-3 text-slate-300">(-) Costo de Ventas (COGS)</td>
                                             <td className="px-4 py-3 text-right font-mono font-bold text-slate-300">
-                                                -{formatUSD(salesData?.totalCOGS ?? 0)}
+                                                -{formatC(salesData?.totalCOGS ?? 0)}
                                             </td>
                                         </tr>
                                         <tr className="hover:bg-surface-800/40">
                                             <td className="px-4 py-3 text-slate-300">(-) Gastos Operativos</td>
                                             <td className="px-4 py-3 text-right font-mono font-bold text-red-500">
-                                                -{formatUSD(expensesData?.totalExpenses ?? 0)}
+                                                -{formatC(expensesData?.totalExpenses ?? 0)}
                                             </td>
                                         </tr>
                                         <tr className={`${utilidadNeta >= 0 ? 'bg-emerald-500/10' : 'bg-red-500/10'}`}>
@@ -486,7 +486,7 @@ const Reports: React.FC = () => {
                                                 = UTILIDAD NETA
                                             </td>
                                             <td className={`px-4 py-4 text-right font-mono font-bold text-lg ${utilidadNeta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                                {formatUSD(utilidadNeta)}
+                                                {formatC(utilidadNeta)}
                                             </td>
                                         </tr>
                                     </tbody>
@@ -784,16 +784,16 @@ const Reports: React.FC = () => {
                                                         <div className="text-xs text-slate-400">{s.totalSales} ventas</div>
                                                     </td>
                                                     <td className="px-4 py-3 text-right font-mono font-bold text-slate-100">
-                                                        C$ {s.grandTotal.toFixed(2)}
+                                                        {formatC(s.grandTotal)}
                                                     </td>
                                                     <td className="px-4 py-3 text-right font-mono text-slate-200">
-                                                        C$ {(s.systemExpectedCash ?? 0).toFixed(2)}
+                                                        {formatC((s.systemExpectedCash ?? 0))}
                                                     </td>
                                                     <td className="px-4 py-3 text-right font-mono text-slate-200">
-                                                        C$ {(s.finalCashDeclared ?? 0).toFixed(2)}
+                                                        {formatC((s.finalCashDeclared ?? 0))}
                                                     </td>
                                                     <td className={`px-4 py-3 text-right font-mono font-bold ${diffColor}`}>
-                                                        {diff > 0 ? '+' : ''}C$ {diff.toFixed(2)}
+                                                        {diff > 0 ? '+' : ''}{formatC(diff)}
                                                     </td>
                                                     <td className="px-4 py-3 text-center">
                                                         <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold ${diffBg} ${diffColor}`}>

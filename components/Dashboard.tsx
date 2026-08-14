@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, Lock, RefreshCw, ShoppingCart, ArrowRight, ShieldAlert, FileText, Settings, Timer } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Loan, Tenant } from '../types';
+import { formatMoney } from '../utils/money';
+import { chartColors, gridProps, axisProps, tooltipProps } from '../utils/chartTheme';
 import { useNavigate } from 'react-router-dom';
 import LenderDashboard from './LenderMode/LenderDashboard';
 import MotorizadosPanel from './LenderMode/MotorizadosPanel';
@@ -419,11 +421,11 @@ const RetailDashboard: React.FC = () => {
 
       {/* --- SMART RESTOCK AI WIDGET --- */}
       {lowStockItems.length > 0 && (
-        <div className="mb-8 bg-nortex-900 rounded-xl p-6 shadow-xl border border-nortex-800 relative overflow-hidden">
+        <div className="mb-8 bg-brand-soft rounded-card p-6 border border-brand/30 relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-nortex-accent blur-[100px] opacity-10"></div>
           <div className="relative z-10 flex flex-col md:flex-row justify-between items-center gap-6">
             <div className="flex items-start gap-4">
-              <div className="p-3 bg-red-500/20 text-red-400 rounded-lg animate-pulse">
+              <div className="p-3 bg-brand/15 text-brand rounded-control">
                 <AlertCircle size={32} />
               </div>
               <div>
@@ -438,7 +440,7 @@ const RetailDashboard: React.FC = () => {
               // Antes iba a /app/marketplace → "Próximamente": la alerta más
               // urgente del dashboard creaba urgencia y cerraba la puerta.
               onClick={() => navigate('/app/smart-purchases')}
-              className="px-6 py-3 bg-surface-900 text-slate-100 font-bold rounded-lg hover:bg-nortex-accent transition-colors flex items-center gap-2 shadow-lg"
+              className="h-touch px-5 bg-brand text-[#06231A] font-semibold rounded-control hover:bg-brand-hover transition-colors flex items-center gap-2"
             >
               <ShoppingCart size={18} /> Pedir Reabastecimiento <ArrowRight size={18} />
             </button>
@@ -462,7 +464,7 @@ const RetailDashboard: React.FC = () => {
             {theftAlerts.slice(0, 3).map((alert: any) => (
               <div key={alert.id} className="text-xs bg-red-500/15 text-red-400 px-3 py-1.5 rounded-lg flex justify-between">
                 <span>{alert.details?.cajero || 'Cajero'}: {alert.details?.tipo}</span>
-                <span className="font-bold">C${Math.abs(alert.details?.diferencia || 0).toFixed(2)}</span>
+                <span className="font-bold">{formatMoney(Math.abs(alert.details?.diferencia || 0))}</span>
               </div>
             ))}
           </div>
@@ -500,38 +502,33 @@ const RetailDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 📊 TODAY'S PERFORMANCE KPIs */}
+      {/* ── LA RESPUESTA ÚNICA ───────────────────────────────────────────────
+          Es el motivo por el que el usuario vuelve mañana: cuánto ganó hoy.
+          Antes vivía como la 3.ª tarjeta de una grilla de 3, del mismo tamaño
+          que "Ventas Hoy" y con la card entera teñida de verde o rojo. Ahora va
+          arriba, en tamaño display y en color de texto principal: el color no
+          se usa para decorar la cifra, solo para calificar el resultado. */}
       {todayStats && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-surface-900 p-4 rounded-xl shadow-sm border border-white/[0.06]">
-            <div className="flex justify-between items-center">
-              <div>
-                <p className="text-xs font-medium text-slate-500 uppercase">Ventas Hoy</p>
-                <h3 className="text-xl font-bold text-slate-100">C${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
-              </div>
-              <div className="p-2 bg-blue-500/15 text-blue-400 rounded-lg"><TrendingUp size={18} /></div>
-            </div>
+        <div className="mb-6 bg-surface-900 border border-white/[0.06] rounded-card p-6">
+          <p className="nx-label mb-1">Hoy</p>
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="text-slate-400">
+              {todayStats.netProfit >= 0 ? 'Ganaste' : 'Perdiste'}
+            </span>
+            <span className="nx-total">{formatMoney(Math.abs(todayStats.netProfit))}</span>
+            <span className={`text-sm font-semibold ${todayStats.netProfit >= 0 ? 'nx-delta-up' : 'nx-delta-down'}`}>
+              {todayStats.netProfit >= 0 ? 'en verde' : 'en rojo'}
+            </span>
           </div>
-          <div className="bg-surface-900 p-4 rounded-xl shadow-sm border border-white/[0.06]">
-            <div className="flex justify-between items-center">
-              <div>
-                <p className="text-xs font-medium text-slate-500 uppercase">Gastos Hoy</p>
-                <h3 className="text-xl font-bold text-red-400">C${todayStats.totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
-              </div>
-              <div className="p-2 bg-red-500/15 text-red-400 rounded-lg"><TrendingDown size={18} /></div>
+          {/* El desglose queda debajo, en jerarquía menor y sin colorear cifras. */}
+          <div className="flex flex-wrap gap-x-8 gap-y-2 mt-4 pt-4 border-t border-white/[0.06]">
+            <div>
+              <p className="nx-label">Ventas</p>
+              <p className="text-lg font-bold text-slate-100 nx-num">{formatMoney(todayStats.totalSales)}</p>
             </div>
-          </div>
-          <div className={`p-4 rounded-xl shadow-sm border ${todayStats.netProfit >= 0 ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-red-500/10 border-red-500/20'}`}>
-            <div className="flex justify-between items-center">
-              <div>
-                <p className="text-xs font-medium text-slate-500 uppercase">Utilidad Neta Hoy</p>
-                <h3 className={`text-xl font-bold ${todayStats.netProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  C${todayStats.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </h3>
-              </div>
-              <div className={`p-2 rounded-lg ${todayStats.netProfit >= 0 ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
-                <DollarSign size={18} />
-              </div>
+            <div>
+              <p className="nx-label">Gastos</p>
+              <p className="text-lg font-bold text-slate-100 nx-num">{formatMoney(todayStats.totalExpenses)}</p>
             </div>
           </div>
         </div>
@@ -545,7 +542,7 @@ const RetailDashboard: React.FC = () => {
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Saldo en Billetera</p>
-              <h3 className="text-2xl font-bold text-white transition-all duration-500">${tenantData.walletBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+              <h3 className="text-2xl font-bold text-white transition-all duration-500">{formatMoney(tenantData.walletBalance)}</h3>
             </div>
             <div className="p-2 bg-green-500/15 text-green-400 rounded-lg">
               <DollarSign size={20} />
@@ -597,7 +594,7 @@ const RetailDashboard: React.FC = () => {
           <div className="flex justify-between items-start mb-4 relative z-10">
             <div>
               <p className="text-sm font-medium text-slate-400">Línea Disponible</p>
-              <h3 className="text-2xl font-bold text-white">${tenantData.creditLimit.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+              <h3 className="text-2xl font-bold text-white">{formatMoney(tenantData.creditLimit)}</h3>
             </div>
             <div className="p-2 bg-white/10 text-white rounded-lg">
               <CreditCard size={20} />
@@ -618,7 +615,7 @@ const RetailDashboard: React.FC = () => {
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Deuda Activa</p>
-              <h3 className="text-2xl font-bold text-red-400">${activeDebt.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+              <h3 className="text-2xl font-bold text-red-400">{formatMoney(activeDebt)}</h3>
             </div>
             <div className="p-2 bg-red-500/15 text-red-400 rounded-lg">
               <AlertCircle size={20} />
@@ -650,11 +647,11 @@ const RetailDashboard: React.FC = () => {
                 Efectivo real menos proveedores. Esto puedes sacarlo sin quebrar el negocio.
               </p>
               <h2 className="text-4xl font-extrabold mb-2 relative z-10 tracking-tight">
-                C${survivalData.liquidezLibre > 0 ? survivalData.liquidezLibre.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '0.00'}
+                {formatMoney(survivalData.liquidezLibre > 0 ? survivalData.liquidezLibre : 0)}
               </h2>
               {survivalData.liquidezLibre <= 0 && (
                 <div className="text-sm font-bold bg-white/20 px-3 py-1 rounded w-fit mt-2 border border-white/30 backdrop-blur-sm relative z-10">
-                  Faltan C${Math.abs(survivalData.liquidezLibre).toLocaleString(undefined, { minimumFractionDigits: 2 })} para cubrir deudas
+                  Faltan {formatMoney(Math.abs(survivalData.liquidezLibre))} para cubrir deudas
                 </div>
               )}
             </div>
@@ -666,18 +663,17 @@ const RetailDashboard: React.FC = () => {
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={[
-                    { name: 'Efectivo Físico', monto: survivalData.efectivoTotal, fill: '#10b981' },
-                    { name: 'Cuentas x Cobrar', monto: survivalData.cuentasPorCobrar, fill: '#f59e0b' },
-                    { name: 'Deuda Proveedor (CxP)', monto: survivalData.cuentasPorPagar, fill: '#ef4444' },
-                    { name: 'Inventario (Valor)', monto: survivalData.inventario, fill: '#3b82f6' }
+                    { name: 'Efectivo Físico', monto: survivalData.efectivoTotal, fill: chartColors.brand },
+                    { name: 'Cuentas x Cobrar', monto: survivalData.cuentasPorCobrar, fill: chartColors.warning },
+                    { name: 'Deuda Proveedor (CxP)', monto: survivalData.cuentasPorPagar, fill: chartColors.danger },
+                    { name: 'Inventario (Valor)', monto: survivalData.inventario, fill: chartColors.warning }
                   ]}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 13, fontWeight: 500 }} dy={10} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: chartColors.muted, fontSize: 13, fontWeight: 500 }} dy={10} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fill: chartColors.muted, fontSize: 12 }} />
                     <Tooltip
-                      cursor={{ fill: '#f1f5f9' }}
-                      contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                      formatter={(value: number) => [`C$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Total']}
+                      {...tooltipProps()}
+                      formatter={(value: number) => [formatMoney(value), 'Total']}
                     />
                     <Bar dataKey="monto" radius={[6, 6, 0, 0]} barSize={50} />
                   </BarChart>
@@ -696,14 +692,14 @@ const RetailDashboard: React.FC = () => {
           <div className="h-64 min-h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
+                <CartesianGrid {...gridProps} />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: chartColors.muted, fontSize: 12 }} dy={10} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: chartColors.muted, fontSize: 12 }} />
                 <Tooltip
-                  cursor={{ fill: '#f1f5f9' }}
+                  {...tooltipProps()}
                   contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                 />
-                <Bar dataKey="sales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="sales" fill={chartColors.brand} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -725,7 +721,7 @@ const RetailDashboard: React.FC = () => {
                       <div className="text-xs text-slate-400 flex items-center gap-1">
                         <Clock size={10} /> Vence: {new Date(loan.dueDate).toLocaleDateString()}
                       </div>
-                      <div className="font-bold text-slate-200">${loan.amount.toFixed(2)}</div>
+                      <div className="font-bold text-slate-200">{formatMoney(loan.amount)}</div>
                     </div>
                     <span className="text-xs font-bold bg-green-500/15 text-green-400 px-2 py-1 rounded-full">ACTIVE</span>
                   </div>
@@ -773,7 +769,7 @@ const RetailDashboard: React.FC = () => {
                   />
                 </div>
                 <div className="flex justify-between mt-2 text-xs">
-                  <span className="text-slate-500">Disponible: <span className="font-bold text-slate-200">${tenantData.creditLimit.toFixed(2)}</span></span>
+                  <span className="text-slate-500">Disponible: <span className="font-bold text-slate-200">{formatMoney(tenantData.creditLimit)}</span></span>
                   {Number(loanAmount) > tenantData.creditLimit && (
                     <span className="text-red-500 font-bold">Excede el límite</span>
                   )}
@@ -785,11 +781,11 @@ const RetailDashboard: React.FC = () => {
                 <div className="bg-surface-800/40 p-4 rounded-xl border border-white/[0.06] mb-6 space-y-2">
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-500">Capital</span>
-                    <span className="font-medium text-white">${Number(loanAmount).toFixed(2)}</span>
+                    <span className="font-medium text-white">{formatMoney(Number(loanAmount))}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-500">Interés (5% Flat)</span>
-                    <span className="font-medium text-white">${(Number(loanAmount) * 0.05).toFixed(2)}</span>
+                    <span className="font-medium text-white">{formatMoney(Number(loanAmount) * 0.05)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-500">Plazo</span>
@@ -797,7 +793,7 @@ const RetailDashboard: React.FC = () => {
                   </div>
                   <div className="border-t border-white/[0.06] pt-2 mt-2 flex justify-between items-center">
                     <span className="font-bold text-slate-200">Total a Pagar</span>
-                    <span className="font-bold text-slate-100 text-lg">${(Number(loanAmount) * 1.05).toFixed(2)}</span>
+                    <span className="font-bold text-slate-100 text-lg">{formatMoney(Number(loanAmount) * 1.05)}</span>
                   </div>
                 </div>
               )}

@@ -1,8 +1,10 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
-import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown } from 'lucide-react';
+import { formatMoney, formatUSD } from '../utils/money';
+import { EmptyState } from './ui/EmptyState';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
@@ -167,6 +169,7 @@ const playErrorBeep = () => {
 };
 
 const POS: React.FC = () => {
+    const navigate = useNavigate();
     // Inicia VACÍO (no MOCK_PRODUCTS): los mocks de demo ("Cemento Sol", precios
     // que no son del tenant) online desaparecían tras fetchProducts, pero OFFLINE
     // persistían y se podían agregar al carrito → venta encolada con IDs mock
@@ -292,6 +295,10 @@ const POS: React.FC = () => {
     const [cashBalance, setCashBalance] = useState<number | null>(null);
     const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
     const [showMovementsList, setShowMovementsList] = useState(false);
+    // Menú único "Acciones de caja": el header tenía 8 botones de 7 colores
+    // distintos compitiendo con el cobro. Lo operativo se agrupa acá y el rojo
+    // queda reservado para lo irreversible (cerrar caja).
+    const [showCashActions, setShowCashActions] = useState(false);
 
     // ==========================================
     // OFFLINE / PWA STATE
@@ -1587,25 +1594,10 @@ const POS: React.FC = () => {
                     )}
                 </div>
 
-                <div className="flex items-center gap-2 flex-1 min-w-0 justify-end overflow-x-auto custom-scrollbar whitespace-nowrap pl-4">
-                    {/* 🖨️ TIQUETERA BT/USB */}
-                    {!simpleMode && <button
-                        onClick={async () => {
-                            if (!thermalConnected) {
-                                const success = await thermalPrinter.connect();
-                                setThermalConnected(success);
-                            }
-                        }}
-                        className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg transition-all shadow-sm ${thermalConnected ? 'bg-indigo-500 text-white hover:bg-indigo-600' : 'bg-white/[0.04] text-slate-500 hover:bg-white/[0.06] border border-white/[0.06]'}`}
-                        title={thermalConnected ? 'Tiquetera Conectada' : 'Vincular Tiquetera'}
-                    >
-                        <Printer size={14} />
-                        <span className="hidden lg:inline">{thermalConnected ? 'Tiquetera lista' : 'Vincular Tiquetera'}</span>
-                    </button>}
-
-                    {/* 📶 OFFLINE INDICATOR */}
+                <div className="flex items-center gap-2 min-w-0 justify-end whitespace-nowrap pl-4">
+                    {/* Estado de conexión: informativo, no es una acción. Ámbar = requiere atención. */}
                     {!isOnline && (
-                        <div className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-amber-500 text-white shadow-sm">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-warning-soft text-amber-400 border border-amber-500/20">
                             <WifiOff size={14} />
                             <span className="hidden lg:inline">Sin internet</span>
                             {pendingOfflineCount > 0 && (
@@ -1617,7 +1609,7 @@ const POS: React.FC = () => {
                         <button
                             onClick={syncOfflineSales}
                             disabled={syncingOffline}
-                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-green-500 text-white hover:bg-green-600 shadow-sm disabled:opacity-60"
+                            className="flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-brand-soft text-brand border border-brand/20 hover:bg-brand/15 transition-colors disabled:opacity-60"
                             title="Sincronizar ventas offline"
                         >
                             <RefreshCw size={14} className={syncingOffline ? 'animate-spin' : ''} />
@@ -1625,100 +1617,142 @@ const POS: React.FC = () => {
                         </button>
                     )}
 
-                    {/* 🅿️ PARQUEO BADGE */}
-                    {currentShift && !simpleMode && (
-                        <button
-                            onClick={() => setShowHeldCarts(!showHeldCarts)}
-                            className={`relative flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg transition-all shadow-sm ${heldCarts.length > 0 ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-white/[0.04] text-slate-500 hover:bg-white/[0.06] border border-white/[0.06]'}`}
-                            title={`Carritos aparcados (F4 para aparcar)`}
-                        >
-                            <ParkingCircle size={14} />
-                            {heldCarts.length > 0 && (
-                                <span className="bg-surface-900 text-blue-400 text-[10px] font-black w-4 h-4 rounded-full flex items-center justify-center">{heldCarts.length}</span>
-                            )}
-                            <span className="hidden lg:inline">{heldCarts.length > 0 ? 'Aparcados' : 'Aparcar'}</span>
-                        </button>
-                    )}
-                    {/* 💰 CASH BALANCE INDICATOR */}
+                    {/* Saldo en caja: dato, en neutro. Abre el detalle de movimientos. */}
                     {currentShift && cashBalance !== null && (
                         <button
                             onClick={() => setShowMovementsList(!showMovementsList)}
-                            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-all cursor-pointer"
+                            className="flex items-center gap-1.5 text-xs px-3 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
                             title="Efectivo en caja"
                         >
                             <Wallet size={14} />
-                            <span className="font-bold">C${cashBalance.toFixed(2)}</span>
+                            <span className="font-bold nx-num">{formatMoney(cashBalance)}</span>
                         </button>
                     )}
 
-                    {/* 💰 QUICK ACTION: ENTRADA DE EFECTIVO */}
+                    {/* Carritos aparcados: badge de estado, solo si hay alguno esperando. */}
+                    {currentShift && !simpleMode && heldCarts.length > 0 && (
+                        <button
+                            onClick={() => setShowHeldCarts(!showHeldCarts)}
+                            className="relative flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
+                            title="Carritos aparcados (F4 para aparcar)"
+                        >
+                            <ParkingCircle size={14} />
+                            <span className="text-[10px] font-black">{heldCarts.length}</span>
+                            <span className="hidden lg:inline">Aparcados</span>
+                        </button>
+                    )}
+
+                    {/* ── MENÚ ÚNICO DE ACCIONES DE CAJA ──────────────────────────
+                        Antes: 8 botones sólidos (verde/ámbar/cian/naranja/índigo…)
+                        peleando por atención con el cobro. Ahora: un solo botón
+                        neutro que despliega lo operativo. El color vuelve a
+                        significar algo porque casi no se usa. */}
                     {currentShift && (
-                        <button
-                            onClick={() => { setShowCashModal('IN'); setCashCategory(''); }}
-                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-all shadow-sm"
-                            title="Entrada de Efectivo"
-                        >
-                            <ArrowDownCircle size={14} />
-                            Entrada
-                        </button>
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowCashActions(v => !v)}
+                                className="flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
+                                title="Acciones de caja"
+                            >
+                                <SlidersHorizontal size={14} />
+                                <span className="hidden lg:inline">Acciones de caja</span>
+                                <ChevronDown size={14} className={`transition-transform ${showCashActions ? 'rotate-180' : ''}`} />
+                            </button>
+
+                            {showCashActions && (
+                                <>
+                                    {/* Capa de cierre: click afuera cierra el menú. Por debajo
+                                        del menú pero por encima del contenido. */}
+                                    <div className="fixed inset-0 z-sticky" onClick={() => setShowCashActions(false)} />
+                                    <div className="absolute right-0 top-full mt-2 w-64 bg-surface-800 border border-white/[0.08] rounded-card shadow-premium overflow-hidden z-checkout animate-fade-in-up">
+                                        <button
+                                            onClick={() => { setShowCashModal('IN'); setCashCategory(''); setShowCashActions(false); }}
+                                            className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                        >
+                                            <ArrowDownCircle size={16} className="text-brand shrink-0" />
+                                            <span>Entrada de efectivo</span>
+                                            <span className="ml-auto text-[10px] text-slate-500 font-mono">F8</span>
+                                        </button>
+                                        <button
+                                            onClick={() => { setShowCashModal('OUT'); setCashCategory(''); setShowCashActions(false); }}
+                                            className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                        >
+                                            <ArrowUpCircle size={16} className="text-slate-400 shrink-0" />
+                                            <span>Salida de efectivo</span>
+                                            <span className="ml-auto text-[10px] text-slate-500 font-mono">F7</span>
+                                        </button>
+                                        <button
+                                            onClick={() => { setShowAgentModal(true); fetchAgentAgreements(); setShowCashActions(false); }}
+                                            className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                        >
+                                            <Landmark size={16} className="text-slate-400 shrink-0" />
+                                            <span>Agente bancario</span>
+                                        </button>
+                                        {!simpleMode && (
+                                            <button
+                                                onClick={() => { setShowReturnModal(true); setShowCashActions(false); }}
+                                                className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                            >
+                                                <RefreshCw size={16} className="text-slate-400 shrink-0" />
+                                                <span>Devolución de producto</span>
+                                            </button>
+                                        )}
+                                        {!simpleMode && (
+                                            <button
+                                                onClick={() => { setShowHeldCarts(true); setShowCashActions(false); }}
+                                                className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                            >
+                                                <ParkingCircle size={16} className="text-slate-400 shrink-0" />
+                                                <span>Carritos aparcados</span>
+                                                <span className="ml-auto text-[10px] text-slate-500 font-mono">F4</span>
+                                            </button>
+                                        )}
+
+                                        {!simpleMode && (
+                                            <div className="border-t border-white/[0.06]">
+                                                <button
+                                                    onClick={() => setScannerActive(!scannerActive)}
+                                                    className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-300 hover:bg-white/[0.05] transition-colors text-left"
+                                                >
+                                                    <ScanBarcode size={16} className="text-slate-400 shrink-0" />
+                                                    <span>Escáner</span>
+                                                    <span className={`ml-auto text-[11px] font-semibold ${scannerActive ? 'text-brand' : 'text-slate-500'}`}>
+                                                        {scannerActive ? 'Activo' : 'Apagado'}
+                                                    </span>
+                                                </button>
+                                                <button
+                                                    onClick={async () => {
+                                                        if (!thermalConnected) {
+                                                            const success = await thermalPrinter.connect();
+                                                            setThermalConnected(success);
+                                                        }
+                                                        setShowCashActions(false);
+                                                    }}
+                                                    className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-300 hover:bg-white/[0.05] transition-colors text-left"
+                                                >
+                                                    <Printer size={16} className="text-slate-400 shrink-0" />
+                                                    {/* Antes se cortaba como "ar Tiquetera": el texto largo
+                                                        vivía en una fila horizontal con overflow oculto. */}
+                                                    <span className="truncate">Tiquetera</span>
+                                                    <span className={`ml-auto text-[11px] font-semibold shrink-0 ${thermalConnected ? 'text-brand' : 'text-slate-500'}`}>
+                                                        {thermalConnected ? 'Lista' : 'Vincular'}
+                                                    </span>
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     )}
 
-                    {/* 💸 QUICK ACTION: SALIDA DE EFECTIVO */}
-                    {currentShift && (
-                        <button
-                            onClick={() => { setShowCashModal('OUT'); setCashCategory(''); }}
-                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-all shadow-sm"
-                            title="Salida de Efectivo"
-                        >
-                            <ArrowUpCircle size={14} />
-                            Salida
-                        </button>
-                    )}
-
-                    {/* 🏦 QUICK ACTION: AGENTE BANCARIO (corresponsalía) */}
-                    {currentShift && (
-                        <button
-                            onClick={() => { setShowAgentModal(true); fetchAgentAgreements(); }}
-                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-sky-600 text-white hover:bg-sky-700 transition-all shadow-sm"
-                            title="Operación de agente bancario (Banpro, BAC, Lafise, Puntoxpress...)"
-                        >
-                            <Landmark size={14} />
-                            Agente
-                        </button>
-                    )}
-
-                    {/* 🔄 QUICK ACTION: DEVOLUCIÓN */}
-                    {currentShift && !simpleMode && (
-                        <button
-                            onClick={() => setShowReturnModal(true)}
-                            className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-all shadow-sm"
-                            title="Devolución de Producto"
-                        >
-                            <RefreshCw size={14} />
-                            Dev.
-                        </button>
-                    )}
-
-                    {/* Scanner indicator */}
-                    {!simpleMode && <button
-                        onClick={() => setScannerActive(!scannerActive)}
-                        className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full transition-all ${scannerActive
-                            ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'
-                            : 'bg-white/[0.04] text-slate-500 border border-white/[0.06]'
-                            }`}
-                        title={scannerActive ? 'Escáner activo' : 'Escáner desactivado'}
-                    >
-                        <ScanBarcode size={14} />
-                        {scannerActive ? <Volume2 size={12} /> : <VolumeX size={12} />}
-                        <span className="hidden xl:inline">{scannerActive ? 'Escáner ON' : 'Escáner OFF'}</span>
-                    </button>}
-
+                    {/* Cerrar caja: lo único irreversible del header → único uso del rojo. */}
                     {currentShift ? (
-                        <button onClick={() => setShowCloseShift(true)} className="text-xs font-bold text-red-500 hover:bg-red-500/10 px-3 py-1.5 rounded transition-colors flex items-center gap-1">
-                            <Lock size={14} /> CERRAR CAJA
+                        <button onClick={() => setShowCloseShift(true)} className="text-xs font-semibold text-danger hover:bg-danger-soft px-3 h-8 rounded-control transition-colors flex items-center gap-1.5">
+                            <Lock size={14} /> Cerrar caja
                         </button>
                     ) : (
-                        <span className="text-xs font-bold text-red-500 flex items-center gap-1"><AlertTriangle size={14} /> CAJA CERRADA</span>
+                        <span className="text-xs font-semibold text-danger flex items-center gap-1.5"><AlertTriangle size={14} /> CAJA CERRADA</span>
                     )}
                 </div>
             </div>
@@ -1747,7 +1781,7 @@ const POS: React.FC = () => {
                                         {showCashModal === 'IN' ? 'Entrada de Efectivo' : 'Salida de Efectivo'}
                                     </h2>
                                     {showCashModal === 'OUT' && cashBalance !== null && (
-                                        <p className="text-xs text-slate-500">Disponible: <span className="font-bold text-slate-200">C${cashBalance.toFixed(2)}</span></p>
+                                        <p className="text-xs text-slate-500">Disponible: <span className="font-bold text-slate-200">{formatMoney(cashBalance)}</span></p>
                                     )}
                                 </div>
                             </div>
@@ -1951,7 +1985,7 @@ const POS: React.FC = () => {
                                         required
                                     />
                                     {agentOps.find(o => o.value === agentData.operation)?.dir === 'OUT' && cashBalance !== null && agentData.currency === 'NIO' && (
-                                        <p className="text-xs text-slate-500 mt-1">Efectivo disponible en gaveta: <span className="font-bold text-slate-200">C${cashBalance.toFixed(2)}</span></p>
+                                        <p className="text-xs text-slate-500 mt-1">Efectivo disponible en gaveta: <span className="font-bold text-slate-200">{formatMoney(cashBalance)}</span></p>
                                     )}
                                 </div>
 
@@ -1969,7 +2003,7 @@ const POS: React.FC = () => {
                                             required
                                         />
                                         {parseFloat(agentData.amount) > 0 && parseFloat(agentData.exchangeRate) > 0 && (
-                                            <p className="text-xs text-slate-500 mt-1">Equivale a <span className="font-bold text-slate-200">C${(parseFloat(agentData.amount) * parseFloat(agentData.exchangeRate)).toFixed(2)}</span> — así se asienta en tu contabilidad.</p>
+                                            <p className="text-xs text-slate-500 mt-1">Equivale a <span className="font-bold text-slate-200">{formatMoney((parseFloat(agentData.amount) * parseFloat(agentData.exchangeRate)))}</span> — así se asienta en tu contabilidad.</p>
                                         )}
                                     </div>
                                 )}
@@ -2040,7 +2074,7 @@ const POS: React.FC = () => {
                                         </div>
                                     </div>
                                     <span className={`text-sm font-bold ${m.type === 'IN' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                                        {m.type === 'IN' ? '+' : '-'}C${Number(m.amount).toFixed(2)}
+                                        {m.type === 'IN' ? '+' : '-'}{formatMoney(Number(m.amount))}
                                     </span>
                                 </div>
                             ))}
@@ -2075,7 +2109,7 @@ const POS: React.FC = () => {
                                             <div className="flex-1 min-w-0">
                                                 <p className="text-sm font-bold text-slate-100 truncate">{held.label}</p>
                                                 <p className="text-[11px] text-slate-500">
-                                                    {held.items.length} {held.items.length === 1 ? 'item' : 'items'} · C${heldTotal.toFixed(2)} · Hace {minutesAgo < 1 ? '<1' : minutesAgo} min
+                                                    {held.items.length} {held.items.length === 1 ? 'item' : 'items'} · {formatMoney(heldTotal)} · Hace {minutesAgo < 1 ? '<1' : minutesAgo} min
                                                 </p>
                                             </div>
                                             <div className="flex items-center gap-1.5 ml-2">
@@ -2249,11 +2283,11 @@ const POS: React.FC = () => {
                                 <div className="p-8 space-y-4">
                                     <div className="flex justify-between text-sm">
                                         <span className="text-slate-500">Esperado (Sistema)</span>
-                                        <span className="font-mono font-bold">${shiftReport.expected.toFixed(2)}</span>
+                                        <span className="font-bold nx-num">{formatMoney(shiftReport.expected)}</span>
                                     </div>
                                     <div className="flex justify-between text-sm">
                                         <span className="text-slate-500">Declarado (Cajero)</span>
-                                        <span className="font-mono font-bold">${parseFloat(declaredCash).toFixed(2)}</span>
+                                        <span className="font-bold nx-num">{formatMoney(parseFloat(declaredCash))}</span>
                                     </div>
                                     <div className="border-t border-white/[0.06] pt-3 flex justify-between text-base text-slate-100">
                                         <span className="font-bold text-slate-200">Diferencia</span>
@@ -2545,12 +2579,16 @@ const POS: React.FC = () => {
             <div className="w-full flex-1 flex flex-col p-4 lg:p-6 mt-14 overflow-hidden mb-16 lg:mb-0">
                 <div className="mb-4 flex gap-2">
                     <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                        {/* 56px + foco automático al montar: es el primer control de la
+                            pantalla donde el cajero pasa el 80% del turno. Antes había
+                            que hacer clic (o saber F2) antes de poder escanear. */}
                         <input
                             ref={searchRef}
                             type="text"
-                            placeholder="Buscar producto o escanear codigo..."
-                            className="w-full pl-10 pr-4 py-3 rounded-xl border border-white/[0.06] focus:outline-none focus:ring-2 focus:ring-nortex-500 shadow-sm text-slate-100 font-medium"
+                            autoFocus
+                            placeholder="Buscar producto o escanear código..."
+                            className="w-full h-pay pl-11 pr-4 rounded-control bg-surface-900 border border-white/[0.06] focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/50 text-slate-100 font-medium transition-colors"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             onKeyDown={handleSearchKeyDown}
@@ -2597,7 +2635,7 @@ const POS: React.FC = () => {
                                 >
                                     <Package size={24} className="text-blue-400 group-hover:text-blue-300 transition-colors mb-1" />
                                     <span className="text-[10px] font-bold text-slate-300 leading-tight line-clamp-2">{product.name}</span>
-                                    <span className="text-xs font-black text-emerald-400 mt-auto">C${product.price}</span>
+                                    <span className="text-xs font-black text-emerald-400 mt-auto">{formatMoney(product.price)}</span>
                                 </button>
                             ))}
                         </div>
@@ -2606,77 +2644,61 @@ const POS: React.FC = () => {
 
                 {filteredProducts.length === 0 ? (
                     <div className="flex-1 min-h-0 flex items-center justify-center pb-4">
-                        <div className="flex flex-col items-center justify-center max-w-sm text-center px-4">
-                            <div className="w-20 h-20 bg-brand-500/10 rounded-full flex items-center justify-center mb-6 shadow-glow shadow-brand/20">
-                                <Package size={40} className="text-brand-400" />
-                            </div>
-                            {searchTerm ? (
-                                <>
-                                    <h3 className="text-xl font-bold text-white mb-2">Sin resultados</h3>
-                                    <p className="text-slate-400 mb-6">No hay ningún producto que coincida con "{searchTerm}".</p>
-                                    <button
-                                        onClick={() => setSearchTerm('')}
-                                        className="px-6 py-2.5 bg-surface-800 hover:bg-surface-700 text-white font-semibold rounded-xl transition-colors border border-white/[0.08] focus:outline-none focus:ring-2 focus:ring-brand/40"
-                                    >
-                                        Limpiar búsqueda
-                                    </button>
-                                </>
-                            ) : productsError ? (
-                                <>
-                                    <h3 className="text-2xl font-bold text-white mb-3">No pudimos cargar tus productos</h3>
-                                    <p className="text-slate-400 mb-8">Puede ser tu conexión. Tus productos siguen ahí — reintentá.</p>
-                                    <button
-                                        onClick={() => fetchProducts()}
-                                        className="inline-flex items-center justify-center gap-2 px-6 py-4 bg-brand hover:bg-brand-hover text-white font-bold rounded-xl transition-all shadow-glow shadow-brand/30 hover:-translate-y-0.5"
-                                    >
-                                        Reintentar
-                                    </button>
-                                </>
-                            ) : (
-                                <>
-                                    <h3 className="text-2xl font-bold text-white mb-3">Todavía no tenés productos</h3>
-                                    <p className="text-slate-400 mb-8">Agregá tu primer producto para empezar a vender. Toma menos de 10 segundos.</p>
-                                    <Link
-                                        to="/app/inventory"
-                                        className="inline-flex items-center justify-center gap-2 px-6 py-4 bg-brand hover:bg-brand-hover text-white font-bold rounded-xl transition-all shadow-glow shadow-brand/30 hover:-translate-y-0.5"
-                                    >
-                                        <PackagePlus size={20} />
-                                        Agregá tu primer producto
-                                    </Link>
-                                    <div className="mt-4">
-                                        <button
-                                            onClick={seedCatalog}
-                                            disabled={seeding}
-                                            className="text-sm text-slate-300 hover:text-white underline underline-offset-4 disabled:opacity-50 disabled:no-underline transition-colors"
-                                        >
-                                            {seeding ? 'Cargando catálogo…' : 'O cargá un catálogo de ejemplo de tu giro para probar'}
-                                        </button>
-                                        {seedError && <p className="text-red-400 text-sm mt-2">{seedError}</p>}
-                                    </div>
-                                </>
-                            )}
-                        </div>
+                        {searchTerm ? (
+                            <EmptyState
+                                mode="no-results"
+                                title="Sin resultados"
+                                description={`Ningún producto coincide con "${searchTerm}".`}
+                                action={{ label: 'Limpiar búsqueda', onClick: () => setSearchTerm('') }}
+                            />
+                        ) : productsError ? (
+                            <EmptyState
+                                mode="error"
+                                title="No pudimos cargar tus productos"
+                                description="Puede ser tu conexión. Tus productos siguen ahí — reintentá."
+                                action={{ label: 'Reintentar', onClick: () => fetchProducts() }}
+                            />
+                        ) : (
+                            <EmptyState
+                                icon={<Package size={32} />}
+                                title="Todavía no tenés productos"
+                                description="Importá tu lista desde Excel y Nortex arma el catálogo solo. También podés cargar el primero a mano."
+                                action={{ label: 'Agregá tu primer producto', icon: <PackagePlus size={18} />, onClick: () => navigate('/app/inventory') }}
+                                linkAction={{ label: 'O cargá un catálogo de ejemplo de tu giro para probar', onClick: seedCatalog, loading: seeding, loadingLabel: 'Cargando catálogo…' }}
+                                errorText={seedError}
+                            />
+                        )}
                     </div>
                 ) : (
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 overflow-y-auto pb-4 custom-scrollbar flex-1 min-h-0">
+                /* Grilla compacta: la tarjeta era `aspect-square` (≈230px en desktop)
+                   y esperaba una imagen que este componente nunca renderiza — 60%
+                   de vacío y solo ~6 productos visibles. A 96px de alto y hasta 5
+                   columnas entran ~20 sin scrollear, que es lo que hace rápido al
+                   mostrador. */
+                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 overflow-y-auto pb-4 custom-scrollbar flex-1 min-h-0 content-start">
                     {filteredProducts.map(product => (
                         <button
                             key={product.id}
                             onClick={() => { addToCart(product); playBeep(); }}
                             disabled={product.stock === 0}
-                            className="bg-surface-800 hover:bg-surface-700 border border-white/[0.06] rounded-2xl shadow-premium aspect-square p-4 hover:border-brand/40 hover:shadow-glow shadow-brand/10 transition-all text-left flex flex-col justify-between text-slate-100 active:scale-95 disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand/40"
+                            className="h-24 bg-surface-900 hover:bg-surface-800 border border-white/[0.06] rounded-card px-3 py-2 hover:border-brand/50 transition-colors text-left flex flex-col justify-between text-slate-100 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand/40"
                         >
-                            <div className="min-w-0">
-                                <div className="flex justify-between items-start mb-1 gap-1">
-                                    <span className="text-xs font-mono tabular-nums text-slate-400 truncate">{product.sku}</span>
-                                    <span className="text-[10px] px-1.5 py-0.5 bg-white/[0.04] text-slate-500 rounded font-medium flex-shrink-0">{product.category}</span>
-                                </div>
-                                <h3 className="font-semibold text-slate-100 leading-tight mt-1 line-clamp-3">{product.name}</h3>
+                            <div className="min-w-0 flex items-start gap-2">
+                                {/* Miniatura solo si el producto TIENE foto: nunca un hueco vacío. */}
+                                {product.imageUrl && (
+                                    <img
+                                        src={product.imageUrl}
+                                        alt=""
+                                        loading="lazy"
+                                        className="w-10 h-10 rounded-control object-cover border border-white/[0.06] shrink-0"
+                                    />
+                                )}
+                                <h3 className="font-semibold text-sm text-slate-100 leading-tight line-clamp-2 min-w-0">{product.name}</h3>
                             </div>
-                            <div className="mt-3 flex justify-between items-end gap-1">
-                                <span className="text-lg font-bold text-white font-mono tabular-nums">C$ {product.price.toFixed(2)}</span>
-                                <span className={`text-xs px-2 py-1 rounded flex-shrink-0 ${product.stock === 0 ? 'bg-red-500/15 text-red-400 font-bold' : product.stock <= 5 ? 'bg-amber-500/15 text-amber-400' : 'bg-white/[0.04] text-slate-500'}`}>
-                                    {product.stock === 0 ? 'AGOTADO' : `Stock: ${product.stock}`}
+                            <div className="flex justify-between items-end gap-1">
+                                <span className="text-[17px] font-bold text-brand nx-num">{formatMoney(product.price)}</span>
+                                <span className={`text-[11px] px-1.5 py-0.5 rounded-control shrink-0 ${product.stock === 0 ? 'bg-danger-soft text-danger font-bold' : product.stock <= 5 ? 'bg-warning-soft text-amber-400' : 'text-slate-500'}`}>
+                                    {product.stock === 0 ? 'AGOTADO' : product.stock}
                                 </span>
                             </div>
                         </button>
@@ -2685,8 +2707,8 @@ const POS: React.FC = () => {
                 )}
 
                 {/* ⌨️ HOTKEY CHEAT SHEET */}
-                <div className="hidden lg:flex items-center gap-3 mt-2 px-2 py-1.5 text-[10px] text-slate-400 font-mono select-none flex-shrink-0">
-                    <Keyboard size={12} className="text-slate-300" />
+                <div className="hidden md:flex items-center gap-3 mt-2 px-2 py-1.5 text-[11px] text-slate-500 select-none flex-shrink-0">
+                    <Keyboard size={13} className="text-slate-500" />
                     <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F2</span> Buscar
                     <span className="text-slate-300">·</span>
                     <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F4</span> Aparcar
@@ -2714,7 +2736,7 @@ const POS: React.FC = () => {
                         </div>
                         <span>Ver Carrito ({cart.reduce((a, b) => a + b.quantity, 0)})</span>
                     </div>
-                    <span>C$ {grandTotal.toFixed(2)}</span>
+                    <span>{formatMoney(grandTotal)}</span>
                 </button>
             </div>
 
@@ -2790,7 +2812,7 @@ const POS: React.FC = () => {
                                         className="w-full text-left px-4 py-3 hover:bg-indigo-500/10 border-b border-white/[0.04] last:border-0 text-slate-100 transition-colors"
                                     >
                                         <div className="font-bold text-slate-100 text-sm">{c.name}</div>
-                                        <div className="text-[11px] text-slate-500 mt-0.5">Limite: C${c.creditLimit} | Deuda: C${c.currentDebt}</div>
+                                        <div className="text-[11px] text-slate-500 mt-0.5">Límite: {formatMoney(c.creditLimit)} | Deuda: {formatMoney(c.currentDebt)}</div>
                                     </button>
                                 ))
                             )}
@@ -2802,7 +2824,7 @@ const POS: React.FC = () => {
                         <div className={`mt-2.5 p-3 rounded-xl text-xs border-2 ${selectedCustomer.isBlocked ? 'bg-red-500/10 border-red-300 text-red-400' : 'bg-blue-500/10 border-blue-500/20 text-blue-400'}`}>
                             <div className="flex justify-between font-bold mb-1.5">
                                 <span className="flex items-center gap-1">{selectedCustomer.isBlocked ? 'BLOQUEADO' : 'Linea Disponible:'}</span>
-                                {!selectedCustomer.isBlocked && <span className="text-sm">C${(selectedCustomer.creditLimit - selectedCustomer.currentDebt).toFixed(2)}</span>}
+                                {!selectedCustomer.isBlocked && <span className="text-sm">{formatMoney((selectedCustomer.creditLimit - selectedCustomer.currentDebt))}</span>}
                             </div>
                             {!selectedCustomer.isBlocked && (
                                 <div className="w-full bg-blue-200 h-2 rounded-full overflow-hidden">
@@ -2833,7 +2855,7 @@ const POS: React.FC = () => {
                                         <div className="flex-1 min-w-0">
                                             <h4 className="text-sm font-medium text-slate-100 line-clamp-1">{item.name}</h4>
                                             <div className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums flex items-center gap-1.5 flex-wrap">
-                                                <span>C$ {item.price.toFixed(2)} / {(item as CartLine).unit || 'und'}</span>
+                                                <span>{formatMoney(item.price)} / {(item as CartLine).unit || 'und'}</span>
                                                 {tierBadge && (
                                                     <span className="px-1.5 py-0.5 bg-indigo-500/15 text-indigo-400 rounded text-[9px] font-bold tracking-wide">{tierBadge}</span>
                                                 )}
@@ -2859,7 +2881,7 @@ const POS: React.FC = () => {
                                             <button onClick={() => updateQuantity(item.id, 0.5)} className="p-1 hover:bg-white/[0.06] rounded text-slate-300"><Plus size={14} /></button>
                                         </div>
                                         <div className="text-right min-w-[60px]">
-                                            <div className="text-sm font-bold text-white font-mono tabular-nums">C$ {lineTotalD.toFixed(2)}</div>
+                                            <div className="text-sm font-bold text-white font-mono tabular-nums">{formatMoney(lineTotalD)}</div>
                                             <button onClick={() => removeFromCart(item.id)} className="text-red-400 hover:text-red-400 mt-1"><Trash2 size={14} className="ml-auto" /></button>
                                         </div>
                                     </div>
@@ -2876,7 +2898,7 @@ const POS: React.FC = () => {
                                         />
                                         <span className="text-[10px] text-slate-400">% desc</span>
                                         {lineDiscountD.greaterThan(0) && (
-                                            <span className="text-[10px] text-red-500 font-bold ml-auto">-C${toDecimal(item.price).mul(item.quantity).mul(lineDiscountD).div(100).toFixed(2)}</span>
+                                            <span className="text-[10px] text-red-500 font-bold ml-auto">-{formatMoney(toDecimal(item.price).mul(item.quantity).mul(lineDiscountD).div(100))}</span>
                                         )}
                                     </div>
                                 </div>
@@ -2884,7 +2906,9 @@ const POS: React.FC = () => {
                         })
                     )}
                 </div>
-                <div className="p-5 border-t border-white/[0.04] bg-surface-800/40 text-slate-100">
+                {/* Bloque de cobro: sticky al fondo del panel, superficie elevada y
+                    z-checkout. Ningún flotante puede vivir por encima de esto. */}
+                <div className="sticky bottom-0 z-checkout p-5 border-t border-white/[0.06] bg-surface-800 text-slate-100">
                     {/* 💸 Global Discount (oculto en modo simple para no invitar al error) */}
                     {!simpleMode && <div className="flex items-center gap-2 mb-2">
                         <Percent size={14} className="text-slate-400" />
@@ -2900,33 +2924,38 @@ const POS: React.FC = () => {
                         />
                         <span className="text-xs text-slate-400">%</span>
                         {globalDiscountD.greaterThan(0) && (
-                            <span className="text-xs text-red-500 font-bold ml-auto">-C${totalD.mul(globalDiscountD).div(100).toFixed(2)}</span>
+                            <span className="text-xs text-red-500 font-bold ml-auto">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span>
                         )}
                     </div>}
-                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>Subtotal</span><span className="font-mono tabular-nums">C$ {total.toFixed(2)}</span></div>
-                    {globalDiscountD.greaterThan(0) && <div className="flex justify-between text-sm text-red-500 mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="font-mono tabular-nums">-C$ {totalD.mul(globalDiscountD).div(100).toFixed(2)}</span></div>}
-                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>IVA incluido (15%)</span><span className="font-mono tabular-nums">C$ {tax.toFixed(2)}</span></div>
-                    <div className="flex justify-between text-xl font-bold text-white mb-4 pt-2 border-t border-white/[0.06]"><span>Total</span><span className="font-mono tabular-nums">C$ {grandTotal.toFixed(2)}</span></div>
+                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>Subtotal</span><span className="nx-num">{formatMoney(total)}</span></div>
+                    {globalDiscountD.greaterThan(0) && <div className="flex justify-between text-sm text-danger mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="nx-num">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span></div>}
+                    <div className="flex justify-between text-sm text-slate-500 mb-2"><span>IVA incluido (15%)</span><span className="nx-num">{formatMoney(tax)}</span></div>
+                    {/* El TOTAL es la cifra que decide la operación: tamaño display,
+                        en color de texto principal (no coloreado). */}
+                    <div className="flex justify-between items-baseline mb-4 pt-3 border-t border-white/[0.06]">
+                        <span className="nx-label">Total</span>
+                        <span className="nx-total">{formatMoney(grandTotal)}</span>
+                    </div>
 
-                    {/* 💥 MASSIVE PAYMENT BUTTONS - FAT FINGER FRIENDLY */}
+                    {/* Botones de cobro a 56px (--nx-h-pay): objetivo táctil de mostrador. */}
                     <div className="grid grid-cols-2 gap-3 mb-3">
                         <button
                             onClick={() => { setCashReceived(''); setPayingInUSD(false); setUsdAmount(''); setShowCashPreModal(true); }}
                             disabled={!currentShift || processing || cart.length === 0}
-                            className="h-16 bg-gradient-to-b from-green-500 to-green-700 text-white font-black rounded-xl hover:from-green-600 hover:to-green-800 text-xl flex items-center justify-center gap-2.5 shadow-lg hover:shadow-xl active:scale-[0.97] transition-all disabled:opacity-50 disabled:cursor-not-allowed border-2 border-green-400/30"
+                            className="h-pay bg-brand text-[#06231A] font-bold rounded-control hover:bg-brand-hover text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/40"
                         >
-                            <Banknote size={28} strokeWidth={2.5} /> EFECTIVO
+                            <Banknote size={24} strokeWidth={2.5} /> EFECTIVO
                         </button>
                         <button
                             onClick={() => handleCheckout('CREDIT')}
                             disabled={!currentShift || processing || isCreditBlocked}
-                            className={`h-16 font-black rounded-xl text-xl flex items-center justify-center gap-2.5 shadow-lg active:scale-[0.97] transition-all border-2 ${
+                            className={`h-pay font-bold rounded-control text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors border ${
                                 isCreditBlocked
-                                    ? 'bg-white/10 text-slate-500 cursor-not-allowed border-white/[0.06]'
-                                    : 'bg-gradient-to-b from-indigo-500 to-indigo-700 text-white hover:from-indigo-600 hover:to-indigo-800 hover:shadow-xl border-indigo-400/30'
+                                    ? 'bg-transparent text-slate-500 cursor-not-allowed border-white/[0.06]'
+                                    : 'bg-transparent text-slate-100 border-slate-700 hover:bg-white/[0.04]'
                             }`}
                         >
-                            {isCreditBlocked ? <Ban size={28} strokeWidth={2.5} /> : <CreditCard size={28} strokeWidth={2.5} />} CRÉDITO
+                            {isCreditBlocked ? <Ban size={24} strokeWidth={2.5} /> : <CreditCard size={24} strokeWidth={2.5} />} CRÉDITO
                         </button>
                     </div>
                     {isCreditBlocked && selectedCustomer && (
@@ -2992,7 +3021,7 @@ const POS: React.FC = () => {
                                         </div>
                                         <div className="flex justify-between text-xs mb-1">
                                             <span className="text-slate-500">Total:</span>
-                                            <span className="font-bold text-slate-100">C$ {Number(returnSaleData.total).toFixed(2)}</span>
+                                            <span className="font-bold text-slate-100">{formatMoney(Number(returnSaleData.total))}</span>
                                         </div>
                                         <div className="flex justify-between text-xs">
                                             <span className="text-slate-500">Método:</span>
@@ -3008,7 +3037,7 @@ const POS: React.FC = () => {
                                                 <div key={idx} className="flex items-center gap-3 bg-surface-800/40 p-2 rounded-lg border border-white/[0.04]">
                                                     <div className="flex-1 min-w-0">
                                                         <p className="text-xs font-medium text-slate-200 truncate">{returnSaleData.items[idx]?.productId?.slice(0, 8) || item.productId.slice(0, 8)}...</p>
-                                                        <p className="text-[10px] text-slate-400">C$ {item.price.toFixed(2)} · Max: {item.maxQty}</p>
+                                                        <p className="text-[10px] text-slate-400">{formatMoney(item.price)} · Max: {item.maxQty}</p>
                                                     </div>
                                                     <div className="flex items-center gap-1">
                                                         <button
@@ -3044,7 +3073,7 @@ const POS: React.FC = () => {
                                             <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-3">
                                                 <div className="flex justify-between font-bold">
                                                     <span className="text-amber-300">Total Devolución:</span>
-                                                    <span className="text-amber-400">C$ {returnItems.reduce((sum, i) => sum + i.price * i.quantity, 0).toFixed(2)}</span>
+                                                    <span className="text-amber-400">{formatMoney(returnItems.reduce((sum, i) => sum + i.price * i.quantity, 0))}</span>
                                                 </div>
                                             </div>
                                             <button
@@ -3111,25 +3140,25 @@ const POS: React.FC = () => {
                             <div>
                                 <div className="flex justify-between text-xs mb-1">
                                     <span className="text-slate-500">Deuda Actual</span>
-                                    <span className="font-bold text-slate-100">C$ {creditInfo.currentDebt.toFixed(2)}</span>
+                                    <span className="font-bold text-slate-100">{formatMoney(creditInfo.currentDebt)}</span>
                                 </div>
                                 <div className="w-full bg-white/[0.06] h-3 rounded-full overflow-hidden">
                                     <div className={`h-full rounded-full transition-all duration-500 ${creditInfo.color === 'red' ? 'bg-red-500' : creditInfo.color === 'yellow' ? 'bg-amber-400' : 'bg-emerald-500'
                                         }`} style={{ width: `${Math.min(creditInfo.debtPct, 100)}%` }} />
                                 </div>
                                 <div className="flex justify-between text-[10px] mt-1">
-                                    <span className="text-slate-400">Límite: C$ {creditInfo.limit.toFixed(2)}</span>
+                                    <span className="text-slate-400">Límite: {formatMoney(creditInfo.limit)}</span>
                                     <span className="font-bold text-slate-300">{Math.round(creditInfo.debtPct)}%</span>
                                 </div>
                             </div>
 
                             {/* Projected */}
                             <div className="bg-surface-800/40 rounded-lg p-3 border border-white/[0.04]">
-                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+C$ {grandTotal.toFixed(2)}):</p>
+                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+{formatMoney(grandTotal)}):</p>
                                 <div className="flex justify-between">
                                     <span className="text-sm font-bold text-slate-200">Nuevo total:</span>
                                     <span className={`text-sm font-bold ${creditInfo.projectedColor === 'red' ? 'text-red-400' : creditInfo.projectedColor === 'yellow' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                                        C$ {creditInfo.projectedDebt.toFixed(2)} ({Math.round(creditInfo.projectedPct)}%)
+                                        {formatMoney(creditInfo.projectedDebt)} ({Math.round(creditInfo.projectedPct)}%)
                                     </span>
                                 </div>
                             </div>
@@ -3208,7 +3237,7 @@ const POS: React.FC = () => {
                         <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-5 text-center">
                             <Banknote size={32} className="text-white mx-auto mb-2" />
                             <h2 className="text-lg font-bold text-white">Cobro en Efectivo</h2>
-                            <p className="text-emerald-100 text-2xl font-black mt-1">C$ {grandTotal.toFixed(2)}</p>
+                            <p className="text-emerald-100 text-2xl font-black mt-1">{formatMoney(grandTotal)}</p>
                         </div>
                         <div className="p-5 space-y-4">
                             {/* USD toggle */}
@@ -3241,14 +3270,14 @@ const POS: React.FC = () => {
                                             }}
                                         />
                                     </div>
-                                    <div className="text-xs text-blue-400 text-center font-medium">Tasa: 1 USD = C${exchangeRate.toFixed(2)} NIO</div>
+                                    <div className="text-xs text-blue-400 text-center font-medium">Tasa: 1 USD = {formatMoney(exchangeRate)} NIO</div>
                                     {toDecimal(usdAmount).greaterThan(0) && (
                                         <div className="bg-blue-500/10 px-3 py-2 rounded-lg border border-blue-500/20 text-sm">
-                                            <div className="flex justify-between"><span className="text-blue-400">Equivalente NIO:</span><span className="font-bold text-blue-300 font-mono tabular-nums">C$ {toDecimal(usdAmount).mul(exchangeRate).toFixed(2)}</span></div>
+                                            <div className="flex justify-between"><span className="text-blue-400">Equivalente NIO:</span><span className="font-bold text-blue-300 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate))}</span></div>
                                             {toDecimal(usdAmount).mul(exchangeRate).greaterThanOrEqualTo(grandTotal) && (
                                                 <>
-                                                    <div className="flex justify-between mt-1 pt-1 border-t border-blue-500/20"><span className="font-bold text-emerald-400">Cambio NIO:</span><span className="font-bold text-emerald-400 font-mono tabular-nums">C$ {toDecimal(usdAmount).mul(exchangeRate).minus(grandTotal).toFixed(2)}</span></div>
-                                                    <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-emerald-500 text-xs font-mono tabular-nums">$ {toDecimal(usdAmount).minus(toDecimal(grandTotal).div(exchangeRate)).toFixed(2)}</span></div>
+                                                    <div className="flex justify-between mt-1 pt-1 border-t border-blue-500/20"><span className="font-bold text-emerald-400">Cambio NIO:</span><span className="font-bold text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate).minus(grandTotal))}</span></div>
+                                                    <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-brand text-xs nx-num">{formatUSD(toDecimal(usdAmount).minus(toDecimal(grandTotal).div(exchangeRate)))}</span></div>
                                                 </>
                                             )}
                                         </div>
@@ -3259,7 +3288,7 @@ const POS: React.FC = () => {
                                     <div className="flex gap-2 flex-wrap">
                                         <button onClick={() => setCashReceived(grandTotal.toFixed(2))} className="flex-shrink-0 px-3 py-1.5 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-200 font-bold rounded-lg text-xs border border-emerald-500/20 transition-colors">Monto Exacto</button>
                                         {[100, 200, 500, 1000].map(amt => (
-                                            <button key={amt} onClick={() => setCashReceived(amt.toString())} className="flex-shrink-0 px-3 py-1.5 bg-white/[0.04] text-slate-200 hover:bg-white/[0.06] font-bold rounded-lg text-xs border border-white/[0.06] transition-colors">C$ {amt}</button>
+                                            <button key={amt} onClick={() => setCashReceived(amt.toString())} className="flex-shrink-0 px-3 py-1.5 bg-white/[0.04] text-slate-200 hover:bg-white/[0.06] font-bold rounded-lg text-xs border border-white/[0.06] transition-colors">{formatMoney(amt, 'NIO', { decimals: 0 })}</button>
                                         ))}
                                     </div>
                                     <div className="relative">
@@ -3278,13 +3307,13 @@ const POS: React.FC = () => {
                                     {cashReceived !== '' && toDecimal(cashReceived).greaterThanOrEqualTo(grandTotal) && (
                                         <div className="flex justify-between items-center bg-emerald-500/10 px-3 py-2 rounded-lg border border-emerald-500/20">
                                             <span className="font-bold text-emerald-400 text-sm">CAMBIO</span>
-                                            <span className="text-2xl font-black text-emerald-400 font-mono tabular-nums">C$ {toDecimal(cashReceived).minus(grandTotal).toFixed(2)}</span>
+                                            <span className="text-2xl font-black text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(cashReceived).minus(grandTotal))}</span>
                                         </div>
                                     )}
                                     {cashReceived !== '' && toDecimal(cashReceived).lessThan(grandTotal) && (
                                         <div className="flex justify-between items-center bg-red-500/10 px-3 py-2 rounded-lg border border-red-500/20">
                                             <span className="font-bold text-red-400 text-sm">FALTANTE</span>
-                                            <span className="text-xl font-bold text-red-400 font-mono tabular-nums">C$ {toDecimal(grandTotal).minus(toDecimal(cashReceived)).toFixed(2)}</span>
+                                            <span className="text-xl font-bold text-red-400 font-mono tabular-nums">{formatMoney(toDecimal(grandTotal).minus(toDecimal(cashReceived)))}</span>
                                         </div>
                                     )}
                                 </>
@@ -3343,7 +3372,7 @@ const POS: React.FC = () => {
                                 <div className="border-t border-white/[0.06] pt-2 mt-2">
                                     <div className="flex justify-between items-center">
                                         <span className="text-lg font-bold text-slate-100">Total Cobrado</span>
-                                        <span className="text-2xl font-bold text-emerald-400">C$ {completedSale.grandTotal.toFixed(2)}</span>
+                                        <span className="text-2xl font-bold text-emerald-400">{formatMoney(completedSale.grandTotal)}</span>
                                     </div>
                                 </div>
 
@@ -3359,7 +3388,7 @@ const POS: React.FC = () => {
                                         {toDecimal(cashReceived).greaterThanOrEqualTo(completedSale.grandTotal) && (
                                             <div className="flex justify-between items-center bg-emerald-500/10 px-3 py-2 rounded-lg border border-emerald-500/20">
                                                 <span className="font-bold text-emerald-400 text-sm">CAMBIO</span>
-                                                <span className="text-xl font-black text-emerald-400 font-mono tabular-nums">C$ {toDecimal(cashReceived).minus(completedSale.grandTotal).toFixed(2)}</span>
+                                                <span className="text-xl font-black text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(cashReceived).minus(completedSale.grandTotal))}</span>
                                             </div>
                                         )}
                                     </div>
