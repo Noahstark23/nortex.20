@@ -11,7 +11,57 @@
  */
 import { describe, it, expect } from 'vitest';
 import Decimal from 'decimal.js';
-import { formatMoney, formatUSD, formatMoneyShort } from '../utils/money';
+import { formatMoney, formatUSD, formatMoneyShort, toDecimal, sanitizeDecimalInput } from '../utils/money';
+
+// ── Captura de montos ───────────────────────────────────────────────────────
+// Estas dos existían sin ningún test: son la puerta de entrada de TODO monto que
+// el usuario teclea (los inputs de dinero son de texto, no type="number", para
+// esquivar los quirks de float y de separador local).
+
+describe('sanitizeDecimalInput: deja solo dígitos y UN punto', () => {
+    it.each([
+        ['1234', '1234'],
+        ['12.34', '12.34'],
+        ['12.34.56', '12.3456'],   // el segundo punto se descarta, no parte el número
+        ['1.2.3', '1.23'],         // punto en la posición 1: distingue el borde de la condición
+        ['C$ 1.234', '1.234'],     // pegar un monto con símbolo no rompe el input
+        ['abc', ''],
+        ['-50', '50'],             // el signo no se admite acá (hay helper aparte)
+        ['1,234.50', '1234.50'],
+        ['.', '.'],                // estado intermedio válido: el usuario sigue tecleando
+        ['', ''],
+    ])('%p → %p', (input, expected) => {
+        expect(sanitizeDecimalInput(input)).toBe(expected);
+    });
+
+    it('preserva el punto decimal inicial mientras se teclea', () => {
+        expect(sanitizeDecimalInput('.5')).toBe('.5');
+    });
+});
+
+describe('toDecimal: nunca lanza, siempre devuelve un Decimal usable', () => {
+    it.each([
+        ['', '0'],
+        ['.', '0'],
+        ['abc', '0'],
+        [NaN, '0'],
+        ['12.5', '12.5'],
+        [42, '42'],
+        ['-3.25', '-3.25'],
+    ])('%p → %s', (input, expected) => {
+        expect(toDecimal(input as string | number).toString()).toBe(expected);
+    });
+
+    it('devuelve 0 ante Infinity (no un Decimal infinito que envenene un total)', () => {
+        expect(toDecimal(Infinity).toString()).toBe('0');
+        expect(toDecimal(-Infinity).toString()).toBe('0');
+    });
+
+    it('devuelve 0 ante null/undefined sin lanzar', () => {
+        expect(toDecimal(null as unknown as number).toString()).toBe('0');
+        expect(toDecimal(undefined as unknown as number).toString()).toBe('0');
+    });
+});
 
 describe('símbolo por moneda', () => {
     it('córdobas llevan C$ y espacio', () => {

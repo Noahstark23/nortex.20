@@ -11,6 +11,7 @@
   "concurrency": 2,
   "_comment_mutate": "nicaTax arranca en la línea 25 (no en la 39) para incluir IVA_FACTOR = IVA_RATE.plus(1): la aritmética del 15% es el número que esta red debe proteger, y los tests de desglose la matan. NO se incluyen las líneas 20-22 (IVA_RATE, ANTICIPO_IR_RATE, IMI_RATE): son inicialización de nivel módulo — corren al importar, antes de que `perTest` atribuya cobertura, así que sus mutantes sobreviven siempre y darían un rojo permanente sin significado. Además ANTICIPO_IR_RATE e IMI_RATE solo se usan en generateMonthlyReport/generateAnnualIR (con Prisma, sin tests): son ZONA CIEGA declarada, no cobertura falsa.",
   "mutate": [
+    "utils/money.ts",
     "utils/calc-laborales.ts",
     "utils/pricing.ts",
     "backend/services/loanMath.ts",

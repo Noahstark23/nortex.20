@@ -28,6 +28,10 @@ const REPORT = path.join(__dirname, '..', 'reports', 'mutation', 'mutation.json'
 // viene a prevenir; si un refactor legítimo reduce mutantes, ajustá el rango del
 // config primero y recién ahí revisá este piso, explicando el porqué en el PR).
 const PISO_MUTANTES = {
+    // money.ts entró con el rediseño (formatMoney + los parsers de captura):
+    // 60 mutantes, score medido 98.33%. El único sobreviviente es equivalente
+    // (`dot === -1 ? cleaned : …` — con dot=-1 la rama else calcula lo mismo).
+    'utils/money.ts': 60,
     'utils/calc-laborales.ts': 96,
     'utils/pricing.ts': 66,
     'backend/services/loanMath.ts': 12,

@@ -14,10 +14,15 @@ export const sanitizeDecimalInput = (raw: string): string => {
     return dot === -1 ? cleaned : cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, '');
 };
 
-/** Parser tolerante a string vacío/parcial ("", ".") → Decimal(0). Nunca lanza. */
+/**
+ * Parser tolerante a string vacío/parcial ("", ".") → Decimal(0). Nunca lanza.
+ * El catch cubre por sí solo los estados intermedios de tecleo: `new Decimal('')`
+ * y `new Decimal('.')` lanzan, así que no hace falta un ternario que los
+ * intercepte antes (era código muerto — sus mutantes sobrevivían siempre).
+ */
 export const toDecimal = (v: string | number): Decimal => {
     try {
-        const d = new Decimal(v === '' || v === '.' ? 0 : v);
+        const d = new Decimal(v);
         return d.isFinite() ? d : new Decimal(0);
     } catch {
         return new Decimal(0);
@@ -76,7 +81,10 @@ export const formatMoney = (
     // null/undefined/NaN → cero explícito. Un monto vacío en un ERP se muestra
     // como "C$ 0.00", nunca como "-" ni como cadena vacía: el usuario tiene que
     // poder distinguir "no hay plata" de "no cargó".
-    const amount = value === null || value === undefined ? new Decimal(0) : toDecimal(value as string | number);
+    // (No hace falta un guard aparte: toDecimal ya devuelve 0 ante null,
+    // undefined, NaN y strings no numéricos. El guard extra era código muerto
+    // — lo detectó la corrida de mutación: sus mutantes sobrevivían siempre.)
+    const amount = toDecimal(value as string | number);
 
     const isNegative = amount.isNegative() && !amount.isZero();
     const absolute = amount.abs().toFixed(decimals, Decimal.ROUND_HALF_UP);
@@ -100,7 +108,7 @@ export const formatUSD = (value: Decimal.Value | null | undefined, options: Form
  * Solo para lectura visual — nunca para un monto que el usuario deba cuadrar.
  */
 export const formatMoneyShort = (value: Decimal.Value | null | undefined, currency: Currency = 'NIO'): string => {
-    const amount = value === null || value === undefined ? new Decimal(0) : toDecimal(value as string | number);
+    const amount = toDecimal(value as string | number);
     const abs = amount.abs();
     const sign = amount.isNegative() && !amount.isZero() ? '-' : '';
     const symbol = CURRENCY_SYMBOL[currency];
