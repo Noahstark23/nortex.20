@@ -14,6 +14,7 @@
     "utils/money.ts",
     "utils/calc-laborales.ts",
     "utils/pricing.ts",
+    "utils/margen.ts",
     "backend/services/loanMath.ts",
     "backend/services/nicaTax.ts:25-75",
     "backend/services/stockService.ts:56-69",

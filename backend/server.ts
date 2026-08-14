@@ -28,6 +28,9 @@ import { initObservability, errorTelemetry } from './services/observability';
 import { isWhatsAppEnabled } from './services/whatsapp/config';
 import { verifyHandler as whatsappVerify, webhookHandler as whatsappWebhook } from './services/whatsapp/webhook';
 import { encryptField } from './services/crypto';
+// Aritmética PURA (sin Prisma) de los números que el dueño verifica a mano:
+// ganancia bruta del día, retiro seguro y efectivo esperado en la gaveta.
+import { calcularMargenBruto, calcularRetiroSeguro, calcularEfectivoTurno } from '../utils/margen';
 import Stripe from 'stripe';
 import path from 'path';
 import fs from 'fs';
@@ -1175,8 +1178,55 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             .filter((s: any) => new Date(s.createdAt).toDateString() === new Date().toDateString())
             .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
 
-        // 5. Net Profit = Ventas Brutas - Gastos Operativos (resta con decimal.js)
-        const netProfitToday = totalSalesToday.minus(totalExpensesToday);
+        // 5. NX-01 — GANANCIA BRUTA REAL del día (ingreso neto − costo de lo vendido).
+        //
+        // Antes: netProfit = ventas brutas − gastos operativos. Sin gastos cargados
+        // (una cuenta nueva NO tiene gastos), "Ganancia de hoy" era la venta ENTERA:
+        // C$645 de ganancia por una venta de C$645 que costó C$520 (+416%).
+        //
+        // Dos correcciones en una: (a) se resta el COSTO de la mercadería (COGS), y
+        // (b) el ingreso se reconoce NETO de IVA — `Product.price` es precio de
+        // góndola (IVA incluido) y `costAtSale` es neto, así que restarlos directo
+        // inflaba la ganancia otro 15%. Se usa la MISMA fórmula del asiento contable
+        // (ver utils/margen.ts) para que el KPI no discrepe del Estado de Resultados.
+        //
+        // Query acotada al día de hoy y con `select` cerrado (no `include` abierto):
+        // solo el total, la porción exonerada y (costo, cantidad) de cada línea.
+        // VOIDED se excluye igual que en el Libro de Ventas / la declaración DGI.
+        const salesTodayForMargin = await prisma.sale.findMany({
+            where: {
+                tenantId: tenantId,
+                createdAt: { gte: todayStart },
+                status: { not: 'VOIDED' },
+            },
+            select: {
+                total: true,
+                exemptTotal: true,
+                items: { select: { costAtSale: true, quantity: true } },
+            },
+            // Techo duro (guardrail de escalado: nada de findMany sin take sobre
+            // Sale). Una PyME nica hace decenas o cientos de ventas al día; si
+            // algún tenant llega a 5.000 en un día, este KPI hay que moverlo a una
+            // agregación SQL (SUM(costAtSale * quantity)) — Prisma no expresa ese
+            // producto en `aggregate`. Hasta entonces el tope evita que el handler
+            // se coma la memoria del único proceso.
+            take: 5000,
+        });
+
+        const margenHoy = calcularMargenBruto(
+            salesTodayForMargin.map((s: any) => ({
+                total: s.total.toString(),
+                exemptTotal: s.exemptTotal == null ? null : s.exemptTotal.toString(),
+                items: s.items.map((i: any) => ({
+                    costAtSale: i.costAtSale == null ? null : i.costAtSale.toString(),
+                    quantity: i.quantity,
+                })),
+            }))
+        );
+
+        // Utilidad REAL del día: ganancia bruta (ya sin costo de mercadería ni IVA)
+        // menos los gastos operativos del día.
+        const netProfitToday = margenHoy.gananciaBruta.minus(totalExpensesToday);
 
         // 6. Recent Theft/Surplus Alerts (últimos 7 días)
         const recentAlerts = await prisma.auditLog.findMany({
@@ -1212,6 +1262,14 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
         const efectivoTotal = caja.plus(bancos);
         const liquidezLibre = efectivoTotal.minus(cxp);
 
+        // NX-02 — RETIRO SEGURO = max(0, efectivo − cuentas por pagar − reposición).
+        // `liquidezLibre` (efectivo − CxP) NO es lo que el dueño puede sacar: parte
+        // de esa plata corresponde a la mercadería que YA salió y hay que recomprar
+        // para dejar el inventario como estaba. Se descuenta el costo de lo vendido
+        // hoy (costoReposicionPendiente). Sin esto la app le decía al dueño que se
+        // llevara el capital de trabajo.
+        const retiroSeguro = calcularRetiroSeguro(efectivoTotal, cxp, margenHoy.costoVendido);
+
         const survivalData = {
             cajaGeneral: caja.toNumber(),
             bancos: bancos.toNumber(),
@@ -1219,7 +1277,9 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             cuentasPorCobrar: cxc.toNumber(),
             inventario: inventario.toNumber(),
             cuentasPorPagar: cxp.toNumber(),
-            liquidezLibre: liquidezLibre.toDecimalPlaces(4).toNumber()
+            liquidezLibre: liquidezLibre.toDecimalPlaces(4).toNumber(),
+            // NX-02 (NUEVO): lo que SÍ se puede retirar sin descapitalizar el negocio.
+            retiroSeguro: retiroSeguro.toNumber()
         };
 
         res.json({
@@ -1228,7 +1288,16 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             todayStats: {
                 totalSales: totalSalesToday.toNumber(),
                 totalExpenses: totalExpensesToday.toNumber(),
+                // netProfit ahora es utilidad REAL: gananciaBruta − gastos del día
+                // (antes era ventas brutas − gastos, sin costo de mercadería).
                 netProfit: netProfitToday.toNumber(),
+                // NX-01 (NUEVOS): desglose de la ganancia del día.
+                gananciaBruta: margenHoy.gananciaBruta.toNumber(),
+                ingresoNeto: margenHoy.ingresoNeto.toNumber(),
+                costoVendido: margenHoy.costoVendido.toNumber(),
+                // Líneas vendidas sin costo registrado: la ganancia está
+                // SOBREESTIMADA y la UI debe advertirlo.
+                lineasSinCosto: margenHoy.lineasSinCosto,
             },
             alerts: recentAlerts.map((a: any) => ({
                 id: a.id,
@@ -1750,7 +1819,8 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const currentShift = await prisma.shift.findFirst({
-            where: { userId: authReq.userId, status: 'OPEN' },
+            // Capa 1: el tenant sale del JWT y va SIEMPRE en el where.
+            where: { tenantId: authReq.tenantId, userId: authReq.userId, status: 'OPEN' },
         });
         // S36 — el canal se FIJA server-side: este es el endpoint del cajero (POS).
         // Antes `source` salía de req.body, y mandar source:'WHATSAPP'/'PUBLIC_ORDER'
@@ -2088,7 +2158,8 @@ app.get('/api/shifts/current', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const shift = await prisma.shift.findFirst({
-            where: { userId: authReq.userId, status: 'OPEN' },
+            // Capa 1: el tenant sale del JWT y va SIEMPRE en el where.
+            where: { tenantId: authReq.tenantId, userId: authReq.userId, status: 'OPEN' },
             include: {
                 employee: {
                     select: { id: true, firstName: true, lastName: true, role: true }
@@ -2124,7 +2195,8 @@ app.post('/api/shifts/open', shiftOpenLimiter as any, authenticate, validate(Ope
 
         // Verificar que no haya ya una caja abierta
         const existingShift = await prisma.shift.findFirst({
-            where: { userId: authReq.userId, status: 'OPEN' }
+            // Capa 1: el tenant sale del JWT y va SIEMPRE en el where.
+            where: { tenantId: authReq.tenantId, userId: authReq.userId, status: 'OPEN' }
         });
         if (existingShift) {
             return res.status(400).json({ error: 'Ya tienes una caja abierta. Ciérrala primero.' });
@@ -2202,16 +2274,37 @@ app.post('/api/shifts/close', authenticate, validate(CloseShiftSchema), async (r
         // ARQUEO DINÁMICO por moneda (Fase D): las ventas son siempre C$; los
         // movimientos de caja se separan por currency. Antes se sumaban C$ y
         // US$ como si fueran la misma unidad — eso era un bug de arqueo.
-        const cashSales = shift.sales.filter((s: any) => s.paymentMethod === 'CASH').reduce((sum: number, s: any) => sum + Number(s.total), 0);
+        const cashSalesD = shift.sales
+            .filter((s: any) => s.paymentMethod === 'CASH')
+            .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
+        const cashSales = cashSalesD.toNumber();
         const cardSales = shift.sales.filter((s: any) => s.paymentMethod !== 'CASH' && s.paymentMethod !== 'CREDIT').reduce((sum: number, s: any) => sum + Number(s.total), 0);
-        const esNio = (m: any) => (m.currency || 'NIO') === 'NIO';
-        const manualINs = shift.cashMovements.filter((m: any) => m.type === 'IN' && esNio(m)).reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-        const manualOUTs = shift.cashMovements.filter((m: any) => m.type === 'OUT' && esNio(m)).reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-        const usdINs = shift.cashMovements.filter((m: any) => m.type === 'IN' && !esNio(m)).reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-        const usdOUTs = shift.cashMovements.filter((m: any) => m.type === 'OUT' && !esNio(m)).reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-        const expectedCash = Number(shift.initialCash) + cashSales + manualINs - manualOUTs;
-        const difference = Number(declaredCash) - expectedCash;
-        const expectedUsd = Number(shift.initialCashUsd || 0) + usdINs - usdOUTs;
+
+        // NX-03 — el arqueo usa LA MISMA función que la píldora del POS y el
+        // monitor de cajas (`calcularEfectivoTurno`, utils/margen.ts). Antes era
+        // una tercera copia de la fórmula, además sumada en float nativo: el
+        // `difference` que dispara la alerta de robo hormiga no puede arrastrar
+        // error binario ni discrepar de lo que el cajero vio en pantalla.
+        const efectivoArqueo = calcularEfectivoTurno({
+            initialCash: shift.initialCash.toString(),
+            initialCashUsd: shift.initialCashUsd == null ? 0 : shift.initialCashUsd.toString(),
+            cashSales: cashSalesD,
+            movimientos: shift.cashMovements.map((m: any) => ({
+                type: m.type,
+                amount: m.amount.toString(),
+                currency: m.currency,
+                category: m.category,
+            })),
+        });
+        // Manuales y de agente bancario van SEPARADOS en el desglose, pero los dos
+        // están adentro del efectivo esperado (son billetes en la gaveta).
+        const manualINs = efectivoArqueo.desglose.manualINs.toNumber();
+        const manualOUTs = efectivoArqueo.desglose.manualOUTs.toNumber();
+        const agentINs = efectivoArqueo.desglose.agentINs.toNumber();
+        const agentOUTs = efectivoArqueo.desglose.agentOUTs.toNumber();
+        const expectedCash = efectivoArqueo.efectivoNIO.toNumber();
+        const difference = new Decimal(declaredCash).minus(efectivoArqueo.efectivoNIO).toDecimalPlaces(2).toNumber();
+        const expectedUsd = efectivoArqueo.efectivoUSD.toNumber();
         // Si no declaró dólares pero hubo movimiento USD, la diferencia se
         // calcula contra 0 (faltante completo visible, no oculto).
         const declaredUsd = declaredCashUsd !== undefined ? Number(declaredCashUsd) : 0;
@@ -2301,8 +2394,13 @@ app.post('/api/shifts/close', authenticate, validate(CloseShiftSchema), async (r
 
         res.json({
             ...closedShift,
+            // NX-03: `manualINs`/`manualOUTs` son ahora estrictamente MANUALES;
+            // la corresponsalía va aparte (los dos ya están dentro de
+            // `systemExpectedCash`).
             manualINs,
             manualOUTs,
+            agentINs,
+            agentOUTs,
             theftAlert: Math.abs(difference) > theftThreshold
         });
     } catch (e: any) {
@@ -2379,10 +2477,13 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
         });
 
         const liveCards = activeShifts.map((shift: any) => {
-            // Bóveda 1: Ventas (solo efectivo)
-            const cashSales = shift.sales
+            // Bóveda 1: Ventas (solo efectivo) — suma con decimal.js: este número
+            // entra al efectivo esperado de la gaveta y no puede arrastrar error
+            // binario de float.
+            const cashSalesD = shift.sales
                 .filter((s: any) => s.paymentMethod === 'CASH')
-                .reduce((sum: number, s: any) => sum + Number(s.total), 0);
+                .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
+            const cashSales = cashSalesD.toNumber();
             // Ventas tarjeta/transferencia
             const cardSales = shift.sales
                 .filter((s: any) => s.paymentMethod !== 'CASH' && s.paymentMethod !== 'CREDIT')
@@ -2392,41 +2493,32 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
                 .filter((s: any) => s.paymentMethod === 'CREDIT')
                 .reduce((sum: number, s: any) => sum + Number(s.total), 0);
 
-            // Fase D: todas las bóvedas son POR MONEDA — lo de abajo es C$;
-            // los dólares llevan su propio conteo (gaveta USD).
-            const esNioMov = (m: any) => (m.currency || 'NIO') === 'NIO';
+            // NX-03 — EL NÚMERO SAGRADO sale de `calcularEfectivoTurno`
+            // (utils/margen.ts), LA MISMA función que alimenta la píldora del POS
+            // (`/api/cash-movements/balance`). Antes cada endpoint tenía su propia
+            // fórmula sobre los mismos datos: dos verdades para una sola gaveta.
+            //
+            // Sigue siendo POR MONEDA (C$ y US$ separados — sumarlos fue un bug
+            // real) y con la corresponsalía bancaria desglosada: entra al total
+            // (son billetes en la gaveta) pero el dueño la concilia aparte.
+            const efectivoTurno = calcularEfectivoTurno({
+                initialCash: shift.initialCash.toString(),
+                initialCashUsd: shift.initialCashUsd == null ? 0 : shift.initialCashUsd.toString(),
+                cashSales: cashSalesD,
+                movimientos: shift.cashMovements.map((m: any) => ({
+                    type: m.type,
+                    amount: m.amount.toString(),
+                    currency: m.currency,
+                    category: m.category,
+                })),
+            });
 
-            // Bóveda 4 (Fase B): operaciones de agente bancario (corresponsalía)
-            // separadas de los movimientos manuales — es plata del banco, no del
-            // negocio, y el dueño necesita verla aparte para conciliar.
-            const agentINs = shift.cashMovements
-                .filter((m: any) => m.type === 'IN' && m.category === 'AGENTE_BANCARIO' && esNioMov(m))
-                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-            const agentOUTs = shift.cashMovements
-                .filter((m: any) => m.type === 'OUT' && m.category === 'AGENTE_BANCARIO' && esNioMov(m))
-                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-
-            // Bóveda 2: Entradas manuales (sin agente)
-            const manualINs = shift.cashMovements
-                .filter((m: any) => m.type === 'IN' && m.category !== 'AGENTE_BANCARIO' && esNioMov(m))
-                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-
-            // Bóveda 3: Salidas manuales (sin agente)
-            const manualOUTs = shift.cashMovements
-                .filter((m: any) => m.type === 'OUT' && m.category !== 'AGENTE_BANCARIO' && esNioMov(m))
-                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-
-            // Gaveta USD (Fase D): fondo + entradas − salidas en dólares.
-            const usdINs = shift.cashMovements
-                .filter((m: any) => m.type === 'IN' && !esNioMov(m))
-                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-            const usdOUTs = shift.cashMovements
-                .filter((m: any) => m.type === 'OUT' && !esNioMov(m))
-                .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-            const estimatedPhysicalUsd = Number(shift.initialCashUsd || 0) + usdINs - usdOUTs;
-
-            // EL NÚMERO SAGRADO (C$): manual + agente = todos los movimientos NIO.
-            const estimatedPhysicalCash = Number(shift.initialCash) + cashSales + manualINs + agentINs - manualOUTs - agentOUTs;
+            const agentINs = efectivoTurno.desglose.agentINs.toNumber();
+            const agentOUTs = efectivoTurno.desglose.agentOUTs.toNumber();
+            const manualINs = efectivoTurno.desglose.manualINs.toNumber();
+            const manualOUTs = efectivoTurno.desglose.manualOUTs.toNumber();
+            const estimatedPhysicalUsd = efectivoTurno.efectivoUSD.toNumber();
+            const estimatedPhysicalCash = efectivoTurno.efectivoNIO.toNumber();
 
             // Última venta
             const sortedSales = shift.sales.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -2548,16 +2640,23 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
 
     try {
         // Validaciones de formato ya realizadas por Zod (type, amount, category).
-        // A. VALIDAR CAJA ABIERTA
-        const currentShift = await prisma.shift.findFirst({
-            where: { userId: authReq.userId, status: 'OPEN' },
-            include: {
-                sales: true,
-                cashMovements: { where: { isVoided: false } }
-            }
-        });
+        // A. VALIDAR CAJA ABIERTA — MISMO turno que ve la píldora del POS
+        // (`resolverTurnoAbierto`, NX-03): si la caja donde está parado el cajero
+        // la abrió otro usuario, antes el POS mostraba el saldo pero registrar un
+        // movimiento respondía "No hay caja abierta". El `tenantId` del JWT va en
+        // el where (antes se buscaba por `userId` suelto).
+        const { shift: turnoAbierto } = await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!);
+        const currentShift = turnoAbierto
+            ? await prisma.shift.findFirst({
+                where: { id: turnoAbierto.id, tenantId: authReq.tenantId },
+                include: {
+                    sales: { select: { total: true, paymentMethod: true } },
+                    cashMovements: { where: { isVoided: false } }
+                }
+            })
+            : null;
         if (!currentShift) {
-            return res.status(400).json({ error: 'No hay caja abierta. Abre una caja primero.' });
+            return res.status(400).json({ error: 'No hay caja abierta. Abrí una caja primero.' });
         }
 
         // B. VALIDACIÓN DE SALDO PARA SALIDAS — CERO TOLERANCIA A SALIDAS FANTASMA
@@ -2723,92 +2822,192 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
     }
 });
 
-// GET /api/cash-movements — Listar movimientos del turno actual o de un turno específico
+/**
+ * NX-03 — Turno abierto sobre el que trabaja el cajero.
+ *
+ * Preferimos el turno que abrió ESTE usuario; si no tiene uno propio pero la
+ * caja del tenant está abierta (la abrió otro cajero, el dueño, o el turno
+ * quedó a nombre de quien hizo el arqueo), devolvemos ESE. Antes se buscaba
+ * solo por `userId` y el POS mostraba C$0.00 / "Sin movimientos" con plata real
+ * en la gaveta: el cajero tiene que ver la plata de la caja donde está parado.
+ *
+ * El `tenantId` sale del JWT (nunca del body/query) y va SIEMPRE en el where:
+ * antes la búsqueda por `userId` suelto no lo llevaba.
+ */
+async function resolverTurnoAbierto(tenantId: string, userId: string) {
+    const propio = await prisma.shift.findFirst({
+        where: { tenantId, userId, status: 'OPEN' },
+        orderBy: { startTime: 'desc' },
+    });
+    if (propio) return { shift: propio, esTurnoPropio: true };
+
+    const delTenant = await prisma.shift.findFirst({
+        where: { tenantId, status: 'OPEN' },
+        orderBy: { startTime: 'desc' },
+        include: { user: { select: { id: true, name: true } } },
+    });
+    if (delTenant) return { shift: delTenant, esTurnoPropio: false };
+
+    return { shift: null, esTurnoPropio: false };
+}
+
+/**
+ * GET /api/cash-movements — Movimientos del turno actual (o de `?shiftId=`).
+ *
+ * CONTRATO (para el frontend):
+ *   Sigue devolviendo un ARRAY, con la misma forma de `CashMovement` de siempre.
+ *   NUEVO: además de los movimientos manuales, el array incluye las VENTAS EN
+ *   EFECTIVO del turno como filas sintéticas — el POS decía "Sin movimientos"
+ *   después de vender, aunque la gaveta había subido. Cada fila trae:
+ *     · `origen`: 'MOVIMIENTO' (registro manual, anulable) | 'VENTA' (venta en
+ *        efectivo, sintética: NO existe en la tabla CashMovement).
+ *     · Las ventas usan `id` = `venta:<saleId>`, `type` = 'IN',
+ *       `category` = 'VENTA_EFECTIVO', `isVoided` = false.
+ *   Las filas con `origen === 'VENTA'` NO se pueden anular (no hay movimiento
+ *   que anular): la UI no debe ofrecer esa acción sobre ellas.
+ *   Todo viene ordenado por `createdAt` descendente.
+ */
 app.get('/api/cash-movements', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { shiftId } = req.query;
 
     try {
-        let whereClause: any = { tenantId: authReq.tenantId };
+        let turnoId: string;
 
         if (shiftId) {
-            whereClause.shiftId = shiftId;
+            // El where lleva tenantId: un shiftId de otro tenant devuelve vacío.
+            turnoId = String(shiftId);
         } else {
-            // Default: turno actual abierto del usuario
-            const currentShift = await prisma.shift.findFirst({
-                where: { userId: authReq.userId, status: 'OPEN' }
-            });
-            if (!currentShift) {
+            const { shift } = await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!);
+            if (!shift) {
                 return res.json([]);
             }
-            whereClause.shiftId = currentShift.id;
+            turnoId = shift.id;
         }
 
-        const movements = await prisma.cashMovement.findMany({
-            where: whereClause,
-            orderBy: { createdAt: 'desc' },
-            include: {
-                user: { select: { id: true, name: true } }
-            }
-        });
+        const [movements, cashSales] = await Promise.all([
+            prisma.cashMovement.findMany({
+                where: { tenantId: authReq.tenantId, shiftId: turnoId },
+                orderBy: { createdAt: 'desc' },
+                take: 200,
+                include: {
+                    user: { select: { id: true, name: true } }
+                }
+            }),
+            prisma.sale.findMany({
+                where: { tenantId: authReq.tenantId, shiftId: turnoId, paymentMethod: 'CASH' },
+                orderBy: { createdAt: 'desc' },
+                take: 200,
+                select: { id: true, total: true, invoiceNumber: true, createdAt: true },
+            }),
+        ]);
 
-        res.json(movements);
+        const ventasComoMovimientos = cashSales.map((s: any) => ({
+            id: `venta:${s.id}`,
+            saleId: s.id,
+            tenantId: authReq.tenantId,
+            shiftId: turnoId,
+            type: 'IN',
+            amount: new Decimal(s.total.toString()).toNumber(),
+            currency: 'NIO',
+            category: 'VENTA_EFECTIVO',
+            description: s.invoiceNumber ? `Venta #${s.invoiceNumber}` : 'Venta en efectivo',
+            isVoided: false,
+            createdAt: s.createdAt,
+            origen: 'VENTA' as const,
+        }));
+
+        const listado = [
+            ...movements.map((m: any) => ({ ...m, origen: 'MOVIMIENTO' as const })),
+            ...ventasComoMovimientos,
+        ].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+        res.json(listado);
     } catch (error) {
         console.error('Error fetching cash movements:', error);
         res.status(500).json({ error: 'Error obteniendo movimientos de caja' });
     }
 });
 
-// GET /api/cash-movements/balance — Saldo de efectivo en caja en tiempo real
+/**
+ * GET /api/cash-movements/balance — Efectivo en la gaveta, en vivo (píldora del POS).
+ *
+ * NX-03: usa `calcularEfectivoTurno` (utils/margen.ts), LA MISMA función del
+ * monitor de cajas ("Efectivo en Gaveta"). Antes cada endpoint tenía su fórmula
+ * y podían dar números distintos para la misma gaveta.
+ *
+ * CONTRATO (para el frontend) — se conservan `balance`, `balanceUsd`,
+ * `hasOpenShift` y `breakdown` con sus claves de siempre. NUEVO:
+ *   · `shiftId`: string — turno al que corresponde el saldo.
+ *   · `esTurnoPropio`: boolean — false cuando el turno abierto lo abrió OTRO
+ *     usuario del tenant (antes eso devolvía `hasOpenShift:false` y C$0.00).
+ *   · `turnoDe`: string | null — nombre de quien abrió el turno (si no es propio).
+ *   · `breakdown.agentINs` / `breakdown.agentOUTs`: number — corresponsalía
+ *     bancaria, ya incluida en `balance` pero desglosada para conciliar.
+ *   · `breakdown.totalINs` / `breakdown.totalOUTs`: number — manual + agente
+ *     (es el valor que ANTES traían `manualINs`/`manualOUTs`; ahora esas dos
+ *     claves son estrictamente MANUALES, igual que en el monitor de cajas).
+ */
 app.get('/api/cash-movements/balance', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
 
     try {
-        const currentShift = await prisma.shift.findFirst({
-            where: { userId: authReq.userId, status: 'OPEN' },
-            include: {
-                sales: { select: { total: true, paymentMethod: true } },
-                cashMovements: { where: { isVoided: false } }
-            }
-        });
+        const { shift, esTurnoPropio } = await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!);
 
-        if (!currentShift) {
-            return res.json({ balance: 0, hasOpenShift: false });
+        if (!shift) {
+            return res.json({ balance: 0, balanceUsd: 0, hasOpenShift: false, shiftId: null, esTurnoPropio: false, turnoDe: null });
         }
 
-        // Fase D: saldo POR MONEDA — C$ y US$ son unidades distintas.
-        const esNio = (m: any) => (m.currency || 'NIO') === 'NIO';
-        const cashSales = currentShift.sales
-            .filter((s: any) => s.paymentMethod === 'CASH')
-            .reduce((sum: number, s: any) => sum + Number(s.total), 0);
-        const totalINs = currentShift.cashMovements
-            .filter((m: any) => m.type === 'IN' && esNio(m))
-            .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-        const totalOUTs = currentShift.cashMovements
-            .filter((m: any) => m.type === 'OUT' && esNio(m))
-            .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-        const usdINs = currentShift.cashMovements
-            .filter((m: any) => m.type === 'IN' && !esNio(m))
-            .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
-        const usdOUTs = currentShift.cashMovements
-            .filter((m: any) => m.type === 'OUT' && !esNio(m))
-            .reduce((sum: number, m: any) => sum + Number(m.amount), 0);
+        // Todo se AGREGA en la BD, no se traen filas para sumarlas en JS: las
+        // ventas con `aggregate` y los movimientos con `groupBy` por
+        // (tipo, moneda, categoría) — a lo sumo un puñado de filas, sin `take`
+        // que pueda truncar la gaveta (truncar acá sería mostrar plata que no es).
+        const [ventasEfectivo, gruposMovimientos] = await Promise.all([
+            prisma.sale.aggregate({
+                where: { tenantId: authReq.tenantId, shiftId: shift.id, paymentMethod: 'CASH' },
+                _sum: { total: true },
+            }),
+            prisma.cashMovement.groupBy({
+                by: ['type', 'currency', 'category'],
+                where: { tenantId: authReq.tenantId, shiftId: shift.id, isVoided: false },
+                _sum: { amount: true },
+            }),
+        ]);
 
-        const balance = Number(currentShift.initialCash) + cashSales + totalINs - totalOUTs;
-        const balanceUsd = Number(currentShift.initialCashUsd || 0) + usdINs - usdOUTs;
+        const efectivo = calcularEfectivoTurno({
+            initialCash: shift.initialCash.toString(),
+            initialCashUsd: shift.initialCashUsd == null ? 0 : shift.initialCashUsd.toString(),
+            cashSales: ventasEfectivo._sum.total == null ? 0 : ventasEfectivo._sum.total.toString(),
+            // Cada grupo entra como UN movimiento con el monto ya sumado: la
+            // fórmula es una suma por bucket, así que agregar antes da idéntico.
+            movimientos: gruposMovimientos.map((g: any) => ({
+                type: g.type,
+                amount: g._sum.amount == null ? 0 : g._sum.amount.toString(),
+                currency: g.currency,
+                category: g.category,
+            })),
+        });
 
+        const d = efectivo.desglose;
         res.json({
-            balance,
-            balanceUsd,
+            balance: efectivo.efectivoNIO.toNumber(),
+            balanceUsd: efectivo.efectivoUSD.toNumber(),
             hasOpenShift: true,
+            shiftId: shift.id,
+            esTurnoPropio,
+            turnoDe: esTurnoPropio ? null : ((shift as any).user?.name ?? null),
             breakdown: {
-                initialCash: Number(currentShift.initialCash),
-                cashSales,
-                manualINs: totalINs,
-                manualOUTs: totalOUTs,
-                initialCashUsd: Number(currentShift.initialCashUsd || 0),
-                usdINs,
-                usdOUTs
+                initialCash: d.initialCash.toNumber(),
+                cashSales: d.cashSales.toNumber(),
+                manualINs: d.manualINs.toNumber(),
+                manualOUTs: d.manualOUTs.toNumber(),
+                agentINs: d.agentINs.toNumber(),
+                agentOUTs: d.agentOUTs.toNumber(),
+                totalINs: d.manualINs.plus(d.agentINs).toNumber(),
+                totalOUTs: d.manualOUTs.plus(d.agentOUTs).toNumber(),
+                initialCashUsd: d.initialCashUsd.toNumber(),
+                usdINs: d.usdINs.toNumber(),
+                usdOUTs: d.usdOUTs.toNumber()
             }
         });
     } catch (error) {
