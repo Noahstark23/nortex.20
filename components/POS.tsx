@@ -322,6 +322,11 @@ const POS: React.FC = () => {
 
     // SHIFT STATE
     const [currentShift, setCurrentShift] = useState<Shift | null>(null);
+    // Traspaso de caja: hay turno abierto, pero a nombre de otra persona. Se ve
+    // el efectivo (la plata está físicamente ahí) y NO se puede cobrar hasta
+    // tomarla, para que el arqueo tenga un responsable único.
+    const turnoAjeno = !!currentShift && currentShift.esTurnoPropio === false;
+    const [tomandoTurno, setTomandoTurno] = useState(false);
     const [showOpenShift, setShowOpenShift] = useState(false);
     const [showCloseShift, setShowCloseShift] = useState(false);
     // Fondo inicial: valor REAL '0', no un placeholder "0.00" que parece cargado
@@ -605,6 +610,36 @@ const POS: React.FC = () => {
         initPOS();
         fetchProducts();
     }, []);
+
+    /**
+     * Traspaso de caja. El caso real: el dueño abre a las 7 y a las 2 entra el
+     * cajero del segundo turno. Antes había dos salidas malas — cerrar y reabrir
+     * la caja (partiendo el arqueo del día) o vender con el turno del dueño
+     * (dejando el faltante a nombre de quien no estaba). El traspaso reasigna el
+     * turno sin cerrarlo y queda registrado en AuditLog.
+     */
+    const tomarTurno = useCallback(async () => {
+        if (!currentShift) return;
+        setTomandoTurno(true);
+        try {
+            const res = await fetch(`/api/shifts/${currentShift.id}/tomar`, { method: 'POST', headers });
+            const data = await res.json();
+            if (!res.ok) {
+                alert(data?.error || 'No pudimos tomar la caja.');
+                return;
+            }
+            // Relee el turno: ahora vuelve con esTurnoPropio true y el cobro se habilita.
+            const verif = await fetch(`/api/shifts/current?t=${Date.now()}`, { headers });
+            if (verif.ok) {
+                const turno = await verif.json();
+                if (turno) setCurrentShift(turno);
+            }
+        } catch {
+            alert('No pudimos tomar la caja. Revisá tu conexión.');
+        } finally {
+            setTomandoTurno(false);
+        }
+    }, [currentShift, headers]);
 
     // ==========================================
     // 💰 CASH MOVEMENT FUNCTIONS
@@ -1514,6 +1549,10 @@ const POS: React.FC = () => {
 
     const handleCheckout = async (method: 'CASH' | 'CARD' | 'QR' | 'CREDIT') => {
         if (!currentShift) { setShowOpenShift(true); return; }
+        // La caja está abierta pero a nombre de otro: cobrar acá dejaría el
+        // faltante del arqueo a nombre de quien no estaba en el mostrador.
+        // Se toma la caja primero (queda en AuditLog) y recién ahí se cobra.
+        if (turnoAjeno) { await tomarTurno(); return; }
         if (cart.length === 0) return;
 
         // Front-end Block (skip if override authorized)
@@ -3259,6 +3298,21 @@ const POS: React.FC = () => {
                     )}
                     {!currentShift && (
                         <p className="text-xs text-center text-slate-400 mt-2">Podés mirar y armar el carrito; para cobrar hay que abrir la caja.</p>
+                    )}
+                    {turnoAjeno && (
+                        <div className="mt-2 text-center">
+                            <p className="text-xs text-slate-400">
+                                Esta caja la abrió <span className="text-slate-200 font-semibold">{currentShift?.turnoDe ?? 'otra persona'}</span>.
+                                Tomá la caja para cobrar con tu nombre.
+                            </p>
+                            <button
+                                onClick={tomarTurno}
+                                disabled={tomandoTurno}
+                                className="mt-2 h-touch px-5 rounded-control border border-slate-700 text-slate-100 font-semibold hover:bg-white/[0.04] transition-colors disabled:opacity-45"
+                            >
+                                {tomandoTurno ? 'Tomando la caja…' : 'Tomar la caja'}
+                            </button>
+                        </div>
                     )}
                 </div>
             </div>

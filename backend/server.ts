@@ -2154,20 +2154,137 @@ app.post('/api/payments', authenticate, validate(CreatePaymentSchema), async (re
 
 // --- OPERATIONAL CONTROL (SHIFTS & AUDITS) - Preserved ---
 // (Preserved endpoints for shifts and audits)
+/**
+ * GET /api/shifts/current — Turno de la caja donde está parado el cajero.
+ *
+ * CONTRATO: sigue devolviendo el objeto Shift (o null), con la misma forma de
+ * siempre. NUEVO: dos campos al lado —`esTurnoPropio` y `turnoDe`—.
+ *
+ * Por qué devuelve también el turno AJENO: antes solo buscaba el turno del
+ * userId del token, así que cuando la caja la había abierto el dueño o el
+ * cajero del turno anterior, el POS se comportaba como si no hubiera caja
+ * abierta —C$0.00 y botones muertos— mientras la gaveta tenía plata real.
+ *
+ * Pero devolverlo NO habilita a vender: `POST /api/sales` sigue exigiendo turno
+ * PROPIO. Con `esTurnoPropio: false` el POS muestra de quién es la caja y ofrece
+ * tomarla (`POST /api/shifts/:id/tomar`). Habilitar la venta directamente contra
+ * el turno de otro dejaría el arqueo sin responsable: cuando el efectivo no
+ * cuadra, tiene que haber una sola persona a quien preguntarle.
+ */
 app.get('/api/shifts/current', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        const shift = await prisma.shift.findFirst({
-            // Capa 1: el tenant sale del JWT y va SIEMPRE en el where.
-            where: { tenantId: authReq.tenantId, userId: authReq.userId, status: 'OPEN' },
+        const { shift, esTurnoPropio } = await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!);
+        if (!shift) return res.json(null);
+
+        // El `include` del turno propio (empleado del PIN) se conserva.
+        const completo = await prisma.shift.findFirst({
+            where: { id: shift.id, tenantId: authReq.tenantId! },
             include: {
-                employee: {
-                    select: { id: true, firstName: true, lastName: true, role: true }
-                }
-            }
+                employee: { select: { id: true, firstName: true, lastName: true, role: true } },
+                user: { select: { id: true, name: true } },
+            },
         });
-        res.json(shift);
+
+        res.json({
+            ...completo,
+            esTurnoPropio,
+            turnoDe: esTurnoPropio ? null : (completo as any)?.user?.name ?? null,
+        });
     } catch (error) { res.status(500).json({ error: 'Error' }); }
+});
+
+/**
+ * POST /api/shifts/:id/tomar — Traspaso explícito de la caja.
+ *
+ * El caso real: el dueño abre la caja a las 7, y a las 2 entra el cajero del
+ * segundo turno. Antes tenía dos salidas malas: cerrar y reabrir la caja
+ * (partiendo el arqueo del día y perdiendo el fondo inicial real), o vender con
+ * el turno del dueño (dejando el faltante a nombre de quien no estaba).
+ *
+ * El traspaso reasigna el turno SIN cerrarlo: el efectivo, los movimientos y el
+ * fondo inicial siguen siendo los mismos, y el arqueo al cierre queda a nombre
+ * de quien tiene la caja en ese momento. Queda en AuditLog dentro de la misma
+ * transacción (Capa 3), con el efectivo esperado AL MOMENTO del traspaso: es el
+ * corte que permite, si al cierre no cuadra, saber en manos de quién se abrió
+ * el faltante.
+ */
+app.post('/api/shifts/:id/tomar', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', 'CASHIER']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const { id } = req.params;
+
+        // Capa 1: propiedad verificada por tenant ANTES de tocar nada.
+        const turno = await prisma.shift.findFirst({
+            where: { id, tenantId: authReq.tenantId!, status: 'OPEN' },
+            include: {
+                user: { select: { id: true, name: true } },
+                cashMovements: true,
+            },
+        });
+        if (!turno) return res.status(404).json({ error: 'No encontramos esa caja abierta.' });
+
+        // Idempotente: si ya es tuyo, no hay nada que traspasar.
+        if (turno.userId === authReq.userId) {
+            return res.json({ ok: true, yaEraPropio: true, shiftId: turno.id });
+        }
+
+        const ventasEfectivo = await prisma.sale.aggregate({
+            where: { tenantId: authReq.tenantId!, shiftId: turno.id, paymentMethod: 'CASH' },
+            _sum: { total: true },
+        });
+        const efectivo = calcularEfectivoTurno({
+            initialCash: turno.initialCash.toString(),
+            initialCashUsd: turno.initialCashUsd == null ? 0 : turno.initialCashUsd.toString(),
+            cashSales: ventasEfectivo._sum.total?.toString() ?? 0,
+            movimientos: turno.cashMovements.map((m: any) => ({
+                type: m.type,
+                amount: m.amount.toString(),
+                currency: m.currency,
+                category: m.category,
+                isVoided: m.isVoided,
+            })),
+        });
+
+        const entregaDe = turno.user?.name ?? turno.userId;
+
+        await prisma.$transaction(async (tx: any) => {
+            await tx.shift.update({
+                where: { id: turno.id },
+                data: { userId: authReq.userId! },
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    userId: authReq.userId,
+                    action: 'SHIFT_HANDOVER',
+                    details: JSON.stringify({
+                        shiftId: turno.id,
+                        entregaUserId: turno.userId,
+                        entregaNombre: entregaDe,
+                        recibeUserId: authReq.userId,
+                        // Corte del efectivo al momento del traspaso: si al cierre
+                        // no cuadra, esto dice con cuánto se recibió la caja.
+                        efectivoAlTraspaso: efectivo.efectivoNIO.toString(),
+                        efectivoUsdAlTraspaso: efectivo.efectivoUSD.toString(),
+                        fondoInicial: turno.initialCash.toString(),
+                    }),
+                },
+            });
+        });
+
+        res.json({
+            ok: true,
+            shiftId: turno.id,
+            entregaDe,
+            efectivoRecibido: efectivo.efectivoNIO.toNumber(),
+            efectivoUsdRecibido: efectivo.efectivoUSD.toNumber(),
+        });
+    } catch (error) {
+        console.error('Error tomando el turno:', error);
+        res.status(500).json({ error: 'No pudimos tomar la caja. Intentá de nuevo.' });
+    }
 });
 // Rate limit estricto para apertura de caja: el PIN de 4 dígitos se coteja contra la
 // BD, así que sin límite dedicado se puede enumerar el PIN de un compañero bajo el
