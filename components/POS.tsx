@@ -326,6 +326,9 @@ const POS: React.FC = () => {
     // arqueo con mercadería en el limbo. O entra, o se aparca, o se descarta —
     // y eso lo decide el cajero, no nosotros.
     const [bloqueoCierre, setBloqueoCierre] = useState(false);
+    // Línea recién quitada del carrito, con su posición para poder devolverla
+    // donde estaba (P0-4). Se limpia sola a los 5 segundos.
+    const [quitadoReciente, setQuitadoReciente] = useState<{ item: CartItem; posicion: number } | null>(null);
 
     // 🅿️ PARQUEO DE VENTAS STATE
     // Antes era memoria pura: F4 "Aparcar" perdía todo con F5, o sea que el
@@ -1327,6 +1330,39 @@ const POS: React.FC = () => {
     }, [products, addToCart, scannerActive]);
 
     const removeFromCart = (id: string) => setCart(prev => prev.filter(item => item.id !== id));
+
+    // ── Quitar con deshacer (P0-4) ─────────────────────────────────────────
+    // Borrar una línea no pedía confirmación ni ofrecía vuelta atrás, y el
+    // botón medía 14px. Ahora el botón es de 44px —o sea que se acierta— y si
+    // igual se toca de más, hay 5 segundos para recuperarla. Confirmar cada
+    // borrado sería peor: en un mostrador, un diálogo por línea se convierte en
+    // ruido que se acepta sin leer.
+    const quitarLinea = useCallback((id: string) => {
+        const posicion = cart.findIndex(i => i.id === id);
+        if (posicion === -1) return;
+        setQuitadoReciente({ item: cart[posicion], posicion });
+        setCart(prev => prev.filter(i => i.id !== id));
+    }, [cart]);
+
+    const deshacerQuitado = useCallback(() => {
+        if (!quitadoReciente) return;
+        setCart(prev => {
+            // Si el producto volvió al carrito por otro camino (escáner, grilla)
+            // NO se duplica la línea: deshacer no puede inventar mercadería.
+            if (prev.some(i => i.id === quitadoReciente.item.id)) return prev;
+            const copia = [...prev];
+            copia.splice(Math.min(quitadoReciente.posicion, copia.length), 0, quitadoReciente.item);
+            return copia;
+        });
+        setQuitadoReciente(null);
+    }, [quitadoReciente]);
+
+    // La ventana de deshacer se cierra sola.
+    useEffect(() => {
+        if (!quitadoReciente) return;
+        const t = setTimeout(() => setQuitadoReciente(null), 5000);
+        return () => clearTimeout(t);
+    }, [quitadoReciente]);
 
     // Reprecia una línea al cambiar su cantidad (mayoreo entra/sale según el umbral).
     const repricedLine = (item: CartItem, newQty: number): CartItem => {
@@ -3571,10 +3607,25 @@ const POS: React.FC = () => {
                             const packLabel = ((item as CartLine).packUnit || 'caja').toLowerCase();
                             return (
                                 <div key={item.id} className="bg-surface-800/40 p-3 rounded-lg border border-white/[0.04] text-slate-100">
-                                    <div className="flex items-center gap-3">
+                                    {/* FILA 1 · El nombre, a ancho completo (P0-3).
+                                        Antes era `line-clamp-1` dentro de una columna de
+                                        110px y sin `title`: "1 bolson de ranchita chile"
+                                        se leía "1 bolson de..." y no había ni tooltip.
+                                        Confirmar el artículo en voz alta con el cliente es
+                                        el control de calidad de una venta; acá era
+                                        imposible. El alto sobra: el panel estaba vacío de
+                                        la tercera fila para abajo. */}
+                                    <h4
+                                        title={item.name}
+                                        className="text-[15px] font-semibold text-slate-100 leading-snug line-clamp-2"
+                                    >
+                                        {item.name}
+                                    </h4>
+
+                                    {/* FILA 2 · precio · cantidad · total · quitar */}
+                                    <div className="flex items-center gap-2 mt-2">
                                         <div className="flex-1 min-w-0">
-                                            <h4 className="text-sm font-medium text-slate-100 line-clamp-1">{item.name}</h4>
-                                            <div className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums flex items-center gap-1.5 flex-wrap">
+                                            <div className="text-xs text-slate-400 font-mono tabular-nums flex items-center gap-1.5 flex-wrap">
                                                 <span>{formatMoney(item.price)} / {(item as CartLine).unit || 'und'}</span>
                                                 {tierBadge && (
                                                     <span className="px-1.5 py-0.5 bg-indigo-500/15 text-indigo-400 rounded text-[9px] font-bold tracking-wide">{tierBadge}</span>
@@ -3584,26 +3635,49 @@ const POS: React.FC = () => {
                                                         onClick={() => updateQuantity(item.id, packSize)}
                                                         className="px-1.5 py-0.5 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-200 rounded text-[9px] font-bold tracking-wide transition-colors"
                                                         title={`Agregar 1 ${packLabel} (${packSize} ${(item as CartLine).unit || 'und'})`}
+                                                        aria-label={`Agregar un ${packLabel} de ${item.name}, ${packSize} unidades`}
                                                     >
                                                         +1 {packLabel.toUpperCase()} ({packSize})
                                                     </button>
                                                 )}
                                             </div>
+                                            <div className="text-[15px] font-bold text-white font-mono tabular-nums mt-0.5">{formatMoney(lineTotalD)}</div>
                                         </div>
-                                        <div className="flex items-center gap-1 bg-surface-900 rounded border border-white/[0.06] p-1 text-slate-100">
-                                            <button onClick={() => updateQuantity(item.id, -0.5)} className="p-1 hover:bg-white/[0.06] rounded text-slate-300"><Minus size={14} /></button>
+
+                                        {/* Objetivos táctiles de 44px (P0-4). Antes: −/+ de
+                                            22px y basurero de 14px, los tres SIN nombre
+                                            accesible — anónimos para un lector de pantalla
+                                            y para cualquier prueba automatizada. */}
+                                        <div className="flex items-center gap-0.5 bg-surface-900 rounded-control border border-white/[0.06] p-0.5 text-slate-100 shrink-0">
+                                            <button
+                                                onClick={() => updateQuantity(item.id, -0.5)}
+                                                aria-label={`Quitar media unidad de ${item.name}`}
+                                                className="w-11 h-11 flex items-center justify-center hover:bg-white/[0.06] rounded-control text-slate-300 transition-colors"
+                                            >
+                                                <Minus size={18} />
+                                            </button>
                                             <NumberDraftInput
                                                 value={item.quantity}
                                                 onCommit={(n) => { if (n > 0) setQuantity(item.id, n); }}
                                                 ariaLabel={`Cantidad de ${item.name}`}
-                                                className="w-14 text-center text-sm font-mono tabular-nums font-bold border-0 outline-none bg-transparent text-slate-100"
+                                                className="w-12 h-11 text-center text-base font-mono tabular-nums font-bold border-0 outline-none bg-transparent text-slate-100"
                                             />
-                                            <button onClick={() => updateQuantity(item.id, 0.5)} className="p-1 hover:bg-white/[0.06] rounded text-slate-300"><Plus size={14} /></button>
+                                            <button
+                                                onClick={() => updateQuantity(item.id, 0.5)}
+                                                aria-label={`Agregar media unidad de ${item.name}`}
+                                                className="w-11 h-11 flex items-center justify-center hover:bg-white/[0.06] rounded-control text-slate-300 transition-colors"
+                                            >
+                                                <Plus size={18} />
+                                            </button>
                                         </div>
-                                        <div className="text-right min-w-[60px]">
-                                            <div className="text-sm font-bold text-white font-mono tabular-nums">{formatMoney(lineTotalD)}</div>
-                                            <button onClick={() => removeFromCart(item.id)} className="text-red-400 hover:text-red-400 mt-1"><Trash2 size={14} className="ml-auto" /></button>
-                                        </div>
+
+                                        <button
+                                            onClick={() => quitarLinea(item.id)}
+                                            aria-label={`Quitar ${item.name} del ticket`}
+                                            className="w-11 h-11 flex items-center justify-center rounded-control text-slate-400 hover:text-danger hover:bg-danger-soft transition-colors shrink-0"
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
                                     </div>
                                     {/* Per-item discount row */}
                                     <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-white/[0.04]">
@@ -3648,7 +3722,8 @@ const POS: React.FC = () => {
                                                     </button>
                                                 ) : (
                                                     <button
-                                                        onClick={() => removeFromCart(item.id)}
+                                                        onClick={() => quitarLinea(item.id)}
+                                                        aria-label={`Quitar ${item.name} del ticket`}
                                                         className="shrink-0 px-1.5 py-0.5 rounded bg-white/[0.06] hover:bg-white/[0.12] font-bold text-slate-200 transition-colors"
                                                     >
                                                         Quitar
@@ -3662,6 +3737,23 @@ const POS: React.FC = () => {
                         })
                     )}
                 </div>
+                {/* Deshacer un quitado (P0-4). Va dentro del panel y pegado al
+                    bloque de cobro para que se vea también en móvil, donde el
+                    panel del ticket ES la pantalla. */}
+                {quitadoReciente && (
+                    <div role="status" className="mx-4 mb-2 px-3 py-2 rounded-control bg-surface-800 border border-white/[0.08] flex items-center gap-2">
+                        <span className="text-[12px] text-slate-300 flex-1 min-w-0 truncate">
+                            Quitaste "{quitadoReciente.item.name}"
+                        </span>
+                        <button
+                            onClick={deshacerQuitado}
+                            className="shrink-0 px-2.5 py-1 rounded bg-white/[0.08] text-slate-100 text-[12px] font-bold hover:bg-white/[0.16] transition-colors"
+                        >
+                            Deshacer
+                        </button>
+                    </div>
+                )}
+
                 {/* Bloque de cobro: sticky al fondo del panel, superficie elevada y
                     z-checkout. Ningún flotante puede vivir por encima de esto. */}
                 <div className="sticky bottom-0 z-checkout p-5 border-t border-white/[0.06] bg-surface-800 text-slate-100">
