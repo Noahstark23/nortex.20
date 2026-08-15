@@ -279,16 +279,19 @@ export async function applyStockDelta(
     if (updated.count === 0) {
         // Distinguir causa sin ampliar la ventana: el producto no existe para
         // este tenant, o existe pero el guard de suficiencia rechazó el UPDATE.
+        // Se lee también el nombre: este mensaje termina en la pantalla del
+        // cajero con el cliente enfrente, y un id (`cmg7x2...`) no le dice nada
+        // ni le indica qué línea del carrito arreglar.
         const existing = await tx.product.findFirst({
             where: { id: productId, tenantId },
-            select: { stock: true },
+            select: { stock: true, name: true },
         });
         if (!existing) {
             throw new StockError('PRODUCT_NOT_FOUND', `Producto ${productId} no encontrado`);
         }
         throw new StockError(
             'INSUFFICIENT_STOCK',
-            `Stock insuficiente para producto ${productId}. Disponible: ${Number(existing.stock)}`
+            `Stock insuficiente de "${existing.name}". Disponible: ${Number(existing.stock)}, se pidió ${qtyOut}.`
         );
     }
 

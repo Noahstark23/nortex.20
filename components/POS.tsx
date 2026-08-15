@@ -11,6 +11,7 @@ import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
 import { resolvePosSimple, UI_MODE_KEY } from '../utils/navigation';
 import { parseWorkbookRows, importInChunks } from '../utils/importProducts';
+import { evaluarCarrito, textoAviso, textoResumen, AvisoStock } from '../utils/stockAlert';
 import { ReceiptTicket } from './ReceiptTicket';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import * as XLSX from 'xlsx';
@@ -303,6 +304,9 @@ const POS: React.FC = () => {
     // 💱 NIO/USD STATE — tipo de cambio del tenant (B6); 36.56 solo es fallback
     // hasta que carga el vigente desde /exchange-rate/latest.
     const [exchangeRate, setExchangeRate] = useState(36.56);
+    // Política de inventario del tenant. `null` = todavía no sabemos: el aviso
+    // del carrito se muestra igual, pero sin prometer la consecuencia.
+    const [permiteStockNegativo, setPermiteStockNegativo] = useState<boolean | null>(null);
     const [payingInUSD, setPayingInUSD] = useState(false);
     const [usdAmount, setUsdAmount] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
@@ -523,6 +527,18 @@ const POS: React.FC = () => {
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (d && typeof d.rate === 'number' && d.rate > 0) setExchangeRate(d.rate); })
             .catch(() => { /* mantiene el fallback */ });
+    }, []);
+
+    // Política de stock negativo del tenant: define QUÉ le pasa a la venta
+    // cuando una línea excede la existencia (rechazo vs inventario en negativo).
+    // Si falla, queda en `null` y el aviso del carrito no promete consecuencia.
+    useEffect(() => {
+        const t = localStorage.getItem('nortex_token');
+        if (!t) return;
+        fetch('/api/tenant/inventory-settings', { headers: { Authorization: `Bearer ${t}` } })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d && typeof d.allowNegativeStock === 'boolean') setPermiteStockNegativo(d.allowNegativeStock); })
+            .catch(() => { /* sin dato: el aviso sale sin consecuencia */ });
     }, []);
 
     // Tutorial guiado: si entran con ?tour=pos (desde Ayuda o el checklist).
@@ -1079,9 +1095,20 @@ const POS: React.FC = () => {
                     const found = products.find(p => p.sku.toUpperCase() === code.toUpperCase());
 
                     if (found) {
+                        // El escáner SÍ agrega aunque no haya existencia: el cajero
+                        // tiene el producto en la mano, o sea que el equivocado es
+                        // el conteo, no la realidad. Lo que no puede pasar es que
+                        // entre en silencio — suena distinto y lo dice, y el aviso
+                        // de la línea del carrito queda ahí para resolverlo.
+                        const sinExistencia = Number.isFinite(found.stock) && found.stock <= 0;
                         addToCart(found);
-                        playBeep();
-                        setLastScanFeedback({ message: `Escaneado: ${found.name}`, type: 'success' });
+                        if (sinExistencia) {
+                            playErrorBeep();
+                            setLastScanFeedback({ message: `${found.name}: sin existencia en el sistema`, type: 'error' });
+                        } else {
+                            playBeep();
+                            setLastScanFeedback({ message: `Escaneado: ${found.name}`, type: 'success' });
+                        }
                     } else {
                         playErrorBeep();
                         setLastScanFeedback({ message: `NO ENCONTRADO: ${code}`, type: 'error' });
@@ -1804,6 +1831,36 @@ const POS: React.FC = () => {
         setPayingInUSD(false);
         setUsdAmount('');
     };
+
+    // ── Aviso de existencias del carrito (utils/stockAlert.ts) ──────────────
+    // La existencia se toma del catálogo VIVO (`products`), no de la foto que
+    // quedó en la línea: un carrito aparcado media hora arrastra un stock que
+    // ya no es cierto. Si el producto no está en el catálogo cargado, se cae a
+    // la foto de la línea; si tampoco hay, el módulo lo marca DESCONOCIDO y no
+    // se avisa nada (jamás un aviso inventado).
+    const stockPorProducto = useMemo(() => {
+        const m = new Map<string, number>();
+        for (const p of products) m.set(p.id, p.stock);
+        return m;
+    }, [products]);
+
+    const resumenStock = useMemo(() => evaluarCarrito(
+        cart.map(item => ({
+            id: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            stock: stockPorProducto.get(item.id) ?? item.stock,
+            unit: (item as CartLine).unit,
+        }))
+    ), [cart, stockPorProducto]);
+
+    const avisoPorLinea = useMemo(() => {
+        const m = new Map<string, AvisoStock>();
+        for (const a of resumenStock.avisos) m.set(a.id, a);
+        return m;
+    }, [resumenStock]);
+
+    const resumenStockTexto = textoResumen(resumenStock, permiteStockNegativo);
 
     const filteredProducts = useMemo(() => {
         if (!searchTerm) return products;
@@ -3006,8 +3063,19 @@ const POS: React.FC = () => {
                     {filteredProducts.map(product => (
                         <button
                             key={product.id}
-                            onClick={() => { addToCart(product); playBeep(); }}
-                            disabled={product.stock === 0}
+                            // Mismo criterio que el escáner: si el negocio permite
+                            // vender sin existencia, la tarjeta agrega pero suena
+                            // distinto. El oído del cajero es parte del aviso.
+                            onClick={() => { addToCart(product); if (product.stock <= 0) playErrorBeep(); else playBeep(); }}
+                            // Antes era `stock === 0`: un producto YA en negativo
+                            // (−3) pasaba el guard y se podía seguir vendiendo sin
+                            // que nada lo dijera. Ahora se bloquea todo lo que esté
+                            // en 0 o abajo — salvo que el negocio haya activado
+                            // explícitamente el stock negativo (backorder), donde
+                            // bloquear sería romperle su propia política. Mientras
+                            // no sabemos (null), se bloquea: el default es el seguro.
+                            disabled={permiteStockNegativo !== true && product.stock <= 0}
+                            title={product.stock <= 0 ? 'Sin existencia en el sistema' : undefined}
                             className="h-24 bg-surface-900 hover:bg-surface-800 border border-white/[0.06] rounded-card px-3 py-2 hover:border-brand/50 transition-colors text-left flex flex-col justify-between text-slate-100 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand/40"
                         >
                             <div className="min-w-0 flex items-start gap-2">
@@ -3024,7 +3092,10 @@ const POS: React.FC = () => {
                             </div>
                             <div className="flex justify-between items-end gap-1">
                                 <span className="text-[17px] font-bold text-brand nx-num">{formatMoney(product.price)}</span>
-                                <span className={`text-[11px] px-1.5 py-0.5 rounded-control shrink-0 ${product.stock === 0 ? 'bg-danger-soft text-danger font-bold' : product.stock <= 5 ? 'bg-warning-soft text-amber-400' : 'text-slate-500'}`}>
+                                {/* El stock negativo se muestra tal cual (−3), no
+                                    disfrazado de AGOTADO: es la señal de que el
+                                    inventario ya se descuadró y hay que recontarlo. */}
+                                <span className={`text-[11px] px-1.5 py-0.5 rounded-control shrink-0 ${product.stock <= 0 ? 'bg-danger-soft text-danger font-bold' : product.stock <= 5 ? 'bg-warning-soft text-amber-400' : 'text-slate-500'}`}>
                                     {product.stock === 0 ? 'AGOTADO' : product.stock}
                                 </span>
                             </div>
@@ -3228,6 +3299,42 @@ const POS: React.FC = () => {
                                             <span className="text-[10px] text-red-500 font-bold ml-auto">-{formatMoney(toDecimal(item.price).mul(item.quantity).mul(lineDiscountD).div(100))}</span>
                                         )}
                                     </div>
+                                    {/* ⚠️ Aviso de existencias — la línea vende más de lo que
+                                        hay en el sistema (o el producto ya está en negativo).
+                                        AVISA, no bloquea: el conteo puede estar desactualizado
+                                        y el producto estar físicamente en la góndola. Lo que sí
+                                        hace es dar la salida en un toque: ajustar a lo que hay,
+                                        o quitar la línea si no hay nada. */}
+                                    {(() => {
+                                        const aviso = avisoPorLinea.get(item.id);
+                                        const texto = aviso ? textoAviso(aviso) : null;
+                                        if (!aviso || !texto) return null;
+                                        const grave = aviso.estado === 'SIN_EXISTENCIA';
+                                        return (
+                                            <div
+                                                role="status"
+                                                className={`mt-1.5 pt-1.5 border-t border-white/[0.04] flex items-start gap-2 text-[11px] leading-snug ${grave ? 'text-danger' : 'text-amber-400'}`}
+                                            >
+                                                <AlertTriangle size={13} className="shrink-0 mt-px" />
+                                                <span className="flex-1 min-w-0">{texto}</span>
+                                                {aviso.ajustarA !== null ? (
+                                                    <button
+                                                        onClick={() => setQuantity(item.id, aviso.ajustarA as number)}
+                                                        className="shrink-0 px-1.5 py-0.5 rounded bg-white/[0.06] hover:bg-white/[0.12] font-bold text-slate-200 transition-colors"
+                                                    >
+                                                        Ajustar a {aviso.ajustarA}
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => removeFromCart(item.id)}
+                                                        className="shrink-0 px-1.5 py-0.5 rounded bg-white/[0.06] hover:bg-white/[0.12] font-bold text-slate-200 transition-colors"
+                                                    >
+                                                        Quitar
+                                                    </button>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             );
                         })
@@ -3263,6 +3370,21 @@ const POS: React.FC = () => {
                         <span className="nx-label">Total</span>
                         <span className="nx-total">{formatMoney(grandTotal)}</span>
                     </div>
+
+                    {/* Resumen de existencias: va PEGADO a los botones de cobro
+                        porque es el último momento en que el aviso sirve. El texto
+                        dice la consecuencia REAL según la política del tenant
+                        (rechazo vs inventario en negativo); si todavía no sabemos
+                        cuál es, avisa el hecho y no promete nada. */}
+                    {resumenStockTexto && (
+                        <div
+                            role="status"
+                            className={`flex items-start gap-2 mb-3 px-3 py-2 rounded-control text-[12px] leading-snug ${permiteStockNegativo === false ? 'bg-danger-soft text-danger' : 'bg-warning-soft text-amber-400'}`}
+                        >
+                            <AlertTriangle size={14} className="shrink-0 mt-px" />
+                            <span>{resumenStockTexto}</span>
+                        </div>
+                    )}
 
                     {/* Botones de cobro a 56px (--nx-h-pay): objetivo táctil de mostrador. */}
                     <div className="grid grid-cols-2 gap-3 mb-3">

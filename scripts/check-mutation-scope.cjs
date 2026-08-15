@@ -40,6 +40,16 @@ const PISO_MUTANTES = {
     // propósito: como constante de módulo su mutante sobrevivía siempre
     // (se evalúa al importar, antes de que Stryker active el mutante).
     'utils/margen.ts': 66,
+    // stockAlert.ts entró con el aviso de existencias del carrito: 110 mutantes,
+    // score medido 99.09%. No es dinero, es inventario — pero es la misma clase
+    // de número que el dueño verifica a ojo contra la góndola, y un aviso falso
+    // se aprende a ignorar. El único sobreviviente es equivalente: la guarda
+    // `disponible !== null` de textoAviso es inalcanzable (el estado DESCONOCIDO
+    // retorna antes), y existe solo para que TypeScript acepte la comparación.
+    // La tolerancia de 1e-6 se construye DENTRO de una función por el mismo
+    // motivo que el IVA de margen.ts: como constante de módulo su mutante
+    // sobrevivía siempre.
+    'utils/stockAlert.ts': 110,
     'backend/services/loanMath.ts': 12,
     'backend/services/nicaTax.ts': 7,
     'backend/services/stockService.ts': 5,
