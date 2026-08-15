@@ -15,15 +15,18 @@
     "utils/calc-laborales.ts",
     "utils/pricing.ts",
     "utils/margen.ts",
+    "utils/stockAlert.ts",
+    "utils/cartPersistence.ts",
+    "utils/posSearch.ts",
     "backend/services/loanMath.ts",
     "backend/services/nicaTax.ts:25-75",
     "backend/services/stockService.ts:56-69",
     "backend/services/accounting.ts:257-272"
   ],
-  "thresholds_comment": "Línea base al introducir Stryker: 95.59% (backend de dinero al 100%). El score es DETERMINISTA (se midió que el único mutante 'timeout' lo es por hit-limit de iteraciones, no por reloj de pared), así que no hace falta margen para ruido: `break` se pega a la línea base. REGLA: este número solo SUBE. Bajarlo para que pase un PR es exactamente el 'specification gaming' que esta red viene a prevenir — si un cambio hunde el score, se arregla el test, no el umbral. Los ~9 mutantes sobrevivientes restantes son equivalentes (guardas redundantes del tipo `x != null && x > 0`, donde `null > 0` ya es false).",
+  "thresholds_comment": "Línea base al introducir Stryker: 95.59% (backend de dinero al 100%). Subió a 97.50% al entrar utils/stockAlert.ts (110 mutantes, 99.09%) y a 98.11% al entrar utils/cartPersistence.ts (142 mutantes, 100.00%): el umbral se re-pega a la nueva línea base cada vez, que es la regla — solo sube. El score es DETERMINISTA (se midió que el único mutante 'timeout' lo es por hit-limit de iteraciones, no por reloj de pared), así que no hace falta margen para ruido: `break` se pega a la línea base. REGLA: este número solo SUBE. Bajarlo para que pase un PR es exactamente el 'specification gaming' que esta red viene a prevenir — si un cambio hunde el score, se arregla el test, no el umbral. Los ~9 mutantes sobrevivientes restantes son equivalentes (guardas redundantes del tipo `x != null && x > 0`, donde `null > 0` ya es false).",
   "thresholds": {
-    "high": 95,
-    "low": 95,
-    "break": 95
+    "high": 98,
+    "low": 98,
+    "break": 98
   }
 }

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef, useDeferredValue } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
@@ -11,6 +11,14 @@ import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
 import { resolvePosSimple, UI_MODE_KEY } from '../utils/navigation';
 import { parseWorkbookRows, importInChunks } from '../utils/importProducts';
+import { evaluarCarrito, textoAviso, textoResumen, AvisoStock } from '../utils/stockAlert';
+import { indexarProductos, buscarProductos } from '../utils/posSearch';
+import {
+    claveCarrito, claveAparcados, leerCarritoGuardado, serializarCarrito,
+    decidirRestauracion, resumenGuardado, leerAparcados, serializarAparcados,
+    CarritoGuardado, LineaGuardada, AparcadoGuardado,
+} from '../utils/cartPersistence';
+import { useReportarVenta } from './VentaEnCursoContext';
 import { ReceiptTicket } from './ReceiptTicket';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import * as XLSX from 'xlsx';
@@ -103,10 +111,75 @@ const MIN_VENTAS_PARA_RANKING = 20;
 export const rotuloProductosRapidos = (esRanking: boolean, ventasRegistradas: number): string =>
     esRanking && ventasRegistradas >= MIN_VENTAS_PARA_RANKING ? 'Más vendidos' : 'Tus productos';
 
+/**
+ * Tarjeta de producto de la grilla — MEMOIZADA (P0-2).
+ *
+ * Sin esto, cada tecla en la búsqueda vuelve a renderizar todas las tarjetas
+ * visibles aunque ninguna cambió. Con la grilla ya acotada el costo baja solo,
+ * pero el re-render sigue siendo gratis de evitar: las props son primitivas y
+ * `onAgregar` es estable.
+ */
+const TarjetaProducto = React.memo<{
+    product: Product;
+    bloqueada: boolean;
+    onAgregar: (p: Product) => void;
+}>(({ product, bloqueada, onAgregar }) => (
+    <button
+        onClick={() => onAgregar(product)}
+        disabled={bloqueada}
+        title={product.stock <= 0 ? 'Sin existencia en el sistema' : undefined}
+        className="h-24 bg-surface-900 hover:bg-surface-800 border border-white/[0.06] rounded-card px-3 py-2 hover:border-brand/50 transition-colors text-left flex flex-col justify-between text-slate-100 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand/40"
+    >
+        <div className="min-w-0 flex items-start gap-2">
+            {/* Miniatura solo si el producto TIENE foto: nunca un hueco vacío. */}
+            {product.imageUrl && (
+                <img
+                    src={product.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    className="w-10 h-10 rounded-control object-cover border border-white/[0.06] shrink-0"
+                />
+            )}
+            <h3 className="font-semibold text-sm text-slate-100 leading-tight line-clamp-2 min-w-0">{product.name}</h3>
+        </div>
+        <div className="flex justify-between items-end gap-1">
+            <span className="text-[17px] font-bold text-brand nx-num">{formatMoney(product.price)}</span>
+            {/* El stock negativo se muestra tal cual (−3), no disfrazado de
+                AGOTADO: es la señal de que el inventario ya se descuadró.
+                A 12px y no 11px — a 11px fallaba el contraste AA (P2-1). */}
+            <span className={`text-xs px-1.5 py-0.5 rounded-control shrink-0 ${product.stock <= 0 ? 'bg-danger-soft text-danger font-bold' : product.stock <= 5 ? 'bg-warning-soft text-amber-400' : 'text-slate-400'}`}>
+                {product.stock === 0 ? 'AGOTADO' : product.stock}
+            </span>
+        </div>
+    </button>
+));
+TarjetaProducto.displayName = 'TarjetaProducto';
+
 // PIN que el backend siembra para el dueño al registrar el negocio. Ya se
 // imprime dentro del modal de apertura, así que además se precarga: escribirlo a
 // mano no es una medida de seguridad, es un peaje para el que viene a probar.
 const PIN_DUENO_POR_DEFECTO = '1234';
+
+/**
+ * Identidad del cliente para namespacear el carrito guardado. Mismo par de
+ * claves que ya usa la cola offline (`nortex_tenant_data` + `nortex_user`).
+ * Devuelve null si falta cualquiera de las dos: sin identidad NO se persiste
+ * nada, antes que arriesgar mezclar los carritos de dos cajeros.
+ */
+const identidadLocal = (): { tenantId: string; userId: string } | null => {
+    try {
+        const tenantId = JSON.parse(localStorage.getItem('nortex_tenant_data') || '{}')?.id;
+        const userId = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.id;
+        if (typeof tenantId === 'string' && tenantId && typeof userId === 'string' && userId) {
+            return { tenantId, userId };
+        }
+    } catch { /* storage ilegible → no se persiste */ }
+    return null;
+};
+
+/** Línea del carrito → forma serializable. Se conserva TODO (mayoreo, empaque,
+ *  basePrice) porque al restaurar la línea tiene que poder repreciarse igual. */
+const aLineaGuardada = (item: CartItem): LineaGuardada => ({ ...(item as unknown as Record<string, unknown>) } as unknown as LineaGuardada);
 
 // Movimiento de caja tal como puede llegar del backend: los registros derivados
 // (p. ej. una venta en efectivo) no son filas de CashMovement y pueden traer
@@ -195,6 +268,10 @@ interface HeldCart {
     items: CartItem[];
     customer: Customer | null;
     heldAt: Date;
+    /** Persistencia (P0-1): el cliente se guarda por id y se re-resuelve contra
+     *  la lista viva; `shiftId` dice a qué turno pertenece el aparcado. */
+    clienteId?: string | null;
+    shiftId?: string;
 }
 
 // Post-sale state
@@ -268,10 +345,52 @@ const POS: React.FC = () => {
     // ranking el rótulo cambie solo — y no antes (ver `rotuloProductosRapidos`).
     const rankingDisponible = false;
     const ventasRegistradas = 0;
-    const [cart, setCart] = useState<CartItem[]>([]);
+    // ── P0-1 · El carrito sobrevive ────────────────────────────────────────
+    // El sidebar está montado ALREDEDOR del POS (App.tsx), así que un clic en
+    // "Mis Productos" desmontaba este componente y borraba la venta en curso.
+    // La cura de fondo es que el carrito sea durable: si vuelve intacto, el bug
+    // deja de existir sin tocar el router. Ver utils/cartPersistence.ts.
+    const [identidad] = useState(identidadLocal);
+    const [rescate] = useState<CarritoGuardado | null>(() =>
+        identidad ? leerCarritoGuardado(localStorage.getItem(claveCarrito(identidad.tenantId, identidad.userId))) : null
+    );
+    // Hidratación OPTIMISTA: el carrito se pinta en el primer render, sin
+    // esperar a que resuelva /shifts/current. En el caso común (salir y volver
+    // dentro del mismo turno) no hay parpadeo de "Carrito vacío". Si al llegar
+    // el turno resulta ser otro, se retira y se ofrece — ver el efecto de
+    // validación más abajo. Un blip en el caso raro vale el cero-blip en el
+    // caso de todos los días.
+    const [cart, setCart] = useState<CartItem[]>(() => (rescate?.lineas ?? []) as unknown as CartItem[]);
+    // Venta a medias que NO se puede atribuir al turno actual: no entra sola.
+    const [ventaPendiente, setVentaPendiente] = useState<CarritoGuardado | null>(null);
+    // Hasta que la validación no corrió, NO se escribe: si no, el primer guardado
+    // pisaría el turno del payload rescatado con el turno de ahora.
+    const [persistenciaLista, setPersistenciaLista] = useState(false);
+    const [clienteARestaurar, setClienteARestaurar] = useState<string | null>(null);
+    // Cerrar la caja con una venta a medias adentro: no se puede cuadrar un
+    // arqueo con mercadería en el limbo. O entra, o se aparca, o se descarta —
+    // y eso lo decide el cajero, no nosotros.
+    const [bloqueoCierre, setBloqueoCierre] = useState(false);
+    // Línea recién quitada del carrito, con su posición para poder devolverla
+    // donde estaba (P0-4). Se limpia sola a los 5 segundos.
+    const [quitadoReciente, setQuitadoReciente] = useState<{ item: CartItem; posicion: number } | null>(null);
 
     // 🅿️ PARQUEO DE VENTAS STATE
-    const [heldCarts, setHeldCarts] = useState<HeldCart[]>([]);
+    // Antes era memoria pura: F4 "Aparcar" perdía todo con F5, o sea que el
+    // diálogo que ofrece "Aparcar y salir" habría sido una promesa falsa.
+    const [heldCarts, setHeldCarts] = useState<HeldCart[]>(() => {
+        const id = identidad;
+        if (!id) return [];
+        return leerAparcados(localStorage.getItem(claveAparcados(id.tenantId, id.userId))).map(a => ({
+            id: a.id,
+            label: a.label,
+            items: a.lineas as unknown as CartItem[],
+            customer: null,
+            clienteId: a.clienteId,
+            heldAt: new Date(a.heldAt),
+            shiftId: a.shiftId,
+        }));
+    });
     const [showHeldCarts, setShowHeldCarts] = useState(false);
 
     // ── Modo simple (Fase C-2 UX): esconde acciones avanzadas del POS ──
@@ -303,6 +422,9 @@ const POS: React.FC = () => {
     // 💱 NIO/USD STATE — tipo de cambio del tenant (B6); 36.56 solo es fallback
     // hasta que carga el vigente desde /exchange-rate/latest.
     const [exchangeRate, setExchangeRate] = useState(36.56);
+    // Política de inventario del tenant. `null` = todavía no sabemos: el aviso
+    // del carrito se muestra igual, pero sin prometer la consecuencia.
+    const [permiteStockNegativo, setPermiteStockNegativo] = useState<boolean | null>(null);
     const [payingInUSD, setPayingInUSD] = useState(false);
     const [usdAmount, setUsdAmount] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
@@ -525,6 +647,125 @@ const POS: React.FC = () => {
             .catch(() => { /* mantiene el fallback */ });
     }, []);
 
+    // Política de stock negativo del tenant: define QUÉ le pasa a la venta
+    // cuando una línea excede la existencia (rechazo vs inventario en negativo).
+    // Si falla, queda en `null` y el aviso del carrito no promete consecuencia.
+    useEffect(() => {
+        const t = localStorage.getItem('nortex_token');
+        if (!t) return;
+        fetch('/api/tenant/inventory-settings', { headers: { Authorization: `Bearer ${t}` } })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d && typeof d.allowNegativeStock === 'boolean') setPermiteStockNegativo(d.allowNegativeStock); })
+            .catch(() => { /* sin dato: el aviso sale sin consecuencia */ });
+    }, []);
+
+    // ── P0-1 · Validar el carrito rescatado contra el turno real ───────────
+    // Corre una sola vez, cuando /shifts/current ya respondió. Regla dura: una
+    // venta a medias NUNCA se restaura en el turno equivocado — la mercadería
+    // de un turno cerrado no entra sola a la caja de hoy, porque descuadraría
+    // el arqueo de otro. Se ofrece y decide el cajero.
+    useEffect(() => {
+        if (shiftLoading || persistenciaLista) return;
+        const decision = decidirRestauracion({
+            guardado: rescate,
+            shiftIdActual: currentShift?.id ?? null,
+            ahoraMs: Date.now(),
+        });
+        if (decision === 'OFRECER') {
+            setCart([]);              // se retira de la vista hasta que decida
+            setVentaPendiente(rescate);
+            // En móvil el panel del ticket está oculto hasta tocar "Ver
+            // Carrito": sin esto el aviso quedaría invisible justo para quien
+            // más lo necesita. En escritorio el panel ya está a la vista y esto
+            // no cambia nada.
+            setShowMobileCart(true);
+        } else if (decision === 'RESTAURAR' && rescate) {
+            setGlobalDiscount(rescate.descuentoGlobal);
+            setClienteARestaurar(rescate.clienteId);
+        }
+        // DESCARTAR: el carrito ya arrancó vacío. Nada que hacer.
+        setPersistenciaLista(true);
+    }, [shiftLoading, currentShift?.id, rescate, persistenciaLista]);
+
+    // El cliente se guarda por ID y se re-resuelve contra la lista viva: si lo
+    // borraron, la venta sigue sin cliente en vez de arrastrar un fantasma.
+    useEffect(() => {
+        if (!clienteARestaurar || customerList.length === 0) return;
+        const cliente = customerList.find(c => c.id === clienteARestaurar) || null;
+        if (cliente) {
+            setSelectedCustomer(cliente);
+            setCustomerSearch(cliente.name);
+        }
+        setClienteARestaurar(null);
+    }, [clienteARestaurar, customerList]);
+
+    // ── P0-1 · Guardar (con debounce) ──────────────────────────────────────
+    useEffect(() => {
+        if (!persistenciaLista || !identidad) return;
+        const clave = claveCarrito(identidad.tenantId, identidad.userId);
+
+        // Venta YA COBRADA: se borra sin esperar el debounce. Si no, navegar
+        // entre el "¡Venta completada!" y "Nueva venta" dejaría guardado un
+        // carrito de mercadería ya vendida — y al volver se cobraría dos veces.
+        if (completedSale) {
+            localStorage.removeItem(clave);
+            return;
+        }
+
+        const t = setTimeout(() => {
+            const payload = serializarCarrito({
+                shiftId: currentShift?.id ?? null,
+                lineas: cart.map(aLineaGuardada),
+                clienteId: selectedCustomer?.id ?? null,
+                descuentoGlobal: globalDiscount,
+                ahoraMs: Date.now(),
+            });
+            // Sin payload (carrito vacío o sin turno) se BORRA la clave: nunca
+            // se deja un `[]` guardado que después haya que interpretar.
+            if (payload) localStorage.setItem(clave, payload);
+            else localStorage.removeItem(clave);
+        }, 300);
+        return () => clearTimeout(t);
+    }, [cart, selectedCustomer?.id, globalDiscount, currentShift?.id, completedSale, persistenciaLista, identidad]);
+
+    // Aparcados: cambian de a uno (F4 / restaurar / quitar), sin debounce.
+    useEffect(() => {
+        if (!persistenciaLista || !identidad) return;
+        const clave = claveAparcados(identidad.tenantId, identidad.userId);
+        const payload = serializarAparcados(heldCarts.map((h): AparcadoGuardado => ({
+            id: h.id,
+            label: h.label,
+            shiftId: h.shiftId || currentShift?.id || '',
+            heldAt: h.heldAt instanceof Date ? h.heldAt.getTime() : Date.now(),
+            lineas: h.items.map(aLineaGuardada),
+            clienteId: h.customer?.id ?? h.clienteId ?? null,
+        })));
+        if (payload) localStorage.setItem(clave, payload);
+        else localStorage.removeItem(clave);
+    }, [heldCarts, currentShift?.id, persistenciaLista, identidad]);
+
+    // Cerrar la pestaña con una venta a medias: el navegador pregunta. El texto
+    // lo decide el navegador (ya no se puede personalizar), pero el freno sí es
+    // nuestro. Con el carrito ya persistido esto es la última red, no la única.
+    useEffect(() => {
+        if (cart.length === 0 || completedSale) return;
+        const avisar = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+        window.addEventListener('beforeunload', avisar);
+        return () => window.removeEventListener('beforeunload', avisar);
+    }, [cart.length, completedSale]);
+
+    // Dos pestañas del POS comparten la clave y la última que escribe gana: sin
+    // esto se podría perder un carrito EN SILENCIO, que es exactamente el bug
+    // que estamos arreglando, en otra forma. No se sobreescribe: se avisa.
+    const [cajaEnOtraPestana, setCajaEnOtraPestana] = useState(false);
+    useEffect(() => {
+        if (!identidad) return;
+        const clave = claveCarrito(identidad.tenantId, identidad.userId);
+        const alCambiar = (e: StorageEvent) => { if (e.key === clave) setCajaEnOtraPestana(true); };
+        window.addEventListener('storage', alCambiar);
+        return () => window.removeEventListener('storage', alCambiar);
+    }, [identidad]);
+
     // Tutorial guiado: si entran con ?tour=pos (desde Ayuda o el checklist).
     // SOLO cuando la caja está visible: antes el tour se dibujaba ENCIMA del
     // modal de apertura de turno (PIN), describiendo una pantalla tapada
@@ -595,9 +836,27 @@ const POS: React.FC = () => {
             try {
                 const pendingCart = localStorage.getItem('nortex_pending_cart');
                 if (pendingCart && pendingCart !== 'undefined') {
-                    setCart(JSON.parse(pendingCart));
+                    const lineasTraspaso = JSON.parse(pendingCart);
+                    // El traspaso (demo o cotización convertida) GANA: es una
+                    // acción explícita del usuario. Pero desde que el carrito
+                    // sobrevive a la navegación puede haber una venta restaurada
+                    // debajo, y pisarla en silencio sería reintroducir el mismo
+                    // bug que este cambio viene a matar. Se aparca primero: los
+                    // aparcados ahora también son durables, así que no se pierde.
+                    // `cart` acá es el del primer render, o sea lo restaurado.
+                    if (cart.length > 0) {
+                        setHeldCarts(prev => [...prev, {
+                            id: `traspaso-${Date.now()}`,
+                            label: 'Venta que estabas haciendo',
+                            items: [...cart],
+                            customer: null,
+                            clienteId: null,
+                            heldAt: new Date(),
+                        }]);
+                    }
+                    setCart(lineasTraspaso);
                     localStorage.removeItem('nortex_pending_cart');
-                    if (!hasOpenShift) alert("¡Bienvenido! Abre tu caja para completar la venta de la demo o cotización.");
+                    if (!hasOpenShift) alert("¡Bienvenido! Abrí tu caja para completar la venta de la demo o cotización.");
                 }
             } catch (e) {
                 console.error("Failed to parse ghost cart", e);
@@ -1079,9 +1338,20 @@ const POS: React.FC = () => {
                     const found = products.find(p => p.sku.toUpperCase() === code.toUpperCase());
 
                     if (found) {
+                        // El escáner SÍ agrega aunque no haya existencia: el cajero
+                        // tiene el producto en la mano, o sea que el equivocado es
+                        // el conteo, no la realidad. Lo que no puede pasar es que
+                        // entre en silencio — suena distinto y lo dice, y el aviso
+                        // de la línea del carrito queda ahí para resolverlo.
+                        const sinExistencia = Number.isFinite(found.stock) && found.stock <= 0;
                         addToCart(found);
-                        playBeep();
-                        setLastScanFeedback({ message: `Escaneado: ${found.name}`, type: 'success' });
+                        if (sinExistencia) {
+                            playErrorBeep();
+                            setLastScanFeedback({ message: `${found.name}: sin existencia en el sistema`, type: 'error' });
+                        } else {
+                            playBeep();
+                            setLastScanFeedback({ message: `Escaneado: ${found.name}`, type: 'success' });
+                        }
                     } else {
                         playErrorBeep();
                         setLastScanFeedback({ message: `NO ENCONTRADO: ${code}`, type: 'error' });
@@ -1105,6 +1375,39 @@ const POS: React.FC = () => {
     }, [products, addToCart, scannerActive]);
 
     const removeFromCart = (id: string) => setCart(prev => prev.filter(item => item.id !== id));
+
+    // ── Quitar con deshacer (P0-4) ─────────────────────────────────────────
+    // Borrar una línea no pedía confirmación ni ofrecía vuelta atrás, y el
+    // botón medía 14px. Ahora el botón es de 44px —o sea que se acierta— y si
+    // igual se toca de más, hay 5 segundos para recuperarla. Confirmar cada
+    // borrado sería peor: en un mostrador, un diálogo por línea se convierte en
+    // ruido que se acepta sin leer.
+    const quitarLinea = useCallback((id: string) => {
+        const posicion = cart.findIndex(i => i.id === id);
+        if (posicion === -1) return;
+        setQuitadoReciente({ item: cart[posicion], posicion });
+        setCart(prev => prev.filter(i => i.id !== id));
+    }, [cart]);
+
+    const deshacerQuitado = useCallback(() => {
+        if (!quitadoReciente) return;
+        setCart(prev => {
+            // Si el producto volvió al carrito por otro camino (escáner, grilla)
+            // NO se duplica la línea: deshacer no puede inventar mercadería.
+            if (prev.some(i => i.id === quitadoReciente.item.id)) return prev;
+            const copia = [...prev];
+            copia.splice(Math.min(quitadoReciente.posicion, copia.length), 0, quitadoReciente.item);
+            return copia;
+        });
+        setQuitadoReciente(null);
+    }, [quitadoReciente]);
+
+    // La ventana de deshacer se cierra sola.
+    useEffect(() => {
+        if (!quitadoReciente) return;
+        const t = setTimeout(() => setQuitadoReciente(null), 5000);
+        return () => clearTimeout(t);
+    }, [quitadoReciente]);
 
     // Reprecia una línea al cambiar su cantidad (mayoreo entra/sale según el umbral).
     const repricedLine = (item: CartItem, newQty: number): CartItem => {
@@ -1176,6 +1479,8 @@ const POS: React.FC = () => {
             label: selectedCustomer?.name || `Carrito ${heldCarts.length + 1}`,
             items: [...cart],
             customer: selectedCustomer,
+            clienteId: selectedCustomer?.id ?? null,
+            shiftId: currentShift?.id,
             heldAt: new Date(),
         };
         setHeldCarts(prev => [...prev, held]);
@@ -1185,7 +1490,7 @@ const POS: React.FC = () => {
         setGlobalDiscount('');
         setCreditOverrideAuthorized(false);
         setCreditOverridePin('');
-    }, [cart, heldCarts, selectedCustomer]);
+    }, [cart, heldCarts, selectedCustomer, currentShift?.id]);
 
     const handleRestoreCart = useCallback((heldId: string) => {
         const toRestore = heldCarts.find(h => h.id === heldId);
@@ -1201,6 +1506,8 @@ const POS: React.FC = () => {
                 label: selectedCustomer?.name || `Carrito ${heldCarts.length + 1}`,
                 items: [...cart],
                 customer: selectedCustomer,
+                clienteId: selectedCustomer?.id ?? null,
+                shiftId: currentShift?.id,
                 heldAt: new Date(),
             };
             setHeldCarts(prev => [...prev.filter(h => h.id !== heldId), currentHeld]);
@@ -1208,11 +1515,29 @@ const POS: React.FC = () => {
             setHeldCarts(prev => prev.filter(h => h.id !== heldId));
         }
         setCart(toRestore.items);
-        setSelectedCustomer(toRestore.customer);
-        setCustomerSearch(toRestore.customer?.name || '');
+        // Un aparcado rescatado del storage trae `clienteId`, no el objeto: se
+        // re-resuelve contra la lista viva (si lo borraron, queda sin cliente).
+        const cliente = toRestore.customer
+            ?? (toRestore.clienteId ? customerList.find(c => c.id === toRestore.clienteId) ?? null : null);
+        setSelectedCustomer(cliente);
+        setCustomerSearch(cliente?.name || '');
         setShowHeldCarts(false);
         setGlobalDiscount('');
-    }, [cart, heldCarts, selectedCustomer]);
+    }, [cart, heldCarts, selectedCustomer, currentShift?.id, customerList]);
+
+    // ── P0-1 · Venta a medias de otro turno ────────────────────────────────
+    const recuperarVentaPendiente = useCallback(() => {
+        if (!ventaPendiente) return;
+        setCart(ventaPendiente.lineas as unknown as CartItem[]);
+        setGlobalDiscount(ventaPendiente.descuentoGlobal);
+        setClienteARestaurar(ventaPendiente.clienteId);
+        setVentaPendiente(null);
+    }, [ventaPendiente]);
+
+    const descartarVentaPendiente = useCallback(() => {
+        setVentaPendiente(null);
+        if (identidad) localStorage.removeItem(claveCarrito(identidad.tenantId, identidad.userId));
+    }, [identidad]);
 
     const handleRemoveHeldCart = useCallback((heldId: string) => {
         setHeldCarts(prev => prev.filter(h => h.id !== heldId));
@@ -1525,6 +1850,23 @@ const POS: React.FC = () => {
     const grandTotal = grandTotalD.toDecimalPlaces(2).toNumber();
     const globalDiscountNum = globalDiscountD.toNumber();
 
+    // ¿El chip de denominación es el que está cargado? Se compara por VALOR con
+    // Decimal, no por string: '500' y '500.00' son el mismo billete, y comparar
+    // texto dejaría el chip apagado según cómo se haya escrito el monto.
+    const chipActivo = (monto: Decimal): boolean =>
+        cashReceived !== '' && toDecimal(cashReceived).equals(monto);
+
+    // El menú que rodea al POS necesita saber si hay una venta abierta para
+    // avisar antes de navegar. Una venta COBRADA (completedSale) ya no cuenta:
+    // el carrito sigue en pantalla hasta "Nueva venta", pero salir ahí no
+    // interrumpe nada.
+    const reportarVenta = useReportarVenta();
+    useEffect(() => {
+        reportarVenta({ hayVenta: cart.length > 0 && !completedSale, lineas: cart.length, total: grandTotal });
+    }, [cart.length, completedSale, grandTotal, reportarVenta]);
+    // Al desmontar, el menú no puede quedar creyendo que hay una venta abierta.
+    useEffect(() => () => reportarVenta({ hayVenta: false, lineas: 0, total: 0 }), [reportarVenta]);
+
     // SMART CREDIT CHECK
     const isCreditBlocked = useMemo(() => {
         if (creditOverrideAuthorized) return false; // Owner override
@@ -1805,18 +2147,70 @@ const POS: React.FC = () => {
         setUsdAmount('');
     };
 
-    const filteredProducts = useMemo(() => {
-        if (!searchTerm) return products;
-        const term = searchTerm.trim();
+    // ── Aviso de existencias del carrito (utils/stockAlert.ts) ──────────────
+    // La existencia se toma del catálogo VIVO (`products`), no de la foto que
+    // quedó en la línea: un carrito aparcado media hora arrastra un stock que
+    // ya no es cierto. Si el producto no está en el catálogo cargado, se cae a
+    // la foto de la línea; si tampoco hay, el módulo lo marca DESCONOCIDO y no
+    // se avisa nada (jamás un aviso inventado).
+    const stockPorProducto = useMemo(() => {
+        const m = new Map<string, number>();
+        for (const p of products) m.set(p.id, p.stock);
+        return m;
+    }, [products]);
 
-        // Exact SKU match first (for manual barcode/SKU entry)
-        const exactMatch = products.find(p => p.sku.toUpperCase() === term.toUpperCase());
-        if (exactMatch) return [exactMatch];
+    const resumenStock = useMemo(() => evaluarCarrito(
+        cart.map(item => ({
+            id: item.id,
+            name: item.name,
+            quantity: item.quantity,
+            stock: stockPorProducto.get(item.id) ?? item.stock,
+            unit: (item as CartLine).unit,
+        }))
+    ), [cart, stockPorProducto]);
 
-        // Fuzzy search
-        const terms = term.toLowerCase().split(' ').filter(t => t.length > 0);
-        return products.filter(p => terms.every(t => `${p.name} ${p.sku} ${p.category}`.toLowerCase().includes(t)));
-    }, [searchTerm, products]);
+    const avisoPorLinea = useMemo(() => {
+        const m = new Map<string, AvisoStock>();
+        for (const a of resumenStock.avisos) m.set(a.id, a);
+        return m;
+    }, [resumenStock]);
+
+    const resumenStockTexto = textoResumen(resumenStock, permiteStockNegativo);
+
+    // ── P0-2 · La grilla deja de ser un catálogo ──────────────────────────
+    // Medido en producción con 1,003 productos: 6,502 nodos DOM y 1,009 botones,
+    // con un long task de 105 ms al limpiar el filtro — que pasa DESPUÉS DE CADA
+    // VENTA, porque al cerrar la venta se limpia la búsqueda. Un cajero no
+    // navega mil tarjetas: escanea o escribe. Así que se pinta un resultado de
+    // búsqueda acotado, y el recorte SIEMPRE se declara (ver utils/posSearch.ts).
+    const TOPE_SIN_BUSQUEDA = 24;
+    const TOPE_BUSCANDO = 60;
+
+    // El índice se arma UNA vez por catálogo. Antes se re-armaba el string
+    // `name + sku + category` de cada producto en CADA tecla.
+    const indiceProductos = useMemo(() => indexarProductos(products), [products]);
+
+    // `useDeferredValue` (React 19) en lugar de un debounce: la grilla puede ir
+    // un frame atrás sin bloquear el tipeo. NO toca el camino del escáner —
+    // tanto el listener global como el Enter de la barra resuelven contra
+    // `products` y `searchTerm` en directo, así que SKU + Enter sigue siendo
+    // instantáneo. Esa es la ruta que más se usa y no se toca.
+    const terminoDiferido = useDeferredValue(searchTerm);
+
+    const resultadoBusqueda = useMemo(() => {
+        const t = terminoDiferido.trim();
+        return buscarProductos(indiceProductos, t, t === '' ? TOPE_SIN_BUSQUEDA : TOPE_BUSCANDO);
+    }, [indiceProductos, terminoDiferido]);
+
+    const filteredProducts = resultadoBusqueda.visibles;
+
+    // Estable, para que `React.memo` de la tarjeta sirva de algo. Mismo criterio
+    // que el escáner: si el negocio permite vender sin existencia la tarjeta
+    // agrega igual, pero suena distinto — el oído del cajero es parte del aviso.
+    const agregarDesdeGrilla = useCallback((product: Product) => {
+        addToCart(product);
+        if (product.stock <= 0) playErrorBeep(); else playBeep();
+    }, [addToCart]);
 
     const filteredCustomers = customerList.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()));
 
@@ -2006,7 +2400,7 @@ const POS: React.FC = () => {
 
                     {/* Cerrar caja: lo único irreversible del header → único uso del rojo. */}
                     {currentShift ? (
-                        <button onClick={() => setShowCloseShift(true)} className="text-xs font-semibold text-danger hover:bg-danger-soft px-3 h-8 rounded-control transition-colors flex items-center gap-1.5">
+                        <button onClick={() => { if (cart.length > 0) { setBloqueoCierre(true); return; } setShowCloseShift(true); }} className="text-xs font-semibold text-danger hover:bg-danger-soft px-3 h-8 rounded-control transition-colors flex items-center gap-1.5">
                             <Lock size={14} /> Cerrar caja
                         </button>
                     ) : (
@@ -2544,6 +2938,50 @@ const POS: React.FC = () => {
             )}
 
             {/* --- CLOSE SHIFT MODAL --- */}
+            {/* Guarda de cierre con venta en curso (P0-1). Tres salidas, todas
+                explícitas: ninguna pierde la venta sin que el cajero lo sepa. */}
+            {bloqueoCierre && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-modal p-4" onClick={() => setBloqueoCierre(false)}>
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="titulo-bloqueo-cierre"
+                        className="bg-surface-900 border border-white/10 rounded-card p-6 w-full max-w-sm text-slate-100"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <h3 id="titulo-bloqueo-cierre" className="text-lg font-extrabold flex items-center gap-2">
+                            <AlertTriangle size={20} className="text-amber-400" /> Tenés una venta sin cobrar
+                        </h3>
+                        <p className="text-sm text-slate-300 mt-2">
+                            Hay {cart.length} producto{cart.length === 1 ? '' : 's'} en el carrito por {formatMoney(grandTotal)}. Decidí qué hacer antes de cerrar la caja.
+                        </p>
+                        <div className="mt-5 space-y-2">
+                            <button
+                                onClick={() => { handleHoldCart(); setBloqueoCierre(false); setShowCloseShift(true); }}
+                                className="w-full h-11 rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors"
+                            >
+                                Aparcar la venta y cerrar
+                            </button>
+                            <button
+                                onClick={() => setBloqueoCierre(false)}
+                                className="w-full h-11 rounded-control bg-white/[0.06] text-slate-100 font-bold hover:bg-white/[0.12] transition-colors"
+                            >
+                                Seguir vendiendo
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setCart([]); setSelectedCustomer(null); setCustomerSearch(''); setGlobalDiscount('');
+                                    setBloqueoCierre(false); setShowCloseShift(true);
+                                }}
+                                className="w-full h-11 rounded-control text-danger font-bold hover:bg-danger-soft transition-colors"
+                            >
+                                Descartar la venta y cerrar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {showCloseShift && (
                 <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur flex items-center justify-center p-4">
                     <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
@@ -3004,32 +3442,23 @@ const POS: React.FC = () => {
                    mostrador. */
                 <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 overflow-y-auto pb-4 custom-scrollbar flex-1 min-h-0 content-start">
                     {filteredProducts.map(product => (
-                        <button
+                        <TarjetaProducto
                             key={product.id}
-                            onClick={() => { addToCart(product); playBeep(); }}
-                            disabled={product.stock === 0}
-                            className="h-24 bg-surface-900 hover:bg-surface-800 border border-white/[0.06] rounded-card px-3 py-2 hover:border-brand/50 transition-colors text-left flex flex-col justify-between text-slate-100 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand/40"
-                        >
-                            <div className="min-w-0 flex items-start gap-2">
-                                {/* Miniatura solo si el producto TIENE foto: nunca un hueco vacío. */}
-                                {product.imageUrl && (
-                                    <img
-                                        src={product.imageUrl}
-                                        alt=""
-                                        loading="lazy"
-                                        className="w-10 h-10 rounded-control object-cover border border-white/[0.06] shrink-0"
-                                    />
-                                )}
-                                <h3 className="font-semibold text-sm text-slate-100 leading-tight line-clamp-2 min-w-0">{product.name}</h3>
-                            </div>
-                            <div className="flex justify-between items-end gap-1">
-                                <span className="text-[17px] font-bold text-brand nx-num">{formatMoney(product.price)}</span>
-                                <span className={`text-[11px] px-1.5 py-0.5 rounded-control shrink-0 ${product.stock === 0 ? 'bg-danger-soft text-danger font-bold' : product.stock <= 5 ? 'bg-warning-soft text-amber-400' : 'text-slate-500'}`}>
-                                    {product.stock === 0 ? 'AGOTADO' : product.stock}
-                                </span>
-                            </div>
-                        </button>
+                            product={product}
+                            bloqueada={permiteStockNegativo !== true && product.stock <= 0}
+                            onAgregar={agregarDesdeGrilla}
+                        />
                     ))}
+                    {/* El recorte se DECLARA. Una lista cortada en silencio se lee
+                        como "esto es todo lo que tengo", y en un inventario eso
+                        hace que el dueño vuelva a comprar algo que ya tiene. */}
+                    {resultadoBusqueda.ocultos > 0 && (
+                        <p className="col-span-full text-center text-xs text-slate-400 py-3">
+                            {searchTerm.trim() === ''
+                                ? `Mostrando ${resultadoBusqueda.visibles.length} de ${resultadoBusqueda.total} productos — escaneá o escribí para buscar el resto.`
+                                : `Mostrando ${resultadoBusqueda.visibles.length} de ${resultadoBusqueda.total} coincidencias — afiná la búsqueda.`}
+                        </p>
+                    )}
                 </div>
                 )}
 
@@ -3162,6 +3591,56 @@ const POS: React.FC = () => {
                     )}
                 </div>
 
+                {/* ⚠️ Venta a medias que NO pertenece a este turno (o quedó vieja).
+                    No se restaura sola: meter mercadería de otro turno en la caja
+                    de hoy sin avisar descuadraría el arqueo de otro. Se muestra
+                    con su tamaño real para que la decisión sea informada. */}
+                {ventaPendiente && (() => {
+                    const r = resumenGuardado(ventaPendiente);
+                    return (
+                        <div role="status" className="mx-4 mt-4 p-3 rounded-control bg-warning-soft border border-amber-500/20">
+                            <div className="flex items-start gap-2">
+                                <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-[13px] font-bold text-amber-400 leading-snug">Tenés una venta sin terminar</p>
+                                    <p className="text-[12px] text-slate-300 mt-0.5">
+                                        {r.lineas} producto{r.lineas === 1 ? '' : 's'} · {formatMoney(r.total)} — quedó de otro turno.
+                                    </p>
+                                    <div className="flex gap-2 mt-2">
+                                        <button
+                                            onClick={recuperarVentaPendiente}
+                                            className="px-2.5 py-1 rounded bg-amber-500 text-white text-[12px] font-bold hover:bg-amber-600 transition-colors"
+                                        >
+                                            Recuperar
+                                        </button>
+                                        <button
+                                            onClick={descartarVentaPendiente}
+                                            className="px-2.5 py-1 rounded bg-white/[0.06] text-slate-200 text-[12px] font-bold hover:bg-white/[0.12] transition-colors"
+                                        >
+                                            Descartar
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {/* Otra pestaña escribió el mismo carrito: se avisa en vez de
+                    pisarlo en silencio — perder un carrito sin enterarse es el
+                    mismo bug que estamos arreglando, disfrazado. */}
+                {cajaEnOtraPestana && (
+                    <div role="status" className="mx-4 mt-4 p-2.5 rounded-control bg-white/[0.04] border border-white/[0.08] flex items-start gap-2">
+                        <AlertTriangle size={14} className="text-slate-400 shrink-0 mt-0.5" />
+                        <p className="text-[12px] text-slate-300 flex-1">
+                            La caja está abierta en otra pestaña. Usá una sola para que no se pisen las ventas.
+                        </p>
+                        <button onClick={() => setCajaEnOtraPestana(false)} className="text-slate-400 hover:text-slate-200 shrink-0" aria-label="Cerrar aviso">
+                            <X size={14} />
+                        </button>
+                    </div>
+                )}
+
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
                     {cart.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
@@ -3178,10 +3657,25 @@ const POS: React.FC = () => {
                             const packLabel = ((item as CartLine).packUnit || 'caja').toLowerCase();
                             return (
                                 <div key={item.id} className="bg-surface-800/40 p-3 rounded-lg border border-white/[0.04] text-slate-100">
-                                    <div className="flex items-center gap-3">
+                                    {/* FILA 1 · El nombre, a ancho completo (P0-3).
+                                        Antes era `line-clamp-1` dentro de una columna de
+                                        110px y sin `title`: "1 bolson de ranchita chile"
+                                        se leía "1 bolson de..." y no había ni tooltip.
+                                        Confirmar el artículo en voz alta con el cliente es
+                                        el control de calidad de una venta; acá era
+                                        imposible. El alto sobra: el panel estaba vacío de
+                                        la tercera fila para abajo. */}
+                                    <h4
+                                        title={item.name}
+                                        className="text-[15px] font-semibold text-slate-100 leading-snug line-clamp-2"
+                                    >
+                                        {item.name}
+                                    </h4>
+
+                                    {/* FILA 2 · precio · cantidad · total · quitar */}
+                                    <div className="flex items-center gap-2 mt-2">
                                         <div className="flex-1 min-w-0">
-                                            <h4 className="text-sm font-medium text-slate-100 line-clamp-1">{item.name}</h4>
-                                            <div className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums flex items-center gap-1.5 flex-wrap">
+                                            <div className="text-xs text-slate-400 font-mono tabular-nums flex items-center gap-1.5 flex-wrap">
                                                 <span>{formatMoney(item.price)} / {(item as CartLine).unit || 'und'}</span>
                                                 {tierBadge && (
                                                     <span className="px-1.5 py-0.5 bg-indigo-500/15 text-indigo-400 rounded text-[9px] font-bold tracking-wide">{tierBadge}</span>
@@ -3191,26 +3685,49 @@ const POS: React.FC = () => {
                                                         onClick={() => updateQuantity(item.id, packSize)}
                                                         className="px-1.5 py-0.5 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-200 rounded text-[9px] font-bold tracking-wide transition-colors"
                                                         title={`Agregar 1 ${packLabel} (${packSize} ${(item as CartLine).unit || 'und'})`}
+                                                        aria-label={`Agregar un ${packLabel} de ${item.name}, ${packSize} unidades`}
                                                     >
                                                         +1 {packLabel.toUpperCase()} ({packSize})
                                                     </button>
                                                 )}
                                             </div>
+                                            <div className="text-[15px] font-bold text-white font-mono tabular-nums mt-0.5">{formatMoney(lineTotalD)}</div>
                                         </div>
-                                        <div className="flex items-center gap-1 bg-surface-900 rounded border border-white/[0.06] p-1 text-slate-100">
-                                            <button onClick={() => updateQuantity(item.id, -0.5)} className="p-1 hover:bg-white/[0.06] rounded text-slate-300"><Minus size={14} /></button>
+
+                                        {/* Objetivos táctiles de 44px (P0-4). Antes: −/+ de
+                                            22px y basurero de 14px, los tres SIN nombre
+                                            accesible — anónimos para un lector de pantalla
+                                            y para cualquier prueba automatizada. */}
+                                        <div className="flex items-center gap-0.5 bg-surface-900 rounded-control border border-white/[0.06] p-0.5 text-slate-100 shrink-0">
+                                            <button
+                                                onClick={() => updateQuantity(item.id, -0.5)}
+                                                aria-label={`Quitar media unidad de ${item.name}`}
+                                                className="w-11 h-11 flex items-center justify-center hover:bg-white/[0.06] rounded-control text-slate-300 transition-colors"
+                                            >
+                                                <Minus size={18} />
+                                            </button>
                                             <NumberDraftInput
                                                 value={item.quantity}
                                                 onCommit={(n) => { if (n > 0) setQuantity(item.id, n); }}
                                                 ariaLabel={`Cantidad de ${item.name}`}
-                                                className="w-14 text-center text-sm font-mono tabular-nums font-bold border-0 outline-none bg-transparent text-slate-100"
+                                                className="w-12 h-11 text-center text-base font-mono tabular-nums font-bold border-0 outline-none bg-transparent text-slate-100"
                                             />
-                                            <button onClick={() => updateQuantity(item.id, 0.5)} className="p-1 hover:bg-white/[0.06] rounded text-slate-300"><Plus size={14} /></button>
+                                            <button
+                                                onClick={() => updateQuantity(item.id, 0.5)}
+                                                aria-label={`Agregar media unidad de ${item.name}`}
+                                                className="w-11 h-11 flex items-center justify-center hover:bg-white/[0.06] rounded-control text-slate-300 transition-colors"
+                                            >
+                                                <Plus size={18} />
+                                            </button>
                                         </div>
-                                        <div className="text-right min-w-[60px]">
-                                            <div className="text-sm font-bold text-white font-mono tabular-nums">{formatMoney(lineTotalD)}</div>
-                                            <button onClick={() => removeFromCart(item.id)} className="text-red-400 hover:text-red-400 mt-1"><Trash2 size={14} className="ml-auto" /></button>
-                                        </div>
+
+                                        <button
+                                            onClick={() => quitarLinea(item.id)}
+                                            aria-label={`Quitar ${item.name} del ticket`}
+                                            className="w-11 h-11 flex items-center justify-center rounded-control text-slate-400 hover:text-danger hover:bg-danger-soft transition-colors shrink-0"
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
                                     </div>
                                     {/* Per-item discount row */}
                                     <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-white/[0.04]">
@@ -3228,11 +3745,65 @@ const POS: React.FC = () => {
                                             <span className="text-[10px] text-red-500 font-bold ml-auto">-{formatMoney(toDecimal(item.price).mul(item.quantity).mul(lineDiscountD).div(100))}</span>
                                         )}
                                     </div>
+                                    {/* ⚠️ Aviso de existencias — la línea vende más de lo que
+                                        hay en el sistema (o el producto ya está en negativo).
+                                        AVISA, no bloquea: el conteo puede estar desactualizado
+                                        y el producto estar físicamente en la góndola. Lo que sí
+                                        hace es dar la salida en un toque: ajustar a lo que hay,
+                                        o quitar la línea si no hay nada. */}
+                                    {(() => {
+                                        const aviso = avisoPorLinea.get(item.id);
+                                        const texto = aviso ? textoAviso(aviso) : null;
+                                        if (!aviso || !texto) return null;
+                                        const grave = aviso.estado === 'SIN_EXISTENCIA';
+                                        return (
+                                            <div
+                                                role="status"
+                                                className={`mt-1.5 pt-1.5 border-t border-white/[0.04] flex items-start gap-2 text-[11px] leading-snug ${grave ? 'text-danger' : 'text-amber-400'}`}
+                                            >
+                                                <AlertTriangle size={13} className="shrink-0 mt-px" />
+                                                <span className="flex-1 min-w-0">{texto}</span>
+                                                {aviso.ajustarA !== null ? (
+                                                    <button
+                                                        onClick={() => setQuantity(item.id, aviso.ajustarA as number)}
+                                                        className="shrink-0 px-1.5 py-0.5 rounded bg-white/[0.06] hover:bg-white/[0.12] font-bold text-slate-200 transition-colors"
+                                                    >
+                                                        Ajustar a {aviso.ajustarA}
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => quitarLinea(item.id)}
+                                                        aria-label={`Quitar ${item.name} del ticket`}
+                                                        className="shrink-0 px-1.5 py-0.5 rounded bg-white/[0.06] hover:bg-white/[0.12] font-bold text-slate-200 transition-colors"
+                                                    >
+                                                        Quitar
+                                                    </button>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             );
                         })
                     )}
                 </div>
+                {/* Deshacer un quitado (P0-4). Va dentro del panel y pegado al
+                    bloque de cobro para que se vea también en móvil, donde el
+                    panel del ticket ES la pantalla. */}
+                {quitadoReciente && (
+                    <div role="status" className="mx-4 mb-2 px-3 py-2 rounded-control bg-surface-800 border border-white/[0.08] flex items-center gap-2">
+                        <span className="text-[12px] text-slate-300 flex-1 min-w-0 truncate">
+                            Quitaste "{quitadoReciente.item.name}"
+                        </span>
+                        <button
+                            onClick={deshacerQuitado}
+                            className="shrink-0 px-2.5 py-1 rounded bg-white/[0.08] text-slate-100 text-[12px] font-bold hover:bg-white/[0.16] transition-colors"
+                        >
+                            Deshacer
+                        </button>
+                    </div>
+                )}
+
                 {/* Bloque de cobro: sticky al fondo del panel, superficie elevada y
                     z-checkout. Ningún flotante puede vivir por encima de esto. */}
                 <div className="sticky bottom-0 z-checkout p-5 border-t border-white/[0.06] bg-surface-800 text-slate-100">
@@ -3254,15 +3825,45 @@ const POS: React.FC = () => {
                             <span className="text-xs text-red-500 font-bold ml-auto">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span>
                         )}
                     </div>}
-                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>Subtotal</span><span className="nx-num">{formatMoney(total)}</span></div>
-                    {globalDiscountD.greaterThan(0) && <div className="flex justify-between text-sm text-danger mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="nx-num">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span></div>}
-                    <div className="flex justify-between text-sm text-slate-500 mb-2"><span>IVA incluido (15%)</span><span className="nx-num">{formatMoney(tax)}</span></div>
+                    {/* P1-5 — Antes: "Subtotal C$19.00 · IVA incluido C$2.48 ·
+                        TOTAL C$19.00". Tres líneas donde dos eran idénticas y la
+                        del medio no sumaba, porque "Subtotal" estaba puesto sobre
+                        el BRUTO (que ya trae el IVA adentro). Ahora se imprime el
+                        desglose fiscal real —base imponible + IVA = TOTAL—, que
+                        además es el MISMO que sale en el ticket de papel: el
+                        número de la pantalla y el del papel tienen que cuadrar
+                        entre sí y con la declaración.
+                        Subtotal y Descuento solo aparecen cuando hubo descuento;
+                        sin él eran una cifra repetida. */}
+                    {globalDiscountD.greaterThan(0) && (
+                        <>
+                            <div className="flex justify-between text-sm text-slate-400 mb-1"><span>Subtotal</span><span className="nx-num">{formatMoney(total)}</span></div>
+                            <div className="flex justify-between text-sm text-danger mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="nx-num">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span></div>
+                        </>
+                    )}
+                    <div className="flex justify-between text-sm text-slate-400 mb-1"><span>Base imponible</span><span className="nx-num">{formatMoney(grandTotalD.minus(taxD))}</span></div>
+                    <div className="flex justify-between text-sm text-slate-400 mb-2"><span>IVA (15%)</span><span className="nx-num">{formatMoney(tax)}</span></div>
                     {/* El TOTAL es la cifra que decide la operación: tamaño display,
                         en color de texto principal (no coloreado). */}
                     <div className="flex justify-between items-baseline mb-4 pt-3 border-t border-white/[0.06]">
                         <span className="nx-label">Total</span>
                         <span className="nx-total">{formatMoney(grandTotal)}</span>
                     </div>
+
+                    {/* Resumen de existencias: va PEGADO a los botones de cobro
+                        porque es el último momento en que el aviso sirve. El texto
+                        dice la consecuencia REAL según la política del tenant
+                        (rechazo vs inventario en negativo); si todavía no sabemos
+                        cuál es, avisa el hecho y no promete nada. */}
+                    {resumenStockTexto && (
+                        <div
+                            role="status"
+                            className={`flex items-start gap-2 mb-3 px-3 py-2 rounded-control text-[12px] leading-snug ${permiteStockNegativo === false ? 'bg-danger-soft text-danger' : 'bg-warning-soft text-amber-400'}`}
+                        >
+                            <AlertTriangle size={14} className="shrink-0 mt-px" />
+                            <span>{resumenStockTexto}</span>
+                        </div>
+                    )}
 
                     {/* Botones de cobro a 56px (--nx-h-pay): objetivo táctil de mostrador. */}
                     <div className="grid grid-cols-2 gap-3 mb-3">
@@ -3642,13 +4243,33 @@ const POS: React.FC = () => {
                                         ver `denominacionesSugeridas` — ninguna puede
                                         resultar en un pago menor al total. */}
                                     <div className="flex gap-2 flex-wrap">
-                                        <button type="button" onClick={() => setCashReceived(grandTotalD.toFixed(2))} className="flex-shrink-0 px-3 py-1.5 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 font-bold rounded-control text-xs border border-emerald-500/20 transition-colors">Monto exacto</button>
+                                        {/* P1-5/P1-2 — El estilo del chip se DERIVA de lo
+                                            que hay escrito. Antes el verde de "Monto exacto"
+                                            estaba hardcodeado: al tocar C$500 el input pasaba
+                                            a 500 y el cambio salía bien, pero "Monto exacto"
+                                            seguía resaltado y C$500 apagado — la pantalla
+                                            mentía sobre lo que estaba seleccionado.
+                                            El activo se distingue por BORDE además de color:
+                                            no se depende solo del color para decir cuál es. */}
+                                        <button
+                                            type="button"
+                                            onClick={() => setCashReceived(grandTotalD.toFixed(2))}
+                                            aria-pressed={chipActivo(grandTotalD)}
+                                            className={`flex-shrink-0 px-3 py-1.5 font-bold rounded-control text-xs border transition-colors ${chipActivo(grandTotalD)
+                                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500 hover:bg-emerald-500/25'
+                                                : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'}`}
+                                        >
+                                            Monto exacto
+                                        </button>
                                         {denominacionesSugeridas(grandTotalD).map(monto => (
                                             <button
                                                 key={monto.toFixed(2)}
                                                 type="button"
                                                 onClick={() => setCashReceived(monto.toFixed(2))}
-                                                className="flex-shrink-0 px-3 py-1.5 bg-white/[0.04] text-slate-200 hover:bg-white/[0.06] font-bold rounded-control text-xs border border-white/[0.06] transition-colors"
+                                                aria-pressed={chipActivo(monto)}
+                                                className={`flex-shrink-0 px-3 py-1.5 font-bold rounded-control text-xs border transition-colors ${chipActivo(monto)
+                                                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500 hover:bg-emerald-500/25'
+                                                    : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'}`}
                                             >
                                                 {formatMoney(monto, 'NIO', { decimals: 0 })}
                                             </button>

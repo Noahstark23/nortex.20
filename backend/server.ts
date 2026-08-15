@@ -7301,6 +7301,28 @@ app.put('/api/tenant/fiscal', authenticate, checkRole(['ADMIN', 'OWNER']), async
     }
 });
 
+// GET /api/tenant/inventory-settings — política de inventario del tenant.
+// Sin `checkRole`: el CAJERO es quien necesita el dato. El POS avisa en el
+// carrito cuando una línea excede la existencia, y la consecuencia real depende
+// de esta política (con la política apagada el backend RECHAZA la venta; con
+// ella encendida la venta pasa y el stock queda en negativo). Sin este GET el
+// POS tendría que adivinar la consecuencia, que es exactamente lo que no se
+// puede hacer con un cliente enfrente. Solo lectura, tenant del JWT.
+app.get('/api/tenant/inventory-settings', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: authReq.tenantId! },
+            select: { allowNegativeStock: true },
+        });
+        if (!tenant) return res.status(404).json({ error: 'Negocio no encontrado' });
+        res.json({ allowNegativeStock: tenant.allowNegativeStock });
+    } catch (error: any) {
+        console.error('Error al leer configuración de inventario:', error);
+        res.status(500).json({ error: 'Error al leer configuración de inventario' });
+    }
+});
+
 // PUT /api/tenant/inventory-settings — política de inventario (0a: stock negativo)
 app.put('/api/tenant/inventory-settings', authenticate, checkRole(['ADMIN', 'OWNER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
