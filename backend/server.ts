@@ -23,7 +23,7 @@ import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEve
 import { executeSale, SaleError } from './services/salesService';
 import { applyStockDelta, StockError, weightedAverageCost } from './services/stockService';
 import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger, appendDriverWalletMovement, verifyDriverLedger } from './services/ledger';
-import { signAuthToken } from './services/secrets';
+import { signAuthToken, verifyAuthToken } from './services/secrets';
 import { initObservability, errorTelemetry } from './services/observability';
 import { isWhatsAppEnabled } from './services/whatsapp/config';
 import { verifyHandler as whatsappVerify, webhookHandler as whatsappWebhook } from './services/whatsapp/webhook';
@@ -193,10 +193,52 @@ if (isWhatsAppEnabled()) {
 // JSON Parser con límite de body (anti-abuse)
 app.use(express.json({ limit: '2mb' }) as any);
 
-// Rate Limit Global: 100 req / 15 min por IP
+/**
+ * Rate limit global — por TENANT cuando hay sesión, por IP cuando no la hay.
+ *
+ * Antes: 300 peticiones / 15 min por IP para todo `/api/`. Son ~20 por minuto
+ * para el NEGOCIO ENTERO, y el mismo razonamiento que ya está escrito en el
+ * limiter de login aplica acá con más fuerza: en Nicaragua los locales comparten
+ * WiFi y el móvil va por CGNAT, así que "una IP" no es un usuario — es la
+ * ferretería completa, y a veces el barrio.
+ *
+ * Una tienda con dos tablets vendiendo y el dueño mirando el panel agota ese
+ * presupuesto en minutos: a partir de ahí TODOS comen 429 y el POS deja de
+ * cobrar. Una prueba de carga local lo disparó sin proponérselo.
+ *
+ * Ahora la llave es el tenant del JWT: cada negocio tiene su propio presupuesto
+ * y no lo comparte con quien esté detrás de la misma IP. El tráfico anónimo
+ * (login, registro, catálogo público) sigue acotado por IP, y las rutas
+ * sensibles conservan además su limiter estricto propio (login por email, PIN
+ * de caja, registro, pedidos públicos) — esos son los que frenan el
+ * brute-force; este solo frena el abuso grueso.
+ *
+ * ⚠️ Sigue siendo MemoryStore: el conteo es POR PROCESO. Con más de una
+ * instancia el límite efectivo se multiplica por N. Pasarlo a Redis es la
+ * Fase 3 de docs/PLAN_DESACOPLE_ESCALABILIDAD.md.
+ */
+const LIMITE_POR_TENANT = 3000;   // 200/min para todo el negocio
+const LIMITE_ANONIMO = 300;       // sin sesión: se mantiene el valor conservador
+
+/** Tenant del Bearer, VERIFICADO. Sin verificar, cualquiera forjaría su cubeta. */
+function tenantDelToken(req: any): string | null {
+    const auth = req.headers?.authorization;
+    if (typeof auth !== 'string' || !auth.startsWith('Bearer ')) return null;
+    try {
+        const payload = verifyAuthToken(auth.slice(7));
+        return payload?.tenantId ?? null;
+    } catch {
+        return null; // token vencido/inválido → cae al cubo por IP
+    }
+}
+
 const globalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 300,
+    max: (req: any) => (tenantDelToken(req) ? LIMITE_POR_TENANT : LIMITE_ANONIMO),
+    keyGenerator: (req: any) => {
+        const tenantId = tenantDelToken(req);
+        return tenantId ? `tenant:${tenantId}` : `ip:${req.ip || 'unknown'}`;
+    },
     message: { error: '⚠️ Demasiadas peticiones. Intenta en unos minutos.' },
     standardHeaders: true,
     legacyHeaders: false,

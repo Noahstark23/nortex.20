@@ -85,7 +85,34 @@ export interface StockDeltaResult {
     warehouseId: string;
 }
 
-const DEFAULT_WAREHOUSE_NAME = 'Principal';
+export const DEFAULT_WAREHOUSE_NAME = 'Principal';
+
+/**
+ * Garantiza la bodega por defecto ANTES de abrir una transacción.
+ *
+ * `resolveDefaultWarehouseId` ya trae un catch de P2002 para la carrera, pero
+ * ese catch NO sirve adentro de una transacción: bajo REPEATABLE READ la fila
+ * que acaba de crear el otro request es invisible para este snapshot, el
+ * `findFirst` del catch devuelve null y el error se relanza igual. Medido en
+ * carga: 10 ventas simultáneas de un tenant nuevo → 8 fallaban con
+ * `Warehouse_tenantId_name_key`.
+ *
+ * Llamar a esto fuera de la tx (con el cliente normal, no con `tx`) deja la
+ * fila creada y commiteada, así que adentro solo queda el camino de lectura.
+ * Solo crea si el tenant NO tiene ninguna bodega: si ya tiene una, la lógica
+ * de promoción de `resolveDefaultWarehouseId` es la que manda.
+ */
+export async function asegurarBodegaPorDefecto(
+    db: { warehouse: { findFirst: Function; createMany: Function } },
+    tenantId: string,
+): Promise<void> {
+    const alguna = await db.warehouse.findFirst({ where: { tenantId }, select: { id: true } });
+    if (alguna) return;
+    await db.warehouse.createMany({
+        data: [{ tenantId, name: DEFAULT_WAREHOUSE_NAME, isDefault: true }],
+        skipDuplicates: true, // INSERT IGNORE: si otro request ganó, no lanza
+    });
+}
 
 /**
  * Resuelve la bodega default del tenant, creándola ("Principal") si no existe.
