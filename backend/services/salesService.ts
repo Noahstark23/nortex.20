@@ -19,7 +19,7 @@ import { z } from 'zod';
 import Decimal from 'decimal.js';
 import { PrismaClient, Sale, Prisma } from '@prisma/client';
 import { recordSale } from './accounting.js';
-import { applyStockDelta, StockError } from './stockService.js';
+import { applyStockDelta, StockError, asegurarBodegaPorDefecto } from './stockService.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -227,12 +227,41 @@ export async function executeSale(
         dueDate       = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     }
 
+    // 4-bis. La fila del correlativo se GARANTIZA ANTES de abrir la transacción.
+    //
+    // Por qué: el `upsert` de adentro toma el camino CREATE mientras el tenant no
+    // tiene fila de serie. Dos ventas simultáneas de un tenant NUEVO ejecutaban
+    // ese INSERT a la vez y la segunda moría con
+    //   P2002 · Unique constraint failed on: InvoiceSeries_tenantId_series_key
+    // Medido en carga: de 10 ventas simultáneas de un tenant recién creado,
+    // 8 FALLABAN (2/10 ok). Con la fila ya existente, 10/10 pasan — el upsert
+    // toma el camino UPDATE y el row-lock las serializa sin error.
+    // O sea: el negocio que estrenaba Nortex con dos cajas abiertas perdía las
+    // ventas de su primer día, y en pantalla solo veía "Error procesando venta".
+    //
+    // `createMany` + `skipDuplicates` es un INSERT IGNORE: si la fila ya existe
+    // no hace nada y no lanza. Va FUERA de la transacción a propósito, mismo
+    // precedente que el seed del catálogo contable en compras: una fila creada
+    // por otra conexión no sería visible dentro de la tx bajo REPEATABLE READ.
+    await prisma.invoiceSeries.createMany({
+        data: [{ tenantId, series: 'A', lastNumber: 0 }],
+        skipDuplicates: true,
+    });
+
+    // Misma clase de carrera, segunda fila perezosa: la bodega por defecto se
+    // creaba dentro de la tx en el primer movimiento de stock. Arreglar solo el
+    // correlativo destapó ésta — las 8 ventas seguían perdiéndose, ahora por
+    // `Warehouse_tenantId_name_key`.
+    await asegurarBodegaPorDefecto(prisma, tenantId);
+
     // 5. Transacción atómica (idempotente ante carrera vía offlineId @unique)
     let sale: Sale;
     try {
         sale = await prisma.$transaction(async (tx: PrismaTx) => {
 
-        // 5a. Consecutivo DGI — upsert atómico dentro de la transacción
+        // 5a. Consecutivo DGI — el upsert ya SIEMPRE toma el camino UPDATE (la
+        // fila se garantizó arriba). El `create` queda como red de seguridad por
+        // si alguien borra la serie a mano.
         const counter = await tx.invoiceSeries.upsert({
             where:  { tenantId_series: { tenantId, series: 'A' } },
             update: { lastNumber: { increment: 1 } },
