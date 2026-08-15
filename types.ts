@@ -70,6 +70,13 @@ export interface Shift {
     lastName: string;
     role: string;
   };
+  // Traspaso de caja: el backend devuelve el turno abierto de la caja aunque lo
+  // haya abierto otra persona (antes devolvía null y el POS mostraba C$0.00 con
+  // plata real en la gaveta). Con `esTurnoPropio: false` se ve el efectivo pero
+  // NO se puede cobrar: primero hay que tomar la caja, para que el arqueo tenga
+  // un responsable único.
+  esTurnoPropio?: boolean;
+  turnoDe?: string | null;
 }
 
 export interface CashMovement {

@@ -11,7 +11,7 @@ import { formatMoney } from '../utils/money';
  * "Mi Plata" (/app/dashboard) para quien quiera profundizar.
  *
  * Datos: SOLO endpoints existentes (tenant-scoped por JWT en el backend):
- *   - /api/dashboard/stats      → todayStats.totalSales / netProfit
+ *   - /api/dashboard/stats      → todayStats.totalSales / gananciaBruta
  *   - /api/collections/worklist → totalReceivable (el fiado en la calle)
  * Si una llamada falla (sin red, permisos), el número muestra "—" y los
  * botones siguen funcionando: la pantalla nunca bloquea la operación.
@@ -29,10 +29,22 @@ const formatCordobas = (n: number | null): string => {
     return formatMoney(n);
 };
 
+/**
+ * Número finito que MANDÓ el backend, o null si el campo no vino.
+ * Se usa para los campos nuevos de /api/dashboard/stats: si la app corre
+ * contra un backend todavía sin ellos, la pantalla muestra "—" en vez de
+ * inventar un número (jamás las ventas disfrazadas de ganancia).
+ */
+const numeroDelBackend = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? v : null;
+
 const MiNegocio: React.FC = () => {
     const navigate = useNavigate();
     const [nums, setNums] = useState<DayNumbers>({ vendiHoy: null, meDeben: null, enCaja: null, gananciaHoy: null });
     const [businessName, setBusinessName] = useState('');
+    // Líneas vendidas hoy SIN costo cargado: la ganancia está sobreestimada y
+    // hay que decirlo, no maquillarlo (NX-01).
+    const [lineasSinCosto, setLineasSinCosto] = useState(0);
 
     useEffect(() => {
         try {
@@ -54,8 +66,14 @@ const MiNegocio: React.FC = () => {
                         setNums(prev => ({
                             ...prev,
                             vendiHoy: Number(data.todayStats.totalSales ?? 0),
-                            gananciaHoy: Number(data.todayStats.netProfit ?? 0),
+                            // NX-01: la ganancia del día es la GANANCIA BRUTA —
+                            // ingreso neto (el precio de góndola trae el IVA del
+                            // fisco adentro) menos el costo de lo vendido. No es
+                            // lo vendido, ni las ventas menos los gastos.
+                            gananciaHoy: numeroDelBackend(data.todayStats.gananciaBruta),
                         }));
+                        const sinCosto = numeroDelBackend(data.todayStats.lineasSinCosto);
+                        setLineasSinCosto(sinCosto !== null && sinCosto > 0 ? Math.trunc(sinCosto) : 0);
                     }
                 }
             } catch { /* sin red — se queda en "—" */ }
@@ -133,6 +151,16 @@ const MiNegocio: React.FC = () => {
                     <div className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5">
                         <p className="text-slate-400 text-sm font-medium">Ganancia de hoy</p>
                         <p className="text-2xl font-extrabold text-white mt-1">{formatCordobas(nums.gananciaHoy)}</p>
+                        {/* Sin costos cargados la ganancia sale inflada: se avisa
+                            y se ofrece el camino para arreglarlo (NX-01). */}
+                        {lineasSinCosto > 0 && (
+                            <button
+                                onClick={() => navigate('/app/inventory')}
+                                className="mt-2 text-left text-[11px] leading-snug text-amber-400 hover:text-amber-300 underline underline-offset-2"
+                            >
+                                Ganancia estimada — faltan costos en {lineasSinCosto} producto{lineasSinCosto === 1 ? '' : 's'}
+                            </button>
+                        )}
                     </div>
                 </section>
 

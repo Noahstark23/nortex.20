@@ -303,7 +303,9 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
 
         // Caja abierta del usuario (mismo criterio que /api/cash-movements).
         const currentShift = await prisma.shift.findFirst({
-            where: { userId: req.userId, status: 'OPEN' },
+            // Capa 1: el tenant sale del JWT y va SIEMPRE en el where. Sin él, un
+            // userId que colisione entre tenants lee la caja del tenant equivocado.
+            where: { tenantId: req.tenantId, userId: req.userId, status: 'OPEN' },
         });
         if (!currentShift) {
             return res.status(400).json({ success: false, error: 'No hay caja abierta. Abrí una caja primero.' });
@@ -506,7 +508,9 @@ router.post('/transactions/:id/reverse', authenticate, checkRole(['OWNER', 'ADMI
         }
 
         const currentShift = await prisma.shift.findFirst({
-            where: { userId: req.userId, status: 'OPEN' },
+            // Capa 1: el tenant sale del JWT y va SIEMPRE en el where. Sin él, un
+            // userId que colisione entre tenants lee la caja del tenant equivocado.
+            where: { tenantId: req.tenantId, userId: req.userId, status: 'OPEN' },
         });
         if (!currentShift) {
             return res.status(400).json({ success: false, error: 'Abrí una caja primero: la reversa mueve efectivo de la gaveta actual.' });

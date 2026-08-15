@@ -17,6 +17,18 @@ function getTenantType(): string {
   return '';
 }
 
+/**
+ * Número finito que MANDÓ el backend, o null si el campo no vino.
+ *
+ * Los campos de ganancia y retiro seguro son NUEVOS en /api/dashboard/stats.
+ * Si el SPA corre contra un backend que todavía no los manda, la pantalla
+ * muestra "—": jamás un número inventado ni el ingreso bruto haciéndose pasar
+ * por ganancia, que es exactamente el error que esta pantalla venía cometiendo.
+ */
+function numeroDelBackend(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
 /** Lee el rol del JWT (fuente autoritativa; el backend lo re-verifica). */
 function getUserRole(): string {
   try {
@@ -57,7 +69,17 @@ const RetailDashboard: React.FC = () => {
   }, []);
 
   // 📊 Today Stats & Alerts
-  const [todayStats, setTodayStats] = useState<{ totalSales: number; totalExpenses: number; netProfit: number; costoMercaderia?: number; lineasSinCosto?: number } | null>(null);
+  // Los campos nuevos (NX-01) van OPCIONALES a propósito: el SPA se despliega
+  // por separado del backend y no puede asumir que ya existen.
+  const [todayStats, setTodayStats] = useState<{
+    totalSales: number;
+    totalExpenses: number;
+    netProfit: number;
+    gananciaBruta?: number;
+    ingresoNeto?: number;
+    costoVendido?: number;
+    lineasSinCosto?: number;
+  } | null>(null);
   const [theftAlerts, setTheftAlerts] = useState<any[]>([]);
 
   // 🛡️ Survival Data (NIIF PyMES)
@@ -315,6 +337,30 @@ const RetailDashboard: React.FC = () => {
     }
   };
 
+  // ── NX-01 · La ganancia del día ────────────────────────────────────────────
+  // Product.price es precio de GÓNDOLA: trae el IVA (15%) adentro, y ese IVA es
+  // del fisco, no del dueño. Por eso la ganancia es ingreso NETO menos costo, y
+  // la calcula el backend (gananciaBruta). Acá solo se lee, defensivamente.
+  const gananciaBrutaHoy = numeroDelBackend(todayStats?.gananciaBruta);
+  const costoVendidoHoy = numeroDelBackend(todayStats?.costoVendido);
+  const utilidadHoy = numeroDelBackend(todayStats?.netProfit);
+  const lineasSinCostoRaw = numeroDelBackend(todayStats?.lineasSinCosto);
+  const lineasSinCosto = lineasSinCostoRaw !== null && lineasSinCostoRaw > 0 ? Math.trunc(lineasSinCostoRaw) : 0;
+
+  // ── NX-02 · Retiro seguro ──────────────────────────────────────────────────
+  // Efectivo − cuentas por pagar − costo de reponer lo vendido. NO es
+  // `liquidezLibre` (que ignora la reposición y le decía al dueño que se
+  // llevara el capital de trabajo).
+  const retiroSeguro = numeroDelBackend(survivalData?.retiroSeguro);
+
+  // ── NX-05 · Score y línea de crédito ───────────────────────────────────────
+  // Con una sola venta, "300/850" y una línea de C$100 no son información: son
+  // cebo. Mientras no haya historial suficiente no se muestra ningún número.
+  const creditScore = numeroDelBackend(tenantData.creditScore);
+  const creditLimit = numeroDelBackend(tenantData.creditLimit) ?? 0;
+  const historialInsuficiente = creditScore === null || creditScore <= 300 || creditLimit < 5000;
+  const puedeSolicitar = !historialInsuficiente && creditScore !== null && creditScore >= 500 && creditLimit > 100;
+
   return (
     <div className="p-6 h-full overflow-y-auto bg-surface-800/40 text-slate-100 relative">
 
@@ -393,11 +439,6 @@ const RetailDashboard: React.FC = () => {
               </>
             )}
           </div>
-          {(todayStats.lineasSinCosto ?? 0) > 0 && (
-            <p className="text-xs text-amber-400 mt-3 font-semibold">
-              Ganancia estimada — faltan costos en {todayStats.lineasSinCosto} producto{todayStats.lineasSinCosto === 1 ? '' : 's'}. Cargalos en Mis Productos para verla exacta.
-            </p>
-          )}
         </div>
       )}
 
@@ -515,42 +556,64 @@ const RetailDashboard: React.FC = () => {
           se usa para decorar la cifra, solo para calificar el resultado. */}
       {todayStats && (
         <div className="mb-6 bg-surface-900 border border-white/[0.06] rounded-card p-6">
-          <p className="nx-label mb-1">Hoy</p>
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="text-slate-400">
-              {todayStats.netProfit >= 0 ? 'Ganaste' : 'Perdiste'}
-            </span>
-            <span className="nx-total">{formatMoney(Math.abs(todayStats.netProfit))}</span>
-            <span className={`text-sm font-semibold ${todayStats.netProfit >= 0 ? 'nx-delta-up' : 'nx-delta-down'}`}>
-              {todayStats.netProfit >= 0 ? 'en verde' : 'en rojo'}
-            </span>
-          </div>
+          <p className="nx-label mb-1">Ganancia de hoy</p>
+          {gananciaBrutaHoy === null ? (
+            /* Backend sin el cálculo nuevo: guion. Mostrar acá las ventas como
+               si fueran ganancia es el error que costaba la credibilidad. */
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="nx-total">—</span>
+              <span className="text-sm text-slate-400">Calculando tu ganancia…</span>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-slate-400">
+                {gananciaBrutaHoy >= 0 ? 'Ganaste' : 'Perdiste'}
+              </span>
+              <span className="nx-total">{formatMoney(Math.abs(gananciaBrutaHoy))}</span>
+              <span className={`text-sm font-semibold ${gananciaBrutaHoy >= 0 ? 'nx-delta-up' : 'nx-delta-down'}`}>
+                {gananciaBrutaHoy >= 0 ? 'en verde' : 'en rojo'}
+              </span>
+            </div>
+          )}
+          <p className="text-xs text-slate-500 mt-1">
+            Lo que vendiste, sin el IVA que es del fisco, menos lo que te costó la mercadería.
+          </p>
+          {/* Sin costo cargado, la ganancia sale INFLADA. Se avisa y se ofrece
+              el camino para arreglarlo, en vez de dar un número que el dueño
+              sabe que está mal (NX-01). */}
+          {lineasSinCosto > 0 && (
+            <button
+              onClick={() => navigate('/app/inventory')}
+              className="mt-2 text-left text-xs text-amber-400 hover:text-amber-300 underline underline-offset-2"
+            >
+              Ganancia estimada — faltan costos en {lineasSinCosto} producto{lineasSinCosto === 1 ? '' : 's'}
+            </button>
+          )}
           {/* El desglose queda debajo, en jerarquía menor y sin colorear cifras. */}
           <div className="flex flex-wrap gap-x-8 gap-y-2 mt-4 pt-4 border-t border-white/[0.06]">
             <div>
               <p className="nx-label">Ventas</p>
               <p className="text-lg font-bold text-slate-100 nx-num">{formatMoney(todayStats.totalSales)}</p>
             </div>
+            {costoVendidoHoy !== null && (
+              <div>
+                <p className="nx-label">Costo de lo vendido</p>
+                <p className="text-lg font-bold text-slate-100 nx-num">{formatMoney(costoVendidoHoy)}</p>
+              </div>
+            )}
             <div>
               <p className="nx-label">Gastos</p>
               <p className="text-lg font-bold text-slate-100 nx-num">{formatMoney(todayStats.totalExpenses)}</p>
             </div>
-            {/* R2.9 · NX-01 — "Ganaste" ahora es ganancia REAL: el backend
-                descuenta el costo de mercadería vendida (SaleItem.costAtSale).
-                Antes mostraba el ingreso bruto (+416% sobre la ganancia real).
-                Si faltan costos, se dice — nunca se infla en silencio. */}
-            {(todayStats.costoMercaderia ?? 0) > 0 && (
+            {/* netProfit solo es utilidad real cuando el backend nuevo está
+                arriba (misma señal que gananciaBruta). */}
+            {gananciaBrutaHoy !== null && utilidadHoy !== null && (
               <div>
-                <p className="nx-label">Costo de lo vendido</p>
-                <p className="text-lg font-bold text-slate-100 nx-num">{formatMoney(todayStats.costoMercaderia!)}</p>
+                <p className="nx-label">Después de gastos</p>
+                <p className="text-lg font-bold text-slate-100 nx-num">{formatMoney(utilidadHoy)}</p>
               </div>
             )}
           </div>
-          {(todayStats.lineasSinCosto ?? 0) > 0 && (
-            <p className="text-xs text-amber-400 mt-3 font-semibold">
-              Ganancia estimada — faltan costos en {todayStats.lineasSinCosto} producto{todayStats.lineasSinCosto === 1 ? '' : 's'}. Cargalos en Mis Productos para verla exacta.
-            </p>
-          )}
         </div>
       )}
 
@@ -583,21 +646,29 @@ const RetailDashboard: React.FC = () => {
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Nortex Score</p>
-              {tenantData.creditScore != null ? (
-                <h3 className="text-2xl font-bold text-blue-400">{tenantData.creditScore} <span className="text-sm text-slate-400 font-normal">/ 850</span></h3>
+              {/* NX-05: sin historial suficiente NO se muestra el número. Un
+                  "300/850" tras la primera venta no describe al negocio — es el
+                  piso de la escala — y el dueño lo lee como que el sistema ya lo
+                  juzgó mal. En su lugar se dice qué falta, en concreto. */}
+              {historialInsuficiente ? (
+                <h3 className="text-lg font-bold text-slate-300">Todavía no alcanza</h3>
               ) : (
-                <h3 className="text-lg font-bold text-slate-400">Sin datos</h3>
+                <h3 className="text-2xl font-bold text-blue-400">{creditScore} <span className="text-sm text-slate-400 font-normal">/ 850</span></h3>
               )}
             </div>
             <div className="p-2 bg-blue-500/10 text-blue-400 rounded-lg">
               <Activity size={20} />
             </div>
           </div>
-          <div className="w-full bg-white/[0.04] h-2 rounded-full overflow-hidden mb-2">
-            <div className="bg-blue-500 h-full rounded-full transition-all duration-1000" style={{ width: `${((tenantData.creditScore ?? 0) / 850) * 100}%` }}></div>
-          </div>
-          {tenantData.creditScore == null ? (
-            <p className="text-xs text-slate-400">Sin historial suficiente para calcular tu score</p>
+          {!historialInsuficiente && (
+            <div className="w-full bg-white/[0.04] h-2 rounded-full overflow-hidden mb-2">
+              <div className="bg-blue-500 h-full rounded-full transition-all duration-1000" style={{ width: `${((creditScore ?? 0) / 850) * 100}%` }}></div>
+            </div>
+          )}
+          {historialInsuficiente ? (
+            <p className="text-xs text-slate-400">
+              Seguí registrando ventas: tu score se calcula con tu historial.
+            </p>
           ) : scoreFactors.length > 0 ? (
             <p className="text-[10px] text-slate-500 truncate" title={scoreFactors.join(', ')}>
               Factores: {scoreFactors[0]} {scoreFactors.length > 1 && `+${scoreFactors.length - 1}`}
@@ -611,23 +682,48 @@ const RetailDashboard: React.FC = () => {
         <div className="bg-gradient-to-br from-nortex-900 to-nortex-800 text-white p-6 rounded-xl shadow-sm border border-nortex-800 ring-1 ring-white/10 relative overflow-hidden group">
           <div className="absolute -right-6 -top-6 w-24 h-24 bg-nortex-accent blur-[50px] opacity-20 group-hover:opacity-30 transition-opacity"></div>
 
+          {/* NX-05: una "línea disponible" de C$100 el día 1 no compra nada y se
+              lee como cebo; y un botón gris deshabilitado se lee como función
+              bloqueada por no pagar. Mientras no haya historial no se muestra
+              monto ni botón muerto: se muestra el camino, accionable. */}
           <div className="flex justify-between items-start mb-4 relative z-10">
             <div>
               <p className="text-sm font-medium text-slate-400">Línea Disponible</p>
-              <h3 className="text-2xl font-bold text-white">{formatMoney(tenantData.creditLimit)}</h3>
+              {historialInsuficiente ? (
+                <h3 className="text-lg font-bold text-slate-300">Se activa con tu historial</h3>
+              ) : (
+                <h3 className="text-2xl font-bold text-white">{formatMoney(creditLimit)}</h3>
+              )}
             </div>
             <div className="p-2 bg-white/10 text-white rounded-lg">
               <CreditCard size={20} />
             </div>
           </div>
-          <button
-            onClick={() => setShowLoanModal(true)}
-            disabled={tenantData.creditLimit <= 100 || (tenantData.creditScore ?? 0) < 500}
-            className="relative z-10 w-full py-2 bg-nortex-accent hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-slate-100 text-sm font-bold rounded transition-colors flex items-center justify-center gap-2"
-          >
-            {(tenantData.creditScore ?? 0) < 500 ? <Lock size={16} /> : <Banknote size={16} />}
-            {tenantData.creditScore == null ? 'GENERÁ HISTORIAL' : tenantData.creditScore < 500 ? 'MEJORA TU SCORE' : 'SOLICITAR DESEMBOLSO'}
-          </button>
+          {historialInsuficiente ? (
+            <>
+              <p className="relative z-10 text-xs text-slate-400 mb-3">
+                Nortex calcula tu línea con las ventas y los pagos que vas registrando. Todavía no hay suficiente movimiento.
+              </p>
+              <button
+                onClick={() => navigate('/app/pos')}
+                className="relative z-10 w-full py-2 bg-white/10 hover:bg-white/[0.16] text-white text-sm font-bold rounded transition-colors flex items-center justify-center gap-2"
+              >
+                <ShoppingCart size={16} /> REGISTRAR UNA VENTA
+              </button>
+            </>
+          ) : puedeSolicitar ? (
+            <button
+              onClick={() => setShowLoanModal(true)}
+              className="relative z-10 w-full py-2 bg-nortex-accent hover:bg-emerald-400 text-slate-100 text-sm font-bold rounded transition-colors flex items-center justify-center gap-2"
+            >
+              <Banknote size={16} /> SOLICITAR DESEMBOLSO
+            </button>
+          ) : (
+            <p className="relative z-10 text-xs text-slate-400 flex items-start gap-2">
+              <Lock size={14} className="mt-0.5 flex-shrink-0" />
+              Los desembolsos se habilitan a partir de 500 puntos. Seguí vendiendo y pagando en fecha.
+            </p>
+          )}
         </div>
 
         {/* Active Debt Card */}
@@ -655,29 +751,34 @@ const RetailDashboard: React.FC = () => {
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-            {/* Safe Withdrawal Widget */}
-            <div className={`p-6 rounded-xl shadow-lg text-white relative overflow-hidden flex flex-col justify-center border
-              ${survivalData.liquidezLibre > 0 ? 'bg-emerald-600 border-emerald-500' : 'bg-red-600 border-red-500'}
-            `}>
-              <div className="absolute -top-10 -right-10 w-48 h-48 bg-surface-900 blur-[60px] opacity-10 rounded-full"></div>
-              <h3 className="text-lg font-bold text-white/90 mb-1 relative z-10 flex items-center gap-2">
-                {survivalData.liquidezLibre > 0 ? <Check size={18} /> : <AlertCircle size={18} />} Retiro Seguro Permitido
+            {/* Safe Withdrawal Widget — NX-02.
+                Antes decía "Retiro Seguro Permitido: esto puedes sacarlo sin
+                quebrar el negocio" sobre `liquidezLibre` (efectivo − proveedores),
+                que ignora que hay que RECOMPRAR lo que se vendió: era una promesa
+                que empujaba a descapitalizar el negocio. Ahora es una estimación,
+                dicha como estimación, sobre `retiroSeguro` (que ya descuenta la
+                reposición). La cifra va en color neutro: el color califica el
+                resultado, no decora el número. */}
+            <div className="p-6 rounded-card bg-surface-900 border border-white/[0.06] relative overflow-hidden flex flex-col justify-center">
+              <h3 className="text-lg font-bold text-slate-100 mb-1 flex items-center gap-2">
+                <Banknote size={18} className="text-slate-400" /> Cuánto podrías retirar
               </h3>
-              {/* R2.9 · NX-02 — antes prometía "esto puedes sacarlo sin quebrar
-                  el negocio" sobre efectivo − proveedores, ignorando el costo de
-                  reponer lo vendido: seguir ese consejo descapitalizaba. */}
-              <p className="text-sm text-white/80 mb-6 relative z-10">
-                Efectivo menos lo que debés a proveedores y menos el costo de reponer lo que vendiste.
-                <span className="block text-xs text-white/60 mt-1">Estimación, no es consejo financiero.</span>
+              <p className="text-sm text-slate-400 mb-6">
+                Tu efectivo, menos lo que le debés a proveedores, menos lo que cuesta reponer lo que vendiste.
               </p>
-              <h2 className="text-4xl font-extrabold mb-2 relative z-10 tracking-tight">
-                {formatMoney(survivalData.liquidezLibre > 0 ? survivalData.liquidezLibre : 0)}
-              </h2>
-              {survivalData.liquidezLibre <= 0 && (
-                <div className="text-sm font-bold bg-white/20 px-3 py-1 rounded w-fit mt-2 border border-white/30 backdrop-blur-sm relative z-10">
-                  Faltan {formatMoney(Math.abs(survivalData.liquidezLibre))} para cubrir deudas
-                </div>
+              {retiroSeguro === null ? (
+                <p className="nx-total text-slate-100">—</p>
+              ) : (
+                <>
+                  <p className="nx-total text-slate-100">{formatMoney(Math.max(retiroSeguro, 0))}</p>
+                  {retiroSeguro <= 0 && (
+                    <p className="text-sm text-slate-300 bg-white/[0.06] border border-white/[0.08] px-3 py-1.5 rounded-control w-fit mt-3">
+                      Hoy no sobra para retirar: primero hay que cubrir proveedores y reponer mercadería.
+                    </p>
+                  )}
+                </>
               )}
+              <p className="text-xs text-slate-500 mt-4">Estimación — no es consejo financiero.</p>
             </div>
 
             {/* Survival Chart */}

@@ -5,6 +5,7 @@ import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
 import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown } from 'lucide-react';
 import { formatMoney, formatUSD } from '../utils/money';
 import { EmptyState } from './ui/EmptyState';
+import { IconButton } from './ui/IconButton';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
@@ -55,6 +56,85 @@ const toDecimal = (v: string | number): Decimal => {
         return new Decimal(0);
     }
 };
+
+// ── Denominaciones sugeridas para el cobro en efectivo ──────────────────────
+// POR QUÉ: los botones rápidos estaban FIJOS (100 / 200 / 500 / 1000). Con un
+// total de C$645, tres de los cuatro producían un pago MENOR al total: el cajero
+// tocaba "500", el modal marcaba FALTANTE y el atajo terminaba estorbando.
+// REGLA (invariante): un botón de denominación NUNCA puede resultar en un pago
+// menor al total. Por eso cada sugerencia es el siguiente múltiplo ESTRICTAMENTE
+// mayor al total de cada escalón de billete usable — el monto exacto ya tiene su
+// propio botón. Para 645 → 650 (escalón 50), 700 (100), 1000 (500 y 1000).
+// Pura a propósito (sin React ni fetch): entra a la red de mutación.
+const ESCALONES_EFECTIVO_NIO = [50, 100, 500, 1000];
+
+export const denominacionesSugeridas = (
+    total: Decimal.Value,
+    escalones: number[] = ESCALONES_EFECTIVO_NIO,
+    maximo = 3,
+): Decimal[] => {
+    const totalD = toDecimal(total as string | number);
+    if (!totalD.isFinite() || totalD.lessThanOrEqualTo(0)) return [];
+
+    const vistos = new Set<string>();
+    const sugeridas: Decimal[] = [];
+    for (const escalon of escalones) {
+        const paso = toDecimal(escalon);
+        if (paso.lessThanOrEqualTo(0)) continue;
+        // floor(total/paso) + 1 → siempre estrictamente mayor al total, incluso
+        // cuando el total ya es múltiplo exacto del escalón (500 → 550, no 500).
+        const monto = totalD.div(paso).floor().plus(1).times(paso);
+        const clave = monto.toFixed(2);
+        if (vistos.has(clave)) continue;
+        vistos.add(clave);
+        sugeridas.push(monto);
+    }
+    return sugeridas.sort((a, b) => a.comparedTo(b)).slice(0, maximo);
+};
+
+// ── Rótulo honesto del acceso rápido de productos ───────────────────────────
+// POR QUÉ: la sección decía "Más vendidos" el día 1, cuando lo que lista son los
+// primeros productos del catálogo y NUNCA se vendió nada. El dueño ve el nombre
+// de un producto que jamás vendió bajo ese título y deja de creerle a los
+// números del sistema. Solo se afirma "Más vendidos" si (a) la lista viene de un
+// ranking real y (b) hay suficientes ventas para que ese ranking signifique algo.
+const MIN_VENTAS_PARA_RANKING = 20;
+
+export const rotuloProductosRapidos = (esRanking: boolean, ventasRegistradas: number): string =>
+    esRanking && ventasRegistradas >= MIN_VENTAS_PARA_RANKING ? 'Más vendidos' : 'Tus productos';
+
+// PIN que el backend siembra para el dueño al registrar el negocio. Ya se
+// imprime dentro del modal de apertura, así que además se precarga: escribirlo a
+// mano no es una medida de seguridad, es un peaje para el que viene a probar.
+const PIN_DUENO_POR_DEFECTO = '1234';
+
+// Movimiento de caja tal como puede llegar del backend: los registros derivados
+// (p. ej. una venta en efectivo) no son filas de CashMovement y pueden traer
+// menos campos. Se modela flojo a propósito — el render normaliza.
+type MovimientoCrudo = Partial<CashMovement> & { date?: string };
+
+// Descripción legible cuando el movimiento derivado no trae texto propio.
+const DESCRIPCION_POR_CATEGORIA: Record<string, string> = {
+    VENTA: 'Venta en efectivo',
+    VENTA_EFECTIVO: 'Venta en efectivo',
+    INYECCION_CAPITAL: 'Inyección de capital',
+    GASTO_OPERATIVO: 'Gasto operativo',
+    PAGO_PROVEEDOR: 'Pago a proveedor',
+    RETIRO_PERSONAL: 'Retiro personal',
+    CAMBIO: 'Cambio de billete',
+    AJUSTE: 'Ajuste de caja',
+};
+
+// ── Validación nativa en español ────────────────────────────────────────────
+// El navegador muestra "Please fill out this field." en una app 100% en español.
+// Este spread reemplaza ese globo por un mensaje nuestro (y lo limpia al teclear
+// para que el campo no quede inválido para siempre).
+type CampoValidable = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+const MENSAJE_REQUERIDO = 'Completá este campo.';
+const validacionEs = (mensaje: string = MENSAJE_REQUERIDO) => ({
+    onInvalid: (e: React.FormEvent<CampoValidable>) => e.currentTarget.setCustomValidity(mensaje),
+    onInput: (e: React.FormEvent<CampoValidable>) => e.currentTarget.setCustomValidity(''),
+});
 
 // Input numérico controlado para estado `number` (cantidad, % descuento por
 // ítem): mantiene un BORRADOR string para que se puedan teclear decimales
@@ -131,14 +211,11 @@ interface CompletedSale {
     date: string;
     invoiceNumber?: number;
     invoiceSeries?: string;
-    /**
-     * R2.9 · NX-13 — efectivo recibido CONGELADO en la venta. Antes la pantalla
-     * de éxito leía el state vivo `cashReceived`, que se limpia en el mismo
-     * batch de React que abre el modal: cuando renderizaba ya valía '' y el
-     * bloque del vuelto nunca se dibujaba. El cajero se quedaba sin el único
-     * número que necesita con el cliente enfrente.
-     */
+    // Efectivo recibido AL MOMENTO del cobro (string decimal crudo, sin float).
+    // Va en la venta y no en un estado suelto porque el estado se limpia apenas
+    // termina el cobro: por eso la pantalla de éxito nunca mostraba el vuelto.
     cashReceived?: string;
+    usdReceived?: string;
 }
 
 // ==========================================
@@ -185,6 +262,12 @@ const POS: React.FC = () => {
     const [products, setProducts] = useState<Product[]>([]);
     // Distingue "no tenés productos" de "no pudimos cargarlos" (auditoría C8).
     const [productsError, setProductsError] = useState(false);
+    // Rótulo del acceso rápido: hoy esa lista sale del catálogo (`products`), no
+    // de un endpoint de más-vendidos, así que NO hay ranking ni conteo de ventas
+    // que respalde la etiqueta. Quedan explícitos para que el día que exista el
+    // ranking el rótulo cambie solo — y no antes (ver `rotuloProductosRapidos`).
+    const rankingDisponible = false;
+    const ventasRegistradas = 0;
     const [cart, setCart] = useState<CartItem[]>([]);
 
     // 🅿️ PARQUEO DE VENTAS STATE
@@ -239,10 +322,21 @@ const POS: React.FC = () => {
 
     // SHIFT STATE
     const [currentShift, setCurrentShift] = useState<Shift | null>(null);
+    // Traspaso de caja: hay turno abierto, pero a nombre de otra persona. Se ve
+    // el efectivo (la plata está físicamente ahí) y NO se puede cobrar hasta
+    // tomarla, para que el arqueo tenga un responsable único.
+    const turnoAjeno = !!currentShift && currentShift.esTurnoPropio === false;
+    const [tomandoTurno, setTomandoTurno] = useState(false);
     const [showOpenShift, setShowOpenShift] = useState(false);
     const [showCloseShift, setShowCloseShift] = useState(false);
-    const [initialCash, setInitialCash] = useState('');
-    const [employeePin, setEmployeePin] = useState('');
+    // Fondo inicial: valor REAL '0', no un placeholder "0.00" que parece cargado
+    // y en realidad deja el campo vacío contra un input `required`.
+    const [initialCash, setInitialCash] = useState('0');
+    // El PIN inicial del dueño ya está impreso en el propio modal: precargarlo
+    // evita que quien viene a EVALUAR el POS tenga que transcribirlo.
+    const [employeePin, setEmployeePin] = useState(() => (isOwnerAdmin ? PIN_DUENO_POR_DEFECTO : ''));
+    // Errores propios de la apertura (en español, debajo del campo).
+    const [errorApertura, setErrorApertura] = useState<{ pin?: string; fondo?: string; general?: string }>({});
     const [declaredCash, setDeclaredCash] = useState('');
     // Fase D: dólares contados al cierre (solo se manda si hay algo que declarar)
     const [declaredCashUsd, setDeclaredCashUsd] = useState('');
@@ -293,6 +387,8 @@ const POS: React.FC = () => {
     const [cashCategory, setCashCategory] = useState('');
     const [cashDescription, setCashDescription] = useState('');
     const [cashMovementLoading, setCashMovementLoading] = useState(false);
+    // Errores propios del movimiento de caja (antes: `return` mudo si faltaba algo).
+    const [errorMovimiento, setErrorMovimiento] = useState<{ monto?: string; categoria?: string; descripcion?: string; general?: string }>({});
     // 🏦 Agente bancario (corresponsalía): el negocio es Agente Banpro/Rapibac/etc.
     const [showAgentModal, setShowAgentModal] = useState(false);
     const [agentAgreements, setAgentAgreements] = useState<any[]>([]);
@@ -515,6 +611,36 @@ const POS: React.FC = () => {
         fetchProducts();
     }, []);
 
+    /**
+     * Traspaso de caja. El caso real: el dueño abre a las 7 y a las 2 entra el
+     * cajero del segundo turno. Antes había dos salidas malas — cerrar y reabrir
+     * la caja (partiendo el arqueo del día) o vender con el turno del dueño
+     * (dejando el faltante a nombre de quien no estaba). El traspaso reasigna el
+     * turno sin cerrarlo y queda registrado en AuditLog.
+     */
+    const tomarTurno = useCallback(async () => {
+        if (!currentShift) return;
+        setTomandoTurno(true);
+        try {
+            const res = await fetch(`/api/shifts/${currentShift.id}/tomar`, { method: 'POST', headers });
+            const data = await res.json();
+            if (!res.ok) {
+                alert(data?.error || 'No pudimos tomar la caja.');
+                return;
+            }
+            // Relee el turno: ahora vuelve con esTurnoPropio true y el cobro se habilita.
+            const verif = await fetch(`/api/shifts/current?t=${Date.now()}`, { headers });
+            if (verif.ok) {
+                const turno = await verif.json();
+                if (turno) setCurrentShift(turno);
+            }
+        } catch {
+            alert('No pudimos tomar la caja. Revisá tu conexión.');
+        } finally {
+            setTomandoTurno(false);
+        }
+    }, [currentShift, headers]);
+
     // ==========================================
     // 💰 CASH MOVEMENT FUNCTIONS
     // ==========================================
@@ -523,7 +649,14 @@ const POS: React.FC = () => {
             const res = await fetch('/api/cash-movements/balance', { headers });
             if (res.ok) {
                 const data = await res.json();
-                if (data.hasOpenShift) setCashBalance(data.balance);
+                // Defensivo (NX-03): el backend está unificando la fórmula del
+                // saldo. Si `hasOpenShift` deja de venir pero el saldo sí, se usa
+                // igual — lo que no se hace nunca es pisar el saldo con basura.
+                const saldo = data?.balance;
+                const hayTurno = data?.hasOpenShift ?? (saldo !== undefined && saldo !== null);
+                if (hayTurno && saldo !== undefined && saldo !== null) {
+                    setCashBalance(Number(toDecimal(saldo as string | number).toFixed(2)));
+                }
             }
         } catch (e) { /* silently fail */ }
     }, [headers]);
@@ -532,10 +665,49 @@ const POS: React.FC = () => {
         try {
             const res = await fetch('/api/cash-movements', { headers });
             if (res.ok) {
-                setCashMovements(await res.json());
+                const data = await res.json();
+                // El endpoint puede devolver el arreglo pelado o envuelto
+                // ({ data } / { movements }). Nos adaptamos sin cambiar el
+                // contrato; cualquier otra forma se trata como lista vacía.
+                const lista = Array.isArray(data) ? data
+                    : Array.isArray(data?.data) ? data.data
+                        : Array.isArray(data?.movements) ? data.movements
+                            : [];
+                setCashMovements(lista);
             }
         } catch (e) { /* silently fail */ }
     }, [headers]);
+
+    // ── Movimientos del turno, normalizados a prueba de contrato ────────────
+    // NX-03: el backend está sumando las VENTAS EN EFECTIVO a esta lista. Esos
+    // registros son derivados y pueden venir sin `id`, sin `description` o con la
+    // fecha en otro campo. Nada de eso puede romper el desplegable ni inventar un
+    // monto: se normaliza acá y se renderiza solo lo que existe.
+    const movimientosVisibles = useMemo(() => {
+        const lista = (Array.isArray(cashMovements) ? cashMovements : []) as MovimientoCrudo[];
+        return lista
+            .filter(m => m && !m.isVoided)
+            .map((m, i) => {
+                const montoCrudo = toDecimal((m.amount ?? 0) as string | number);
+                // `type` manda; si no viene (movimiento derivado), decide el signo.
+                const esEntrada = m.type ? m.type === 'IN' : !montoCrudo.isNegative();
+                const crudoFecha = m.createdAt ?? m.date ?? null;
+                const fecha = crudoFecha ? new Date(crudoFecha) : null;
+                const hora = fecha && !isNaN(fecha.getTime())
+                    ? fecha.toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })
+                    : '';
+                const descripcion = (m.description ?? '').trim()
+                    || (m.category ? DESCRIPCION_POR_CATEGORIA[m.category] : '')
+                    || 'Movimiento de caja';
+                return {
+                    clave: String(m.id ?? `${m.category ?? 'MOV'}-${crudoFecha ?? ''}-${i}`),
+                    descripcion,
+                    monto: montoCrudo.abs(),
+                    esEntrada,
+                    hora,
+                };
+            });
+    }, [cashMovements]);
 
     // Fetch balance when shift changes
     useEffect(() => {
@@ -550,7 +722,18 @@ const POS: React.FC = () => {
 
     const handleCashMovement = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!showCashModal || !cashAmount || !cashCategory || !cashDescription) return;
+        if (!showCashModal) return;
+
+        // Validación propia, en español y debajo del campo: antes el submit hacía
+        // `return` en silencio (o el navegador gritaba "Please fill out this field").
+        const montoD = toDecimal(cashAmount);
+        const errores: typeof errorMovimiento = {};
+        if (cashAmount.trim() === '' || montoD.lessThanOrEqualTo(0)) errores.monto = 'Ingresá un monto mayor a cero.';
+        if (!cashCategory) errores.categoria = 'Elegí una categoría.';
+        if (!cashDescription.trim()) errores.descripcion = 'Escribí para qué fue el movimiento.';
+        setErrorMovimiento(errores);
+        if (Object.keys(errores).length > 0) return;
+
         setCashMovementLoading(true);
 
         try {
@@ -559,7 +742,8 @@ const POS: React.FC = () => {
                 headers,
                 body: JSON.stringify({
                     type: showCashModal,
-                    amount: parseFloat(cashAmount),
+                    // El monto viaja por Decimal (nunca parseFloat sobre dinero).
+                    amount: Number(montoD.toFixed(2)),
                     currency: 'NIO',
                     category: cashCategory,
                     description: cashDescription.trim(),
@@ -573,14 +757,18 @@ const POS: React.FC = () => {
             setCashAmount('');
             setCashCategory('');
             setCashDescription('');
+            setErrorMovimiento({});
             fetchCashBalance();
             fetchCashMovements();
         } catch (error: any) {
-            alert(error.message);
+            setErrorMovimiento({ general: error?.message || 'No pudimos registrar el movimiento. Reintentá.' });
         } finally {
             setCashMovementLoading(false);
         }
     };
+
+    // Al abrir/cerrar el modal de movimiento, los errores viejos se van con él.
+    useEffect(() => { setErrorMovimiento({}); }, [showCashModal]);
 
     const inCategories = [
         { value: 'INYECCION_CAPITAL', label: 'Inyección de Capital' },
@@ -774,11 +962,16 @@ const POS: React.FC = () => {
     // --- SHIFT LOGIC (API) ---
     const handleOpenShift = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!initialCash || !employeePin) return;
-        if (!/^\d{4}$/.test(employeePin)) {
-            alert('El PIN debe ser exactamente 4 digitos.');
-            return;
-        }
+
+        // Validación propia en español (el form va `noValidate`: el globo nativo
+        // del navegador está en inglés y no tiene arreglo por CSS).
+        const errores: typeof errorApertura = {};
+        if (!/^\d{4}$/.test(employeePin)) errores.pin = 'El PIN son 4 dígitos.';
+        if (initialCash.trim() === '') errores.fondo = 'Ingresá el fondo inicial. Si arrancás sin efectivo, poné 0.';
+        else if (toDecimal(initialCash).isNegative()) errores.fondo = 'El fondo inicial no puede ser negativo.';
+        setErrorApertura(errores);
+        if (Object.keys(errores).length > 0) return;
+
         setShiftLoading(true);
 
         try {
@@ -786,14 +979,20 @@ const POS: React.FC = () => {
             const res = await fetch('/api/shifts/open', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ initialCash: parseFloat(initialCash), employeePin })
+                // El fondo viaja por Decimal (nunca parseFloat sobre dinero).
+                body: JSON.stringify({ initialCash: Number(toDecimal(initialCash).toFixed(2)), employeePin })
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
             setCurrentShift(data);
             setShowOpenShift(false);
-            setEmployeePin('');
-        } catch (error: any) { alert(error.message); }
+            // Se restituye el default (igual que al montar): si el turno se cierra
+            // y hay que reabrir, el dueño no vuelve a transcribir su PIN.
+            setEmployeePin(isOwnerAdmin ? PIN_DUENO_POR_DEFECTO : '');
+            setErrorApertura({});
+        } catch (error: any) {
+            setErrorApertura({ general: error?.message || 'No pudimos abrir la caja. Reintentá.' });
+        }
         finally { setShiftLoading(false); }
     };
 
@@ -1065,12 +1264,17 @@ const POS: React.FC = () => {
                     if (showImportModal) { closeImportModal(); return; }
                     if (showCloseShift) { setShowCloseShift(false); return; }
                     if (showMovementsList) { setShowMovementsList(false); return; }
+                    if (showCashPreModal) { setShowCashPreModal(false); return; }
+                    // La apertura de caja se cierra de última: es el modal de más
+                    // abajo en la pila. Antes NO se cerraba con nada — Escape no
+                    // hacía nada y no tenía botón de cierre.
+                    if (showOpenShift) { setShowOpenShift(false); return; }
                     return;
             }
         };
         window.addEventListener('keydown', handleHotkey);
         return () => window.removeEventListener('keydown', handleHotkey);
-    }, [handleHoldCart, currentShift, cart, completedSale, processing, showCashPreModal, showCashModal, showCreditPanel, showHeldCarts, showQuickCreate, showAddModal, showImportModal, showCloseShift, showMovementsList]);
+    }, [handleHoldCart, currentShift, cart, completedSale, processing, showCashPreModal, showCashModal, showCreditPanel, showHeldCarts, showQuickCreate, showAddModal, showImportModal, showCloseShift, showMovementsList, showOpenShift]);
 
     // ==========================================
     // 🔴 FIADO INTELIGENTE (Credit Override)
@@ -1345,6 +1549,10 @@ const POS: React.FC = () => {
 
     const handleCheckout = async (method: 'CASH' | 'CARD' | 'QR' | 'CREDIT') => {
         if (!currentShift) { setShowOpenShift(true); return; }
+        // La caja está abierta pero a nombre de otro: cobrar acá dejaría el
+        // faltante del arqueo a nombre de quien no estaba en el mostrador.
+        // Se toma la caja primero (queda en AuditLog) y recién ahí se cobra.
+        if (turnoAjeno) { await tomarTurno(); return; }
         if (cart.length === 0) return;
 
         // Front-end Block (skip if override authorized)
@@ -1403,7 +1611,10 @@ const POS: React.FC = () => {
                 customerPhone: selectedCustomer?.phone,
                 saleId: offlineId,
                 date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
-                cashReceived,
+                // Foto del efectivo recibido: el estado se limpia en la línea
+                // siguiente, así que el vuelto tiene que quedar en la venta.
+                cashReceived: method === 'CASH' ? cashReceived : undefined,
+                usdReceived: method === 'CASH' && payingInUSD ? usdAmount : undefined,
             });
             setCashReceived('');
         };
@@ -1441,13 +1652,6 @@ const POS: React.FC = () => {
             if (!res.ok) throw new Error(data.error);
 
             fetchProducts();
-            // R2.9 · NX-03 — la píldora de caja del header y "Movimientos del
-            // Turno" solo se recargaban al CAMBIAR de turno: tras vender en
-            // efectivo mostraban C$0.00 mientras Arqueos ya decía el monto
-            // real. El cajero veía plata en la gaveta y cero en pantalla, y
-            // concluía que la venta no se registró.
-            fetchCashBalance();
-            fetchCashMovements();
             // Aviso global (retención R2): el checklist de primeros pasos se
             // refresca en vivo y celebra la primera venta sin esperar un remount.
             window.dispatchEvent(new CustomEvent('nortex:data-changed'));
@@ -1465,9 +1669,16 @@ const POS: React.FC = () => {
                 date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
                 invoiceNumber: data.invoiceNumber,
                 invoiceSeries: data.invoiceSeries,
-                cashReceived,
+                cashReceived: method === 'CASH' ? cashReceived : undefined,
+                usdReceived: method === 'CASH' && payingInUSD ? usdAmount : undefined,
             });
             setCashReceived('');
+
+            // NX-03: la píldora de efectivo del header y el desplegable de
+            // movimientos se quedaban en C$0.00 / "Sin movimientos" después de
+            // cobrar. La venta en efectivo SÍ mueve la gaveta, así que se
+            // refrescan ambos apenas el backend confirma.
+            if (currentShift) { fetchCashBalance(); fetchCashMovements(); }
 
         } catch (error: any) {
             // Fallo de RED (timeout, servidor caído, DNS): la venta NO se
@@ -1490,6 +1701,36 @@ const POS: React.FC = () => {
             setProcessing(false);
         }
     };
+
+    // ── Vuelto de la venta recién cobrada ───────────────────────────────────
+    // Se deriva de la FOTO guardada en la venta (`completedSale.cashReceived`),
+    // no del estado del modal: ese se limpia al cerrar el cobro y por eso la
+    // pantalla de éxito nunca mostraba el vuelto. Todo en Decimal.
+    const efectivoRecibidoDeLaVenta = useMemo(() => {
+        if (!completedSale || completedSale.paymentMethod !== 'CASH') return null;
+        if (!completedSale.cashReceived) return null;
+        const recibido = toDecimal(completedSale.cashReceived);
+        return recibido.greaterThan(0) ? recibido : null;
+    }, [completedSale]);
+
+    const vueltoDeLaVenta = useMemo(() => {
+        if (!completedSale || !efectivoRecibidoDeLaVenta) return null;
+        const vuelto = efectivoRecibidoDeLaVenta.minus(toDecimal(completedSale.grandTotal));
+        // Pago justo (o insuficiente, p. ej. abono en efectivo): no hay vuelto
+        // que mostrar y NO se inventa uno negativo.
+        if (vuelto.lessThanOrEqualTo(0)) return null;
+        const recibidoUsdD = completedSale.usdReceived ? toDecimal(completedSale.usdReceived) : null;
+        const tasa = toDecimal(exchangeRate);
+        const recibidoUsd = recibidoUsdD && recibidoUsdD.greaterThan(0) ? recibidoUsdD : null;
+        return {
+            recibido: efectivoRecibidoDeLaVenta,
+            vuelto,
+            recibidoUsd,
+            // El vuelto se entrega en córdobas; el equivalente en dólares es
+            // referencia para quien pagó en USD.
+            vueltoUsd: recibidoUsd && tasa.greaterThan(0) ? vuelto.div(tasa) : null,
+        };
+    }, [completedSale, efectivoRecibidoDeLaVenta, exchangeRate]);
 
     // POST-SALE ACTIONS
     const getTenantName = () => {
@@ -1769,7 +2010,16 @@ const POS: React.FC = () => {
                             <Lock size={14} /> Cerrar caja
                         </button>
                     ) : (
-                        <span className="text-xs font-semibold text-danger flex items-center gap-1.5"><AlertTriangle size={14} /> CAJA CERRADA</span>
+                        // Vuelta a la apertura: como el modal ahora se puede cerrar
+                        // ("solo quiero mirar"), este indicador tiene que ser la
+                        // puerta de regreso, no un cartel muerto.
+                        <button
+                            onClick={() => { setErrorApertura({}); setShowOpenShift(true); }}
+                            className="flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-control bg-danger-soft text-danger border border-danger/20 hover:bg-danger/15 transition-colors"
+                            title="Abrir la caja para poder cobrar"
+                        >
+                            <AlertTriangle size={14} /> Caja cerrada — abrir
+                        </button>
                     )}
                 </div>
             </div>
@@ -1807,7 +2057,7 @@ const POS: React.FC = () => {
                             </button>
                         </div>
 
-                        <form onSubmit={handleCashMovement} className="space-y-4">
+                        <form onSubmit={handleCashMovement} noValidate className="space-y-4">
                             {/* Category - Quick Select Buttons */}
                             <div>
                                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">Categoría</label>
@@ -1828,6 +2078,7 @@ const POS: React.FC = () => {
                                         </button>
                                     ))}
                                 </div>
+                                {errorMovimiento.categoria && <p className="text-xs text-danger mt-2">{errorMovimiento.categoria}</p>}
                             </div>
 
                             {/* Amount */}
@@ -1837,12 +2088,13 @@ const POS: React.FC = () => {
                                     type="text"
                                     inputMode="decimal"
                                     value={cashAmount}
-                                    onChange={e => setCashAmount(sanitizeDecimalInput(e.target.value))}
+                                    onChange={e => { setCashAmount(sanitizeDecimalInput(e.target.value)); setErrorMovimiento(prev => ({ ...prev, monto: undefined })); }}
                                     placeholder="0.00"
+                                    aria-label="Monto del movimiento en córdobas"
                                     className="w-full text-2xl font-bold text-center border-2 border-white/10 rounded-xl p-4 focus:border-nortex-500 outline-none text-slate-100 bg-surface-800/40 font-mono tabular-nums"
                                     autoFocus
-                                    required
                                 />
+                                {errorMovimiento.monto && <p className="text-xs text-danger mt-2">{errorMovimiento.monto}</p>}
                             </div>
 
                             {/* Description */}
@@ -1851,17 +2103,25 @@ const POS: React.FC = () => {
                                 <input
                                     type="text"
                                     value={cashDescription}
-                                    onChange={e => setCashDescription(e.target.value)}
+                                    onChange={e => { setCashDescription(e.target.value); setErrorMovimiento(prev => ({ ...prev, descripcion: undefined })); }}
                                     placeholder={showCashModal === 'OUT' ? 'Ej: Compra de hielo para el local' : 'Ej: Cambio de billete de C$500'}
+                                    aria-label="Descripción del movimiento"
+                                    maxLength={300}
                                     className="w-full border-2 border-white/[0.06] rounded-lg px-4 py-3 text-sm focus:border-nortex-500 outline-none text-slate-200"
-                                    required
-                                    minLength={3}
                                 />
+                                {errorMovimiento.descripcion && <p className="text-xs text-danger mt-2">{errorMovimiento.descripcion}</p>}
                             </div>
+
+                            {errorMovimiento.general && (
+                                <p className="text-xs text-danger bg-danger-soft border border-danger/20 rounded-control px-3 py-2">{errorMovimiento.general}</p>
+                            )}
 
                             <button
                                 type="submit"
-                                disabled={cashMovementLoading || !cashCategory || !cashAmount || !cashDescription}
+                                // Habilitado siempre: si falta algo, el submit muestra
+                                // el error en español debajo del campo. Un botón muerto
+                                // no explica qué falta.
+                                disabled={cashMovementLoading}
                                 className={`w-full py-3.5 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2 ${showCashModal === 'IN'
                                     ? 'bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-300'
                                     : 'bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300'
@@ -1935,6 +2195,7 @@ const POS: React.FC = () => {
                                         onChange={e => updateAgentData({ agreementId: e.target.value })}
                                         className="w-full border-2 border-white/[0.06] rounded-lg px-4 py-3 text-sm focus:border-sky-500 outline-none text-slate-200 bg-surface-900"
                                         required
+                                        {...validacionEs('Elegí el convenio del banco.')}
                                     >
                                         <option value="">— Elegí el convenio —</option>
                                         {agentAgreements.map(a => (
@@ -1998,8 +2259,10 @@ const POS: React.FC = () => {
                                         value={agentData.amount}
                                         onChange={e => updateAgentData({ amount: sanitizeDecimalInput(e.target.value) })}
                                         placeholder="0.00"
+                                        aria-label="Monto de la operación"
                                         className="w-full text-2xl font-bold text-center border-2 border-white/10 rounded-xl p-4 focus:border-sky-500 outline-none text-slate-100 bg-surface-800/40 font-mono tabular-nums"
                                         required
+                                        {...validacionEs('Ingresá el monto de la operación.')}
                                     />
                                     {agentOps.find(o => o.value === agentData.operation)?.dir === 'OUT' && cashBalance !== null && agentData.currency === 'NIO' && (
                                         <p className="text-xs text-slate-500 mt-1">Efectivo disponible en gaveta: <span className="font-bold text-slate-200">{formatMoney(cashBalance)}</span></p>
@@ -2016,8 +2279,10 @@ const POS: React.FC = () => {
                                             value={agentData.exchangeRate}
                                             onChange={e => updateAgentData({ exchangeRate: sanitizeDecimalInput(e.target.value) })}
                                             placeholder="36.62"
+                                            aria-label="Tipo de cambio, córdobas por dólar"
                                             className="w-full border-2 border-white/[0.06] rounded-lg px-4 py-3 text-sm focus:border-emerald-500 outline-none text-slate-200 font-mono"
                                             required
+                                            {...validacionEs('Ingresá el tipo de cambio del día.')}
                                         />
                                         {parseFloat(agentData.amount) > 0 && parseFloat(agentData.exchangeRate) > 0 && (
                                             <p className="text-xs text-slate-500 mt-1">Equivale a <span className="font-bold text-slate-200">{formatMoney((parseFloat(agentData.amount) * parseFloat(agentData.exchangeRate)))}</span> — así se asienta en tu contabilidad.</p>
@@ -2075,23 +2340,23 @@ const POS: React.FC = () => {
                         <h3 className="text-sm font-bold text-slate-200">Movimientos del Turno</h3>
                         <button onClick={() => setShowMovementsList(false)} className="text-slate-400 hover:text-slate-300"><X size={16} /></button>
                     </div>
-                    {cashMovements.length === 0 ? (
-                        <p className="text-sm text-slate-400 text-center py-6">Sin movimientos</p>
+                    {movimientosVisibles.length === 0 ? (
+                        <p className="text-sm text-slate-400 text-center py-6">Sin movimientos todavía</p>
                     ) : (
                         <div className="divide-y divide-white/[0.04]">
-                            {cashMovements.filter(m => !m.isVoided).map(m => (
-                                <div key={m.id} className="px-3 py-2.5 flex items-center justify-between">
+                            {movimientosVisibles.map(m => (
+                                <div key={m.clave} className="px-3 py-2.5 flex items-center justify-between">
                                     <div className="flex items-center gap-2">
-                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${m.type === 'IN' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'}`}>
-                                            {m.type === 'IN' ? '↓' : '↑'}
+                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${m.esEntrada ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'}`}>
+                                            {m.esEntrada ? '↓' : '↑'}
                                         </div>
                                         <div>
-                                            <p className="text-xs font-medium text-slate-200 truncate max-w-[160px]">{m.description}</p>
-                                            <p className="text-[10px] text-slate-400">{new Date(m.createdAt).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })}</p>
+                                            <p className="text-xs font-medium text-slate-200 truncate max-w-[160px]">{m.descripcion}</p>
+                                            {m.hora && <p className="text-[10px] text-slate-400">{m.hora}</p>}
                                         </div>
                                     </div>
-                                    <span className={`text-sm font-bold ${m.type === 'IN' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                                        {m.type === 'IN' ? '+' : '-'}{formatMoney(Number(m.amount))}
+                                    <span className={`text-sm font-bold font-mono tabular-nums ${m.esEntrada ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                        {formatMoney(m.esEntrada ? m.monto : m.monto.negated(), 'NIO', { signed: true })}
                                     </span>
                                 </div>
                             ))}
@@ -2171,19 +2436,30 @@ const POS: React.FC = () => {
 
             {/* --- OPEN SHIFT MODAL --- */}
             {showOpenShift && (
-                <div className="absolute inset-0 z-50 bg-slate-900/90 backdrop-blur flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-sm p-8 text-center animate-in zoom-in duration-200">
+                // Clic en el fondo = cerrar (además de la X y de Escape).
+                <div className="absolute inset-0 z-50 bg-slate-900/90 backdrop-blur flex items-center justify-center p-4" onClick={() => setShowOpenShift(false)}>
+                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-sm p-8 text-center animate-in zoom-in duration-200 relative" onClick={e => e.stopPropagation()}>
+                        {/* Salida del modal (antes no había ninguna: ni X, ni Escape,
+                            ni "después"). Abrir turno es un requisito de OPERACIÓN;
+                            no puede bloquear la VISTA del POS a quien viene a mirar. */}
+                        <div className="absolute top-2 right-2">
+                            <IconButton
+                                icon={<X size={16} />}
+                                label="Cerrar"
+                                onClick={() => setShowOpenShift(false)}
+                            />
+                        </div>
                         <div className="w-16 h-16 bg-blue-500/15 text-blue-400 rounded-full flex items-center justify-center mx-auto mb-4">
                             <Lock size={32} />
                         </div>
                         <h2 className="text-2xl font-bold text-slate-100 mb-2">Apertura de Caja</h2>
-                        <p className="text-slate-500 text-sm mb-6">Ingresa tu PIN de empleado y el fondo inicial.</p>
+                        <p className="text-slate-500 text-sm mb-6">Ingresá tu PIN de empleado y el fondo inicial.</p>
                         {isOwnerAdmin && (
                             <p className="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-lg px-3 py-2 mb-4">
-                                ¿Primera vez? Tu PIN inicial de dueño es <strong>1234</strong> — cambialo después en <strong>Mi Personal</strong>.
+                                ¿Primera vez? Tu PIN inicial de dueño es <strong>{PIN_DUENO_POR_DEFECTO}</strong> (ya te lo dejamos puesto) — cambialo después en <strong>Mi Personal</strong>.
                             </p>
                         )}
-                        <form onSubmit={handleOpenShift} className="space-y-5">
+                        <form onSubmit={handleOpenShift} noValidate className="space-y-5">
                             {/* PIN Input */}
                             <div>
                                 <label className="text-xs font-mono font-bold text-slate-400 uppercase tracking-wider">PIN de Empleado</label>
@@ -2197,12 +2473,18 @@ const POS: React.FC = () => {
                                             className="w-14 h-14 text-center text-2xl font-bold border-2 border-white/10 rounded-xl focus:border-nortex-500 outline-none text-slate-100 bg-surface-800/40"
                                             value={employeePin[i] || ''}
                                             autoFocus={i === 0}
+                                            aria-label={`Dígito ${i + 1} del PIN`}
+                                            // Seleccionar al enfocar: con el PIN
+                                            // precargado, `maxLength=1` impediría
+                                            // teclear encima sin borrar antes.
+                                            onFocus={e => e.currentTarget.select()}
                                             onChange={(e) => {
                                                 const val = e.target.value.replace(/\D/g, '');
                                                 if (val.length <= 1) {
                                                     const newPin = employeePin.split('');
                                                     newPin[i] = val;
                                                     setEmployeePin(newPin.join(''));
+                                                    setErrorApertura(prev => ({ ...prev, pin: undefined }));
                                                     // Auto-focus next input
                                                     if (val && i < 3) {
                                                         const next = e.target.parentElement?.children[i + 1] as HTMLInputElement;
@@ -2219,6 +2501,7 @@ const POS: React.FC = () => {
                                         />
                                     ))}
                                 </div>
+                                {errorApertura.pin && <p className="text-xs text-danger mt-2">{errorApertura.pin}</p>}
                             </div>
 
                             {/* Cash Input */}
@@ -2227,18 +2510,35 @@ const POS: React.FC = () => {
                                 <input
                                     type="text"
                                     inputMode="decimal"
+                                    aria-label="Fondo inicial en efectivo"
                                     className="w-full text-center text-3xl font-bold border-b-2 border-white/10 focus:border-nortex-500 outline-none pb-2 mt-2 text-slate-100 font-mono tabular-nums"
-                                    placeholder="0.00"
                                     value={initialCash}
-                                    onChange={e => setInitialCash(sanitizeDecimalInput(e.target.value))}
-                                    required
+                                    onChange={e => { setInitialCash(sanitizeDecimalInput(e.target.value)); setErrorApertura(prev => ({ ...prev, fondo: undefined })); }}
                                 />
+                                {errorApertura.fondo
+                                    ? <p className="text-xs text-danger mt-2">{errorApertura.fondo}</p>
+                                    : <p className="text-[11px] text-slate-500 mt-2">Con cuánto efectivo arrancás el turno. Si no tenés cambio todavía, dejalo en 0.</p>}
                             </div>
+
+                            {errorApertura.general && (
+                                <p className="text-xs text-danger bg-danger-soft border border-danger/20 rounded-control px-3 py-2">{errorApertura.general}</p>
+                            )}
 
                             <button type="submit" disabled={shiftLoading || employeePin.length !== 4} className="btn-primary w-full py-3 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100">
                                 {shiftLoading ? 'VERIFICANDO PIN...' : 'ABRIR TURNO'}
                             </button>
                         </form>
+
+                        {/* Salida secundaria: mirar el POS sin abrir turno. La venta
+                            va a seguir pidiendo turno abierto al cobrar (correcto);
+                            lo que ya no hace es tapar la pantalla desde el minuto 0. */}
+                        <button
+                            type="button"
+                            onClick={() => setShowOpenShift(false)}
+                            className="mt-4 text-xs text-slate-400 hover:text-slate-200 underline underline-offset-4 transition-colors"
+                        >
+                            Solo quiero mirar el POS
+                        </button>
                     </div>
                 </div>
             )}
@@ -2250,7 +2550,7 @@ const POS: React.FC = () => {
                         {!shiftReport ? (
                             <div className="p-8">
                                 <h2 className="text-xl font-bold text-slate-100 mb-1">Cierre de Caja (Ciego)</h2>
-                                <p className="text-slate-500 text-sm mb-6">Cuenta el dinero fisico e ingresalo abajo.</p>
+                                <p className="text-slate-500 text-sm mb-6">Contá el dinero físico e ingresalo abajo.</p>
                                 <form onSubmit={handleCloseShift}>
                                     <label className="text-xs font-mono font-bold text-slate-500">EFECTIVO CONTADO</label>
                                     <div className="relative mb-6">
@@ -2262,8 +2562,10 @@ const POS: React.FC = () => {
                                             className="w-full pl-10 py-3 text-2xl font-bold border border-white/10 rounded-lg focus:ring-2 focus:ring-nortex-500 outline-none text-slate-100 font-mono tabular-nums"
                                             placeholder="0.00"
                                             value={declaredCash}
+                                            aria-label="Efectivo contado en la gaveta"
                                             onChange={e => setDeclaredCash(sanitizeDecimalInput(e.target.value))}
                                             required
+                                            {...validacionEs('Ingresá el efectivo que contaste.')}
                                         />
                                     </div>
                                     {/* Fase D: dólares contados (solo si manejaste US$ en el turno) */}
@@ -2294,7 +2596,7 @@ const POS: React.FC = () => {
                                     </div>
                                     <h2 className="text-2xl font-bold text-slate-100">Resumen de Cierre</h2>
                                     <p className={`text-lg font-bold mt-2 ${shiftReport.diff >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                        {shiftReport.diff >= 0 ? 'Cuadre Exitoso' : 'Discrepancia de Efectivo'}
+                                        {shiftReport.diff >= 0 ? 'Cuadre exitoso' : 'Discrepancia de efectivo'}
                                     </p>
                                 </div>
                                 <div className="p-8 space-y-4">
@@ -2339,34 +2641,34 @@ const POS: React.FC = () => {
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="col-span-2">
                                     <label className="block text-xs font-mono text-slate-500 mb-1">NOMBRE DEL PRODUCTO *</label>
-                                    <input type="text" required className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100"
+                                    <input type="text" required {...validacionEs('Escribí el nombre del producto.')} className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100"
                                         placeholder="Ej. Taladro Percutor 500W" value={newProduct.name} onChange={e => setNewProduct({ ...newProduct, name: e.target.value })} />
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">SKU / CODIGO BARRAS</label>
+                                    <label className="block text-xs font-mono text-slate-500 mb-1">SKU / CÓDIGO DE BARRAS</label>
                                     <input type="text" className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100"
                                         placeholder="Escanea o escribe" value={newProduct.sku} onChange={e => setNewProduct({ ...newProduct, sku: e.target.value.toUpperCase() })} />
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">CATEGORIA</label>
+                                    <label className="block text-xs font-mono text-slate-500 mb-1">CATEGORÍA</label>
                                     <select className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 bg-surface-900"
                                         value={newProduct.category} onChange={e => setNewProduct({ ...newProduct, category: e.target.value })} >
-                                        <option>General</option><option>Construccion</option><option>Ferreteria</option><option>Herramientas</option>
+                                        <option>General</option><option>Construcción</option><option>Ferretería</option><option>Herramientas</option>
                                     </select>
                                 </div>
                                 <div>
                                     <label className="block text-xs font-mono text-slate-500 mb-1">PRECIO VENTA *</label>
-                                    <input type="text" inputMode="decimal" required className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100 font-mono tabular-nums"
+                                    <input type="text" inputMode="decimal" required {...validacionEs('Ingresá el precio de venta.')} className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100 font-mono tabular-nums"
                                         placeholder="0.00" value={newProduct.price} onChange={e => setNewProduct({ ...newProduct, price: sanitizeDecimalInput(e.target.value) })} />
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">COSTO (Wholesale) *</label>
-                                    <input type="text" inputMode="decimal" required className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 bg-surface-800/40 text-slate-100 font-mono tabular-nums"
+                                    <label className="block text-xs font-mono text-slate-500 mb-1">COSTO (COMPRA) *</label>
+                                    <input type="text" inputMode="decimal" required {...validacionEs('Ingresá el costo del producto.')} className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 bg-surface-800/40 text-slate-100 font-mono tabular-nums"
                                         placeholder="0.00" value={newProduct.costPrice} onChange={e => setNewProduct({ ...newProduct, costPrice: sanitizeDecimalInput(e.target.value) })} />
                                 </div>
                                 <div className="col-span-2">
                                     <label className="block text-xs font-mono text-slate-500 mb-1">STOCK INICIAL *</label>
-                                    <input type="text" inputMode="decimal" required className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100 font-mono tabular-nums"
+                                    <input type="text" inputMode="decimal" required {...validacionEs('Ingresá el stock inicial (puede ser 0).')} className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100 font-mono tabular-nums"
                                         placeholder="0" value={newProduct.stock} onChange={e => setNewProduct({ ...newProduct, stock: sanitizeDecimalInput(e.target.value) })} />
                                 </div>
                             </div>
@@ -2386,7 +2688,7 @@ const POS: React.FC = () => {
                     <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-white/[0.06]">
                         <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-5 py-3 flex items-center justify-between">
                             <h3 className="font-bold text-white flex items-center gap-2">
-                                <Zap size={18} /> Producto Rapido
+                                <Zap size={18} /> Producto rápido
                             </h3>
                             <button onClick={() => setShowQuickCreate(false)} className="text-white/80 hover:text-white">
                                 <X size={20} />
@@ -2397,6 +2699,7 @@ const POS: React.FC = () => {
                             <div>
                                 <input
                                     required autoFocus
+                                    {...validacionEs('Escribí el nombre del producto.')}
                                     type="text"
                                     placeholder="Nombre del producto *"
                                     value={quickProduct.name}
@@ -2407,7 +2710,7 @@ const POS: React.FC = () => {
                             <div>
                                 <input
                                     type="text"
-                                    placeholder="SKU / Codigo de barras (escanea aqui)"
+                                    placeholder="SKU / Código de barras (escaneá aquí)"
                                     value={quickProduct.sku}
                                     onChange={e => setQuickProduct({ ...quickProduct, sku: e.target.value.toUpperCase() })}
                                     className="w-full px-3 py-2.5 border border-white/10 rounded-lg text-slate-100 font-mono focus:ring-2 focus:ring-amber-500 outline-none bg-amber-500/10"
@@ -2418,6 +2721,8 @@ const POS: React.FC = () => {
                                     <label className="text-[10px] text-slate-500 font-bold">PRECIO *</label>
                                     <input
                                         required type="text" inputMode="decimal"
+                                        {...validacionEs('Ingresá el precio de venta.')}
+                                        aria-label="Precio de venta"
                                         placeholder="0.00"
                                         value={quickProduct.price}
                                         onChange={e => setQuickProduct({ ...quickProduct, price: sanitizeDecimalInput(e.target.value) })}
@@ -2637,11 +2942,16 @@ const POS: React.FC = () => {
                     </button>}
                 </div>
 
-                {/* TOP SELLERS QUICK ACCESS */}
+                {/* ACCESO RÁPIDO A PRODUCTOS
+                    Esta lista es `filteredProducts.slice(0, 5)`: el catálogo en su
+                    orden natural, NO un ranking de ventas — no existe endpoint de
+                    más-vendidos y no se inventa uno. Por eso el rótulo se calcula
+                    con `rotuloProductosRapidos`, que solo dice "Más vendidos"
+                    cuando hay un ranking real con suficientes ventas detrás. */}
                 {searchTerm === '' && (
                     <div className="mb-4">
                         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                            <Zap size={14} className="text-amber-500" /> Mas Vendidos
+                            <Zap size={14} className="text-amber-500" /> {rotuloProductosRapidos(rankingDisponible, ventasRegistradas)}
                         </h3>
                         <div className="grid grid-cols-3 lg:grid-cols-5 gap-2">
                             {filteredProducts.slice(0, 5).map(product => (
@@ -2957,15 +3267,23 @@ const POS: React.FC = () => {
                     {/* Botones de cobro a 56px (--nx-h-pay): objetivo táctil de mostrador. */}
                     <div className="grid grid-cols-2 gap-3 mb-3">
                         <button
-                            onClick={() => { setCashReceived(''); setPayingInUSD(false); setUsdAmount(''); setShowCashPreModal(true); }}
-                            disabled={!currentShift || processing || cart.length === 0}
+                            // Sin turno abierto el botón NO queda muerto: manda a la
+                            // apertura de caja (que ahora se puede cerrar). Bloquear
+                            // el cobro es correcto; dejar al usuario sin camino, no.
+                            onClick={() => {
+                                if (!currentShift) { setErrorApertura({}); setShowOpenShift(true); return; }
+                                setCashReceived(''); setPayingInUSD(false); setUsdAmount(''); setShowCashPreModal(true);
+                            }}
+                            title={!currentShift ? 'Abrí la caja para poder cobrar' : undefined}
+                            disabled={processing || cart.length === 0}
                             className="h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/40"
                         >
                             <Banknote size={24} strokeWidth={2.5} /> EFECTIVO
                         </button>
                         <button
                             onClick={() => handleCheckout('CREDIT')}
-                            disabled={!currentShift || processing || isCreditBlocked}
+                            title={!currentShift ? 'Abrí la caja para poder cobrar' : undefined}
+                            disabled={processing || isCreditBlocked}
                             className={`h-pay font-bold rounded-control text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors border ${
                                 isCreditBlocked
                                     ? 'bg-transparent text-slate-500 cursor-not-allowed border-white/[0.06]'
@@ -2976,7 +3294,25 @@ const POS: React.FC = () => {
                         </button>
                     </div>
                     {isCreditBlocked && selectedCustomer && (
-                        <p className="text-xs text-center text-red-500 font-bold mb-1">Credito no disponible: Limite excedido o cliente bloqueado.</p>
+                        <p className="text-xs text-center text-red-500 font-bold mb-1">Crédito no disponible: límite excedido o cliente bloqueado.</p>
+                    )}
+                    {!currentShift && (
+                        <p className="text-xs text-center text-slate-400 mt-2">Podés mirar y armar el carrito; para cobrar hay que abrir la caja.</p>
+                    )}
+                    {turnoAjeno && (
+                        <div className="mt-2 text-center">
+                            <p className="text-xs text-slate-400">
+                                Esta caja la abrió <span className="text-slate-200 font-semibold">{currentShift?.turnoDe ?? 'otra persona'}</span>.
+                                Tomá la caja para cobrar con tu nombre.
+                            </p>
+                            <button
+                                onClick={tomarTurno}
+                                disabled={tomandoTurno}
+                                className="mt-2 h-touch px-5 rounded-control border border-slate-700 text-slate-100 font-semibold hover:bg-white/[0.04] transition-colors disabled:opacity-45"
+                            >
+                                {tomandoTurno ? 'Tomando la caja…' : 'Tomar la caja'}
+                            </button>
+                        </div>
                     )}
                 </div>
             </div>
@@ -3264,7 +3600,7 @@ const POS: React.FC = () => {
                                     onClick={() => { setPayingInUSD(!payingInUSD); setUsdAmount(''); setCashReceived(''); }}
                                     className={`text-[10px] font-bold px-2 py-1 rounded-full border transition-all ${payingInUSD ? 'bg-blue-500 text-white border-blue-500' : 'bg-white/[0.04] text-slate-500 border-white/[0.06] hover:border-blue-300'}`}
                                 >
-                                    {payingInUSD ? 'USD ' : 'Paga en USD?'}
+                                    {payingInUSD ? 'USD' : '¿Paga en USD?'}
                                 </button>
                             </div>
 
@@ -3302,10 +3638,20 @@ const POS: React.FC = () => {
                                 </div>
                             ) : (
                                 <>
+                                    {/* Denominaciones derivadas del total (nunca fijas):
+                                        ver `denominacionesSugeridas` — ninguna puede
+                                        resultar en un pago menor al total. */}
                                     <div className="flex gap-2 flex-wrap">
-                                        <button onClick={() => setCashReceived(grandTotal.toFixed(2))} className="flex-shrink-0 px-3 py-1.5 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-200 font-bold rounded-lg text-xs border border-emerald-500/20 transition-colors">Monto Exacto</button>
-                                        {[100, 200, 500, 1000].map(amt => (
-                                            <button key={amt} onClick={() => setCashReceived(amt.toString())} className="flex-shrink-0 px-3 py-1.5 bg-white/[0.04] text-slate-200 hover:bg-white/[0.06] font-bold rounded-lg text-xs border border-white/[0.06] transition-colors">{formatMoney(amt, 'NIO', { decimals: 0 })}</button>
+                                        <button type="button" onClick={() => setCashReceived(grandTotalD.toFixed(2))} className="flex-shrink-0 px-3 py-1.5 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 font-bold rounded-control text-xs border border-emerald-500/20 transition-colors">Monto exacto</button>
+                                        {denominacionesSugeridas(grandTotalD).map(monto => (
+                                            <button
+                                                key={monto.toFixed(2)}
+                                                type="button"
+                                                onClick={() => setCashReceived(monto.toFixed(2))}
+                                                className="flex-shrink-0 px-3 py-1.5 bg-white/[0.04] text-slate-200 hover:bg-white/[0.06] font-bold rounded-control text-xs border border-white/[0.06] transition-colors"
+                                            >
+                                                {formatMoney(monto, 'NIO', { decimals: 0 })}
+                                            </button>
                                         ))}
                                     </div>
                                     <div className="relative">
@@ -3373,6 +3719,27 @@ const POS: React.FC = () => {
 
                         {/* Sale Summary */}
                         <div className="p-6">
+                            {/* EL VUELTO PRIMERO Y MÁS GRANDE: es el único número que
+                                el cajero necesita en este instante, con el cliente
+                                enfrente esperando. Antes ni aparecía (el efectivo
+                                recibido se limpiaba al cerrar la venta). */}
+                            {vueltoDeLaVenta && (
+                                <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-card p-4 mb-4 text-center">
+                                    <p className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Vuelto para el cliente</p>
+                                    <p className="text-5xl font-black text-emerald-400 font-mono tabular-nums mt-1 leading-none">
+                                        {formatMoney(vueltoDeLaVenta.vuelto)}
+                                    </p>
+                                    {vueltoDeLaVenta.vueltoUsd && (
+                                        <p className="text-xs text-emerald-300 mt-1">Equivale a {formatUSD(vueltoDeLaVenta.vueltoUsd)}</p>
+                                    )}
+                                    <p className="text-[11px] text-slate-400 mt-2">
+                                        Recibiste {vueltoDeLaVenta.recibidoUsd
+                                            ? `${formatUSD(vueltoDeLaVenta.recibidoUsd)} (${formatMoney(vueltoDeLaVenta.recibido)})`
+                                            : formatMoney(vueltoDeLaVenta.recibido)} · Total {formatMoney(completedSale.grandTotal)}
+                                    </p>
+                                </div>
+                            )}
+
                             <div className="bg-surface-800/40 rounded-xl p-4 mb-4 border border-white/[0.04]">
                                 <div className="flex justify-between items-center mb-2">
                                     <span className="text-sm text-slate-500">Cliente</span>
@@ -3393,24 +3760,12 @@ const POS: React.FC = () => {
                                     </div>
                                 </div>
 
-                                {/* R2.9 · NX-13 — se lee el efectivo CONGELADO en la venta,
-                                    no el state vivo (que ya se limpió en el mismo batch). */}
-                                {completedSale.paymentMethod === 'CASH' && (completedSale.cashReceived ?? '') !== '' && toDecimal(completedSale.cashReceived!).greaterThan(0) && (
-                                    <div className="mt-3 pt-3 border-t border-white/[0.06] space-y-2">
-                                        <div className="flex justify-between items-center">
-                                            <span className="text-sm text-slate-500">Efectivo recibido</span>
-                                            <span className="font-bold text-slate-200 font-mono tabular-nums">
-                                                {payingInUSD && usdAmount
-                                                    ? `${formatUSD(toDecimal(usdAmount))} (${formatMoney(toDecimal(completedSale.cashReceived!))})`
-                                                    : formatMoney(toDecimal(completedSale.cashReceived!))}
-                                            </span>
-                                        </div>
-                                        {toDecimal(completedSale.cashReceived!).greaterThanOrEqualTo(completedSale.grandTotal) && (
-                                            <div className="flex flex-col items-center bg-emerald-500/15 px-3 py-3 rounded-xl border border-emerald-500/30">
-                                                <span className="font-bold text-emerald-300 text-xs tracking-widest">VUELTO</span>
-                                                <span className="text-4xl font-black text-emerald-400 font-mono tabular-nums leading-tight">{formatMoney(toDecimal(completedSale.cashReceived!).minus(completedSale.grandTotal))}</span>
-                                            </div>
-                                        )}
+                                {/* Efectivo recibido sin vuelto (pago justo): el detalle
+                                    igual queda a la vista para cuadrar la gaveta. */}
+                                {completedSale.paymentMethod === 'CASH' && !vueltoDeLaVenta && efectivoRecibidoDeLaVenta && (
+                                    <div className="mt-3 pt-3 border-t border-white/[0.06] flex justify-between items-center">
+                                        <span className="text-sm text-slate-500">Efectivo recibido</span>
+                                        <span className="font-bold text-slate-200 font-mono tabular-nums">{formatMoney(efectivoRecibidoDeLaVenta)}</span>
                                     </div>
                                 )}
                             </div>
@@ -3471,6 +3826,10 @@ const POS: React.FC = () => {
                 tax: completedSale.tax,
                 total: completedSale.grandTotal,
                 paymentMethod: completedSale.paymentMethod,
+                // Solo si hubo vuelto real (efectivo > total): el ticket no
+                // imprime un vuelto inventado en pagos justos ni a crédito.
+                cashReceived: vueltoDeLaVenta ? Number(vueltoDeLaVenta.recibido.toFixed(2)) : undefined,
+                change: vueltoDeLaVenta ? Number(vueltoDeLaVenta.vuelto.toFixed(2)) : undefined,
                 user: currentShift?.employee ? `${currentShift.employee.firstName} ${currentShift.employee.lastName}` : 'Cajero',
             } : null} />
 

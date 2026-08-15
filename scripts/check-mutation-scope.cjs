@@ -34,6 +34,12 @@ const PISO_MUTANTES = {
     'utils/money.ts': 60,
     'utils/calc-laborales.ts': 96,
     'utils/pricing.ts': 66,
+    // margen.ts entró con NX-01/02/03 (ganancia bruta real, retiro seguro y
+    // efectivo del turno): 66 mutantes, score medido 100.00% — sin
+    // sobrevivientes. El 15% de IVA se construye DENTRO de la función a
+    // propósito: como constante de módulo su mutante sobrevivía siempre
+    // (se evalúa al importar, antes de que Stryker active el mutante).
+    'utils/margen.ts': 66,
     'backend/services/loanMath.ts': 12,
     'backend/services/nicaTax.ts': 7,
     'backend/services/stockService.ts': 5,
