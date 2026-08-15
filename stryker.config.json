@@ -17,6 +17,7 @@
     "utils/margen.ts",
     "utils/stockAlert.ts",
     "utils/cartPersistence.ts",
+    "utils/posSearch.ts",
     "backend/services/loanMath.ts",
     "backend/services/nicaTax.ts:25-75",
     "backend/services/stockService.ts:56-69",

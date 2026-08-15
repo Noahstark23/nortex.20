@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef, useDeferredValue } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
@@ -12,6 +12,7 @@ import { trackEvent } from '../utils/analytics';
 import { resolvePosSimple, UI_MODE_KEY } from '../utils/navigation';
 import { parseWorkbookRows, importInChunks } from '../utils/importProducts';
 import { evaluarCarrito, textoAviso, textoResumen, AvisoStock } from '../utils/stockAlert';
+import { indexarProductos, buscarProductos } from '../utils/posSearch';
 import {
     claveCarrito, claveAparcados, leerCarritoGuardado, serializarCarrito,
     decidirRestauracion, resumenGuardado, leerAparcados, serializarAparcados,
@@ -109,6 +110,50 @@ const MIN_VENTAS_PARA_RANKING = 20;
 
 export const rotuloProductosRapidos = (esRanking: boolean, ventasRegistradas: number): string =>
     esRanking && ventasRegistradas >= MIN_VENTAS_PARA_RANKING ? 'Más vendidos' : 'Tus productos';
+
+/**
+ * Tarjeta de producto de la grilla — MEMOIZADA (P0-2).
+ *
+ * Sin esto, cada tecla en la búsqueda vuelve a renderizar todas las tarjetas
+ * visibles aunque ninguna cambió. Con la grilla ya acotada el costo baja solo,
+ * pero el re-render sigue siendo gratis de evitar: las props son primitivas y
+ * `onAgregar` es estable.
+ */
+const TarjetaProducto = React.memo<{
+    product: Product;
+    bloqueada: boolean;
+    onAgregar: (p: Product) => void;
+}>(({ product, bloqueada, onAgregar }) => (
+    <button
+        onClick={() => onAgregar(product)}
+        disabled={bloqueada}
+        title={product.stock <= 0 ? 'Sin existencia en el sistema' : undefined}
+        className="h-24 bg-surface-900 hover:bg-surface-800 border border-white/[0.06] rounded-card px-3 py-2 hover:border-brand/50 transition-colors text-left flex flex-col justify-between text-slate-100 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand/40"
+    >
+        <div className="min-w-0 flex items-start gap-2">
+            {/* Miniatura solo si el producto TIENE foto: nunca un hueco vacío. */}
+            {product.imageUrl && (
+                <img
+                    src={product.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    className="w-10 h-10 rounded-control object-cover border border-white/[0.06] shrink-0"
+                />
+            )}
+            <h3 className="font-semibold text-sm text-slate-100 leading-tight line-clamp-2 min-w-0">{product.name}</h3>
+        </div>
+        <div className="flex justify-between items-end gap-1">
+            <span className="text-[17px] font-bold text-brand nx-num">{formatMoney(product.price)}</span>
+            {/* El stock negativo se muestra tal cual (−3), no disfrazado de
+                AGOTADO: es la señal de que el inventario ya se descuadró.
+                A 12px y no 11px — a 11px fallaba el contraste AA (P2-1). */}
+            <span className={`text-xs px-1.5 py-0.5 rounded-control shrink-0 ${product.stock <= 0 ? 'bg-danger-soft text-danger font-bold' : product.stock <= 5 ? 'bg-warning-soft text-amber-400' : 'text-slate-400'}`}>
+                {product.stock === 0 ? 'AGOTADO' : product.stock}
+            </span>
+        </div>
+    </button>
+));
+TarjetaProducto.displayName = 'TarjetaProducto';
 
 // PIN que el backend siembra para el dueño al registrar el negocio. Ya se
 // imprime dentro del modal de apertura, así que además se precarga: escribirlo a
@@ -2132,18 +2177,40 @@ const POS: React.FC = () => {
 
     const resumenStockTexto = textoResumen(resumenStock, permiteStockNegativo);
 
-    const filteredProducts = useMemo(() => {
-        if (!searchTerm) return products;
-        const term = searchTerm.trim();
+    // ── P0-2 · La grilla deja de ser un catálogo ──────────────────────────
+    // Medido en producción con 1,003 productos: 6,502 nodos DOM y 1,009 botones,
+    // con un long task de 105 ms al limpiar el filtro — que pasa DESPUÉS DE CADA
+    // VENTA, porque al cerrar la venta se limpia la búsqueda. Un cajero no
+    // navega mil tarjetas: escanea o escribe. Así que se pinta un resultado de
+    // búsqueda acotado, y el recorte SIEMPRE se declara (ver utils/posSearch.ts).
+    const TOPE_SIN_BUSQUEDA = 24;
+    const TOPE_BUSCANDO = 60;
 
-        // Exact SKU match first (for manual barcode/SKU entry)
-        const exactMatch = products.find(p => p.sku.toUpperCase() === term.toUpperCase());
-        if (exactMatch) return [exactMatch];
+    // El índice se arma UNA vez por catálogo. Antes se re-armaba el string
+    // `name + sku + category` de cada producto en CADA tecla.
+    const indiceProductos = useMemo(() => indexarProductos(products), [products]);
 
-        // Fuzzy search
-        const terms = term.toLowerCase().split(' ').filter(t => t.length > 0);
-        return products.filter(p => terms.every(t => `${p.name} ${p.sku} ${p.category}`.toLowerCase().includes(t)));
-    }, [searchTerm, products]);
+    // `useDeferredValue` (React 19) en lugar de un debounce: la grilla puede ir
+    // un frame atrás sin bloquear el tipeo. NO toca el camino del escáner —
+    // tanto el listener global como el Enter de la barra resuelven contra
+    // `products` y `searchTerm` en directo, así que SKU + Enter sigue siendo
+    // instantáneo. Esa es la ruta que más se usa y no se toca.
+    const terminoDiferido = useDeferredValue(searchTerm);
+
+    const resultadoBusqueda = useMemo(() => {
+        const t = terminoDiferido.trim();
+        return buscarProductos(indiceProductos, t, t === '' ? TOPE_SIN_BUSQUEDA : TOPE_BUSCANDO);
+    }, [indiceProductos, terminoDiferido]);
+
+    const filteredProducts = resultadoBusqueda.visibles;
+
+    // Estable, para que `React.memo` de la tarjeta sirva de algo. Mismo criterio
+    // que el escáner: si el negocio permite vender sin existencia la tarjeta
+    // agrega igual, pero suena distinto — el oído del cajero es parte del aviso.
+    const agregarDesdeGrilla = useCallback((product: Product) => {
+        addToCart(product);
+        if (product.stock <= 0) playErrorBeep(); else playBeep();
+    }, [addToCart]);
 
     const filteredCustomers = customerList.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()));
 
@@ -3375,46 +3442,23 @@ const POS: React.FC = () => {
                    mostrador. */
                 <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 overflow-y-auto pb-4 custom-scrollbar flex-1 min-h-0 content-start">
                     {filteredProducts.map(product => (
-                        <button
+                        <TarjetaProducto
                             key={product.id}
-                            // Mismo criterio que el escáner: si el negocio permite
-                            // vender sin existencia, la tarjeta agrega pero suena
-                            // distinto. El oído del cajero es parte del aviso.
-                            onClick={() => { addToCart(product); if (product.stock <= 0) playErrorBeep(); else playBeep(); }}
-                            // Antes era `stock === 0`: un producto YA en negativo
-                            // (−3) pasaba el guard y se podía seguir vendiendo sin
-                            // que nada lo dijera. Ahora se bloquea todo lo que esté
-                            // en 0 o abajo — salvo que el negocio haya activado
-                            // explícitamente el stock negativo (backorder), donde
-                            // bloquear sería romperle su propia política. Mientras
-                            // no sabemos (null), se bloquea: el default es el seguro.
-                            disabled={permiteStockNegativo !== true && product.stock <= 0}
-                            title={product.stock <= 0 ? 'Sin existencia en el sistema' : undefined}
-                            className="h-24 bg-surface-900 hover:bg-surface-800 border border-white/[0.06] rounded-card px-3 py-2 hover:border-brand/50 transition-colors text-left flex flex-col justify-between text-slate-100 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand/40"
-                        >
-                            <div className="min-w-0 flex items-start gap-2">
-                                {/* Miniatura solo si el producto TIENE foto: nunca un hueco vacío. */}
-                                {product.imageUrl && (
-                                    <img
-                                        src={product.imageUrl}
-                                        alt=""
-                                        loading="lazy"
-                                        className="w-10 h-10 rounded-control object-cover border border-white/[0.06] shrink-0"
-                                    />
-                                )}
-                                <h3 className="font-semibold text-sm text-slate-100 leading-tight line-clamp-2 min-w-0">{product.name}</h3>
-                            </div>
-                            <div className="flex justify-between items-end gap-1">
-                                <span className="text-[17px] font-bold text-brand nx-num">{formatMoney(product.price)}</span>
-                                {/* El stock negativo se muestra tal cual (−3), no
-                                    disfrazado de AGOTADO: es la señal de que el
-                                    inventario ya se descuadró y hay que recontarlo. */}
-                                <span className={`text-[11px] px-1.5 py-0.5 rounded-control shrink-0 ${product.stock <= 0 ? 'bg-danger-soft text-danger font-bold' : product.stock <= 5 ? 'bg-warning-soft text-amber-400' : 'text-slate-500'}`}>
-                                    {product.stock === 0 ? 'AGOTADO' : product.stock}
-                                </span>
-                            </div>
-                        </button>
+                            product={product}
+                            bloqueada={permiteStockNegativo !== true && product.stock <= 0}
+                            onAgregar={agregarDesdeGrilla}
+                        />
                     ))}
+                    {/* El recorte se DECLARA. Una lista cortada en silencio se lee
+                        como "esto es todo lo que tengo", y en un inventario eso
+                        hace que el dueño vuelva a comprar algo que ya tiene. */}
+                    {resultadoBusqueda.ocultos > 0 && (
+                        <p className="col-span-full text-center text-xs text-slate-400 py-3">
+                            {searchTerm.trim() === ''
+                                ? `Mostrando ${resultadoBusqueda.visibles.length} de ${resultadoBusqueda.total} productos — escaneá o escribí para buscar el resto.`
+                                : `Mostrando ${resultadoBusqueda.visibles.length} de ${resultadoBusqueda.total} coincidencias — afiná la búsqueda.`}
+                        </p>
+                    )}
                 </div>
                 )}
 

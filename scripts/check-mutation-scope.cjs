@@ -57,6 +57,11 @@ const PISO_MUTANTES = {
     // otro. La ventana de 12 h se construye dentro de una función por el mismo
     // motivo que el IVA de margen.ts.
     'utils/cartPersistence.ts': 142,
+    // posSearch.ts entró con P0-2 (la grilla dejó de pintar 1,003 tarjetas):
+    // 46 mutantes, score medido 100.00%. Lo que protege es que el recorte NUNCA
+    // se haga en silencio (visibles + ocultos == total) y que el SKU exacto —el
+    // camino del escáner— le siga ganando a cualquier coincidencia parcial.
+    'utils/posSearch.ts': 46,
     'backend/services/loanMath.ts': 12,
     'backend/services/nicaTax.ts': 7,
     'backend/services/stockService.ts': 5,
