@@ -2860,7 +2860,7 @@ const POS: React.FC = () => {
                                 <div className="space-y-3">
                                     <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 text-center">
                                         <Check size={32} className="text-emerald-500 mx-auto mb-2" />
-                                        <p className="font-bold text-emerald-300">Importacion Completada</p>
+                                        <p className="font-bold text-emerald-300">Importación Completada</p>
                                         <div className="flex justify-center gap-6 mt-2">
                                             <div>
                                                 <p className="text-2xl font-bold text-emerald-400">{importResult.created}</p>
@@ -3166,7 +3166,7 @@ const POS: React.FC = () => {
                     {cart.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
                             <ShoppingCart size={32} /> <p className="text-sm">Carrito vacio</p>
-                            <p className="text-[10px] text-slate-300">Escanea un codigo de barras o selecciona un producto</p>
+                            <p className="text-[10px] text-slate-300">Escaneá un código de barras o selecciona un producto</p>
                         </div>
                     ) : (
                         cart.map(item => {
