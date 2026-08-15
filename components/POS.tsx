@@ -12,6 +12,12 @@ import { trackEvent } from '../utils/analytics';
 import { resolvePosSimple, UI_MODE_KEY } from '../utils/navigation';
 import { parseWorkbookRows, importInChunks } from '../utils/importProducts';
 import { evaluarCarrito, textoAviso, textoResumen, AvisoStock } from '../utils/stockAlert';
+import {
+    claveCarrito, claveAparcados, leerCarritoGuardado, serializarCarrito,
+    decidirRestauracion, resumenGuardado, leerAparcados, serializarAparcados,
+    CarritoGuardado, LineaGuardada, AparcadoGuardado,
+} from '../utils/cartPersistence';
+import { useReportarVenta } from './VentaEnCursoContext';
 import { ReceiptTicket } from './ReceiptTicket';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import * as XLSX from 'xlsx';
@@ -109,6 +115,27 @@ export const rotuloProductosRapidos = (esRanking: boolean, ventasRegistradas: nu
 // mano no es una medida de seguridad, es un peaje para el que viene a probar.
 const PIN_DUENO_POR_DEFECTO = '1234';
 
+/**
+ * Identidad del cliente para namespacear el carrito guardado. Mismo par de
+ * claves que ya usa la cola offline (`nortex_tenant_data` + `nortex_user`).
+ * Devuelve null si falta cualquiera de las dos: sin identidad NO se persiste
+ * nada, antes que arriesgar mezclar los carritos de dos cajeros.
+ */
+const identidadLocal = (): { tenantId: string; userId: string } | null => {
+    try {
+        const tenantId = JSON.parse(localStorage.getItem('nortex_tenant_data') || '{}')?.id;
+        const userId = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.id;
+        if (typeof tenantId === 'string' && tenantId && typeof userId === 'string' && userId) {
+            return { tenantId, userId };
+        }
+    } catch { /* storage ilegible → no se persiste */ }
+    return null;
+};
+
+/** Línea del carrito → forma serializable. Se conserva TODO (mayoreo, empaque,
+ *  basePrice) porque al restaurar la línea tiene que poder repreciarse igual. */
+const aLineaGuardada = (item: CartItem): LineaGuardada => ({ ...(item as unknown as Record<string, unknown>) } as unknown as LineaGuardada);
+
 // Movimiento de caja tal como puede llegar del backend: los registros derivados
 // (p. ej. una venta en efectivo) no son filas de CashMovement y pueden traer
 // menos campos. Se modela flojo a propósito — el render normaliza.
@@ -196,6 +223,10 @@ interface HeldCart {
     items: CartItem[];
     customer: Customer | null;
     heldAt: Date;
+    /** Persistencia (P0-1): el cliente se guarda por id y se re-resuelve contra
+     *  la lista viva; `shiftId` dice a qué turno pertenece el aparcado. */
+    clienteId?: string | null;
+    shiftId?: string;
 }
 
 // Post-sale state
@@ -269,10 +300,49 @@ const POS: React.FC = () => {
     // ranking el rótulo cambie solo — y no antes (ver `rotuloProductosRapidos`).
     const rankingDisponible = false;
     const ventasRegistradas = 0;
-    const [cart, setCart] = useState<CartItem[]>([]);
+    // ── P0-1 · El carrito sobrevive ────────────────────────────────────────
+    // El sidebar está montado ALREDEDOR del POS (App.tsx), así que un clic en
+    // "Mis Productos" desmontaba este componente y borraba la venta en curso.
+    // La cura de fondo es que el carrito sea durable: si vuelve intacto, el bug
+    // deja de existir sin tocar el router. Ver utils/cartPersistence.ts.
+    const [identidad] = useState(identidadLocal);
+    const [rescate] = useState<CarritoGuardado | null>(() =>
+        identidad ? leerCarritoGuardado(localStorage.getItem(claveCarrito(identidad.tenantId, identidad.userId))) : null
+    );
+    // Hidratación OPTIMISTA: el carrito se pinta en el primer render, sin
+    // esperar a que resuelva /shifts/current. En el caso común (salir y volver
+    // dentro del mismo turno) no hay parpadeo de "Carrito vacío". Si al llegar
+    // el turno resulta ser otro, se retira y se ofrece — ver el efecto de
+    // validación más abajo. Un blip en el caso raro vale el cero-blip en el
+    // caso de todos los días.
+    const [cart, setCart] = useState<CartItem[]>(() => (rescate?.lineas ?? []) as unknown as CartItem[]);
+    // Venta a medias que NO se puede atribuir al turno actual: no entra sola.
+    const [ventaPendiente, setVentaPendiente] = useState<CarritoGuardado | null>(null);
+    // Hasta que la validación no corrió, NO se escribe: si no, el primer guardado
+    // pisaría el turno del payload rescatado con el turno de ahora.
+    const [persistenciaLista, setPersistenciaLista] = useState(false);
+    const [clienteARestaurar, setClienteARestaurar] = useState<string | null>(null);
+    // Cerrar la caja con una venta a medias adentro: no se puede cuadrar un
+    // arqueo con mercadería en el limbo. O entra, o se aparca, o se descarta —
+    // y eso lo decide el cajero, no nosotros.
+    const [bloqueoCierre, setBloqueoCierre] = useState(false);
 
     // 🅿️ PARQUEO DE VENTAS STATE
-    const [heldCarts, setHeldCarts] = useState<HeldCart[]>([]);
+    // Antes era memoria pura: F4 "Aparcar" perdía todo con F5, o sea que el
+    // diálogo que ofrece "Aparcar y salir" habría sido una promesa falsa.
+    const [heldCarts, setHeldCarts] = useState<HeldCart[]>(() => {
+        const id = identidad;
+        if (!id) return [];
+        return leerAparcados(localStorage.getItem(claveAparcados(id.tenantId, id.userId))).map(a => ({
+            id: a.id,
+            label: a.label,
+            items: a.lineas as unknown as CartItem[],
+            customer: null,
+            clienteId: a.clienteId,
+            heldAt: new Date(a.heldAt),
+            shiftId: a.shiftId,
+        }));
+    });
     const [showHeldCarts, setShowHeldCarts] = useState(false);
 
     // ── Modo simple (Fase C-2 UX): esconde acciones avanzadas del POS ──
@@ -541,6 +611,113 @@ const POS: React.FC = () => {
             .catch(() => { /* sin dato: el aviso sale sin consecuencia */ });
     }, []);
 
+    // ── P0-1 · Validar el carrito rescatado contra el turno real ───────────
+    // Corre una sola vez, cuando /shifts/current ya respondió. Regla dura: una
+    // venta a medias NUNCA se restaura en el turno equivocado — la mercadería
+    // de un turno cerrado no entra sola a la caja de hoy, porque descuadraría
+    // el arqueo de otro. Se ofrece y decide el cajero.
+    useEffect(() => {
+        if (shiftLoading || persistenciaLista) return;
+        const decision = decidirRestauracion({
+            guardado: rescate,
+            shiftIdActual: currentShift?.id ?? null,
+            ahoraMs: Date.now(),
+        });
+        if (decision === 'OFRECER') {
+            setCart([]);              // se retira de la vista hasta que decida
+            setVentaPendiente(rescate);
+            // En móvil el panel del ticket está oculto hasta tocar "Ver
+            // Carrito": sin esto el aviso quedaría invisible justo para quien
+            // más lo necesita. En escritorio el panel ya está a la vista y esto
+            // no cambia nada.
+            setShowMobileCart(true);
+        } else if (decision === 'RESTAURAR' && rescate) {
+            setGlobalDiscount(rescate.descuentoGlobal);
+            setClienteARestaurar(rescate.clienteId);
+        }
+        // DESCARTAR: el carrito ya arrancó vacío. Nada que hacer.
+        setPersistenciaLista(true);
+    }, [shiftLoading, currentShift?.id, rescate, persistenciaLista]);
+
+    // El cliente se guarda por ID y se re-resuelve contra la lista viva: si lo
+    // borraron, la venta sigue sin cliente en vez de arrastrar un fantasma.
+    useEffect(() => {
+        if (!clienteARestaurar || customerList.length === 0) return;
+        const cliente = customerList.find(c => c.id === clienteARestaurar) || null;
+        if (cliente) {
+            setSelectedCustomer(cliente);
+            setCustomerSearch(cliente.name);
+        }
+        setClienteARestaurar(null);
+    }, [clienteARestaurar, customerList]);
+
+    // ── P0-1 · Guardar (con debounce) ──────────────────────────────────────
+    useEffect(() => {
+        if (!persistenciaLista || !identidad) return;
+        const clave = claveCarrito(identidad.tenantId, identidad.userId);
+
+        // Venta YA COBRADA: se borra sin esperar el debounce. Si no, navegar
+        // entre el "¡Venta completada!" y "Nueva venta" dejaría guardado un
+        // carrito de mercadería ya vendida — y al volver se cobraría dos veces.
+        if (completedSale) {
+            localStorage.removeItem(clave);
+            return;
+        }
+
+        const t = setTimeout(() => {
+            const payload = serializarCarrito({
+                shiftId: currentShift?.id ?? null,
+                lineas: cart.map(aLineaGuardada),
+                clienteId: selectedCustomer?.id ?? null,
+                descuentoGlobal: globalDiscount,
+                ahoraMs: Date.now(),
+            });
+            // Sin payload (carrito vacío o sin turno) se BORRA la clave: nunca
+            // se deja un `[]` guardado que después haya que interpretar.
+            if (payload) localStorage.setItem(clave, payload);
+            else localStorage.removeItem(clave);
+        }, 300);
+        return () => clearTimeout(t);
+    }, [cart, selectedCustomer?.id, globalDiscount, currentShift?.id, completedSale, persistenciaLista, identidad]);
+
+    // Aparcados: cambian de a uno (F4 / restaurar / quitar), sin debounce.
+    useEffect(() => {
+        if (!persistenciaLista || !identidad) return;
+        const clave = claveAparcados(identidad.tenantId, identidad.userId);
+        const payload = serializarAparcados(heldCarts.map((h): AparcadoGuardado => ({
+            id: h.id,
+            label: h.label,
+            shiftId: h.shiftId || currentShift?.id || '',
+            heldAt: h.heldAt instanceof Date ? h.heldAt.getTime() : Date.now(),
+            lineas: h.items.map(aLineaGuardada),
+            clienteId: h.customer?.id ?? h.clienteId ?? null,
+        })));
+        if (payload) localStorage.setItem(clave, payload);
+        else localStorage.removeItem(clave);
+    }, [heldCarts, currentShift?.id, persistenciaLista, identidad]);
+
+    // Cerrar la pestaña con una venta a medias: el navegador pregunta. El texto
+    // lo decide el navegador (ya no se puede personalizar), pero el freno sí es
+    // nuestro. Con el carrito ya persistido esto es la última red, no la única.
+    useEffect(() => {
+        if (cart.length === 0 || completedSale) return;
+        const avisar = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+        window.addEventListener('beforeunload', avisar);
+        return () => window.removeEventListener('beforeunload', avisar);
+    }, [cart.length, completedSale]);
+
+    // Dos pestañas del POS comparten la clave y la última que escribe gana: sin
+    // esto se podría perder un carrito EN SILENCIO, que es exactamente el bug
+    // que estamos arreglando, en otra forma. No se sobreescribe: se avisa.
+    const [cajaEnOtraPestana, setCajaEnOtraPestana] = useState(false);
+    useEffect(() => {
+        if (!identidad) return;
+        const clave = claveCarrito(identidad.tenantId, identidad.userId);
+        const alCambiar = (e: StorageEvent) => { if (e.key === clave) setCajaEnOtraPestana(true); };
+        window.addEventListener('storage', alCambiar);
+        return () => window.removeEventListener('storage', alCambiar);
+    }, [identidad]);
+
     // Tutorial guiado: si entran con ?tour=pos (desde Ayuda o el checklist).
     // SOLO cuando la caja está visible: antes el tour se dibujaba ENCIMA del
     // modal de apertura de turno (PIN), describiendo una pantalla tapada
@@ -611,9 +788,27 @@ const POS: React.FC = () => {
             try {
                 const pendingCart = localStorage.getItem('nortex_pending_cart');
                 if (pendingCart && pendingCart !== 'undefined') {
-                    setCart(JSON.parse(pendingCart));
+                    const lineasTraspaso = JSON.parse(pendingCart);
+                    // El traspaso (demo o cotización convertida) GANA: es una
+                    // acción explícita del usuario. Pero desde que el carrito
+                    // sobrevive a la navegación puede haber una venta restaurada
+                    // debajo, y pisarla en silencio sería reintroducir el mismo
+                    // bug que este cambio viene a matar. Se aparca primero: los
+                    // aparcados ahora también son durables, así que no se pierde.
+                    // `cart` acá es el del primer render, o sea lo restaurado.
+                    if (cart.length > 0) {
+                        setHeldCarts(prev => [...prev, {
+                            id: `traspaso-${Date.now()}`,
+                            label: 'Venta que estabas haciendo',
+                            items: [...cart],
+                            customer: null,
+                            clienteId: null,
+                            heldAt: new Date(),
+                        }]);
+                    }
+                    setCart(lineasTraspaso);
                     localStorage.removeItem('nortex_pending_cart');
-                    if (!hasOpenShift) alert("¡Bienvenido! Abre tu caja para completar la venta de la demo o cotización.");
+                    if (!hasOpenShift) alert("¡Bienvenido! Abrí tu caja para completar la venta de la demo o cotización.");
                 }
             } catch (e) {
                 console.error("Failed to parse ghost cart", e);
@@ -1203,6 +1398,8 @@ const POS: React.FC = () => {
             label: selectedCustomer?.name || `Carrito ${heldCarts.length + 1}`,
             items: [...cart],
             customer: selectedCustomer,
+            clienteId: selectedCustomer?.id ?? null,
+            shiftId: currentShift?.id,
             heldAt: new Date(),
         };
         setHeldCarts(prev => [...prev, held]);
@@ -1212,7 +1409,7 @@ const POS: React.FC = () => {
         setGlobalDiscount('');
         setCreditOverrideAuthorized(false);
         setCreditOverridePin('');
-    }, [cart, heldCarts, selectedCustomer]);
+    }, [cart, heldCarts, selectedCustomer, currentShift?.id]);
 
     const handleRestoreCart = useCallback((heldId: string) => {
         const toRestore = heldCarts.find(h => h.id === heldId);
@@ -1228,6 +1425,8 @@ const POS: React.FC = () => {
                 label: selectedCustomer?.name || `Carrito ${heldCarts.length + 1}`,
                 items: [...cart],
                 customer: selectedCustomer,
+                clienteId: selectedCustomer?.id ?? null,
+                shiftId: currentShift?.id,
                 heldAt: new Date(),
             };
             setHeldCarts(prev => [...prev.filter(h => h.id !== heldId), currentHeld]);
@@ -1235,11 +1434,29 @@ const POS: React.FC = () => {
             setHeldCarts(prev => prev.filter(h => h.id !== heldId));
         }
         setCart(toRestore.items);
-        setSelectedCustomer(toRestore.customer);
-        setCustomerSearch(toRestore.customer?.name || '');
+        // Un aparcado rescatado del storage trae `clienteId`, no el objeto: se
+        // re-resuelve contra la lista viva (si lo borraron, queda sin cliente).
+        const cliente = toRestore.customer
+            ?? (toRestore.clienteId ? customerList.find(c => c.id === toRestore.clienteId) ?? null : null);
+        setSelectedCustomer(cliente);
+        setCustomerSearch(cliente?.name || '');
         setShowHeldCarts(false);
         setGlobalDiscount('');
-    }, [cart, heldCarts, selectedCustomer]);
+    }, [cart, heldCarts, selectedCustomer, currentShift?.id, customerList]);
+
+    // ── P0-1 · Venta a medias de otro turno ────────────────────────────────
+    const recuperarVentaPendiente = useCallback(() => {
+        if (!ventaPendiente) return;
+        setCart(ventaPendiente.lineas as unknown as CartItem[]);
+        setGlobalDiscount(ventaPendiente.descuentoGlobal);
+        setClienteARestaurar(ventaPendiente.clienteId);
+        setVentaPendiente(null);
+    }, [ventaPendiente]);
+
+    const descartarVentaPendiente = useCallback(() => {
+        setVentaPendiente(null);
+        if (identidad) localStorage.removeItem(claveCarrito(identidad.tenantId, identidad.userId));
+    }, [identidad]);
 
     const handleRemoveHeldCart = useCallback((heldId: string) => {
         setHeldCarts(prev => prev.filter(h => h.id !== heldId));
@@ -1551,6 +1768,17 @@ const POS: React.FC = () => {
     const tax = taxD.toDecimalPlaces(2).toNumber();
     const grandTotal = grandTotalD.toDecimalPlaces(2).toNumber();
     const globalDiscountNum = globalDiscountD.toNumber();
+
+    // El menú que rodea al POS necesita saber si hay una venta abierta para
+    // avisar antes de navegar. Una venta COBRADA (completedSale) ya no cuenta:
+    // el carrito sigue en pantalla hasta "Nueva venta", pero salir ahí no
+    // interrumpe nada.
+    const reportarVenta = useReportarVenta();
+    useEffect(() => {
+        reportarVenta({ hayVenta: cart.length > 0 && !completedSale, lineas: cart.length, total: grandTotal });
+    }, [cart.length, completedSale, grandTotal, reportarVenta]);
+    // Al desmontar, el menú no puede quedar creyendo que hay una venta abierta.
+    useEffect(() => () => reportarVenta({ hayVenta: false, lineas: 0, total: 0 }), [reportarVenta]);
 
     // SMART CREDIT CHECK
     const isCreditBlocked = useMemo(() => {
@@ -2063,7 +2291,7 @@ const POS: React.FC = () => {
 
                     {/* Cerrar caja: lo único irreversible del header → único uso del rojo. */}
                     {currentShift ? (
-                        <button onClick={() => setShowCloseShift(true)} className="text-xs font-semibold text-danger hover:bg-danger-soft px-3 h-8 rounded-control transition-colors flex items-center gap-1.5">
+                        <button onClick={() => { if (cart.length > 0) { setBloqueoCierre(true); return; } setShowCloseShift(true); }} className="text-xs font-semibold text-danger hover:bg-danger-soft px-3 h-8 rounded-control transition-colors flex items-center gap-1.5">
                             <Lock size={14} /> Cerrar caja
                         </button>
                     ) : (
@@ -2601,6 +2829,50 @@ const POS: React.FC = () => {
             )}
 
             {/* --- CLOSE SHIFT MODAL --- */}
+            {/* Guarda de cierre con venta en curso (P0-1). Tres salidas, todas
+                explícitas: ninguna pierde la venta sin que el cajero lo sepa. */}
+            {bloqueoCierre && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-modal p-4" onClick={() => setBloqueoCierre(false)}>
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="titulo-bloqueo-cierre"
+                        className="bg-surface-900 border border-white/10 rounded-card p-6 w-full max-w-sm text-slate-100"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <h3 id="titulo-bloqueo-cierre" className="text-lg font-extrabold flex items-center gap-2">
+                            <AlertTriangle size={20} className="text-amber-400" /> Tenés una venta sin cobrar
+                        </h3>
+                        <p className="text-sm text-slate-300 mt-2">
+                            Hay {cart.length} producto{cart.length === 1 ? '' : 's'} en el carrito por {formatMoney(grandTotal)}. Decidí qué hacer antes de cerrar la caja.
+                        </p>
+                        <div className="mt-5 space-y-2">
+                            <button
+                                onClick={() => { handleHoldCart(); setBloqueoCierre(false); setShowCloseShift(true); }}
+                                className="w-full h-11 rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors"
+                            >
+                                Aparcar la venta y cerrar
+                            </button>
+                            <button
+                                onClick={() => setBloqueoCierre(false)}
+                                className="w-full h-11 rounded-control bg-white/[0.06] text-slate-100 font-bold hover:bg-white/[0.12] transition-colors"
+                            >
+                                Seguir vendiendo
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setCart([]); setSelectedCustomer(null); setCustomerSearch(''); setGlobalDiscount('');
+                                    setBloqueoCierre(false); setShowCloseShift(true);
+                                }}
+                                className="w-full h-11 rounded-control text-danger font-bold hover:bg-danger-soft transition-colors"
+                            >
+                                Descartar la venta y cerrar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {showCloseShift && (
                 <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur flex items-center justify-center p-4">
                     <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
@@ -3232,6 +3504,56 @@ const POS: React.FC = () => {
                         </div>
                     )}
                 </div>
+
+                {/* ⚠️ Venta a medias que NO pertenece a este turno (o quedó vieja).
+                    No se restaura sola: meter mercadería de otro turno en la caja
+                    de hoy sin avisar descuadraría el arqueo de otro. Se muestra
+                    con su tamaño real para que la decisión sea informada. */}
+                {ventaPendiente && (() => {
+                    const r = resumenGuardado(ventaPendiente);
+                    return (
+                        <div role="status" className="mx-4 mt-4 p-3 rounded-control bg-warning-soft border border-amber-500/20">
+                            <div className="flex items-start gap-2">
+                                <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-[13px] font-bold text-amber-400 leading-snug">Tenés una venta sin terminar</p>
+                                    <p className="text-[12px] text-slate-300 mt-0.5">
+                                        {r.lineas} producto{r.lineas === 1 ? '' : 's'} · {formatMoney(r.total)} — quedó de otro turno.
+                                    </p>
+                                    <div className="flex gap-2 mt-2">
+                                        <button
+                                            onClick={recuperarVentaPendiente}
+                                            className="px-2.5 py-1 rounded bg-amber-500 text-white text-[12px] font-bold hover:bg-amber-600 transition-colors"
+                                        >
+                                            Recuperar
+                                        </button>
+                                        <button
+                                            onClick={descartarVentaPendiente}
+                                            className="px-2.5 py-1 rounded bg-white/[0.06] text-slate-200 text-[12px] font-bold hover:bg-white/[0.12] transition-colors"
+                                        >
+                                            Descartar
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {/* Otra pestaña escribió el mismo carrito: se avisa en vez de
+                    pisarlo en silencio — perder un carrito sin enterarse es el
+                    mismo bug que estamos arreglando, disfrazado. */}
+                {cajaEnOtraPestana && (
+                    <div role="status" className="mx-4 mt-4 p-2.5 rounded-control bg-white/[0.04] border border-white/[0.08] flex items-start gap-2">
+                        <AlertTriangle size={14} className="text-slate-400 shrink-0 mt-0.5" />
+                        <p className="text-[12px] text-slate-300 flex-1">
+                            La caja está abierta en otra pestaña. Usá una sola para que no se pisen las ventas.
+                        </p>
+                        <button onClick={() => setCajaEnOtraPestana(false)} className="text-slate-400 hover:text-slate-200 shrink-0" aria-label="Cerrar aviso">
+                            <X size={14} />
+                        </button>
+                    </div>
+                )}
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
                     {cart.length === 0 ? (

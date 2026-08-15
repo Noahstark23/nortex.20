@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutGrid, ShoppingCart, LogOut, Wallet, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle, Home, ChevronDown, SlidersHorizontal } from 'lucide-react';
+import { AlertTriangle, LayoutGrid, ShoppingCart, LogOut, Wallet, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle, Home, ChevronDown, SlidersHorizontal } from 'lucide-react';
+import { formatMoney } from '../utils/money';
 import { PinPadClock } from './PinPadClock';
+import { useVentaEnCurso } from './VentaEnCursoContext';
 import OnboardingHub from './OnboardingHub';
 import { buildNavigation, groupBySection, resolveUiMode, UI_MODE_KEY, type UiMode, type NavEntry, type NavSection } from '../utils/navigation';
 
@@ -185,6 +187,23 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const sectionHasActive = (items: NavItem[]) => items.some(it => location.pathname.startsWith(it.path));
 
   /** Item de nav: fondo suave + barra izquierda. Nunca un bloque sólido de color. */
+  /* ── Guarda de navegación con venta en curso (P0-1) ──────────────────
+     El sidebar está montado ALREDEDOR del POS, así que un clic acá desmonta la
+     caja. El carrito ya sobrevive (utils/cartPersistence.ts), pero verlo
+     desaparecer asusta igual: se avisa ANTES de salir y se dice la verdad —
+     la venta queda esperando, no se pierde.
+     No se usa `useBlocker` porque exige un data router y la app monta
+     <BrowserRouter>; el menú es el camino de salida que importa y está acá. */
+  const ventaEnCurso = useVentaEnCurso();
+  const [destinoPendiente, setDestinoPendiente] = useState<string | null>(null);
+
+  const guardarSalida = (e: React.MouseEvent, destino: string) => {
+    // Navegar DENTRO del POS no interrumpe nada.
+    if (!ventaEnCurso.hayVenta || destino === location.pathname) return;
+    e.preventDefault();
+    setDestinoPendiente(destino);
+  };
+
   const navItemClass = ({ isActive }: { isActive: boolean }) => `
     w-full flex items-center justify-start gap-3 px-3 h-touch rounded-control transition-colors duration-150 group active:scale-[0.98]
     ${isActive
@@ -213,7 +232,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             {looseItems.map((item) => {
               const Icon = item.icon;
               return (
-                <NavLink key={item.path} to={item.path} className={navItemClass}>
+                <NavLink key={item.path} to={item.path} onClick={e => guardarSalida(e, item.path)} className={navItemClass}>
                   <Icon size={20} />
                   <span className="font-medium text-sm">{item.label}</span>
                 </NavLink>
@@ -241,7 +260,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       {items.map((item) => {
                         const Icon = item.icon;
                         return (
-                          <NavLink key={item.path} to={item.path} className={navItemClass}>
+                          <NavLink key={item.path} to={item.path} onClick={e => guardarSalida(e, item.path)} className={navItemClass}>
                             <Icon size={20} />
                             <span className="font-medium text-sm">{item.label}</span>
                           </NavLink>
@@ -333,7 +352,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <NavLink
               key={item.path}
               to={item.path}
-              onClick={() => setShowMobileMenu(false)}
+              onClick={e => { setShowMobileMenu(false); guardarSalida(e, item.path); }}
               className={({ isActive }) => `
                 flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-all min-w-0
                 ${isActive ? 'text-nortex-accent bg-slate-800' : 'text-slate-500 hover:text-slate-300'}
@@ -395,7 +414,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                         <NavLink
                           key={item.path}
                           to={item.path}
-                          onClick={() => setShowMobileMenu(false)}
+                          onClick={e => { setShowMobileMenu(false); guardarSalida(e, item.path); }}
                           className={({ isActive }) => `
                             flex flex-col items-center justify-center gap-1.5 p-3 rounded-2xl border transition-all text-center
                             ${isActive
@@ -454,6 +473,44 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <main className="flex-1 overflow-hidden relative mb-16 lg:mb-0">
         {children}
       </main>
+
+      {/* Aviso de salida con venta en curso (P0-1). El texto dice la VERDAD:
+          la venta queda guardada. Antes esto no existía y salir la borraba; si
+          ahora avisáramos "vas a perder la venta" estaríamos mintiendo al revés
+          y el cajero aprendería a temerle al menú sin motivo. */}
+      {destinoPendiente && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-modal p-4" onClick={() => setDestinoPendiente(null)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="titulo-salida-venta"
+            className="bg-surface-900 border border-white/10 rounded-card p-6 w-full max-w-sm text-slate-100"
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 id="titulo-salida-venta" className="text-lg font-extrabold flex items-center gap-2">
+              <AlertTriangle size={20} className="text-amber-400" /> Tenés una venta abierta
+            </h3>
+            <p className="text-sm text-slate-300 mt-2">
+              {ventaEnCurso.lineas} producto{ventaEnCurso.lineas === 1 ? '' : 's'} por {formatMoney(ventaEnCurso.total)}.
+              Si salís se guarda y te espera en la caja.
+            </p>
+            <div className="mt-5 space-y-2">
+              <button
+                onClick={() => setDestinoPendiente(null)}
+                className="w-full h-11 rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors"
+              >
+                Seguir vendiendo
+              </button>
+              <button
+                onClick={() => { const d = destinoPendiente; setDestinoPendiente(null); navigate(d); }}
+                className="w-full h-11 rounded-control bg-white/[0.06] text-slate-100 font-bold hover:bg-white/[0.12] transition-colors"
+              >
+                Salir igual
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showClock && <PinPadClock onClose={() => setShowClock(false)} />}
 

@@ -8,6 +8,7 @@ const BlogPost = lazy(() => import('./components/BlogPost'));
 const ClusterPage = lazy(() => import('./components/ClusterPage'));
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
+import { VentaEnCursoProvider } from './components/VentaEnCursoContext';
 import { trackPageView } from './utils/analytics';
 import { homePathFor } from './utils/navigation';
 import MiNegocio from './components/MiNegocio';
@@ -103,6 +104,7 @@ const ProtectedApp = () => {
   const reencaminarBienvenida = vieneDeLaBienvenida && homePath !== '/app/dashboard';
 
   return (
+    <VentaEnCursoProvider>
     <Layout>
       <Routes>
         <Route path="inicio" element={<MiNegocio />} />
@@ -145,6 +147,7 @@ const ProtectedApp = () => {
         <Route path="*" element={<Navigate to={homePath} replace />} />
       </Routes>
     </Layout>
+    </VentaEnCursoProvider>
   );
 };
 
