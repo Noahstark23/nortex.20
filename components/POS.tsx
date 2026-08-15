@@ -131,6 +131,14 @@ interface CompletedSale {
     date: string;
     invoiceNumber?: number;
     invoiceSeries?: string;
+    /**
+     * R2.9 · NX-13 — efectivo recibido CONGELADO en la venta. Antes la pantalla
+     * de éxito leía el state vivo `cashReceived`, que se limpia en el mismo
+     * batch de React que abre el modal: cuando renderizaba ya valía '' y el
+     * bloque del vuelto nunca se dibujaba. El cajero se quedaba sin el único
+     * número que necesita con el cliente enfrente.
+     */
+    cashReceived?: string;
 }
 
 // ==========================================
@@ -1395,6 +1403,7 @@ const POS: React.FC = () => {
                 customerPhone: selectedCustomer?.phone,
                 saleId: offlineId,
                 date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                cashReceived,
             });
             setCashReceived('');
         };
@@ -1432,6 +1441,13 @@ const POS: React.FC = () => {
             if (!res.ok) throw new Error(data.error);
 
             fetchProducts();
+            // R2.9 · NX-03 — la píldora de caja del header y "Movimientos del
+            // Turno" solo se recargaban al CAMBIAR de turno: tras vender en
+            // efectivo mostraban C$0.00 mientras Arqueos ya decía el monto
+            // real. El cajero veía plata en la gaveta y cero en pantalla, y
+            // concluía que la venta no se registró.
+            fetchCashBalance();
+            fetchCashMovements();
             // Aviso global (retención R2): el checklist de primeros pasos se
             // refresca en vivo y celebra la primera venta sin esperar un remount.
             window.dispatchEvent(new CustomEvent('nortex:data-changed'));
@@ -1449,6 +1465,7 @@ const POS: React.FC = () => {
                 date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
                 invoiceNumber: data.invoiceNumber,
                 invoiceSeries: data.invoiceSeries,
+                cashReceived,
             });
             setCashReceived('');
 
@@ -2538,7 +2555,7 @@ const POS: React.FC = () => {
                                 <div className="space-y-3">
                                     <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 text-center">
                                         <Check size={32} className="text-emerald-500 mx-auto mb-2" />
-                                        <p className="font-bold text-emerald-300">Importacion Completada</p>
+                                        <p className="font-bold text-emerald-300">Importación Completada</p>
                                         <div className="flex justify-center gap-6 mt-2">
                                             <div>
                                                 <p className="text-2xl font-bold text-emerald-400">{importResult.created}</p>
@@ -2839,7 +2856,7 @@ const POS: React.FC = () => {
                     {cart.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
                             <ShoppingCart size={32} /> <p className="text-sm">Carrito vacio</p>
-                            <p className="text-[10px] text-slate-300">Escanea un codigo de barras o selecciona un producto</p>
+                            <p className="text-[10px] text-slate-300">Escaneá un código de barras o selecciona un producto</p>
                         </div>
                     ) : (
                         cart.map(item => {
@@ -3350,7 +3367,7 @@ const POS: React.FC = () => {
                             <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3 relative z-10">
                                 <Check size={36} className="text-white" />
                             </div>
-                            <h2 className="text-xl font-bold text-white relative z-10">Venta Registrada con Exito</h2>
+                            <h2 className="text-xl font-bold text-white relative z-10">Venta Registrada con Éxito</h2>
                             <p className="text-emerald-100 text-sm mt-1 relative z-10">{completedSale.date}</p>
                         </div>
 
@@ -3362,10 +3379,10 @@ const POS: React.FC = () => {
                                     <span className="font-bold text-slate-100">{completedSale.customerName}</span>
                                 </div>
                                 <div className="flex justify-between items-center mb-2">
-                                    <span className="text-sm text-slate-500">Metodo</span>
+                                    <span className="text-sm text-slate-500">Método</span>
                                     <span className="font-medium text-slate-200">
                                         {completedSale.paymentMethod === 'CASH' ? 'Efectivo' :
-                                            completedSale.paymentMethod === 'CREDIT' ? 'Credito' :
+                                            completedSale.paymentMethod === 'CREDIT' ? 'Crédito' :
                                                 completedSale.paymentMethod === 'CARD' ? 'Tarjeta' : completedSale.paymentMethod}
                                     </span>
                                 </div>
@@ -3376,21 +3393,22 @@ const POS: React.FC = () => {
                                     </div>
                                 </div>
 
-                                {/* Cash change summary - read-only, set before sale */}
-                                {completedSale.paymentMethod === 'CASH' && cashReceived !== '' && toDecimal(cashReceived).greaterThan(0) && (
+                                {/* R2.9 · NX-13 — se lee el efectivo CONGELADO en la venta,
+                                    no el state vivo (que ya se limpió en el mismo batch). */}
+                                {completedSale.paymentMethod === 'CASH' && (completedSale.cashReceived ?? '') !== '' && toDecimal(completedSale.cashReceived!).greaterThan(0) && (
                                     <div className="mt-3 pt-3 border-t border-white/[0.06] space-y-2">
                                         <div className="flex justify-between items-center">
                                             <span className="text-sm text-slate-500">Efectivo recibido</span>
                                             <span className="font-bold text-slate-200 font-mono tabular-nums">
                                                 {payingInUSD && usdAmount
-                                                    ? `${formatUSD(toDecimal(usdAmount))} (${formatMoney(toDecimal(cashReceived))})`
-                                                    : formatMoney(toDecimal(cashReceived))}
+                                                    ? `${formatUSD(toDecimal(usdAmount))} (${formatMoney(toDecimal(completedSale.cashReceived!))})`
+                                                    : formatMoney(toDecimal(completedSale.cashReceived!))}
                                             </span>
                                         </div>
-                                        {toDecimal(cashReceived).greaterThanOrEqualTo(completedSale.grandTotal) && (
-                                            <div className="flex justify-between items-center bg-emerald-500/10 px-3 py-2 rounded-lg border border-emerald-500/20">
-                                                <span className="font-bold text-emerald-400 text-sm">CAMBIO</span>
-                                                <span className="text-xl font-black text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(cashReceived).minus(completedSale.grandTotal))}</span>
+                                        {toDecimal(completedSale.cashReceived!).greaterThanOrEqualTo(completedSale.grandTotal) && (
+                                            <div className="flex flex-col items-center bg-emerald-500/15 px-3 py-3 rounded-xl border border-emerald-500/30">
+                                                <span className="font-bold text-emerald-300 text-xs tracking-widest">VUELTO</span>
+                                                <span className="text-4xl font-black text-emerald-400 font-mono tabular-nums leading-tight">{formatMoney(toDecimal(completedSale.cashReceived!).minus(completedSale.grandTotal))}</span>
                                             </div>
                                         )}
                                     </div>

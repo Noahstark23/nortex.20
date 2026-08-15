@@ -109,19 +109,30 @@ export const ReceiptTicket: React.FC<ReceiptTicketProps> = ({ data }) => {
 
                     <div className="border-b border-black border-dashed my-1"></div>
 
-                    {/* ═══ TOTALES ═══ */}
-                    <div className="flex justify-between">
-                        <span>Subtotal:</span>
-                        <span>C$ {data.subtotal.toFixed(2)}</span>
-                    </div>
+                    {/* ═══ TOTALES ═══
+                        R2.9 · NX-12 — antes se imprimía "Subtotal" con el mismo
+                        número que "TOTAL" y el IVA suelto en medio: sin descuento
+                        el ticket mostraba dos veces la misma cifra y no había
+                        forma de verificar el IVA a ojo. Ahora se imprime el
+                        desglose fiscal real: base imponible + IVA = total. */}
                     {(data.discount ?? 0) > 0 && (
-                        <div className="flex justify-between">
-                            <span>Descuento:</span>
-                            <span>-C$ {(data.discount ?? 0).toFixed(2)}</span>
-                        </div>
+                        <>
+                            <div className="flex justify-between">
+                                <span>Subtotal:</span>
+                                <span>C$ {data.subtotal.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Descuento:</span>
+                                <span>-C$ {(data.discount ?? 0).toFixed(2)}</span>
+                            </div>
+                        </>
                     )}
                     <div className="flex justify-between">
-                        <span>IVA incluido (15%):</span>
+                        <span>Base imponible:</span>
+                        <span>C$ {(data.total - data.tax).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span>IVA (15%):</span>
                         <span>C$ {data.tax.toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between font-bold text-sm mt-1">

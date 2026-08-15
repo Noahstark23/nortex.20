@@ -57,7 +57,7 @@ const RetailDashboard: React.FC = () => {
   }, []);
 
   // 📊 Today Stats & Alerts
-  const [todayStats, setTodayStats] = useState<{ totalSales: number; totalExpenses: number; netProfit: number } | null>(null);
+  const [todayStats, setTodayStats] = useState<{ totalSales: number; totalExpenses: number; netProfit: number; costoMercaderia?: number; lineasSinCosto?: number } | null>(null);
   const [theftAlerts, setTheftAlerts] = useState<any[]>([]);
 
   // 🛡️ Survival Data (NIIF PyMES)
@@ -393,6 +393,11 @@ const RetailDashboard: React.FC = () => {
               </>
             )}
           </div>
+          {(todayStats.lineasSinCosto ?? 0) > 0 && (
+            <p className="text-xs text-amber-400 mt-3 font-semibold">
+              Ganancia estimada — faltan costos en {todayStats.lineasSinCosto} producto{todayStats.lineasSinCosto === 1 ? '' : 's'}. Cargalos en Mis Productos para verla exacta.
+            </p>
+          )}
         </div>
       )}
 
@@ -530,7 +535,22 @@ const RetailDashboard: React.FC = () => {
               <p className="nx-label">Gastos</p>
               <p className="text-lg font-bold text-slate-100 nx-num">{formatMoney(todayStats.totalExpenses)}</p>
             </div>
+            {/* R2.9 · NX-01 — "Ganaste" ahora es ganancia REAL: el backend
+                descuenta el costo de mercadería vendida (SaleItem.costAtSale).
+                Antes mostraba el ingreso bruto (+416% sobre la ganancia real).
+                Si faltan costos, se dice — nunca se infla en silencio. */}
+            {(todayStats.costoMercaderia ?? 0) > 0 && (
+              <div>
+                <p className="nx-label">Costo de lo vendido</p>
+                <p className="text-lg font-bold text-slate-100 nx-num">{formatMoney(todayStats.costoMercaderia!)}</p>
+              </div>
+            )}
           </div>
+          {(todayStats.lineasSinCosto ?? 0) > 0 && (
+            <p className="text-xs text-amber-400 mt-3 font-semibold">
+              Ganancia estimada — faltan costos en {todayStats.lineasSinCosto} producto{todayStats.lineasSinCosto === 1 ? '' : 's'}. Cargalos en Mis Productos para verla exacta.
+            </p>
+          )}
         </div>
       )}
 
@@ -643,8 +663,12 @@ const RetailDashboard: React.FC = () => {
               <h3 className="text-lg font-bold text-white/90 mb-1 relative z-10 flex items-center gap-2">
                 {survivalData.liquidezLibre > 0 ? <Check size={18} /> : <AlertCircle size={18} />} Retiro Seguro Permitido
               </h3>
+              {/* R2.9 · NX-02 — antes prometía "esto puedes sacarlo sin quebrar
+                  el negocio" sobre efectivo − proveedores, ignorando el costo de
+                  reponer lo vendido: seguir ese consejo descapitalizaba. */}
               <p className="text-sm text-white/80 mb-6 relative z-10">
-                Efectivo real menos proveedores. Esto puedes sacarlo sin quebrar el negocio.
+                Efectivo menos lo que debés a proveedores y menos el costo de reponer lo que vendiste.
+                <span className="block text-xs text-white/60 mt-1">Estimación, no es consejo financiero.</span>
               </p>
               <h2 className="text-4xl font-extrabold mb-2 relative z-10 tracking-tight">
                 {formatMoney(survivalData.liquidezLibre > 0 ? survivalData.liquidezLibre : 0)}

@@ -44,6 +44,8 @@ import stockTransfersRouter from './routes/stockTransfers';
 import syncRoutes from './routes/sync';
 import agentBankingRouter from './routes/agentBanking';
 import Decimal from 'decimal.js';
+// R2.9 — márgenes y liquidez (módulo puro y testeado, compartido con el front).
+import { calcularGanancia, calcularRetiroSeguro } from '../utils/margins';
 import { z } from 'zod';
 import {
     validate,
@@ -1175,8 +1177,29 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             .filter((s: any) => new Date(s.createdAt).toDateString() === new Date().toDateString())
             .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
 
-        // 5. Net Profit = Ventas Brutas - Gastos Operativos (resta con decimal.js)
-        const netProfitToday = totalSalesToday.minus(totalExpensesToday);
+        // 5. GANANCIA REAL (R2.9 · NX-01) — antes: `ventas − gastos`, o sea el
+        //    INGRESO BRUTO llamado "ganancia". Con una venta de C$645 cuya
+        //    mercadería costó C$520, el panel decía C$645 de ganancia (+416%).
+        //    Un ferretero conoce su margen: ese número es el que le hace dejar
+        //    de creerle al sistema. Ahora se descuenta el costo de mercadería
+        //    usando `SaleItem.costAtSale` (el costo congelado en la venta, no
+        //    el actual), y las líneas sin costo se EXCLUYEN y se avisan —
+        //    nunca se hace fallback al ingreso.
+        const todaySaleItems = await prisma.saleItem.findMany({
+            where: {
+                sale: { tenantId: tenantId, createdAt: { gte: todayStart } },
+            },
+            select: { quantity: true, priceAtSale: true, costAtSale: true, discount: true },
+        });
+        const margenHoy = calcularGanancia(
+            todaySaleItems.map((i: any) => ({
+                quantity: i.quantity,
+                priceAtSale: i.priceAtSale.toString(),
+                costAtSale: i.costAtSale.toString(),
+                discount: i.discount,
+            }))
+        );
+        const netProfitToday = margenHoy.gananciaBruta.minus(totalExpensesToday);
 
         // 6. Recent Theft/Surplus Alerts (últimos 7 días)
         const recentAlerts = await prisma.auditLog.findMany({
@@ -1210,7 +1233,12 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
         const cxp = new Decimal(cxpObj ? cxpObj.balance.toString() : 0);
 
         const efectivoTotal = caja.plus(bancos);
-        const liquidezLibre = efectivoTotal.minus(cxp);
+        // R2.9 · NX-02 — "Retiro Seguro Permitido" decía "esto podés sacarlo
+        // sin quebrar el negocio" sobre `efectivo − CxP`, ignorando que buena
+        // parte de ese efectivo ES el costo de reponer lo que se vendió. Si el
+        // dueño hacía caso, se descapitalizaba. Ahora también se descuenta el
+        // costo de reposición de lo vendido hoy, con piso en 0.
+        const liquidezLibre = calcularRetiroSeguro(efectivoTotal, cxp, margenHoy.costoMercaderia);
 
         const survivalData = {
             cajaGeneral: caja.toNumber(),
@@ -1219,7 +1247,8 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             cuentasPorCobrar: cxc.toNumber(),
             inventario: inventario.toNumber(),
             cuentasPorPagar: cxp.toNumber(),
-            liquidezLibre: liquidezLibre.toDecimalPlaces(4).toNumber()
+            liquidezLibre: liquidezLibre.toNumber(),
+            costoReposicion: margenHoy.costoMercaderia.toDecimalPlaces(2).toNumber()
         };
 
         res.json({
@@ -1228,7 +1257,11 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             todayStats: {
                 totalSales: totalSalesToday.toNumber(),
                 totalExpenses: totalExpensesToday.toNumber(),
-                netProfit: netProfitToday.toNumber(),
+                netProfit: netProfitToday.toDecimalPlaces(2).toNumber(),
+                // Para el aviso honesto en la UI: si faltan costos, la ganancia
+                // es una estimación por lo bajo y hay que decirlo.
+                costoMercaderia: margenHoy.costoMercaderia.toDecimalPlaces(2).toNumber(),
+                lineasSinCosto: margenHoy.lineasSinCosto,
             },
             alerts: recentAlerts.map((a: any) => ({
                 id: a.id,
