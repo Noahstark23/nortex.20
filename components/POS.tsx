@@ -1805,6 +1805,12 @@ const POS: React.FC = () => {
     const grandTotal = grandTotalD.toDecimalPlaces(2).toNumber();
     const globalDiscountNum = globalDiscountD.toNumber();
 
+    // ¿El chip de denominación es el que está cargado? Se compara por VALOR con
+    // Decimal, no por string: '500' y '500.00' son el mismo billete, y comparar
+    // texto dejaría el chip apagado según cómo se haya escrito el monto.
+    const chipActivo = (monto: Decimal): boolean =>
+        cashReceived !== '' && toDecimal(cashReceived).equals(monto);
+
     // El menú que rodea al POS necesita saber si hay una venta abierta para
     // avisar antes de navegar. Una venta COBRADA (completedSale) ya no cuenta:
     // el carrito sigue en pantalla hasta "Nueva venta", pero salir ahí no
@@ -3775,9 +3781,24 @@ const POS: React.FC = () => {
                             <span className="text-xs text-red-500 font-bold ml-auto">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span>
                         )}
                     </div>}
-                    <div className="flex justify-between text-sm text-slate-500 mb-1"><span>Subtotal</span><span className="nx-num">{formatMoney(total)}</span></div>
-                    {globalDiscountD.greaterThan(0) && <div className="flex justify-between text-sm text-danger mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="nx-num">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span></div>}
-                    <div className="flex justify-between text-sm text-slate-500 mb-2"><span>IVA incluido (15%)</span><span className="nx-num">{formatMoney(tax)}</span></div>
+                    {/* P1-5 — Antes: "Subtotal C$19.00 · IVA incluido C$2.48 ·
+                        TOTAL C$19.00". Tres líneas donde dos eran idénticas y la
+                        del medio no sumaba, porque "Subtotal" estaba puesto sobre
+                        el BRUTO (que ya trae el IVA adentro). Ahora se imprime el
+                        desglose fiscal real —base imponible + IVA = TOTAL—, que
+                        además es el MISMO que sale en el ticket de papel: el
+                        número de la pantalla y el del papel tienen que cuadrar
+                        entre sí y con la declaración.
+                        Subtotal y Descuento solo aparecen cuando hubo descuento;
+                        sin él eran una cifra repetida. */}
+                    {globalDiscountD.greaterThan(0) && (
+                        <>
+                            <div className="flex justify-between text-sm text-slate-400 mb-1"><span>Subtotal</span><span className="nx-num">{formatMoney(total)}</span></div>
+                            <div className="flex justify-between text-sm text-danger mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="nx-num">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span></div>
+                        </>
+                    )}
+                    <div className="flex justify-between text-sm text-slate-400 mb-1"><span>Base imponible</span><span className="nx-num">{formatMoney(grandTotalD.minus(taxD))}</span></div>
+                    <div className="flex justify-between text-sm text-slate-400 mb-2"><span>IVA (15%)</span><span className="nx-num">{formatMoney(tax)}</span></div>
                     {/* El TOTAL es la cifra que decide la operación: tamaño display,
                         en color de texto principal (no coloreado). */}
                     <div className="flex justify-between items-baseline mb-4 pt-3 border-t border-white/[0.06]">
@@ -4178,13 +4199,33 @@ const POS: React.FC = () => {
                                         ver `denominacionesSugeridas` — ninguna puede
                                         resultar en un pago menor al total. */}
                                     <div className="flex gap-2 flex-wrap">
-                                        <button type="button" onClick={() => setCashReceived(grandTotalD.toFixed(2))} className="flex-shrink-0 px-3 py-1.5 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 font-bold rounded-control text-xs border border-emerald-500/20 transition-colors">Monto exacto</button>
+                                        {/* P1-5/P1-2 — El estilo del chip se DERIVA de lo
+                                            que hay escrito. Antes el verde de "Monto exacto"
+                                            estaba hardcodeado: al tocar C$500 el input pasaba
+                                            a 500 y el cambio salía bien, pero "Monto exacto"
+                                            seguía resaltado y C$500 apagado — la pantalla
+                                            mentía sobre lo que estaba seleccionado.
+                                            El activo se distingue por BORDE además de color:
+                                            no se depende solo del color para decir cuál es. */}
+                                        <button
+                                            type="button"
+                                            onClick={() => setCashReceived(grandTotalD.toFixed(2))}
+                                            aria-pressed={chipActivo(grandTotalD)}
+                                            className={`flex-shrink-0 px-3 py-1.5 font-bold rounded-control text-xs border transition-colors ${chipActivo(grandTotalD)
+                                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500 hover:bg-emerald-500/25'
+                                                : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'}`}
+                                        >
+                                            Monto exacto
+                                        </button>
                                         {denominacionesSugeridas(grandTotalD).map(monto => (
                                             <button
                                                 key={monto.toFixed(2)}
                                                 type="button"
                                                 onClick={() => setCashReceived(monto.toFixed(2))}
-                                                className="flex-shrink-0 px-3 py-1.5 bg-white/[0.04] text-slate-200 hover:bg-white/[0.06] font-bold rounded-control text-xs border border-white/[0.06] transition-colors"
+                                                aria-pressed={chipActivo(monto)}
+                                                className={`flex-shrink-0 px-3 py-1.5 font-bold rounded-control text-xs border transition-colors ${chipActivo(monto)
+                                                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500 hover:bg-emerald-500/25'
+                                                    : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'}`}
                                             >
                                                 {formatMoney(monto, 'NIO', { decimals: 0 })}
                                             </button>
