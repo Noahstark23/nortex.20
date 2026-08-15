@@ -277,9 +277,17 @@ const CashRegisters: React.FC = () => {
                 throw new Error(data.error || 'Error cargando monitor');
             }
             const data = await res.json();
-            setActiveShifts(data.activeShifts);
-            setClosedShifts(data.closedShifts);
-            setTheftThreshold(data.theftThreshold);
+            // Lectura defensiva del contrato (NX-03): el backend está unificando
+            // la fórmula del efectivo esperado con la del POS y puede sumar
+            // campos. Si una lista viniera ausente o renombrada, la pantalla se
+            // caía entera con "…is not iterable" en pleno arqueo. Los córdobas y
+            // los dólares se siguen leyendo y mostrando POR SEPARADO
+            // (estimatedPhysicalCash vs estimatedPhysicalUsd): nunca se suman,
+            // son monedas distintas.
+            setActiveShifts(Array.isArray(data.activeShifts) ? data.activeShifts : []);
+            setClosedShifts(Array.isArray(data.closedShifts) ? data.closedShifts : []);
+            const umbral = Number(data.theftThreshold);
+            if (Number.isFinite(umbral)) setTheftThreshold(umbral);
             setLastRefresh(new Date());
             setError(null);
         } catch (e: any) {

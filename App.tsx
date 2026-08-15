@@ -9,7 +9,7 @@ const ClusterPage = lazy(() => import('./components/ClusterPage'));
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
 import { trackPageView } from './utils/analytics';
-import { homePathFor, resolveUiMode, UI_MODE_KEY } from './utils/navigation';
+import { homePathFor } from './utils/navigation';
 import MiNegocio from './components/MiNegocio';
 import POS from './components/POS';
 import Dashboard from './components/Dashboard';
@@ -73,23 +73,43 @@ const ProtectedApp = () => {
     }
   } catch { /* token ilegible: lo dejará caer el backend con 401 */ }
 
-  // Aterrizaje por rol (Fase A UX): el cajero empieza en el POS y el contador
-  // en Contabilidad. En modo simple (Fase B), quien administra aterriza en
-  // "Mi Negocio"; en modo completo se conserva el dashboard de siempre.
-  let homePath = '/app/dashboard';
+  // Aterrizaje por rol (NX-07): el cajero empieza en el POS y el contador en
+  // Contabilidad. Quien administra aterriza SIEMPRE en "Mi Negocio"
+  // (/app/inicio) — saludo por nombre, 4 números comprensibles y 4 acciones
+  // grandes — y ya NO en "Mi Plata" (/app/dashboard): el día 1 esa pantalla es
+  // Nortex Score, línea de crédito, "Dashboard de Supervivencia" y dos gráficos,
+  // todo en cero. Es la peor primera pantalla del producto y ahí se perdía la
+  // retención del día 1.
+  //
+  // El modo del MENÚ (simple/completo) ya no decide el aterrizaje: quien elige
+  // ver el menú completo no está pidiendo empezar el día en contabilidad, y
+  // "Mi Plata" sigue a un clic desde el menú y desde Mi Negocio.
+  // Excepción: el prestamista (LENDER) conserva su panel — "Mi Negocio" es una
+  // pantalla de retail (ventas, fiado, productos) que no describe su operación.
+  let homePath = '/app/inicio';
   try {
     const role: string = JSON.parse(atob(token.split('.')[1])).role || '';
     let tenantType = '';
     try { tenantType = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.tenant?.type || ''; } catch { }
-    const uiMode = resolveUiMode(tenantType, localStorage.getItem(UI_MODE_KEY));
-    homePath = homePathFor(role, uiMode);
-  } catch { /* token ilegible → dashboard */ }
+    homePath = tenantType === 'LENDER' ? '/app/dashboard' : homePathFor(role, 'simple');
+  } catch { /* token ilegible → Mi Negocio, que degrada sin datos a "—" */ }
+
+  // El registro (RegisterTenant) y el correo de bienvenida mandan a
+  // /app/dashboard?welcome=1: justo el primer pantallazo que esta corrección
+  // quiere evitar. Se reencamina al aterrizaje del rol CONSERVANDO ?welcome=1,
+  // que es lo que dispara la bienvenida del OnboardingHub. Sin ese parámetro
+  // (menú, enlaces internos, deep-link ?config=fiscal) "Mi Plata" abre normal.
+  const vieneDeLaBienvenida = new URLSearchParams(window.location.search).get('welcome') === '1';
+  const reencaminarBienvenida = vieneDeLaBienvenida && homePath !== '/app/dashboard';
 
   return (
     <Layout>
       <Routes>
         <Route path="inicio" element={<MiNegocio />} />
-        <Route path="dashboard" element={<Dashboard />} />
+        <Route
+          path="dashboard"
+          element={reencaminarBienvenida ? <Navigate to={`${homePath}?welcome=1`} replace /> : <Dashboard />}
+        />
         <Route path="pos" element={<POS />} />
         <Route path="clients" element={<Clients />} />
         <Route path="suppliers" element={<Suppliers />} />
