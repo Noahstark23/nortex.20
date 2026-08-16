@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { Warehouse as WarehouseIcon, Plus, ArrowRightLeft, Star, RefreshCw, X } from 'lucide-react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { Warehouse as WarehouseIcon, Plus, ArrowRightLeft, Star, RefreshCw, X, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 
 /** Multi-bodega: lista, stock por bodega y transferencias (Fase 3). */
 interface Warehouse { id: string; name: string; address?: string | null; isDefault: boolean; isActive: boolean; }
@@ -10,6 +10,12 @@ const authHeaders = (): Record<string, string> => ({
     Authorization: `Bearer ${localStorage.getItem('nortex_token') ?? ''}`,
 });
 
+/** Mismo criterio que la búsqueda del inventario: "cafe" encuentra "café". */
+const sinTildes = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+/** Igual que en Mis Productos, para que las dos vistas se paginen parejo. */
+const POR_PAGINA = 50;
+
 const Warehouses: React.FC = () => {
     const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
     const [selected, setSelected] = useState<Warehouse | null>(null);
@@ -18,6 +24,31 @@ const Warehouses: React.FC = () => {
     const [newName, setNewName] = useState('');
     const [transfer, setTransfer] = useState<{ toId: string; productId: string; qty: string } | null>(null);
     const [msg, setMsg] = useState('');
+
+    // P0-1 — El panel renderizaba TODAS las existencias de la bodega (1.003 filas
+    // en un tenant real) dentro de un contenedor sin scroll: el 98% del inventario
+    // quedaba fuera de alcance, sin barra, sin paginar y sin forma de buscar.
+    const [busqueda, setBusqueda] = useState('');
+    const [orden, setOrden] = useState<'nombre' | 'stock'>('nombre');
+    const [pagina, setPagina] = useState(1);
+
+    const filtrados = useMemo(() => {
+        const q = sinTildes(busqueda.trim());
+        const base = q
+            ? stock.filter(it => sinTildes(it.name).includes(q) || sinTildes(it.sku ?? '').includes(q))
+            : stock;
+        // Copia antes de ordenar: sort muta, y `stock` es el estado.
+        return [...base].sort((a, b) =>
+            orden === 'stock'
+                ? b.stock - a.stock
+                : a.name.localeCompare(b.name, 'es'));
+    }, [stock, busqueda, orden]);
+
+    const totalPaginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
+    const visibles = filtrados.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA);
+
+    // Cambiar de bodega, buscar u ordenar deja la página fuera de rango: volver a 1.
+    useEffect(() => { setPagina(1); }, [busqueda, orden, selected?.id]);
 
     const load = useCallback(async () => {
         const res = await fetch('/api/warehouses', { headers: authHeaders() });
@@ -59,7 +90,11 @@ const Warehouses: React.FC = () => {
     };
 
     return (
-        <div className="p-6 max-w-6xl mx-auto text-slate-100">
+        // `h-full overflow-y-auto` es el contenedor de scroll que esta vista NO tenía:
+        // el <main> del layout es `overflow-hidden` a propósito y cada pantalla trae
+        // el suyo (Mis Productos, Compras y Series ya lo hacen). Sin él, el contenido
+        // se recortaba en la altura del viewport y no había forma de bajar.
+        <div className="h-full overflow-y-auto p-6 max-w-6xl mx-auto text-slate-100">
             <div className="flex items-center justify-between mb-6">
                 <h1 className="text-2xl font-bold flex items-center gap-2"><WarehouseIcon className="text-brand" /> Bodegas</h1>
                 {msg && <span className="text-emerald-400 font-bold text-sm">{msg}</span>}
@@ -85,15 +120,61 @@ const Warehouses: React.FC = () => {
 
                 {/* Stock de la bodega seleccionada */}
                 <div className="lg:col-span-3 bg-surface-900 border border-white/[0.06] rounded-xl overflow-hidden">
-                    <div className="px-4 py-3 border-b border-white/[0.04] font-bold text-sm">
-                        Existencias en {selected?.name ?? '—'} {loading && '…'}
+                    <div className="px-4 py-3 border-b border-white/[0.04] space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-bold text-sm">
+                                Existencias en {selected?.name ?? '—'} {loading && '…'}
+                            </span>
+                            {/* Contador: sin esto no se sabe si la tabla muestra todo
+                                el inventario de la bodega o apenas el primer tramo. */}
+                            {!loading && stock.length > 0 && (
+                                <span className="text-xs text-slate-400 tabular-nums">
+                                    Mostrando {visibles.length.toLocaleString('es-NI')} de {filtrados.length.toLocaleString('es-NI')}
+                                    {busqueda.trim() && ` (de ${stock.length.toLocaleString('es-NI')} en la bodega)`}
+                                </span>
+                            )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                            <div className="relative flex-1 min-w-[12rem]">
+                                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                                <input
+                                    id="buscar-existencias"
+                                    value={busqueda}
+                                    onChange={e => setBusqueda(e.target.value)}
+                                    placeholder="Buscar por nombre o SKU…"
+                                    className="w-full h-touch pl-9 pr-9 bg-slate-800 border border-slate-700 rounded-control text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-brand"
+                                />
+                                {busqueda && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setBusqueda('')}
+                                        aria-label="Limpiar búsqueda"
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-slate-200 rounded-control"
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                )}
+                            </div>
+                            <label htmlFor="orden-existencias" className="text-xs text-slate-400">Ordenar</label>
+                            <select
+                                id="orden-existencias"
+                                value={orden}
+                                onChange={e => setOrden(e.target.value as 'nombre' | 'stock')}
+                                className="h-touch px-3 bg-slate-800 border border-slate-700 rounded-control text-sm text-slate-100 focus:outline-none focus:border-brand"
+                            >
+                                <option value="nombre">Nombre (A-Z)</option>
+                                <option value="stock">Stock (mayor primero)</option>
+                            </select>
+                        </div>
                     </div>
                     <table className="w-full text-sm">
                         <thead className="bg-surface-800/40 text-slate-500 text-xs uppercase">
                             <tr><th className="p-3 text-left">Producto</th><th className="p-3 text-left">SKU</th><th className="p-3 text-right">Stock</th><th className="p-3"></th></tr>
                         </thead>
                         <tbody className="divide-y divide-white/[0.04]">
-                            {stock.map(it => (
+                            {/* Solo la página actual: antes se montaban las 1.003 filas de una. */}
+                            {visibles.map(it => (
                                 <tr key={it.productId}>
                                     <td className="p-3">{it.name}{it.implicit && <span className="ml-2 text-[9px] text-slate-400" title="Stock legado aún no movido en esta bodega">IMPLÍCITO</span>}</td>
                                     <td className="p-3 text-slate-500 font-mono text-xs">{it.sku}</td>
@@ -109,8 +190,41 @@ const Warehouses: React.FC = () => {
                                 </tr>
                             ))}
                             {stock.length === 0 && !loading && <tr><td colSpan={4} className="p-8 text-center text-slate-400">Sin existencias en esta bodega</td></tr>}
+                            {stock.length > 0 && filtrados.length === 0 && (
+                                <tr><td colSpan={4} className="p-8 text-center text-slate-400">
+                                    Ningún producto de esta bodega coincide con “{busqueda}”.
+                                    <button onClick={() => setBusqueda('')} className="ml-2 text-brand hover:underline">Limpiar búsqueda</button>
+                                </td></tr>
+                            )}
                         </tbody>
                     </table>
+
+                    {filtrados.length > POR_PAGINA && (
+                        <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.04] text-xs text-slate-400">
+                            <span className="tabular-nums">
+                                {((pagina - 1) * POR_PAGINA) + 1}–{Math.min(pagina * POR_PAGINA, filtrados.length)} de {filtrados.length.toLocaleString('es-NI')}
+                            </span>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setPagina(p => Math.max(1, p - 1))}
+                                    disabled={pagina <= 1}
+                                    aria-label="Página anterior"
+                                    className="min-h-tap min-w-tap inline-flex items-center justify-center rounded-control border border-slate-700 text-slate-300 hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    <ChevronLeft size={16} />
+                                </button>
+                                <span className="text-slate-300 font-mono tabular-nums">{pagina} / {totalPaginas}</span>
+                                <button
+                                    onClick={() => setPagina(p => Math.min(totalPaginas, p + 1))}
+                                    disabled={pagina >= totalPaginas}
+                                    aria-label="Página siguiente"
+                                    className="min-h-tap min-w-tap inline-flex items-center justify-center rounded-control border border-slate-700 text-slate-300 hover:bg-white/[0.06] disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    <ChevronRight size={16} />
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
