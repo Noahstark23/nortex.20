@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { Warehouse as WarehouseIcon, Plus, ArrowRightLeft, Star, RefreshCw, X, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { InventoryTabs } from './ui/InventoryTabs';
 
 /** Multi-bodega: lista, stock por bodega y transferencias (Fase 3). */
 interface Warehouse {
@@ -128,6 +129,11 @@ const Warehouses: React.FC = () => {
         // el suyo (Mis Productos, Compras y Series ya lo hacen). Sin él, el contenido
         // se recortaba en la altura del viewport y no había forma de bajar.
         <div className="h-full overflow-y-auto p-6 max-w-6xl mx-auto text-slate-100">
+            {/* Pestañas compartidas: sin ellas, entrar acá era un callejón sin
+                salida — no había forma de volver a Mis Productos ni de saltar a
+                Series salvo con el botón atrás del navegador. */}
+            <InventoryTabs className="mb-4" />
+
             <div className="flex items-center justify-between mb-6">
                 <h1 className="text-2xl font-bold flex items-center gap-2"><WarehouseIcon className="text-brand" /> Bodegas</h1>
                 {msg && <span className="text-emerald-400 font-bold text-sm">{msg}</span>}
