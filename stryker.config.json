@@ -3,9 +3,18 @@
   "_comment": "NORTEX — Pruebas de MUTACIÓN sobre los módulos de DINERO. Verifica que los tests de números-oro realmente MATEN bugs, no solo que pasen: Stryker introduce fallas (cambia +/-, invierte comparaciones, borra cuerpos) y exige que algún test falle. Un mutante 'sobreviviente' = un bug de plata que hoy pasaría el CI sin que nadie se entere. Alcance deliberadamente ACOTADO a lógica PURA con tests: incluir todo el repo sería lentísimo y llenaría el reporte de ruido de código sin cobertura. Los archivos grandes (Prisma adentro) se mutan por RANGO de líneas, solo las funciones puras testeadas — OJO: los rangos se desfasan con cualquier refactor que mueva las funciones, y Stryker NO avisa (un rango inválido da score NaN y sale con éxito). Por eso `npm run test:mutation` corre además scripts/check-mutation-scope.cjs, que falla si un archivo pierde mutantes.",
   "packageManager": "npm",
   "testRunner": "vitest",
-  "reporters": ["html", "json", "clear-text", "progress"],
-  "htmlReporter": { "fileName": "reports/mutation/index.html" },
-  "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
+  "reporters": [
+    "html",
+    "json",
+    "clear-text",
+    "progress"
+  ],
+  "htmlReporter": {
+    "fileName": "reports/mutation/index.html"
+  },
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation.json"
+  },
   "coverageAnalysis": "perTest",
   "timeoutMS": 15000,
   "concurrency": 2,
@@ -28,10 +37,10 @@
     "backend/services/stockService.ts:56-69",
     "backend/services/accounting.ts:257-272"
   ],
-  "thresholds_comment": "Línea base al introducir Stryker: 95.59% (backend de dinero al 100%). Subió a 97.50% al entrar utils/stockAlert.ts (110 mutantes, 99.09%) y a 98.11% al entrar utils/cartPersistence.ts (142 mutantes, 100.00%): el umbral se re-pega a la nueva línea base cada vez, que es la regla — solo sube. El score es DETERMINISTA (se midió que el único mutante 'timeout' lo es por hit-limit de iteraciones, no por reloj de pared), así que no hace falta margen para ruido: `break` se pega a la línea base. REGLA: este número solo SUBE. Bajarlo para que pase un PR es exactamente el 'specification gaming' que esta red viene a prevenir — si un cambio hunde el score, se arregla el test, no el umbral. Los ~9 mutantes sobrevivientes restantes son equivalentes (guardas redundantes del tipo `x != null && x > 0`, donde `null > 0` ya es false). Subió a 98.49% al entrar backend/services/nicaLabor.ts (107 mutantes, 98.17%): al escribir su red se encontraron guardas redundantes `aplicaIndemnizacion && anios > 0` en calculateSettlement y en su espejo calcLiquidacion —con `anios` ya acotado a ≥0 y el bloque acumulando 0 días por sí solo, la mitad de la condición no discriminaba nada—, que se reemplazaron por `indemnizacionDias > 0` (sí discrimina: el piso de 1 mes no debe aplicarse a quien entra y sale el mismo día). Subió a 98.52% al entrar backend/services/stripe.ts:35-62 (13 mutantes, 100.00%): las dos reglas puras del cobro manual —si un pago en dolares queda corto contra el precio del plan, y desde cuando se cuentan los 30 dias—. Antes aprobar otorgaba el mes con cualquier monto y sumaba 30 dias a `now`, castigando a quien renovaba anticipado. Al escribir su red apareció un mutante equivalente en el ternario `vencimientoActual > ahora` (con fechas idénticas ambas ramas devuelven lo mismo): se reescribió con Math.max sobre los timestamps, que no tiene ese caso límite. Los 3 sobrevivientes restantes de nicaLabor/calc-laborales son equivalentes: el default `?? []` del array de deducciones judiciales (un elemento basura da monto 0 igual), `hire >= lastDec1` (solo difiere cuando son la MISMA fecha, y ahí ambas ramas devuelven el mismo valor) y el `Decimal.set` de nivel módulo.",
+  "thresholds_comment": "Línea base al introducir Stryker: 95.59% (backend de dinero al 100%). Subió a 97.50% al entrar utils/stockAlert.ts (110 mutantes, 99.09%) y a 98.11% al entrar utils/cartPersistence.ts (142 mutantes, 100.00%): el umbral se re-pega a la nueva línea base cada vez, que es la regla — solo sube. El score es DETERMINISTA (se midió que el único mutante 'timeout' lo es por hit-limit de iteraciones, no por reloj de pared), así que no hace falta margen para ruido: `break` se pega a la línea base. REGLA: este número solo SUBE. Bajarlo para que pase un PR es exactamente el 'specification gaming' que esta red viene a prevenir — si un cambio hunde el score, se arregla el test, no el umbral. Los ~9 mutantes sobrevivientes restantes son equivalentes (guardas redundantes del tipo `x != null && x > 0`, donde `null > 0` ya es false). Subió a 98.49% al entrar backend/services/nicaLabor.ts (107 mutantes, 98.17%): al escribir su red se encontraron guardas redundantes `aplicaIndemnizacion && anios > 0` en calculateSettlement y en su espejo calcLiquidacion —con `anios` ya acotado a ≥0 y el bloque acumulando 0 días por sí solo, la mitad de la condición no discriminaba nada—, que se reemplazaron por `indemnizacionDias > 0` (sí discrimina: el piso de 1 mes no debe aplicarse a quien entra y sale el mismo día). Subió a 98.51% al entrar backend/services/stripe.ts:35-62 (13 mutantes, 100.00%): las dos reglas puras del cobro manual —si un pago en dolares queda corto contra el precio del plan, y desde cuando se cuentan los 30 dias—. Antes aprobar otorgaba el mes con cualquier monto y sumaba 30 dias a `now`, castigando a quien renovaba anticipado. Al escribir su red apareció un mutante equivalente en el ternario `vencimientoActual > ahora` (con fechas idénticas ambas ramas devuelven lo mismo): se reescribió con Math.max sobre los timestamps, que no tiene ese caso límite. TRAMPA AL RE-PEGAR EL UMBRAL (costó un CI rojo): el reporte imprime el score REDONDEADO a 2 decimales, pero Stryker compara contra el valor exacto. Acá el reporte decía 98.52 y el real era 731/742 = 98.5175, así que poner 98.52 hizo fallar el build con el mensaje absurdo de que 98.52 esta por debajo de 98.52. Al subir el umbral: calcular (killed+timeout)/total y TRUNCAR hacia abajo, nunca copiar el número impreso. Los 3 sobrevivientes restantes de nicaLabor/calc-laborales son equivalentes: el default `?? []` del array de deducciones judiciales (un elemento basura da monto 0 igual), `hire >= lastDec1` (solo difiere cuando son la MISMA fecha, y ahí ambas ramas devuelven el mismo valor) y el `Decimal.set` de nivel módulo.",
   "thresholds": {
-    "high": 98.52,
-    "low": 98.52,
-    "break": 98.52
+    "high": 98.51,
+    "low": 98.51,
+    "break": 98.51
   }
 }

@@ -9,7 +9,7 @@
 
 | Capacidad | Evidencia |
 |---|---|
-| **Motor de nómina Ley 185/539/822**: INSS laboral 7% con techo, IR tabla progresiva proyectada, INSS patronal parametrizable (21.5/22.5 vía `TaxConfig`), INATEC 2%, costo empresa — todo en Decimal | `nicaLabor.ts → calculatePayroll` |
+| **Motor de nómina Ley 185/539/822**: INSS laboral 7% sin techo cotizable (el Decreto 06-2019 lo derogó), IR tabla progresiva proyectada, INSS patronal parametrizable (21.5/22.5 vía `TaxConfig`), INATEC 2%, costo empresa — todo en Decimal | `nicaLabor.ts → calculatePayroll` |
 | **Nómina mensual persistida** por empleado con comisiones automáticas (ventas del mes × tasa) | `/api/payroll/calculate` + modelo `Payroll` |
 | **Pasivo laboral** (vacaciones 2.5 d/mes, aguinaldo proporcional, indemnización con tope 5 meses) | `calculateLaborLiability` + tab LIABILITIES |
 | **Salida INSS (SIE)** consolidada + export Excel | `/api/payroll/sie/:m/:y` (B5) |
@@ -26,7 +26,7 @@
 
 | # | Hueco | Por qué duele | Confirmación |
 |---|---|---|---|
-| D1 | **Dos motores de nómina contradictorios** | `/api/hr/payroll/preview` ignora el IR ("para simplificar la demo"), no aplica techo INSS y no usa `nicaLabor.ts`. Dos pantallas pueden mostrar dos netos distintos para el mismo empleado. `PayrollRun/PayrollLine` están huérfanos (nada los persiste). | `routes/hr.ts:230` |
+| D1 | **Dos motores de nómina contradictorios** | `/api/hr/payroll/preview` ignora el IR ("para simplificar la demo"), no usa `nicaLabor.ts`. Dos pantallas pueden mostrar dos netos distintos para el mismo empleado. `PayrollRun/PayrollLine` están huérfanos (nada los persiste). | `routes/hr.ts:230` |
 | D2 | **Horas extra registradas pero NUNCA pagadas** | El clock-out calcula `overtimeHours` y ahí mueren: `/api/payroll/calculate` paga solo base+comisiones. La HE es al **doble** (Art. 62 Ley 185) — hoy Nortex literalmente le paga de menos al empleado. | `Shift.overtimeHours` sin consumidor |
 | D3 | **Adelantos aprobados que no se descuentan** | `SalaryAdvance` APPROVED nunca pasa a DEDUCTED en la nómina real: el empleado recibe el adelanto **y** el salario completo. Pérdida directa de caja. | `repaymentPayrollId` siempre null |
 | D4 | **Vacaciones: saldo muerto** | `Employee.vacationDays` no se acumula (2.5 d/mes, Art. 76) ni se descuenta al gozar. `LeaveRequest` VACATION/UNPAID/SICK no afecta la nómina ni el saldo. | 0 writes a `vacationDays` |

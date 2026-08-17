@@ -62,7 +62,7 @@ describe('Horas extra — calcHorasExtras', () => {
     });
 });
 
-// ── INSS — laboral 7% con techo · patronal 22.5%/21.5% · INATEC 2% ───────────
+// ── INSS — laboral 7% SIN techo · patronal 22.5%/21.5% · INATEC 2% ──────────
 describe('INSS — calcINSS', () => {
     it('salario 30000 (empresa grande): laboral 2100, patronal 6750, INATEC 600', () => {
         const r = calcINSS(30000);

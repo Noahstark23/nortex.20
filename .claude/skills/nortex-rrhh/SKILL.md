@@ -50,7 +50,12 @@ movió — verificá, pero las reglas de dominio no cambian.
   salario mensual ya cubre el día ordinario).
 - **Ausencia sin goce**: acotada a `[0, base]`, reduce el devengado y con él la
   base de INSS/IR.
-- **INSS laboral 7%** sobre `min(totalIncome, TECHO_INSS_MENSUAL)`.
+- **INSS laboral 7%** sobre el `totalIncome` COMPLETO. ⛔ **No hay techo
+  cotizable y no se debe reintroducir uno**: el Decreto Presidencial 06-2019
+  eliminó el tope de la remuneración cotizable. El motor aplicaba
+  `min(totalIncome, 132071.43)` —una cifra que no corresponde a ningún techo
+  nicaragüense documentado— y por eso sub-retenía INSS y, al inflar la renta
+  neta, sobre-retenía IR. Hay tests que fijan los valores absolutos.
 - **INSS patronal** default 22.5%, **parametrizable por tenant** vía
   `TaxConfig.inssPatronalRate` (regla legal: 21.5% <50 empleados / 22.5% ≥50).
 - **INATEC 2%** sobre el ingreso **completo, sin techo** (hay test que lo fija).
@@ -95,9 +100,12 @@ Idempotente por `Aguinaldo @@unique([employeeId, year])`.
 
 ### ⚠️ Vigencia de tasas (repetir siempre al usuario)
 `utils/tasas.ts` declara **`TASAS_VERIFICADAS_AL = null`** → sin verificar, no
-publicar. Marcados VERIFICAR: **techo INSS C$132,071.43** (comentado "2024", casi
-seguro desactualizado), tabla IR ("reformas 2025"), INSS patronal 21.5/22.5,
-anticipo IR, IMI por municipio. El salario mínimo NO se hardcodea — vive en
+publicar. CONFIRMADO por fuentes secundarias concordantes (no por fuente primaria: los
+dominios de INSS y DGI no son alcanzables desde el entorno de desarrollo): INSS
+laboral 7%, patronal 21.5/22.5, INATEC 2%, primer tramo del IR exento hasta
+C$100,000 anuales, y el **techo cotizable DEROGADO** (ya borrado del código).
+Siguen SIN confirmar: los tramos 15/20/25/30% con sus bases, IVA 15%, anticipo
+IR 1%, IMI 1%. El salario mínimo NO se hardcodea — vive en
 `TaxConfig.salarioMinimo` (por sector/MITRAB). Fuentes: inss.gob.ni, dgi.gob.ni,
 MITRAB.
 
@@ -196,11 +204,16 @@ existe): subsidio INSS 60% por enfermedad desde el día 4, maternidad Art. 141
 del tope 3 h extra/día, séptimo día/descanso semanal remunerado, adjuntos en el
 expediente.
 
-**Zona ciega de tests**: `tests/calc-laborales.test.ts` cubre el espejo, pero **no
-hay ni un test de `nicaLabor.ts`** — `calculatePayroll` (INSS con techo, IR
-acumulado, judiciales, adelantos) es la función que más dinero mueve y está fuera
-de Stryker. Al tocarla: agregar tests con valores absolutos y sumarla al scope de
-mutación.
+**Tests del motor** (ya existen, no re-hacer): `tests/nicaLabor.test.ts` cubre
+`irAnualDeTabla`, `calculatePayroll` (INSS sin techo, IR acumulado, horas extra,
+feriados, ausencias, deducciones judiciales) y `calculateSettlement` con valores
+absolutos derivados de la ley. Los tres están en el `mutate` de Stryker por rango
+de líneas — **los rangos se desfasan si movés las funciones y Stryker NO avisa**;
+`scripts/check-mutation-scope.cjs` es el que grita.
+
+**Zona ciega declarada**: `calculateLaborLiability` llama `new Date()` adentro,
+así que no es determinista y queda FUERA del scope de mutación. Para cubrirla hay
+que inyectarle la fecha.
 
 ## 6. Checklist al tocar este subsistema
 

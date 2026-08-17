@@ -6,7 +6,7 @@
  * nicaTax.ts) — NO son inventados —, pero varios cambian por año/reforma y algunos
  * ya podrían estar desactualizados. Antes de mergear una calculadora pública que los
  * muestre, cotejar CADA número marcado `VERIFICAR` contra la fuente oficial:
- *   - INSS / techo salarial → www.inss.gob.ni (Ley 539 y reformas)
+ *   - INSS (tasas; el techo cotizable ya NO existe) → www.inss.gob.ni (Ley 539 y reformas)
  *   - Tabla IR rentas del trabajo → www.dgi.gob.ni (reforma vigente)
  *   - Salario mínimo → MITRAB (comisión tripartita, por sector; NO se hardcodea acá)
  * Publicar una cifra fiscal errada daña la autoridad SEO que buscamos.

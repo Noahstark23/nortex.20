@@ -575,7 +575,7 @@ Nortex acumula vacaciones y aguinaldo mes a mes, calcula horas extra y arma la l
         calculator: 'inss',
         howToSteps: [
             { name: 'Tomá el salario bruto', text: 'Partí del salario bruto mensual del trabajador (incluye comisiones y horas extra).' },
-            { name: 'INSS laboral (7%)', text: 'Aplicá el 7% sobre el salario, hasta el techo cotizable vigente: es la deducción que paga el trabajador.' },
+            { name: 'INSS laboral (7%)', text: 'Aplicá el 7% sobre el salario bruto completo: es la deducción que paga el trabajador. Desde el Decreto 06-2019 no hay techo cotizable — cotiza cada córdoba, sin límite superior.' },
             { name: 'INSS patronal', text: 'Aplicá la tasa patronal (22.5% con 50 o más empleados, 21.5% con menos) sobre la misma base: es el aporte de la empresa.' },
             { name: 'INATEC (2%)', text: 'Sumá el 2% de INATEC sobre el total como costo adicional del empleador.' },
         ],
