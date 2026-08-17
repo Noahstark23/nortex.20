@@ -9,6 +9,7 @@
   "coverageAnalysis": "perTest",
   "timeoutMS": 15000,
   "concurrency": 2,
+  "_comment_nicaLabor": "nicaLabor.ts (motor de nómina del ERP) entra por TRES rangos y no entero, por dos razones. (1) Las constantes de nivel módulo (líneas 23-34: tasas INSS/INATEC, tabla IR, topes de indemnización) corren al importar, antes de que `perTest` atribuya cobertura, así que sus mutantes sobrevivirían siempre — mismo criterio que las líneas 20-22 de nicaTax. (2) `calculateLaborLiability` (267-322) llama `new Date()` internamente: su resultado depende del reloj, así que no es determinista y no se puede mutar sin ruido. Es ZONA CIEGA declarada: para testearla habría que inyectarle la fecha, refactor que no entra en este cambio. Lo cubierto es irAnualDeTabla (49-64), calculatePayroll (126-264) y calculateSettlement (351-430) — las tres funciones puras que deciden lo que se le paga a un trabajador. OJO: estos rangos se desfasan con cualquier refactor que mueva las funciones.",
   "_comment_mutate": "nicaTax arranca en la línea 25 (no en la 39) para incluir IVA_FACTOR = IVA_RATE.plus(1): la aritmética del 15% es el número que esta red debe proteger, y los tests de desglose la matan. NO se incluyen las líneas 20-22 (IVA_RATE, ANTICIPO_IR_RATE, IMI_RATE): son inicialización de nivel módulo — corren al importar, antes de que `perTest` atribuya cobertura, así que sus mutantes sobreviven siempre y darían un rojo permanente sin significado. Además ANTICIPO_IR_RATE e IMI_RATE solo se usan en generateMonthlyReport/generateAnnualIR (con Prisma, sin tests): son ZONA CIEGA declarada, no cobertura falsa.",
   "mutate": [
     "utils/money.ts",
@@ -19,14 +20,17 @@
     "utils/cartPersistence.ts",
     "utils/posSearch.ts",
     "backend/services/loanMath.ts",
+    "backend/services/nicaLabor.ts:49-64",
+    "backend/services/nicaLabor.ts:126-264",
+    "backend/services/nicaLabor.ts:351-430",
     "backend/services/nicaTax.ts:25-75",
     "backend/services/stockService.ts:56-69",
     "backend/services/accounting.ts:257-272"
   ],
-  "thresholds_comment": "Línea base al introducir Stryker: 95.59% (backend de dinero al 100%). Subió a 97.50% al entrar utils/stockAlert.ts (110 mutantes, 99.09%) y a 98.11% al entrar utils/cartPersistence.ts (142 mutantes, 100.00%): el umbral se re-pega a la nueva línea base cada vez, que es la regla — solo sube. El score es DETERMINISTA (se midió que el único mutante 'timeout' lo es por hit-limit de iteraciones, no por reloj de pared), así que no hace falta margen para ruido: `break` se pega a la línea base. REGLA: este número solo SUBE. Bajarlo para que pase un PR es exactamente el 'specification gaming' que esta red viene a prevenir — si un cambio hunde el score, se arregla el test, no el umbral. Los ~9 mutantes sobrevivientes restantes son equivalentes (guardas redundantes del tipo `x != null && x > 0`, donde `null > 0` ya es false).",
+  "thresholds_comment": "Línea base al introducir Stryker: 95.59% (backend de dinero al 100%). Subió a 97.50% al entrar utils/stockAlert.ts (110 mutantes, 99.09%) y a 98.11% al entrar utils/cartPersistence.ts (142 mutantes, 100.00%): el umbral se re-pega a la nueva línea base cada vez, que es la regla — solo sube. El score es DETERMINISTA (se midió que el único mutante 'timeout' lo es por hit-limit de iteraciones, no por reloj de pared), así que no hace falta margen para ruido: `break` se pega a la línea base. REGLA: este número solo SUBE. Bajarlo para que pase un PR es exactamente el 'specification gaming' que esta red viene a prevenir — si un cambio hunde el score, se arregla el test, no el umbral. Los ~9 mutantes sobrevivientes restantes son equivalentes (guardas redundantes del tipo `x != null && x > 0`, donde `null > 0` ya es false). Subió a 98.49% al entrar backend/services/nicaLabor.ts (107 mutantes, 98.17%): al escribir su red se encontraron guardas redundantes `aplicaIndemnizacion && anios > 0` en calculateSettlement y en su espejo calcLiquidacion —con `anios` ya acotado a ≥0 y el bloque acumulando 0 días por sí solo, la mitad de la condición no discriminaba nada—, que se reemplazaron por `indemnizacionDias > 0` (sí discrimina: el piso de 1 mes no debe aplicarse a quien entra y sale el mismo día). Los 3 sobrevivientes restantes de estos dos archivos son equivalentes: el default `?? []` del array de deducciones judiciales (un elemento basura da monto 0 igual), `hire >= lastDec1` (solo difiere cuando son la MISMA fecha, y ahí ambas ramas devuelven el mismo valor) y el `Decimal.set` de nivel módulo.",
   "thresholds": {
-    "high": 98,
-    "low": 98,
-    "break": 98
+    "high": 98.49,
+    "low": 98.49,
+    "break": 98.49
   }
 }

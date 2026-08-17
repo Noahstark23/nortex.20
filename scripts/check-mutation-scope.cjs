@@ -32,7 +32,16 @@ const PISO_MUTANTES = {
     // 60 mutantes, score medido 98.33%. El único sobreviviente es equivalente
     // (`dot === -1 ? cleaned : …` — con dot=-1 la rama else calcula lo mismo).
     'utils/money.ts': 60,
-    'utils/calc-laborales.ts': 96,
+    // calc-laborales.ts bajó de 96 a 88 mutantes en el barrido del motor de
+    // nómina, y es una de las bajas legítimas que este guardián contempla: NO se
+    // corrió un rango ni se sacó el archivo del alcance, se BORRÓ CÓDIGO. La
+    // guarda `aplicaIndemnizacion && anios > 0` de calcLiquidacion tenía la mitad
+    // de más (`anios` ya viene acotado a ≥0 y el bloque acumula 0 días solo), así
+    // que sus 8 mutantes eran equivalentes por construcción: ninguna aserción
+    // podía matarlos. Se reemplazó por `indemnizacionDias > 0`, que sí discrimina
+    // —el piso de 1 mes no le toca a quien entra y sale el mismo día— y cuyos
+    // mutantes SÍ mueren. Menos mutantes, más score (96.81% → 98.86%).
+    'utils/calc-laborales.ts': 88,
     'utils/pricing.ts': 66,
     // margen.ts entró con NX-01/02/03 (ganancia bruta real, retiro seguro y
     // efectivo del turno): 66 mutantes, score medido 100.00% — sin
@@ -63,6 +72,16 @@ const PISO_MUTANTES = {
     // camino del escáner— le siga ganando a cualquier coincidencia parcial.
     'utils/posSearch.ts': 46,
     'backend/services/loanMath.ts': 12,
+    // nicaLabor.ts es el motor de nómina del ERP: lo que de verdad se le paga a un
+    // trabajador (planilla, retención de IR, finiquito). Entró sin ninguna red —
+    // el 95,59% histórico protegía utils/calc-laborales.ts, que es el ESPEJO
+    // público del blog, no esto. 107 mutantes, score medido 98.17%. Escribir la
+    // red destapó tres errores de dinero: el techo cotizable del INSS (derogado
+    // por el Decreto 06-2019), un hueco de un centavo entre tramos de la tabla IR
+    // que devolvía IR = 0, y un finiquito que imprimía los días sin topar junto a
+    // un monto topado. Entra por rangos: las constantes de módulo y
+    // calculateLaborLiability (llama `new Date()`) quedan fuera — ver el config.
+    'backend/services/nicaLabor.ts': 107,
     'backend/services/nicaTax.ts': 7,
     'backend/services/stockService.ts': 5,
     'backend/services/accounting.ts': 18,

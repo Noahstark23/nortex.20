@@ -11,9 +11,9 @@
 import Decimal from 'decimal.js';
 import {
   INSS_LABORAL_RATE, INSS_PATRONAL_RATE_DEFAULT, INSS_PATRONAL_RATE_PYME,
-  INATEC_RATE, TECHO_INSS_MENSUAL, IVA_RATE,
+  INATEC_RATE, IVA_RATE,
   VACACIONES_DIAS_POR_MES, VACACIONES_TOPE_DIAS, HORAS_MES_ORDINARIAS,
-  HORA_EXTRA_RECARGO, INDEMNIZACION_TOPE_MESES,
+  HORA_EXTRA_RECARGO, INDEMNIZACION_TOPE_MESES, DIAS_POR_MES_INDEMNIZACION,
 } from './tasas';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
@@ -44,19 +44,22 @@ export function calcHorasExtras(salarioMensual: number, cantidadHoras: number): 
 }
 
 /**
- * INSS laboral (7%, deducción al trabajador, con techo) y patronal (22.5% ≥50 emp
- * · 21.5% <50 emp). ERP: base = min(bruto, techo). Ley 539.
+ * INSS laboral (7%, deducción al trabajador) y patronal (22.5% ≥50 emp · 21.5%
+ * <50 emp). Ley 539. SIN techo cotizable: el Decreto 06-2019 lo eliminó, así que
+ * la base es el bruto completo (ver la nota en utils/tasas.ts). `baseAplicada`
+ * se conserva en la respuesta —hoy siempre igual al bruto— para no romper a los
+ * consumidores que la muestran.
  */
 export function calcINSS(
   salarioBruto: number,
   opts: { pyme?: boolean } = {},
 ): { baseAplicada: number; inssLaboral: number; inssPatronal: number; inatec: number; netoTrasINSS: number } {
   const bruto = new Decimal(salarioBruto || 0);
-  const base = Decimal.min(bruto, TECHO_INSS_MENSUAL);
+  const base = bruto; // sin techo cotizable (Decreto 06-2019)
   const patronalRate = opts.pyme ? INSS_PATRONAL_RATE_PYME : INSS_PATRONAL_RATE_DEFAULT;
   const inssLaboral = base.mul(INSS_LABORAL_RATE);
   const inssPatronal = base.mul(patronalRate);
-  const inatec = bruto.mul(INATEC_RATE); // INATEC sobre el total, no sobre el techo
+  const inatec = bruto.mul(INATEC_RATE);
   return {
     baseAplicada: money(base),
     inssLaboral: money(inssLaboral),
@@ -83,27 +86,40 @@ export function calcLiquidacion(params: {
   const anios = Math.max(0, params.aniosServicio || 0);
   const aplicaIndemnizacion = params.motivo === 'DESPIDO' || params.motivo === 'MUTUO';
 
+  // `anios` ya viene acotado a ≥ 0 y el bloque acumula 0 días con antigüedad cero,
+  // así que guardarlo además por `anios > 0` es redundante.
   let indemnizacionDias = 0;
-  if (aplicaIndemnizacion && anios > 0) {
+  if (aplicaIndemnizacion) {
     const completos = Math.floor(anios);
     for (let i = 1; i <= completos; i++) indemnizacionDias += i <= 3 ? 30 : 20;
     const fraccion = anios - completos;
     indemnizacionDias += fraccion * ((completos + 1) <= 3 ? 30 : 20);
   }
-  let indemnizacion = salarioDiario.mul(indemnizacionDias);
-  if (aplicaIndemnizacion && anios > 0) {
-    if (indemnizacion.lessThan(salarioMensual)) indemnizacion = salarioMensual;             // piso 1 mes
-    const tope = salarioMensual.mul(INDEMNIZACION_TOPE_MESES);
-    if (indemnizacion.greaterThan(tope)) indemnizacion = tope;                               // techo 5 meses
+  // Piso 1 mes / techo 5 meses (Art. 45). Se acotan los DÍAS, no el monto: como
+  // el monto es días × (salario/30), acotar a [30, 150] días es aritméticamente
+  // idéntico a acotarlo a [1, 5] salarios mensuales, pero deja el documento
+  // consistente. Antes se acotaba solo el monto y se devolvían los días sin
+  // acotar, así que el finiquito imprimía "170 días" junto a un monto de 150.
+  // El piso solo aplica si hubo antigüedad: con 0 años no se debe un mes.
+  if (indemnizacionDias > 0) {
+    indemnizacionDias = Math.min(
+      Math.max(indemnizacionDias, DIAS_POR_MES_INDEMNIZACION),
+      DIAS_POR_MES_INDEMNIZACION * INDEMNIZACION_TOPE_MESES,
+    );
   }
+  // Los días se redondean ANTES de valorizarlos y el monto se deriva de ese mismo
+  // número: es el que se muestra, así que es el que tiene que cuadrar.
+  indemnizacionDias = Number(indemnizacionDias.toFixed(2));
+  const indemnizacion = salarioDiario.mul(indemnizacionDias).toDecimalPlaces(2);
 
   const diasVac = Math.max(0, params.diasVacacionesPendientes || 0);
-  const vacaciones = salarioDiario.mul(diasVac);
+  const vacaciones = salarioDiario.mul(diasVac).toDecimalPlaces(2);
 
   return {
-    indemnizacionDias: Number(indemnizacionDias.toFixed(1)),
+    indemnizacionDias,
     indemnizacion: money(indemnizacion),
     vacaciones: money(vacaciones),
+    // Total sobre los componentes ya redondeados: el desglose siempre suma el total.
     total: money(indemnizacion.plus(vacaciones)),
     aplicaIndemnizacion,
   };

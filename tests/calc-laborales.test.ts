@@ -74,19 +74,22 @@ describe('INSS — calcINSS', () => {
     it('PYME (<50 empleados) aplica patronal 21.5%', () => {
         expect(calcINSS(30000, { pyme: true }).inssPatronal).toBe(6450);
     });
-    it('aplica el techo cotizable en salarios altos', () => {
-        // Sobre el techo, la base deja de crecer: el INSS laboral se congela.
-        // OJO: este caso fija el VALOR ABSOLUTO del techo a propósito. Antes
-        // comparaba calcINSS(techo) contra calcINSS(500000) — es decir, la
-        // función contra sí misma — y por eso pasaba con CUALQUIER techo: se
-        // verificó cambiándolo a 100000 y los tests seguían en verde. El techo
-        // es justamente el número que utils/tasas.ts marca "⚠️ VERIFICAR, casi
-        // seguro desactualizado", así que era el único sin red.
-        // 132071.43 × 0.07 = 9245.0001 → 2 decimales → 9245
-        expect(calcINSS(500000).baseAplicada).toBe(132071.43);
-        expect(calcINSS(500000).inssLaboral).toBe(9245);
+    it('NO aplica techo cotizable: la base sigue al bruto en salarios altos', () => {
+        // El Decreto 06-2019 eliminó el tope de la remuneración cotizable, así que
+        // la base NO se congela. Este caso fija los valores absolutos a propósito:
+        // si alguien reintroduce un techo (el repo aplicaba 132071.43, una cifra sin
+        // fuente), estas tres aserciones caen.
+        const r = calcINSS(500000);
+        expect(r.baseAplicada).toBe(500000);
+        expect(r.inssLaboral).toBe(35000);    // 500000 × 7%
+        expect(r.inssPatronal).toBe(112500);  // 500000 × 22.5%
     });
-    it('INATEC se calcula sobre el total, no sobre el techo', () => {
+    it('la base cotizable crece de forma estrictamente proporcional', () => {
+        // Con techo, duplicar el salario por encima del tope NO cambiaba el INSS.
+        // Mata cualquier `Decimal.min(bruto, X)` que alguien vuelva a introducir.
+        expect(calcINSS(400000).inssLaboral).toBe(calcINSS(200000).inssLaboral * 2);
+    });
+    it('INATEC se calcula sobre el bruto', () => {
         expect(calcINSS(500000).inatec).toBe(10000);
     });
 });
@@ -119,19 +122,45 @@ describe('Liquidación — calcLiquidacion', () => {
         });
         expect(r.aplicaIndemnizacion).toBe(true);
     });
-    it('respeta el PISO de 1 mes de salario', () => {
+    it('respeta el PISO de 1 mes de salario, y los días acompañan al monto', () => {
+        // 0.5 años = 15 días crudos → el piso los sube a 30. Antes se acotaba solo
+        // el monto y se devolvían los 15 días: el finiquito imprimía "15 días"
+        // junto a un monto de 1 mes completo.
         const r = calcLiquidacion({
             salarioMensual: 30000, aniosServicio: 0.5,
             diasVacacionesPendientes: 0, motivo: 'DESPIDO',
         });
         expect(r.indemnizacion).toBe(30000);
+        expect(r.indemnizacionDias).toBe(30);
     });
-    it('respeta el TECHO de 5 meses de salario', () => {
+    it('respeta el TECHO de 5 meses de salario, y los días acompañan al monto', () => {
+        // 20 años = 30×3 + 20×17 = 430 días crudos → el techo los baja a 150.
         const r = calcLiquidacion({
             salarioMensual: 30000, aniosServicio: 20,
             diasVacacionesPendientes: 0, motivo: 'DESPIDO',
         });
         expect(r.indemnizacion).toBe(150000);
+        expect(r.indemnizacionDias).toBe(150);
+    });
+    it('días y monto son coherentes en el borde exacto del techo (6 años)', () => {
+        // 6 años = 30×3 + 20×3 = 150 días = exactamente 5 meses: el techo NO debe
+        // recortar nada acá. Es el primer punto donde el bug se volvía visible.
+        const r = calcLiquidacion({
+            salarioMensual: 30000, aniosServicio: 6,
+            diasVacacionesPendientes: 0, motivo: 'DESPIDO',
+        });
+        expect(r.indemnizacionDias).toBe(150);
+        expect(r.indemnizacion).toBe(150000);
+    });
+    it('el monto declarado siempre es días × salario diario', () => {
+        // Invariante del documento: con cualquier antigüedad, lo impreso cuadra.
+        for (const anios of [0.25, 0.5, 1, 2.5, 3.5, 4.5, 6, 7, 20]) {
+            const r = calcLiquidacion({
+                salarioMensual: 30000, aniosServicio: anios,
+                diasVacacionesPendientes: 0, motivo: 'DESPIDO',
+            });
+            expect(r.indemnizacion).toBeCloseTo(r.indemnizacionDias * (30000 / 30), 2);
+        }
     });
 
     // ── Años FRACCIONARIOS ───────────────────────────────────────────────────

@@ -25,8 +25,16 @@ export const INSS_LABORAL_RATE = 0.07;          // 7% al trabajador — estable,
 export const INSS_PATRONAL_RATE_DEFAULT = 0.225; // 22.5% (≥50 empleados). <50 empleados = 0.215. VERIFICAR
 export const INSS_PATRONAL_RATE_PYME = 0.215;    // 21.5% (<50 empleados). VERIFICAR
 export const INATEC_RATE = 0.02;                 // 2% (Ley 40) — estable, confirmar
-/** ⚠️ VERIFICAR: el comentario del ERP lo marca "2024" — casi seguro desactualizado. */
-export const TECHO_INSS_MENSUAL = 132071.43;
+/**
+ * ⛔ NO REINTRODUCIR UN TECHO COTIZABLE.
+ * El Decreto Presidencial 06-2019 (1-feb-2019, reforma al Decreto 975) ELIMINÓ el
+ * tope máximo de la remuneración cotizable: cada córdoba del salario cotiza, sin
+ * límite superior. Hasta este cambio el repo aplicaba base = min(bruto, 132071.43)
+ * —una cifra sin fuente, que no corresponde a ningún techo nicaragüense documentado—
+ * tanto acá como en el motor del ERP. El error iba en dos direcciones: sub-retenía
+ * INSS (laboral y patronal, subestimando el costo real del empleado) y, al inflar la
+ * renta neta de INSS, sobre-retenía IR.
+ */
 
 // ── IR rentas del trabajo (tabla progresiva anual DGI) ──────────────────────
 // ⚠️ VERIFICAR contra la tabla DGI vigente del año (el ERP la marca "reformas 2025").
@@ -51,6 +59,9 @@ export const AGUINALDO_MESES = 12;            // 13º mes = 1/12 del salario por
 export const HORAS_MES_ORDINARIAS = 240;      // 30 días · 8 h → hora ordinaria = salario/240
 export const HORA_EXTRA_RECARGO = 2;          // Art. 62 — al doble
 export const INDEMNIZACION_TOPE_MESES = 5;    // Art. 45 — techo 5 meses
+export const INDEMNIZACION_PISO_MESES = 1;    // Art. 45 — piso 1 mes
+/** Art. 45: un "mes" de indemnización son 30 días de salario. */
+export const DIAS_POR_MES_INDEMNIZACION = 30;
 
 /** true si las tasas fueron verificadas contra fuente oficial y se pueden publicar. */
 export function tasasVerificadas(): boolean {
