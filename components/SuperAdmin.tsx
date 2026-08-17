@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import useSWR from 'swr';
 import Decimal from 'decimal.js';
-import { Shield, Users, Building2, DollarSign, TrendingUp, Ban, CheckCircle, Eye, RefreshCw, Skull, Activity, CreditCard, Clock, BarChart3, Target, XCircle, Banknote, FileCheck, X, Mail, MessageCircle, Download, Moon } from 'lucide-react';
+import { AlertTriangle, Shield, Users, Building2, DollarSign, TrendingUp, Ban, CheckCircle, Eye, RefreshCw, Skull, Activity, CreditCard, Clock, BarChart3, Target, XCircle, Banknote, FileCheck, X, Mail, MessageCircle, Download, Moon } from 'lucide-react';
 import AdminMotorizadosKYC from './AdminMotorizadosKYC';
 
 // ── Tipos de respuesta del backend (tipado estricto, sin any) ──
@@ -239,14 +239,27 @@ const SuperAdmin: React.FC = () => {
         finally { setActionLoading(null); }
     };
 
-    const handleApprovePayment = async (id: string) => {
-        if (!confirm('¿Aprobar este pago y activar la suscripción del cliente?')) return;
+    const handleApprovePayment = async (id: string, confirmUnderpaid = false) => {
+        if (!confirmUnderpaid && !confirm('¿Aprobar este pago y activar la suscripción del cliente?')) return;
         setActionLoading(`approve-pay-${id}`);
         try {
-            const res = await fetch(`/api/admin/manual-payments/${id}/approve`, { method: 'POST', headers: authHeaders() });
+            const res = await fetch(`/api/admin/manual-payments/${id}/approve`, {
+                method: 'POST', headers: authHeaders(),
+                body: JSON.stringify({ confirmUnderpaid }),
+            });
             const data = await res.json();
-            if (res.ok) { alert(data.message); refreshAll(); }
-            else alert(data.error);
+            if (res.ok) { alert(data.message); refreshAll(); return; }
+            // El backend frena los pagos por debajo del precio del plan en vez de
+            // otorgar 30 días con cualquier monto. Se puede aprobar igual, pero a
+            // propósito y con el número a la vista.
+            if (res.status === 409 && data.needsConfirmation) {
+                if (confirm(`${data.error}\n\nAprobar de todas formas activa 30 días completos.`)) {
+                    setActionLoading(null);
+                    return handleApprovePayment(id, true);
+                }
+                return;
+            }
+            alert(data.error);
         } catch (e) { alert(e instanceof Error ? e.message : 'Error'); }
         finally { setActionLoading(null); }
     };
@@ -542,10 +555,20 @@ const SuperAdmin: React.FC = () => {
                                                     <span className="bg-gray-800 px-2 py-0.5 rounded">Banco: <strong className="text-gray-300">{p.bank}</strong></span>
                                                     <span className="bg-gray-800 px-2 py-0.5 rounded">Ref: <strong className="text-gray-300">{p.referenceNumber}</strong></span>
                                                     {p.notes && <span className="bg-gray-800 px-2 py-0.5 rounded">Nota: {p.notes}</span>}
-                                                    {p.proofUrl && (
-                                                        <a href={p.proofUrl} target="_blank" rel="noreferrer" className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded hover:bg-blue-500/30 transition-colors flex items-center gap-1">
-                                                            <Eye size={10} /> Ver Voucher
+                                                    {/* Hasta el arreglo del formulario de cobro, acá se
+                                                        guardaba el NOMBRE del archivo ("IMG_2841.jpg"),
+                                                        no su URL: el enlace estaba muerto y se aprobaba
+                                                        sin ver nada. Las filas viejas siguen con ese
+                                                        valor, así que solo se enlaza lo que es una URL
+                                                        de verdad y el resto se marca como sin comprobante. */}
+                                                    {/^https?:\/\//.test(p.proofUrl || '') ? (
+                                                        <a href={p.proofUrl!} target="_blank" rel="noreferrer" className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded hover:bg-blue-500/30 transition-colors flex items-center gap-1">
+                                                            <Eye size={10} /> Ver voucher
                                                         </a>
+                                                    ) : (
+                                                        <span className="bg-amber-500/15 text-amber-400 px-2 py-0.5 rounded flex items-center gap-1" title={p.proofUrl || 'El cliente no adjuntó comprobante'}>
+                                                            <AlertTriangle size={10} /> Sin comprobante
+                                                        </span>
                                                     )}
                                                 </div>
                                                 {p.status === 'REJECTED' && p.rejectionReason && (

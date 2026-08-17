@@ -115,6 +115,26 @@ STRIPE_WEBHOOK_SECRET=<tu-webhook-secret-de-stripe>
 STRIPE_PRICE_ID=<tu-price-id-de-stripe>
 
 # ==========================================
+# 🏦 COBRO LOCAL (OBLIGATORIO EN NICARAGUA)
+# ==========================================
+# Stripe NO soporta Nicaragua como país de comercio, así que el rail real de
+# cobro es depósito/transferencia con comprobante. Si BANK_ACCOUNTS_JSON no está
+# definida, /api/billing/status devuelve una lista vacía y la pantalla de pago
+# NO MUESTRA NINGUNA CUENTA a la cual transferir: el cliente que quiere pagar se
+# queda sin cómo hacerlo y cae al canal de WhatsApp.
+#
+# Arreglo JSON en UNA sola línea (comillas dobles, sin saltos):
+BANK_ACCOUNTS_JSON=[{"bank":"BAC","type":"Cuenta corriente USD","number":"000000000","name":"NORTEX"},{"bank":"LAFISE","type":"Cuenta de ahorro C$","number":"000000000","name":"NORTEX"}]
+
+# A dónde llega el aviso "entró un pago por revisar". La activación de la
+# suscripción es MANUAL: sin este correo, el pago espera a que alguien abra el
+# panel de administración por casualidad.
+BILLING_ALERT_EMAIL=<tu-correo>
+
+# Teléfono de soporte que ve el cliente (default: +505 7664-4030)
+SUPPORT_WHATSAPP=+505 7664-4030
+
+# ==========================================
 # 📧 EMAILS (RESEND)
 # ==========================================
 # Obtener desde: https://resend.com/api-keys

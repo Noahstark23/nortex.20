@@ -17,8 +17,30 @@
  */
 
 export const TASAS_ANIO = 2026;
-/** Fecha de la última verificación manual contra fuentes oficiales (actualizar al verificar). */
-export const TASAS_VERIFICADAS_AL: string | null = null; // null = SIN verificar aún → no publicar
+/**
+ * Fecha de la última verificación manual contra FUENTE OFICIAL.
+ *
+ * Sigue en null a propósito. Estado del barrido de agosto 2026 — importa la
+ * distinción entre "concordante en fuentes secundarias" y "verificado":
+ *
+ *   CONFIRMADO por varias fuentes secundarias concordantes (NO por la fuente
+ *   primaria: inss.gob.ni y dgi.gob.ni no son alcanzables desde el entorno de
+ *   desarrollo):
+ *     · INSS laboral 7% (subió de 6,25% con el Decreto 06-2019)
+ *     · INSS patronal 21,5% (<50 trabajadores) y 22,5% (≥50)
+ *     · INATEC 2% sobre la planilla bruta, a cargo exclusivo del patrono
+ *     · Primer tramo del IR de rentas del trabajo exento hasta C$100.000 anuales
+ *     · Techo cotizable: DEROGADO (Decreto 06-2019) — ya se borró del código
+ *
+ *   SIN CONFIRMAR, no tocar sin fuente:
+ *     · Los tramos 15/20/25/30% con sus bases (15.000 / 45.000 / 82.500)
+ *     · IVA 15% · anticipo IR 1% · IMI municipal 1%
+ *
+ * Para sellar esto hace falta abrir la fuente primaria (o que lo firme un
+ * contador) y poner acá la fecha. Mientras siga en null, las calculadoras
+ * públicas muestran el aviso de Calculator.tsx.
+ */
+export const TASAS_VERIFICADAS_AL: string | null = null;
 
 // ── Seguridad social (Ley 539) ──────────────────────────────────────────────
 export const INSS_LABORAL_RATE = 0.07;          // 7% al trabajador — estable, confirmar

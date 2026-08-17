@@ -11,7 +11,7 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
-import { sendPasswordResetEmail, sendWelcomeEmail } from './services/email';
+import { sendPasswordResetEmail, sendWelcomeEmail, sendManualPaymentAlert } from './services/email';
 import { runLifecycleEmails } from './services/lifecycleEmails';
 import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
@@ -19,7 +19,7 @@ import { calculateTenantScore } from './services/scoring';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { seedCatalogFor } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
-import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
+import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent, PLAN_PRICE_USD, requiereConfirmacionDePagoCorto, calcularNuevoVencimiento } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
 import { applyStockDelta, StockError, weightedAverageCost } from './services/stockService';
 import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger, appendDriverWalletMovement, verifyDriverLedger } from './services/ledger';
@@ -6702,6 +6702,22 @@ app.post('/api/billing/report-manual', authenticate, async (req: any, res: any) 
             }
         });
 
+        // Aviso al operador: el rail de cobro es manual, así que sin esto el
+        // cliente transfiere y su suscripción espera a que alguien entre al panel
+        // por casualidad. Fire-and-forget — nunca hace fallar el reporte del pago.
+        const tenantDelPago = await prisma.tenant.findUnique({
+            where: { id: authReq.tenantId! },
+            select: { businessName: true },
+        });
+        void sendManualPaymentAlert({
+            businessName: tenantDelPago?.businessName ?? authReq.tenantId!,
+            amount: monto.toFixed(2),
+            currency: currency || 'USD',
+            bank,
+            referenceNumber: String(referenceNumber),
+            hasProof: Boolean(proofUrl),
+        }).catch((e) => console.error('Aviso de pago manual falló:', e));
+
         res.json({ message: 'Pago reportado exitosamente. Será revisado en las próximas horas.', payment });
     } catch (error) {
         console.error('Manual payment error:', error);
@@ -6754,8 +6770,30 @@ app.post('/api/admin/manual-payments/:id/approve', authenticate, requireSuperAdm
         if (!payment) return res.status(404).json({ error: 'Pago no encontrado' });
         if (payment.status !== 'PENDING') return res.status(400).json({ error: 'Este pago ya fue procesado' });
 
-        const endsAt = new Date();
-        endsAt.setDate(endsAt.getDate() + 30);
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: payment.tenantId },
+            select: { subscriptionEndsAt: true },
+        });
+
+        // El monto no se miraba: aprobar daba 30 días con cualquier cifra, así que
+        // un pago reportado de $1 activaba el mes completo. No se bloquea de plano
+        // —hay pagos en córdobas, parciales y acuerdos puntuales—, pero un pago en
+        // dólares por debajo del precio del plan exige que el admin lo confirme.
+        const montoPagado = new Decimal(payment.amount.toString());
+        const esPagoCorto = requiereConfirmacionDePagoCorto(montoPagado, payment.currency);
+        if (esPagoCorto && req.body?.confirmUnderpaid !== true) {
+            return res.status(409).json({
+                error: `El pago es de $${montoPagado.toFixed(2)} y el plan cuesta $${PLAN_PRICE_USD}. `
+                     + 'Confirmá que lo querés aprobar igual.',
+                needsConfirmation: true,
+                amountPaid: montoPagado.toNumber(),
+                expected: PLAN_PRICE_USD,
+            });
+        }
+
+        // Se extiende desde el vencimiento vigente, no desde hoy: quien renovaba
+        // antes de tiempo perdía los días que le quedaban.
+        const endsAt = calcularNuevoVencimiento(tenant?.subscriptionEndsAt, new Date());
 
         await prisma.$transaction(async (tx: any) => {
             // Concurrencia (TOCTOU): el chequeo status==='PENDING' de arriba está FUERA
@@ -6781,7 +6819,14 @@ app.post('/api/admin/manual-payments/:id/approve', authenticate, requireSuperAdm
                     tenantId: payment.tenantId,
                     userId: authReq.userId!,
                     action: 'MANUAL_PAYMENT_APPROVED',
-                    details: `Pago manual de $${payment.amount} ${payment.currency} aprobado. Ref: ${payment.referenceNumber}`
+                    // Deja rastro de lo que se cobró CONTRA lo esperado y hasta cuándo
+                    // se extendió: sin eso, un pago corto aprobado es indistinguible
+                    // de uno completo al revisar el log meses después.
+                    details: `Pago manual de ${payment.currency === 'USD' ? '$' : 'C$'}${montoPagado.toFixed(2)} `
+                           + `${payment.currency} aprobado (plan $${PLAN_PRICE_USD}`
+                           + `${esPagoCorto ? ' — APROBADO CORTO por decisión del admin' : ''}). `
+                           + `Ref: ${payment.referenceNumber}. Vence ${endsAt.toISOString().slice(0, 10)}. `
+                           + `Comprobante: ${payment.proofUrl ? 'sí' : 'NO ADJUNTO'}`
                 }
             });
         });

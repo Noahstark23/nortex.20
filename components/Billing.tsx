@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CreditCard, Shield, CheckCircle, AlertTriangle, Clock, Zap, ArrowRight, ExternalLink, Loader2, XCircle, RefreshCw, Building2, Upload, Send, FileText, DollarSign, Banknote } from 'lucide-react';
+import ImageUploader from './ImageUploader';
 
 interface BankAccount {
     bank: string;
@@ -50,7 +51,8 @@ const Billing: React.FC = () => {
     // Precargado con el precio real del plan ($20): venía en '25' y el
     // cliente transfería $25 contra una pantalla que decía $20.
     const [manualForm, setManualForm] = useState({ amount: String(PLAN_PRICE), currency: 'USD', bank: '', referenceNumber: '', notes: '' });
-    const [proofFile, setProofFile] = useState<File | null>(null);
+    // URL real del comprobante ya subido (Cloudinary), no el File local.
+    const [proofUrl, setProofUrl] = useState('');
 
     const token = localStorage.getItem('nortex_token');
     const headers: Record<string, string> = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -113,15 +115,15 @@ const Billing: React.FC = () => {
                     currency: manualForm.currency,
                     bank: manualForm.bank,
                     referenceNumber: manualForm.referenceNumber,
-                    proofUrl: proofFile ? proofFile.name : null,
+                    proofUrl: proofUrl || null,
                     notes: manualForm.notes || null,
                 }),
             });
             const data = await res.json();
             if (res.ok) {
                 alert('Pago reportado exitosamente. Será revisado pronto.');
-                setManualForm({ amount: '25', currency: 'USD', bank: '', referenceNumber: '', notes: '' });
-                setProofFile(null);
+                setManualForm({ amount: String(PLAN_PRICE), currency: 'USD', bank: '', referenceNumber: '', notes: '' });
+                setProofUrl('');
                 fetchAll();
             } else {
                 alert(data.error || 'Error al reportar pago');
@@ -381,22 +383,17 @@ const Billing: React.FC = () => {
                                             onChange={e => setManualForm({...manualForm, referenceNumber: e.target.value})} />
                                     </div>
                                     <div>
-                                        <label className="text-xs font-bold text-slate-500">Foto del Voucher (opcional)</label>
-                                        <div className="border-2 border-dashed border-white/[0.06] rounded-lg p-4 text-center hover:border-blue-400 transition-colors cursor-pointer relative">
-                                            <input type="file" accept="image/*"
-                                                className="absolute inset-0 opacity-0 cursor-pointer"
-                                                onChange={e => setProofFile(e.target.files?.[0] || null)} />
-                                            {proofFile ? (
-                                                <div className="flex items-center justify-center gap-2 text-sm text-emerald-400">
-                                                    <CheckCircle size={16} /> {proofFile.name}
-                                                </div>
-                                            ) : (
-                                                <div className="text-slate-400 text-sm">
-                                                    <Upload size={24} className="mx-auto mb-1" />
-                                                    Clic para subir foto del comprobante
-                                                </div>
-                                            )}
-                                        </div>
+                                        <label className="text-xs font-bold text-slate-500">Foto del voucher</label>
+                                        {/* Sube de verdad la imagen (mismo pipeline del catálogo:
+                                            compresión en cliente + Cloudinary). Antes acá había un
+                                            <input type="file"> suelto y al reportar el pago se
+                                            mandaba `proofFile.name` — el NOMBRE del archivo, no el
+                                            archivo. El administrador aprobaba a ciegas: veía
+                                            "IMG_2841.jpg" y ningún comprobante. */}
+                                        <ImageUploader value={proofUrl} onChange={setProofUrl} />
+                                        <p className="text-[11px] text-slate-500 mt-1">
+                                            Sin el voucher tu pago tarda más: hay que confirmarlo a mano con el banco.
+                                        </p>
                                     </div>
                                     <div>
                                         <label className="text-xs font-bold text-slate-500">Notas (opcional)</label>

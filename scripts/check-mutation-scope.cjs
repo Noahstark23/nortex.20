@@ -83,6 +83,14 @@ const PISO_MUTANTES = {
     // calculateLaborLiability (llama `new Date()`) quedan fuera — ver el config.
     'backend/services/nicaLabor.ts': 107,
     'backend/services/nicaTax.ts': 7,
+    // stripe.ts entra solo por sus dos funciones PURAS de cobro (35-62), no por
+    // el cliente de Stripe: 13 mutantes, score medido 100.00%. Protegen el rail
+    // que de verdad cobra en Nicaragua — Stripe no soporta el país como
+    // comercio, así que el dinero entra por depósito con comprobante y
+    // activación a mano. Antes aprobar daba 30 días con cualquier monto
+    // reportado y los contaba desde hoy, perdiendo los días de quien renovaba
+    // anticipado.
+    'backend/services/stripe.ts': 13,
     'backend/services/stockService.ts': 5,
     'backend/services/accounting.ts': 18,
 };
