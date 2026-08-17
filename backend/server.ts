@@ -5288,7 +5288,7 @@ app.get('/api/purchases/pending', authenticate, async (req: any, res: any) => {
 // ==========================================
 
 import { calculatePayroll, calculateLaborLiability } from './services/nicaLabor';
-import { generateMonthlyReport, saveMonthlyReport, desglosarIvaIncluido } from './services/nicaTax';
+import { generateMonthlyReport, saveMonthlyReport, desglosarIvaIncluido, desglosarVentaConExoneracion } from './services/nicaTax';
 
 // POST /api/payroll/calculate - Calcular nómina de todos los empleados
 app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), validate(PayrollCalculateSchema), async (req: any, res: any) => {
@@ -9791,18 +9791,10 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
 // 📊 SPRINT A — EXPORTACIONES FISCALES DGI
 // ==========================================
 
-// Helper: rango de fechas para un mes/año.
-// El servidor puede correr en UTC (Docker/Coolify) → pineamos el rango a la zona de
-// Nicaragua (America/Managua = UTC-6 todo el año, sin horario de verano) para no correr
-// ventas de borde de mes a otro período, y usamos límite superior EXCLUSIVO (inicio del
-// mes siguiente, con `lt`) para no perder el último sub-segundo del último día.
-const MANAGUA_UTC_OFFSET_HOURS = 6; // UTC-6 fijo (Nicaragua no aplica DST)
-function fiscalMonthRange(month: number, year: number) {
-    // Medianoche de Managua expresada en UTC = 06:00 UTC del mismo día calendario.
-    const start = new Date(Date.UTC(year, month - 1, 1, MANAGUA_UTC_OFFSET_HOURS, 0, 0));
-    const end   = new Date(Date.UTC(year, month, 1, MANAGUA_UTC_OFFSET_HOURS, 0, 0)); // inicio del mes siguiente (exclusivo)
-    return { start, end };
-}
+// El rango fiscal del mes vive en services/nicaTax.ts (fuente única): los libros,
+// el resumen VET y la declaración mensual TIENEN que recortar las mismas ventas.
+// Antes había una copia acá y otra fórmula distinta en generateMonthlyReport.
+import { fiscalMonthRange } from './services/nicaTax';
 
 // ── A1: LIBRO DE VENTAS (Excel) ─────────────────────────────────────────────
 // GET /api/fiscal/libro-ventas/:month/:year
@@ -9824,12 +9816,18 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(['OWNER
             orderBy: { createdAt: 'asc' },
         });
 
-        // Precisión fiscal: derivar subtotal/IVA y totalizar con decimal.js (cero float).
-        const IVA_RATE = new Decimal('0.15');
+        // Precisión fiscal: el desglose sale de `desglosarVentaConExoneracion`, la
+        // MISMA función que usan el asiento contable y la declaración mensual.
+        // Antes acá se hacía `total / 1.15` sobre la venta ENTERA, ignorando
+        // `Sale.exemptTotal`: en un negocio que marca productos de canasta básica
+        // como exentos (Inventory.tsx tiene el toggle), este libro declaraba IVA
+        // por ventas exoneradas que nunca se le cobraron al cliente — y no cuadraba
+        // con la declaración del mismo mes, que sí las respetaba.
         const rows = sales.map((s, i) => {
-            const totalD    = new Decimal(s.total.toString());
-            const subtotalD = totalD.div(new Decimal(1).plus(IVA_RATE)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-            const ivaD      = totalD.minus(subtotalD).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            const d = desglosarVentaConExoneracion(
+                s.total.toString(),
+                s.exemptTotal?.toString() ?? '0',
+            );
             return {
                 'N°':            i + 1,
                 'Fecha':         new Date(s.createdAt).toLocaleDateString('es-NI'),
@@ -9837,9 +9835,10 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(['OWNER
                 'Cliente':       s.customerName || s.customer?.name || 'Consumidor Final',
                 'RUC/Cédula':    s.customer?.taxId || '---',
                 'Método Pago':   s.paymentMethod,
-                'Subtotal C$':   subtotalD.toNumber(),
-                'IVA 15% C$':    ivaD.toNumber(),
-                'Total C$':      totalD.toNumber(),
+                'Exento C$':     d.exonerado.toDecimalPlaces(2).toNumber(),
+                'Subtotal C$':   d.netoGravado.toDecimalPlaces(2).toNumber(),
+                'IVA 15% C$':    d.iva.toDecimalPlaces(2).toNumber(),
+                'Total C$':      d.exonerado.plus(d.netoGravado).plus(d.iva).toDecimalPlaces(2).toNumber(),
             };
         });
 
@@ -9847,6 +9846,7 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(['OWNER
         const totals = {
             'N°': '', 'Fecha': '', 'N° Factura': '', 'Cliente': 'TOTALES',
             'RUC/Cédula': '', 'Método Pago': '',
+            'Exento C$':   rows.reduce((s, r) => s.plus(r['Exento C$']), new Decimal(0)).toNumber(),
             'Subtotal C$': rows.reduce((s, r) => s.plus(r['Subtotal C$']), new Decimal(0)).toNumber(),
             'IVA 15% C$':  rows.reduce((s, r) => s.plus(r['IVA 15% C$']), new Decimal(0)).toNumber(),
             'Total C$':    rows.reduce((s, r) => s.plus(r['Total C$']), new Decimal(0)).toNumber(),
@@ -9854,7 +9854,7 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(['OWNER
         rows.push(totals as any);
 
         const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [4, 12, 14, 28, 16, 12, 14, 14, 14].map(w => ({ wch: w }));
+        ws['!cols'] = [4, 12, 14, 28, 16, 12, 14, 14, 14, 14].map(w => ({ wch: w }));
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, `Ventas ${month}-${year}`);
 
@@ -9970,7 +9970,6 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(['OWNER',
 
     try {
         const { start, end } = fiscalMonthRange(month, year);
-        const IVA_RATE = new Decimal('0.15');
         const period = `${year}${String(month).padStart(2, '0')}`;
 
         // Ventas
@@ -9992,35 +9991,53 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(['OWNER',
         });
 
         const lines: string[] = [];
-        lines.push(`# ARCHIVO VET DGI | PERIODO: ${period} | GENERADO: ${new Date().toISOString()}`);
-        lines.push(`# FORMATO: TIPO|FECHA(YYYYMMDD)|N_FACTURA|RUC|NOMBRE|SUBTOTAL|IVA|TOTAL`);
+        // OJO: este NO es un archivo cargable en la Ventanilla Electrónica
+        // Tributaria. El formato de abajo es propio de Nortex — no hay en el repo
+        // ninguna referencia a una especificación publicada por la DGI. Sirve para
+        // TRANSCRIBIR los montos a la VET, no para subirlos. Mientras no se
+        // incorpore la spec oficial, el nombre tiene que decir la verdad: prometer
+        // un archivo que la DGI rechaza quema al contador en su primer intento.
+        lines.push(`# RESUMEN PARA TRANSCRIBIR A LA VET | PERIODO: ${period} | GENERADO: ${new Date().toISOString()}`);
+        lines.push(`# NO es un archivo cargable en la VET: formato propio de Nortex, para transcripcion manual.`);
+        lines.push(`# FORMATO: TIPO|FECHA(YYYYMMDD)|N_FACTURA|RUC|NOMBRE|EXENTO|SUBTOTAL|IVA|TOTAL`);
         lines.push('');
         lines.push('## LIBRO DE VENTAS');
 
         for (const s of sales) {
-            const totalD    = new Decimal(s.total.toString());
-            const subtotalD = totalD.div(new Decimal(1).plus(IVA_RATE)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-            const ivaD      = totalD.minus(subtotalD).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            // Mismo desglose que el Libro de Ventas y la declaración mensual.
+            const d = desglosarVentaConExoneracion(
+                s.total.toString(),
+                s.exemptTotal?.toString() ?? '0',
+            );
+            const exentoD   = d.exonerado.toDecimalPlaces(2);
+            const subtotalD = d.netoGravado.toDecimalPlaces(2);
+            const ivaD      = d.iva.toDecimalPlaces(2);
+            const totalD    = exentoD.plus(subtotalD).plus(ivaD);
             const fecha    = new Date(s.createdAt).toISOString().slice(0,10).replace(/-/g,'');
             const factura  = s.invoiceNumber
                 ? `${s.invoiceSeries || 'A'}${String(s.invoiceNumber).padStart(6,'0')}`
                 : 'CF';
             const nombre   = (s.customerName || s.customer?.name || 'CONSUMIDOR FINAL').toUpperCase().substring(0, 60);
             const rucV     = s.customer?.taxId || '000-000000-0000X';
-            lines.push(`V|${fecha}|${factura}|${rucV}|${nombre}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
+            lines.push(`V|${fecha}|${factura}|${rucV}|${nombre}|${exentoD.toFixed(2)}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
         }
 
         lines.push('');
         lines.push('## LIBRO DE COMPRAS');
 
         for (const p of purchases) {
-            const subtotalD = new Decimal(p.subtotal.toString());
-            const ivaD      = new Decimal(p.tax.toString());
-            const totalD    = new Decimal(p.total.toString());
+            const subtotalD = new Decimal(p.subtotal.toString()).toDecimalPlaces(2);
+            const ivaD      = new Decimal(p.tax.toString()).toDecimalPlaces(2);
+            const totalD    = new Decimal(p.total.toString()).toDecimalPlaces(2);
+            // La compra guarda subtotal/IVA/total por separado; lo que no cuadra
+            // contra el total es la parte exenta (proveedor exonerado, canasta
+            // básica). Se acota a ≥0 para que un dato inconsistente no salga en
+            // negativo. Misma columna que las ventas, para que el archivo alinee.
+            const exentoD = Decimal.max(0, totalD.minus(subtotalD).minus(ivaD)).toDecimalPlaces(2);
             const fecha    = new Date(p.createdAt).toISOString().slice(0,10).replace(/-/g,'');
             const nombre   = p.supplier.name.toUpperCase().substring(0, 60);
             const rucC     = (p.supplier as any).ruc || '000-000000-0000X';
-            lines.push(`C|${fecha}|${p.invoiceNumber}|${rucC}|${nombre}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
+            lines.push(`C|${fecha}|${p.invoiceNumber}|${rucC}|${nombre}|${exentoD.toFixed(2)}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
         }
 
         const content = lines.join('\r\n'); // CRLF como exige la VET

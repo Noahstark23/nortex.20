@@ -280,8 +280,8 @@ const AuditDashboard: React.FC = () => {
                                 ? <Loader2 size={32} className="text-violet-500 animate-spin" />
                                 : <Download size={32} className="text-violet-500 group-hover:scale-110 transition-transform" />}
                             <div className="text-center">
-                                <p className="font-semibold text-slate-100 text-sm">Archivo VET</p>
-                                <p className="text-xs text-slate-500 mt-0.5">TXT pipe-delimited — DGI VET</p>
+                                <p className="font-semibold text-slate-100 text-sm">Resumen para la VET</p>
+                                <p className="text-xs text-slate-500 mt-0.5">TXT para transcribir — no se sube a la VET</p>
                             </div>
                             <span className="text-xs bg-violet-100 text-violet-700 px-3 py-1 rounded-full font-medium">Descargar</span>
                         </button>
