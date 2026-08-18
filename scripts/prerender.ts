@@ -19,11 +19,13 @@ import path from 'path';
 import { blogPosts } from '../data/blog-posts';
 import { blogClusters } from '../data/blog-clusters';
 import { markdownToHtml } from '../utils/markdown';
+import { CALCULADORAS } from '../utils/calculadoras';
 import {
     buildArticleJsonLd,
     buildBreadcrumbJsonLd,
     buildFaqJsonLd,
     buildHowToJsonLd,
+    buildCalculatorAppJsonLd,
     jsonLdScriptTags,
 } from '../utils/seo';
 import { pickRelatedGuides } from '../utils/related-guides';
@@ -207,19 +209,71 @@ for (const post of blogPosts) {
 
     routes.push({
         path: `/blog/${post.slug}`,
-        title: `${post.title} | Nortex Blog`,
+        // `metaTitle` manda sobre el H1 y va SIN el sufijo "| Nortex Blog": son
+        // 14 caracteres que empujaban 48 de 49 títulos por encima de los ~60 que
+        // Google muestra, y el truncado se comía justo el diferenciador final.
+        // Quien escribe un metaTitle se hace cargo del ancho completo.
+        title: post.metaTitle ?? `${post.title} | Nortex Blog`,
         description: post.description,
         h1: post.title,
         changefreq: 'monthly',
         priority: '0.7',
-        body: markdownToHtml(post.content) + relatedHtml,
+        // La calculadora va ARRIBA del cuerpo, igual que en BlogPost.tsx: es lo
+        // que diferencia estas guías de un artículo que el AI Overview ya resumió.
+        body: (post.calculator ? calculadoraHtml(post.calculator) : '')
+            + markdownToHtml(post.content) + relatedHtml,
         jsonLd: jsonLdScriptTags(
             buildArticleJsonLd(post),
             buildBreadcrumbJsonLd(breadcrumb),
             buildFaqJsonLd(post.faq),
             post.howToSteps ? buildHowToJsonLd(post.title, post.howToSteps, post.description) : null,
+            // Declara la herramienta que la página realmente ofrece. Sin esto, el
+            // único schema de aplicación que veía Google en esta URL era el del
+            // POS, heredado del shell.
+            post.calculator
+                ? buildCalculatorAppJsonLd({
+                      slug: post.slug,
+                      name: CALCULADORAS[post.calculator].titulo,
+                      description: CALCULADORAS[post.calculator].descripcion,
+                  })
+                : null,
         ),
     });
+}
+
+/**
+ * Emite la calculadora como HTML estático y crawleable.
+ *
+ * El prerender no monta React, así que hasta ahora la herramienta simplemente NO
+ * estaba en el HTML: Google la veía recién en el segundo pase de renderizado y
+ * los crawlers de IA —que no ejecutan JS— nunca. Para ellos una guía con
+ * calculadora era indistinguible de un artículo de texto, que es justo lo que un
+ * AI Overview responde sin que nadie haga clic.
+ *
+ * Lo que se emite es la herramienta REAL (encabezado, campos, select y botón),
+ * con los mismos labels que el componente porque salen del mismo registro. Es un
+ * andamio no interactivo: React lo reemplaza al montar en #root, igual que hace
+ * con el resto del bloque SEO. No se duplica ninguna fórmula acá — el cálculo
+ * vive en utils/calc-laborales.ts y corre del lado del cliente.
+ */
+function calculadoraHtml(tipo: keyof typeof CALCULADORAS): string {
+    const c = CALCULADORAS[tipo];
+    const campos = c.fields
+        .map(f => `<p><label for="calc-${esc(f.key)}">${esc(f.label)}${f.suffix ? ` (${esc(f.suffix)})` : ''}</label>`
+                + `<input id="calc-${esc(f.key)}" type="number" inputmode="decimal" min="0"`
+                + ` step="${esc(f.step ?? '0.01')}" placeholder="0" disabled /></p>`)
+        .join('');
+    const select = c.select
+        ? `<p><label for="calc-${esc(c.select.key)}">${esc(c.select.label)}</label>`
+          + `<select id="calc-${esc(c.select.key)}" disabled>`
+          + c.select.options.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')
+          + '</select></p>'
+        : '';
+    return `<section data-calculadora="${esc(tipo)}">`
+         + `<h2>${esc(c.titulo)}</h2>`
+         + `<p>${esc(c.descripcion)}</p>`
+         + `<form>${campos}${select}<p><button type="button" disabled>Calcular</button></p></form>`
+         + '</section>';
 }
 
 function buildHtml(route: RouteSEO): string {
