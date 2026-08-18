@@ -97,6 +97,51 @@ const getMovementMeta = (type: string) => {
 // de las cinco convenciones de moneda que convivían en la app.
 const formatCurrency = (n: number) => formatMoney(n);
 
+/**
+ * Tarjeta de KPI del inventario. Sin `onClick` es un bloque estático (sin hover,
+ * sin cursor) — la diferencia importa: una tarjeta que parece clicable y no hace
+ * nada es peor que una que se ve inerte.
+ */
+const TarjetaKpi: React.FC<{
+    icono: React.ReactNode;
+    titulo: string;
+    valor: string;
+    nota: string;
+    activa?: boolean;
+    onClick?: () => void;
+    /** Qué hace el filtro, para lectores de pantalla. */
+    etiquetaAccion?: string;
+}> = ({ icono, titulo, valor, nota, activa = false, onClick, etiquetaAccion }) => {
+    const contenido = (
+        <>
+            <div className="flex items-center gap-2 mb-1">
+                {icono}
+                <span className="text-xs text-slate-400 uppercase tracking-wider">{titulo}</span>
+            </div>
+            <p className="text-kpi font-bold text-slate-100 tabular-nums">{valor}</p>
+            <p className="text-xs text-slate-400">{nota}</p>
+        </>
+    );
+
+    if (!onClick) {
+        return <div className="bg-slate-800/80 border border-slate-700 rounded-card p-4 text-left">{contenido}</div>;
+    }
+
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            aria-pressed={activa}
+            aria-label={etiquetaAccion ?? titulo}
+            className={`bg-slate-800/80 border rounded-card p-4 text-left transition-colors cursor-pointer hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring ${
+                activa ? 'border-brand' : 'border-slate-700 hover:border-slate-600'
+            }`}
+        >
+            {contenido}
+        </button>
+    );
+};
+
 /** Como sanitizeDecimalInput pero admite un '-' inicial (para ajustes porcentuales). */
 const sanitizeSignedDecimal = (raw: string): string => {
     const neg = raw.trim().startsWith('-');
@@ -448,6 +493,21 @@ export default function Inventory() {
     // ==========================================
     // INVENTORY TOTALS
     // ==========================================
+
+    /** Alterna el filtro: volver a tocar la tarjeta activa lo quita. */
+    const aplicarFiltroEstado = useCallback((valor: string) => {
+        setStatusFilter(prev => (prev === valor ? '' : valor));
+        setPage(1);
+    }, []);
+
+    const limpiarFiltros = useCallback(() => {
+        setStatusFilter('');
+        setCategoryFilter('');
+        setSearchTerm('');
+        setPage(1);
+    }, []);
+
+    const hayFiltro = Boolean(statusFilter || categoryFilter || searchTerm);
 
     // KPIs sobre TODO el inventario (no solo la página visible): vienen del stats.
     const totals = useMemo(() => ({
@@ -978,48 +1038,59 @@ export default function Inventory() {
                 )}
             />
 
-            {/* KPI CARDS */}
+            {/* KPI CARDS — las tres accionables FILTRAN la tabla.
+                "¿Qué tengo que comprar?" es la pregunta más frecuente del dueño de
+                bodega, y la respuesta ya estaba en pantalla: la tarjeta contaba los
+                productos bajo mínimo pero el número era decorativo — no se podía
+                hacer clic ni existía la opción en el filtro de estado. Había que
+                ordenar por stock ascendente y contar a ojo dónde terminaba el rojo. */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-4">
-                    <div className="flex items-center gap-2 mb-1">
-                        <Package size={16} className="text-blue-400" />
-                        <span className="text-xs text-slate-400 uppercase tracking-wider">Productos</span>
-                    </div>
-                    <p className="text-kpi font-bold text-slate-100 tabular-nums">{(stats?.totalProducts ?? 0).toLocaleString()}</p>
-                    <p className="text-xs text-slate-500">{totals.totalItems.toLocaleString()} unidades en bodega</p>
-                </div>
-
-                <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-4">
-                    <div className="flex items-center gap-2 mb-1">
-                        <TrendingUp size={16} className="text-emerald-400" />
-                        <span className="text-xs text-slate-400 uppercase tracking-wider">Valor Inventario</span>
-                    </div>
-                    <p className="text-kpi font-bold text-slate-100 tabular-nums">{formatCurrency(totals.totalValue)}</p>
-                    <p className="text-xs text-slate-500">Al costo de compra</p>
-                </div>
-
-                <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-4">
-                    <div className="flex items-center gap-2 mb-1">
-                        <AlertTriangle size={16} className="text-amber-400" />
-                        <span className="text-xs text-slate-400 uppercase tracking-wider">Stock Bajo</span>
-                    </div>
-                    <p className="text-kpi font-bold text-slate-100 tabular-nums">
-                        {totals.lowStockCount}
-                    </p>
-                    <p className="text-xs text-slate-500">Productos bajo mínimo</p>
-                </div>
-
-                <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-4">
-                    <div className="flex items-center gap-2 mb-1">
-                        <FileWarning size={16} className="text-red-400" />
-                        <span className="text-xs text-slate-400 uppercase tracking-wider">Agotados</span>
-                    </div>
-                    <p className="text-kpi font-bold text-slate-100 tabular-nums">
-                        {totals.outOfStockCount}
-                    </p>
-                    <p className="text-xs text-slate-500">Stock en cero</p>
-                </div>
+                <TarjetaKpi
+                    icono={<Package size={16} className="text-blue-400" />}
+                    titulo="Productos"
+                    valor={(stats?.totalProducts ?? 0).toLocaleString()}
+                    nota={`${totals.totalItems.toLocaleString()} unidades en bodega`}
+                    activa={statusFilter === '' && categoryFilter === '' && !searchTerm}
+                    onClick={limpiarFiltros}
+                    etiquetaAccion="Ver todo el catálogo, sin filtros"
+                />
+                {/* El valor del inventario no es un subconjunto filtrable: se deja
+                    estática y sin hover para no prometer una interacción que no existe. */}
+                <TarjetaKpi
+                    icono={<TrendingUp size={16} className="text-emerald-400" />}
+                    titulo="Valor Inventario"
+                    valor={formatCurrency(totals.totalValue)}
+                    nota="Al costo de compra"
+                />
+                <TarjetaKpi
+                    icono={<AlertTriangle size={16} className="text-amber-400" />}
+                    titulo="Stock Bajo"
+                    valor={String(totals.lowStockCount)}
+                    nota="Productos bajo mínimo"
+                    activa={statusFilter === 'low'}
+                    onClick={() => aplicarFiltroEstado('low')}
+                    etiquetaAccion="Ver solo los productos bajo mínimo"
+                />
+                <TarjetaKpi
+                    icono={<FileWarning size={16} className="text-red-400" />}
+                    titulo="Agotados"
+                    valor={String(totals.outOfStockCount)}
+                    nota="Stock en cero"
+                    activa={statusFilter === 'out'}
+                    onClick={() => aplicarFiltroEstado('out')}
+                    etiquetaAccion="Ver solo los productos agotados"
+                />
             </div>
+
+            {/* Las tarjetas cuentan SIEMPRE sobre el catálogo completo (vienen del
+                endpoint de stats, no de la página visible). Con un filtro puesto,
+                decirlo evita que el dueño lea "1,003 productos" sobre una tabla de 5
+                y no sepa si el valor del inventario es del filtro o del total. */}
+            {hayFiltro && (
+                <p className="text-xs text-slate-400 -mt-2">
+                    Los totales de arriba son de tu catálogo completo; la tabla está filtrada.
+                </p>
+            )}
 
             {/* SEARCH + FILTROS + ORDEN + EXPORTAR */}
             <div className="flex flex-wrap gap-3 items-center">
@@ -1042,6 +1113,8 @@ export default function Inventory() {
                 <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
                     className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
                     <option value="">Todos</option>
+                    <option value="low">Bajo mínimo</option>
+                    <option value="reorder">Toca reponer</option>
                     <option value="out">Agotados</option>
                     <option value="published">Publicados</option>
                     <option value="unpublished">Ocultos</option>

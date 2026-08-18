@@ -3286,6 +3286,20 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
         }
         if (category) whereClause.category = String(category);
         if (status === 'out') whereClause.stock = { lte: 0 };
+        // "Bajo mínimo" y "punto de reorden" comparan DOS COLUMNAS de la misma
+        // fila (stock contra su umbral), así que van por field reference: el
+        // filtro ocurre en SQL y el `count` de la paginación cuadra. Filtrarlo en
+        // JS después del findMany —como hace el viejo `lowStock=true` de abajo—
+        // rompe la paginación y trae toda la tabla a memoria.
+        //
+        // `gt: 0` NO es decorativo: la tarjeta KPI cuenta bajo-mínimo EXCLUYENDO
+        // los agotados (lowStock − outOfStock). Sin esa condición, hacer clic en
+        // una tarjeta que dice 100 devolvería más de 100 filas.
+        else if (status === 'low') whereClause.stock = { lte: prisma.product.fields.minStock, gt: 0 };
+        else if (status === 'reorder') {
+            whereClause.stock = { lte: prisma.product.fields.reorderPoint, gt: 0 };
+            whereClause.reorderPoint = { gt: 0 }; // 0 = el dueño no configuró reorden
+        }
         else if (status === 'published') whereClause.isPublished = true;
         else if (status === 'unpublished') whereClause.isPublished = false;
 
