@@ -122,3 +122,42 @@ export function jsonLdScriptTags(...blocks: Array<Record<string, unknown> | null
         .map(b => `<script type="application/ld+json">${JSON.stringify(b)}</script>`)
         .join('\n');
 }
+
+/**
+ * WebApplication para una guía que trae calculadora.
+ *
+ * Por qué hace falta: el único `SoftwareApplication` del sitio estaba clavado en
+ * el shell (index.html) y el prerender lo heredaba IDÉNTICO en las 72 páginas, o
+ * sea que una guía de aguinaldo se declaraba ante Google como si fuera el POS de
+ * $20/mes. Este bloque describe lo que la página realmente ofrece: una
+ * herramienta gratis, sin registro, que se usa en el navegador. Es la señal que
+ * distingue estas guías de un artículo de texto — que es exactamente lo que un
+ * AI Overview resume sin que nadie haga clic.
+ *
+ * `isAccessibleForFree: true` y precio 0 son literales: el cálculo en pantalla
+ * no pide cuenta. Si algún día se pone detrás de un muro, este bloque miente y
+ * hay que cambiarlo.
+ */
+export function buildCalculatorAppJsonLd(input: {
+    slug: string;
+    name: string;
+    description: string;
+}): Record<string, unknown> {
+    return {
+        '@context': 'https://schema.org',
+        '@type': 'WebApplication',
+        name: input.name,
+        description: input.description,
+        url: `${SITE_ORIGIN}/blog/${input.slug}`,
+        applicationCategory: 'FinanceApplication',
+        operatingSystem: 'Web Browser',
+        browserRequirements: 'Requires JavaScript.',
+        inLanguage: 'es-NI',
+        isAccessibleForFree: true,
+        offers: {
+            '@type': 'Offer',
+            price: '0',
+            priceCurrency: 'NIO',
+        },
+    };
+}

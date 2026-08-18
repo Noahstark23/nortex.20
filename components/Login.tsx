@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { useNavigate, Navigate, Link, useSearchParams } from 'react-router-dom';
 import { Mail, Lock, LogIn, Loader2, ArrowRight, Clock } from 'lucide-react';
 import { homePathFor, resolveUiMode, UI_MODE_KEY } from '../utils/navigation';
 
@@ -15,6 +15,26 @@ const Login: React.FC = () => {
     email: '',
     password: ''
   });
+
+  // ── La trampa del botón atrás (reporte real desde móvil) ──────────────────
+  // Con sesión viva, /login mostraba el formulario vacío otra vez. Como el
+  // navigate() post-login no reemplazaba el historial, el flujo era: entrás →
+  // app → botón atrás → formulario de login de nuevo → volvés a entrar → atrás
+  // → formulario… En el teléfono eso se siente como "la app me atrapa y no me
+  // deja salir". Con token presente acá no hay nada que preguntar: derecho al
+  // app, con replace para no apilar otro /login en el historial.
+  // Sin riesgo de loop: utils/auth.ts BORRA el token antes de redirigir con
+  // ?error=session_expired, así que un token presente es una sesión viva — y
+  // ante ese parámetro igual se muestra el formulario, por si acaso.
+  const tokenVivo = localStorage.getItem('nortex_token');
+  if (tokenVivo && !sessionExpired) {
+    try {
+      const u = JSON.parse(localStorage.getItem('nortex_user') || '{}');
+      if (u.role === 'SUPER_ADMIN') return <Navigate to="/admin" replace />;
+      const uiMode = resolveUiMode(u.tenant?.type || '', localStorage.getItem(UI_MODE_KEY));
+      return <Navigate to={homePathFor(u.role || '', uiMode)} replace />;
+    } catch { /* nortex_user ilegible → dejar el formulario; el 401 limpiará */ }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,14 +63,14 @@ const Login: React.FC = () => {
       // SUPER_ADMIN redirect — basado en el rol devuelto por el backend, nunca en un
       // email hardcodeado en el bundle. El privilegio real lo valida el servidor.
       if (data.user.role === 'SUPER_ADMIN') {
-        navigate('/admin');
+        navigate('/admin', { replace: true });
       } else {
         // Aterrizaje por rol y modo (auditoría F4): antes TODOS caían en
         // /app/dashboard — el cajero pagaba la cascada del panel financiero
         // para recién ahí tocar "Vender". App.tsx ya calculaba homePathFor
         // para la ruta *; el login lo ignoraba.
         const uiMode = resolveUiMode(data.tenant?.type || '', localStorage.getItem(UI_MODE_KEY));
-        navigate(homePathFor(data.user.role, uiMode));
+        navigate(homePathFor(data.user.role, uiMode), { replace: true });
       }
 
     } catch (err: any) {

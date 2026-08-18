@@ -19,7 +19,22 @@ export interface BlogPostFaq {
 
 export interface BlogPost {
     slug: string;
+    /** Encabezado H1 del artículo: se lee DENTRO de la página. */
     title: string;
+    /**
+     * Título del SERP, cuando tiene que decir algo distinto al H1.
+     *
+     * Existe porque hasta ahora eran el mismo string por construcción: el
+     * prerender emitía `${title} | Nortex Blog` y el H1 era `title`, así que
+     * optimizar uno degradaba el otro. Con el sufijo obligatorio de 14
+     * caracteres, 48 de 49 títulos pasaban los ~60 y Google los truncaba justo
+     * sobre el paréntesis que llevaba el único diferenciador —"(con
+     * calculadora)"— contra un AI Overview que ya respondió arriba.
+     *
+     * Cuando está presente se usa TAL CUAL, sin el sufijo "| Nortex Blog":
+     * quien lo escribe se hace cargo del ancho completo. Objetivo <= 60 chars.
+     */
+    metaTitle?: string;
     /** Meta description (≤ 155 caracteres recomendado). */
     description: string;
     /** Keyword principal del artículo (del plan SEO). */
@@ -51,6 +66,7 @@ export const blogPosts: BlogPost[] = [
     {
         slug: 'como-calcular-nomina-nicaragua-2026',
         title: 'Cómo calcular la nómina en Nicaragua 2026 (Guía completa Ley 185)',
+        metaTitle: 'Nómina en Nicaragua 2026: planilla y Ley 185',
         description: 'Guía paso a paso para calcular salarios, INSS, INATEC, IR, vacaciones y aguinaldo según el Código del Trabajo de Nicaragua, con ejemplos reales.',
         keyword: 'cómo calcular la nómina en Nicaragua',
         cluster: 'Nómina y Planillas',
@@ -137,7 +153,7 @@ Para un salario bruto de C$20,000:
 
 Hacer esto a mano, empleado por empleado, es donde aparecen los errores que la DGI y el INSS multan. Nortex calcula automáticamente INSS, INATEC, IR, vacaciones y aguinaldo: ingresás el salario base y el sistema arma la planilla en segundos.
 
-[Probá Nortex gratis 30 días →](/register)
+[Corré la planilla completa de tu equipo en Nortex →](/register)
 `,
     },
     {
@@ -203,7 +219,7 @@ Las retenciones se declaran en la **Ventanilla Electrónica Tributaria (VET)** d
 
 Nortex genera automáticamente el reporte de retenciones listo para declarar, con la base, la tasa y el monto retenido por proveedor.
 
-[Mirá cómo funciona →](/register)
+[Llevá tus retenciones y libros DGI en Nortex →](/register)
 `,
     },
     {
@@ -324,6 +340,7 @@ Nortex asigna el siguiente número correlativo de cada serie automáticamente, b
     {
         slug: 'iva-nicaragua-guia-completa',
         title: 'IVA en Nicaragua 2026: cuánto es y cómo calcularlo (con calculadora)',
+        metaTitle: 'Calculadora de IVA Nicaragua 2026 (15%)',
         description: 'Cuánto es el IVA en Nicaragua (15%) y cómo separarlo de un precio con la calculadora gratis. Base gravable, crédito fiscal, exenciones y declaración DGI.',
         calculator: 'iva',
         howToSteps: [
@@ -386,7 +403,7 @@ El IVA se declara cada mes en la **VET**. Necesitás tener cuadrado el IVA cobra
 
 Nortex calcula el IVA de cada venta, acumula el crédito fiscal de tus compras y te muestra el IVA a pagar del mes listo para declarar. Sin hojas de cálculo paralelas.
 
-[Probá Nortex gratis 30 días →](/register)
+[Sacá tu libro de ventas con el IVA ya desglosado →](/register)
 `,
     },
     {
@@ -433,7 +450,7 @@ Para ver cómo el crédito se cruza con el débito, leé la [guía completa del 
 
 Cada compra que ingresás en Nortex suma su crédito fiscal y se descuenta del IVA del mes. Llegás a la declaración con el número ya listo.
 
-[Empezá gratis con Nortex →](/register)
+[Mirá tu crédito fiscal del mes en Nortex →](/register)
 `,
     },
     {
@@ -498,13 +515,14 @@ Es una decisión con consecuencias fiscales: conversala con tu contador. Para en
 
 Estés en Cuota Fija o en régimen general, Nortex ordena tus ventas, compras e inventario. Y el día que des el salto al régimen general, ya tenés todo registrado para facturar con IVA.
 
-[Probá Nortex gratis 30 días →](/register)
+[Llevá tu cuota fija ordenada en Nortex →](/register)
 `,
     },
     {
         slug: 'prestaciones-laborales-nicaragua-guia',
         title: 'Prestaciones de ley en Nicaragua 2026: la guía completa (Ley 185)',
-        description: 'Todas las prestaciones de ley en Nicaragua: vacaciones, aguinaldo, indemnización, horas extra y feriados según la Ley 185. Qué le debés a cada trabajador y cómo calcularlo.',
+        metaTitle: 'Prestaciones de ley en Nicaragua 2026: qué te toca',
+        description: 'Vacaciones, aguinaldo, indemnización, horas extra y feriados según la Ley 185: qué le debés a cada trabajador en Nicaragua y cómo calcularlo bien.',
         keyword: 'prestaciones laborales Nicaragua',
         cluster: 'Recursos Humanos',
         category: 'Recursos Humanos',
@@ -564,18 +582,19 @@ El salario base es solo una parte. Sumá INSS patronal, INATEC y la provisión d
 
 Nortex acumula vacaciones y aguinaldo mes a mes, calcula horas extra y arma la liquidación final sin que tengás que sacar la calculadora. Menos errores, menos reclamos.
 
-[Probá Nortex gratis 30 días →](/register)
+[Calculá las prestaciones de todo tu equipo →](/register)
 `,
     },
     {
         slug: 'como-calcular-inss-nicaragua',
         title: 'Cómo calcular el INSS en Nicaragua 2026 (con calculadora)',
+        metaTitle: 'Calculadora de INSS Nicaragua 2026: laboral y patronal',
         description: 'Calculá el INSS laboral (7%) y patronal en Nicaragua con la calculadora gratis. Qué descuenta el trabajador, qué aporta el patrono y cómo enterarlo.',
         keyword: 'cómo calcular INSS Nicaragua',
         calculator: 'inss',
         howToSteps: [
             { name: 'Tomá el salario bruto', text: 'Partí del salario bruto mensual del trabajador (incluye comisiones y horas extra).' },
-            { name: 'INSS laboral (7%)', text: 'Aplicá el 7% sobre el salario, hasta el techo cotizable vigente: es la deducción que paga el trabajador.' },
+            { name: 'INSS laboral (7%)', text: 'Aplicá el 7% sobre el salario bruto completo: es la deducción que paga el trabajador. Desde el Decreto 06-2019 no hay techo cotizable — cotiza cada córdoba, sin límite superior.' },
             { name: 'INSS patronal', text: 'Aplicá la tasa patronal (22.5% con 50 o más empleados, 21.5% con menos) sobre la misma base: es el aporte de la empresa.' },
             { name: 'INATEC (2%)', text: 'Sumá el 2% de INATEC sobre el total como costo adicional del empleador.' },
         ],
@@ -619,12 +638,13 @@ Para el cálculo completo de la planilla, leé la [guía para calcular la nómin
 
 Ingresás el salario y Nortex calcula el INSS laboral, el patronal y el INATEC, y arma la planilla lista para enterar.
 
-[Probá Nortex gratis 30 días →](/register)
+[Generá el INSS de toda tu planilla en Nortex →](/register)
 `,
     },
     {
         slug: 'como-calcular-aguinaldo-nicaragua',
         title: 'Cómo calcular el aguinaldo en Nicaragua 2026 (con calculadora)',
+        metaTitle: 'Calculadora de aguinaldo Nicaragua 2026 (13.º mes)',
         description: 'Calculá el aguinaldo o décimo tercer mes en Nicaragua con la calculadora gratis. Fórmula para año completo y proporcional, cuándo se paga y si paga impuestos.',
         keyword: 'cómo calcular aguinaldo Nicaragua',
         calculator: 'aguinaldo',
@@ -678,12 +698,13 @@ Para ver cómo encaja en la planilla, leé la [guía para calcular la nómina](/
 
 En vez de buscar la plata en diciembre, Nortex acumula la provisión del aguinaldo mes a mes y la liquida cuando corresponde.
 
-[Probá Nortex gratis 30 días →](/register)
+[Generá el aguinaldo de toda tu planilla →](/register)
 `,
     },
     {
         slug: 'como-calcular-indemnizacion-laboral-nicaragua',
         title: 'Cómo calcular la liquidación en Nicaragua 2026 (con calculadora)',
+        metaTitle: 'Calculadora de liquidación Nicaragua 2026 (Art. 45)',
         description: 'Calculá la liquidación y la indemnización del Art. 45 con la calculadora gratis: antigüedad, vacaciones y aguinaldo proporcional. Con ejemplos.',
         calculator: 'liquidacion',
         howToSteps: [
@@ -739,7 +760,7 @@ Para el panorama completo de derechos, leé la [guía de prestaciones laborales]
 
 Nortex tiene registrado el historial de cada empleado y arma la liquidación con vacaciones, aguinaldo e indemnización proporcionales, lista para revisar.
 
-[Probá Nortex gratis 30 días →](/register)
+[Armá el finiquito completo en Nortex →](/register)
 `,
     },
     {
@@ -1025,7 +1046,7 @@ Un sistema ordena los números y un contador los interpreta y te mantiene en reg
 
 Cada venta, compra y gasto en Nortex queda registrado y clasificado, listo para tus reportes y para tu contador. Menos papeles, más control.
 
-[Probá Nortex gratis 30 días →](/register)
+[Llevá tu partida doble en Nortex →](/register)
 `,
     },
     {
@@ -1584,7 +1605,7 @@ La constancia documenta esos C$2,000 que vos enterás a la DGI a nombre del prov
 
 Cada compra con retención en Nortex genera su constancia con base, tasa y monto correctos, y el reporte mensual queda cuadrado para declarar.
 
-[Probá Nortex gratis 30 días →](/register)
+[Llevá el registro de tus retenciones en Nortex →](/register)
 `,
     },
     {
@@ -1637,7 +1658,7 @@ Además de lo mensual, cada año se presenta la **declaración anual del IR** so
 
 Con Nortex, el IVA, las retenciones y los ingresos del mes salen cuadrados del propio sistema: llegás a la VET con los números listos, no con una caja de facturas por sumar.
 
-[Probá Nortex gratis 30 días →](/register)
+[Mirá tus vencimientos de la DGI en Nortex →](/register)
 `,
     },
     {
@@ -1684,7 +1705,7 @@ Como el anticipo se calcula sobre ingresos brutos, subdeclarar ingresos un mes n
 
 Nortex acumula tus ingresos facturados del período, listos para calcular el anticipo con tu contador, y guarda el historial completo para la declaración anual.
 
-[Probá Nortex gratis 30 días →](/register)
+[Calculá tu anticipo IR del mes en Nortex →](/register)
 `,
     },
     {
@@ -1732,7 +1753,7 @@ La ley exime ciertos bienes y servicios — por ejemplo, productos de la **canas
 
 En Nortex cada producto se configura como gravado o exento: la factura desglosa bien el IVA y el reporte mensual separa las bases automáticamente.
 
-[Probá Nortex gratis 30 días →](/register)
+[Marcá tus productos exentos y que el IVA salga bien →](/register)
 `,
     },
     {
@@ -1790,7 +1811,7 @@ Presentar la declaración y pagar son dos actos: ambos tienen fecha límite seg�
 
 El reporte de IVA de Nortex trae débito, crédito y bases separadas por gravado/exento, directo de tus facturas. Llegás a la VET a transcribir, no a calcular.
 
-[Probá Nortex gratis 30 días →](/register)
+[Armá el resumen de tu declaración en Nortex →](/register)
 `,
     },
     {
@@ -1947,12 +1968,13 @@ Muchos negocios crecen y siguen en Cuota Fija "porque es más fácil", perdiendo
 
 En Cuota Fija, Nortex te ordena ventas e inventario. En régimen general, además te cuadra el [IVA](/blog/iva-nicaragua-guia-completa) y las retenciones. Y si migrás, tu historial ya está en el sistema.
 
-[Probá Nortex gratis 30 días →](/register)
+[Llevá tus números y decidí con datos →](/register)
 `,
     },
     {
         slug: 'como-calcular-horas-extras-nicaragua',
         title: 'Cómo calcular las horas extras en Nicaragua 2026 (con calculadora)',
+        metaTitle: 'Calculadora de horas extra Nicaragua 2026',
         description: 'Calculá las horas extras con la calculadora gratis: en Nicaragua se pagan al doble (100% de recargo, Art. 62 Ley 185). Fórmula, límites legales y ejemplos.',
         calculator: 'horasExtras',
         howToSteps: [
@@ -2017,7 +2039,7 @@ El **Art. 58** limita la jornada extraordinaria a **3 horas diarias y 9 semanale
 
 Registrás las horas y Nortex aplica el recargo correcto (50% o 100%), las suma a la planilla y actualiza INSS e IR. Ver la [guía completa de nómina](/blog/como-calcular-nomina-nicaragua-2026).
 
-[Probá Nortex gratis 30 días →](/register)
+[Cargá las horas extra en la planilla del mes →](/register)
 `,
     },
     {
@@ -2082,12 +2104,13 @@ El trabajador recibe: 20,000 − 1,400 − 1,637 = **C$16,963**.
 
 Nortex anualiza, aplica la tabla por tramos y ajusta cuando el salario varía. La retención sale correcta cada mes, sin hoja de cálculo aparte. Ver la [guía completa de nómina](/blog/como-calcular-nomina-nicaragua-2026).
 
-[Probá Nortex gratis 30 días →](/register)
+[Retené el IR salarial automático en tu planilla →](/register)
 `,
     },
     {
         slug: 'como-calcular-vacaciones-nicaragua',
         title: 'Cómo calcular las vacaciones en Nicaragua 2026 (con calculadora)',
+        metaTitle: 'Calculadora de vacaciones Nicaragua 2026',
         description: 'Calculá las vacaciones según el Art. 76 de la Ley 185 con la calculadora gratis: 15 días por semestre (2.5 por mes), con ejemplos de goce y de pago.',
         keyword: 'cómo calcular vacaciones Nicaragua',
         calculator: 'vacaciones',
@@ -2147,7 +2170,7 @@ Las vacaciones conviven con el resto de [prestaciones laborales](/blog/prestacio
 
 Nortex acumula 2.5 días por mes automáticamente, descuenta los días gozados y valora el saldo para la liquidación. Sin cuaderno, sin discusiones.
 
-[Probá Nortex gratis 30 días →](/register)
+[Llevá el saldo de vacaciones de cada empleado →](/register)
 `,
     },
     {
@@ -2206,7 +2229,7 @@ El contrato define el salario; la [planilla](/blog/como-calcular-nomina-nicaragu
 
 En Nortex cada empleado tiene su ficha con salario, fecha de ingreso y condiciones — y la planilla se calcula desde esos datos. Coherencia entre lo firmado y lo pagado.
 
-[Probá Nortex gratis 30 días →](/register)
+[Llevá el expediente de tu equipo en Nortex →](/register)
 `,
     },
     {
@@ -2254,7 +2277,7 @@ El mínimo es el piso legal, no la referencia de mercado. Para retener gente bue
 
 Con la planilla en Nortex ves todos los salarios de un vistazo y ajustarlos cuando cambia el mínimo toma minutos, con el recálculo de INSS y prestaciones incluido. Ver la [guía de nómina](/blog/como-calcular-nomina-nicaragua-2026).
 
-[Probá Nortex gratis 30 días →](/register)
+[Recalculá tu planilla con el salario nuevo →](/register)
 `,
     },
     {
@@ -2426,7 +2449,7 @@ Armar el estado de resultados solo cuando lo pide el banco o la DGI. Es una herr
 
 Cada venta, compra y gasto registrado en Nortex alimenta tu estado de resultados en tiempo real: margen bruto, gastos y utilidad del mes sin esperar al contador.
 
-[Probá Nortex gratis 30 días →](/register)
+[Mirá tu estado de resultados en Nortex →](/register)
 `,
     },
     {

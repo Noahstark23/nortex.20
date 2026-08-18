@@ -12,7 +12,7 @@
  * vigente; eso lo cubre la Fase 2 con el contador.
  */
 import { describe, it, expect } from 'vitest';
-import { desglosarIvaIncluido, desglosarVentaConExoneracion } from '../backend/services/nicaTax';
+import { desglosarIvaIncluido, desglosarVentaConExoneracion, fiscalMonthRange } from '../backend/services/nicaTax';
 import { weightedAverageCost } from '../backend/services/stockService';
 import { calcularAmortizacion } from '../backend/services/loanMath';
 import { buildSaleJournalLines } from '../backend/services/accounting';
@@ -159,5 +159,89 @@ describe('Partida doble — buildSaleJournalLines', () => {
         ];
         expect(buildSaleJournalLines(115, 60, 'CASH')).toEqual(esperado);
         expect(buildSaleJournalLines(115, 60, 'CASH', null)).toEqual(esperado);
+    });
+});
+
+// ── Rango fiscal del mes — el recorte que comparten los tres documentos ──────
+// El Libro de Ventas, el resumen VET y la declaración mensual tienen que incluir
+// EXACTAMENTE las mismas ventas. Antes los exports usaban un rango anclado a
+// Managua y generateMonthlyReport usaba `new Date(year, month-1, 1)` —la zona del
+// PROCESO—: con el contenedor en UTC el borde se corría seis horas y una venta de
+// la tarde del último día caía en un mes distinto según qué documento se mirara.
+describe('Rango fiscal del mes — fiscalMonthRange', () => {
+    it('arranca a medianoche de Managua (06:00 UTC del día 1)', () => {
+        const { start } = fiscalMonthRange(3, 2026);
+        expect(start.toISOString()).toBe('2026-03-01T06:00:00.000Z');
+    });
+
+    it('termina en el arranque del mes siguiente, y el fin es EXCLUSIVO', () => {
+        const { end } = fiscalMonthRange(3, 2026);
+        expect(end.toISOString()).toBe('2026-04-01T06:00:00.000Z');
+        // El fin de marzo es idéntico al inicio de abril: por eso hay que
+        // consultarlo con `lt` y nunca con `lte`, o el día 1 se cuenta dos veces.
+        expect(end.getTime()).toBe(fiscalMonthRange(4, 2026).start.getTime());
+    });
+
+    it('cruza el fin de año sin agujeros', () => {
+        const dic = fiscalMonthRange(12, 2025);
+        const ene = fiscalMonthRange(1, 2026);
+        expect(dic.end.getTime()).toBe(ene.start.getTime());
+        expect(dic.start.toISOString()).toBe('2025-12-01T06:00:00.000Z');
+    });
+
+    it('cubre febrero de un año bisiesto completo', () => {
+        const feb = fiscalMonthRange(2, 2024);
+        const dias = (feb.end.getTime() - feb.start.getTime()) / 86400000;
+        expect(dias).toBe(29);
+    });
+
+    it('una venta de las 19:00 de Managua del último día cae en SU mes', () => {
+        // 19:00 del 31-mar en Managua = 01:00 UTC del 1-abr. Con un rango en hora
+        // local del proceso (UTC) esa venta se iba a abril.
+        const venta = new Date('2026-04-01T01:00:00.000Z');
+        const marzo = fiscalMonthRange(3, 2026);
+        expect(venta >= marzo.start && venta < marzo.end).toBe(true);
+        const abril = fiscalMonthRange(4, 2026);
+        expect(venta >= abril.start).toBe(false);
+    });
+});
+
+// ── Reconciliación entre documentos ─────────────────────────────────────────
+// El Libro de Ventas y el resumen VET arman sus filas con el mismo desglose que
+// la declaración mensual. Antes hacían `total / 1.15` sobre la venta ENTERA,
+// ignorando `Sale.exemptTotal`: con productos de canasta básica marcados exentos
+// (Inventory.tsx tiene el toggle y salesService ya calcula el campo), los dos
+// documentos del mismo mes declaraban IVA distinto.
+describe('Reconciliación libro/VET/declaración — desglose por venta', () => {
+    it('una venta con parte exonerada no paga IVA por lo exonerado', () => {
+        // C$1.000 de los cuales C$400 son canasta básica: el IVA sale solo de 600.
+        const d = desglosarVentaConExoneracion(1000, 400);
+        expect(d.exonerado.toNumber()).toBe(400);
+        expect(d.gravado.toNumber()).toBe(600);
+        expect(d.iva.toDecimalPlaces(2).toNumber()).toBe(78.26);   // 600 − 600/1,15
+        // Dividir el total entero habría declarado 130,43: 52,17 de más.
+        expect(d.iva.toNumber()).toBeLessThan(130);
+    });
+
+    it('INVARIANTE de la fila: exento + subtotal + IVA reconstruye el total', () => {
+        for (const [total, exento] of [[1000, 400], [115, 0], [999.99, 333.33], [50, 50]]) {
+            const d = desglosarVentaConExoneracion(total, exento);
+            const fila = d.exonerado.toDecimalPlaces(2)
+                .plus(d.netoGravado.toDecimalPlaces(2))
+                .plus(d.iva.toDecimalPlaces(2));
+            expect(fila.toNumber()).toBeCloseTo(Number(total), 2);
+        }
+    });
+
+    it('una venta 100% exonerada no genera IVA', () => {
+        const d = desglosarVentaConExoneracion(500, 500);
+        expect(d.iva.toNumber()).toBe(0);
+        expect(d.ingresoNeto.toNumber()).toBe(500);
+    });
+
+    it('sin exentos se comporta igual que el desglose simple', () => {
+        const d = desglosarVentaConExoneracion(115, 0);
+        expect(d.netoGravado.toNumber()).toBe(100);
+        expect(d.iva.toNumber()).toBe(15);
     });
 });

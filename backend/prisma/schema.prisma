@@ -113,6 +113,8 @@ model User {
   tenant          Tenant           @relation(fields: [tenantId], references: [id])
   shifts          Shift[]
   payments        Payment[]
+  salesSold         Sale[]     @relation("SaleSeller")
+  customersAssigned Customer[] @relation("CustomerSeller")
   auditLogs       AuditLog[]
   productsCreated Product[]
   kardexMovements KardexMovement[]
@@ -181,14 +183,23 @@ model Customer {
   isBlocked   Boolean  @default(false)
   // Cliente mayorista: el POS le aplica el precio de mayoreo desde la unidad 1.
   isWholesale Boolean  @default(false)
+  // Vendedores: cartera de ruta — a qué vendedor (User del MISMO tenant)
+  // pertenece este cliente. Nullable = sin asignar. La validación de que el
+  // User asignado sea del mismo tenant y no esté DISABLED vive en los
+  // endpoints (POST/PUT /api/customers), no en la BD. Los User nunca se
+  // borran físicamente (solo status DISABLED), así que la FK no deja huérfanos.
+  sellerId    String?
   createdAt   DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
+  seller User?  @relation("CustomerSeller", fields: [sellerId], references: [id])
   sales  Sale[]
 
   loans Loan[]
 
   @@index([tenantId])
+  // Filtro de cartera: GET /api/customers?sellerId=… — índice con su query.
+  @@index([tenantId, sellerId])
 }
 
 model Supplier {
@@ -528,6 +539,15 @@ model Sale {
   balance        Decimal   @default(0) @db.Decimal(10, 2)
   dueDate        DateTime?
   shiftId        String?
+  // Vendedores (cartera de ruta): QUIÉN vendió, tomado SIEMPRE de req.userId
+  // (JWT) server-side. Nullable a propósito: (a) aditivo para db push, (b) las
+  // filas históricas quedan null = "Sin vendedor" — NO backfillear desde
+  // Shift.userId, que es mutable (POST /api/shifts/:id/tomar reasigna el turno
+  // sin cerrarlo y re-atribuiría lo ya vendido al último dueño de la caja); la
+  // fuente honesta de backfill es KardexMovement.userId (Fase B, opcional).
+  // No confundir con employeeId (Employee de RRHH por PIN = quién tiene la
+  // gaveta) ni con shiftId (la caja): esto es la persona que FACTURÓ.
+  soldById       String?
   createdAt      DateTime  @default(now())
   globalDiscount Float     @default(0)
   // Facturación DGI
@@ -540,6 +560,7 @@ model Sale {
   customer       Customer?       @relation(fields: [customerId], references: [id])
   employee       Employee?       @relation(fields: [employeeId], references: [id])
   shift          Shift?          @relation(fields: [shiftId], references: [id])
+  soldBy         User?           @relation("SaleSeller", fields: [soldById], references: [id])
   items          SaleItem[]
   payments       Payment[]
   productReturns ProductReturn[]
@@ -551,6 +572,9 @@ model Sale {
   @@index([employeeId])
   @@index([shiftId])
   @@index([tenantId, createdAt])
+  // Reporte "cuánto vende cada vendedor": groupBy(soldById) filtrado por
+  // tenant y rango de fechas. Índice compuesto en el MISMO cambio que la query.
+  @@index([tenantId, soldById, createdAt])
 }
 
 model SaleItem {
@@ -585,6 +609,9 @@ model Payment {
   // B1: el agregado de cobros del día recorre pagos por fecha (el tenant
   // viene por el join a Sale, que ya tiene su compuesto).
   @@index([createdAt])
+  // Reporte "cuánto cobra cada vendedor": groupBy(collectedBy) por rango de
+  // fechas. Payment NO tiene tenantId — el scoping viene del join a Sale.
+  @@index([collectedBy, createdAt])
 }
 
 model Shift {

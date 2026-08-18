@@ -117,15 +117,17 @@ export async function generateMonthlyReport(
     month: number,
     year: number
 ): Promise<MonthlyTaxReport> {
-    // Rango de fechas del mes
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0, 23, 59, 59);
+    // Rango fiscal anclado a Managua, el MISMO que usan el Libro de Ventas y el
+    // resumen VET. Antes acá se usaba `new Date(year, month-1, 1)` —la zona del
+    // proceso—, así que los tres documentos del mismo mes podían recortar ventas
+    // distintas en el borde. Ojo: `end` es EXCLUSIVO (`lt`, no `lte`).
+    const { start: startDate, end: endDate } = fiscalMonthRange(month, year);
 
     // 1. Obtener ventas del mes (excluyendo anuladas, igual que el Libro de Ventas / VET)
     const salesResult = await prisma.sale.aggregate({
         where: {
             tenantId,
-            createdAt: { gte: startDate, lte: endDate },
+            createdAt: { gte: startDate, lt: endDate },
             status: { not: 'VOIDED' },
         },
         _sum: { total: true, exemptTotal: true },
@@ -155,7 +157,7 @@ export async function generateMonthlyReport(
     const purchasesResult = await prisma.purchase.aggregate({
         where: {
             tenantId,
-            date: { gte: startDate, lte: endDate },
+            date: { gte: startDate, lt: endDate },
             status: { in: ['COMPLETED', 'PENDING_PAYMENT'] },
         },
         _sum: { total: true, tax: true },
@@ -182,7 +184,7 @@ export async function generateMonthlyReport(
 
     // B1 — Retenciones SUFRIDAS del mes (crédito contra anticipo IR / IMI).
     const retenciones = await prisma.retencionSufrida.findMany({
-        where: { tenantId, fecha: { gte: startDate, lte: endDate } },
+        where: { tenantId, fecha: { gte: startDate, lt: endDate } },
         select: { tipo: true, amount: true },
     });
     let retIR = new Decimal(0);
@@ -259,14 +261,14 @@ Preparado por: NORTEX ERP
  * Genera el reporte DMI-V2.1 con rangos de facturas para la DGI
  */
 export async function generateDMIReport(tenantId: string, month: number, year: number) {
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0, 23, 59, 59);
+    // Mismo rango fiscal anclado a Managua que la declaración y los libros.
+    const { start: startDate, end: endDate } = fiscalMonthRange(month, year);
 
     // Obtener rango de facturas emitidas en el período
     const invoiceRange = await prisma.sale.aggregate({
         where: {
             tenantId,
-            createdAt: { gte: startDate, lte: endDate },
+            createdAt: { gte: startDate, lt: endDate },
             invoiceNumber: { not: null },
             status: { not: 'VOIDED' },
         },
@@ -506,4 +508,28 @@ Preparado por: NORTEX ERP
         saldoAFavor: saldoAFavor.toNumber(),
         resumen,
     };
+}
+
+// ── Rango fiscal del mes (fuente única) ──────────────────────────────────────
+/**
+ * Nicaragua no aplica horario de verano, así que el mes fiscal va de medianoche
+ * de Managua a medianoche de Managua: UTC-6 fijo.
+ *
+ * Vive acá y no en server.ts porque los TRES documentos del mismo período —el
+ * Libro de Ventas, el resumen VET y la declaración mensual— tienen que recortar
+ * exactamente las mismas ventas. Antes no lo hacían: los exports usaban este
+ * rango anclado a Managua y `generateMonthlyReport` usaba
+ * `new Date(year, month-1, 1)`, o sea la zona horaria del PROCESO. Con el
+ * contenedor en UTC eso corría el borde seis horas, y las ventas de la tarde del
+ * último día del mes (18:00–24:00 de Managua) caían en un mes distinto según qué
+ * documento se mirara.
+ *
+ * El fin es EXCLUSIVO: usar siempre `{ gte: start, lt: end }`, nunca `lte`.
+ */
+export const MANAGUA_UTC_OFFSET_HOURS = 6;
+
+export function fiscalMonthRange(month: number, year: number): { start: Date; end: Date } {
+    const start = new Date(Date.UTC(year, month - 1, 1, MANAGUA_UTC_OFFSET_HOURS, 0, 0));
+    const end   = new Date(Date.UTC(year, month, 1, MANAGUA_UTC_OFFSET_HOURS, 0, 0));
+    return { start, end };
 }

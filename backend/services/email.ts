@@ -232,3 +232,55 @@ export async function sendPasswordResetEmail(
     return false;
   }
 }
+
+/**
+ * Aviso al operador de que entró un pago manual por revisar.
+ *
+ * En Nicaragua el rail de cobro NO es Stripe (no soporta el país como comercio):
+ * es depósito con comprobante y activación a mano. Sin este aviso, el cliente
+ * transfiere y la suscripción se queda esperando a que alguien abra el panel de
+ * administración por casualidad — la peor experiencia posible justo en el momento
+ * en que decidió pagar.
+ *
+ * Destino: BILLING_ALERT_EMAIL (o ADMIN_EMAIL). Si no hay ninguno configurado no
+ * se envía nada y se deja rastro en el log. Fire-and-forget: NUNCA bloquea ni
+ * hace fallar el reporte de pago del cliente.
+ */
+export async function sendManualPaymentAlert(params: {
+  businessName: string;
+  amount: string;
+  currency: string;
+  bank: string;
+  referenceNumber: string;
+  hasProof: boolean;
+}): Promise<boolean> {
+  const to = process.env.BILLING_ALERT_EMAIL || process.env.ADMIN_EMAIL;
+  if (!to) {
+    console.log(`💸 Pago manual reportado por ${params.businessName} — sin BILLING_ALERT_EMAIL configurado, no se envió aviso.`);
+    return false;
+  }
+  const baseUrl = process.env.FRONTEND_URL || 'https://somosnortex.com';
+  const simbolo = params.currency === 'USD' ? '$' : 'C$';
+  return deliver(
+    to,
+    `Pago reportado: ${params.businessName} — ${simbolo}${params.amount}`,
+    nortexEmailShell({
+      heading: 'Entró un pago por revisar',
+      bodyHtml: `
+        <p style="margin:0 0 16px;color:#cbd5e1;">
+          <strong style="color:#f1f5f9;">${esc(params.businessName)}</strong> reportó un pago de
+          <strong style="color:#f1f5f9;">${simbolo}${esc(params.amount)} ${esc(params.currency)}</strong>.
+        </p>
+        <p style="margin:0 0 8px;color:#94a3b8;">Banco: <strong style="color:#cbd5e1;">${esc(params.bank)}</strong></p>
+        <p style="margin:0 0 8px;color:#94a3b8;">Referencia: <strong style="color:#cbd5e1;">${esc(params.referenceNumber)}</strong></p>
+        <p style="margin:0 0 16px;color:${params.hasProof ? '#94a3b8' : '#fbbf24'};">
+          Comprobante: <strong>${params.hasProof ? 'adjunto' : 'NO adjunto — confirmar con el banco'}</strong>
+        </p>
+        <p style="margin:0;color:#64748b;font-size:13px;">
+          La suscripción NO se activa sola: hay que aprobarlo en el panel.
+        </p>`,
+      ctaText: 'Revisar en el panel',
+      ctaUrl: `${baseUrl}/admin`,
+    }),
+  );
+}

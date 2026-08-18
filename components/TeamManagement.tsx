@@ -70,6 +70,13 @@ const ROLE_CONFIG: Record<string, { label: string; icon: React.ReactNode; color:
         bg: 'bg-slate-500/10 border-slate-500/30',
         description: 'POS e inventario básico'
     },
+    VENDEDOR: {
+        label: 'Vendedor',
+        icon: <ShoppingCart size={14} />,
+        color: 'text-cyan-400',
+        bg: 'bg-cyan-500/10 border-cyan-500/30',
+        description: 'Vende y cobra su cartera: POS, sus clientes, fiado y su reporte'
+    },
     ACCOUNTANT: {
         label: 'Contador',
         icon: <Calculator size={14} />,
@@ -322,6 +329,7 @@ const TeamManagement: React.FC = () => {
                                         >
                                             <option value="MANAGER">Gerente</option>
                                             <option value="CASHIER">Cajero</option>
+                                            <option value="VENDEDOR">Vendedor</option>
                                             <option value="VIEWER">Visor</option>
                                             <option value="EMPLOYEE">Empleado</option>
                                             <option value="ACCOUNTANT">Contador</option>
@@ -392,7 +400,7 @@ const TeamManagement: React.FC = () => {
             <div className="bg-nortex-800/50 border border-slate-700/50 rounded-xl p-5">
                 <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4">Permisos por Rol</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'].map(role => {
+                    {['MANAGER', 'CASHIER', 'VENDEDOR', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'].map(role => {
                         const rc = ROLE_CONFIG[role];
                         return (
                             <div key={role} className={`p-3 rounded-lg border ${rc.bg}`}>
@@ -434,7 +442,7 @@ const TeamManagement: React.FC = () => {
                                     <div className="mb-6">
                                         <label className="text-sm font-medium text-slate-300 block mb-2">Rol</label>
                                         <div className="grid grid-cols-2 gap-2">
-                                            {['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'].map(role => {
+                                            {['MANAGER', 'CASHIER', 'VENDEDOR', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'].map(role => {
                                                 const rc = ROLE_CONFIG[role];
                                                 const isSelected = inviteRole === role;
                                                 return (

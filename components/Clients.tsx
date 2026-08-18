@@ -13,6 +13,17 @@ interface Customer {
     currentDebt: number;
     isBlocked: boolean;
     isWholesale?: boolean; // cliente mayorista → el POS le aplica precio de mayoreo
+    // Cartera de ruta: vendedor asignado (User del tenant). El GET lo incluye.
+    sellerId?: string | null;
+    seller?: { id: string; name: string; status?: string } | null;
+}
+
+interface Vendedor { id: string; name: string; role: string; status: string; }
+
+/** Rol del usuario logueado, leído del storage (mismo criterio que Layout). */
+function rolActual(): string {
+    try { return JSON.parse(localStorage.getItem('nortex_user') || '{}').role || ''; }
+    catch { return ''; }
 }
 
 const Clients: React.FC = () => {
@@ -20,13 +31,20 @@ const Clients: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    // Cartera: filtro por vendedor + lista de vendedores para asignar. La lista
+    // sale de GET /api/team (solo OWNER/ADMIN): si responde 403 queda vacía y
+    // los selects de asignación se OCULTAN — nunca un select vacío en silencio.
+    const [sellerFilter, setSellerFilter] = useState('');
+    const [vendedores, setVendedores] = useState<Vendedor[]>([]);
+    const puedeAsignar = vendedores.length > 0;
     const [formData, setFormData] = useState({
         name: '',
         taxId: '',
         phone: '',
         email: '',
         address: '',
-        creditLimit: ''
+        creditLimit: '',
+        sellerId: ''
     });
 
     const fetchCustomers = async () => {
@@ -44,7 +62,36 @@ const Clients: React.FC = () => {
 
     useEffect(() => {
         fetchCustomers();
+        // Equipo para el dropdown de asignación (403 → lista vacía, selects ocultos).
+        (async () => {
+            try {
+                const res = await authFetch('/api/team');
+                if (!res.ok) return;
+                const data = await res.json();
+                const users = Array.isArray(data) ? data : (data.users ?? []);
+                setVendedores(users.filter((u: Vendedor) => u.status !== 'DISABLED'));
+            } catch { /* sin permiso o sin red: se oculta la asignación */ }
+        })();
     }, []);
+
+    const reasignarVendedor = async (customerId: string, sellerId: string) => {
+        try {
+            const res = await authFetch(`/api/customers/${customerId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sellerId: sellerId || null }),
+            });
+            if (!res.ok) {
+                const d = await res.json().catch(() => ({}));
+                alert(d.error || 'No se pudo reasignar el vendedor');
+                return;
+            }
+            const v = vendedores.find(x => x.id === sellerId);
+            setCustomers(prev => prev.map(c => c.id === customerId
+                ? { ...c, sellerId: sellerId || null, seller: v ? { id: v.id, name: v.name } : null }
+                : c));
+        } catch { alert('Error de red al reasignar'); }
+    };
 
     const handleCreate = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -55,13 +102,14 @@ const Clients: React.FC = () => {
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify({
                     ...formData,
+                    sellerId: formData.sellerId || undefined,
                     creditLimit: parseFloat(formData.creditLimit) || 0
                 })
             });
 
             if (res.ok) {
                 setShowModal(false);
-                setFormData({ name: '', taxId: '', phone: '', email: '', address: '', creditLimit: '' });
+                setFormData({ name: '', taxId: '', phone: '', email: '', address: '', creditLimit: '', sellerId: '' });
                 fetchCustomers();
                 alert("Cliente registrado exitosamente.");
             }
@@ -97,8 +145,10 @@ const Clients: React.FC = () => {
     };
 
     const filtered = customers.filter(c =>
-        c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        c.taxId?.includes(searchTerm)
+        (c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        c.taxId?.includes(searchTerm)) &&
+        (sellerFilter === '' ||
+            (sellerFilter === 'none' ? !c.sellerId : c.sellerId === sellerFilter))
     );
 
     return (
@@ -126,6 +176,20 @@ const Clients: React.FC = () => {
                         onChange={e => setSearchTerm(e.target.value)}
                     />
                 </div>
+                {puedeAsignar && (
+                    <div className="mt-3 flex items-center gap-2">
+                        <span className="text-xs text-slate-500 uppercase font-mono">Vendedor</span>
+                        <select
+                            value={sellerFilter}
+                            onChange={e => setSellerFilter(e.target.value)}
+                            className="bg-surface-800/60 border border-white/[0.06] rounded-lg text-sm text-slate-200 px-3 py-1.5 focus:outline-none focus:border-nortex-500"
+                        >
+                            <option value="">Todos</option>
+                            <option value="none">Sin asignar</option>
+                            {vendedores.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                        </select>
+                    </div>
+                )}
             </div>
 
             <div className="bg-surface-900 rounded-xl shadow-sm border border-white/[0.06] overflow-hidden">
@@ -135,17 +199,18 @@ const Clients: React.FC = () => {
                             <th className="p-4">Cliente</th>
                             <th className="p-4">DNI / RUC</th>
                             <th className="p-4">Contacto</th>
+                            <th className="p-4">Vendedor</th>
                             <th className="p-4">Estado Financiero</th>
                             <th className="p-4">Acciones</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-white/[0.04]">
                         {loading ? (
-                            <SkeletonTableRows rows={5} cols={5} />
+                            <SkeletonTableRows rows={5} cols={6} />
                         ) : filtered.length === 0 ? (
                             searchTerm ? (
                                 <TableEmptyState
-                                    colSpan={5}
+                                    colSpan={6}
                                     mode="no-results"
                                     title="No se encontraron clientes"
                                     description={`Ningún cliente coincide con "${searchTerm}". Probá con otro nombre o documento.`}
@@ -153,7 +218,7 @@ const Clients: React.FC = () => {
                                 />
                             ) : (
                                 <TableEmptyState
-                                    colSpan={5}
+                                    colSpan={6}
                                     icon={<Users size={32} />}
                                     title="Todavía no tenés clientes con crédito"
                                     description="Registrá el primero y Nortex te avisa antes de que se pase del límite."
@@ -171,6 +236,22 @@ const Clients: React.FC = () => {
                                     </td>
                                     <td className="p-4 font-mono text-slate-300">{c.taxId || '-'}</td>
                                     <td className="p-4 text-sm text-slate-300">{c.phone || '-'}</td>
+                                    <td className="p-4 text-sm">
+                                        {puedeAsignar ? (
+                                            /* Reasignación inline (solo quien ve /api/team = OWNER/ADMIN;
+                                               el PUT igual lo re-valida server-side). */
+                                            <select
+                                                value={c.sellerId || ''}
+                                                onChange={e => reasignarVendedor(c.id, e.target.value)}
+                                                className="bg-surface-800/60 border border-white/[0.06] rounded text-xs text-slate-300 px-2 py-1 max-w-[140px]"
+                                            >
+                                                <option value="">Sin asignar</option>
+                                                {vendedores.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                                            </select>
+                                        ) : (
+                                            <span className="text-slate-400">{c.seller?.name || '—'}</span>
+                                        )}
+                                    </td>
                                     <td className="p-4">
                                         <div className="flex justify-between text-xs mb-1">
                                             <span className="text-slate-500">Deuda: ${Number(c.currentDebt).toFixed(2)}</span>
@@ -239,6 +320,19 @@ const Clients: React.FC = () => {
                             <div className="bg-blue-500/10 p-4 rounded-lg border border-blue-500/15">
                                 <label className="text-xs font-mono font-bold text-blue-300 flex items-center gap-2"><Shield size={14} /> LÍMITE DE CRÉDITO INICIAL ($)</label>
                                 <input type="number" min="0" className="w-full border border-blue-500/20 rounded p-2 mt-1 font-bold text-lg text-slate-100" value={formData.creditLimit} onChange={e => setFormData({ ...formData, creditLimit: e.target.value })} placeholder="0.00" />
+                                {puedeAsignar && (
+                                    <div className="mt-3">
+                                        <label className="text-xs text-slate-500 uppercase font-mono">Vendedor asignado</label>
+                                        <select
+                                            value={formData.sellerId}
+                                            onChange={e => setFormData({ ...formData, sellerId: e.target.value })}
+                                            className="w-full bg-surface-800/60 border border-white/[0.06] rounded p-2 mt-1 text-slate-200"
+                                        >
+                                            <option value="">Sin asignar</option>
+                                            {vendedores.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                                        </select>
+                                    </div>
+                                )}
                                 <p className="text-[10px] text-blue-400 mt-1">Este monto define cuánto puede comprar a crédito antes de bloquearse.</p>
                             </div>
                             <button type="submit" className="w-full py-3 bg-nortex-900 text-white font-bold rounded-lg hover:bg-nortex-800 flex items-center justify-center gap-2">

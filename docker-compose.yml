@@ -50,6 +50,21 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - DATABASE_URL=mysql://root:${DB_ROOT_PASSWORD:?Define DB_ROOT_PASSWORD}@db:3306/nortex_db
+      # ── Cobro ──────────────────────────────────────────────────────────────
+      # Stripe NO soporta Nicaragua como país de comercio: el rail real de cobro
+      # es depósito/transferencia con comprobante. Estas variables se leen en el
+      # código desde siempre, pero no estaban declaradas acá ni en ningún script
+      # de deploy, así que en producción llegaban vacías: parseBankAccounts()
+      # devolvía [] y la pantalla de pago no mostraba NINGUNA cuenta a la cual
+      # transferir — el cliente que quería pagar no tenía cómo.
+      #
+      # BANK_ACCOUNTS_JSON: arreglo JSON en una línea. Ejemplo:
+      #   [{"bank":"BAC","type":"Cuenta corriente USD","number":"...","name":"NORTEX"}]
+      # Si falta o viene malformado, el frontend cae al canal de WhatsApp.
+      - BANK_ACCOUNTS_JSON=${BANK_ACCOUNTS_JSON:-}
+      # Destino del aviso "entró un pago por revisar" (la activación es manual).
+      - BILLING_ALERT_EMAIL=${BILLING_ALERT_EMAIL:-}
+      - SUPPORT_WHATSAPP=${SUPPORT_WHATSAPP:-}
     # Espera a que MySQL pase el healthcheck antes de arrancar (belt-and-suspenders
     # junto al wait del entrypoint, por si Coolify no honra la condición).
     depends_on:

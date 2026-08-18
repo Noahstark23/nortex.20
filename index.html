@@ -117,16 +117,19 @@
         "availableLanguage": "Spanish",
         "areaServed": "NI"
       }
-    },
-    "aggregateRating": {
-      "@type": "AggregateRating",
-      "ratingValue": "4.8",
-      "ratingCount": "47",
-      "bestRating": "5",
-      "worstRating": "1"
     }
   }
   </script>
+  <!--
+    SIN aggregateRating a propósito. Acá había un 4.8 sobre 47 calificaciones que
+    no corresponde a ninguna reseña verificable, y el prerender lo heredaba
+    IDÉNTICO en las 72 páginas estáticas: cada guía de aguinaldo se declaraba
+    ante Google con el rating del POS. El marcado de reseñas no verificable es
+    causa de acción manual por "structured data spam", y la sanción cae sobre los
+    rich results de todo el dominio — justo el activo que el SEO está
+    construyendo. No reponerlo hasta que existan reseñas reales, y cuando existan
+    emitirlo SOLO en la página del producto, nunca heredado en el shell.
+  -->
 
   <script type="application/ld+json">
   {

@@ -11,7 +11,7 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
-import { sendPasswordResetEmail, sendWelcomeEmail } from './services/email';
+import { sendPasswordResetEmail, sendWelcomeEmail, sendManualPaymentAlert } from './services/email';
 import { runLifecycleEmails } from './services/lifecycleEmails';
 import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
@@ -19,7 +19,7 @@ import { calculateTenantScore } from './services/scoring';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { seedCatalogFor } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
-import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent } from './services/stripe';
+import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent, PLAN_PRICE_USD, requiereConfirmacionDePagoCorto, calcularNuevoVencimiento } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
 import { applyStockDelta, StockError, weightedAverageCost } from './services/stockService';
 import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger, appendDriverWalletMovement, verifyDriverLedger } from './services/ledger';
@@ -514,7 +514,7 @@ app.post('/api/team/invite', authenticate, async (req: any, res: any) => {
             return res.status(400).json({ error: 'Email y rol son requeridos.' });
         }
 
-        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'];
+        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT', 'VENDEDOR'];
         if (!validRoles.includes(role)) {
             return res.status(400).json({ error: `Rol inválido. Opciones: ${validRoles.join(', ')}` });
         }
@@ -641,7 +641,7 @@ app.patch('/api/team/:userId/role', authenticate, async (req: any, res: any) => 
             return res.status(400).json({ error: 'No puedes cambiar tu propio rol.' });
         }
 
-        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'];
+        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT', 'VENDEDOR'];
         if (!validRoles.includes(role)) {
             return res.status(400).json({ error: `Rol inválido. Opciones: ${validRoles.join(', ')}` });
         }
@@ -1530,19 +1530,50 @@ const CreateCustomerSchema = z.object({
     email: z.string().optional(),
     creditLimit: CustomerCreditLimit.optional(),
     isWholesale: z.boolean().optional(),
+    sellerId: z.string().min(1).nullable().optional(),
 });
 
 const UpdateCustomerSchema = z.object({
     creditLimit: CustomerCreditLimit.optional(),
     isBlocked: z.boolean().optional(),
     isWholesale: z.boolean().optional(),
+    sellerId: z.string().min(1).nullable().optional(),
 });
+
+// Vendedores: quién puede ASIGNAR cartera. La regla tiene tres ramas para que
+// el POST sin checkRole no sea una puerta lateral:
+//  · OWNER/ADMIN/MANAGER asignan a quien quieran (validado contra el tenant).
+//  · VENDEDOR se auto-asigna SIEMPRE: lo que venga en el body se ignora —
+//    defaultearlo no basta, porque un vendedor podría crear el cliente
+//    apuntado a OTRO vendedor (o una cajera inflarle la cartera a alguien).
+//  · El resto de roles no asigna: sellerId se descarta en silencio.
+function resolverSellerIdAlCrear(role: string | undefined, userId: string, sellerIdDelBody: string | null | undefined): string | null | undefined {
+    if (role === 'VENDEDOR') return userId;
+    if (role === 'OWNER' || role === 'ADMIN' || role === 'MANAGER') return sellerIdDelBody;
+    return undefined;
+}
+
+// Guard cross-tenant de la asignación: el User apuntado tiene que ser del
+// MISMO tenant y estar activo. Sin esto, un OWNER apunta sellerId a un userId
+// de otro tenant y el include del seller filtra nombres ajenos. (Versión más
+// fuerte que el precedente de loans.ts, que no chequea DISABLED.)
+async function validarSellerDelTenant(sellerId: string, tenantId: string): Promise<boolean> {
+    const seller = await prisma.user.findFirst({
+        where: { id: sellerId, tenantId, status: { not: 'DISABLED' } },
+        select: { id: true },
+    });
+    return seller !== null;
+}
 
 app.post('/api/customers', authenticate, validate(CreateCustomerSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { name, taxId, phone, address, creditLimit, email, isWholesale } = req.body;
 
     try {
+        const sellerId = resolverSellerIdAlCrear(authReq.role, authReq.userId!, req.body.sellerId);
+        if (sellerId != null && authReq.role !== 'VENDEDOR' && !(await validarSellerDelTenant(sellerId, authReq.tenantId!))) {
+            return res.status(400).json({ error: 'Vendedor inválido' });
+        }
         const customer = await prisma.customer.create({
             data: {
                 tenantId: authReq.tenantId,
@@ -1554,7 +1585,8 @@ app.post('/api/customers', authenticate, validate(CreateCustomerSchema), async (
                 creditLimit: creditLimit !== undefined ? new Decimal(creditLimit).toDecimalPlaces(2).toString() : 0,
                 currentDebt: 0,
                 isBlocked: false,
-                isWholesale: Boolean(isWholesale)
+                isWholesale: Boolean(isWholesale),
+                sellerId: sellerId ?? null
             }
         });
         res.json(customer);
@@ -1574,11 +1606,18 @@ app.get('/api/customers', authenticate, async (req: any, res: any) => {
                 { taxId: { contains: String(search) } }
             ];
         }
+        // Cartera por vendedor: ?sellerId=<id> filtra; ?sellerId=none trae los
+        // sin asignar. Un sellerId de otro tenant da lista vacía por el where
+        // compuesto con tenantId — no hace falta validarlo acá.
+        const { sellerId } = req.query;
+        if (sellerId === 'none') whereClause.sellerId = null;
+        else if (sellerId) whereClause.sellerId = String(sellerId);
 
         const customers = await prisma.customer.findMany({
             where: whereClause,
             orderBy: { name: 'asc' },
-            take: 50
+            take: 50,
+            include: { seller: { select: { id: true, name: true, status: true } } }
         });
         res.json(customers);
     } catch (error) {
@@ -1589,9 +1628,14 @@ app.get('/api/customers', authenticate, async (req: any, res: any) => {
 app.put('/api/customers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), validate(UpdateCustomerSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { creditLimit, isBlocked, isWholesale } = req.body;
+    const { creditLimit, isBlocked, isWholesale, sellerId } = req.body;
 
     try {
+        // La REasignación de cartera es de OWNER/ADMIN (el checkRole de esta
+        // ruta ya lo garantiza). Validar el destino ANTES de la transacción.
+        if (sellerId != null && !(await validarSellerDelTenant(sellerId, authReq.tenantId!))) {
+            return res.status(400).json({ error: 'Vendedor inválido' });
+        }
         await prisma.$transaction(async (tx: any) => {
             // Verificar propiedad dentro del tenant (patrón de /api/suppliers PUT).
             const existing = await tx.customer.findFirst({ where: { id, tenantId: authReq.tenantId } });
@@ -1601,6 +1645,7 @@ app.put('/api/customers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), valid
             if (creditLimit !== undefined) data.creditLimit = new Decimal(creditLimit).toDecimalPlaces(2).toString();
             if (isBlocked !== undefined) data.isBlocked = Boolean(isBlocked);
             if (isWholesale !== undefined) data.isWholesale = Boolean(isWholesale);
+            if (sellerId !== undefined) data.sellerId = sellerId; // null = desasignar
 
             if (Object.keys(data).length === 0) return;
 
@@ -1614,8 +1659,8 @@ app.put('/api/customers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), valid
                     action: 'CUSTOMER_CREDIT_UPDATED',
                     details: JSON.stringify({
                         customerId: id,
-                        before: { creditLimit: existing.creditLimit.toString(), isBlocked: existing.isBlocked },
-                        after: { creditLimit: updated.creditLimit.toString(), isBlocked: updated.isBlocked },
+                        before: { creditLimit: existing.creditLimit.toString(), isBlocked: existing.isBlocked, sellerId: existing.sellerId },
+                        after: { creditLimit: updated.creditLimit.toString(), isBlocked: updated.isBlocked, sellerId: updated.sellerId },
                     }),
                 },
             });
@@ -4783,6 +4828,76 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
 });
 
 // GET /api/reports/inventory - Valor de inventario y alertas de stock
+// ── VENDEDORES: cuánto vende y cuánto cobra cada uno ────────────────────────
+// GET /api/reports/sellers?startDate&endDate
+// Todo agregado EN LA BD (groupBy); el fold en JS es sobre grupos, no filas —
+// vive puro en services/sellerReport.ts, con tests. Índices de esta query:
+// Sale[tenantId, soldById, createdAt] y Payment[collectedBy, createdAt],
+// agregados en la misma migración (20260818_vendedores_cartera).
+app.get('/api/reports/sellers', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { startDate, endDate } = req.query;
+    try {
+        const start = startDate ? new Date(String(startDate)) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const end = endDate ? new Date(String(endDate)) : new Date();
+        end.setHours(23, 59, 59, 999);
+
+        // Gate server-side con else explícito: el frontend no gatea rutas, así
+        // que cualquier rol puede llegar acá. Fuera de OWNER/ADMIN/MANAGER,
+        // el reporte queda forzado a la fila PROPIA (soldById/collectedBy del
+        // JWT) — un vendedor ve lo suyo, nunca lo del compañero.
+        const propio = alcanceDelReporte(authReq.role) === 'propio';
+
+        const whereVentas: any = {
+            tenantId: authReq.tenantId,
+            createdAt: { gte: start, lte: end },
+            status: { not: 'VOIDED' },
+        };
+        if (propio) whereVentas.soldById = authReq.userId;
+
+        // Cobros = abonos de CxC. El filtro sale.paymentMethod CREDIT resuelve
+        // tres cosas a la vez: (a) scoping por tenant vía join — Payment NO
+        // tiene tenantId; (b) excluye los Payment de contado que sync y
+        // delivery SÍ crean (executeSale no los crea para el POS: sin este
+        // filtro el reporte mediría distinto según el canal); (c) excluye las
+        // filas rotas del driver (ventas CASH con collectedBy inválido).
+        const wherePagos: any = {
+            sale: { tenantId: authReq.tenantId, paymentMethod: 'CREDIT' },
+            createdAt: { gte: start, lte: end },
+        };
+        if (propio) wherePagos.collectedBy = authReq.userId;
+
+        const [ventas, cobros, usuarios] = await Promise.all([
+            prisma.sale.groupBy({
+                by: ['soldById', 'paymentMethod'],
+                where: whereVentas,
+                _sum: { total: true },
+                _count: { _all: true },
+            }),
+            prisma.payment.groupBy({
+                by: ['collectedBy'],
+                where: wherePagos,
+                _sum: { amount: true },
+                _count: { _all: true },
+            }),
+            prisma.user.findMany({
+                where: { tenantId: authReq.tenantId },
+                select: { id: true, name: true },
+            }),
+        ]);
+
+        const filas = plegarReporteVendedores(
+            ventas.map((g: any) => ({ soldById: g.soldById, paymentMethod: g.paymentMethod, total: g._sum.total?.toString() ?? '0', count: g._count._all })),
+            cobros.map((g: any) => ({ collectedBy: g.collectedBy, amount: g._sum.amount?.toString() ?? '0', count: g._count._all })),
+            usuarios,
+        );
+        res.json({ startDate: start.toISOString(), endDate: end.toISOString(), alcance: propio ? 'propio' : 'todos', sellers: filas });
+    } catch (error) {
+        console.error('Reporte de vendedores:', error);
+        res.status(500).json({ error: 'Error generando el reporte de vendedores' });
+    }
+});
+
 app.get('/api/reports/inventory', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
 
@@ -5302,7 +5417,8 @@ app.get('/api/purchases/pending', authenticate, async (req: any, res: any) => {
 // ==========================================
 
 import { calculatePayroll, calculateLaborLiability } from './services/nicaLabor';
-import { generateMonthlyReport, saveMonthlyReport, desglosarIvaIncluido } from './services/nicaTax';
+import { generateMonthlyReport, saveMonthlyReport, desglosarIvaIncluido, desglosarVentaConExoneracion } from './services/nicaTax';
+import { plegarReporteVendedores, alcanceDelReporte } from './services/sellerReport';
 
 // POST /api/payroll/calculate - Calcular nómina de todos los empleados
 app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), validate(PayrollCalculateSchema), async (req: any, res: any) => {
@@ -6716,6 +6832,22 @@ app.post('/api/billing/report-manual', authenticate, async (req: any, res: any) 
             }
         });
 
+        // Aviso al operador: el rail de cobro es manual, así que sin esto el
+        // cliente transfiere y su suscripción espera a que alguien entre al panel
+        // por casualidad. Fire-and-forget — nunca hace fallar el reporte del pago.
+        const tenantDelPago = await prisma.tenant.findUnique({
+            where: { id: authReq.tenantId! },
+            select: { businessName: true },
+        });
+        void sendManualPaymentAlert({
+            businessName: tenantDelPago?.businessName ?? authReq.tenantId!,
+            amount: monto.toFixed(2),
+            currency: currency || 'USD',
+            bank,
+            referenceNumber: String(referenceNumber),
+            hasProof: Boolean(proofUrl),
+        }).catch((e) => console.error('Aviso de pago manual falló:', e));
+
         res.json({ message: 'Pago reportado exitosamente. Será revisado en las próximas horas.', payment });
     } catch (error) {
         console.error('Manual payment error:', error);
@@ -6768,8 +6900,30 @@ app.post('/api/admin/manual-payments/:id/approve', authenticate, requireSuperAdm
         if (!payment) return res.status(404).json({ error: 'Pago no encontrado' });
         if (payment.status !== 'PENDING') return res.status(400).json({ error: 'Este pago ya fue procesado' });
 
-        const endsAt = new Date();
-        endsAt.setDate(endsAt.getDate() + 30);
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: payment.tenantId },
+            select: { subscriptionEndsAt: true },
+        });
+
+        // El monto no se miraba: aprobar daba 30 días con cualquier cifra, así que
+        // un pago reportado de $1 activaba el mes completo. No se bloquea de plano
+        // —hay pagos en córdobas, parciales y acuerdos puntuales—, pero un pago en
+        // dólares por debajo del precio del plan exige que el admin lo confirme.
+        const montoPagado = new Decimal(payment.amount.toString());
+        const esPagoCorto = requiereConfirmacionDePagoCorto(montoPagado, payment.currency);
+        if (esPagoCorto && req.body?.confirmUnderpaid !== true) {
+            return res.status(409).json({
+                error: `El pago es de $${montoPagado.toFixed(2)} y el plan cuesta $${PLAN_PRICE_USD}. `
+                     + 'Confirmá que lo querés aprobar igual.',
+                needsConfirmation: true,
+                amountPaid: montoPagado.toNumber(),
+                expected: PLAN_PRICE_USD,
+            });
+        }
+
+        // Se extiende desde el vencimiento vigente, no desde hoy: quien renovaba
+        // antes de tiempo perdía los días que le quedaban.
+        const endsAt = calcularNuevoVencimiento(tenant?.subscriptionEndsAt, new Date());
 
         await prisma.$transaction(async (tx: any) => {
             // Concurrencia (TOCTOU): el chequeo status==='PENDING' de arriba está FUERA
@@ -6795,7 +6949,14 @@ app.post('/api/admin/manual-payments/:id/approve', authenticate, requireSuperAdm
                     tenantId: payment.tenantId,
                     userId: authReq.userId!,
                     action: 'MANUAL_PAYMENT_APPROVED',
-                    details: `Pago manual de $${payment.amount} ${payment.currency} aprobado. Ref: ${payment.referenceNumber}`
+                    // Deja rastro de lo que se cobró CONTRA lo esperado y hasta cuándo
+                    // se extendió: sin eso, un pago corto aprobado es indistinguible
+                    // de uno completo al revisar el log meses después.
+                    details: `Pago manual de ${payment.currency === 'USD' ? '$' : 'C$'}${montoPagado.toFixed(2)} `
+                           + `${payment.currency} aprobado (plan $${PLAN_PRICE_USD}`
+                           + `${esPagoCorto ? ' — APROBADO CORTO por decisión del admin' : ''}). `
+                           + `Ref: ${payment.referenceNumber}. Vence ${endsAt.toISOString().slice(0, 10)}. `
+                           + `Comprobante: ${payment.proofUrl ? 'sí' : 'NO ADJUNTO'}`
                 }
             });
         });
@@ -9805,18 +9966,10 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
 // 📊 SPRINT A — EXPORTACIONES FISCALES DGI
 // ==========================================
 
-// Helper: rango de fechas para un mes/año.
-// El servidor puede correr en UTC (Docker/Coolify) → pineamos el rango a la zona de
-// Nicaragua (America/Managua = UTC-6 todo el año, sin horario de verano) para no correr
-// ventas de borde de mes a otro período, y usamos límite superior EXCLUSIVO (inicio del
-// mes siguiente, con `lt`) para no perder el último sub-segundo del último día.
-const MANAGUA_UTC_OFFSET_HOURS = 6; // UTC-6 fijo (Nicaragua no aplica DST)
-function fiscalMonthRange(month: number, year: number) {
-    // Medianoche de Managua expresada en UTC = 06:00 UTC del mismo día calendario.
-    const start = new Date(Date.UTC(year, month - 1, 1, MANAGUA_UTC_OFFSET_HOURS, 0, 0));
-    const end   = new Date(Date.UTC(year, month, 1, MANAGUA_UTC_OFFSET_HOURS, 0, 0)); // inicio del mes siguiente (exclusivo)
-    return { start, end };
-}
+// El rango fiscal del mes vive en services/nicaTax.ts (fuente única): los libros,
+// el resumen VET y la declaración mensual TIENEN que recortar las mismas ventas.
+// Antes había una copia acá y otra fórmula distinta en generateMonthlyReport.
+import { fiscalMonthRange } from './services/nicaTax';
 
 // ── A1: LIBRO DE VENTAS (Excel) ─────────────────────────────────────────────
 // GET /api/fiscal/libro-ventas/:month/:year
@@ -9838,12 +9991,18 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(['OWNER
             orderBy: { createdAt: 'asc' },
         });
 
-        // Precisión fiscal: derivar subtotal/IVA y totalizar con decimal.js (cero float).
-        const IVA_RATE = new Decimal('0.15');
+        // Precisión fiscal: el desglose sale de `desglosarVentaConExoneracion`, la
+        // MISMA función que usan el asiento contable y la declaración mensual.
+        // Antes acá se hacía `total / 1.15` sobre la venta ENTERA, ignorando
+        // `Sale.exemptTotal`: en un negocio que marca productos de canasta básica
+        // como exentos (Inventory.tsx tiene el toggle), este libro declaraba IVA
+        // por ventas exoneradas que nunca se le cobraron al cliente — y no cuadraba
+        // con la declaración del mismo mes, que sí las respetaba.
         const rows = sales.map((s, i) => {
-            const totalD    = new Decimal(s.total.toString());
-            const subtotalD = totalD.div(new Decimal(1).plus(IVA_RATE)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-            const ivaD      = totalD.minus(subtotalD).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            const d = desglosarVentaConExoneracion(
+                s.total.toString(),
+                s.exemptTotal?.toString() ?? '0',
+            );
             return {
                 'N°':            i + 1,
                 'Fecha':         new Date(s.createdAt).toLocaleDateString('es-NI'),
@@ -9851,9 +10010,10 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(['OWNER
                 'Cliente':       s.customerName || s.customer?.name || 'Consumidor Final',
                 'RUC/Cédula':    s.customer?.taxId || '---',
                 'Método Pago':   s.paymentMethod,
-                'Subtotal C$':   subtotalD.toNumber(),
-                'IVA 15% C$':    ivaD.toNumber(),
-                'Total C$':      totalD.toNumber(),
+                'Exento C$':     d.exonerado.toDecimalPlaces(2).toNumber(),
+                'Subtotal C$':   d.netoGravado.toDecimalPlaces(2).toNumber(),
+                'IVA 15% C$':    d.iva.toDecimalPlaces(2).toNumber(),
+                'Total C$':      d.exonerado.plus(d.netoGravado).plus(d.iva).toDecimalPlaces(2).toNumber(),
             };
         });
 
@@ -9861,6 +10021,7 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(['OWNER
         const totals = {
             'N°': '', 'Fecha': '', 'N° Factura': '', 'Cliente': 'TOTALES',
             'RUC/Cédula': '', 'Método Pago': '',
+            'Exento C$':   rows.reduce((s, r) => s.plus(r['Exento C$']), new Decimal(0)).toNumber(),
             'Subtotal C$': rows.reduce((s, r) => s.plus(r['Subtotal C$']), new Decimal(0)).toNumber(),
             'IVA 15% C$':  rows.reduce((s, r) => s.plus(r['IVA 15% C$']), new Decimal(0)).toNumber(),
             'Total C$':    rows.reduce((s, r) => s.plus(r['Total C$']), new Decimal(0)).toNumber(),
@@ -9868,7 +10029,7 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(['OWNER
         rows.push(totals as any);
 
         const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [4, 12, 14, 28, 16, 12, 14, 14, 14].map(w => ({ wch: w }));
+        ws['!cols'] = [4, 12, 14, 28, 16, 12, 14, 14, 14, 14].map(w => ({ wch: w }));
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, `Ventas ${month}-${year}`);
 
@@ -9984,7 +10145,6 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(['OWNER',
 
     try {
         const { start, end } = fiscalMonthRange(month, year);
-        const IVA_RATE = new Decimal('0.15');
         const period = `${year}${String(month).padStart(2, '0')}`;
 
         // Ventas
@@ -10006,35 +10166,53 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(['OWNER',
         });
 
         const lines: string[] = [];
-        lines.push(`# ARCHIVO VET DGI | PERIODO: ${period} | GENERADO: ${new Date().toISOString()}`);
-        lines.push(`# FORMATO: TIPO|FECHA(YYYYMMDD)|N_FACTURA|RUC|NOMBRE|SUBTOTAL|IVA|TOTAL`);
+        // OJO: este NO es un archivo cargable en la Ventanilla Electrónica
+        // Tributaria. El formato de abajo es propio de Nortex — no hay en el repo
+        // ninguna referencia a una especificación publicada por la DGI. Sirve para
+        // TRANSCRIBIR los montos a la VET, no para subirlos. Mientras no se
+        // incorpore la spec oficial, el nombre tiene que decir la verdad: prometer
+        // un archivo que la DGI rechaza quema al contador en su primer intento.
+        lines.push(`# RESUMEN PARA TRANSCRIBIR A LA VET | PERIODO: ${period} | GENERADO: ${new Date().toISOString()}`);
+        lines.push(`# NO es un archivo cargable en la VET: formato propio de Nortex, para transcripcion manual.`);
+        lines.push(`# FORMATO: TIPO|FECHA(YYYYMMDD)|N_FACTURA|RUC|NOMBRE|EXENTO|SUBTOTAL|IVA|TOTAL`);
         lines.push('');
         lines.push('## LIBRO DE VENTAS');
 
         for (const s of sales) {
-            const totalD    = new Decimal(s.total.toString());
-            const subtotalD = totalD.div(new Decimal(1).plus(IVA_RATE)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-            const ivaD      = totalD.minus(subtotalD).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            // Mismo desglose que el Libro de Ventas y la declaración mensual.
+            const d = desglosarVentaConExoneracion(
+                s.total.toString(),
+                s.exemptTotal?.toString() ?? '0',
+            );
+            const exentoD   = d.exonerado.toDecimalPlaces(2);
+            const subtotalD = d.netoGravado.toDecimalPlaces(2);
+            const ivaD      = d.iva.toDecimalPlaces(2);
+            const totalD    = exentoD.plus(subtotalD).plus(ivaD);
             const fecha    = new Date(s.createdAt).toISOString().slice(0,10).replace(/-/g,'');
             const factura  = s.invoiceNumber
                 ? `${s.invoiceSeries || 'A'}${String(s.invoiceNumber).padStart(6,'0')}`
                 : 'CF';
             const nombre   = (s.customerName || s.customer?.name || 'CONSUMIDOR FINAL').toUpperCase().substring(0, 60);
             const rucV     = s.customer?.taxId || '000-000000-0000X';
-            lines.push(`V|${fecha}|${factura}|${rucV}|${nombre}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
+            lines.push(`V|${fecha}|${factura}|${rucV}|${nombre}|${exentoD.toFixed(2)}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
         }
 
         lines.push('');
         lines.push('## LIBRO DE COMPRAS');
 
         for (const p of purchases) {
-            const subtotalD = new Decimal(p.subtotal.toString());
-            const ivaD      = new Decimal(p.tax.toString());
-            const totalD    = new Decimal(p.total.toString());
+            const subtotalD = new Decimal(p.subtotal.toString()).toDecimalPlaces(2);
+            const ivaD      = new Decimal(p.tax.toString()).toDecimalPlaces(2);
+            const totalD    = new Decimal(p.total.toString()).toDecimalPlaces(2);
+            // La compra guarda subtotal/IVA/total por separado; lo que no cuadra
+            // contra el total es la parte exenta (proveedor exonerado, canasta
+            // básica). Se acota a ≥0 para que un dato inconsistente no salga en
+            // negativo. Misma columna que las ventas, para que el archivo alinee.
+            const exentoD = Decimal.max(0, totalD.minus(subtotalD).minus(ivaD)).toDecimalPlaces(2);
             const fecha    = new Date(p.createdAt).toISOString().slice(0,10).replace(/-/g,'');
             const nombre   = p.supplier.name.toUpperCase().substring(0, 60);
             const rucC     = (p.supplier as any).ruc || '000-000000-0000X';
-            lines.push(`C|${fecha}|${p.invoiceNumber}|${rucC}|${nombre}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
+            lines.push(`C|${fecha}|${p.invoiceNumber}|${rucC}|${nombre}|${exentoD.toFixed(2)}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
         }
 
         const content = lines.join('\r\n'); // CRLF como exige la VET

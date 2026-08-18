@@ -274,6 +274,12 @@ offline; asientos espejo exactos. Ver detalle por módulo en la corrida de agent
 
 ---
 
+## Hallazgo 2026-08-18 — recon del módulo Vendedores (S76)
+
+| # | Clase | Hallazgo | Dónde | Severidad | Estado |
+|---|---|---|---|---|---|
+| S76 | Integridad/FK | **Transacción de entrega del driver ROTA en runtime cuando el pedido no tiene `facturaId`.** `driver.ts` escribe `Payment.collectedBy = motorizadoId ?? null`, pero `motorizadoId` es un `Motorizado.id` (`req.driver.id`), NO un `User.id`, y la columna es `String` NOT NULL con FK real a `User`. Con la FK activa en MySQL el `payment.create` viola la restricción y **aborta toda la transacción de entrega** — no es solo un dato mal atribuido, es que ese camino probablemente no puede completarse hoy. Detectado por el recon de Vendedores; el reporte nuevo (`/api/reports/sellers`) es inmune porque filtra `sale.paymentMethod='CREDIT'` y esas ventas son CASH. Verificar contra BD real antes del fix (¿la FK está aplicada en prod?); el arreglo de fondo (¿quién "cobra" una entrega: el motorizado no-User?) es decisión de diseño de la Fase E de Vendedores. | `backend/routes/driver.ts:330` | 🟠 HIGH | 🟡 PENDIENTE |
+
 ## Acciones del CEO (no las puede hacer un agente)
 
 1. **🔴 ROTAR YA `JWT_SECRET`** (estaba en `.env.backup`/git). Con el keyring se hace sin

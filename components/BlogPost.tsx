@@ -8,9 +8,11 @@ import {
     buildBreadcrumbJsonLd,
     buildFaqJsonLd,
     buildHowToJsonLd,
+    buildCalculatorAppJsonLd,
     SITE_ORIGIN,
 } from '../utils/seo';
 import Calculator from './Calculator';
+import { CALCULADORAS } from '../utils/calculadoras';
 import { pickRelatedGuides } from '../utils/related-guides';
 import { ArrowLeft, Clock, Calendar, ChevronRight } from 'lucide-react';
 
@@ -22,7 +24,8 @@ const BlogPost: React.FC = () => {
     useEffect(() => {
         if (!post) return;
         const prevTitle = document.title;
-        document.title = `${post.title} | Nortex Blog`;
+        // Mismo criterio que el prerender: si hay metaTitle manda tal cual.
+        document.title = post.metaTitle ?? `${post.title} | Nortex Blog`;
 
         // JSON-LD: Article + BreadcrumbList + FAQPage (inyectado al montar; el
         // prerender ya lo incluye en el HTML estático para los crawlers).
@@ -36,6 +39,13 @@ const BlogPost: React.FC = () => {
             buildBreadcrumbJsonLd(breadcrumb),
             buildFaqJsonLd(post.faq),
             post.howToSteps ? buildHowToJsonLd(post.title, post.howToSteps, post.description) : null,
+            post.calculator
+                ? buildCalculatorAppJsonLd({
+                      slug: post.slug,
+                      name: CALCULADORAS[post.calculator].titulo,
+                      description: CALCULADORAS[post.calculator].descripcion,
+                  })
+                : null,
         ].filter((b): b is Record<string, unknown> => b !== null);
 
         const tag = document.createElement('script');
