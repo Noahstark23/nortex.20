@@ -11,9 +11,10 @@ import {
     Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers, Download, ChevronLeft, ChevronRight,
     Tag, DollarSign, Printer
 } from 'lucide-react';
-import { ModuleHeader, ModuleHeaderLink } from './ui/ModuleHeader';
+import { ModuleHeader } from './ui/ModuleHeader';
 import { IconButton } from './ui/IconButton';
 import { ActionMenu } from './ui/ActionMenu';
+import { InventoryTabs } from './ui/InventoryTabs';
 import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
 import { maybeAutostartTour } from '../utils/tours';
@@ -977,12 +978,10 @@ export default function Inventory() {
                 icon={<Shield size={20} />}
                 title="Mis Productos"
                 subtitle="Tu catálogo, precios y existencias — cada movimiento queda registrado"
-                contextLinks={
-                    <>
-                        <ModuleHeaderLink href="/app/warehouses">Bodegas</ModuleHeaderLink>
-                        <ModuleHeaderLink href="/app/serials">Series</ModuleHeaderLink>
-                    </>
-                }
+                // Las pestañas viven en un componente compartido montado también en
+                // Bodegas y Series: antes solo existían acá y entrar a las otras dos
+                // dejaba al usuario sin camino de vuelta.
+                contextLinks={<InventoryTabs />}
                 actions={isOwner && (
                     <div className="relative">
                         <button

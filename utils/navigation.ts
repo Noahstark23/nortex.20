@@ -89,6 +89,40 @@ interface CatalogEntry extends NavEntry {
 export const NAV_SECTIONS = ['VENDER', 'STOCK', 'CLIENTES', 'DINERO', 'NEGOCIO'] as const;
 export type NavSection = (typeof NAV_SECTIONS)[number];
 
+/**
+ * Rutas SATÉLITE: pantallas que no tienen ítem propio en el menú pero pertenecen
+ * a uno que sí lo tiene.
+ *
+ * El problema que resuelven: al entrar a Bodegas o a Series, ningún ítem del
+ * sidebar quedaba marcado y todas las secciones aparecían plegadas —el usuario
+ * no sabía dónde estaba ni cómo volver, y no había breadcrumb ni botón atrás—.
+ * Se llegaba a un callejón sin salida desde el propio menú.
+ *
+ * Vive acá, en el módulo puro, y no en el Layout: la pertenencia de una ruta a
+ * una sección es una decisión de navegación, no de presentación, y así se puede
+ * testear sin montar React.
+ */
+export const RUTAS_SATELITE: Readonly<Record<string, string>> = {
+    '/app/warehouses': '/app/inventory',
+    '/app/serials': '/app/inventory',
+};
+
+/** ¿`ruta` es el ítem `navPath` o una pantalla por debajo de él? */
+export function esRutaDe(navPath: string, ruta: string): boolean {
+    // El borde con '/' importa: sin él, '/app/inventory-count' marcaría como
+    // activo a '/app/inventory' (Mis Productos) estando en Contar Productos.
+    return ruta === navPath || ruta.startsWith(`${navPath}/`);
+}
+
+/**
+ * Ítem del menú "dueño" de una ruta: el que debe verse activo y cuya sección
+ * debe estar abierta. Para una ruta normal es ella misma.
+ */
+export function navPathForRoute(ruta: string): string {
+    const satelite = Object.keys(RUTAS_SATELITE).find(r => esRutaDe(r, ruta));
+    return satelite ? RUTAS_SATELITE[satelite] : ruta;
+}
+
 const RETAIL_CATALOG: CatalogEntry[] = [
     // ── INICIO ── (home de acciones para quien administra; fuera de sección)
     { path: '/app/inicio', label: 'Mi Negocio', shortLabel: 'Inicio', group: 'Inicio', iconKey: 'home', roles: GATE_MANAGER },

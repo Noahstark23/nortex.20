@@ -1,0 +1,55 @@
+/**
+ * Pertenencia de rutas al menú (P0-3).
+ *
+ * Lo que se protege: entrar a Bodegas o Series dejaba el sidebar sin ningún ítem
+ * activo y con las secciones plegadas — un callejón sin salida. La regla de qué
+ * ítem "posee" cada ruta vive en el módulo puro, así que se testea sin React.
+ */
+import { describe, it, expect } from 'vitest';
+import { navPathForRoute, esRutaDe, RUTAS_SATELITE } from '../utils/navigation';
+
+describe('esRutaDe', () => {
+    it('la ruta exacta pertenece a su propio ítem', () => {
+        expect(esRutaDe('/app/inventory', '/app/inventory')).toBe(true);
+    });
+
+    it('una pantalla por debajo pertenece al ítem padre', () => {
+        expect(esRutaDe('/app/inventory', '/app/inventory/123')).toBe(true);
+    });
+
+    it('NO confunde un hermano con prefijo compartido', () => {
+        // Sin el borde de '/', estar en Contar Productos marcaría Mis Productos.
+        expect(esRutaDe('/app/inventory', '/app/inventory-count')).toBe(false);
+    });
+
+    it('no marca rutas ajenas', () => {
+        expect(esRutaDe('/app/inventory', '/app/pos')).toBe(false);
+    });
+});
+
+describe('navPathForRoute', () => {
+    it('Bodegas se atribuye a Mis Productos', () => {
+        expect(navPathForRoute('/app/warehouses')).toBe('/app/inventory');
+    });
+
+    it('Series se atribuye a Mis Productos', () => {
+        expect(navPathForRoute('/app/serials')).toBe('/app/inventory');
+    });
+
+    it('una subruta del satélite también se atribuye', () => {
+        expect(navPathForRoute('/app/warehouses/abc')).toBe('/app/inventory');
+    });
+
+    it('una ruta normal se devuelve tal cual', () => {
+        expect(navPathForRoute('/app/pos')).toBe('/app/pos');
+        expect(navPathForRoute('/app/inventory-count')).toBe('/app/inventory-count');
+    });
+
+    it('todo satélite apunta a un ítem distinto de sí mismo', () => {
+        // Un satélite que se apunte a sí mismo dejaría el bug intacto sin avisar.
+        for (const [satelite, dueño] of Object.entries(RUTAS_SATELITE)) {
+            expect(dueño).not.toBe(satelite);
+            expect(dueño.startsWith('/app/')).toBe(true);
+        }
+    });
+});

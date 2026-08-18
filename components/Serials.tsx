@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { ScanBarcode, Plus, Search, X, RefreshCw } from 'lucide-react';
+import { InventoryTabs } from './ui/InventoryTabs';
 
 /** Control de series por unidad (issue #77): registrar, listar, trazar, mover estado. */
 interface Serial { id: string; serial: string; status: string; createdAt: string; product: { name: string; sku: string }; }
@@ -61,7 +62,9 @@ const Serials: React.FC = () => {
     };
 
     return (
-        <div className="p-6 max-w-5xl mx-auto">
+        <div className="h-full overflow-y-auto p-6 max-w-5xl mx-auto">
+            <InventoryTabs className="mb-4" />
+
             <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
                 <h1 className="text-2xl font-bold text-white flex items-center gap-2"><ScanBarcode className="text-brand" /> Números de Serie</h1>
                 <div className="flex gap-2">
