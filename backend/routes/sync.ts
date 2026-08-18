@@ -208,6 +208,13 @@ router.post('/', authenticate, async (req: any, res: any) => {
                         balance: creditBalance.toNumber(),
                         dueDate,
                         shiftId: validShiftId,
+                        // Vendedores: atribuida al JWT que sincroniza (el userId
+                        // del payload IndexedDB se ignora a propósito — aceptarlo
+                        // permitiría inflar la cartera de otro). Limitación
+                        // conocida: en un dispositivo COMPARTIDO donde cambia el
+                        // usuario entre encolar y sincronizar, la venta queda del
+                        // que sincroniza. Modelo asumido: 1 teléfono por vendedor.
+                        soldById: callerUserId,
                         globalDiscount: sale.globalDiscount,
                         invoiceNumber,
                         invoiceSeries,

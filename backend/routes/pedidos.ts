@@ -433,6 +433,8 @@ router.patch('/:id/estado', authenticate, async (req: any, res: any) => {
                         total: pedido.total,
                         status: 'COMPLETED',
                         paymentMethod: 'CASH', // Asumiendo pago contra entrega
+                        // Vendedores: quien marca entregado factura la venta.
+                        soldById: authReq.userId,
                         customerName: pedido.clienteNombre,
                         items: {
                             create: saleItemsData

@@ -310,6 +310,11 @@ export async function executeSale(
                 balance:       creditBalance.toNumber(),
                 dueDate,
                 shiftId:       shiftId ?? null,
+                // Vendedores: quién facturó. Es el userId del JWT que el caller
+                // ya pasa a executeSale — nunca del body. No confundir con
+                // employeeId (identidad de gaveta por PIN) ni derivarlo del
+                // shift (mutable por el traspaso de caja).
+                soldById:      userId,
                 globalDiscount,
                 invoiceNumber: counter.lastNumber,
                 invoiceSeries: 'A',

@@ -64,6 +64,17 @@ const LENDER_ITEMS: NavEntry[] = [
     { path: '/app/cobradores', label: 'Cobradores', shortLabel: 'Cobradores', group: 'Administración', iconKey: 'userPlus' },
 ];
 
+// Vendedor de ruta: menú corto DEDICADO (como el del contador). El gating del
+// catálogo retail es por INCLUSIÓN (roles?: en cada entry): un rol desconocido
+// vería todo lo no-gated — Compras, Proveedores, Mi Equipo… Un branch propio
+// evita sembrar `roles` en ~10 entries y deja el menú del vendedor explícito.
+const VENDEDOR_ITEMS: NavEntry[] = [
+    { path: '/app/pos', label: 'Vender', shortLabel: 'Vender', group: 'Ventas', iconKey: 'shoppingCart' },
+    { path: '/app/clients', label: 'Mis Clientes', shortLabel: 'Clientes', group: 'Clientes', iconKey: 'users' },
+    { path: '/app/receivables', label: 'Fiado / Cobros', shortLabel: 'Fiado', group: 'Clientes', iconKey: 'creditCard' },
+    { path: '/app/reports', label: 'Mi Reporte', shortLabel: 'Reporte', group: 'Reportes', iconKey: 'pieChart' },
+];
+
 const ACCOUNTANT_ITEMS: NavEntry[] = [
     { path: '/app/accounting', label: 'Contabilidad', shortLabel: 'Contab.', group: 'Fiscal', iconKey: 'bookOpen' },
     { path: '/app/reports', label: 'Reportes / Fiscal', shortLabel: 'Fiscal', group: 'Fiscal', iconKey: 'pieChart' },
@@ -163,6 +174,9 @@ export function buildNavigation(ctx: NavContext): Navigation {
     if (role === 'ACCOUNTANT') {
         return { primary: [...ACCOUNTANT_ITEMS], more: [], homePath: '/app/accounting' };
     }
+    if (role === 'VENDEDOR') {
+        return { primary: [...VENDEDOR_ITEMS], more: [], homePath: '/app/pos' };
+    }
 
     const all = retailItemsForRole(role);
     const homePath = homePathFor(role, simple ? 'simple' : 'full');
@@ -214,6 +228,7 @@ export function groupBySection<T extends { group: string }>(entries: T[]): {
  */
 export function homePathFor(role: string, uiMode: UiMode = 'full'): string {
     if (role === 'CASHIER') return '/app/pos';
+    if (role === 'VENDEDOR') return '/app/pos';
     if (role === 'ACCOUNTANT') return '/app/accounting';
     if (uiMode === 'simple' && GATE_MANAGER.includes(role)) return '/app/inicio';
     return '/app/dashboard';

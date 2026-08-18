@@ -64,10 +64,16 @@ interface TaxReportData {
 }
 
 const Reports: React.FC = () => {
-    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'CONTADOR' | 'CAJAS' | 'CONTABILIDAD'>('DASHBOARD');
+    const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'CONTADOR' | 'CAJAS' | 'CONTABILIDAD' | 'VENDEDORES'>('DASHBOARD');
     const [dates, setDates] = useState(getDefaultDates);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+
+    // Vendedores: cuánto vende y cuánto cobra cada uno (Fase A de cartera).
+    // El backend fuerza self-only para roles no-admin — acá solo se pinta.
+    interface FilaVendedor { sellerId: string | null; nombre: string; ventasTotal: string; ventasCount: number; contadoTotal: string; creditoTotal: string; cobradoTotal: string; cobradoCount: number; }
+    const [sellersData, setSellersData] = useState<{ alcance: string; sellers: FilaVendedor[] } | null>(null);
+    const [sellersLoading, setSellersLoading] = useState(false);
 
     const [salesData, setSalesData] = useState<SalesReport | null>(null);
     const [inventoryData, setInventoryData] = useState<InventoryReport | null>(null);
@@ -134,7 +140,17 @@ const Reports: React.FC = () => {
     useEffect(() => {
         if (activeTab === 'CAJAS') fetchShiftHistory();
         if (activeTab === 'CONTABILIDAD') fetchAccounting();
+        if (activeTab === 'VENDEDORES') fetchSellers();
     }, [activeTab]);
+
+    const fetchSellers = async () => {
+        setSellersLoading(true);
+        try {
+            const res = await fetch(`/api/reports/sellers?startDate=${dates.startDate}&endDate=${dates.endDate}`, { headers });
+            if (res.ok) setSellersData(await res.json());
+        } catch (e) { console.error('Error reporte vendedores:', e); }
+        finally { setSellersLoading(false); }
+    };
 
     const fetchAccounting = useCallback(async () => {
         setAccountingLoading(true);
@@ -258,6 +274,12 @@ const Reports: React.FC = () => {
                         className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CONTABILIDAD' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
                         <BookOpen size={14} /> Contabilidad
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('VENDEDORES')}
+                        className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'VENDEDORES' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-surface-800/40'}`}
+                    >
+                        <Users size={14} /> Vendedores
                     </button>
                 </div>
             </div>
@@ -525,6 +547,68 @@ const Reports: React.FC = () => {
                         </div>
                     </div>
                 </>
+            )}
+
+            {/* ==================== TAB: VENDEDORES ==================== */}
+            {activeTab === 'VENDEDORES' && (
+                <div className="bg-surface-900 rounded-xl border border-white/[0.06] shadow-sm overflow-hidden">
+                    <div className="p-4 border-b border-white/[0.06] flex items-center justify-between flex-wrap gap-3">
+                        <div>
+                            <h2 className="font-bold text-slate-100 flex items-center gap-2"><Users size={16} /> Ventas y cobros por vendedor</h2>
+                            <p className="text-xs text-slate-500 mt-0.5">
+                                "Cobrado" = abonos de cuentas por cobrar. El efectivo de una venta de contado
+                                se ve en su columna de ventas, no acá.
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <input type="date" value={dates.startDate} onChange={e => setDates(d => ({ ...d, startDate: e.target.value }))}
+                                className="bg-surface-800/60 border border-white/[0.06] rounded px-2 py-1.5 text-sm text-slate-200" />
+                            <span className="text-slate-500 text-sm">→</span>
+                            <input type="date" value={dates.endDate} onChange={e => setDates(d => ({ ...d, endDate: e.target.value }))}
+                                className="bg-surface-800/60 border border-white/[0.06] rounded px-2 py-1.5 text-sm text-slate-200" />
+                            <button onClick={fetchSellers} className="bg-nortex-900 hover:bg-nortex-800 text-white text-sm font-bold px-3 py-1.5 rounded flex items-center gap-1.5">
+                                <RefreshCw size={13} className={sellersLoading ? 'animate-spin' : ''} /> Aplicar
+                            </button>
+                        </div>
+                    </div>
+                    {sellersLoading ? (
+                        <div className="p-10 text-center text-slate-500"><Loader2 className="animate-spin inline mr-2" size={18} />Cargando…</div>
+                    ) : !sellersData || sellersData.sellers.length === 0 ? (
+                        <div className="p-10 text-center text-slate-500 text-sm">
+                            Sin ventas ni cobros en el período. Las ventas anteriores a esta versión
+                            aparecen como «Sin vendedor» cuando existen.
+                        </div>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left text-sm">
+                                <thead className="bg-surface-800/40 text-slate-500 font-mono text-xs uppercase">
+                                    <tr>
+                                        <th className="p-3">Vendedor</th>
+                                        <th className="p-3 text-right">Ventas C$</th>
+                                        <th className="p-3 text-right"># Ventas</th>
+                                        <th className="p-3 text-right">Contado C$</th>
+                                        <th className="p-3 text-right">Crédito C$</th>
+                                        <th className="p-3 text-right">Cobrado C$</th>
+                                        <th className="p-3 text-right"># Abonos</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/[0.04]">
+                                    {sellersData.sellers.map(f => (
+                                        <tr key={f.sellerId ?? '__sin__'} className={`hover:bg-surface-800/40 ${f.sellerId === null ? 'text-slate-500 italic' : 'text-slate-200'}`}>
+                                            <td className="p-3 font-bold">{f.nombre}</td>
+                                            <td className="p-3 text-right font-mono">{Number(f.ventasTotal).toLocaleString('es-NI', { minimumFractionDigits: 2 })}</td>
+                                            <td className="p-3 text-right font-mono">{f.ventasCount}</td>
+                                            <td className="p-3 text-right font-mono">{Number(f.contadoTotal).toLocaleString('es-NI', { minimumFractionDigits: 2 })}</td>
+                                            <td className="p-3 text-right font-mono">{Number(f.creditoTotal).toLocaleString('es-NI', { minimumFractionDigits: 2 })}</td>
+                                            <td className="p-3 text-right font-mono text-emerald-400">{Number(f.cobradoTotal).toLocaleString('es-NI', { minimumFractionDigits: 2 })}</td>
+                                            <td className="p-3 text-right font-mono">{f.cobradoCount}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
             )}
 
             {/* ==================== TAB: CONTADOR DGI ==================== */}

@@ -514,7 +514,7 @@ app.post('/api/team/invite', authenticate, async (req: any, res: any) => {
             return res.status(400).json({ error: 'Email y rol son requeridos.' });
         }
 
-        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'];
+        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT', 'VENDEDOR'];
         if (!validRoles.includes(role)) {
             return res.status(400).json({ error: `Rol inválido. Opciones: ${validRoles.join(', ')}` });
         }
@@ -641,7 +641,7 @@ app.patch('/api/team/:userId/role', authenticate, async (req: any, res: any) => 
             return res.status(400).json({ error: 'No puedes cambiar tu propio rol.' });
         }
 
-        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'];
+        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT', 'VENDEDOR'];
         if (!validRoles.includes(role)) {
             return res.status(400).json({ error: `Rol inválido. Opciones: ${validRoles.join(', ')}` });
         }
@@ -1530,19 +1530,50 @@ const CreateCustomerSchema = z.object({
     email: z.string().optional(),
     creditLimit: CustomerCreditLimit.optional(),
     isWholesale: z.boolean().optional(),
+    sellerId: z.string().min(1).nullable().optional(),
 });
 
 const UpdateCustomerSchema = z.object({
     creditLimit: CustomerCreditLimit.optional(),
     isBlocked: z.boolean().optional(),
     isWholesale: z.boolean().optional(),
+    sellerId: z.string().min(1).nullable().optional(),
 });
+
+// Vendedores: quién puede ASIGNAR cartera. La regla tiene tres ramas para que
+// el POST sin checkRole no sea una puerta lateral:
+//  · OWNER/ADMIN/MANAGER asignan a quien quieran (validado contra el tenant).
+//  · VENDEDOR se auto-asigna SIEMPRE: lo que venga en el body se ignora —
+//    defaultearlo no basta, porque un vendedor podría crear el cliente
+//    apuntado a OTRO vendedor (o una cajera inflarle la cartera a alguien).
+//  · El resto de roles no asigna: sellerId se descarta en silencio.
+function resolverSellerIdAlCrear(role: string | undefined, userId: string, sellerIdDelBody: string | null | undefined): string | null | undefined {
+    if (role === 'VENDEDOR') return userId;
+    if (role === 'OWNER' || role === 'ADMIN' || role === 'MANAGER') return sellerIdDelBody;
+    return undefined;
+}
+
+// Guard cross-tenant de la asignación: el User apuntado tiene que ser del
+// MISMO tenant y estar activo. Sin esto, un OWNER apunta sellerId a un userId
+// de otro tenant y el include del seller filtra nombres ajenos. (Versión más
+// fuerte que el precedente de loans.ts, que no chequea DISABLED.)
+async function validarSellerDelTenant(sellerId: string, tenantId: string): Promise<boolean> {
+    const seller = await prisma.user.findFirst({
+        where: { id: sellerId, tenantId, status: { not: 'DISABLED' } },
+        select: { id: true },
+    });
+    return seller !== null;
+}
 
 app.post('/api/customers', authenticate, validate(CreateCustomerSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { name, taxId, phone, address, creditLimit, email, isWholesale } = req.body;
 
     try {
+        const sellerId = resolverSellerIdAlCrear(authReq.role, authReq.userId!, req.body.sellerId);
+        if (sellerId != null && authReq.role !== 'VENDEDOR' && !(await validarSellerDelTenant(sellerId, authReq.tenantId!))) {
+            return res.status(400).json({ error: 'Vendedor inválido' });
+        }
         const customer = await prisma.customer.create({
             data: {
                 tenantId: authReq.tenantId,
@@ -1554,7 +1585,8 @@ app.post('/api/customers', authenticate, validate(CreateCustomerSchema), async (
                 creditLimit: creditLimit !== undefined ? new Decimal(creditLimit).toDecimalPlaces(2).toString() : 0,
                 currentDebt: 0,
                 isBlocked: false,
-                isWholesale: Boolean(isWholesale)
+                isWholesale: Boolean(isWholesale),
+                sellerId: sellerId ?? null
             }
         });
         res.json(customer);
@@ -1574,11 +1606,18 @@ app.get('/api/customers', authenticate, async (req: any, res: any) => {
                 { taxId: { contains: String(search) } }
             ];
         }
+        // Cartera por vendedor: ?sellerId=<id> filtra; ?sellerId=none trae los
+        // sin asignar. Un sellerId de otro tenant da lista vacía por el where
+        // compuesto con tenantId — no hace falta validarlo acá.
+        const { sellerId } = req.query;
+        if (sellerId === 'none') whereClause.sellerId = null;
+        else if (sellerId) whereClause.sellerId = String(sellerId);
 
         const customers = await prisma.customer.findMany({
             where: whereClause,
             orderBy: { name: 'asc' },
-            take: 50
+            take: 50,
+            include: { seller: { select: { id: true, name: true, status: true } } }
         });
         res.json(customers);
     } catch (error) {
@@ -1589,9 +1628,14 @@ app.get('/api/customers', authenticate, async (req: any, res: any) => {
 app.put('/api/customers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), validate(UpdateCustomerSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { creditLimit, isBlocked, isWholesale } = req.body;
+    const { creditLimit, isBlocked, isWholesale, sellerId } = req.body;
 
     try {
+        // La REasignación de cartera es de OWNER/ADMIN (el checkRole de esta
+        // ruta ya lo garantiza). Validar el destino ANTES de la transacción.
+        if (sellerId != null && !(await validarSellerDelTenant(sellerId, authReq.tenantId!))) {
+            return res.status(400).json({ error: 'Vendedor inválido' });
+        }
         await prisma.$transaction(async (tx: any) => {
             // Verificar propiedad dentro del tenant (patrón de /api/suppliers PUT).
             const existing = await tx.customer.findFirst({ where: { id, tenantId: authReq.tenantId } });
@@ -1601,6 +1645,7 @@ app.put('/api/customers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), valid
             if (creditLimit !== undefined) data.creditLimit = new Decimal(creditLimit).toDecimalPlaces(2).toString();
             if (isBlocked !== undefined) data.isBlocked = Boolean(isBlocked);
             if (isWholesale !== undefined) data.isWholesale = Boolean(isWholesale);
+            if (sellerId !== undefined) data.sellerId = sellerId; // null = desasignar
 
             if (Object.keys(data).length === 0) return;
 
@@ -1614,8 +1659,8 @@ app.put('/api/customers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), valid
                     action: 'CUSTOMER_CREDIT_UPDATED',
                     details: JSON.stringify({
                         customerId: id,
-                        before: { creditLimit: existing.creditLimit.toString(), isBlocked: existing.isBlocked },
-                        after: { creditLimit: updated.creditLimit.toString(), isBlocked: updated.isBlocked },
+                        before: { creditLimit: existing.creditLimit.toString(), isBlocked: existing.isBlocked, sellerId: existing.sellerId },
+                        after: { creditLimit: updated.creditLimit.toString(), isBlocked: updated.isBlocked, sellerId: updated.sellerId },
                     }),
                 },
             });
@@ -4769,6 +4814,76 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
 });
 
 // GET /api/reports/inventory - Valor de inventario y alertas de stock
+// ── VENDEDORES: cuánto vende y cuánto cobra cada uno ────────────────────────
+// GET /api/reports/sellers?startDate&endDate
+// Todo agregado EN LA BD (groupBy); el fold en JS es sobre grupos, no filas —
+// vive puro en services/sellerReport.ts, con tests. Índices de esta query:
+// Sale[tenantId, soldById, createdAt] y Payment[collectedBy, createdAt],
+// agregados en la misma migración (20260818_vendedores_cartera).
+app.get('/api/reports/sellers', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { startDate, endDate } = req.query;
+    try {
+        const start = startDate ? new Date(String(startDate)) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const end = endDate ? new Date(String(endDate)) : new Date();
+        end.setHours(23, 59, 59, 999);
+
+        // Gate server-side con else explícito: el frontend no gatea rutas, así
+        // que cualquier rol puede llegar acá. Fuera de OWNER/ADMIN/MANAGER,
+        // el reporte queda forzado a la fila PROPIA (soldById/collectedBy del
+        // JWT) — un vendedor ve lo suyo, nunca lo del compañero.
+        const propio = alcanceDelReporte(authReq.role) === 'propio';
+
+        const whereVentas: any = {
+            tenantId: authReq.tenantId,
+            createdAt: { gte: start, lte: end },
+            status: { not: 'VOIDED' },
+        };
+        if (propio) whereVentas.soldById = authReq.userId;
+
+        // Cobros = abonos de CxC. El filtro sale.paymentMethod CREDIT resuelve
+        // tres cosas a la vez: (a) scoping por tenant vía join — Payment NO
+        // tiene tenantId; (b) excluye los Payment de contado que sync y
+        // delivery SÍ crean (executeSale no los crea para el POS: sin este
+        // filtro el reporte mediría distinto según el canal); (c) excluye las
+        // filas rotas del driver (ventas CASH con collectedBy inválido).
+        const wherePagos: any = {
+            sale: { tenantId: authReq.tenantId, paymentMethod: 'CREDIT' },
+            createdAt: { gte: start, lte: end },
+        };
+        if (propio) wherePagos.collectedBy = authReq.userId;
+
+        const [ventas, cobros, usuarios] = await Promise.all([
+            prisma.sale.groupBy({
+                by: ['soldById', 'paymentMethod'],
+                where: whereVentas,
+                _sum: { total: true },
+                _count: { _all: true },
+            }),
+            prisma.payment.groupBy({
+                by: ['collectedBy'],
+                where: wherePagos,
+                _sum: { amount: true },
+                _count: { _all: true },
+            }),
+            prisma.user.findMany({
+                where: { tenantId: authReq.tenantId },
+                select: { id: true, name: true },
+            }),
+        ]);
+
+        const filas = plegarReporteVendedores(
+            ventas.map((g: any) => ({ soldById: g.soldById, paymentMethod: g.paymentMethod, total: g._sum.total?.toString() ?? '0', count: g._count._all })),
+            cobros.map((g: any) => ({ collectedBy: g.collectedBy, amount: g._sum.amount?.toString() ?? '0', count: g._count._all })),
+            usuarios,
+        );
+        res.json({ startDate: start.toISOString(), endDate: end.toISOString(), alcance: propio ? 'propio' : 'todos', sellers: filas });
+    } catch (error) {
+        console.error('Reporte de vendedores:', error);
+        res.status(500).json({ error: 'Error generando el reporte de vendedores' });
+    }
+});
+
 app.get('/api/reports/inventory', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
 
@@ -5289,6 +5404,7 @@ app.get('/api/purchases/pending', authenticate, async (req: any, res: any) => {
 
 import { calculatePayroll, calculateLaborLiability } from './services/nicaLabor';
 import { generateMonthlyReport, saveMonthlyReport, desglosarIvaIncluido, desglosarVentaConExoneracion } from './services/nicaTax';
+import { plegarReporteVendedores, alcanceDelReporte } from './services/sellerReport';
 
 // POST /api/payroll/calculate - Calcular nómina de todos los empleados
 app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), validate(PayrollCalculateSchema), async (req: any, res: any) => {

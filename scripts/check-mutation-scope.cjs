@@ -83,6 +83,10 @@ const PISO_MUTANTES = {
     // calculateLaborLiability (llama `new Date()`) quedan fuera — ver el config.
     'backend/services/nicaLabor.ts': 107,
     'backend/services/nicaTax.ts': 7,
+    // sellerReport.ts: fold puro del reporte por vendedor (cuánto vende y
+    // cuánto cobra cada quien — el número con el que el dueño paga o reclama).
+    // 59 mutantes, score medido 100.00%.
+    'backend/services/sellerReport.ts': 59,
     // stripe.ts entra solo por sus dos funciones PURAS de cobro (35-62), no por
     // el cliente de Stripe: 13 mutantes, score medido 100.00%. Protegen el rail
     // que de verdad cobra en Nicaragua — Stripe no soporta el país como
