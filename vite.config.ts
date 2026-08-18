@@ -50,9 +50,29 @@ export default defineConfig(({ mode }) => {
             // La raíz "/" la sirve Express con landing.html (marketing/SEO).
             // Sin este denylist, el SW intercepta la navegación a "/" y devuelve
             // el index.html cacheado (el SPA), ocultando la landing profesional.
-            // El resto de rutas (/login, /app/*, etc.) siguen usando el fallback al SPA.
+            //
+            // Las rutas PÚBLICAS prerenderizadas (/blog/*, landings de nicho,
+            // legales) también van al denylist. Antes solo se excluía "/": en
+            // cualquier teléfono que hubiera visitado la app una vez, el SW
+            // respondía TODA navegación a /blog/... con el shell PRECACHEADO del
+            // SPA — la página nunca tocaba el servidor, y como el contenido del
+            // blog viaja embebido en el bundle JS, el usuario recurrente veía la
+            // versión de cuando se instaló su SW, deploy tras deploy ("los
+            // cambios no se reflejan en el teléfono"). El HTML prerenderizado
+            // fresco solo lo veían los crawlers y las visitas sin SW.
+            // El app (/login, /app/*, /pedidos, /driver…) conserva el fallback:
+            // ahí el offline-first es la función, no un bug.
             navigateFallback: '/index.html',
-            navigateFallbackDenylist: [/^\/$/, /^\/landing\.html$/],
+            navigateFallbackDenylist: [
+                /^\/$/,
+                /^\/landing\.html$/,
+                /^\/blog(\/|$)/,
+                /^\/ferreterias$/,
+                /^\/farmacias$/,
+                /^\/nicaragua$/,
+                /^\/privacy$/,
+                /^\/terms$/,
+            ],
             // NO cacheamos en runtime las respuestas de /api/. Antes un
             // NetworkFirst guardaba respuestas AUTENTICADAS de negocio en un
             // Cache Storage compartido por origen, sin partición por tenant/sesión
