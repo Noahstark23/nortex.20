@@ -109,9 +109,11 @@ la bomba (revisadas junto al Security Loop):
    comparten entre instancias; no asumas multi-instancia sin store compartido
    (Redis/BullMQ).
 8. **Schema estrictamente aditivo.** El deploy corre `db push` **sin**
-   `--accept-data-loss` (ya se quitó): un cambio NO aditivo (drop/rename/narrow)
-   hace **fallar el arranque** (la instancia vieja sigue sirviendo) en vez de
-   borrar datos de prod. Igual: nunca introducir cambios destructivos (SCALING_AUDIT C).
+   `--accept-data-loss`: un cambio no autorizado hace fallar el arranque en vez
+   de borrar datos de prod. Prisma también puede marcar un `UNIQUE` nuevo como
+   data loss aunque sea expand-only; ese caso requiere preflight DDL state-based,
+   validación con datos y re-ejecución idempotente. Nunca habilitar el flag global
+   ni asumir que una instancia vieja seguirá disponible (SCALING_AUDIT C).
 
 ---
 

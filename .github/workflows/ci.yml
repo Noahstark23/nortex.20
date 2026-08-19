@@ -1,7 +1,6 @@
-# NORTEX — CI mínima: tipos + tests + build en cada PR y push a main.
-# Sin BD (los tests de lógica pura no la necesitan); el smoke E2E con MySQL
-# vive en .claude/skills/run-nortex/smoke.sh (candidato a job futuro con
-# services: mysql:8).
+# NORTEX — CI: tipos + tests + build y smoke del upgrade de schema con MySQL 8.
+# El job verify conserva lógica pura; deploy-schema-smoke reproduce una BD
+# poblada anterior a PR #158 y exige upgrade/idempotencia/fallo cerrado reales.
 name: CI
 on:
   push:
@@ -50,3 +49,40 @@ jobs:
           retention-days: 7
       - name: Build frontend
         run: npm run build
+
+  deploy-schema-smoke:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: nortex_deploy_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Prisma generate
+        run: DATABASE_URL="$DATABASE_URL" npx prisma generate --schema=backend/prisma/schema.prisma
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_deploy_test
+      - name: Preparar schema anterior a PR 158
+        run: git show afe5ca71aa74f458950acd52b504ecd2701e5a56:backend/prisma/schema.prisma > "$RUNNER_TEMP/schema-before-pr158.prisma"
+      - name: Smoke de upgrade con MySQL 8 y datos existentes
+        run: scripts/test-deploy-schema-upgrade.sh
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_deploy_test
+          LEGACY_SCHEMA_PATH: ${{ runner.temp }}/schema-before-pr158.prisma
+          NORTEX_ALLOW_DESTRUCTIVE_SCHEMA_SMOKE: issue-159-ci-only
