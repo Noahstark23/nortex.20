@@ -37,10 +37,16 @@ cleanup_deploy_smoke_logs() {
 trap cleanup_deploy_smoke_logs EXIT HUP INT TERM
 
 run_ci_entrypoint() {
+  # Timeout HOLGADO a propósito (default de prod: 120s): en runners compartidos
+  # el db push de instalación fresca roza los 60s y con ese valor el smoke
+  # falló por variancia de hardware con un schema idéntico al de corridas
+  # verdes previas. Este número protege contra CUELGUES (metadata lock), no
+  # mide performance; el mecanismo de kill ya lo prueba la fase dedicada del
+  # wrapper con 5s.
   GITHUB_ACTIONS=true \
   NORTEX_SCHEMA_ONLY_FOR_CI=1 \
   DB_PUSH_ATTEMPTS=2 \
-  SCHEMA_SYNC_TIMEOUT_SECONDS=60 \
+  SCHEMA_SYNC_TIMEOUT_SECONDS=180 \
     sh scripts/docker-entrypoint.sh
 }
 
