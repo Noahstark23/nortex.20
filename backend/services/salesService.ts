@@ -324,6 +324,18 @@ export async function executeSale(
 
         // (costos y trato fiscal ya resueltos en 5a-bis, antes de crear la venta)
 
+        // Carga de ruta (Vendedores Fase B): si el usuario que vende tiene una
+        // bodega-carga asignada (Warehouse.sellerId = él), el stock sale de SU
+        // carga — con el guard de suficiencia POR BODEGA de applyStockDelta:
+        // no vendés lo que no cargaste. Sin carga asignada, warehouseId queda
+        // undefined y todo sigue saliendo de la bodega default (comportamiento
+        // de siempre; la feature es opt-in por vendedor). El lookup es UNA
+        // query por venta, no por item, y valida tenant + isActive.
+        const cargaVendedor = await tx.warehouse.findFirst({
+            where: { tenantId, sellerId: userId, isActive: true },
+            select: { id: true },
+        });
+
         // 0a · Política de stock negativo del tenant. Si está activa, la venta NO se
         // bloquea por stock insuficiente (la salida puede dejar el stock en negativo y
         // el Kardex refleja la realidad). Por defecto se sigue exigiendo suficiencia.
@@ -366,6 +378,7 @@ export async function executeSale(
                     productId: item.id,
                     delta: -item.quantity,
                     enforceSufficient: enforceStock,
+                    warehouseId: cargaVendedor?.id,
                 });
                 stockBefore = result.stockBefore;
                 stockAfter  = result.stockAfter;

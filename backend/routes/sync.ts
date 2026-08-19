@@ -193,6 +193,12 @@ router.post('/', authenticate, async (req: any, res: any) => {
                     invoiceSeries = updated.series;
                 }
 
+                // Carga de ruta: una query por venta, antes del loop de items.
+                const cargaVendedor = await tx.warehouse.findFirst({
+                    where: { tenantId: callerTenantId, sellerId: callerUserId, isActive: true },
+                    select: { id: true },
+                });
+
                 // 4. CREAR VENTA (la restricción @unique de offlineId corta la
                 //    carrera si dos syncs del mismo lote llegan a la vez: P2002)
                 const newSale = await tx.sale.create({
@@ -286,6 +292,11 @@ router.post('/', authenticate, async (req: any, res: any) => {
                             productId: item.id,
                             delta: -effectiveQty,
                             enforceSufficient: false, // venta offline ya ocurrida
+                            // Carga de ruta: la venta offline del vendedor salió
+                            // de SU carga. enforceSufficient=false puede dejarla
+                            // en negativo — correcto: la venta física ya ocurrió
+                            // y el Kardex por bodega deja el faltante visible.
+                            warehouseId: cargaVendedor?.id,
                         });
                         stockBefore = result.stockBefore;
                         stockAfter = result.stockAfter;

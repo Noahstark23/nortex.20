@@ -1673,6 +1673,72 @@ app.put('/api/customers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), valid
     }
 });
 
+// ── Vendedores Fase B: CATÁLOGO ASIGNADO ────────────────────────────────────
+// Qué productos vende cada vendedor. OPT-IN: sin filas, el vendedor ve el
+// catálogo completo (comportamiento de siempre). La gestión es OWNER/ADMIN.
+
+// GET /api/sellers/:sellerId/catalog — ids de productos asignados
+app.get('/api/sellers/:sellerId/catalog', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const rows = await prisma.sellerProduct.findMany({
+            where: { tenantId: authReq.tenantId!, sellerId: req.params.sellerId },
+            select: { productId: true },
+        });
+        res.json({ productIds: rows.map(r => r.productId) });
+    } catch (e) {
+        console.error('Catálogo de vendedor:', e);
+        res.status(500).json({ error: 'Error leyendo el catálogo del vendedor' });
+    }
+});
+
+const SellerCatalogSchema = z.object({
+    productIds: z.array(z.string().min(1)).max(2000),
+});
+
+// PUT /api/sellers/:sellerId/catalog — REEMPLAZA el set completo (semántica
+// simple y auditable: lo que mandás es lo que queda; [] = quitar el catálogo
+// y volver a "ve todo").
+app.put('/api/sellers/:sellerId/catalog', authenticate, checkRole(['OWNER', 'ADMIN']), validate(SellerCatalogSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const sellerId = String(req.params.sellerId);
+    const productIds: string[] = [...new Set(req.body.productIds as string[])];
+    try {
+        // El vendedor tiene que ser del MISMO tenant y estar activo.
+        if (!(await validarSellerDelTenant(sellerId, authReq.tenantId!))) {
+            return res.status(400).json({ error: 'Vendedor inválido' });
+        }
+        // Y cada producto también es del tenant — un id ajeno no entra al set.
+        const propios = await prisma.product.findMany({
+            where: { id: { in: productIds }, tenantId: authReq.tenantId! },
+            select: { id: true },
+        });
+        if (propios.length !== productIds.length) {
+            return res.status(400).json({ error: 'Uno o más productos no existen en tu inventario' });
+        }
+        await prisma.$transaction([
+            prisma.sellerProduct.deleteMany({ where: { tenantId: authReq.tenantId!, sellerId } }),
+            ...(productIds.length
+                ? [prisma.sellerProduct.createMany({
+                      data: productIds.map(productId => ({ tenantId: authReq.tenantId!, sellerId, productId })),
+                  })]
+                : []),
+            prisma.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'SELLER_CATALOG_UPDATED',
+                    details: JSON.stringify({ sellerId, count: productIds.length }),
+                },
+            }),
+        ]);
+        res.json({ success: true, count: productIds.length });
+    } catch (e) {
+        console.error('Catálogo de vendedor:', e);
+        res.status(500).json({ error: 'Error guardando el catálogo del vendedor' });
+    }
+});
+
 // ==========================================
 // 📦 SRM: PROVEEDORES
 // ==========================================
@@ -3321,6 +3387,20 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
 
     try {
         const whereClause: any = { tenantId: authReq.tenantId };
+
+        // Catálogo asignado (Vendedores Fase B): un VENDEDOR con catálogo ve
+        // SOLO sus productos — en el POS y en cualquier listado. Sin filas, ve
+        // todo (opt-in; el default preserva el comportamiento de siempre). El
+        // filtro vive server-side: el rol sale del JWT, no de la UI.
+        if (authReq.role === 'VENDEDOR') {
+            const catalogo = await prisma.sellerProduct.findMany({
+                where: { tenantId: authReq.tenantId!, sellerId: authReq.userId! },
+                select: { productId: true },
+            });
+            if (catalogo.length > 0) {
+                whereClause.id = { in: catalogo.map(c => c.productId) };
+            }
+        }
 
         if (search) {
             whereClause.OR = [

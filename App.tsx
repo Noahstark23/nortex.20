@@ -32,6 +32,7 @@ import DriverView from './components/DriverView';
 import RegistroRepartidor from './components/RegistroRepartidor';
 import Inventory from './components/Inventory';
 import Warehouses from './components/Warehouses';
+import CargaVendedor from './components/CargaVendedor';
 import PurchaseOrders from './components/PurchaseOrders';
 import Serials from './components/Serials';
 import StockCount from './components/StockCount';
@@ -125,6 +126,7 @@ const ProtectedApp = () => {
         <Route path="delivery" element={<DeliveryManager />} />
         <Route path="inventory" element={<Inventory />} />
         <Route path="warehouses" element={<Warehouses />} />
+        <Route path="mi-carga" element={<CargaVendedor />} />
         <Route path="purchase-orders" element={<PurchaseOrders />} />
         <Route path="serials" element={<Serials />} />
         <Route path="inventory-count" element={<StockCount />} />

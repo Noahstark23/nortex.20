@@ -75,6 +75,7 @@ model Tenant {
   warehouses       Warehouse[]
   productStocks    ProductStock[]
   stockTransfers   StockTransfer[]
+  sellerProducts   SellerProduct[]
   accounts         Account[]
   journalEntries   JournalEntry[]
   fiscalRetentions FiscalRetention[]
@@ -115,6 +116,8 @@ model User {
   payments        Payment[]
   salesSold         Sale[]     @relation("SaleSeller")
   customersAssigned Customer[] @relation("CustomerSeller")
+  loadWarehouses    Warehouse[]     @relation("SellerLoadWarehouse")
+  catalogAssigned   SellerProduct[] @relation("SellerCatalog")
   auditLogs       AuditLog[]
   productsCreated Product[]
   kardexMovements KardexMovement[]
@@ -959,6 +962,7 @@ model Product {
   purchaseOrderItems PurchaseOrderItem[]
   serialNumbers   SerialNumber[]
   productStocks   ProductStock[]
+  sellerCatalog   SellerProduct[]
   defaultSupplier Supplier?        @relation("DefaultSupplier", fields: [defaultSupplierId], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, sku])
@@ -1021,6 +1025,28 @@ model KardexMovement {
 // el total legado la primera vez que se toca (ver stockService).
 // ==========================================
 
+// Vendedores Fase B — catálogo asignado: qué productos vende cada vendedor.
+// OPT-IN por vendedor: sin filas acá, el vendedor ve el catálogo COMPLETO
+// (comportamiento de siempre); con una o más filas, su POS solo lista estas.
+// Independiente de la carga física (Warehouse.sellerId): un negocio puede usar
+// una, la otra, ambas o ninguna.
+model SellerProduct {
+  id        String   @id @default(cuid())
+  tenantId  String
+  sellerId  String
+  productId String
+  createdAt DateTime @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  seller  User    @relation("SellerCatalog", fields: [sellerId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([tenantId, sellerId, productId])
+  // El filtro del POS busca por vendedor; el índice del unique ya lo cubre
+  // (prefijo tenantId+sellerId). Este segundo sirve el borrado por producto.
+  @@index([tenantId, productId])
+}
+
 model Warehouse {
   id        String   @id @default(cuid())
   tenantId  String
@@ -1028,15 +1054,24 @@ model Warehouse {
   address   String?
   isDefault Boolean  @default(false) // bodega principal (recibe los flujos sin bodega explícita)
   isActive  Boolean  @default(true)
+  // Carga de ruta (Vendedores Fase B): si esta bodega es la CARGA de un
+  // vendedor ("camioneta de Juan"), acá vive su User. Con carga asignada, las
+  // ventas de ese vendedor descuentan de ESTA bodega (guard de suficiencia
+  // incluido: no vendés lo que no cargaste). Nullable = bodega normal; el
+  // unique de abajo garantiza a lo sumo UNA carga por vendedor (MySQL permite
+  // múltiples NULL en índice único, así que las bodegas comunes no chocan).
+  sellerId  String?
   createdAt DateTime @default(now())
 
   tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  seller          User?            @relation("SellerLoadWarehouse", fields: [sellerId], references: [id])
   productStocks   ProductStock[]
   kardexMovements KardexMovement[]
   transfersFrom   StockTransfer[]  @relation("TransferFrom")
   transfersTo     StockTransfer[]  @relation("TransferTo")
 
   @@unique([tenantId, name])
+  @@unique([tenantId, sellerId])
   @@index([tenantId])
 }
 

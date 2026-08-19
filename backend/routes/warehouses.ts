@@ -29,7 +29,10 @@ router.get('/', authenticate, async (req: any, res: any) => {
         const warehouses = await prisma.warehouse.findMany({
             where: { tenantId },
             orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-            include: { _count: { select: { productStocks: true } } },
+            include: {
+                _count: { select: { productStocks: true } },
+                seller: { select: { id: true, name: true, status: true } },
+            },
         });
         res.json({ success: true, data: warehouses });
     } catch (e: any) {
@@ -38,22 +41,43 @@ router.get('/', authenticate, async (req: any, res: any) => {
     }
 });
 
+// Carga de ruta: el User asignado como dueño de la carga debe ser del MISMO
+// tenant y estar activo — sin esto, un sellerId ajeno colgaría la bodega de un
+// usuario de otro tenant. El unique [tenantId, sellerId] de la BD garantiza a
+// lo sumo una carga por vendedor (P2002 si ya tiene).
+async function validarVendedorDeCarga(sellerId: string, tenantId: string): Promise<boolean> {
+    const u = await prisma.user.findFirst({
+        where: { id: sellerId, tenantId, status: { not: 'DISABLED' } },
+        select: { id: true },
+    });
+    return u !== null;
+}
+
 // ── POST / — crear bodega ────────────────────────────────────────────────────
 router.post('/', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any) => {
     const tenantId: string = req.tenantId;
-    const { name, address } = req.body ?? {};
+    const { name, address, sellerId } = req.body ?? {};
     const cleanName = String(name ?? '').trim();
     if (!cleanName) return res.status(400).json({ error: 'El nombre de la bodega es requerido' });
 
     try {
-        // La primera bodega del tenant nace como default.
+        if (sellerId != null && !(await validarVendedorDeCarga(String(sellerId), tenantId))) {
+            return res.status(400).json({ error: 'Vendedor inválido' });
+        }
+        // La primera bodega del tenant nace como default — y una carga de
+        // vendedor jamás puede ser la default (recibiría todos los flujos sin
+        // bodega explícita del tenant).
         const count = await prisma.warehouse.count({ where: { tenantId } });
+        if (sellerId != null && count === 0) {
+            return res.status(400).json({ error: 'Creá primero la bodega principal; la carga de un vendedor no puede ser la default.' });
+        }
         const created = await prisma.warehouse.create({
             data: {
                 tenantId,
                 name: cleanName,
                 address: address ? String(address) : null,
                 isDefault: count === 0,
+                sellerId: sellerId != null ? String(sellerId) : null,
             },
         });
         await prisma.auditLog.create({
@@ -65,7 +89,7 @@ router.post('/', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any
         res.status(201).json({ success: true, data: created });
     } catch (e: any) {
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-            return res.status(409).json({ error: 'Ya existe una bodega con ese nombre' });
+            return res.status(409).json({ error: 'Ya existe una bodega con ese nombre, o ese vendedor ya tiene su carga asignada' });
         }
         console.error('Error creando bodega:', e.message);
         res.status(500).json({ error: 'Error al crear la bodega' });
@@ -75,10 +99,16 @@ router.post('/', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any
 // ── PUT /:id — renombrar / dirección / activar-desactivar ───────────────────
 router.put('/:id', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any) => {
     const tenantId: string = req.tenantId;
-    const { name, address, isActive } = req.body ?? {};
+    const { name, address, isActive, sellerId } = req.body ?? {};
     try {
         const wh = await prisma.warehouse.findFirst({ where: { id: req.params.id, tenantId } });
         if (!wh) return res.status(404).json({ error: 'Bodega no encontrada' });
+        if (sellerId !== undefined && sellerId !== null) {
+            if (wh.isDefault) return res.status(400).json({ error: 'La bodega principal no puede ser la carga de un vendedor.' });
+            if (!(await validarVendedorDeCarga(String(sellerId), tenantId))) {
+                return res.status(400).json({ error: 'Vendedor inválido' });
+            }
+        }
         if (name !== undefined && !String(name).trim()) {
             return res.status(400).json({ error: 'El nombre no puede estar vacío' });
         }
@@ -103,12 +133,13 @@ router.put('/:id', authenticate, checkRole(ROLES_WRITE), async (req: any, res: a
                 ...(name !== undefined ? { name: String(name).trim() } : {}),
                 ...(address !== undefined ? { address: address ? String(address) : null } : {}),
                 ...(typeof isActive === 'boolean' ? { isActive } : {}),
+                ...(sellerId !== undefined ? { sellerId: sellerId != null ? String(sellerId) : null } : {}),
             },
         });
         res.json({ success: true, data: updated });
     } catch (e: any) {
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-            return res.status(409).json({ error: 'Ya existe una bodega con ese nombre' });
+            return res.status(409).json({ error: 'Ya existe una bodega con ese nombre, o ese vendedor ya tiene su carga asignada' });
         }
         console.error('Error actualizando bodega:', e.message);
         res.status(500).json({ error: 'Error al actualizar la bodega' });
@@ -122,6 +153,9 @@ router.post('/:id/set-default', authenticate, checkRole(ROLES_WRITE), async (req
         const result = await prisma.$transaction(async (tx) => {
             const wh = await tx.warehouse.findFirst({ where: { id: req.params.id, tenantId, isActive: true } });
             if (!wh) return null;
+            // La carga de un vendedor no puede ser la principal: la default
+            // recibe TODOS los flujos sin bodega explícita del tenant.
+            if (wh.sellerId) throw new Error('CARGA_NO_DEFAULT');
             await tx.warehouse.updateMany({ where: { tenantId, isDefault: true }, data: { isDefault: false } });
             return tx.warehouse.update({ where: { id: wh.id }, data: { isDefault: true } });
         });
@@ -134,6 +168,9 @@ router.post('/:id/set-default', authenticate, checkRole(ROLES_WRITE), async (req
         });
         res.json({ success: true, data: result });
     } catch (e: any) {
+        if (e.message === 'CARGA_NO_DEFAULT') {
+            return res.status(400).json({ error: 'La carga de un vendedor no puede ser la bodega principal.' });
+        }
         console.error('Error cambiando bodega default:', e.message);
         res.status(500).json({ error: 'Error al cambiar la bodega principal' });
     }

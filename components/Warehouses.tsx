@@ -2,7 +2,13 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { Warehouse as WarehouseIcon, Plus, ArrowRightLeft, Star, RefreshCw, X, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 
 /** Multi-bodega: lista, stock por bodega y transferencias (Fase 3). */
-interface Warehouse { id: string; name: string; address?: string | null; isDefault: boolean; isActive: boolean; }
+interface Warehouse {
+    id: string; name: string; address?: string | null; isDefault: boolean; isActive: boolean;
+    // Carga de ruta: si la bodega es la carga de un vendedor, acá viene su User.
+    sellerId?: string | null;
+    seller?: { id: string; name: string; status?: string } | null;
+}
+interface MiembroEquipo { id: string; name: string; status: string; }
 interface StockItem { productId: string; name: string; sku: string; unit: string; stock: number; implicit: boolean; }
 
 const authHeaders = (): Record<string, string> => ({
@@ -29,6 +35,9 @@ const Warehouses: React.FC = () => {
     // en un tenant real) dentro de un contenedor sin scroll: el 98% del inventario
     // quedaba fuera de alcance, sin barra, sin paginar y sin forma de buscar.
     const [busqueda, setBusqueda] = useState('');
+    // Equipo para asignar la carga (GET /api/team es OWNER/ADMIN: ante 403 la
+    // lista queda vacía y el select se oculta — nunca un select vacío mudo).
+    const [equipo, setEquipo] = useState<MiembroEquipo[]>([]);
     const [orden, setOrden] = useState<'nombre' | 'stock'>('nombre');
     const [pagina, setPagina] = useState(1);
 
@@ -67,6 +76,30 @@ const Warehouses: React.FC = () => {
     }, []);
 
     useEffect(() => { load(); }, [load]);
+    useEffect(() => {
+        (async () => {
+            try {
+                const res = await fetch('/api/team', { headers: authHeaders() });
+                if (!res.ok) return; // 403 = rol sin gestión de equipo → select oculto
+                const d = await res.json();
+                const users = Array.isArray(d) ? d : (d.users ?? []);
+                setEquipo(users.filter((u: MiembroEquipo) => u.status !== 'DISABLED'));
+            } catch { /* sin red: se oculta la asignación */ }
+        })();
+    }, []);
+
+    // Asignar / quitar la carga de un vendedor a la bodega seleccionada. El
+    // backend re-valida (mismo tenant, activo, no-default, único por vendedor).
+    const asignarCarga = async (wh: Warehouse, sellerId: string) => {
+        const res = await fetch(`/api/warehouses/${wh.id}`, {
+            method: 'PUT', headers: authHeaders(),
+            body: JSON.stringify({ sellerId: sellerId || null }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) { setMsg(d.error || 'No se pudo asignar'); return; }
+        setMsg(sellerId ? 'Carga asignada' : 'Carga liberada');
+        load();
+    };
     useEffect(() => { if (selected) loadStock(selected); }, [selected, loadStock]);
 
     const createWarehouse = async () => {
@@ -105,11 +138,31 @@ const Warehouses: React.FC = () => {
                 {/* Lista + crear */}
                 <div className="space-y-2">
                     {warehouses.map(w => (
-                        <button key={w.id} onClick={() => setSelected(w)}
-                            className={`w-full text-left p-3 rounded-lg border transition-colors ${selected?.id === w.id ? 'border-brand bg-brand/5' : 'border-white/[0.06] hover:border-white/10'}`}>
-                            <div className="font-bold text-sm flex items-center gap-1.5">{w.name}{w.isDefault && <Star size={12} className="text-amber-500 fill-amber-500" />}</div>
-                            {!w.isActive && <span className="text-[10px] text-red-500">INACTIVA</span>}
-                        </button>
+                        /* El select vive FUERA del <button> (interactivo dentro de
+                           interactivo = HTML inválido — trampa conocida del repo). */
+                        <div key={w.id} className={`rounded-lg border transition-colors ${selected?.id === w.id ? 'border-brand bg-brand/5' : 'border-white/[0.06] hover:border-white/10'}`}>
+                            <button onClick={() => setSelected(w)} className="w-full text-left p-3">
+                                <div className="font-bold text-sm flex items-center gap-1.5">{w.name}{w.isDefault && <Star size={12} className="text-amber-500 fill-amber-500" />}</div>
+                                {!w.isActive && <span className="text-[10px] text-red-500">INACTIVA</span>}
+                                {w.seller && (
+                                    <span className="text-[10px] bg-cyan-500/15 text-cyan-400 px-1.5 py-0.5 rounded font-bold">
+                                        CARGA · {w.seller.name}
+                                    </span>
+                                )}
+                            </button>
+                            {equipo.length > 0 && !w.isDefault && (
+                                <div className="px-3 pb-2">
+                                    <select
+                                        value={w.sellerId || ''}
+                                        onChange={e => asignarCarga(w, e.target.value)}
+                                        className="w-full bg-surface-800/60 border border-white/[0.06] rounded text-[11px] text-slate-300 px-1.5 py-1"
+                                    >
+                                        <option value="">Bodega común (sin vendedor)</option>
+                                        {equipo.map(u => <option key={u.id} value={u.id}>Carga de {u.name}</option>)}
+                                    </select>
+                                </div>
+                            )}
+                        </div>
                     ))}
                     <div className="flex gap-2 pt-2">
                         <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nueva bodega"
