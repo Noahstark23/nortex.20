@@ -42,6 +42,23 @@ interface CartItem {
     expiryDate?: string;
 }
 
+interface PurchaseOrderItemLite {
+    id: string;
+    productId: string;
+    productName: string;
+    quantityOrdered: number;
+    quantityReceived: number;
+    unitCost: number | string;
+}
+
+interface PurchaseOrderLite {
+    id: string;
+    supplierId: string;
+    orderNumber: string;
+    status: string;
+    items: PurchaseOrderItemLite[];
+}
+
 interface Purchase {
     id: string;
     supplierId: string;
@@ -82,6 +99,8 @@ export default function Purchases() {
 
     // New Purchase form
     const [selectedSupplier, setSelectedSupplier] = useState('');
+    const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderLite[]>([]);
+    const [selectedPO, setSelectedPO] = useState('');
     const [invoiceNumber, setInvoiceNumber] = useState('');
     const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CREDIT'>('CASH');
     const [dueDate, setDueDate] = useState('');
@@ -108,15 +127,20 @@ export default function Purchases() {
     const fetchAll = useCallback(async () => {
         setLoading(true);
         try {
-            const [suppRes, prodRes, purchRes] = await Promise.all([
+            const [suppRes, prodRes, purchRes, poRes] = await Promise.all([
                 fetch('/api/suppliers', { headers }),
                 fetch('/api/products', { headers }),
-                fetch('/api/purchases', { headers })
+                fetch('/api/purchases', { headers }),
+                fetch('/api/purchase-orders', { headers })
             ]);
 
             if (suppRes.ok) setSuppliers(await suppRes.json());
             if (prodRes.ok) setProducts(await prodRes.json());
             if (purchRes.ok) setPurchases(await purchRes.json());
+            if (poRes.ok) {
+                const poData = await poRes.json();
+                setPurchaseOrders(Array.isArray(poData?.data) ? poData.data : []);
+            }
         } catch (e) {
             console.error('Error fetching data:', e);
         } finally {
@@ -180,6 +204,55 @@ export default function Purchases() {
         setCart(cart.filter(c => c.productId !== productId));
     };
 
+    // ==========================================
+    // VINCULAR A ORDEN DE COMPRA (S45)
+    // ==========================================
+
+    // OCs facturables del proveedor elegido (no DRAFT/CANCELLED): la factura se
+    // vincula y el backend NO re-ingresa stock (los bienes entran con la recepción).
+    const ocsDelProveedor = useMemo(() =>
+        purchaseOrders.filter(po =>
+            po.supplierId === selectedSupplier &&
+            ['APPROVED', 'PARTIALLY_RECEIVED', 'RECEIVED'].includes(po.status)
+        ), [purchaseOrders, selectedSupplier]);
+
+    const vincularOC = (poId: string) => {
+        setSelectedPO(poId);
+        if (!poId) return;
+        const po = purchaseOrders.find(p => p.id === poId);
+        if (!po) return;
+        // Prefill del carrito desde la OC: lo recibido si ya hubo recepción, si no
+        // lo pedido. Los montos siguen editables (la factura real puede diferir).
+        setCart(po.items.map(it => {
+            const prod = products.find(p => p.id === it.productId);
+            const qty = Number(it.quantityReceived) > 0 ? Number(it.quantityReceived) : Number(it.quantityOrdered);
+            const cost = Number(it.unitCost);
+            return {
+                productId: it.productId,
+                productName: it.productName,
+                sku: prod?.sku ?? '',
+                quantity: qty,
+                unitCost: cost,
+                totalCost: qty * cost,
+                currentStock: prod?.stock ?? 0,
+                // La factura vinculada no re-ingresa stock ni lotes (eso lo hizo la
+                // recepción), así que no se exige lote/vencimiento acá.
+                requiresBatchTracking: false,
+                batchNumber: '',
+                expiryDate: ''
+            };
+        }));
+    };
+
+    const cambiarProveedor = (supplierId: string) => {
+        setSelectedSupplier(supplierId);
+        // La OC (y su carrito prefijado) pertenecen al proveedor anterior.
+        if (selectedPO) {
+            setSelectedPO('');
+            setCart([]);
+        }
+    };
+
     const cartTotals = useMemo(() => {
         const subtotal = cart.reduce((sum, c) => sum + c.totalCost, 0);
         const tax = subtotal * 0.15;
@@ -205,9 +278,12 @@ export default function Purchases() {
                 body: JSON.stringify({
                     supplierId: selectedSupplier,
                     invoiceNumber: invoiceNumber.trim(),
+                    purchaseOrderId: selectedPO || undefined,
                     paymentMethod,
-                    dueDate: paymentMethod === 'CREDIT' ? dueDate : null,
-                    notes: notes.trim() || null,
+                    // undefined (no null): JSON.stringify omite la clave y el campo
+                    // queda realmente opcional para Zod.
+                    dueDate: paymentMethod === 'CREDIT' && dueDate ? dueDate : undefined,
+                    notes: notes.trim() || undefined,
                     items: cart.map(c => {
                         if (c.requiresBatchTracking && (!c.batchNumber || !c.expiryDate)) {
                             throw new Error(`Falta lote o fecha de vencimiento para ${c.productName}`);
@@ -226,9 +302,10 @@ export default function Purchases() {
             const data = await res.json();
 
             if (res.ok) {
-                alert(`Compra registrada exitosamente. Stock actualizado.`);
+                alert(data.message || 'Compra registrada exitosamente.');
                 // Reset form
                 setSelectedSupplier('');
+                setSelectedPO('');
                 setInvoiceNumber('');
                 setPaymentMethod('CASH');
                 setDueDate('');
@@ -454,7 +531,7 @@ export default function Purchases() {
                                         <label className="block text-sm text-slate-300 mb-1.5">Proveedor *</label>
                                         <select
                                             value={selectedSupplier}
-                                            onChange={(e) => setSelectedSupplier(e.target.value)}
+                                            onChange={(e) => cambiarProveedor(e.target.value)}
                                             className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
                                         >
                                             <option value="">Seleccionar proveedor...</option>
@@ -463,6 +540,27 @@ export default function Purchases() {
                                             ))}
                                         </select>
                                     </div>
+                                    {ocsDelProveedor.length > 0 && (
+                                        <div>
+                                            <label className="block text-sm text-slate-300 mb-1.5">Orden de Compra (opcional)</label>
+                                            <select
+                                                value={selectedPO}
+                                                onChange={(e) => vincularOC(e.target.value)}
+                                                className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+                                            >
+                                                <option value="">Sin OC (compra directa)</option>
+                                                {ocsDelProveedor.map(po => (
+                                                    <option key={po.id} value={po.id}>{po.orderNumber} · {po.status === 'RECEIVED' ? 'Recibida' : po.status === 'PARTIALLY_RECEIVED' ? 'Recepción parcial' : 'Aprobada'}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
+                                    {selectedPO && (
+                                        <div className="col-span-2 flex items-start gap-2 px-3 py-2.5 rounded-lg border border-sky-800 bg-sky-950/40 text-sky-300 text-sm">
+                                            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                                            <span>Factura vinculada a la OC: el inventario entra (o entró) con la <strong>recepción</strong> de la orden — esta factura registra solo el dinero (cuenta por pagar o caja, e IVA). El stock NO se vuelve a sumar.</span>
+                                        </div>
+                                    )}
                                     <div>
                                         <label className="block text-sm text-slate-300 mb-1.5"># Factura Proveedor *</label>
                                         <input

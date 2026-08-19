@@ -147,8 +147,19 @@ export const CreatePurchaseSchema = z.object({
     supplierId:    z.string().min(1, 'supplierId requerido'),
     invoiceNumber: z.string().min(1, 'Número de factura requerido'),
     paymentMethod: z.enum(['CASH', 'CREDIT']),
-    dueDate:       z.string().datetime({ offset: true }).optional(),
-    notes:         z.string().max(500).optional(),
+    // El form de Compras manda `dueDate` de un <input type="date"> (YYYY-MM-DD,
+    // sin hora) y `null` en contado/notas vacías. Con `.datetime().optional()` a
+    // secas, TODA compra manual devolvía 400 («Datos de entrada inválidos») y el
+    // form quedó muerto sin que nadie lo notara — SmartPurchases pasaba porque
+    // manda notas fijas y sin dueDate. Aceptar fecha-sola o ISO completo, y null.
+    dueDate:       z.union([
+        z.string().datetime({ offset: true }),
+        z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)'),
+    ]).nullish(),
+    notes:         z.string().max(500).nullish(),
+    // S45 — factura vinculada a una OC: los bienes entran por la recepción de la
+    // OC y el handler NO re-ingresa stock (la factura registra solo el dinero).
+    purchaseOrderId: z.string().min(1).optional(),
     items:         z.array(PurchaseItemSchema).min(1, 'Se requiere al menos 1 ítem'),
 });
 

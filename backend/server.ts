@@ -5098,7 +5098,7 @@ app.get('/api/purchases', authenticate, async (req: any, res: any) => {
 // POST /api/purchases - Registrar compra (Transacción ACID)
 app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), validate(CreatePurchaseSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { supplierId, invoiceNumber, dueDate, paymentMethod, notes, items } = req.body;
+    const { supplierId, invoiceNumber, dueDate, paymentMethod, notes, items, purchaseOrderId } = req.body;
     // Validaciones de formato ya realizadas por Zod
 
     try {
@@ -5114,6 +5114,14 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
         if (!anchorPurchase) await seedChartOfAccounts(authReq.tenantId!);
 
         const result = await prisma.$transaction(async (tx: any) => {
+            // S39 — punto de serialización: lock de la fila del proveedor como PRIMERA
+            // sentencia de la tx. Dos submits concurrentes de la misma factura
+            // serializan acá; el segundo abre su snapshot DESPUÉS del commit del
+            // primero, así que el dup-check de abajo SÍ ve la fila recién creada.
+            // (El @@unique([tenantId, supplierId, invoiceNumber]) de refuerzo entra
+            // en el lote DDL post-dump — este guard es a nivel aplicación.)
+            await tx.$queryRaw`SELECT id FROM \`Supplier\` WHERE id = ${supplierId} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
+
             // Verificar propiedad del proveedor: nunca confiar en supplierId del body sin
             // scoping por tenant. Sin esto, el include: { supplier: true } filtraría PII
             // del proveedor de otro tenant (fuga cross-tenant).
@@ -5122,6 +5130,34 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             });
             if (!supplier) {
                 throw new Error('Proveedor no encontrado');
+            }
+
+            // S39 — idempotencia del registro de factura: el mismo proveedor no puede
+            // tener dos facturas con el mismo número (doble-click / reintento de red
+            // duplicaban factura, inventario y CxP). Bajo el lock del proveedor este
+            // chequeo es race-safe.
+            const facturaExistente = await tx.purchase.findFirst({
+                where: { tenantId: authReq.tenantId!, supplierId, invoiceNumber },
+                select: { id: true },
+            });
+            if (facturaExistente) throw new Error('FACTURA_DUPLICADA');
+
+            // S45 — factura vinculada a una Orden de Compra: los bienes entran al
+            // inventario con la RECEPCIÓN de la OC (goods receipt), así que esta
+            // factura registra SOLO el dinero (CxP/caja, IVA, asiento). Sin este
+            // vínculo, seguir el flujo documentado (recibir OC + registrar factura)
+            // sumaba el stock 2×.
+            let ocVinculada: { id: string; supplierId: string; status: string } | null = null;
+            if (purchaseOrderId) {
+                ocVinculada = await tx.purchaseOrder.findFirst({
+                    where: { id: purchaseOrderId, tenantId: authReq.tenantId! },
+                    select: { id: true, supplierId: true, status: true },
+                });
+                if (!ocVinculada) throw new Error('Orden de compra no encontrada');
+                if (ocVinculada.supplierId !== supplierId) throw new Error('OC_DE_OTRO_PROVEEDOR');
+                if (ocVinculada.status === 'DRAFT' || ocVinculada.status === 'CANCELLED') {
+                    throw new Error(`OC_ESTADO:${ocVinculada.status}`);
+                }
             }
 
             // Snapshot del saldo de billetera para el asiento de auditoría (before/after).
@@ -5182,6 +5218,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     tenantId: authReq.tenantId!,
                     supplierId,
                     invoiceNumber,
+                    purchaseOrderId: ocVinculada?.id ?? null,
                     dueDate: dueDate ? new Date(dueDate) : null,
                     subtotal,
                     tax,
@@ -5197,9 +5234,12 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 include: { items: true, supplier: true }
             });
 
-            // 3. Actualizar inventario + Kardex + Costo promedio ponderado
+            // 3. Actualizar inventario + Kardex + Costo promedio ponderado.
+            //    S45 — con OC vinculada este paso NO corre: el stock, el costo
+            //    promedio, los lotes y el Kardex ya los aplicó (o los aplicará) la
+            //    recepción de la OC; repetirlos acá era el doble ingreso.
             const costChanges: any[] = []; // before/after de stock y costo valorizado por producto
-            for (const item of processedItems) {
+            for (const item of ocVinculada ? [] : processedItems) {
                 const product = await tx.product.findUnique({ where: { id: item.productId } });
                 if (!product) continue;
 
@@ -5344,6 +5384,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                         purchaseId: purchase.id,
                         supplierId,
                         invoiceNumber,
+                        purchaseOrderId: ocVinculada?.id ?? null,
                         paymentMethod,
                         subtotal,
                         tax,
@@ -5360,7 +5401,9 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
         });
 
         res.json({
-            message: `Compra registrada. ${processedItemsCount(items)} productos ingresados al inventario.`,
+            message: result.purchaseOrderId
+                ? 'Factura registrada y vinculada a la Orden de Compra. El inventario entra con la recepción de la OC; esta factura registra el dinero.'
+                : `Compra registrada. ${processedItemsCount(items)} productos ingresados al inventario.`,
             purchase: result
         });
 
@@ -5370,6 +5413,15 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
         // bloqueado la RECHAZA (423) en vez de dejar entrar mercancía sin registrar.
         if (error instanceof PeriodLockedError) {
             return res.status(423).json({ error: error.message });
+        }
+        if (error?.message === 'FACTURA_DUPLICADA') {
+            return res.status(409).json({ error: `Ya existe una factura #${invoiceNumber} de este proveedor — parece un doble envío.` });
+        }
+        if (error?.message === 'OC_DE_OTRO_PROVEEDOR') {
+            return res.status(400).json({ error: 'La orden de compra pertenece a otro proveedor' });
+        }
+        if (error?.message?.startsWith('OC_ESTADO:')) {
+            return res.status(400).json({ error: `No se puede facturar una OC en estado ${error.message.split(':')[1]}` });
         }
         const insufficient = error?.message?.includes('SALDO_INSUFICIENTE');
         const notFound = error?.message?.includes('no encontrado');

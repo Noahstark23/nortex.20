@@ -305,6 +305,13 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_WRITE), async (req: an
 
     try {
         const result = await prisma.$transaction(async (tx) => {
+            // S38 — lock del header ANTES de cualquier lectura: dos receives
+            // concurrentes de la misma OC pasaban ambos el chequeo de estado (el
+            // findFirst no bloquea) y entraban el stock 2×. Con el FOR UPDATE el
+            // segundo espera el commit del primero, y como esta es la PRIMERA
+            // sentencia de la tx, su snapshot se abre después y las lecturas de
+            // abajo ya ven el estado y quantityReceived actualizados.
+            await tx.$queryRaw`SELECT id FROM \`PurchaseOrder\` WHERE id = ${req.params.id} AND \`tenantId\` = ${tenantId} FOR UPDATE`;
             const po = await tx.purchaseOrder.findFirst({
                 where: { id: req.params.id, tenantId },
                 include: { items: true },
@@ -316,11 +323,23 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_WRITE), async (req: an
 
             // Emparejar cada línea con su ítem de la OC (del mismo tenant por construcción).
             const itemById = new Map(po.items.map((i) => [i.id, i]));
+            const seenItemIds = new Set<string>();
             const matched: { item: typeof po.items[number]; line: ReceiptLine }[] = [];
             for (const line of lines) {
                 const item = itemById.get(line.itemId);
                 if (!item) throw new Error(`ITEM_NOT_IN_PO:${line.itemId}`);
-                matched.push({ item, line: { ...line, quantityReceived: Number(line.quantityReceived) } });
+                // S46 — un itemId repetido en el payload sumaría stock 2× en la misma recepción.
+                if (seenItemIds.has(line.itemId)) throw new Error(`ITEM_REPETIDO:${line.itemId}`);
+                seenItemIds.add(line.itemId);
+                // S46 — tope: lo recibido acumulado no puede exceder lo pedido. Un
+                // sobre-envío real del proveedor se registra como compra directa o
+                // ajuste explícito, no inflando la OC.
+                const recv = Number(line.quantityReceived);
+                const pendiente = new Decimal(item.quantityOrdered.toString()).minus(item.quantityReceived.toString());
+                if (new Decimal(recv.toString()).greaterThan(pendiente)) {
+                    throw new Error(`SOBRE_RECEPCION|${item.productName}|${pendiente.toString()}`);
+                }
+                matched.push({ item, line: { ...line, quantityReceived: recv } });
             }
 
             const receiptResults = await applyGoodsReceipt(tx, tenantId, userId, po.id, po.orderNumber, matched);
@@ -369,6 +388,11 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_WRITE), async (req: an
         if (msg === 'NOT_FOUND') return res.status(404).json({ error: 'Orden de compra no encontrada' });
         if (msg.startsWith('INVALID_STATUS:')) return res.status(400).json({ error: `No se puede recibir una OC en estado ${msg.split(':')[1]}` });
         if (msg.startsWith('ITEM_NOT_IN_PO:')) return res.status(400).json({ error: 'Una línea no pertenece a esta orden de compra' });
+        if (msg.startsWith('ITEM_REPETIDO:')) return res.status(400).json({ error: 'Hay líneas repetidas del mismo ítem en la recepción' });
+        if (msg.startsWith('SOBRE_RECEPCION|')) {
+            const [, nombre, pendiente] = msg.split('|');
+            return res.status(400).json({ error: `No podés recibir más de lo pedido: a "${nombre}" le quedan ${pendiente} por recibir` });
+        }
         console.error('Error recibiendo OC:', msg);
         res.status(500).json({ error: 'Error al recibir la orden de compra' });
     }
