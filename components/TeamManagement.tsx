@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     Users, Plus, Shield, Eye, ShoppingCart, UserCog, Copy, Check,
-    Trash2, Clock, Mail, ChevronDown, AlertCircle, Loader2, UserPlus, Calculator
+    Trash2, Clock, Mail, ChevronDown, AlertCircle, Loader2, UserPlus, Calculator, Package
 } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -95,6 +95,44 @@ const TeamManagement: React.FC = () => {
     const [inviteRole, setInviteRole] = useState('CASHIER');
     const [inviteLoading, setInviteLoading] = useState(false);
     const [generatedLink, setGeneratedLink] = useState('');
+    // Catálogo asignado (Vendedores Fase B): modal por vendedor. `null` =
+    // cerrado. Guarda el set editable de productIds + la lista de productos.
+    const [catalogModal, setCatalogModal] = useState<{ sellerId: string; sellerName: string } | null>(null);
+    const [catalogIds, setCatalogIds] = useState<Set<string>>(new Set());
+    const [catalogProducts, setCatalogProducts] = useState<{ id: string; name: string; sku?: string }[]>([]);
+    const [catalogSearch, setCatalogSearch] = useState('');
+    const [catalogSaving, setCatalogSaving] = useState(false);
+
+    const abrirCatalogo = async (sellerId: string, sellerName: string) => {
+        setCatalogModal({ sellerId, sellerName });
+        setCatalogSearch('');
+        try {
+            const [catRes, prodRes] = await Promise.all([
+                fetch(`${API}/api/sellers/${sellerId}/catalog`, { headers: { Authorization: `Bearer ${token}` } }),
+                fetch(`${API}/api/products`, { headers: { Authorization: `Bearer ${token}` } }),
+            ]);
+            const cat = catRes.ok ? await catRes.json() : { productIds: [] };
+            const prods = prodRes.ok ? await prodRes.json() : [];
+            setCatalogIds(new Set(cat.productIds));
+            setCatalogProducts((Array.isArray(prods) ? prods : prods.products ?? []).map((p: any) => ({ id: p.id, name: p.name, sku: p.sku })));
+        } catch { setCatalogProducts([]); }
+    };
+
+    const guardarCatalogo = async () => {
+        if (!catalogModal) return;
+        setCatalogSaving(true);
+        try {
+            const res = await fetch(`${API}/api/sellers/${catalogModal.sellerId}/catalog`, {
+                method: 'PUT',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ productIds: [...catalogIds] }),
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) { alert(d.error || 'No se pudo guardar el catálogo'); return; }
+            setCatalogModal(null);
+        } catch { alert('Error de red'); }
+        finally { setCatalogSaving(false); }
+    };
     const [copiedLink, setCopiedLink] = useState(false);
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
@@ -334,6 +372,15 @@ const TeamManagement: React.FC = () => {
                                             <option value="EMPLOYEE">Empleado</option>
                                             <option value="ACCOUNTANT">Contador</option>
                                         </select>
+                                        {u.role === 'VENDEDOR' && (
+                                            <button
+                                                onClick={() => abrirCatalogo(u.id, u.name)}
+                                                className="p-1.5 text-cyan-400 hover:bg-cyan-500/10 rounded transition-colors"
+                                                title="Catálogo asignado (qué productos vende)"
+                                            >
+                                                <Package size={14} />
+                                            </button>
+                                        )}
                                         <button
                                             onClick={() => handleDisableUser(u.id, u.name)}
                                             className="p-1.5 text-red-400 hover:bg-red-500/10 rounded transition-colors"
@@ -525,6 +572,62 @@ const TeamManagement: React.FC = () => {
                                     </button>
                                 </div>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Modal: catálogo asignado del vendedor ─────────────────── */}
+            {catalogModal && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setCatalogModal(null)}>
+                    <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                        <div className="p-4 border-b border-slate-700">
+                            <h3 className="font-bold text-white flex items-center gap-2">
+                                <Package size={16} className="text-cyan-400" /> Catálogo de {catalogModal.sellerName}
+                            </h3>
+                            <p className="text-xs text-slate-500 mt-1">
+                                Marcá qué productos vende. Sin ninguno marcado, ve el catálogo completo
+                                (así funciona hoy). Con uno o más, su POS muestra SOLO esos.
+                            </p>
+                            <input
+                                value={catalogSearch}
+                                onChange={e => setCatalogSearch(e.target.value)}
+                                placeholder="Buscar producto…"
+                                className="mt-3 w-full bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-200"
+                            />
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-2">
+                            {catalogProducts
+                                .filter(pr => pr.name.toLowerCase().includes(catalogSearch.toLowerCase()) || (pr.sku ?? '').toLowerCase().includes(catalogSearch.toLowerCase()))
+                                .slice(0, 300)
+                                .map(pr => (
+                                    <label key={pr.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-800 cursor-pointer text-sm text-slate-300">
+                                        <input
+                                            type="checkbox"
+                                            checked={catalogIds.has(pr.id)}
+                                            onChange={e => {
+                                                const next = new Set(catalogIds);
+                                                if (e.target.checked) next.add(pr.id); else next.delete(pr.id);
+                                                setCatalogIds(next);
+                                            }}
+                                        />
+                                        <span className="truncate">{pr.name}</span>
+                                        {pr.sku && <span className="text-[10px] text-slate-500 font-mono ml-auto shrink-0">{pr.sku}</span>}
+                                    </label>
+                                ))}
+                            {catalogProducts.length === 0 && (
+                                <p className="text-center text-slate-500 text-sm py-6">Sin productos en el inventario.</p>
+                            )}
+                        </div>
+                        <div className="p-4 border-t border-slate-700 flex items-center justify-between gap-3">
+                            <span className="text-xs text-slate-500">{catalogIds.size} producto(s) asignado(s)</span>
+                            <div className="flex gap-2">
+                                <button onClick={() => setCatalogModal(null)} className="px-4 py-2 bg-slate-700 text-white rounded-lg text-sm hover:bg-slate-600">Cancelar</button>
+                                <button onClick={guardarCatalogo} disabled={catalogSaving}
+                                    className="px-4 py-2 bg-cyan-600 text-white rounded-lg text-sm font-bold hover:bg-cyan-500 disabled:opacity-50">
+                                    {catalogSaving ? 'Guardando…' : 'Guardar catálogo'}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

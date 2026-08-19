@@ -70,6 +70,7 @@ const LENDER_ITEMS: NavEntry[] = [
 // evita sembrar `roles` en ~10 entries y deja el menú del vendedor explícito.
 const VENDEDOR_ITEMS: NavEntry[] = [
     { path: '/app/pos', label: 'Vender', shortLabel: 'Vender', group: 'Ventas', iconKey: 'shoppingCart' },
+    { path: '/app/mi-carga', label: 'Mi Carga', shortLabel: 'Carga', group: 'Ventas', iconKey: 'truck' },
     { path: '/app/clients', label: 'Mis Clientes', shortLabel: 'Clientes', group: 'Clientes', iconKey: 'users' },
     { path: '/app/receivables', label: 'Fiado / Cobros', shortLabel: 'Fiado', group: 'Clientes', iconKey: 'creditCard' },
     { path: '/app/reports', label: 'Mi Reporte', shortLabel: 'Reporte', group: 'Reportes', iconKey: 'pieChart' },
