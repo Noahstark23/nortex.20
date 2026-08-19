@@ -175,6 +175,43 @@ router.post('/:id/repayments', authenticate, validate(RepaymentSchema), async (r
 
         // Transacción Atómica: Registramos el pago y bajamos el saldo en la misma operación
         const transaction = await prisma.$transaction(async (tx) => {
+            // S41 — serialización por préstamo: FOR UPDATE del Loan como PRIMERA
+            // sentencia de la tx. El reintento concurrente espera el commit del
+            // rival y su snapshot se abre después, así que el dedupe de abajo SÍ
+            // ve el abono ya registrado.
+            await tx.$queryRaw`SELECT id FROM \`Loan\` WHERE id = ${id} AND \`lenderId\` = ${lenderId} FOR UPDATE`;
+
+            // S41 — idempotencia del abono. La columna es Decimal(10,2): comparar
+            // con el monto a 2 decimales, igual que quedó persistido.
+            const monto2dp = payment.toDecimalPlaces(2).toNumber();
+            if (timestamp) {
+                // Modo offline: el reintento manda el MISMO timestamp de captura,
+                // que junto a (loanId, monto) identifica el cobro original. Si ya
+                // existe, devolver el existente como éxito (la cola offline debe
+                // dejar de reintentar) SIN decrementar el saldo otra vez.
+                const existente = await tx.repayment.findFirst({
+                    where: { loanId: id, paymentDate: new Date(timestamp), amountPaid: monto2dp },
+                });
+                if (existente) {
+                    const loanActual = await tx.loan.findFirst({ where: { id, lenderId } });
+                    return { repayment: existente, updatedLoan: loanActual, idempotente: true };
+                }
+            } else {
+                // Online sin llave de cliente: mismo préstamo + mismo monto + mismo
+                // cobrador en los últimos 10s = doble-click casi seguro → 409. Un
+                // duplicado intencional se reintenta pasados unos segundos.
+                const reciente = await tx.repayment.findFirst({
+                    where: {
+                        loanId: id,
+                        amountPaid: monto2dp,
+                        collectedBy: collectedBy ?? null,
+                        createdAt: { gte: new Date(Date.now() - 10_000) },
+                    },
+                    select: { id: true },
+                });
+                if (reciente) throw new Error('ABONO_DUPLICADO');
+            }
+
             // 1. Crear el recibo de pago
             const repayment = await tx.repayment.create({
                 data: {
@@ -191,7 +228,9 @@ router.post('/:id/repayments', authenticate, validate(RepaymentSchema), async (r
             //    solo decrementa si el saldo aún alcanza; si otra transacción ya lo
             //    dejó corto, count === 0 y abortamos sin dejar el saldo negativo.
             const dec = await tx.loan.updateMany({
-                where: { id, lenderId, balanceRemaining: { gte: paymentNum - 0.01 } },
+                // Tolerancia de 1 centavo calculada en Decimal (0.1 - 0.01 en float
+                // da 0.09000000000000001 y endurece el guard por un pelo).
+                where: { id, lenderId, balanceRemaining: { gte: payment.minus('0.01').toNumber() } },
                 data: { balanceRemaining: { decrement: paymentNum } }
             });
             if (dec.count === 0) {
@@ -251,6 +290,12 @@ router.post('/:id/repayments', authenticate, validate(RepaymentSchema), async (r
 
         res.json({ success: true, data: transaction });
     } catch (error) {
+        if (error instanceof Error && error.message === 'ABONO_DUPLICADO') {
+            return res.status(409).json({ success: false, error: 'Abono idéntico registrado hace unos segundos — parece un doble envío. Si es intencional, esperá 10 segundos y repetilo.' });
+        }
+        if (error instanceof Error && error.message === 'El abono excede el saldo pendiente') {
+            return res.status(400).json({ success: false, error: error.message });
+        }
         console.error('Error registrando cobro:', error);
         res.status(500).json({ success: false, error: 'Error procesando el pago' });
     }

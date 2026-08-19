@@ -6422,14 +6422,30 @@ app.post('/api/admin/motorizados/:id/wallet/payout', authenticate, requireSuperA
         }
 
         const movement = await prisma.$transaction(async (tx) => {
-            // Lectura DENTRO de la tx: el saldo no puede cambiar entre chequeo y débito
-            // (el row-lock del update de proyección serializa con las comisiones).
+            // Pre-chequeo para un 400 limpio; la validación AUTORITATIVA del
+            // sobregiro es el read-back de después del débito (ver abajo).
             const driver = await tx.motorizado.findUnique({
                 where: { id: req.params.id },
                 select: { id: true, nombre: true, walletBalance: true },
             });
             if (!driver) throw new Error('DRIVER_NOT_FOUND');
             if (new Decimal(driver.walletBalance.toString()).lt(monto)) throw new Error('SALDO_INSUFICIENTE');
+
+            // S44 — dedupe del doble-click: un payout idéntico al mismo repartidor
+            // en los últimos 10s es un duplicado casi seguro → 409. Cubre el
+            // reintento secuencial (refresh/re-submit); el doble-click estrictamente
+            // concurrente se cierra con llave de idempotencia + unique en el lote
+            // DDL post-dump.
+            const reciente = await tx.driverWalletMovement.findFirst({
+                where: {
+                    motorizadoId: driver.id,
+                    type: 'PAGO_NORTEX',
+                    amount: monto.negated().toNumber(),
+                    createdAt: { gte: new Date(Date.now() - 10_000) },
+                },
+                select: { id: true },
+            });
+            if (reciente) throw new Error('PAYOUT_DUPLICADO');
 
             const mov = await appendDriverWalletMovement(tx, {
                 motorizadoId: driver.id,
@@ -6441,6 +6457,21 @@ app.post('/api/admin/motorizados/:id/wallet/payout', authenticate, requireSuperA
                     ? `Pago Nortex: ${nota.trim()}`
                     : 'Pago de comisiones Nortex al repartidor',
             });
+
+            // S44 — el pre-chequeo de arriba lee un snapshot (TOCTOU): dos payouts
+            // concurrentes lo pasaban ambos y el wallet quedaba NEGATIVO (se pagaba
+            // de más). La proyección del ledger debita con increment atómico y deja
+            // el row-lock hasta el commit, así que este read-back (misma tx, ve su
+            // propio débito y serializa con el rival) es el guard real: si el saldo
+            // resultante es negativo, el rival ganó → rollback completo del payout.
+            // Funciona con y sin firma del libro (NORTEX_LEDGER_KEYS).
+            const despues = await tx.motorizado.findUnique({
+                where: { id: driver.id },
+                select: { walletBalance: true },
+            });
+            if (!despues || new Decimal(despues.walletBalance.toString()).lt(0)) {
+                throw new Error('SALDO_INSUFICIENTE');
+            }
 
             // Auditoría inmutable (Capa 3): el payout saca dinero real, así que dentro
             // de la MISMA $transaction dejamos el actor (SUPER_ADMIN) y el monto.
@@ -6469,6 +6500,9 @@ app.post('/api/admin/motorizados/:id/wallet/payout', authenticate, requireSuperA
         }
         if (error instanceof Error && error.message === 'SALDO_INSUFICIENTE') {
             return res.status(400).json({ error: 'El monto excede el saldo del wallet del repartidor.' });
+        }
+        if (error instanceof Error && error.message === 'PAYOUT_DUPLICADO') {
+            return res.status(409).json({ error: 'Pago idéntico registrado hace unos segundos — parece un doble envío. Si es intencional, esperá 10 segundos y repetilo.' });
         }
         const message = error instanceof Error ? error.message : 'Error registrando pago';
         res.status(500).json({ error: message });
