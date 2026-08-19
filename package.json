@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx backend/server.ts",
+    "db:preflight": "tsx scripts/run-deploy-schema-preflight.ts",
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",

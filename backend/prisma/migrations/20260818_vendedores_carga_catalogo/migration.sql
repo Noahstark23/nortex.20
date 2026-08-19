@@ -1,5 +1,8 @@
--- Vendedores Fase B — carga de ruta + catálogo asignado. 100% ADITIVO
--- (compatible con `prisma db push` sin --accept-data-loss).
+-- Vendedores Fase B — carga de ruta + catálogo asignado. DDL expand-only.
+-- Prisma 6.4 clasifica la creación de un UNIQUE sobre una tabla poblada como
+-- posible data loss. Producción crea columna+índice mediante el preflight
+-- idempotente `scripts/deploy-schema-preflight.ts` y después corre `db push`
+-- normal, sin habilitar --accept-data-loss.
 --
 -- Warehouse.sellerId: la bodega-CARGA de un vendedor ("camioneta de Juan").
 -- Con carga asignada, sus ventas descuentan de esa bodega. El índice único

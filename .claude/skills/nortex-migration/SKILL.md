@@ -13,6 +13,12 @@ quitó) → **aplica el schema como DDL y NUNCA ejecuta DML**. Consecuencias:
   vieja sigue viva) en vez de borrar datos → los cambios deben ser **ADITIVOS**
   igual (agregar columna/tabla nullable o con default). Rename = agregar nueva +
   migrar en app + deprecar.
+- **Aditivo no significa libre de warnings:** Prisma también exige
+  `--accept-data-loss` al crear algunos índices `UNIQUE` sobre tablas pobladas.
+  No habilitar el flag. Agregar un paso state-based en
+  `scripts/deploy-schema-preflight.ts` que inspeccione `information_schema`,
+  valide duplicados/estado exacto, aplique únicamente el DDL permitido y revalide;
+  luego el `db push` normal debe quedar sin warnings.
 - Igual se escribe el SQL en `backend/prisma/migrations/<YYYYMMDD>_<nombre>/migration.sql`
   (documentación + `migrate deploy` futuro). **Sintaxis MySQL**: backticks,
   `VARCHAR(191)`, `DATETIME(3)`, `DOUBLE`, `BOOLEAN`, `DECIMAL(18,4)`.
@@ -31,7 +37,10 @@ quitó) → **aplica el schema como DDL y NUNCA ejecuta DML**. Consecuencias:
    del registry: `npm install` primero (el repo pinnea 6.4.1).
 4. Escribir el `migration.sql` espejo (aditivo, con FKs e índices con los nombres
    que Prisma genera: `Tabla_campo_idx`, `Tabla_campoA_campoB_key`).
-5. `npx tsc --noEmit` (el client generado tipa el código nuevo).
+5. Si el delta agrega un `UNIQUE` a una tabla existente/poblada, reproducir el
+   upgrade en MySQL 8 con datos y agregar el preflight idempotente antes descrito.
+   Debe fallar cerrado ante duplicados o una definición homónima incompatible.
+6. `npx tsc --noEmit` (el client generado tipa el código nuevo).
 
 ## Patrones del repo
 - **Dinero nuevo** → `Decimal @db.Decimal(18, 4)`. Excepción documentada: campos
@@ -54,5 +63,6 @@ quitó) → **aplica el schema como DDL y NUNCA ejecuta DML**. Consecuencias:
 - [ ] Cambio aditivo (ninguna columna/tabla existente alterada o renombrada)
 - [ ] `prisma validate` + `generate` OK con 6.4.1 · `tsc` 0 nuevos
 - [ ] `migration.sql` espejo presente y en sintaxis MySQL
+- [ ] Upgrade probado con datos existentes; ningún warning requiere un flag global
 - [ ] Back-relations completas · índices de scoping
 - [ ] Si hay backfill: es perezoso, race-safe (P2002) y con invariante verificado
