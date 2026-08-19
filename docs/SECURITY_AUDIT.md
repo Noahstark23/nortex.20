@@ -211,7 +211,7 @@ trazabilidad. Confianza: CONFIRMADO salvo donde se anota PLAUSIBLE.
 
 | ID | orig | Hallazgo | Ubicación | Estado |
 |----|------|----------|-----------|--------|
-| S35 | S1 | Raw query con comillas dobles estilo **PostgreSQL** en MySQL → el **cierre de toma física** revienta con error 1064 (y rompe un path de crédito/AR): la reconciliación de inventario queda muerta | `server.ts:4038-4041,1928-1929` | 🔴 PENDIENTE |
+| S35 | S1 | Raw query con comillas dobles estilo **PostgreSQL** en MySQL → el **cierre de toma física** revienta con error 1064 (y rompe un path de crédito/AR): la reconciliación de inventario queda muerta | `server.ts:4038-4041,1928-1929` | ✅ CORREGIDO (2026-08-19): backticks MySQL en ambas queries (`FOR UPDATE` del cierre de toma y del lock de `/api/payments`); `/api/payments` además quedó marcada DEPRECADA — sin consumidores en el SPA, los abonos van por `/api/credits/payment` |
 | S36 | V1 | Descuento por ítem **sin tope de 100%** en venta online → `total` negativo y, a crédito, **condona deuda** del cliente (CxC negativo, salta el límite). Explotable por cualquier cajero vía API cruda | `salesService.ts:56-64,144-146` | 🔴 PENDIENTE |
 | S37 | V2 | Venta **online sin `offlineId`** → sin idempotencia; doble-click/reintento **duplica la venta** (doble stock, factura, deuda, asiento) | `POS.tsx:1302-1314` · `salesService.ts:120-125` | 🔴 PENDIENTE |
 | S38 | C3 | **Doble recepción de OC** por concurrencia (lectura no bloqueante, sin guard atómico de estado) → stock ingresado 2× + promedio ponderado corrido 2× | `purchaseOrders.ts:307-339` | 🔴 PENDIENTE |

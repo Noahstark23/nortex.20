@@ -2202,6 +2202,9 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
 // 💸 PAGOS
 // ==========================================
 
+// ⚠️ DEPRECADA: ningún componente del SPA llama esta ruta — los abonos a crédito
+// entran por /api/credits/payment. Se mantiene funcional por compatibilidad de API,
+// pero NO construir consumidores nuevos sobre ella: unificar sobre /api/credits/payment.
 app.post('/api/payments', authenticate, validate(CreatePaymentSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { saleId, amount, method } = req.body;
@@ -2230,8 +2233,8 @@ app.post('/api/payments', authenticate, validate(CreatePaymentSchema), async (re
             // se lee bajo lock DENTRO de la transacción para evitar lost-update entre pagos
             // concurrentes. La consulta va parametrizada (tagged template) contra inyección.
             const locked: Array<{ balance: any; status: string }> = await tx.$queryRaw`
-                SELECT balance, status FROM "Sale"
-                WHERE id = ${saleId} AND "tenantId" = ${authReq.tenantId}
+                SELECT balance, status FROM \`Sale\`
+                WHERE id = ${saleId} AND \`tenantId\` = ${authReq.tenantId}
                 FOR UPDATE`;
             if (locked.length === 0) throw new Error('Venta no encontrada');
             const balanceBefore = new Decimal(locked[0].balance.toString());
@@ -4630,8 +4633,8 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
                 // El row-lock se mantiene hasta el COMMIT, de modo que applyStockDelta escribe
                 // sobre el mismo valor leído y el libro queda EXACTAMENTE en el conteo.
                 const lockedRows: Array<{ stock: any }> = await tx.$queryRaw`
-                    SELECT stock FROM "Product"
-                    WHERE id = ${it.productId} AND "tenantId" = ${authReq.tenantId!}
+                    SELECT stock FROM \`Product\`
+                    WHERE id = ${it.productId} AND \`tenantId\` = ${authReq.tenantId!}
                     FOR UPDATE`;
                 if (lockedRows.length === 0) continue;
                 const currentBook = Number(lockedRows[0].stock);
