@@ -264,7 +264,8 @@ router.post('/:id/repayments', authenticate, validate(RepaymentSchema), async (r
             // 4. Imputar el abono a las cuotas, más antiguas primero (Cobranza B2).
             let remaining = new Decimal(paymentNum);
             const pendientes = await tx.loanInstallment.findMany({
-                where: { loanId: id, status: { not: 'PAID' } },
+                // No imputar sobre cuotas REFINANCED: su saldo vive en el préstamo nuevo.
+                where: { loanId: id, status: { in: ['PENDING', 'PARTIAL'] } },
                 orderBy: { number: 'asc' }
             });
             for (const cuota of pendientes) {
@@ -325,7 +326,9 @@ router.get('/', authenticate, async (req: any, res: any) => {
                     where: { paymentDate: { gte: startOfDay, lte: endOfDay } },
                     orderBy: { createdAt: 'desc' }
                 },
-                schedule: { where: { status: { not: 'PAID' } }, orderBy: { number: 'asc' } }
+                // Solo cuotas con deuda VIVA: las REFINANCED se absorbieron en el
+                // préstamo nuevo y no deben generar mora ni próxima-cuota acá.
+                schedule: { where: { status: { in: ['PENDING', 'PARTIAL'] } }, orderBy: { number: 'asc' } }
             }
         });
 
@@ -369,13 +372,14 @@ router.get('/:id/schedule', authenticate, async (req: any, res: any) => {
         const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const data = cuotas.map((c) => {
             const falta = Number(c.amountDue) - Number(c.amountPaid);
-            const overdue = falta > 0.001 && new Date(c.dueDate) < hoy;
+            // Una cuota REFINANCED no vence: su saldo se absorbió en el préstamo nuevo.
+            const overdue = c.status !== 'REFINANCED' && falta > 0.001 && new Date(c.dueDate) < hoy;
             const daysOverdue = overdue ? Math.floor((hoy.getTime() - new Date(c.dueDate).getTime()) / 86400000) : 0;
             return {
                 id: c.id, number: c.number, dueDate: c.dueDate,
                 amountDue: Number(c.amountDue), amountPaid: Number(c.amountPaid),
                 balance: Math.round(falta * 100) / 100,
-                status: c.status === 'PAID' ? 'PAID' : overdue ? 'OVERDUE' : c.status === 'PARTIAL' ? 'PARTIAL' : 'PENDING',
+                status: c.status === 'PAID' ? 'PAID' : c.status === 'REFINANCED' ? 'REFINANCED' : overdue ? 'OVERDUE' : c.status === 'PARTIAL' ? 'PARTIAL' : 'PENDING',
                 daysOverdue
             };
         });
@@ -509,15 +513,36 @@ router.post('/:id/refinance', authenticate, LENDER_MANAGER, validate(RefinanceLo
         const lenderId = req.tenantId;
 
         const result = await prisma.$transaction(async (tx) => {
+            // Serialización por préstamo (mismo patrón que los abonos): dos
+            // refinanciamientos concurrentes del mismo préstamo crearían DOS
+            // préstamos nuevos arrastrando el MISMO saldo. El lock + re-lectura
+            // bajo lock hace que el segundo vea el préstamo ya PAID_OFF y rebote.
+            await tx.$queryRaw`SELECT id FROM \`Loan\` WHERE id = ${id} AND \`lenderId\` = ${lenderId} FOR UPDATE`;
+
             // 1. Obtener el préstamo viejo
             // Aislamiento multi-tenant: el préstamo debe pertenecer a este prestamista.
             const oldLoan = await tx.loan.findFirst({ where: { id, lenderId } });
             if (!oldLoan) throw new Error('Préstamo no encontrado');
+            // S40 — solo se refinancia deuda VIVA: refinanciar un préstamo ya
+            // liquidado fabricaría deuda de la nada (o duplicaría un refinance).
+            if (oldLoan.status !== 'ACTIVE' && oldLoan.status !== 'DEFAULTED') {
+                throw new Error('REFINANCE_NO_ACTIVO');
+            }
 
-            // 2. Cerrar el préstamo viejo como PAID_OFF (liquidado por refinanciamiento)
+            // 2. Cerrar el préstamo viejo liquidado por refinanciamiento.
+            //    S40 — el saldo se ABSORBE en el préstamo nuevo, así que acá se
+            //    pone en 0: dejarlo era deuda fantasma que la cartera sumaba DOS
+            //    veces (vieja + arrastrada en la nueva).
             await tx.loan.update({
                 where: { id },
-                data: { status: 'PAID_OFF' }
+                data: { status: 'PAID_OFF', balanceRemaining: 0 }
+            });
+            // S40 — las cuotas no pagadas del préstamo viejo pasan a REFINANCED:
+            // dejarlas PENDING generaba mora eterna sobre un préstamo cerrado
+            // (la mora se calcula por montos y fechas, no por estado del préstamo).
+            await tx.loanInstallment.updateMany({
+                where: { loanId: id, status: { in: ['PENDING', 'PARTIAL'] } },
+                data: { status: 'REFINANCED' },
             });
 
             // 3. Calcular nuevo capital = saldo pendiente viejo + capital nuevo
@@ -537,6 +562,12 @@ router.post('/:id/refinance', authenticate, LENDER_MANAGER, validate(RefinanceLo
             const newLoan = await tx.loan.create({
                 data: {
                     lenderId,
+                    // S61 — el refinance perdía los enlaces del préstamo viejo: el
+                    // nuevo quedaba huérfano del CRM (customerId), sin ruta de
+                    // cobro (assignedToId) y sin el tenant deudor si aplicaba.
+                    tenantId: oldLoan.tenantId,
+                    customerId: oldLoan.customerId,
+                    assignedToId: oldLoan.assignedToId,
                     clientName: oldLoan.clientName,
                     clientPhone: oldLoan.clientPhone,
                     clientAddress: oldLoan.clientAddress,
@@ -588,6 +619,12 @@ router.post('/:id/refinance', authenticate, LENDER_MANAGER, validate(RefinanceLo
 
         res.status(201).json({ success: true, data: result });
     } catch (error) {
+        if (error instanceof Error && error.message === 'REFINANCE_NO_ACTIVO') {
+            return res.status(400).json({ success: false, error: 'Solo se puede refinanciar un préstamo activo o en mora.' });
+        }
+        if (error instanceof Error && error.message === 'Préstamo no encontrado') {
+            return res.status(404).json({ success: false, error: error.message });
+        }
         console.error('Error refinanciando:', error);
         res.status(500).json({ success: false, error: 'Error en el refinanciamiento' });
     }
@@ -600,15 +637,32 @@ router.post('/:id/penalty', authenticate, LENDER_MANAGER, validate(PenaltySchema
         const { penaltyAmount, reason } = req.body;
         const lenderId = req.tenantId;
 
-        const amount = parseFloat(penaltyAmount);
-        if (isNaN(amount) || amount <= 0) {
+        // Dinero con decimal.js (nunca parseFloat), redondeado a los 2 decimales
+        // de las columnas Decimal(12,2)/(10,2) donde va a persistir.
+        let amountD: Decimal;
+        try {
+            amountD = new Decimal(String(penaltyAmount)).toDecimalPlaces(2);
+        } catch {
             return res.status(400).json({ success: false, error: 'Monto de penalidad inválido' });
         }
-
-        const loan = await prisma.loan.findFirst({ where: { id, lenderId } });
-        if (!loan) return res.status(404).json({ success: false, error: 'Préstamo no encontrado' });
+        if (!amountD.isFinite() || amountD.lessThanOrEqualTo(0)) {
+            return res.status(400).json({ success: false, error: 'Monto de penalidad inválido' });
+        }
+        const amount = amountD.toNumber();
 
         const result = await prisma.$transaction(async (tx) => {
+            // Serialización por préstamo (mismo patrón que abonos/refinance): el
+            // número de la cuota nueva se calcula bajo lock — dos penalidades
+            // concurrentes chocarían en el @@unique([loanId, number]).
+            await tx.$queryRaw`SELECT id FROM \`Loan\` WHERE id = ${id} AND \`lenderId\` = ${lenderId} FOR UPDATE`;
+            const loan = await tx.loan.findFirst({ where: { id, lenderId } });
+            if (!loan) throw new Error('Préstamo no encontrado');
+            // S50 — no se penaliza un préstamo liquidado: revivía deuda sobre un
+            // crédito cerrado (el cliente ya no debe nada que multar).
+            if (loan.status !== 'ACTIVE' && loan.status !== 'DEFAULTED') {
+                throw new Error('PENALTY_NO_ACTIVO');
+            }
+
             const updatedLoan = await tx.loan.update({
                 where: { id },
                 data: {
@@ -617,13 +671,21 @@ router.post('/:id/penalty', authenticate, LENDER_MANAGER, validate(PenaltySchema
                 }
             });
 
-            await tx.repayment.create({
+            // S50 — la multa entra al plan como CUOTA extra (vence hoy), no como
+            // Repayment negativo: aquel restaba del "cobrado hoy" del arqueo y no
+            // aparecía en el plan, así que la imputación de abonos nunca la cobraba.
+            const ultima = await tx.loanInstallment.aggregate({
+                where: { loanId: id },
+                _max: { number: true },
+            });
+            const cuotaMulta = await tx.loanInstallment.create({
                 data: {
                     loanId: id,
-                    amountPaid: -amount,
-                    collectedBy: req.email || 'Sistema',
-                    notes: `Penalidad / Multa: ${reason || 'Atraso'}`
-                }
+                    number: (ultima._max.number ?? 0) + 1,
+                    dueDate: new Date(),
+                    amountDue: amount,
+                    status: 'PENDING',
+                },
             });
 
             await tx.auditLog.create({
@@ -633,9 +695,10 @@ router.post('/:id/penalty', authenticate, LENDER_MANAGER, validate(PenaltySchema
                     action: 'LOAN_PENALTY',
                     details: JSON.stringify({
                         loanId: id,
-                        penaltyAmount: String(amount),
+                        penaltyAmount: amountD.toString(),
                         balanceBefore: loan.balanceRemaining.toString(),
                         balanceAfter: updatedLoan.balanceRemaining.toString(),
+                        installmentNumber: cuotaMulta.number,
                         reason: reason ?? null,
                     }),
                 },
@@ -646,6 +709,12 @@ router.post('/:id/penalty', authenticate, LENDER_MANAGER, validate(PenaltySchema
 
         res.status(200).json({ success: true, data: result });
     } catch (error) {
+        if (error instanceof Error && error.message === 'PENALTY_NO_ACTIVO') {
+            return res.status(400).json({ success: false, error: 'No se puede penalizar un préstamo ya liquidado.' });
+        }
+        if (error instanceof Error && error.message === 'Préstamo no encontrado') {
+            return res.status(404).json({ success: false, error: error.message });
+        }
         console.error('Error applying penalty:', error);
         res.status(500).json({ success: false, error: 'Error aplicando penalidad' });
     }

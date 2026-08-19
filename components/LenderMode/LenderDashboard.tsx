@@ -580,10 +580,12 @@ const LenderDashboard: React.FC = () => {
                                                                                             const estadoStyle = cuota.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-400'
                                                                                                 : cuota.status === 'OVERDUE' ? 'bg-red-500/20 text-red-400'
                                                                                                 : cuota.status === 'PARTIAL' ? 'bg-amber-500/20 text-amber-400'
+                                                                                                : cuota.status === 'REFINANCED' ? 'bg-sky-500/15 text-sky-300'
                                                                                                 : 'bg-slate-600/30 text-slate-300';
                                                                                             const estadoLabel = cuota.status === 'PAID' ? 'PAGADA'
                                                                                                 : cuota.status === 'OVERDUE' ? `VENCIDA${cuota.daysOverdue ? ` · ${cuota.daysOverdue}d` : ''}`
                                                                                                 : cuota.status === 'PARTIAL' ? 'PARCIAL'
+                                                                                                : cuota.status === 'REFINANCED' ? 'REFINANCIADA'
                                                                                                 : 'PENDIENTE';
                                                                                             return (
                                                                                                 <tr key={cuota.id} className={`border-t border-slate-700/50 ${cuota.status === 'OVERDUE' ? 'bg-red-900/10' : ''}`}>

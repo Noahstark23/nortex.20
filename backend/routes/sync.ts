@@ -189,6 +189,15 @@ router.post('/', authenticate, async (req: any, res: any) => {
                         where: { id: series.id },
                         data: { lastNumber: { increment: 1 } },
                     });
+                    // S47 — rango autorizado DGI, igual que el POS online
+                    // (salesService INVOICE_RANGE_EXHAUSTED): emitir correlativos
+                    // fuera del rango es incumplimiento fiscal. El throw revierte
+                    // la tx (el incremento no se consume) y la venta queda
+                    // 'failed' en el lote — el cliente la conserva y reintenta
+                    // cuando haya rango nuevo.
+                    if (updated.lastNumber > updated.rangeEnd) {
+                        throw new Error('Rango de facturación DGI agotado. Solicite nuevo rango.');
+                    }
                     invoiceNumber = updated.lastNumber;
                     invoiceSeries = updated.series;
                 }
@@ -248,18 +257,12 @@ router.post('/', authenticate, async (req: any, res: any) => {
                     })),
                 });
 
-                // 6. PAYMENT — SOLO para ventas de contado. En crédito NO se registra
-                //    cobro por el total (el dinero aún se debe; la CxC vive en Sale.balance).
-                if (sale.paymentMethod !== 'CREDIT') {
-                    await tx.payment.create({
-                        data: {
-                            saleId: newSale.id,
-                            amount: finalTotal.toNumber(),
-                            method: sale.paymentMethod,
-                            collectedBy: callerUserId,
-                        },
-                    });
-                }
+                // 6. PAYMENT — NO se crea ninguno (S53, paridad con executeSale):
+                //    el contado vive en Sale (total/status) y en el arqueo del
+                //    turno; Payment es exclusivamente el registro de COBROS de
+                //    crédito. Crearlo acá inflaba el "cobrado hoy" del reporte de
+                //    CxC solo para ventas sincronizadas — asimétrico con el online.
+                //    En crédito tampoco: el dinero aún se debe (CxC en Sale.balance).
 
                 // 6b. DEUDA DEL CLIENTE — incrementar en crédito (increment atómico)
                 if (sale.paymentMethod === 'CREDIT' && validCustomerId) {
