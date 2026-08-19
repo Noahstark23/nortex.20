@@ -2202,6 +2202,9 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
 // 💸 PAGOS
 // ==========================================
 
+// ⚠️ DEPRECADA: ningún componente del SPA llama esta ruta — los abonos a crédito
+// entran por /api/credits/payment. Se mantiene funcional por compatibilidad de API,
+// pero NO construir consumidores nuevos sobre ella: unificar sobre /api/credits/payment.
 app.post('/api/payments', authenticate, validate(CreatePaymentSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { saleId, amount, method } = req.body;
@@ -2230,8 +2233,8 @@ app.post('/api/payments', authenticate, validate(CreatePaymentSchema), async (re
             // se lee bajo lock DENTRO de la transacción para evitar lost-update entre pagos
             // concurrentes. La consulta va parametrizada (tagged template) contra inyección.
             const locked: Array<{ balance: any; status: string }> = await tx.$queryRaw`
-                SELECT balance, status FROM "Sale"
-                WHERE id = ${saleId} AND "tenantId" = ${authReq.tenantId}
+                SELECT balance, status FROM \`Sale\`
+                WHERE id = ${saleId} AND \`tenantId\` = ${authReq.tenantId}
                 FOR UPDATE`;
             if (locked.length === 0) throw new Error('Venta no encontrada');
             const balanceBefore = new Decimal(locked[0].balance.toString());
@@ -4630,8 +4633,8 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
                 // El row-lock se mantiene hasta el COMMIT, de modo que applyStockDelta escribe
                 // sobre el mismo valor leído y el libro queda EXACTAMENTE en el conteo.
                 const lockedRows: Array<{ stock: any }> = await tx.$queryRaw`
-                    SELECT stock FROM "Product"
-                    WHERE id = ${it.productId} AND "tenantId" = ${authReq.tenantId!}
+                    SELECT stock FROM \`Product\`
+                    WHERE id = ${it.productId} AND \`tenantId\` = ${authReq.tenantId!}
                     FOR UPDATE`;
                 if (lockedRows.length === 0) continue;
                 const currentBook = Number(lockedRows[0].stock);
@@ -5095,7 +5098,7 @@ app.get('/api/purchases', authenticate, async (req: any, res: any) => {
 // POST /api/purchases - Registrar compra (Transacción ACID)
 app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), validate(CreatePurchaseSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { supplierId, invoiceNumber, dueDate, paymentMethod, notes, items } = req.body;
+    const { supplierId, invoiceNumber, dueDate, paymentMethod, notes, items, purchaseOrderId } = req.body;
     // Validaciones de formato ya realizadas por Zod
 
     try {
@@ -5111,6 +5114,14 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
         if (!anchorPurchase) await seedChartOfAccounts(authReq.tenantId!);
 
         const result = await prisma.$transaction(async (tx: any) => {
+            // S39 — punto de serialización: lock de la fila del proveedor como PRIMERA
+            // sentencia de la tx. Dos submits concurrentes de la misma factura
+            // serializan acá; el segundo abre su snapshot DESPUÉS del commit del
+            // primero, así que el dup-check de abajo SÍ ve la fila recién creada.
+            // (El @@unique([tenantId, supplierId, invoiceNumber]) de refuerzo entra
+            // en el lote DDL post-dump — este guard es a nivel aplicación.)
+            await tx.$queryRaw`SELECT id FROM \`Supplier\` WHERE id = ${supplierId} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
+
             // Verificar propiedad del proveedor: nunca confiar en supplierId del body sin
             // scoping por tenant. Sin esto, el include: { supplier: true } filtraría PII
             // del proveedor de otro tenant (fuga cross-tenant).
@@ -5119,6 +5130,34 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             });
             if (!supplier) {
                 throw new Error('Proveedor no encontrado');
+            }
+
+            // S39 — idempotencia del registro de factura: el mismo proveedor no puede
+            // tener dos facturas con el mismo número (doble-click / reintento de red
+            // duplicaban factura, inventario y CxP). Bajo el lock del proveedor este
+            // chequeo es race-safe.
+            const facturaExistente = await tx.purchase.findFirst({
+                where: { tenantId: authReq.tenantId!, supplierId, invoiceNumber },
+                select: { id: true },
+            });
+            if (facturaExistente) throw new Error('FACTURA_DUPLICADA');
+
+            // S45 — factura vinculada a una Orden de Compra: los bienes entran al
+            // inventario con la RECEPCIÓN de la OC (goods receipt), así que esta
+            // factura registra SOLO el dinero (CxP/caja, IVA, asiento). Sin este
+            // vínculo, seguir el flujo documentado (recibir OC + registrar factura)
+            // sumaba el stock 2×.
+            let ocVinculada: { id: string; supplierId: string; status: string } | null = null;
+            if (purchaseOrderId) {
+                ocVinculada = await tx.purchaseOrder.findFirst({
+                    where: { id: purchaseOrderId, tenantId: authReq.tenantId! },
+                    select: { id: true, supplierId: true, status: true },
+                });
+                if (!ocVinculada) throw new Error('Orden de compra no encontrada');
+                if (ocVinculada.supplierId !== supplierId) throw new Error('OC_DE_OTRO_PROVEEDOR');
+                if (ocVinculada.status === 'DRAFT' || ocVinculada.status === 'CANCELLED') {
+                    throw new Error(`OC_ESTADO:${ocVinculada.status}`);
+                }
             }
 
             // Snapshot del saldo de billetera para el asiento de auditoría (before/after).
@@ -5179,6 +5218,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     tenantId: authReq.tenantId!,
                     supplierId,
                     invoiceNumber,
+                    purchaseOrderId: ocVinculada?.id ?? null,
                     dueDate: dueDate ? new Date(dueDate) : null,
                     subtotal,
                     tax,
@@ -5194,9 +5234,12 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 include: { items: true, supplier: true }
             });
 
-            // 3. Actualizar inventario + Kardex + Costo promedio ponderado
+            // 3. Actualizar inventario + Kardex + Costo promedio ponderado.
+            //    S45 — con OC vinculada este paso NO corre: el stock, el costo
+            //    promedio, los lotes y el Kardex ya los aplicó (o los aplicará) la
+            //    recepción de la OC; repetirlos acá era el doble ingreso.
             const costChanges: any[] = []; // before/after de stock y costo valorizado por producto
-            for (const item of processedItems) {
+            for (const item of ocVinculada ? [] : processedItems) {
                 const product = await tx.product.findUnique({ where: { id: item.productId } });
                 if (!product) continue;
 
@@ -5341,6 +5384,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                         purchaseId: purchase.id,
                         supplierId,
                         invoiceNumber,
+                        purchaseOrderId: ocVinculada?.id ?? null,
                         paymentMethod,
                         subtotal,
                         tax,
@@ -5357,7 +5401,9 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
         });
 
         res.json({
-            message: `Compra registrada. ${processedItemsCount(items)} productos ingresados al inventario.`,
+            message: result.purchaseOrderId
+                ? 'Factura registrada y vinculada a la Orden de Compra. El inventario entra con la recepción de la OC; esta factura registra el dinero.'
+                : `Compra registrada. ${processedItemsCount(items)} productos ingresados al inventario.`,
             purchase: result
         });
 
@@ -5367,6 +5413,15 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
         // bloqueado la RECHAZA (423) en vez de dejar entrar mercancía sin registrar.
         if (error instanceof PeriodLockedError) {
             return res.status(423).json({ error: error.message });
+        }
+        if (error?.message === 'FACTURA_DUPLICADA') {
+            return res.status(409).json({ error: `Ya existe una factura #${invoiceNumber} de este proveedor — parece un doble envío.` });
+        }
+        if (error?.message === 'OC_DE_OTRO_PROVEEDOR') {
+            return res.status(400).json({ error: 'La orden de compra pertenece a otro proveedor' });
+        }
+        if (error?.message?.startsWith('OC_ESTADO:')) {
+            return res.status(400).json({ error: `No se puede facturar una OC en estado ${error.message.split(':')[1]}` });
         }
         const insufficient = error?.message?.includes('SALDO_INSUFICIENTE');
         const notFound = error?.message?.includes('no encontrado');
@@ -6367,14 +6422,30 @@ app.post('/api/admin/motorizados/:id/wallet/payout', authenticate, requireSuperA
         }
 
         const movement = await prisma.$transaction(async (tx) => {
-            // Lectura DENTRO de la tx: el saldo no puede cambiar entre chequeo y débito
-            // (el row-lock del update de proyección serializa con las comisiones).
+            // Pre-chequeo para un 400 limpio; la validación AUTORITATIVA del
+            // sobregiro es el read-back de después del débito (ver abajo).
             const driver = await tx.motorizado.findUnique({
                 where: { id: req.params.id },
                 select: { id: true, nombre: true, walletBalance: true },
             });
             if (!driver) throw new Error('DRIVER_NOT_FOUND');
             if (new Decimal(driver.walletBalance.toString()).lt(monto)) throw new Error('SALDO_INSUFICIENTE');
+
+            // S44 — dedupe del doble-click: un payout idéntico al mismo repartidor
+            // en los últimos 10s es un duplicado casi seguro → 409. Cubre el
+            // reintento secuencial (refresh/re-submit); el doble-click estrictamente
+            // concurrente se cierra con llave de idempotencia + unique en el lote
+            // DDL post-dump.
+            const reciente = await tx.driverWalletMovement.findFirst({
+                where: {
+                    motorizadoId: driver.id,
+                    type: 'PAGO_NORTEX',
+                    amount: monto.negated().toNumber(),
+                    createdAt: { gte: new Date(Date.now() - 10_000) },
+                },
+                select: { id: true },
+            });
+            if (reciente) throw new Error('PAYOUT_DUPLICADO');
 
             const mov = await appendDriverWalletMovement(tx, {
                 motorizadoId: driver.id,
@@ -6386,6 +6457,21 @@ app.post('/api/admin/motorizados/:id/wallet/payout', authenticate, requireSuperA
                     ? `Pago Nortex: ${nota.trim()}`
                     : 'Pago de comisiones Nortex al repartidor',
             });
+
+            // S44 — el pre-chequeo de arriba lee un snapshot (TOCTOU): dos payouts
+            // concurrentes lo pasaban ambos y el wallet quedaba NEGATIVO (se pagaba
+            // de más). La proyección del ledger debita con increment atómico y deja
+            // el row-lock hasta el commit, así que este read-back (misma tx, ve su
+            // propio débito y serializa con el rival) es el guard real: si el saldo
+            // resultante es negativo, el rival ganó → rollback completo del payout.
+            // Funciona con y sin firma del libro (NORTEX_LEDGER_KEYS).
+            const despues = await tx.motorizado.findUnique({
+                where: { id: driver.id },
+                select: { walletBalance: true },
+            });
+            if (!despues || new Decimal(despues.walletBalance.toString()).lt(0)) {
+                throw new Error('SALDO_INSUFICIENTE');
+            }
 
             // Auditoría inmutable (Capa 3): el payout saca dinero real, así que dentro
             // de la MISMA $transaction dejamos el actor (SUPER_ADMIN) y el monto.
@@ -6414,6 +6500,9 @@ app.post('/api/admin/motorizados/:id/wallet/payout', authenticate, requireSuperA
         }
         if (error instanceof Error && error.message === 'SALDO_INSUFICIENTE') {
             return res.status(400).json({ error: 'El monto excede el saldo del wallet del repartidor.' });
+        }
+        if (error instanceof Error && error.message === 'PAYOUT_DUPLICADO') {
+            return res.status(409).json({ error: 'Pago idéntico registrado hace unos segundos — parece un doble envío. Si es intencional, esperá 10 segundos y repetilo.' });
         }
         const message = error instanceof Error ? error.message : 'Error registrando pago';
         res.status(500).json({ error: message });

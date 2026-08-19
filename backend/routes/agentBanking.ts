@@ -363,6 +363,33 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
         if (!anchorAccount) await seedChartOfAccounts(req.tenantId);
 
         const result = await prisma.$transaction(async (tx: any) => {
+            // S52 — serialización por convenio: FOR UPDATE del AgentAgreement como
+            // PRIMERA sentencia de la tx (antes solo se tomaba en la rama del límite
+            // diario). El doble-submit concurrente espera el commit del rival y su
+            // snapshot se abre después, así que el dedupe de abajo SÍ ve la operación
+            // ya registrada. Costo: las operaciones del MISMO convenio serializan —
+            // en la práctica hay un mostrador por convenio, ya serializaban cuando
+            // había límite diario, y la tx no hace llamadas externas.
+            await tx.$queryRaw`SELECT id FROM \`AgentAgreement\` WHERE id = ${agreement.id} AND \`tenantId\` = ${req.tenantId} FOR UPDATE`;
+
+            // S52 — idempotencia: el folio del dispositivo del banco (externalRef)
+            // es la clave de conciliación → la misma referencia con la misma
+            // operación no puede registrarse dos veces (sin ventana de tiempo: un
+            // folio es único para siempre; REVERSED no bloquea re-registrar). Sin
+            // folio (efectivo), doble-click: misma operación + monto + caja en los
+            // últimos 10s → 409.
+            const dupe = await tx.agentTransaction.findFirst({
+                where: externalRef
+                    ? { tenantId: req.tenantId, agreementId: agreement.id, operation, externalRef, status: 'COMPLETED' }
+                    : {
+                        tenantId: req.tenantId, agreementId: agreement.id, operation,
+                        shiftId: currentShift.id, amount: dAmount.toNumber(), status: 'COMPLETED',
+                        createdAt: { gte: new Date(Date.now() - 10_000) },
+                    },
+                select: { id: true },
+            });
+            if (dupe) throw new Error(externalRef ? 'AGENTE_REF_DUPLICADA' : 'AGENTE_OP_DUPLICADA');
+
             // Guarda anti-sobregiro para salidas (retiros/remesas pagadas/entregas
             // al banco): el tope real de retiro lo pone la gaveta (Banpro lo
             // delega al comercio). Row-lock + recálculo fresco dentro de la tx.
@@ -370,11 +397,10 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
                 await assertGavetaAlcanza(tx, currentShift, req.tenantId, dAmount, currency === 'USD' ? 'USD' : 'NIO');
             }
 
-            // Límite DIARIO del contrato (Fase C): lock de la fila del convenio
-            // (serializa las operaciones del convenio entre cajas) + agregado
-            // fresco del día en SQL. Día calendario del server.
+            // Límite DIARIO del contrato (Fase C): el lock del convenio ya se tomó
+            // arriba (serializa las operaciones del convenio entre cajas); acá va el
+            // agregado fresco del día en SQL. Día calendario del server.
             if (!isLiquidacion && tieneLimiteDiario(agreement.limitsConfig, operation)) {
-                await tx.$queryRaw`SELECT id FROM \`AgentAgreement\` WHERE id = ${agreement.id} FOR UPDATE`;
                 const hoy0 = new Date();
                 hoy0.setHours(0, 0, 0, 0);
                 // Suma del día en C$: COALESCE(amountNio, amount) — las filas
@@ -484,6 +510,12 @@ router.post('/transactions', authenticate, validate(CreateAgentTxSchema), async 
         if (error?.message?.startsWith('LIMITE: ')) {
             return res.status(400).json({ success: false, error: error.message.slice('LIMITE: '.length) });
         }
+        if (error?.message === 'AGENTE_REF_DUPLICADA') {
+            return res.status(409).json({ success: false, error: 'Ya hay una operación registrada con esa referencia del banco — parece un doble envío. Verificá el historial antes de reintentar.' });
+        }
+        if (error?.message === 'AGENTE_OP_DUPLICADA') {
+            return res.status(409).json({ success: false, error: 'Operación idéntica registrada hace unos segundos — parece un doble envío. Si es intencional, esperá 10 segundos y repetila.' });
+        }
         res.status(500).json({ success: false, error: 'Error registrando la operación de agente' });
     }
 });
@@ -529,6 +561,16 @@ router.post('/transactions/:id/reverse', authenticate, checkRole(['OWNER', 'ADMI
         const compensatingDirection: 'IN' | 'OUT' = original.direction === 'IN' ? 'OUT' : 'IN';
 
         const result = await prisma.$transaction(async (tx: any) => {
+            // Lock del convenio como PRIMERA sentencia — mismo ORDEN GLOBAL de locks
+            // que el registro de operaciones (convenio → gaveta/Shift → libro de
+            // caja): si la reversa lo tomara al final (como antes), un registro y una
+            // reversa concurrentes del mismo convenio podían abrazarse en deadlock.
+            // Además serializa contra una liquidación de comisiones concurrente: el
+            // remanente devengado se lee acá, bajo el lock, y se acota al final.
+            const lockedAgg: any[] = await tx.$queryRaw`SELECT \`commissionAccrued\` FROM \`AgentAgreement\` WHERE id = ${original.agreementId} AND \`tenantId\` = ${req.tenantId} FOR UPDATE`;
+            const freshAccrued = new Decimal((lockedAgg[0]?.commissionAccrued ?? 0).toString());
+            const commissionToReverse = Decimal.min(dCommission, Decimal.max(freshAccrued, new Decimal(0)));
+
             if (compensatingDirection === 'OUT') {
                 await assertGavetaAlcanza(tx, currentShift, req.tenantId, dAmount, monedaOriginal);
             }
@@ -558,14 +600,11 @@ router.post('/transactions/:id/reverse', authenticate, checkRole(['OWNER', 'ADMI
             // La comisión devengada solo puede revertirse HASTA lo que siga
             // devengado: si ya se liquidó (settle-commissions la bajó a 0), un
             // decremento incondicional dejaba `commissionAccrued` NEGATIVO y
-            // duplicaba el asiento de 1.1.7 (banco sobrevaluado). Lockeamos la
-            // fila del convenio (FOR UPDATE, serializa contra una liquidación
-            // concurrente) y acotamos al remanente. El principal (settlementBalance)
+            // duplicaba el asiento de 1.1.7 (banco sobrevaluado). El lock del
+            // convenio se tomó al INICIO de la tx (orden global de locks) y
+            // `commissionToReverse` ya viene acotada al remanente leído bajo ese
+            // lock. El principal (settlementBalance)
             // SÍ se revierte completo: el efectivo de la contrapartida es total.
-            const lockedAgg: any[] = await tx.$queryRaw`SELECT \`commissionAccrued\` FROM \`AgentAgreement\` WHERE id = ${original.agreementId} AND \`tenantId\` = ${req.tenantId} FOR UPDATE`;
-            const freshAccrued = new Decimal((lockedAgg[0]?.commissionAccrued ?? 0).toString());
-            const commissionToReverse = Decimal.min(dCommission, Decimal.max(freshAccrued, new Decimal(0)));
-
             const balanceBefore = new Decimal(original.agreement.settlementBalance.toString());
             const delta = original.direction === 'IN' ? dAmountNio.negated() : dAmountNio;
             await tx.agentAgreement.update({
