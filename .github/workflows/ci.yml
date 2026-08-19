@@ -86,3 +86,73 @@ jobs:
           DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_deploy_test
           LEGACY_SCHEMA_PATH: ${{ runner.temp }}/schema-before-pr158.prisma
           NORTEX_ALLOW_DESTRUCTIVE_SCHEMA_SMOKE: issue-159-ci-only
+
+  # ── Despliegue con COMPUERTA: solo corre en main y solo si verify +
+  # deploy-schema-smoke pasaron. Para que la compuerta sea real, el auto-deploy
+  # de Coolify debe estar APAGADO (Coolify → app → desactivar "Auto Deploy"):
+  # quien dispara el deploy es este job, vía webhook, nunca el push directo.
+  # Cada paso se activa con su secret; sin secrets configurados el job es un
+  # no-op inofensivo (el repo no depende de infra que todavía no existe).
+  # Orden: staging → smoke de staging (bloquea) → prod → smoke de prod (avisa).
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [verify, deploy-schema-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Desplegar STAGING (webhook de Coolify)
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_STAGING_WEBHOOK }}
+          TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then echo "COOLIFY_STAGING_WEBHOOK no configurado — paso omitido"; exit 0; fi
+          if [ -n "$TOKEN" ]; then
+            curl -fsS -H "Authorization: Bearer $TOKEN" "$WEBHOOK"
+          else
+            curl -fsS "$WEBHOOK"
+          fi
+          echo "🚀 Deploy de staging disparado"
+
+      # El smoke de staging BLOQUEA prod: si staging no queda sano, prod no se
+      # toca. Espera hasta 8 min (build de imagen + db push + arranque).
+      - name: Smoke de STAGING (/api/health)
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+          WEBHOOK: ${{ secrets.COOLIFY_STAGING_WEBHOOK }}
+        run: |
+          if [ -z "$STAGING_URL" ] || [ -z "$WEBHOOK" ]; then echo "STAGING_URL/webhook no configurados — paso omitido"; exit 0; fi
+          for i in $(seq 1 48); do
+            if curl -fsS --max-time 10 "$STAGING_URL/api/health" | grep -q '"ok":true'; then
+              echo "✅ Staging sano — se habilita prod"; exit 0
+            fi
+            sleep 10
+          done
+          echo "❌ Staging NO quedó sano en 8 min — prod NO se despliega"; exit 1
+
+      - name: Desplegar PROD (webhook de Coolify)
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
+          TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then echo "COOLIFY_PROD_WEBHOOK no configurado — paso omitido"; exit 0; fi
+          if [ -n "$TOKEN" ]; then
+            curl -fsS -H "Authorization: Bearer $TOKEN" "$WEBHOOK"
+          else
+            curl -fsS "$WEBHOOK"
+          fi
+          echo "🚀 Deploy de prod disparado"
+
+      # El smoke de prod no puede "bloquear" (ya se desplegó): existe para que
+      # el workflow quede ROJO y llegue el correo de GitHub si prod no levantó.
+      - name: Smoke de PROD (/api/health)
+        env:
+          PROD_URL: ${{ secrets.PROD_URL }}
+          WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
+        run: |
+          if [ -z "$PROD_URL" ] || [ -z "$WEBHOOK" ]; then echo "PROD_URL/webhook no configurados — paso omitido"; exit 0; fi
+          for i in $(seq 1 48); do
+            if curl -fsS --max-time 10 "$PROD_URL/api/health" | grep -q '"ok":true'; then
+              echo "✅ Prod sano"; exit 0
+            fi
+            sleep 10
+          done
+          echo "❌ Prod NO respondió sano en 8 min — revisar Coolify YA"; exit 1

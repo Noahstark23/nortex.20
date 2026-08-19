@@ -66,6 +66,47 @@ TTL: 300
 2. Coolify generará automáticamente el certificado SSL vía Let's Encrypt
 3. Habilitar **"Force HTTPS"** ✅
 
+### Paso 5: Pipeline con compuerta (CI verde → staging → prod)
+
+El repo ya trae el pipeline completo en `.github/workflows/ci.yml` (job `deploy`):
+en cada push a `main` corren typecheck + tests + mutación + build + smoke de
+schema contra MySQL 8, y **solo si todo pasa** se dispara el deploy — primero
+staging, se verifica su `/api/health`, y recién ahí prod. Un main roto ya no
+puede llegar a producción. Para activarlo:
+
+1. **Apagar el auto-deploy de Coolify** en la app de prod (Configuration →
+   desactivar *Auto Deploy on push*). Si queda encendido, Coolify despliega el
+   push directo y la compuerta no compuerta nada.
+2. **Crear la app de STAGING en Coolify** (misma receta que prod, mismo repo y
+   branch `main`): base de datos MySQL **propia** (jamás la de prod), dominio
+   `staging.somosnortex.com`, mismas variables de entorno pero con
+   `DATABASE_URL`/`JWT_SECRETS` propios y SIN llaves reales de Stripe/WhatsApp.
+   También con auto-deploy apagado.
+3. **Copiar los webhooks de deploy**: en cada app de Coolify, sección
+   *Webhooks* → copiar la *Deploy Webhook URL*.
+4. **Crear los secrets en GitHub** (repo → Settings → Secrets and variables →
+   Actions):
+   | Secret | Valor |
+   |---|---|
+   | `COOLIFY_STAGING_WEBHOOK` | URL del webhook de deploy de la app staging |
+   | `COOLIFY_PROD_WEBHOOK` | URL del webhook de deploy de la app prod |
+   | `COOLIFY_TOKEN` | (Solo si el webhook exige `Authorization: Bearer`) API token de Coolify |
+   | `STAGING_URL` | `https://staging.somosnortex.com` |
+   | `PROD_URL` | `https://somosnortex.com` |
+
+   Sin secrets, el job `deploy` es un no-op (los pasos se omiten solos): se
+   puede activar por partes — p. ej. solo prod primero, staging después.
+5. **Monitoreo** (5 minutos de setup, gratis):
+   - **Sentry**: crear proyecto Node en sentry.io y poner `SENTRY_DSN` en las
+     variables de Coolify (el backend ya lo soporta — gate suave, sin DSN opera
+     igual). Los errores 500 de prod llegan solos, con stack.
+   - **UptimeRobot** (o similar): monitor HTTP a
+     `https://somosnortex.com/api/health` cada 5 min con alerta al correo. El
+     endpoint devuelve 503 si la BD no responde, así que también avisa de una
+     BD caída, no solo del proceso muerto.
+   - El contenedor ya trae `HEALTHCHECK` (Dockerfile): Coolify reinicia una
+     instancia enferma y no le enruta tráfico durante el deploy.
+
 ---
 
 ## 3. Variables de Entorno (Secretos)
@@ -207,10 +248,10 @@ docker compose -p nortex ps
 
 ```bash
 # Desde tu máquina local:
-curl -s https://nortex.com/api/health | jq .
+curl -s https://somosnortex.com/api/health | jq .
 
-# Respuesta esperada:
-# { "status": "ok", "timestamp": "2026-02-11T...", "version": "1.0.0" }
+# Respuesta esperada (200 si la BD responde, 503 si no):
+# { "ok": true, "db": "up", "uptimeSeconds": 12345, "commit": "<sha del build>" }
 
 # Probar autenticación:
 curl -s -X POST https://nortex.com/api/auth/login \

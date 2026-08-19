@@ -193,6 +193,31 @@ if (isWhatsAppEnabled()) {
 // JSON Parser con límite de body (anti-abuse)
 app.use(express.json({ limit: '2mb' }) as any);
 
+// ── Healthcheck (Docker HEALTHCHECK, Coolify y monitoreo externo) ────────────
+// Registrado ANTES del rate limiter a propósito: en pleno incidente es cuando
+// más se necesita que responda, y el latido cada 30s no debe consumir el
+// presupuesto anónimo del limiter. Sin auth y sin datos de negocio: solo
+// vida del proceso + estado de la BD (con timeout — una BD colgada no puede
+// colgar también el healthcheck).
+const arranqueDelProceso = Date.now();
+app.get('/api/health', async (_req: any, res: any) => {
+    let db: 'up' | 'down' = 'down';
+    try {
+        await Promise.race([
+            prisma.$queryRaw`SELECT 1`,
+            new Promise((_, reject) => setTimeout(() => reject(new Error('DB_TIMEOUT')), 2000)),
+        ]);
+        db = 'up';
+    } catch { /* db queda 'down' */ }
+    res.status(db === 'up' ? 200 : 503).json({
+        ok: db === 'up',
+        db,
+        uptimeSeconds: Math.floor((Date.now() - arranqueDelProceso) / 1000),
+        // Coolify inyecta SOURCE_COMMIT en el build: permite ver QUÉ versión corre.
+        commit: process.env.SOURCE_COMMIT ?? null,
+    });
+});
+
 /**
  * Rate limit global — por TENANT cuando hay sesión, por IP cuando no la hay.
  *
