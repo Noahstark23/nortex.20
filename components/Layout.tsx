@@ -5,6 +5,7 @@ import { formatMoney } from '../utils/money';
 import { PinPadClock } from './PinPadClock';
 import { useVentaEnCurso } from './VentaEnCursoContext';
 import OnboardingHub from './OnboardingHub';
+import InstallPrompt from './InstallPrompt';
 import { buildNavigation, groupBySection, resolveUiMode, UI_MODE_KEY, type UiMode, type NavEntry, type NavSection } from '../utils/navigation';
 
 // El módulo de navegación es puro (sin React): mapa iconKey → componente lucide.
@@ -540,6 +541,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
       {/* 🚀 Onboarding guiado (solo Dueño/Admin; se auto-oculta al completar) */}
       <OnboardingHub />
+
+      {/* 📲 Aviso de instalación de la PWA (solo si el navegador la ofrece) */}
+      <InstallPrompt />
     </div>
   );
 };

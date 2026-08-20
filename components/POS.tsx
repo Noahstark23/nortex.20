@@ -21,7 +21,7 @@ import {
 import { useReportarVenta } from './VentaEnCursoContext';
 import { ReceiptTicket } from './ReceiptTicket';
 import { thermalPrinter } from '../utils/thermalPrinter';
-import * as XLSX from 'xlsx';
+// xlsx (~430 KB) se importa dinámicamente en handleFileUpload — fuera del bundle inicial.
 import { db, generateOfflineId, saveSaleOffline, getPendingSales, markSalesSynced } from '../lib/db';
 import Decimal from 'decimal.js';
 
@@ -1694,8 +1694,9 @@ const POS: React.FC = () => {
         setImportResult(null);
 
         const reader = new FileReader();
-        reader.onload = (evt) => {
+        reader.onload = async (evt) => {
             try {
+                const XLSX = await import('xlsx');
                 const data = evt.target?.result;
                 const workbook = XLSX.read(data, { type: 'binary' });
                 const sheetName = workbook.SheetNames[0];

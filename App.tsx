@@ -1,63 +1,70 @@
 import React, { Suspense, lazy, useEffect, useRef } from 'react';
-
-// Blog (lazy: el contenido de los artículos NO entra al bundle inicial del SPA).
-// Restaurados: el merge de #61/#62 borró estas declaraciones pero dejó las rutas
-// que las usan (Blog/BlogPost/ClusterPage), rompiendo la compilación.
-const Blog = lazy(() => import('./components/Blog'));
-const BlogPost = lazy(() => import('./components/BlogPost'));
-const ClusterPage = lazy(() => import('./components/ClusterPage'));
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
 import { VentaEnCursoProvider } from './components/VentaEnCursoContext';
 import { trackPageView } from './utils/analytics';
 import { homePathFor } from './utils/navigation';
-import MiNegocio from './components/MiNegocio';
-import POS from './components/POS';
-import Dashboard from './components/Dashboard';
-import BlueprintViewer from './components/BlueprintViewer';
-import LandingPage from './components/LandingPage';
-import RegisterTenant from './components/RegisterTenant';
-import AccountsReceivable from './components/AccountsReceivable';
-import B2BMarketplace from './components/B2BMarketplace';
-import Reports from './components/Reports';
-import Login from './components/Login';
-import QuotationManager from './components/QuotationManager';
-import Clients from './components/Clients';
-import Suppliers from './components/Suppliers';
-import HRM from './components/HRM';
-import MiEspacio from './components/MiEspacio';
-import SuperAdmin from './components/SuperAdmin';
-import DeliveryManager from './components/DeliveryManager';
-import DriverView from './components/DriverView';
-import RegistroRepartidor from './components/RegistroRepartidor';
-import Inventory from './components/Inventory';
-import Warehouses from './components/Warehouses';
-import CargaVendedor from './components/CargaVendedor';
-import PurchaseOrders from './components/PurchaseOrders';
-import Serials from './components/Serials';
-import StockCount from './components/StockCount';
-import SmartPurchases from './components/SmartPurchases';
-import CashRegisters from './components/CashRegisters';
-import Purchases from './components/Purchases';
-import FinancialHealth from './components/FinancialHealth';
-import AuditDashboard from './components/AuditDashboard';
-import Contabilidad from './components/Contabilidad';
-import Billing from './components/Billing';
-import TeamManagement from './components/TeamManagement';
-import HelpCenter from './components/HelpCenter';
-import PublicCatalog from './components/PublicCatalog';
-import TrackPedido from './components/TrackPedido';
 
-// SEO Landing Pages
-import LandingFerreteria from './components/LandingFerreteria';
-import LandingFarmacia from './components/LandingFarmacia';
-import LandingNicaragua from './components/LandingNicaragua';
-import ForgotPassword from './components/ForgotPassword';
-import ResetPassword from './components/ResetPassword';
+// ── Camino crítico EAGER: login, registro y la primera pantalla post-login.
+// Solo esto entra al bundle inicial — es lo que un usuario NUEVO necesita
+// para llegar a valor en su primera visita, con la red que tenga.
+import Login from './components/Login';
+import RegisterTenant from './components/RegisterTenant';
+import MiNegocio from './components/MiNegocio';
+
+// ── Todo lo demás LAZY por ruta (UX-2). Antes era UN archivo de 2.2 MB
+// (616 KB gzip): 12–20 s hasta interactivo en el Android de gama baja del
+// cliente real — el asesino #1 de la retención del día 1. Cada ruta baja su
+// chunk al visitarse, y el SW los precachea tras el primer load, así que la
+// PWA instalada sigue abriendo todo offline.
+const Blog = lazy(() => import('./components/Blog'));
+const BlogPost = lazy(() => import('./components/BlogPost'));
+const ClusterPage = lazy(() => import('./components/ClusterPage'));
+const POS = lazy(() => import('./components/POS'));
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const BlueprintViewer = lazy(() => import('./components/BlueprintViewer'));
+const LandingPage = lazy(() => import('./components/LandingPage'));
+const AccountsReceivable = lazy(() => import('./components/AccountsReceivable'));
+const B2BMarketplace = lazy(() => import('./components/B2BMarketplace'));
+const Reports = lazy(() => import('./components/Reports'));
+const QuotationManager = lazy(() => import('./components/QuotationManager'));
+const Clients = lazy(() => import('./components/Clients'));
+const Suppliers = lazy(() => import('./components/Suppliers'));
+const HRM = lazy(() => import('./components/HRM'));
+const MiEspacio = lazy(() => import('./components/MiEspacio'));
+const SuperAdmin = lazy(() => import('./components/SuperAdmin'));
+const DeliveryManager = lazy(() => import('./components/DeliveryManager'));
+const DriverView = lazy(() => import('./components/DriverView'));
+const RegistroRepartidor = lazy(() => import('./components/RegistroRepartidor'));
+const Inventory = lazy(() => import('./components/Inventory'));
+const Warehouses = lazy(() => import('./components/Warehouses'));
+const CargaVendedor = lazy(() => import('./components/CargaVendedor'));
+const PurchaseOrders = lazy(() => import('./components/PurchaseOrders'));
+const Serials = lazy(() => import('./components/Serials'));
+const StockCount = lazy(() => import('./components/StockCount'));
+const SmartPurchases = lazy(() => import('./components/SmartPurchases'));
+const CashRegisters = lazy(() => import('./components/CashRegisters'));
+const Purchases = lazy(() => import('./components/Purchases'));
+const FinancialHealth = lazy(() => import('./components/FinancialHealth'));
+const AuditDashboard = lazy(() => import('./components/AuditDashboard'));
+const Contabilidad = lazy(() => import('./components/Contabilidad'));
+const Billing = lazy(() => import('./components/Billing'));
+const TeamManagement = lazy(() => import('./components/TeamManagement'));
+const HelpCenter = lazy(() => import('./components/HelpCenter'));
+const PublicCatalog = lazy(() => import('./components/PublicCatalog'));
+const TrackPedido = lazy(() => import('./components/TrackPedido'));
+
+// SEO Landing Pages (en prod las sirve el prerender estático; el chunk solo
+// baja si alguien navega a ellas DENTRO del SPA)
+const LandingFerreteria = lazy(() => import('./components/LandingFerreteria'));
+const LandingFarmacia = lazy(() => import('./components/LandingFarmacia'));
+const LandingNicaragua = lazy(() => import('./components/LandingNicaragua'));
+const ForgotPassword = lazy(() => import('./components/ForgotPassword'));
+const ResetPassword = lazy(() => import('./components/ResetPassword'));
 
 // Legal pages
-import PrivacyPolicy from './components/PrivacyPolicy';
-import TermsOfService from './components/TermsOfService';
+const PrivacyPolicy = lazy(() => import('./components/PrivacyPolicy'));
+const TermsOfService = lazy(() => import('./components/TermsOfService'));
 
 const ProtectedApp = () => {
   const token = localStorage.getItem('nortex_token');
@@ -107,6 +114,11 @@ const ProtectedApp = () => {
   return (
     <VentaEnCursoProvider>
     <Layout>
+      {/* Suspense INTERNO: al cargar el chunk de una ruta, el shell (menú,
+          bottom-nav) queda en su lugar y solo el contenido muestra "Cargando…".
+          Sin esto, el Suspense raíz blanquearía la app entera en cada primera
+          visita a una pantalla. */}
+      <Suspense fallback={<div className="min-h-[40vh] flex items-center justify-center text-slate-400">Cargando…</div>}>
       <Routes>
         <Route path="inicio" element={<MiNegocio />} />
         <Route
@@ -148,6 +160,7 @@ const ProtectedApp = () => {
         <Route path="ayuda" element={<HelpCenter />} />
         <Route path="*" element={<Navigate to={homePath} replace />} />
       </Routes>
+      </Suspense>
     </Layout>
     </VentaEnCursoProvider>
   );

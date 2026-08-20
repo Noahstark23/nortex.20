@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Users, Briefcase, DollarSign, Plus, UserPlus, CheckCircle, Clock, KeyRound, FileText, AlertTriangle, Calculator, CreditCard, Printer, X, Shield, Calendar, TrendingDown, Wallet, FileSpreadsheet, Gift, BarChart3 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+// xlsx (~430 KB) se importa dinámicamente en exportPlanillaINSS — fuera del bundle inicial.
 import { formatMoney } from '../utils/money';
 
 interface Employee {
@@ -690,6 +690,7 @@ const HRM: React.FC = () => {
                 'Salario (C$)': data.totals.salario, 'INSS Laboral 7%': data.totals.inssLaboral,
                 'INSS Patronal': data.totals.inssPatronal, 'Total INSS': data.totals.totalInss, 'INATEC 2%': data.totals.inatec,
             });
+            const XLSX = await import('xlsx');
             const ws = XLSX.utils.aoa_to_sheet([
                 [`PLANILLA INSS — ${data.empresa}`],
                 [`RUC: ${data.ruc}   |   Período: ${meses[data.month - 1]} ${data.year}`],
