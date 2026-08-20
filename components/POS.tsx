@@ -519,6 +519,17 @@ const POS: React.FC = () => {
     const [newAgreementName, setNewAgreementName] = useState('');
     const [newAgreementKind, setNewAgreementKind] = useState('BANCO');
     const [cashBalance, setCashBalance] = useState<number | null>(null);
+
+    // ── Pulso del día (gamificación honesta): cuánto llevás hoy, tu racha de
+    // días vendiendo, tu meta (tu propio promedio) y si hoy es récord. Se
+    // refresca tras CADA venta — es el número que hace que la próxima venta
+    // tenga gancho. Sin ganancia ni costos: apto para cajeros.
+    interface PulsoDia {
+        totalHoy: string; ventasHoy: number;
+        racha: number; rachaIncluyeHoy: boolean;
+        metaDiaria: string | null; record: string | null; esRecordHoy: boolean;
+    }
+    const [pulso, setPulso] = useState<PulsoDia | null>(null);
     const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
     const [showMovementsList, setShowMovementsList] = useState(false);
     // Menú único "Acciones de caja": el header tenía 8 botones de 7 colores
@@ -868,6 +879,7 @@ const POS: React.FC = () => {
         };
         initPOS();
         fetchProducts();
+        fetchPulso();
     }, []);
 
     /**
@@ -918,6 +930,13 @@ const POS: React.FC = () => {
                 }
             }
         } catch (e) { /* silently fail */ }
+    }, [headers]);
+
+    const fetchPulso = useCallback(async () => {
+        try {
+            const res = await fetch('/api/pos/pulso', { headers });
+            if (res.ok) setPulso(await res.json());
+        } catch { /* offline/red caída: se conserva el último pulso conocido */ }
     }, [headers]);
 
     const fetchCashMovements = useCallback(async () => {
@@ -1943,6 +1962,19 @@ const POS: React.FC = () => {
             });
             setPendingOfflineCount(p => p + 1);
 
+            // Sin red no hay endpoint, pero el loop no se apaga: el pulso se
+            // avanza localmente con la venta recién encolada (el fetch de la
+            // próxima venta online lo vuelve autoritativo).
+            setPulso(prev => prev && {
+                ...prev,
+                totalHoy: toDecimal(prev.totalHoy).plus(grandTotal).toFixed(2),
+                ventasHoy: prev.ventasHoy + 1,
+                rachaIncluyeHoy: true,
+                racha: prev.rachaIncluyeHoy ? prev.racha : prev.racha + 1,
+                esRecordHoy: prev.record !== null &&
+                    toDecimal(prev.totalHoy).plus(grandTotal).greaterThan(toDecimal(prev.record)),
+            });
+
             setCompletedSale({
                 items: [...cart],
                 subtotal: total,
@@ -1995,6 +2027,7 @@ const POS: React.FC = () => {
             if (!res.ok) throw new Error(data.error);
 
             fetchProducts();
+            fetchPulso();
             // Aviso global (retención R2): el checklist de primeros pasos se
             // refresca en vivo y celebra la primera venta sin esperar un remount.
             window.dispatchEvent(new CustomEvent('nortex:data-changed'));
@@ -2268,6 +2301,29 @@ const POS: React.FC = () => {
                             <RefreshCw size={14} className={syncingOffline ? 'animate-spin' : ''} />
                             <span className="hidden lg:inline">{syncingOffline ? 'Sincronizando...' : `Sync (${pendingOfflineCount})`}</span>
                         </button>
+                    )}
+
+                    {/* Pulso del día: lo vendido HOY siempre a la vista, con racha y
+                        avance de meta. El número que crece con cada cobro — esa es
+                        la gamificación, no medallas. */}
+                    {pulso && pulso.ventasHoy > 0 && (
+                        <div
+                            className="flex items-center gap-2 text-xs px-3 h-8 rounded-control bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
+                            title={pulso.metaDiaria ? `Vendido hoy · Meta del día: ${formatMoney(pulso.metaDiaria)}` : 'Vendido hoy'}
+                        >
+                            {pulso.racha >= 2 && (
+                                <span className="font-black text-[11px]" title={`${pulso.racha} días seguidos vendiendo`}>🔥{pulso.racha}</span>
+                            )}
+                            <span className="font-bold nx-num">{formatMoney(pulso.totalHoy)}</span>
+                            {pulso.metaDiaria && (
+                                <span className="hidden md:block w-12 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                                    <span
+                                        className="block h-full bg-emerald-400"
+                                        style={{ width: `${Math.min(100, toDecimal(pulso.totalHoy).div(toDecimal(pulso.metaDiaria)).mul(100).toNumber())}%` }}
+                                    />
+                                </span>
+                            )}
+                        </div>
                     )}
 
                     {/* Saldo en caja: dato, en neutro. Abre el detalle de movimientos. */}
@@ -4391,6 +4447,45 @@ const POS: React.FC = () => {
                                     </div>
                                 )}
                             </div>
+
+                            {/* ── Pulso del día: la venta recién cobrada, sumada a TU día.
+                                El gancho para la siguiente venta es ver crecer este
+                                número — y las celebraciones solo aparecen cuando son
+                                verdad (meta cumplida, récord del mes, racha viva). */}
+                            {pulso && (
+                                <div className={`rounded-xl p-4 mb-4 border ${pulso.esRecordHoy ? 'bg-amber-500/10 border-amber-500/25' : 'bg-surface-800/40 border-white/[0.04]'}`}>
+                                    <div className="flex items-baseline justify-between">
+                                        <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Hoy llevás</span>
+                                        <span className="text-xs text-slate-500">{pulso.ventasHoy} {pulso.ventasHoy === 1 ? 'venta' : 'ventas'}</span>
+                                    </div>
+                                    <p className="text-3xl font-black text-slate-100 nx-num mt-1">{formatMoney(pulso.totalHoy)}</p>
+                                    {pulso.metaDiaria && (() => {
+                                        const pct = Math.min(100, toDecimal(pulso.totalHoy).div(toDecimal(pulso.metaDiaria)).mul(100).toNumber());
+                                        const cumplida = pct >= 100;
+                                        return (
+                                            <div className="mt-2">
+                                                <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                                                    <div
+                                                        className={`h-full transition-all duration-700 ${cumplida ? 'bg-amber-400' : 'bg-emerald-500'}`}
+                                                        style={{ width: `${pct}%` }}
+                                                    />
+                                                </div>
+                                                <p className="text-[11px] text-slate-400 mt-1">
+                                                    {cumplida
+                                                        ? <>🎯 ¡Meta del día cumplida! ({formatMoney(pulso.metaDiaria)})</>
+                                                        : <>Meta del día: {formatMoney(pulso.metaDiaria)} · vas al {Math.round(pct)}%</>}
+                                                </p>
+                                            </div>
+                                        );
+                                    })()}
+                                    {pulso.esRecordHoy && (
+                                        <p className="text-sm font-bold text-amber-400 mt-2">🏆 ¡Hoy es tu mejor día del último mes!</p>
+                                    )}
+                                    {pulso.racha >= 2 && (
+                                        <p className="text-[11px] text-slate-400 mt-1.5">🔥 {pulso.racha} días seguidos vendiendo — no cortés la racha</p>
+                                    )}
+                                </div>
+                            )}
 
                             {/* Action Buttons */}
                             <div className="grid grid-cols-2 gap-3 mb-3">
