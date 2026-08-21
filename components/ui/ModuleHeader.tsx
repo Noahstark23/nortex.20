@@ -49,7 +49,11 @@ export const ModuleHeader: React.FC<ModuleHeaderProps> = ({
     <header
         className={`${sticky ? 'sticky top-0 z-sticky bg-slate-950/95 backdrop-blur' : ''} ${className}`}
     >
-        <div className="h-module flex items-center justify-between gap-4">
+        {/* En móvil la fila ENVUELVE (las acciones bajan a su propia línea):
+            con altura fija + dos bloques shrink-0, en 390px el botón primario
+            se imprimía ENCIMA de los enlaces de contexto (auditoría de uso
+            real). En md+ conserva la altura única de módulo. */}
+        <div className="md:h-module py-3 md:py-0 flex flex-wrap md:flex-nowrap items-center justify-between gap-x-4 gap-y-2">
             <div className="flex items-center gap-3 min-w-0">
                 {icon && (
                     <div className="w-10 h-10 shrink-0 rounded-control bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300">

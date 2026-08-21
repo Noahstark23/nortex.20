@@ -206,7 +206,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                         >
                             {audioEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
                         </button>
-                        <button onClick={onClose} className="p-2 hover:bg-surface-700 rounded-lg text-surface-400 hover:text-white transition-colors">
+                        <button onClick={onClose} aria-label="Cerrar modo rápido" className="p-2 hover:bg-surface-700 rounded-lg text-surface-400 hover:text-white transition-colors">
                             <X size={20} />
                         </button>
                     </div>
