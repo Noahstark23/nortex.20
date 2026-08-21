@@ -1567,6 +1567,32 @@ const POS: React.FC = () => {
     // ==========================================
     useEffect(() => {
         const handleHotkey = (e: KeyboardEvent) => {
+            // ── Alternativas sin Fn (P1-8) ───────────────────────────────
+            // En la mayoría de las laptops las teclas F exigen mantener Fn, así
+            // que los atajos documentados quedaban fuera del alcance real del
+            // cajero. Las F se conservan (en un teclado de mostrador con F
+            // dedicadas son más rápidas); esto las acompaña, no las reemplaza.
+            //
+            // NO se toma Ctrl+P para aparcar, aunque la auditoría lo proponía:
+            // Ctrl+P es imprimir, y un POS imprime tickets todo el día.
+            // Secuestrarlo rompería algo más importante de lo que arregla.
+            if (e.ctrlKey || e.metaKey) {
+                const tecla = e.key.toLowerCase();
+                if (tecla === 'k') {
+                    e.preventDefault();
+                    searchRef.current?.focus();
+                    return;
+                }
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    // Mismas guardas que F9: sin ellas, mantener la combinación
+                    // apretada dispararía N cobros y N descargos de stock.
+                    if (e.repeat || processing || completedSale || showCashPreModal) return;
+                    if (currentShift && cart.length > 0) handleCheckout('CASH');
+                    return;
+                }
+            }
+
             // F-keys always work (don't type in inputs)
             switch (e.key) {
                 case 'F2':
@@ -1875,6 +1901,17 @@ const POS: React.FC = () => {
     // texto dejaría el chip apagado según cómo se haya escrito el monto.
     const chipActivo = (monto: Decimal): boolean =>
         cashReceived !== '' && toDecimal(cashReceived).equals(monto);
+
+    // Teclado en pantalla del modal de efectivo (P1-3). Se apoya en el mismo
+    // `sanitizeDecimalInput` que el input de texto, así que ambos caminos
+    // producen exactamente la misma cadena — no hay dos reglas de captura.
+    const teclaEfectivo = (tecla: string) => {
+        setCashReceived(prev => {
+            if (tecla === 'LIMPIAR') return '';
+            if (tecla === 'BORRAR') return prev.slice(0, -1);
+            return sanitizeDecimalInput(prev + tecla);
+        });
+    };
 
     // El menú que rodea al POS necesita saber si hay una venta abierta para
     // avisar antes de navegar. Una venta COBRADA (completedSale) ya no cuenta:
@@ -3527,7 +3564,8 @@ const POS: React.FC = () => {
                 {/* ⌨️ HOTKEY CHEAT SHEET */}
                 <div className="hidden md:flex items-center gap-3 mt-2 px-2 py-1.5 text-[11px] text-slate-500 select-none flex-shrink-0">
                     <Keyboard size={13} className="text-slate-500" />
-                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F2</span> Buscar
+                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F2</span>
+                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Ctrl+K</span> Buscar
                     <span className="text-slate-300">·</span>
                     <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F4</span> Aparcar
                     <span className="text-slate-300">·</span>
@@ -3535,7 +3573,8 @@ const POS: React.FC = () => {
                     <span className="text-slate-300">·</span>
                     <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F8</span> Entrada
                     <span className="text-slate-300">·</span>
-                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F9</span> Cobrar
+                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F9</span>
+                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Ctrl+Enter</span> Cobrar
                     <span className="text-slate-300">·</span>
                     <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Esc</span> Cerrar
                 </div>
@@ -3942,6 +3981,7 @@ const POS: React.FC = () => {
                             className="h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/40"
                         >
                             <Banknote size={24} strokeWidth={2.5} /> EFECTIVO
+                            <kbd className="hidden md:inline text-[11px] font-mono font-normal opacity-70 border border-current/30 rounded px-1 py-0.5">F9</kbd>
                         </button>
                         <button
                             onClick={() => handleCheckout('CREDIT')}
@@ -4350,16 +4390,57 @@ const POS: React.FC = () => {
                                             onChange={e => setCashReceived(sanitizeDecimalInput(e.target.value))}
                                         />
                                     </div>
+                                    {/* Teclado en pantalla (P1-3): un POS de mostrador es
+                                        táctil y hasta acá el único modo de cargar el
+                                        efectivo era un input de texto. Teclas de 56px,
+                                        que es lo que se acierta con el pulgar sin mirar. */}
+                                    <div className="grid grid-cols-3 gap-1.5">
+                                        {['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '00'].map(t => (
+                                            <button
+                                                key={t}
+                                                type="button"
+                                                onClick={() => teclaEfectivo(t)}
+                                                className="h-14 rounded-control bg-white/[0.04] hover:bg-white/[0.10] text-slate-100 text-xl font-bold font-mono tabular-nums transition-colors active:scale-[0.97]"
+                                            >
+                                                {t}
+                                            </button>
+                                        ))}
+                                        <button
+                                            type="button"
+                                            onClick={() => teclaEfectivo('BORRAR')}
+                                            aria-label="Borrar el último dígito"
+                                            className="h-14 rounded-control bg-white/[0.04] hover:bg-white/[0.10] text-slate-300 font-bold transition-colors active:scale-[0.97] flex items-center justify-center"
+                                        >
+                                            <ArrowRight size={20} className="rotate-180" />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => teclaEfectivo('LIMPIAR')}
+                                            className="h-14 col-span-2 rounded-control bg-white/[0.04] hover:bg-white/[0.10] text-slate-300 font-bold transition-colors active:scale-[0.97]"
+                                        >
+                                            Limpiar
+                                        </button>
+                                    </div>
+
+                                    {/* EL VUELTO MANDA (P1-3). Al momento de cobrar, el
+                                        total ya no importa: importa cuánto devolver. Antes
+                                        se renderizaba a 24px, más chico que el total del
+                                        encabezado — justo el número que el cajero tiene que
+                                        ejecutar contando billetes sin mirar la pantalla. */}
                                     {cashReceived !== '' && toDecimal(cashReceived).greaterThanOrEqualTo(grandTotal) && (
-                                        <div className="flex justify-between items-center bg-emerald-500/10 px-3 py-2 rounded-lg border border-emerald-500/20">
-                                            <span className="font-bold text-emerald-400 text-sm">CAMBIO</span>
-                                            <span className="text-2xl font-black text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(cashReceived).minus(grandTotal))}</span>
+                                        <div className="bg-emerald-500/10 px-4 py-3 rounded-control border border-emerald-500/20 text-center">
+                                            <p className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Vuelto</p>
+                                            <p className="text-5xl font-black text-emerald-400 font-mono tabular-nums leading-none mt-1">
+                                                {formatMoney(toDecimal(cashReceived).minus(grandTotal))}
+                                            </p>
                                         </div>
                                     )}
                                     {cashReceived !== '' && toDecimal(cashReceived).lessThan(grandTotal) && (
-                                        <div className="flex justify-between items-center bg-red-500/10 px-3 py-2 rounded-lg border border-red-500/20">
-                                            <span className="font-bold text-red-400 text-sm">FALTANTE</span>
-                                            <span className="text-xl font-bold text-red-400 font-mono tabular-nums">{formatMoney(toDecimal(grandTotal).minus(toDecimal(cashReceived)))}</span>
+                                        <div className="bg-red-500/10 px-4 py-3 rounded-control border border-red-500/20 text-center">
+                                            <p className="text-xs font-bold text-red-400 uppercase tracking-widest">Falta</p>
+                                            <p className="text-3xl font-black text-red-400 font-mono tabular-nums leading-none mt-1">
+                                                {formatMoney(toDecimal(grandTotal).minus(toDecimal(cashReceived)))}
+                                            </p>
                                         </div>
                                     )}
                                 </>
@@ -4372,13 +4453,15 @@ const POS: React.FC = () => {
                                 >
                                     Cancelar
                                 </button>
+                                {/* Un botón dice QUÉ hace y POR CUÁNTO (P1-3). "Confirmar"
+                                    no dice ninguna de las dos cosas. */}
                                 <button
                                     onClick={() => { setShowCashPreModal(false); handleCheckout('CASH'); }}
                                     disabled={processing}
                                     className="flex-1 py-3 rounded-xl bg-gradient-to-b from-green-500 to-green-700 text-white font-black hover:from-green-600 hover:to-green-800 transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
                                 >
                                     {processing ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
-                                    Confirmar
+                                    Cobrar {formatMoney(grandTotal)}
                                 </button>
                             </div>
                         </div>
