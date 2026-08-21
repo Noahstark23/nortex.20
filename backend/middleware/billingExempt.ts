@@ -12,10 +12,18 @@ export const ALWAYS_ALLOWED_PREFIXES = ['/api/billing', '/api/auth', '/api/admin
 
 // Camino OPERATIVO de venta: nunca se bloquea (seguir vendiendo, caja, cobros,
 // devoluciones, clientes de crédito, productos).
+// ⚠️ Estos prefijos deben ser RUTAS REALES del backend. Acá vivió el bug UX-1:
+// se eximía '/api/cash-registers' — una ruta del FRONTEND que no existe en la
+// API — mientras las rutas reales de caja (/api/shifts, /api/cash-movements)
+// quedaban tras el paywall: al vencer el trial, abrir caja daba 402 → sin turno
+// no hay venta → el POS SÍ se bloqueaba, rompiendo la promesa de esta política
+// (y la textual de los emails de trial). El test fija las rutas reales.
 export const OPERATIONAL_PREFIXES = [
-    '/api/sales',          // ejecutar venta + sync offline
-    '/api/cash-registers', // abrir/cerrar caja (requisito para vender)
-    '/api/payments',       // abonos a crédito
+    '/api/sales',          // ejecutar venta + sync offline (/api/sales/sync)
+    '/api/shifts',         // abrir/cerrar/tomar caja (requisito para vender)
+    '/api/cash-movements', // entradas/salidas de la gaveta (arqueo)
+    '/api/payments',       // abonos a crédito (ruta legacy)
+    '/api/credits',        // cobrar el fiado (/api/credits/payment) — la plata del dueño
     '/api/returns',        // devoluciones
     '/api/customers',      // ventas a crédito necesitan el cliente
     '/api/products',       // alta/edición de productos para seguir operando

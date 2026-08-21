@@ -21,6 +21,7 @@ import { seedCatalogFor } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent, PLAN_PRICE_USD, requiereConfirmacionDePagoCorto, calcularNuevoVencimiento } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
+import { calcularPulso, claveDelDiaManagua, inicioDelDiaManagua, MANAGUA_UTC_OFFSET_HOURS } from './services/pulsoPos';
 import { applyStockDelta, StockError, weightedAverageCost } from './services/stockService';
 import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger, appendDriverWalletMovement, verifyDriverLedger } from './services/ledger';
 import { signAuthToken, verifyAuthToken } from './services/secrets';
@@ -1185,6 +1186,57 @@ app.get('/api/onboarding', authenticate, async (req: any, res: any) => {
     } catch (e: any) {
         console.error('onboarding status error', e);
         res.status(500).json({ error: 'Error al calcular el onboarding' });
+    }
+});
+
+// ── Pulso del día del POS (gamificación honesta) ─────────────────────────────
+// Los números REALES del negocio como motor del loop de venta: cuánto llevás
+// hoy, tu racha de días vendiendo, tu meta (tu propio promedio) y si hoy es
+// récord. Liviano a propósito — el POS lo consulta tras CADA venta: solo
+// agregados en BD (aggregate + GROUP BY por día con LIMIT), cero filas.
+// Es GET → exento de billing (el pulso nunca se paywallea). Cualquier rol lo
+// ve: no expone ganancia ni costos, solo venta bruta del propio tenant.
+app.get('/api/pos/pulso', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const ahora = new Date();
+        const hoy0 = inicioDelDiaManagua(ahora);
+        const hoyStr = claveDelDiaManagua(ahora);
+        const hace45 = new Date(hoy0.getTime() - 45 * 86_400_000);
+
+        const [agg, rows] = await Promise.all([
+            prisma.sale.aggregate({
+                where: { tenantId: authReq.tenantId!, createdAt: { gte: hoy0 }, status: { not: 'VOIDED' } },
+                _count: { _all: true },
+                _sum: { total: true },
+            }),
+            // Día calendario de MANAGUA (UTC-6), no del server: una venta de las
+            // 10 pm nica es "hoy", aunque en UTC ya sea mañana.
+            prisma.$queryRaw`
+                SELECT DATE_FORMAT(DATE_SUB(createdAt, INTERVAL ${MANAGUA_UTC_OFFSET_HOURS} HOUR), '%Y-%m-%d') AS dia,
+                       SUM(total) AS total,
+                       COUNT(*) AS ventas
+                FROM \`Sale\`
+                WHERE \`tenantId\` = ${authReq.tenantId} AND createdAt >= ${hace45} AND status <> 'VOIDED'
+                GROUP BY dia
+                ORDER BY dia DESC
+                LIMIT 45` as Promise<Array<{ dia: string; total: any; ventas: any }>>,
+        ]);
+
+        const pulso = calcularPulso(
+            rows.map((r) => ({ dia: r.dia, total: (r.total ?? 0).toString(), ventas: Number(r.ventas) })),
+            hoyStr
+        );
+
+        res.json({
+            // Montos como string con precisión Decimal — cero float en el cable.
+            totalHoy: new Decimal((agg._sum.total ?? 0).toString()).toFixed(2),
+            ventasHoy: agg._count._all,
+            ...pulso,
+        });
+    } catch (error) {
+        console.error('Error calculando el pulso del POS:', error);
+        res.status(500).json({ error: 'Error calculando el pulso del día' });
     }
 });
 

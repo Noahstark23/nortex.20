@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Upload, Download, FileSpreadsheet, AlertCircle, CheckCircle, XCircle, Loader2, X, Columns3 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+// xlsx (~430 KB) se importa DINÁMICAMENTE dentro de cada handler: solo baja al
+// navegador cuando alguien importa/exporta un Excel, nunca en el bundle inicial.
 import {
     parseWorkbookRows, acceptedHeaders, importInChunks,
     type ParsedRow, type ColumnResolution, type CanonicalField,
@@ -44,8 +45,9 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
         setSummary(null);
         const reader = new FileReader();
 
-        reader.onload = (e) => {
+        reader.onload = async (e) => {
             try {
+                const XLSX = await import('xlsx');
                 const data = e.target?.result;
                 const workbook = XLSX.read(data, { type: 'binary' });
                 const sheetName = workbook.SheetNames[0];
@@ -79,7 +81,8 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
     };
 
     // Descargar plantilla
-    const downloadTemplate = () => {
+    const downloadTemplate = async () => {
+        const XLSX = await import('xlsx');
         // Ejemplos de una PyME nica (ferretería/pulpería/farmacia) con precios
         // realistas en córdobas (C$). El dueño reemplaza estas filas con su catálogo.
         const template = [
@@ -182,8 +185,9 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
     };
 
     // Descargar los rechazados como Excel para corregir y re-subir SOLO eso.
-    const downloadRejected = () => {
+    const downloadRejected = async () => {
         if (!summary || summary.rejected.length === 0) return;
+        const XLSX = await import('xlsx');
         const sheetRows = summary.rejected.map(r => ({
             fila_excel: r.excelRow ?? '',
             codigo: r.sku,

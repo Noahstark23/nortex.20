@@ -240,7 +240,10 @@ const OnboardingHub: React.FC = () => {
           botón EFECTIVO del POS y cortaba el texto de CRÉDITO. La zona de cobro
           es intocable — por eso z-sticky (10), por debajo de --nx-z-checkout (20).
           Ningún flotante persistente puede vivir encima del cobro. */}
-      <div className="fixed top-[4.5rem] right-4 lg:right-6 z-sticky print:hidden flex flex-col items-end">
+      {/* En móvil baja a top-[8.5rem]: a 4.5rem quedaba impresa ENCIMA de la
+          barra de búsqueda y del botón "Agregar" del POS (auditoría de uso
+          real en 390px). En md+ vuelve a su lugar bajo el header. */}
+      <div className="fixed top-[8.5rem] md:top-[4.5rem] right-4 lg:right-6 z-sticky print:hidden flex flex-col items-end">
         {open && (
           <div className="order-2 mt-3 w-[22rem] max-w-[calc(100vw-2.5rem)] bg-surface-900 rounded-card shadow-2xl border border-white/[0.06] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
             <div className="bg-nortex-900 px-5 py-4 flex items-center justify-between">
@@ -331,7 +334,10 @@ const OnboardingHub: React.FC = () => {
           className="order-1 flex items-center gap-2 pl-4 pr-5 h-touch bg-surface-800 hover:bg-surface-700 text-white font-semibold rounded-pill shadow-premium border border-white/[0.08] transition-colors"
         >
           <Sparkles size={18} className="text-nortex-accent" />
-          <span className="text-sm">Primeros pasos</span>
+          {/* En móvil la píldora se encoge a ícono+contador: con el texto
+              completo tapaba controles reales (el botón Agregar del POS, la
+              tarjeta VALOR de Inventario — auditoría de uso real en 390px). */}
+          <span className="text-sm hidden md:inline">Primeros pasos</span>
           <span className="text-xs bg-nortex-accent text-slate-100 rounded-full px-2 py-0.5 font-extrabold">
             {data.completed}/{data.total}
           </span>

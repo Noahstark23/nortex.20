@@ -1,7 +1,7 @@
 import { TableEmptyState } from './ui/EmptyState';
 import { SkeletonTableRows } from './ui/Skeleton';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import * as XLSX from 'xlsx';
+// xlsx (~430 KB) se importa dinámicamente en handleExport — fuera del bundle inicial.
 import ImageUploader from './ImageUploader';
 import { sanitizeDecimalInput, formatMoney } from '../utils/money';
 import { trackEvent } from '../utils/analytics';
@@ -346,6 +346,7 @@ export default function Inventory() {
                 'Valor (costo)': Number((Number(p.stock) * Number(p.cost)).toFixed(2)),
                 Publicado: p.isPublished ? 'Sí' : 'No',
             }));
+            const XLSX = await import('xlsx');
             const ws = XLSX.utils.json_to_sheet(rows);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
