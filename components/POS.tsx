@@ -3211,7 +3211,7 @@ const POS: React.FC = () => {
                                 <div>
                                     <label className="block text-xs font-mono text-slate-500 mb-1">SKU / CÓDIGO DE BARRAS</label>
                                     <input type="text" className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100"
-                                        placeholder="Escanea o escribe" value={newProduct.sku} onChange={e => setNewProduct({ ...newProduct, sku: e.target.value.toUpperCase() })} />
+                                        placeholder="Escaneá o escribí" value={newProduct.sku} onChange={e => setNewProduct({ ...newProduct, sku: e.target.value.toUpperCase() })} />
                                 </div>
                                 <div>
                                     <label className="block text-xs font-mono text-slate-500 mb-1">CATEGORÍA</label>
@@ -3772,8 +3772,8 @@ const POS: React.FC = () => {
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
                     {cart.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
-                            <ShoppingCart size={32} /> <p className="text-sm">Carrito vacio</p>
-                            <p className="text-[10px] text-slate-300">Escaneá un código de barras o selecciona un producto</p>
+                            <ShoppingCart size={32} /> <p className="text-sm">Carrito vacío</p>
+                            <p className="text-xs text-slate-300">Escaneá un código o tocá un producto para empezar.</p>
                         </div>
                     ) : (
                         cart.map(item => {
@@ -4045,8 +4045,16 @@ const POS: React.FC = () => {
                             disabled={processing || cart.length === 0}
                             className="h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/40"
                         >
-                            <Banknote size={24} strokeWidth={2.5} /> EFECTIVO
-                            <kbd className="hidden md:inline text-[11px] font-mono font-normal opacity-70 border border-current/30 rounded px-1 py-0.5">F9</kbd>
+                            <Banknote size={22} strokeWidth={2.5} className="shrink-0" />
+                            <span className="flex flex-col items-start leading-tight min-w-0">
+                                <span className="flex items-center gap-1.5">
+                                    EFECTIVO
+                                    <kbd className="hidden md:inline text-[10px] font-mono font-normal opacity-70 border border-current/30 rounded px-1">F9</kbd>
+                                </span>
+                                {cart.length > 0 && (
+                                    <span className="text-[13px] font-mono tabular-nums opacity-90">{formatMoney(grandTotal)}</span>
+                                )}
+                            </span>
                         </button>
                         <button
                             onClick={() => handleCheckout('CREDIT')}
@@ -4058,7 +4066,18 @@ const POS: React.FC = () => {
                                     : 'bg-transparent text-slate-100 border-slate-700 hover:bg-white/[0.04]'
                             }`}
                         >
-                            {isCreditBlocked ? <Ban size={24} strokeWidth={2.5} /> : <CreditCard size={24} strokeWidth={2.5} />} CRÉDITO
+                            {isCreditBlocked ? <Ban size={22} strokeWidth={2.5} className="shrink-0" /> : <CreditCard size={22} strokeWidth={2.5} className="shrink-0" />}
+                            <span className="flex flex-col items-start leading-tight min-w-0">
+                                <span>CRÉDITO</span>
+                                {cart.length > 0 && !isCreditBlocked && (
+                                    <span className="text-[13px] font-mono tabular-nums opacity-90">{formatMoney(grandTotal)}</span>
+                                )}
+                                {/* Un botón deshabilitado tiene que decir POR QUÉ; que el
+                                    cajero lo descubra tocando es la peor forma de saberlo. */}
+                                {isCreditBlocked && !selectedCustomer && (
+                                    <span className="text-[11px] font-normal opacity-80">Elegí un cliente</span>
+                                )}
+                            </span>
                         </button>
                     </div>
                     {isCreditBlocked && selectedCustomer && (
