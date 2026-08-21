@@ -12,6 +12,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import Decimal from 'decimal.js';
+import { ESTADO_ANULADA } from './saleCancellation';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -128,7 +129,7 @@ export async function generateMonthlyReport(
         where: {
             tenantId,
             createdAt: { gte: startDate, lt: endDate },
-            status: { not: 'VOIDED' },
+            status: { not: ESTADO_ANULADA },
         },
         _sum: { total: true, exemptTotal: true },
         _count: true,
@@ -270,7 +271,7 @@ export async function generateDMIReport(tenantId: string, month: number, year: n
             tenantId,
             createdAt: { gte: startDate, lt: endDate },
             invoiceNumber: { not: null },
-            status: { not: 'VOIDED' },
+            status: { not: ESTADO_ANULADA },
         },
         _min: { invoiceNumber: true },
         _max: { invoiceNumber: true },

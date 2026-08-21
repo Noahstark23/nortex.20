@@ -31,6 +31,7 @@
     "utils/stockAlert.ts",
     "utils/cartPersistence.ts",
     "utils/posSearch.ts",
+    "backend/services/saleCancellation.ts",
     "utils/productFamilyPresets.ts",
     "utils/quantity.ts",
     "utils/stockTransferQuantity.ts",
@@ -51,7 +52,7 @@
     "backend/services/nicaLabor.ts:142-262",
     "backend/services/nicaLabor.ts:368-451",
     "backend/services/sellerReport.ts",
-    "backend/services/nicaTax.ts:25-75",
+    "backend/services/nicaTax.ts:26-76",
     "backend/services/stripe.ts:35-62",
     "backend/services/stockService.ts:58-71",
     "backend/services/accounting.ts:257-272"

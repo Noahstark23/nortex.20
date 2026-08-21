@@ -175,6 +175,15 @@ export const CreateReturnSchema = z.object({
     refundMethod: z.enum(['CASH', 'CARD', 'QR', 'TRANSFER']).optional(),
 });
 
+// POST /api/sales/:id/cancel — ANULACIÓN fiscal (DGI-5)
+// El motivo tiene mínimo REAL porque termina en el expediente: dentro de seis
+// meses "error" no le sirve a nadie que audite por qué se anuló una factura.
+// La regla fina (colapsar espacios, medir lo útil) vive en el módulo puro
+// `saleCancellation.ts`; acá solo se ataja lo grosero.
+export const CancelSaleSchema = z.object({
+    motivo: z.string().min(10, 'Escribí por qué se anula (mínimo 10 caracteres)').max(500),
+});
+
 // POST /api/expenses
 export const CreateExpenseSchema = z.object({
     amount:      moneyAmountPositive,

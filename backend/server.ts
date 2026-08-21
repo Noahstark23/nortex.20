@@ -22,7 +22,8 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { BODEGUERO_ROLE, redactBodegueroProduct } from './security/bodegueroPolicy';
 import { calculateTenantScore } from './services/scoring';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
+import { ESTADO_ANULADA, puedeAnularse, planDeReversion, textoUtil } from './services/saleCancellation';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { composeSeedCatalog } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent, PLAN_PRICE_USD, requiereConfirmacionDePagoCorto, calcularNuevoVencimiento } from './services/stripe';
@@ -100,6 +101,7 @@ import { fiscalMonthRange } from './services/nicaTax';
 import {
     validate,
     CreateReturnSchema,
+    CancelSaleSchema,
     CreatePaymentSchema,
     CreateCashMovementSchema,
     CreatePurchaseSchema,
@@ -1406,7 +1408,7 @@ app.get('/api/pos/pulso', authenticate, async (req: any, res: any) => {
 
         const [agg, rows] = await Promise.all([
             prisma.sale.aggregate({
-                where: { tenantId: authReq.tenantId!, createdAt: { gte: hoy0 }, status: { not: 'VOIDED' } },
+                where: { tenantId: authReq.tenantId!, createdAt: { gte: hoy0 }, status: { not: ESTADO_ANULADA } },
                 _count: { _all: true },
                 _sum: { total: true },
             }),
@@ -1417,7 +1419,7 @@ app.get('/api/pos/pulso', authenticate, async (req: any, res: any) => {
                        SUM(total) AS total,
                        COUNT(*) AS ventas
                 FROM \`Sale\`
-                WHERE \`tenantId\` = ${authReq.tenantId} AND createdAt >= ${hace45} AND status <> 'VOIDED'
+                WHERE \`tenantId\` = ${authReq.tenantId} AND createdAt >= ${hace45} AND status <> ${ESTADO_ANULADA}
                 GROUP BY dia
                 ORDER BY dia DESC
                 LIMIT 45` as Promise<Array<{ dia: string; total: any; ventas: any }>>,
@@ -1457,7 +1459,8 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
         const recentSales = await prisma.sale.findMany({
             where: {
                 tenantId: tenantId,
-                createdAt: { gte: sevenDaysAgo }
+                createdAt: { gte: sevenDaysAgo },
+                status: { not: ESTADO_ANULADA },
             },
             select: {
                 createdAt: true,
@@ -1516,7 +1519,7 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             where: {
                 tenantId: tenantId,
                 createdAt: { gte: todayStart },
-                status: { not: 'VOIDED' },
+                status: { not: ESTADO_ANULADA },
             },
             select: {
                 total: true,
@@ -2123,6 +2126,7 @@ app.get('/api/employees', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', 
             by: ['employeeId'],
             where: {
                 tenantId: authReq.tenantId,
+                status: { not: ESTADO_ANULADA },
                 createdAt: { gte: startOfMonth },
                 employeeId: { not: null }
             },
@@ -2898,6 +2902,216 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
 });
 
 // ==========================================
+// 🚫 ANULACIÓN DE COMPROBANTES (DGI-5)
+// ==========================================
+//
+// Anular NO es devolver. Devolver mercadería es una operación nueva sobre una
+// venta que SÍ ocurrió; anular es declarar que el documento no debió emitirse
+// (error de digitación, cobro duplicado, cliente equivocado). Sin este camino,
+// ante una factura mal emitida al operario solo le quedaban dos salidas peores:
+// dejarla como venta real —y declarar de más— o improvisar una devolución que
+// descuadra el inventario con mercadería que nunca se movió.
+//
+// El comprobante anulado NO se borra: queda visible, marcado, con motivo y
+// autor. Su número NO se reutiliza — un correlativo con huecos o repetidos es
+// justo lo que la Disposición Técnica 09-2007 prohíbe.
+app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CancelSaleSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const saleId = String(req.params.id);
+    const motivo = textoUtil(req.body.motivo);
+
+    try {
+        const sale = await prisma.sale.findFirst({
+            where: { id: saleId, tenantId: authReq.tenantId! },
+            include: {
+                items: { select: { productId: true, quantity: true, costAtSale: true } },
+                _count: { select: { productReturns: true, payments: true } },
+            },
+        });
+        if (!sale) return res.status(404).json({ error: 'Factura no encontrada' });
+
+        // ¿El período contable de la venta está cerrado? Se pregunta con la
+        // MISMA función que usa el motor contable, para no tener dos criterios
+        // de "período cerrado" que puedan discrepar.
+        let periodoCerrado = false;
+        try {
+            await assertPeriodOpen(prisma as any, authReq.tenantId!, sale.createdAt);
+        } catch (err) {
+            if (err instanceof PeriodLockedError) periodoCerrado = true;
+            else throw err;
+        }
+
+        const veredicto = puedeAnularse({
+            status: sale.status,
+            cancelledAt: sale.cancelledAt,
+            devoluciones: sale._count.productReturns,
+            pagos: sale._count.payments,
+            periodoCerrado,
+        }, motivo);
+
+        if (!veredicto.ok) {
+            return res.status(409).json({ error: veredicto.mensaje, codigo: veredicto.codigo });
+        }
+
+        const plan = planDeReversion({
+            total: sale.total.toString(),
+            paymentMethod: sale.paymentMethod,
+            items: sale.items.map(i => ({
+                productId: i.productId,
+                quantity: i.quantity.toString(),
+                costAtSale: i.costAtSale.toString(),
+            })),
+        });
+
+        const resultado = await prisma.$transaction(async (tx: any) => {
+            // 1 · MARCAR PRIMERO, con la guarda en el WHERE. Dos anulaciones
+            //     simultáneas (doble clic, dos pestañas) revertirían el stock
+            //     DOS VECES si esto se hiciera al final: acá la primera gana y
+            //     la segunda ve count === 0 y aborta la transacción entera.
+            const marcada = await tx.sale.updateMany({
+                where: {
+                    id: saleId,
+                    tenantId: authReq.tenantId!,
+                    status: { not: ESTADO_ANULADA },
+                    cancelledAt: null,
+                },
+                data: {
+                    status: ESTADO_ANULADA,
+                    cancelledAt: new Date(),
+                    cancelledById: authReq.userId!,
+                    cancelReason: motivo,
+                    // Una factura anulada no tiene saldo por cobrar.
+                    balance: 0,
+                },
+            });
+            if (marcada.count === 0) {
+                throw new Error('La factura ya fue anulada por otra operación.');
+            }
+
+            // 2 · Devolver la mercadería al inventario. `enforceSufficient:false`
+            //     porque es una ENTRADA: nunca puede fallar por insuficiencia.
+            for (const linea of plan.lineas) {
+                const cantidad = linea.cantidad.toNumber();
+                let stockResult;
+                try {
+                    stockResult = await applyStockDelta(tx, {
+                        tenantId: authReq.tenantId!,
+                        productId: linea.productId,
+                        delta: cantidad,
+                        enforceSufficient: false,
+                    });
+                } catch (err) {
+                    // Producto borrado del catálogo: la venta se anula igual, no
+                    // se puede rehacer inventario de algo que ya no existe.
+                    if (err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') continue;
+                    throw err;
+                }
+
+                await tx.kardexMovement.create({
+                    data: {
+                        tenantId: authReq.tenantId!,
+                        productId: linea.productId,
+                        type: 'RETURN',
+                        quantity: cantidad,
+                        stockBefore: stockResult.stockBefore,
+                        stockAfter: stockResult.stockAfter,
+                        referenceId: saleId,
+                        referenceType: 'SALE_VOIDED',
+                        reason: `Anulación de factura: ${motivo}`,
+                        userId: authReq.userId!,
+                    },
+                });
+            }
+
+            // 3 · Bajar la deuda del cliente si era venta a crédito.
+            let deudaAntes: string | null = null;
+            let deudaDespues: string | null = null;
+            if (sale.customerId && plan.deudaAReversar.greaterThan(0)) {
+                const previo = await tx.customer.findFirst({
+                    where: { id: sale.customerId, tenantId: authReq.tenantId! },
+                    select: { currentDebt: true },
+                });
+                if (previo) {
+                    deudaAntes = String(previo.currentDebt);
+                    // Piso en 0: si el contador venía desfasado, la anulación no
+                    // puede dejar al cliente con deuda NEGATIVA (saldo a favor
+                    // fantasma que después alguien cobra).
+                    const nueva = Decimal.max(
+                        new Decimal(previo.currentDebt.toString()).minus(plan.deudaAReversar),
+                        new Decimal(0)
+                    ).toDecimalPlaces(2);
+                    const act = await tx.customer.update({
+                        where: { id: sale.customerId, tenantId: authReq.tenantId! },
+                        data: { currentDebt: nueva.toNumber() },
+                    });
+                    deudaDespues = String(act.currentDebt);
+                }
+            }
+
+            // 4 · Asiento de REVERSIÓN: los mismos renglones de la venta con
+            //     débito y crédito INVERTIDOS. Cuadra por construcción (el
+            //     original cuadraba) y deja el rastro contable visible, en vez
+            //     de borrar el asiento original — que sería falsear el libro.
+            try {
+                const lineasVenta = buildSaleJournalLines(
+                    Number(sale.total),
+                    plan.costoTotal.toNumber(),
+                    sale.paymentMethod,
+                    sale.exemptTotal == null ? null : Number(sale.exemptTotal),
+                );
+                await createJournalEntry(
+                    tx, authReq.tenantId!,
+                    `Anulación de venta #${saleId.slice(0, 8)}`,
+                    saleId, 'SALE_CANCELLED', authReq.userId!,
+                    lineasVenta.map(l => ({ accountCode: l.accountCode, debit: l.credit, credit: l.debit })),
+                );
+            } catch (accErr) {
+                // Mismo criterio que el resto del sistema: el gancho contable no
+                // tumba la operación de negocio, pero queda en el log.
+                console.warn('⚠️ Asiento de anulación falló (la anulación continúa):', accErr);
+            }
+
+            // 5 · AUDITORÍA INMUTABLE, en la MISMA transacción (Capa 3).
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'SALE_VOIDED',
+                    details: JSON.stringify({
+                        saleId,
+                        invoiceSeries: sale.invoiceSeries,
+                        invoiceNumber: sale.invoiceNumber,
+                        motivo,
+                        before: { status: sale.status, balance: String(sale.balance), cancelledAt: null },
+                        after: { status: ESTADO_ANULADA, balance: '0' },
+                        total: String(sale.total),
+                        costoRevertido: plan.costoTotal.toString(),
+                        // El efectivo NO se compensa con un movimiento de caja: el
+                        // arqueo del turno suma las ventas en efectivo desde las
+                        // filas de Sale, así que excluir las anuladas YA lo
+                        // revierte. Crear además un movimiento contaría doble.
+                        efectivoQueDejaDeContar: plan.efectivoAReversar.toString(),
+                        deudaAntes,
+                        deudaDespues,
+                        items: plan.lineas.map(l => ({
+                            productId: l.productId,
+                            cantidad: l.cantidad.toString(),
+                        })),
+                    }),
+                },
+            });
+
+            return { id: saleId, status: ESTADO_ANULADA, motivo };
+        });
+
+        res.json({ success: true, ...resultado });
+    } catch (error: any) {
+        console.error('Error anulando factura:', error);
+        res.status(500).json({ error: error?.message || 'No se pudo anular la factura' });
+    }
+});
+
+// ==========================================
 // 💸 PAGOS
 // ==========================================
 
@@ -3085,7 +3299,7 @@ app.post('/api/shifts/:id/tomar', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
         }
 
         const ventasEfectivo = await prisma.sale.aggregate({
-            where: { tenantId: authReq.tenantId!, shiftId: turno.id, paymentMethod: 'CASH' },
+            where: { tenantId: authReq.tenantId!, shiftId: turno.id, paymentMethod: 'CASH', status: { not: ESTADO_ANULADA } },
             _sum: { total: true },
         });
         const efectivo = calcularEfectivoTurno({
@@ -3392,7 +3606,7 @@ app.get('/api/shifts/history', authenticate, async (req: any, res: any) => {
             include: {
                 employee: { select: { id: true, firstName: true, lastName: true, role: true } },
                 user: { select: { id: true, name: true, email: true } },
-                sales: { select: { id: true, total: true, paymentMethod: true } }
+                sales: { where: { status: { not: ESTADO_ANULADA } }, select: { id: true, total: true, paymentMethod: true } }
             }
         });
 
@@ -3442,7 +3656,7 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
             include: {
                 employee: { select: { id: true, firstName: true, lastName: true, role: true } },
                 user: { select: { id: true, name: true, email: true } },
-                sales: { select: { id: true, total: true, paymentMethod: true, createdAt: true } },
+                sales: { where: { status: { not: ESTADO_ANULADA } }, select: { id: true, total: true, paymentMethod: true, createdAt: true } },
                 cashMovements: { where: { isVoided: false }, select: { id: true, type: true, amount: true, currency: true, category: true, description: true, createdAt: true } }
             },
             orderBy: { startTime: 'asc' }
@@ -3543,7 +3757,7 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
             include: {
                 employee: { select: { id: true, firstName: true, lastName: true, role: true } },
                 user: { select: { id: true, name: true } },
-                sales: { select: { total: true, paymentMethod: true } }
+                sales: { where: { status: { not: ESTADO_ANULADA } }, select: { total: true, paymentMethod: true } }
             }
         });
 
@@ -3622,7 +3836,7 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
             ? await prisma.shift.findFirst({
                 where: { id: turnoAbierto.id, tenantId: authReq.tenantId },
                 include: {
-                    sales: { select: { total: true, paymentMethod: true } },
+                    sales: { where: { status: { not: ESTADO_ANULADA } }, select: { total: true, paymentMethod: true } },
                     cashMovements: { where: { isVoided: false } }
                 }
             })
@@ -3686,7 +3900,7 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
                 const movCurrency = currency || 'NIO';
                 const freshSales: Array<{ total: any }> = movCurrency === 'NIO'
                     ? await tx.sale.findMany({
-                        where: { shiftId: currentShift.id, paymentMethod: 'CASH' },
+                        where: { shiftId: currentShift.id, paymentMethod: 'CASH', status: { not: ESTADO_ANULADA } },
                         select: { total: true },
                     })
                     : [];
@@ -3867,7 +4081,7 @@ app.get('/api/cash-movements', authenticate, async (req: any, res: any) => {
                 }
             }),
             prisma.sale.findMany({
-                where: { tenantId: authReq.tenantId, shiftId: turnoId, paymentMethod: 'CASH' },
+                where: { tenantId: authReq.tenantId, shiftId: turnoId, paymentMethod: 'CASH', status: { not: ESTADO_ANULADA } },
                 orderBy: { createdAt: 'desc' },
                 take: 200,
                 select: { id: true, total: true, invoiceNumber: true, createdAt: true },
@@ -3936,7 +4150,7 @@ app.get('/api/cash-movements/balance', authenticate, async (req: any, res: any) 
         // que pueda truncar la gaveta (truncar acá sería mostrar plata que no es).
         const [ventasEfectivo, gruposMovimientos] = await Promise.all([
             prisma.sale.aggregate({
-                where: { tenantId: authReq.tenantId, shiftId: shift.id, paymentMethod: 'CASH' },
+                where: { tenantId: authReq.tenantId, shiftId: shift.id, paymentMethod: 'CASH', status: { not: ESTADO_ANULADA } },
                 _sum: { total: true },
             }),
             prisma.cashMovement.groupBy({
@@ -6296,7 +6510,8 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
         const sales = await prisma.sale.findMany({
             where: {
                 tenantId: authReq.tenantId,
-                createdAt: { gte: start, lte: end }
+                createdAt: { gte: start, lte: end },
+                status: { not: ESTADO_ANULADA },
             },
             include: { items: true },
             orderBy: { createdAt: 'asc' }
@@ -6407,7 +6622,7 @@ app.get('/api/reports/sellers', authenticate, async (req: any, res: any) => {
         const whereVentas: any = {
             tenantId: authReq.tenantId,
             createdAt: { gte: start, lte: end },
-            status: { not: 'VOIDED' },
+            status: { not: ESTADO_ANULADA },
         };
         if (propio) whereVentas.soldById = authReq.userId;
 
@@ -7236,6 +7451,7 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             by: ['employeeId'],
             where: {
                 tenantId: authReq.tenantId,
+                status: { not: ESTADO_ANULADA },
                 createdAt: { gte: startOfMonth, lte: endOfMonth },
                 employeeId: { not: null },
             },
@@ -12011,7 +12227,7 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(FISCAL_
         const XLSX = await import('xlsx');
 
         const sales = await prisma.sale.findMany({
-            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: 'VOIDED' } },
+            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: ESTADO_ANULADA } },
             include: { customer: true },
             orderBy: { createdAt: 'asc' },
         });
@@ -12172,7 +12388,7 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(FISCAL_RE
 
         // Ventas
         const sales = await prisma.sale.findMany({
-            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: 'VOIDED' } },
+            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: ESTADO_ANULADA } },
             include: { customer: true },
             orderBy: { createdAt: 'asc' },
         });

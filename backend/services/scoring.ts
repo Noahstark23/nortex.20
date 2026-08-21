@@ -1,6 +1,7 @@
 // @ts-ignore
 import { PrismaClient } from '@prisma/client';
 import { getBalanceGeneral, getEstadoResultados, seedChartOfAccounts } from './accounting';
+import { ESTADO_ANULADA } from './saleCancellation';
 
 const prisma = new PrismaClient();
 
@@ -28,6 +29,9 @@ export const calculateTenantScore = async (tenantId: string): Promise<ScoreResul
     const sales = await prisma.sale.findMany({
         where: {
             tenantId,
+            // Una factura ANULADA no es actividad comercial: si contara, un
+            // negocio podría inflar su propio score facturando y anulando.
+            status: { not: ESTADO_ANULADA },
             createdAt: { gte: new Date(new Date().setDate(new Date().getDate() - 30)) }
         }
     });
