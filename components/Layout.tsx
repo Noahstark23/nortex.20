@@ -6,7 +6,7 @@ import { PinPadClock } from './PinPadClock';
 import { useVentaEnCurso } from './VentaEnCursoContext';
 import OnboardingHub from './OnboardingHub';
 import InstallPrompt from './InstallPrompt';
-import { buildNavigation, groupBySection, resolveUiMode, UI_MODE_KEY, type UiMode, type NavEntry, type NavSection } from '../utils/navigation';
+import { buildNavigation, groupBySection, resolveUiMode, navPathForRoute, esRutaDe, UI_MODE_KEY, type UiMode, type NavEntry, type NavSection } from '../utils/navigation';
 
 // El módulo de navegación es puro (sin React): mapa iconKey → componente lucide.
 const NAV_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
@@ -185,7 +185,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   // ── Navegación en 5 secciones (rediseño Fase 2) ───────────────────────────
   const { sections: sectionGroups, loose: looseItems } = groupBySection(navItems);
-  const sectionHasActive = (items: NavItem[]) => items.some(it => location.pathname.startsWith(it.path));
+  // P0-3 — Bodegas y Series no tienen ítem propio en el menú: se atribuyen a
+  // "Mis Productos" (utils/navigation.ts). Sin esto, entrar ahí dejaba el
+  // sidebar sin NINGÚN ítem marcado y con todas las secciones plegadas: el
+  // usuario no sabía dónde estaba ni cómo volver.
+  const rutaDelMenu = navPathForRoute(location.pathname);
+  const sectionHasActive = (items: NavItem[]) => items.some(it => esRutaDe(it.path, rutaDelMenu));
+  /** Activo real del ítem, contemplando sus pantallas satélite. */
+  const itemActivo = (item: NavItem, isActive: boolean) => isActive || esRutaDe(item.path, rutaDelMenu);
 
   /** Item de nav: fondo suave + barra izquierda. Nunca un bloque sólido de color. */
   /* ── Guarda de navegación con venta en curso (P0-1) ──────────────────
@@ -233,7 +240,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             {looseItems.map((item) => {
               const Icon = item.icon;
               return (
-                <NavLink key={item.path} to={item.path} onClick={e => guardarSalida(e, item.path)} className={navItemClass}>
+                <NavLink key={item.path} to={item.path} onClick={e => guardarSalida(e, item.path)} className={({ isActive }) => navItemClass({ isActive: itemActivo(item, isActive) })}>
                   <Icon size={20} />
                   <span className="font-medium text-sm">{item.label}</span>
                 </NavLink>
@@ -261,7 +268,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       {items.map((item) => {
                         const Icon = item.icon;
                         return (
-                          <NavLink key={item.path} to={item.path} onClick={e => guardarSalida(e, item.path)} className={navItemClass}>
+                          <NavLink key={item.path} to={item.path} onClick={e => guardarSalida(e, item.path)} className={({ isActive }) => navItemClass({ isActive: itemActivo(item, isActive) })}>
                             <Icon size={20} />
                             <span className="font-medium text-sm">{item.label}</span>
                           </NavLink>

@@ -61,9 +61,14 @@ export const ModuleHeader: React.FC<ModuleHeaderProps> = ({
                     </div>
                 )}
                 <div className="min-w-0">
-                    <div className="flex items-center gap-3 min-w-0">
-                        <h1 className="text-title font-bold text-slate-100 truncate">{title}</h1>
-                        {contextLinks && <div className="flex items-center gap-2 shrink-0">{contextLinks}</div>}
+                    {/* En móvil el título se lleva su propio renglón (`basis-full`)
+                        y las píldoras bajan al siguiente. Sin eso, el h1 competía
+                        con tres píldoras `shrink-0` en 390px y se encogía hasta
+                        "M…": el header dejaba de decir en qué módulo estás. En md+
+                        vuelven a la misma línea, sin cambios. */}
+                    <div className="flex flex-wrap md:flex-nowrap items-center gap-x-3 gap-y-2 min-w-0">
+                        <h1 className="text-title font-bold text-slate-100 truncate basis-full md:basis-auto">{title}</h1>
+                        {contextLinks && <div className="flex items-center gap-2 flex-wrap md:flex-nowrap md:shrink-0">{contextLinks}</div>}
                     </div>
                     {subtitle && <p className="text-sm text-slate-400 truncate">{subtitle}</p>}
                 </div>
