@@ -374,6 +374,18 @@ const POS: React.FC = () => {
     // Línea recién quitada del carrito, con su posición para poder devolverla
     // donde estaba (P0-4). Se limpia sola a los 5 segundos.
     const [quitadoReciente, setQuitadoReciente] = useState<{ item: CartItem; posicion: number } | null>(null);
+    // Línea con el campo de descuento ABIERTO (P1-1). Una sola a la vez: dos
+    // campos abiertos en un ticket largo es exactamente el ruido que se saca.
+    const [lineaConDescuento, setLineaConDescuento] = useState<string | null>(null);
+    // Línea que acaba de recibir un producto (P1-4): destella 400ms para que el
+    // cajero vea QUÉ entró sin despegar la vista del producto que tiene en la mano.
+    //
+    // Lleva un contador y no solo el id A PROPÓSITO: al escanear DOS VECES el
+    // mismo producto —que es justo el caso donde la confirmación importa— setear
+    // el mismo id no cambia el estado, React se ahorra el render y el destello no
+    // se repetiría. El contador garantiza que cada lectura sea un valor nuevo.
+    const [lineaResaltada, setLineaResaltada] = useState<{ id: string; n: number } | null>(null);
+    const contadorResaltado = useRef(0);
 
     // 🅿️ PARQUEO DE VENTAS STATE
     // Antes era memoria pura: F4 "Aparcar" perdía todo con F5, o sea que el
@@ -1311,6 +1323,14 @@ const POS: React.FC = () => {
 
     const addToCart = useCallback((product: Product) => {
         if (!currentShift) { setShowOpenShift(true); return; }
+        // P1-4 · El cajero mira el PRODUCTO, no la pantalla. Escanear dos veces el
+        // mismo artículo es el error más caro de un POS, así que la confirmación
+        // llega por tres sentidos a la vez: el beep (que ya existía), el destello
+        // de la línea que entró, y la vibración en táctil. `vibrate` no existe en
+        // escritorio ni en iOS: la llamada es opcional y su ausencia no rompe nada.
+        contadorResaltado.current += 1;
+        setLineaResaltada({ id: product.id, n: contadorResaltado.current });
+        try { navigator.vibrate?.(30); } catch { /* el navegador no lo soporta */ }
         const wholesaleCustomer = Boolean(selectedCustomer?.isWholesale);
         setCart(prev => {
             const existing = prev.find(item => item.id === product.id) as CartLine | undefined;
@@ -1420,6 +1440,13 @@ const POS: React.FC = () => {
         });
         setQuitadoReciente(null);
     }, [quitadoReciente]);
+
+    // El destello de la línea recién agregada se apaga solo (P1-4).
+    useEffect(() => {
+        if (!lineaResaltada) return;
+        const t = setTimeout(() => setLineaResaltada(null), 400);
+        return () => clearTimeout(t);
+    }, [lineaResaltada]);
 
     // La ventana de deshacer se cierra sola.
     useEffect(() => {
@@ -1567,6 +1594,32 @@ const POS: React.FC = () => {
     // ==========================================
     useEffect(() => {
         const handleHotkey = (e: KeyboardEvent) => {
+            // ── Alternativas sin Fn (P1-8) ───────────────────────────────
+            // En la mayoría de las laptops las teclas F exigen mantener Fn, así
+            // que los atajos documentados quedaban fuera del alcance real del
+            // cajero. Las F se conservan (en un teclado de mostrador con F
+            // dedicadas son más rápidas); esto las acompaña, no las reemplaza.
+            //
+            // NO se toma Ctrl+P para aparcar, aunque la auditoría lo proponía:
+            // Ctrl+P es imprimir, y un POS imprime tickets todo el día.
+            // Secuestrarlo rompería algo más importante de lo que arregla.
+            if (e.ctrlKey || e.metaKey) {
+                const tecla = e.key.toLowerCase();
+                if (tecla === 'k') {
+                    e.preventDefault();
+                    searchRef.current?.focus();
+                    return;
+                }
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    // Mismas guardas que F9: sin ellas, mantener la combinación
+                    // apretada dispararía N cobros y N descargos de stock.
+                    if (e.repeat || processing || completedSale || showCashPreModal) return;
+                    if (currentShift && cart.length > 0) handleCheckout('CASH');
+                    return;
+                }
+            }
+
             // F-keys always work (don't type in inputs)
             switch (e.key) {
                 case 'F2':
@@ -1875,6 +1928,17 @@ const POS: React.FC = () => {
     // texto dejaría el chip apagado según cómo se haya escrito el monto.
     const chipActivo = (monto: Decimal): boolean =>
         cashReceived !== '' && toDecimal(cashReceived).equals(monto);
+
+    // Teclado en pantalla del modal de efectivo (P1-3). Se apoya en el mismo
+    // `sanitizeDecimalInput` que el input de texto, así que ambos caminos
+    // producen exactamente la misma cadena — no hay dos reglas de captura.
+    const teclaEfectivo = (tecla: string) => {
+        setCashReceived(prev => {
+            if (tecla === 'LIMPIAR') return '';
+            if (tecla === 'BORRAR') return prev.slice(0, -1);
+            return sanitizeDecimalInput(prev + tecla);
+        });
+    };
 
     // El menú que rodea al POS necesita saber si hay una venta abierta para
     // avisar antes de navegar. Una venta COBRADA (completedSale) ya no cuenta:
@@ -3147,7 +3211,7 @@ const POS: React.FC = () => {
                                 <div>
                                     <label className="block text-xs font-mono text-slate-500 mb-1">SKU / CÓDIGO DE BARRAS</label>
                                     <input type="text" className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100"
-                                        placeholder="Escanea o escribe" value={newProduct.sku} onChange={e => setNewProduct({ ...newProduct, sku: e.target.value.toUpperCase() })} />
+                                        placeholder="Escaneá o escribí" value={newProduct.sku} onChange={e => setNewProduct({ ...newProduct, sku: e.target.value.toUpperCase() })} />
                                 </div>
                                 <div>
                                     <label className="block text-xs font-mono text-slate-500 mb-1">CATEGORÍA</label>
@@ -3527,7 +3591,8 @@ const POS: React.FC = () => {
                 {/* ⌨️ HOTKEY CHEAT SHEET */}
                 <div className="hidden md:flex items-center gap-3 mt-2 px-2 py-1.5 text-[11px] text-slate-500 select-none flex-shrink-0">
                     <Keyboard size={13} className="text-slate-500" />
-                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F2</span> Buscar
+                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F2</span>
+                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Ctrl+K</span> Buscar
                     <span className="text-slate-300">·</span>
                     <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F4</span> Aparcar
                     <span className="text-slate-300">·</span>
@@ -3535,7 +3600,8 @@ const POS: React.FC = () => {
                     <span className="text-slate-300">·</span>
                     <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F8</span> Entrada
                     <span className="text-slate-300">·</span>
-                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F9</span> Cobrar
+                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F9</span>
+                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Ctrl+Enter</span> Cobrar
                     <span className="text-slate-300">·</span>
                     <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Esc</span> Cerrar
                 </div>
@@ -3706,8 +3772,8 @@ const POS: React.FC = () => {
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
                     {cart.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
-                            <ShoppingCart size={32} /> <p className="text-sm">Carrito vacio</p>
-                            <p className="text-[10px] text-slate-300">Escaneá un código de barras o selecciona un producto</p>
+                            <ShoppingCart size={32} /> <p className="text-sm">Carrito vacío</p>
+                            <p className="text-xs text-slate-300">Escaneá un código o tocá un producto para empezar.</p>
                         </div>
                     ) : (
                         cart.map(item => {
@@ -3718,7 +3784,10 @@ const POS: React.FC = () => {
                             const packSize = (item as CartLine).packSize;
                             const packLabel = ((item as CartLine).packUnit || 'caja').toLowerCase();
                             return (
-                                <div key={item.id} className="bg-surface-800/40 p-3 rounded-lg border border-white/[0.04] text-slate-100">
+                                <div
+                                    key={item.id}
+                                    className={`bg-surface-800/40 p-3 rounded-lg border text-slate-100 transition-colors duration-300 ${lineaResaltada?.id === item.id ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-white/[0.04]'}`}
+                                >
                                     {/* FILA 1 · El nombre, a ancho completo (P0-3).
                                         Antes era `line-clamp-1` dentro de una columna de
                                         110px y sin `title`: "1 bolson de ranchita chile"
@@ -3791,22 +3860,57 @@ const POS: React.FC = () => {
                                             <Trash2 size={18} />
                                         </button>
                                     </div>
-                                    {/* Per-item discount row */}
-                                    <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-white/[0.04]">
-                                        <Percent size={11} className="text-slate-400" />
-                                        <NumberDraftInput
-                                            value={lineDiscount}
-                                            onCommit={(n) => setItemDiscount(item.id, n)}
-                                            allowZero
-                                            placeholder="0"
-                                            ariaLabel={`Descuento de ${item.name} en porcentaje`}
-                                            className="w-12 text-[11px] text-center border border-white/[0.06] rounded px-1 py-0.5 outline-none focus:border-brand text-slate-200 font-mono tabular-nums"
-                                        />
-                                        <span className="text-[10px] text-slate-400">% desc</span>
-                                        {lineDiscountD.greaterThan(0) && (
-                                            <span className="text-[10px] text-red-500 font-bold ml-auto">-{formatMoney(toDecimal(item.price).mul(item.quantity).mul(lineDiscountD).div(100))}</span>
-                                        )}
-                                    </div>
+                                    {/* Descuento por línea (P1-1) — ANTES estaba abierto y
+                                        permanente en CADA renglón: ocupaba una fila entera
+                                        por producto, ensuciaba el ticket, y en un negocio
+                                        con empleados dejaba un descuento arbitrario a un
+                                        toque de distancia en cada línea.
+                                        Ahora: si hay descuento se muestra como resultado
+                                        (chip + lo que se rebaja); si no, es un enlace
+                                        discreto que abre el campo. Y al abrirse el campo va
+                                        a 44px — el criterio de P0-4 que no se podía cumplir
+                                        mientras esto sumaba alto a todas las líneas. */}
+                                    {lineDiscountD.greaterThan(0) ? (
+                                        <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-white/[0.04]">
+                                            <span className="px-1.5 py-0.5 rounded bg-danger-soft text-danger text-[10px] font-bold">−{lineDiscount}%</span>
+                                            <span className="text-[11px] text-slate-400">
+                                                rebaja {formatMoney(toDecimal(item.price).mul(item.quantity).mul(lineDiscountD).div(100))}
+                                            </span>
+                                            <button
+                                                onClick={() => setLineaConDescuento(prev => prev === item.id ? null : item.id)}
+                                                className="ml-auto text-[11px] text-slate-400 hover:text-slate-200 underline underline-offset-2"
+                                            >
+                                                {lineaConDescuento === item.id ? 'Listo' : 'Cambiar'}
+                                            </button>
+                                        </div>
+                                    ) : lineaConDescuento !== item.id ? (
+                                        <button
+                                            onClick={() => setLineaConDescuento(item.id)}
+                                            className="mt-1.5 pt-1.5 border-t border-white/[0.04] w-full text-left text-[11px] text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1.5"
+                                        >
+                                            <Percent size={11} /> Aplicar descuento
+                                        </button>
+                                    ) : null}
+
+                                    {lineaConDescuento === item.id && (
+                                        <div className="flex items-center gap-2 mt-1.5">
+                                            <NumberDraftInput
+                                                value={lineDiscount}
+                                                onCommit={(n) => setItemDiscount(item.id, n)}
+                                                allowZero
+                                                placeholder="0"
+                                                ariaLabel={`Descuento de ${item.name} en porcentaje`}
+                                                className="w-16 h-11 text-center text-base border border-white/[0.10] rounded-control outline-none focus:border-brand text-slate-100 font-mono tabular-nums bg-surface-900"
+                                            />
+                                            <span className="text-xs text-slate-400">% de descuento</span>
+                                            <button
+                                                onClick={() => setLineaConDescuento(null)}
+                                                className="ml-auto h-11 px-3 rounded-control bg-white/[0.06] hover:bg-white/[0.12] text-slate-100 text-xs font-bold transition-colors"
+                                            >
+                                                Listo
+                                            </button>
+                                        </div>
+                                    )}
                                     {/* ⚠️ Aviso de existencias — la línea vende más de lo que
                                         hay en el sistema (o el producto ya está en negativo).
                                         AVISA, no bloquea: el conteo puede estar desactualizado
@@ -3941,7 +4045,16 @@ const POS: React.FC = () => {
                             disabled={processing || cart.length === 0}
                             className="h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/40"
                         >
-                            <Banknote size={24} strokeWidth={2.5} /> EFECTIVO
+                            <Banknote size={22} strokeWidth={2.5} className="shrink-0" />
+                            <span className="flex flex-col items-start leading-tight min-w-0">
+                                <span className="flex items-center gap-1.5">
+                                    EFECTIVO
+                                    <kbd className="hidden md:inline text-[10px] font-mono font-normal opacity-70 border border-current/30 rounded px-1">F9</kbd>
+                                </span>
+                                {cart.length > 0 && (
+                                    <span className="text-[13px] font-mono tabular-nums opacity-90">{formatMoney(grandTotal)}</span>
+                                )}
+                            </span>
                         </button>
                         <button
                             onClick={() => handleCheckout('CREDIT')}
@@ -3953,7 +4066,18 @@ const POS: React.FC = () => {
                                     : 'bg-transparent text-slate-100 border-slate-700 hover:bg-white/[0.04]'
                             }`}
                         >
-                            {isCreditBlocked ? <Ban size={24} strokeWidth={2.5} /> : <CreditCard size={24} strokeWidth={2.5} />} CRÉDITO
+                            {isCreditBlocked ? <Ban size={22} strokeWidth={2.5} className="shrink-0" /> : <CreditCard size={22} strokeWidth={2.5} className="shrink-0" />}
+                            <span className="flex flex-col items-start leading-tight min-w-0">
+                                <span>CRÉDITO</span>
+                                {cart.length > 0 && !isCreditBlocked && (
+                                    <span className="text-[13px] font-mono tabular-nums opacity-90">{formatMoney(grandTotal)}</span>
+                                )}
+                                {/* Un botón deshabilitado tiene que decir POR QUÉ; que el
+                                    cajero lo descubra tocando es la peor forma de saberlo. */}
+                                {isCreditBlocked && !selectedCustomer && (
+                                    <span className="text-[11px] font-normal opacity-80">Elegí un cliente</span>
+                                )}
+                            </span>
                         </button>
                     </div>
                     {isCreditBlocked && selectedCustomer && (
@@ -4350,16 +4474,57 @@ const POS: React.FC = () => {
                                             onChange={e => setCashReceived(sanitizeDecimalInput(e.target.value))}
                                         />
                                     </div>
+                                    {/* Teclado en pantalla (P1-3): un POS de mostrador es
+                                        táctil y hasta acá el único modo de cargar el
+                                        efectivo era un input de texto. Teclas de 56px,
+                                        que es lo que se acierta con el pulgar sin mirar. */}
+                                    <div className="grid grid-cols-3 gap-1.5">
+                                        {['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '00'].map(t => (
+                                            <button
+                                                key={t}
+                                                type="button"
+                                                onClick={() => teclaEfectivo(t)}
+                                                className="h-14 rounded-control bg-white/[0.04] hover:bg-white/[0.10] text-slate-100 text-xl font-bold font-mono tabular-nums transition-colors active:scale-[0.97]"
+                                            >
+                                                {t}
+                                            </button>
+                                        ))}
+                                        <button
+                                            type="button"
+                                            onClick={() => teclaEfectivo('BORRAR')}
+                                            aria-label="Borrar el último dígito"
+                                            className="h-14 rounded-control bg-white/[0.04] hover:bg-white/[0.10] text-slate-300 font-bold transition-colors active:scale-[0.97] flex items-center justify-center"
+                                        >
+                                            <ArrowRight size={20} className="rotate-180" />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => teclaEfectivo('LIMPIAR')}
+                                            className="h-14 col-span-2 rounded-control bg-white/[0.04] hover:bg-white/[0.10] text-slate-300 font-bold transition-colors active:scale-[0.97]"
+                                        >
+                                            Limpiar
+                                        </button>
+                                    </div>
+
+                                    {/* EL VUELTO MANDA (P1-3). Al momento de cobrar, el
+                                        total ya no importa: importa cuánto devolver. Antes
+                                        se renderizaba a 24px, más chico que el total del
+                                        encabezado — justo el número que el cajero tiene que
+                                        ejecutar contando billetes sin mirar la pantalla. */}
                                     {cashReceived !== '' && toDecimal(cashReceived).greaterThanOrEqualTo(grandTotal) && (
-                                        <div className="flex justify-between items-center bg-emerald-500/10 px-3 py-2 rounded-lg border border-emerald-500/20">
-                                            <span className="font-bold text-emerald-400 text-sm">CAMBIO</span>
-                                            <span className="text-2xl font-black text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(cashReceived).minus(grandTotal))}</span>
+                                        <div className="bg-emerald-500/10 px-4 py-3 rounded-control border border-emerald-500/20 text-center">
+                                            <p className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Vuelto</p>
+                                            <p className="text-5xl font-black text-emerald-400 font-mono tabular-nums leading-none mt-1">
+                                                {formatMoney(toDecimal(cashReceived).minus(grandTotal))}
+                                            </p>
                                         </div>
                                     )}
                                     {cashReceived !== '' && toDecimal(cashReceived).lessThan(grandTotal) && (
-                                        <div className="flex justify-between items-center bg-red-500/10 px-3 py-2 rounded-lg border border-red-500/20">
-                                            <span className="font-bold text-red-400 text-sm">FALTANTE</span>
-                                            <span className="text-xl font-bold text-red-400 font-mono tabular-nums">{formatMoney(toDecimal(grandTotal).minus(toDecimal(cashReceived)))}</span>
+                                        <div className="bg-red-500/10 px-4 py-3 rounded-control border border-red-500/20 text-center">
+                                            <p className="text-xs font-bold text-red-400 uppercase tracking-widest">Falta</p>
+                                            <p className="text-3xl font-black text-red-400 font-mono tabular-nums leading-none mt-1">
+                                                {formatMoney(toDecimal(grandTotal).minus(toDecimal(cashReceived)))}
+                                            </p>
                                         </div>
                                     )}
                                 </>
@@ -4372,13 +4537,15 @@ const POS: React.FC = () => {
                                 >
                                     Cancelar
                                 </button>
+                                {/* Un botón dice QUÉ hace y POR CUÁNTO (P1-3). "Confirmar"
+                                    no dice ninguna de las dos cosas. */}
                                 <button
                                     onClick={() => { setShowCashPreModal(false); handleCheckout('CASH'); }}
                                     disabled={processing}
                                     className="flex-1 py-3 rounded-xl bg-gradient-to-b from-green-500 to-green-700 text-white font-black hover:from-green-600 hover:to-green-800 transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
                                 >
                                     {processing ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
-                                    Confirmar
+                                    Cobrar {formatMoney(grandTotal)}
                                 </button>
                             </div>
                         </div>
