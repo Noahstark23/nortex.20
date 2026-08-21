@@ -1,4 +1,4 @@
-import { TableEmptyState } from './ui/EmptyState';
+import { EmptyState, TableEmptyState, type EmptyStateProps } from './ui/EmptyState';
 import { SkeletonTableRows } from './ui/Skeleton';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 // xlsx (~430 KB) se importa dinámicamente en handleExport — fuera del bundle inicial.
@@ -966,6 +966,86 @@ export default function Inventory() {
 
     const isOwner = userRole === 'OWNER' || userRole === 'ADMIN';
 
+    // Debajo de `lg` el catálogo se pinta como tarjetas y no como tabla (ver el
+    // comentario del bloque de tarjetas). Las acciones del menú "…" son las
+    // MISMAS en los dos modos, así que se arman una sola vez: duplicar el arreglo
+    // era la forma segura de que un día "Eliminar" existiera en la tabla y no en
+    // el teléfono, o peor, al revés.
+    const accionesDe = (product: Product) => [
+        {
+            label: product.isPublished ? 'Ocultar del catálogo' : 'Publicar en catálogo',
+            icon: <Globe size={16} />,
+            onClick: () => handleTogglePublish(product.id, product.isPublished || false, product.name),
+        },
+        {
+            label: 'Lotes y vencimientos',
+            icon: <Layers size={16} />,
+            onClick: () => openBatches(product),
+            hidden: !product.requiresBatchTracking,
+        },
+        {
+            label: 'Ajuste de stock (Kardex)',
+            icon: <Wrench size={16} />,
+            onClick: () => openAdjust(product),
+        },
+        {
+            label: 'Eliminar producto',
+            icon: <Trash2 size={16} />,
+            onClick: () => handleDelete(product.id, product.name),
+            danger: true,
+        },
+    ];
+
+    // El semáforo de existencias también es compartido entre tabla y tarjetas.
+    const estadoStock = (product: Product) => ({
+        agotado: product.stock === 0,
+        bajo: product.stock <= product.minStock && product.stock > 0,
+    });
+
+    // El vacío dice lo MISMO en los dos modos; solo cambia el envoltorio
+    // (`<tr><td colSpan>` en la tabla, bloque suelto en las tarjetas). Declararlo
+    // una vez evita que el teléfono termine con un vacío mudo mientras el
+    // escritorio ofrece "Modo rápido".
+    const propsVacio: EmptyStateProps = productsError
+        ? {
+            mode: 'error',
+            title: 'No pudimos cargar tu inventario',
+            description: 'Puede ser tu conexión. Tus productos siguen ahí — reintentá.',
+            action: { label: 'Reintentar', onClick: () => fetchProducts() },
+        }
+        : searchTerm
+            ? {
+                mode: 'no-results',
+                title: 'No se encontraron resultados',
+                description: `Ningún producto coincide con "${searchTerm}". Probá con otro nombre o SKU.`,
+                action: { label: 'Limpiar búsqueda', onClick: () => setSearchTerm('') },
+            }
+            : {
+                icon: <Package size={32} />,
+                title: 'Tu inventario está vacío',
+                description: 'Importá tu lista desde Excel y Nortex arma el catálogo solo.',
+                action: isOwner ? { label: 'Modo rápido', icon: <Zap size={18} />, onClick: () => { setShowQuickAddModal(true); setQuickAddSKU(''); } } : undefined,
+                secondaryAction: isOwner ? { label: 'Cargar manual', icon: <Plus size={18} />, onClick: () => setShowCreateModal(true) } : undefined,
+                linkAction: isOwner ? { label: 'O cargá un catálogo de ejemplo de tu giro para probar', onClick: seedCatalog, loading: seeding, loadingLabel: 'Cargando catálogo…' } : undefined,
+                errorText: seedError,
+            };
+
+    // La paginación vivía DENTRO del contenedor de la tabla. Al ocultar la tabla
+    // en el teléfono se habría ido con ella, dejando al dueño encerrado en los
+    // primeros 50 de 1,003 productos sin ninguna señal de que hay más.
+    const paginacion = total > PAGE_SIZE ? (
+        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700 text-sm text-slate-400">
+            <span>{((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, total)} de {total.toLocaleString()}</span>
+            <div className="flex items-center gap-2">
+                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+                    className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 flex items-center gap-1 transition-colors"><ChevronLeft size={16} /> <span className="hidden sm:inline">Anterior</span></button>
+                <span className="text-slate-300 font-mono">{page} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
+                <button onClick={() => setPage(p => p + 1)} disabled={page >= Math.ceil(total / PAGE_SIZE)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 flex items-center gap-1 transition-colors"><span className="hidden sm:inline">Siguiente</span> <ChevronRight size={16} /></button>
+            </div>
+        </div>
+    ) : null;
+
     // ==========================================
     // RENDER
     // ==========================================
@@ -1092,9 +1172,17 @@ export default function Inventory() {
                 </p>
             )}
 
-            {/* SEARCH + FILTROS + ORDEN + EXPORTAR */}
-            <div className="flex flex-wrap gap-3 items-center">
-                <div className="flex-1 min-w-[200px] relative">
+            {/* SEARCH + FILTROS + ORDEN + EXPORTAR
+
+                En el teléfono `flex-wrap` repartía los 5 controles en 3 renglones
+                de alturas distintas (buscador solo, dos selects, select + Excel):
+                ocupaba media pantalla antes de que apareciera un producto. Debajo
+                de `sm` el buscador va a lo ancho y los otros cuatro caen en una
+                grilla de 2×2 pareja. `sm:contents` disuelve ese envoltorio de
+                `sm` para arriba, así que en escritorio el layout queda idéntico
+                al de antes — una sola fila flex. */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                <div className="w-full sm:flex-1 sm:min-w-[200px] relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                     <input
                         data-tour="inv-search"
@@ -1105,13 +1193,14 @@ export default function Inventory() {
                         className="w-full pl-10 pr-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
                     />
                 </div>
+                <div className="grid grid-cols-2 gap-3 sm:contents">
                 <select value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setPage(1); }}
-                    className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
+                    className="min-w-0 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
                     <option value="">Todas las categorías</option>
                     {categories.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
                 <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-                    className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
+                    className="min-w-0 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
                     <option value="">Todos</option>
                     <option value="low">Bajo mínimo</option>
                     <option value="reorder">Toca reponer</option>
@@ -1120,7 +1209,7 @@ export default function Inventory() {
                     <option value="unpublished">Ocultos</option>
                 </select>
                 <select value={`${sortField}:${sortDir}`} onChange={(e) => { const [f, d] = e.target.value.split(':'); setSortField(f); setSortDir(d as 'asc' | 'desc'); setPage(1); }}
-                    className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
+                    className="min-w-0 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
                     <option value="name:asc">Nombre A-Z</option>
                     <option value="name:desc">Nombre Z-A</option>
                     <option value="stock:asc">Stock ↑ (bajos primero)</option>
@@ -1130,45 +1219,70 @@ export default function Inventory() {
                     <option value="cost:desc">Costo ↓</option>
                 </select>
                 <button onClick={handleExport} disabled={exporting}
-                    className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 border border-slate-600 disabled:opacity-50 transition-colors">
+                    className="min-w-0 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 border border-slate-600 disabled:opacity-50 transition-colors">
                     <Download size={16} /> {exporting ? 'Exportando…' : 'Excel'}
                 </button>
+                </div>
             </div>
 
-            {/* BULK ACTIONS BAR */}
+            {/* BULK ACTIONS BAR
+
+                En el teléfono esta barra estaba ANTES del listado: para seleccionar
+                productos hay que bajar, y al bajar la barra —con los botones que
+                aplican el cambio— se iba para arriba de la pantalla. Uno terminaba
+                marcando 20 productos y subiendo a ciegas a buscar el botón.
+
+                Debajo de `lg` queda anclada abajo, 72px sobre el borde para no
+                taparse con la barra de navegación (h-16 = 64px, fija). Es `fixed`
+                y no `sticky` a propósito: medido en el navegador, `sticky` NO se
+                anclaba dentro de esta vista —quedaba en -532px, fuera de pantalla—
+                y una barra que depende de dónde quedó el scroll no sirve para
+                confirmar un cambio de precios masivo. De `lg` para arriba vuelve a
+                ser un bloque normal en el flujo.
+
+                El botón "Quitar" existe porque una barra anclada sin salida es una
+                trampa: sin él, deseleccionar exige volver a tocar 20 casillas. */}
             {selectedProductIds.length > 0 && isOwner && (
-                <div className="bg-blue-900/40 border border-blue-500/30 rounded-lg p-3 flex items-center justify-between mb-4 shadow-lg animate-in fade-in slide-in-from-top-2">
-                    <div className="flex items-center gap-3">
-                        <CheckSquare size={18} className="text-blue-400" />
-                        <span className="text-white font-medium">
-                            {selectedProductIds.length} productos seleccionados
-                        </span>
+                <div className="fixed bottom-[72px] left-4 right-4 z-30 lg:static lg:bottom-auto lg:left-auto lg:right-auto lg:z-auto bg-blue-950/95 lg:bg-blue-900/40 backdrop-blur-sm border border-blue-500/30 rounded-lg p-3 mb-4 shadow-lg animate-in fade-in slide-in-from-bottom-2 lg:slide-in-from-top-2 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 min-w-0">
+                            <CheckSquare size={18} className="text-blue-400 shrink-0" />
+                            <span className="text-white font-medium truncate">
+                                {selectedProductIds.length} {selectedProductIds.length === 1 ? 'producto seleccionado' : 'productos seleccionados'}
+                            </span>
+                        </div>
+                        <button
+                            onClick={() => setSelectedProductIds([])}
+                            className="text-sm text-slate-300 hover:text-white underline underline-offset-2 shrink-0 lg:hidden"
+                        >
+                            Quitar
+                        </button>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="grid grid-cols-2 gap-2 lg:flex lg:items-center lg:gap-3">
                         <button
                             onClick={openBulkEdit}
-                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
                         >
                             <Edit size={16} />
-                            Editar precio/categoría
+                            <span className="truncate">Editar precio<span className="hidden lg:inline">/categoría</span></span>
                         </button>
                         <button
                             onClick={handlePrintLabels}
-                            className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors border border-slate-600"
+                            className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors border border-slate-600"
                         >
                             <Printer size={16} />
                             Etiquetas
                         </button>
                         <button
                             onClick={() => handleBulkPublish(true)}
-                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
                         >
                             <Globe size={16} />
                             Publicar
                         </button>
                         <button
                             onClick={() => handleBulkPublish(false)}
-                            className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors border border-slate-600"
+                            className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors border border-slate-600"
                         >
                             <EyeOff size={16} />
                             Ocultar
@@ -1177,14 +1291,29 @@ export default function Inventory() {
                 </div>
             )}
 
-            {/* PRODUCTS TABLE */}
-            <div className="bg-slate-800/60 rounded-xl border border-slate-700 overflow-hidden">
+            {/* PRODUCTS TABLE — solo de `lg` para arriba.
+
+                Medido en el navegador con el rol de dueño (8 columnas): la tabla
+                mide 849px de ancho natural. La caja que la contiene da 313px a
+                360px, 343px a 390px y 593px a 640px — o sea que en CUALQUIER
+                teléfono quedaban afuera Precio, Costo, Valor Total y Acciones.
+                No es que se vieran apretados: el `overflow-x-auto` los escondía
+                detrás de un scroll lateral que nadie descubre, así que el dueño
+                no podía ver el precio de su propio producto ni tocar "Editar".
+
+                Debajo de `lg` el listado se pinta como tarjetas (bloque siguiente).
+                A `lg` (1024px) la caja da 737px contra los 849px de la tabla, así
+                que ahí se esconde la columna Costo hasta `xl` — es el dato menos
+                urgente y el único cuya ausencia no rompe una decisión de venta;
+                Valor Total se queda porque es el que el dueño mira para saber
+                cuánta plata tiene parada. */}
+            <div className="hidden lg:block bg-slate-800/60 rounded-xl border border-slate-700 overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="table-premium w-full">
                         <thead>
                             <tr className="bg-slate-900/80">
                                 {isOwner && (
-                                    <th className="text-center px-4 py-3">
+                                    <th className="text-center px-2 xl:px-4 py-3">
                                         <input
                                             type="checkbox"
                                             checked={filteredProducts.length > 0 && selectedProductIds.length === filteredProducts.length}
@@ -1193,52 +1322,25 @@ export default function Inventory() {
                                         />
                                     </th>
                                 )}
-                                <th className="text-left px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">SKU</th>
-                                <th className="text-left px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Producto</th>
-                                <th className="text-left px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Categoría</th>
-                                <th className="text-right px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Stock</th>
-                                <th className="text-right px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Precio</th>
+                                <th className="text-left px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">SKU</th>
+                                <th className="text-left px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Producto</th>
+                                <th className="text-left px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Categoría</th>
+                                <th className="text-right px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Stock</th>
+                                <th className="text-right px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Precio</th>
                                 {isOwner && (
                                     <>
-                                        <th className="text-right px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Costo</th>
-                                        <th className="text-right px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Valor Total</th>
+                                        <th className="hidden xl:table-cell text-right px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Costo</th>
+                                        <th className="text-right px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Valor Total</th>
                                     </>
                                 )}
-                                <th className="text-center px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Acciones</th>
+                                <th className="text-center px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Acciones</th>
                             </tr>
                         </thead>
                         <tbody>
                             {loading ? (
                                 <SkeletonTableRows rows={6} cols={isOwner ? 8 : 6} />
                             ) : filteredProducts.length === 0 ? (
-                                productsError ? (
-                                    <TableEmptyState
-                                        colSpan={isOwner ? 8 : 6}
-                                        mode="error"
-                                        title="No pudimos cargar tu inventario"
-                                        description="Puede ser tu conexión. Tus productos siguen ahí — reintentá."
-                                        action={{ label: 'Reintentar', onClick: () => fetchProducts() }}
-                                    />
-                                ) : searchTerm ? (
-                                    <TableEmptyState
-                                        colSpan={isOwner ? 8 : 6}
-                                        mode="no-results"
-                                        title="No se encontraron resultados"
-                                        description={`Ningún producto coincide con "${searchTerm}". Probá con otro nombre o SKU.`}
-                                        action={{ label: 'Limpiar búsqueda', onClick: () => setSearchTerm('') }}
-                                    />
-                                ) : (
-                                    <TableEmptyState
-                                        colSpan={isOwner ? 8 : 6}
-                                        icon={<Package size={32} />}
-                                        title="Tu inventario está vacío"
-                                        description="Importá tu lista desde Excel y Nortex arma el catálogo solo."
-                                        action={isOwner ? { label: 'Modo rápido', icon: <Zap size={18} />, onClick: () => { setShowQuickAddModal(true); setQuickAddSKU(''); } } : undefined}
-                                        secondaryAction={isOwner ? { label: 'Cargar manual', icon: <Plus size={18} />, onClick: () => setShowCreateModal(true) } : undefined}
-                                        linkAction={isOwner ? { label: 'O cargá un catálogo de ejemplo de tu giro para probar', onClick: seedCatalog, loading: seeding, loadingLabel: 'Cargando catálogo…' } : undefined}
-                                        errorText={seedError}
-                                    />
-                                )
+                                <TableEmptyState colSpan={isOwner ? 8 : 6} {...propsVacio} />
                             ) : (
                                 filteredProducts.map((product) => {
                                     const isLow = product.stock <= product.minStock && product.stock > 0;
@@ -1252,7 +1354,7 @@ export default function Inventory() {
                                     return (
                                         <tr key={product.id} className={`${rowBg} transition-colors`}>
                                             {isOwner && (
-                                                <td className="px-4 py-3 text-center">
+                                                <td className="px-2 xl:px-4 py-3 text-center">
                                                     <input
                                                         type="checkbox"
                                                         checked={selectedProductIds.includes(product.id)}
@@ -1261,12 +1363,12 @@ export default function Inventory() {
                                                     />
                                                 </td>
                                             )}
-                                            <td className="px-4 py-3">
+                                            <td className="px-2 xl:px-4 py-3">
                                                 <span className="font-mono text-sm text-slate-300 bg-slate-900/60 px-2 py-0.5 rounded">
                                                     {product.sku}
                                                 </span>
                                             </td>
-                                            <td className="px-4 py-3">
+                                            <td className="px-2 xl:px-4 py-3">
                                                 <div className="flex flex-col">
                                                     <span className="text-white font-semibold">{product.name}</span>
                                                     {product.description && (
@@ -1274,7 +1376,7 @@ export default function Inventory() {
                                                     )}
                                                 </div>
                                             </td>
-                                            <td className="px-4 py-3">
+                                            <td className="px-2 xl:px-4 py-3">
                                                 {product.category ? (
                                                     <span className="text-xs bg-slate-700/60 text-slate-300 px-2 py-1 rounded-full">
                                                         {product.category}
@@ -1283,7 +1385,7 @@ export default function Inventory() {
                                                     <span className="text-slate-300">-</span>
                                                 )}
                                             </td>
-                                            <td className="px-4 py-3 text-right">
+                                            <td className="px-2 xl:px-4 py-3 text-right">
                                                 <div className="flex items-center justify-end gap-2">
                                                     <span className={`font-mono tabular-nums font-bold ${isOut ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-white'}`}>
                                                         {product.stock}
@@ -1300,20 +1402,20 @@ export default function Inventory() {
                                                     )}
                                                 </div>
                                             </td>
-                                            <td className="px-4 py-3 text-right text-emerald-400 font-semibold font-mono tabular-nums">
+                                            <td className="px-2 xl:px-4 py-3 text-right text-emerald-400 font-semibold font-mono tabular-nums whitespace-nowrap">
                                                 {formatCurrency(product.price)}
                                             </td>
                                             {isOwner && (
                                                 <>
-                                                    <td className="px-4 py-3 text-right text-slate-400 font-mono tabular-nums">
+                                                    <td className="hidden xl:table-cell px-2 xl:px-4 py-3 text-right text-slate-400 font-mono tabular-nums whitespace-nowrap">
                                                         {formatCurrency(product.cost)}
                                                     </td>
-                                                    <td className="px-4 py-3 text-right font-semibold text-cyan-400 font-mono tabular-nums">
+                                                    <td className="px-2 xl:px-4 py-3 text-right font-semibold text-cyan-400 font-mono tabular-nums whitespace-nowrap">
                                                         {formatCurrency(product.stock * product.cost)}
                                                     </td>
                                                 </>
                                             )}
-                                            <td className="px-4 py-3">
+                                            <td className="px-2 xl:px-4 py-3">
                                                 {/* Antes había 6 íconos de ~33px pegados, con "Eliminar"
                                                     al lado de "Ajustar stock". Con el dedo y con prisa,
                                                     esa vecindad borra productos. Ahora quedan visibles
@@ -1334,30 +1436,7 @@ export default function Inventory() {
                                                             />
                                                             <ActionMenu
                                                                 label={`Más acciones de ${product.name}`}
-                                                                items={[
-                                                                    {
-                                                                        label: product.isPublished ? 'Ocultar del catálogo' : 'Publicar en catálogo',
-                                                                        icon: <Globe size={16} />,
-                                                                        onClick: () => handleTogglePublish(product.id, product.isPublished || false, product.name),
-                                                                    },
-                                                                    {
-                                                                        label: 'Lotes y vencimientos',
-                                                                        icon: <Layers size={16} />,
-                                                                        onClick: () => openBatches(product),
-                                                                        hidden: !product.requiresBatchTracking,
-                                                                    },
-                                                                    {
-                                                                        label: 'Ajuste de stock (Kardex)',
-                                                                        icon: <Wrench size={16} />,
-                                                                        onClick: () => openAdjust(product),
-                                                                    },
-                                                                    {
-                                                                        label: 'Eliminar producto',
-                                                                        icon: <Trash2 size={16} />,
-                                                                        onClick: () => handleDelete(product.id, product.name),
-                                                                        danger: true,
-                                                                    },
-                                                                ]}
+                                                                items={accionesDe(product)}
                                                             />
                                                         </>
                                                     )}
@@ -1370,18 +1449,140 @@ export default function Inventory() {
                         </tbody>
                     </table>
                 </div>
-                {total > PAGE_SIZE && (
-                    <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700 text-sm text-slate-400">
-                        <span>{((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, total)} de {total.toLocaleString()}</span>
-                        <div className="flex items-center gap-2">
-                            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
-                                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 flex items-center gap-1 transition-colors"><ChevronLeft size={16} /> Anterior</button>
-                            <span className="text-slate-300 font-mono">{page} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
-                            <button onClick={() => setPage(p => p + 1)} disabled={page >= Math.ceil(total / PAGE_SIZE)}
-                                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 flex items-center gap-1 transition-colors">Siguiente <ChevronRight size={16} /></button>
-                        </div>
-                    </div>
+                {paginacion}
+            </div>
+
+            {/* CATÁLOGO EN TARJETAS — el modo de teléfono y tablet (< lg).
+
+                Cada tarjeta muestra de una lo que la tabla escondía tras el
+                scroll lateral: nombre, SKU, existencias con su semáforo, PRECIO
+                y las acciones. Costo y Valor Total quedan en una segunda línea
+                solo para el dueño, que es el único a quien le sirven.
+
+                Se mantiene la casilla de selección para que la edición masiva
+                —el atajo para subir precios cuando cambia el dólar— siga siendo
+                posible desde el teléfono. */}
+            <div className={`lg:hidden bg-slate-800/60 rounded-xl border border-slate-700 overflow-hidden ${
+                // Con la barra de acciones anclada abajo, sin este colchón las
+                // últimas tarjetas y la paginación quedan debajo de ella.
+                selectedProductIds.length > 0 && isOwner ? 'pb-36' : ''
+            }`}>
+                {isOwner && filteredProducts.length > 0 && !loading && (
+                    <label className="flex items-center gap-3 px-4 py-3 border-b border-slate-700 bg-slate-900/60 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={selectedProductIds.length === filteredProducts.length}
+                            onChange={toggleSelectAll}
+                            className="w-5 h-5 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-slate-900"
+                        />
+                        <span className="text-sm text-slate-300 font-medium">Seleccionar los {filteredProducts.length} de esta página</span>
+                    </label>
                 )}
+
+                {loading ? (
+                    <div className="divide-y divide-slate-700/60">
+                        {Array.from({ length: 6 }).map((_, i) => (
+                            <div key={i} className="p-4 space-y-2">
+                                <div className="h-4 w-2/3 rounded bg-slate-700/60 animate-pulse" />
+                                <div className="h-3 w-1/3 rounded bg-slate-700/40 animate-pulse" />
+                            </div>
+                        ))}
+                    </div>
+                ) : filteredProducts.length === 0 ? (
+                    <EmptyState {...propsVacio} />
+                ) : (
+                    <ul className="divide-y divide-slate-700/60">
+                        {filteredProducts.map((product) => {
+                            const { agotado, bajo } = estadoStock(product);
+                            const fondo = agotado ? 'bg-red-950/20' : bajo ? 'bg-amber-950/10' : '';
+                            const seleccionado = selectedProductIds.includes(product.id);
+
+                            return (
+                                <li key={product.id} data-fila-producto className={`${fondo} p-4`}>
+                                    <div className="flex items-start gap-3">
+                                        {isOwner && (
+                                            <input
+                                                type="checkbox"
+                                                aria-label={`Seleccionar ${product.name}`}
+                                                checked={seleccionado}
+                                                onChange={() => toggleSelection(product.id)}
+                                                className="mt-0.5 w-5 h-5 shrink-0 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-slate-900"
+                                            />
+                                        )}
+
+                                        <div className="min-w-0 flex-1">
+                                            {/* El nombre se lleva el renglón entero. Compartiéndolo con el
+                                                precio y tres botones, "Broca modelo 100" caía en tres
+                                                líneas de dos palabras y el producto dejaba de leerse. */}
+                                            <p className="text-white font-semibold leading-snug break-words">{product.name}</p>
+
+                                            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                                                <span className="font-mono text-xs text-slate-300 bg-slate-900/60 px-2 py-0.5 rounded">
+                                                    {product.sku}
+                                                </span>
+                                                {product.category && (
+                                                    <span className="text-xs bg-slate-700/60 text-slate-300 px-2 py-0.5 rounded-full">
+                                                        {product.category}
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            {/* Existencias a la izquierda, precio a la derecha: los dos
+                                                datos por los que se abre esta pantalla, en un renglón. */}
+                                            <div className="mt-2 flex items-center justify-between gap-3">
+                                                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                                                    <span className={`font-mono tabular-nums font-bold ${agotado ? 'text-red-400' : bajo ? 'text-amber-400' : 'text-white'}`}>
+                                                        {product.stock}
+                                                    </span>
+                                                    <span className="text-xs text-slate-500">{product.unit}</span>
+                                                    {agotado ? (
+                                                        <span className="badge-soft-danger"><AlertTriangle size={11} /> Agotado</span>
+                                                    ) : bajo ? (
+                                                        <span className="badge-soft-warning"><AlertTriangle size={11} /> Reorden · mín {product.minStock}</span>
+                                                    ) : (
+                                                        <span className="badge-soft-success">OK</span>
+                                                    )}
+                                                </div>
+                                                <span className="shrink-0 text-emerald-400 font-bold font-mono tabular-nums">
+                                                    {formatCurrency(product.price)}
+                                                </span>
+                                            </div>
+
+                                            {isOwner && (
+                                                <div className="mt-2 flex items-center justify-between gap-3">
+                                                    {/* Sin `truncate`: con los tres botones al lado, "Valor"
+                                                        se cortaba en "V…" y desaparecía justo la cifra que
+                                                        dice cuánta plata hay parada en ese producto. Que
+                                                        baje a dos líneas es mejor que ocultarla. */}
+                                                    <p className="min-w-0 text-xs text-slate-400 font-mono tabular-nums">
+                                                        Costo {formatCurrency(product.cost)} · Valor <span className="text-cyan-400">{formatCurrency(product.stock * product.cost)}</span>
+                                                    </p>
+                                                    <div className="flex shrink-0 items-center gap-1">
+                                                        <IconButton
+                                                            icon={<Eye size={16} />}
+                                                            label={`Auditar kardex de ${product.name}`}
+                                                            onClick={() => openKardex(product)}
+                                                        />
+                                                        <IconButton
+                                                            icon={<Edit size={16} />}
+                                                            label={`Editar ${product.name}`}
+                                                            onClick={() => openEditModal(product)}
+                                                        />
+                                                        <ActionMenu
+                                                            label={`Más acciones de ${product.name}`}
+                                                            items={accionesDe(product)}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                )}
+                {paginacion}
             </div>
 
             {/* ==========================================
@@ -2247,6 +2448,11 @@ export default function Inventory() {
                                     <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Cantidad</label>
                                     <input
                                         type="number"
+                                        // Sin `inputMode` el teléfono abre el teclado
+                                        // alfabético y hay que cambiarlo a mano para
+                                        // escribir la cantidad de un lote. Es el único
+                                        // campo numérico del módulo al que le faltaba.
+                                        inputMode="numeric"
                                         min="1"
                                         value={batchForm.quantity}
                                         onChange={(e) => setBatchForm({ ...batchForm, quantity: e.target.value })}
