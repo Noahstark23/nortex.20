@@ -2269,7 +2269,9 @@ const POS: React.FC = () => {
             {/* HEADER BAR */}
             <div className="absolute top-0 right-0 left-0 h-14 bg-surface-900 border-b border-white/[0.06] px-6 flex justify-between items-center gap-4 z-10 text-slate-100">
                 <div className="font-bold text-slate-100 flex items-center gap-2 shrink-0">
-                    PUNTO DE VENTA
+                    {/* En móvil el bottom-nav ya dice "Vender": el título solo
+                        empujaba a las píldoras a montarse unas sobre otras. */}
+                    <span className="hidden md:inline">PUNTO DE VENTA</span>
                     {currentShift && (
                         <span className="text-xs bg-green-500/15 text-green-400 px-2 py-0.5 rounded-full border border-green-500/20 flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
@@ -2280,7 +2282,10 @@ const POS: React.FC = () => {
                     )}
                 </div>
 
-                <div className="flex items-center gap-2 min-w-0 justify-end whitespace-nowrap pl-4">
+                {/* overflow-x-auto: en pantallas angostas las píldoras se
+                    desplazan en horizontal — antes se IMPRIMÍAN una encima de
+                    otra (auditoría de uso real en 390px: header ilegible). */}
+                <div className="flex items-center gap-2 min-w-0 md:justify-end whitespace-nowrap pl-4 overflow-x-auto">
                     {/* Estado de conexión: informativo, no es una acción. Ámbar = requiere atención. */}
                     {!isOnline && (
                         <div className="flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-warning-soft text-amber-400 border border-amber-500/20">
