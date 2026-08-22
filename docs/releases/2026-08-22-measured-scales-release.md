@@ -12,8 +12,8 @@ mismo valor en `commit`.
 ## Estado de preparación
 
 - TypeScript, Prisma 6.4.1, suite completa, diseño, mutación y build: aprobados.
-- Suite integrada local: 94 archivos y 1,242 pruebas activas; 14 integraciones
-  omitidas en esa corrida ya fueron validadas 14/14 con backend y MySQL 8.
+- Suite integrada local: 97 archivos y 1,293 pruebas activas; 22 integraciones
+  omitidas en esa corrida fueron validadas 22/22 con backend y MySQL 8.0.46.
 - Mutación: 1,905 instrumentados; 1,873 `Killed`, 4 `Timeout`, 8 equivalentes
   históricos, 0 `NoCoverage`, umbral `99.57` aprobado.
 - Upgrade MySQL 8 descartable: aprobado con fresh install, histórico, redeploy,

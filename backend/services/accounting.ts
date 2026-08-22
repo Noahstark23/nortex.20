@@ -9,7 +9,7 @@
  */
 
 import Decimal from 'decimal.js';
-import { generateMonthlyReport, desglosarVentaConExoneracion } from './nicaTax';
+import { generateMonthlyReport, desglosarVentaConExoneracion, fiscalMonthRange } from './nicaTax';
 import prisma from '../lib/prisma';
 
 // Configuración global: 20 dígitos significativos, redondeo HALF_UP (DGI)
@@ -1038,8 +1038,7 @@ const IVA_RETENTION_RATE = 0.15;  // 15% IVA retenido (gran contribuyente)
  */
 export async function generateRetentions(tenantId: string, month: number, year: number, db: AnyTx = prisma) {
     const period = `${year}-${String(month).padStart(2, '0')}`;
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0, 23, 59, 59);
+    const { start: startDate, end: endDate } = fiscalMonthRange(month, year);
 
     // Verificar si ya se generaron para este periodo
     const existing = await db.fiscalRetention.count({
@@ -1053,7 +1052,7 @@ export async function generateRetentions(tenantId: string, month: number, year: 
     const purchases = await db.purchase.findMany({
         where: {
             tenantId,
-            date: { gte: startDate, lte: endDate },
+            date: { gte: startDate, lt: endDate },
         },
         include: {
             supplier: { select: { id: true, name: true } },

@@ -12,7 +12,6 @@ import bcrypt from 'bcryptjs';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
 import {
-    FISCAL_DGI_ROLES,
     QUOTATION_READ_ROLES,
     QUOTATION_WRITE_ROLES,
     RETURN_SEARCH_ROLES,
@@ -90,6 +89,14 @@ import {
     resolvePublicOrderItems,
     type PublicOrderProductAuthority,
 } from './services/publicOrderItemService.js';
+import {
+    FISCAL_REPORT_ROLES,
+    fiscalCivilDate,
+    fiscalPurchaseScope,
+    fiscalRetentionScope,
+    parseFiscalPeriod,
+} from './lib/fiscalAccess';
+import { fiscalMonthRange } from './services/nicaTax';
 import {
     validate,
     CreateReturnSchema,
@@ -6607,7 +6614,7 @@ app.get('/api/purchases', authenticate, async (req: any, res: any) => {
 // POST /api/purchases - Registrar compra (Transacción ACID)
 app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), validate(CreatePurchaseSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { supplierId, warehouseId, invoiceNumber, dueDate, paymentMethod, notes, items, purchaseOrderId } = req.body;
+    const { supplierId, warehouseId, invoiceNumber, date, dueDate, paymentMethod, notes, items, purchaseOrderId } = req.body;
     // Validaciones de formato ya realizadas por Zod
 
     try {
@@ -6834,6 +6841,9 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     supplierId,
                     invoiceNumber,
                     purchaseOrderId: linkedPurchaseOrder?.id ?? null,
+                    // `date` es obligatorio: inferirlo desde createdAt clasifica
+                    // mal las facturas retroactivas en constancias/libros/DGI.
+                    date: normalizeCalendarDateInput(date),
                     dueDate: dueDate ? normalizeCalendarDateInput(dueDate) : null,
                     subtotal: subtotalAmount.toNumber(),
                     tax: taxAmount.toNumber(),
@@ -7861,7 +7871,7 @@ app.get('/api/labor-liabilities', authenticate, async (req: any, res: any) => {
 });
 
 // POST /api/tax-report/generate - Generar reporte fiscal mensual
-app.post('/api/tax-report/generate', authenticate, checkRole(FISCAL_DGI_ROLES), validate(TaxReportSchema), async (req: any, res: any) => {
+app.post('/api/tax-report/generate', authenticate, checkRole(FISCAL_REPORT_ROLES), validate(TaxReportSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { month, year } = req.body; // Validado por Zod (int, 1-12, 2020-2100)
 
@@ -7880,17 +7890,19 @@ app.post('/api/tax-report/generate', authenticate, checkRole(FISCAL_DGI_ROLES), 
 });
 
 // GET /api/tax-report/:month/:year - Obtener reporte fiscal
-app.get('/api/tax-report/:month/:year', authenticate, async (req: any, res: any) => {
+app.get('/api/tax-report/:month/:year', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { month, year } = req.params;
+    const period = parseFiscalPeriod(req.params.month, req.params.year);
+    if (!period) return res.status(400).json({ error: 'Mes o año inválido.' });
+    const { month, year } = period;
 
     try {
         const report = await prisma.taxReport.findUnique({
             where: {
                 tenantId_month_year: {
                     tenantId: authReq.tenantId!,
-                    month: Number(month),
-                    year: Number(year),
+                    month,
+                    year,
                 },
             },
         });
@@ -9333,10 +9345,11 @@ app.post('/api/admin/manual-payments/:id/reject', authenticate, requireSuperAdmi
 import { generateDMIReport } from './services/nicaTax';
 
 // Generar Reporte DMI-V2.1 para la DGI
-app.get('/api/tax-report/dmi', authenticate, async (req: any, res: any) => {
+app.get('/api/tax-report/dmi', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const month = parseInt(req.query.month as string) || new Date().getMonth() + 1;
-    const year = parseInt(req.query.year as string) || new Date().getFullYear();
+    const period = parseFiscalPeriod(req.query.month, req.query.year);
+    if (!period) return res.status(400).json({ error: 'Mes o año inválido.' });
+    const { month, year } = period;
 
     try {
         const report = await generateDMIReport(authReq.tenantId!, month, year);
@@ -11748,14 +11761,14 @@ app.patch('/api/public-orders/:id/convert', authenticate, checkRole(QUOTATION_WR
 
 // GET /api/fiscal/constancia-retencion/:purchaseId
 // Devuelve HTML listo para imprimir como PDF via window.print()
-app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(FISCAL_DGI_ROLES), async (req: any, res: any) => {
+app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { purchaseId } = req.params;
 
     try {
         // 1. Obtener la compra + proveedor
         const purchase = await prisma.purchase.findFirst({
-            where: { id: purchaseId, tenantId: authReq.tenantId! },
+            where: fiscalPurchaseScope(authReq.tenantId!, purchaseId),
             include: { supplier: true },
         });
         if (!purchase) return res.status(404).json({ error: 'Compra no encontrada.' });
@@ -11769,7 +11782,7 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
 
         // 3. Obtener retenciones de esta compra
         const retentions = await prisma.fiscalRetention.findMany({
-            where: { purchaseId, tenantId: authReq.tenantId! },
+            where: fiscalRetentionScope(authReq.tenantId!, purchaseId),
             orderBy: { type: 'asc' },
         });
 
@@ -11780,16 +11793,25 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
         const computedRetentions = retentions.length > 0 ? retentions : [
             { type: 'IR_2PCT',  amount: baseAmountD.mul('0.02').toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(), baseAmount },
             { type: 'IMI_1PCT', amount: baseAmountD.mul('0.01').toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(), baseAmount },
+            ...(new Decimal(purchase.tax.toString()).greaterThan(0)
+                ? [{
+                    type: 'IVA_RETENIDO',
+                    amount: new Decimal(purchase.tax.toString()).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
+                    baseAmount,
+                }]
+                : []),
         ];
 
         const totalRetenido = computedRetentions
             .reduce((s, r) => s.plus(r.amount.toString()), new Decimal(0))
             .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-        const fecha = new Date(purchase.createdAt).toLocaleDateString('es-NI', {
-            day: '2-digit', month: 'long', year: 'numeric'
-        });
+        // `Purchase.date` es la fecha de la factura del proveedor. Es un día de
+        // calendario civil de Managua, no el instante en que el usuario digitó
+        // la compra ni la zona horaria accidental del proceso.
+        const fiscalInvoiceDate = fiscalCivilDate(purchase.date);
+        const fecha = fiscalInvoiceDate.longLabel;
         const numeroConstancia = `RET-${purchase.id.slice(-8).toUpperCase()}`;
-        const period = retentions[0]?.period || `${new Date(purchase.createdAt).getFullYear()}-${String(new Date(purchase.createdAt).getMonth()+1).padStart(2,'0')}`;
+        const period = retentions[0]?.period || fiscalInvoiceDate.period;
         const printNonce = crypto.randomBytes(18).toString('base64url');
         const previewCsp = fiscalPreviewCsp(printNonce);
 
@@ -11821,9 +11843,9 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
         const retentionRows = computedRetentions.map(r => `
             <tr>
                 <td>${escapeHtml(typeLabel[r.type] || r.type)}</td>
-                <td class="num">C$ ${Number(r.baseAmount || baseAmount).toFixed(2)}</td>
-                <td class="num">${r.type === 'IR_2PCT' ? '2%' : r.type === 'IMI_1PCT' ? '1%' : '15%'}</td>
-                <td class="num bold">C$ ${Number(r.amount).toFixed(2)}</td>
+                <td class="num">C$ ${escapeHtml(Number(r.baseAmount || baseAmount).toFixed(2))}</td>
+                <td class="num">${escapeHtml(r.type === 'IR_2PCT' ? '2%' : r.type === 'IMI_1PCT' ? '1%' : '15%')}</td>
+                <td class="num bold">C$ ${escapeHtml(Number(r.amount).toFixed(2))}</td>
             </tr>
         `).join('');
 
@@ -11914,7 +11936,7 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
       ${retentionRows}
       <tr class="total-row">
         <td colspan="3">TOTAL RETENIDO</td>
-        <td class="num">C$ ${totalRetenido.toFixed(2)}</td>
+        <td class="num">C$ ${escapeHtml(totalRetenido.toFixed(2))}</td>
       </tr>
     </tbody>
   </table>
@@ -11923,8 +11945,8 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
 <div class="section">
   <div class="grid">
     <div class="field"><label>Fecha de Emisión</label><span>${safe.fecha}</span></div>
-    <div class="field"><label>Monto Total Factura</label><span>C$ ${Number(purchase.total).toFixed(2)}</span></div>
-    <div class="field"><label>Neto a Pagar al Proveedor</label><span style="color:#1a56a0;font-size:13px;">C$ ${new Decimal(purchase.total.toString()).minus(totalRetenido).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2)}</span></div>
+    <div class="field"><label>Monto Total Factura</label><span>C$ ${escapeHtml(Number(purchase.total).toFixed(2))}</span></div>
+    <div class="field"><label>Neto a Pagar al Proveedor</label><span style="color:#1a56a0;font-size:13px;">C$ ${escapeHtml(new Decimal(purchase.total.toString()).minus(totalRetenido).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2))}</span></div>
   </div>
 </div>
 
@@ -11957,6 +11979,9 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
         res.setHeader('X-Content-Type-Options', 'nosniff');
         res.setHeader('Cache-Control', 'private, no-store, max-age=0');
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Referrer-Policy', 'no-referrer');
+        res.setHeader('X-Frame-Options', 'SAMEORIGIN');
         res.send(html);
 
     } catch (error) {
@@ -11972,17 +11997,14 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
 // El rango fiscal del mes vive en services/nicaTax.ts (fuente única): los libros,
 // el resumen VET y la declaración mensual TIENEN que recortar las mismas ventas.
 // Antes había una copia acá y otra fórmula distinta en generateMonthlyReport.
-import { fiscalMonthRange } from './services/nicaTax';
 
 // ── A1: LIBRO DE VENTAS (Excel) ─────────────────────────────────────────────
 // GET /api/fiscal/libro-ventas/:month/:year
-app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(FISCAL_DGI_ROLES), async (req: any, res: any) => {
+app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const month = parseInt(req.params.month);
-    const year  = parseInt(req.params.year);
-    if (isNaN(month) || isNaN(year) || month < 1 || month > 12) {
-        return res.status(400).json({ error: 'Mes o año inválido.' });
-    }
+    const fiscalPeriod = parseFiscalPeriod(req.params.month, req.params.year);
+    if (!fiscalPeriod) return res.status(400).json({ error: 'Mes o año inválido.' });
+    const { month, year } = fiscalPeriod;
 
     try {
         const { start, end } = fiscalMonthRange(month, year);
@@ -12002,13 +12024,14 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(FISCAL_
         // por ventas exoneradas que nunca se le cobraron al cliente — y no cuadraba
         // con la declaración del mismo mes, que sí las respetaba.
         const rows = sales.map((s, i) => {
+            const fiscalSaleDate = fiscalCivilDate(s.createdAt);
             const d = desglosarVentaConExoneracion(
                 s.total.toString(),
                 s.exemptTotal?.toString() ?? '0',
             );
             return {
                 'N°':            i + 1,
-                'Fecha':         new Date(s.createdAt).toLocaleDateString('es-NI'),
+                'Fecha':         fiscalSaleDate.shortLabel,
                 'N° Factura':    s.invoiceNumber ? `${s.invoiceSeries || 'A'}-${String(s.invoiceNumber).padStart(6, '0')}` : 'CF',
                 'Cliente':       s.customerName || s.customer?.name || 'Consumidor Final',
                 'RUC/Cédula':    s.customer?.taxId || '---',
@@ -12049,13 +12072,11 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(FISCAL_
 
 // ── A2: LIBRO DE COMPRAS (Excel) ─────────────────────────────────────────────
 // GET /api/fiscal/libro-compras/:month/:year
-app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(FISCAL_DGI_ROLES), async (req: any, res: any) => {
+app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const month = parseInt(req.params.month);
-    const year  = parseInt(req.params.year);
-    if (isNaN(month) || isNaN(year) || month < 1 || month > 12) {
-        return res.status(400).json({ error: 'Mes o año inválido.' });
-    }
+    const fiscalPeriod = parseFiscalPeriod(req.params.month, req.params.year);
+    if (!fiscalPeriod) return res.status(400).json({ error: 'Mes o año inválido.' });
+    const { month, year } = fiscalPeriod;
 
     try {
         const { start, end } = fiscalMonthRange(month, year);
@@ -12071,7 +12092,7 @@ app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(FISCAL
                 status: { in: ['COMPLETED', 'PENDING_PAYMENT'] },
             },
             include: { supplier: true },
-            orderBy: { createdAt: 'asc' },
+            orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
         });
 
         // Retenciones del período para cruzar con compras (acumuladas con Decimal).
@@ -12087,6 +12108,7 @@ app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(FISCAL
         });
 
         const rows = purchases.map((p, i) => {
+            const fiscalInvoiceDate = fiscalCivilDate(p.date);
             const subtotalD = new Decimal(p.subtotal.toString());
             const ivaD      = new Decimal(p.tax.toString());
             const totalD    = new Decimal(p.total.toString());
@@ -12095,7 +12117,7 @@ app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(FISCAL
             const netoD     = totalD.minus(irD).minus(imiD).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
             return {
                 'N°':              i + 1,
-                'Fecha':           new Date(p.createdAt).toLocaleDateString('es-NI'),
+                'Fecha':           fiscalInvoiceDate.shortLabel,
                 'N° Factura Prov.': p.invoiceNumber,
                 'Proveedor':       p.supplier.name,
                 'RUC Proveedor':   (p.supplier as any).ruc || '---',
@@ -12138,13 +12160,11 @@ app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(FISCAL
 // ── A3: ARCHIVO VET DGI (.TXT pipe-delimitado) ──────────────────────────────
 // GET /api/fiscal/vet-export/:month/:year
 // Formato: TIPO|FECHA|N_FACTURA|RUC_CLIENTE|NOMBRE|SUBTOTAL|IVA|TOTAL
-app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(FISCAL_DGI_ROLES), async (req: any, res: any) => {
+app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const month = parseInt(req.params.month);
-    const year  = parseInt(req.params.year);
-    if (isNaN(month) || isNaN(year) || month < 1 || month > 12) {
-        return res.status(400).json({ error: 'Mes o año inválido.' });
-    }
+    const fiscalPeriod = parseFiscalPeriod(req.params.month, req.params.year);
+    if (!fiscalPeriod) return res.status(400).json({ error: 'Mes o año inválido.' });
+    const { month, year } = fiscalPeriod;
 
     try {
         const { start, end } = fiscalMonthRange(month, year);
@@ -12165,7 +12185,7 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(FISCAL_DG
                 status: { in: ['COMPLETED', 'PENDING_PAYMENT'] },
             },
             include: { supplier: true },
-            orderBy: { createdAt: 'asc' },
+            orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
         });
 
         const lines: string[] = [];
@@ -12191,7 +12211,7 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(FISCAL_DG
             const subtotalD = d.netoGravado.toDecimalPlaces(2);
             const ivaD      = d.iva.toDecimalPlaces(2);
             const totalD    = exentoD.plus(subtotalD).plus(ivaD);
-            const fecha    = new Date(s.createdAt).toISOString().slice(0,10).replace(/-/g,'');
+            const fecha    = fiscalCivilDate(s.createdAt).compact;
             const factura  = s.invoiceNumber
                 ? `${s.invoiceSeries || 'A'}${String(s.invoiceNumber).padStart(6,'0')}`
                 : 'CF';
@@ -12212,7 +12232,7 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(FISCAL_DG
             // básica). Se acota a ≥0 para que un dato inconsistente no salga en
             // negativo. Misma columna que las ventas, para que el archivo alinee.
             const exentoD = Decimal.max(0, totalD.minus(subtotalD).minus(ivaD)).toDecimalPlaces(2);
-            const fecha    = new Date(p.createdAt).toISOString().slice(0,10).replace(/-/g,'');
+            const fecha    = fiscalCivilDate(p.date).compact;
             const nombre   = p.supplier.name.toUpperCase().substring(0, 60);
             const rucC     = (p.supplier as any).ruc || '000-000000-0000X';
             lines.push(`C|${fecha}|${p.invoiceNumber}|${rucC}|${nombre}|${exentoD.toFixed(2)}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);

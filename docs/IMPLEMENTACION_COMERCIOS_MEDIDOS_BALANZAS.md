@@ -576,10 +576,10 @@ npm run build
 git diff --check
 ```
 
-La revisión integrada final aprobó 94 archivos de pruebas y omitió 4 suites de
-integración sin entorno: 1,242 casos pasaron y 14 quedaron omitidos en esa
-corrida. Esos 14 casos se ejecutaron aparte contra el backend real y MySQL 8,
-con resultado 14/14. También pasaron TypeScript, Prisma 6.4.1
+La revisión integrada final aprobó 97 archivos de pruebas y omitió 5 suites de
+integración sin entorno: 1,293 casos pasaron y 22 quedaron omitidos en esa
+corrida. Esos 22 casos se ejecutaron aparte contra el backend real y MySQL 8,
+con resultado 22/22. También pasaron TypeScript, Prisma 6.4.1
 (`validate`/`generate`), el build de producción, el guard del sistema de diseño
 y `git diff --check`. El único aviso no bloqueante es que el chunk dinámico de
 XLSX queda apenas sobre 500 kB; POS y el núcleo principal permanecen separados.

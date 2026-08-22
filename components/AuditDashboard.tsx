@@ -4,8 +4,9 @@ import {
     AlertTriangle, Shield, Package, XCircle, Percent, Clock, User, ChevronDown,
     Loader2, RefreshCw, Filter, Eye, FileSpreadsheet, Download, Stamp
 } from 'lucide-react';
-import { authenticatedDownload } from '../utils/authenticatedDownload';
 import { ToastViewport, useToast } from './ui/Toast';
+import { authenticatedRequestErrorMessage, downloadAuthenticatedFile } from '../utils/authenticatedDownload';
+import { currentSessionRole } from '../utils/roleCapabilities';
 
 // Types
 interface AuditAlert {
@@ -52,19 +53,14 @@ interface DiscountAnalysis {
 }
 
 type Tab = 'feed' | 'kardex' | 'voids' | 'discounts' | 'fiscal';
+const FISCAL_DOCUMENT_ROLES = new Set(['OWNER', 'ADMIN', 'ACCOUNTANT']);
 
 const AuditDashboard: React.FC = () => {
-    const { toast, showToast, dismissToast } = useToast();
-    // ACCOUNTANT role defaults to fiscal tab
-    const getUserRole = () => {
-        try {
-            const t = localStorage.getItem('nortex_token');
-            if (!t) return '';
-            return JSON.parse(atob(t.split('.')[1])).role || '';
-        } catch { return ''; }
-    };
-    const userRole = getUserRole();
-    const defaultTab: Tab = userRole === 'ACCOUNTANT' ? 'fiscal' : 'feed';
+    const userRole = currentSessionRole();
+    const canAccessFiscalDocuments = FISCAL_DOCUMENT_ROLES.has(userRole);
+    // ACCOUNTANT entra directo a sus herramientas; para cualquier rol sin
+    // acceso fiscal el tab inicial siempre es uno permitido.
+    const defaultTab: Tab = canAccessFiscalDocuments && userRole === 'ACCOUNTANT' ? 'fiscal' : 'feed';
 
     const [tab, setTab] = useState<Tab>(defaultTab);
     const [feed, setFeed] = useState<AuditAlert[]>([]);
@@ -74,6 +70,7 @@ const AuditDashboard: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [expandedVoid, setExpandedVoid] = useState<string | null>(null);
     const [downloading, setDownloading] = useState<string | null>(null);
+    const { toast, showToast, dismissToast } = useToast();
 
     // Fiscal tab state
     const now = new Date();
@@ -108,14 +105,21 @@ const AuditDashboard: React.FC = () => {
     useEffect(() => { fetchTab(tab); }, [tab]);
 
     const downloadFiscal = async (url: string, filename: string) => {
+        if (!canAccessFiscalDocuments) return;
+        if (downloading) return;
         setDownloading(url);
         try {
-            await authenticatedDownload(url, { token, filename });
-        } catch (error: any) {
+            await downloadAuthenticatedFile(url, filename, { token });
+            showToast({
+                tone: 'success',
+                title: 'Documento fiscal generado',
+                message: 'La descarga comenzó correctamente.',
+            });
+        } catch (error) {
             showToast({
                 tone: 'error',
                 title: 'No se pudo generar la descarga',
-                message: error?.message || 'Verificá tu conexión e intentá de nuevo.',
+                message: authenticatedRequestErrorMessage(error),
             });
         } finally {
             setDownloading(null);
@@ -144,7 +148,9 @@ const AuditDashboard: React.FC = () => {
     };
 
     const tabs: { key: Tab; label: string; icon: React.ReactNode; count?: number }[] = [
-        { key: 'fiscal', label: 'Exportaciones DGI', icon: <FileSpreadsheet size={16} /> },
+        ...(canAccessFiscalDocuments
+            ? [{ key: 'fiscal' as Tab, label: 'Exportaciones DGI', icon: <FileSpreadsheet size={16} /> }]
+            : []),
         { key: 'feed', label: 'Alertas', icon: <AlertTriangle size={16} />, count: feed.filter(f => f.severity === 'HIGH' || f.severity === 'CRITICAL').length },
         { key: 'kardex', label: 'Kardex Pro', icon: <Package size={16} />, count: kardex.filter(k => k.severity === 'HIGH' || k.severity === 'CRITICAL').length },
         { key: 'voids', label: 'Anulaciones', icon: <XCircle size={16} />, count: voids.filter(v => v.riskLevel === 'HIGH').length },
@@ -190,7 +196,7 @@ const AuditDashboard: React.FC = () => {
             </div>
 
             {/* ── FISCAL TAB ─────────────────────────────── */}
-            {tab === 'fiscal' && (
+            {tab === 'fiscal' && canAccessFiscalDocuments && (
                 <div className="space-y-6">
                     {/* Month / Year picker */}
                     <div className="bg-surface-900 rounded-2xl border border-white/[0.06] p-5 shadow-sm">
@@ -226,7 +232,7 @@ const AuditDashboard: React.FC = () => {
                                 `/api/fiscal/libro-ventas/${fiscalMonth}/${fiscalYear}`,
                                 `libro-ventas-${fiscalYear}-${String(fiscalMonth).padStart(2, '0')}.xlsx`
                             )}
-                            disabled={downloading === `/api/fiscal/libro-ventas/${fiscalMonth}/${fiscalYear}`}
+                            disabled={downloading !== null}
                             className="flex flex-col items-center gap-3 bg-surface-900 border border-emerald-500/20 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                             {downloading === `/api/fiscal/libro-ventas/${fiscalMonth}/${fiscalYear}`
@@ -245,7 +251,7 @@ const AuditDashboard: React.FC = () => {
                                 `/api/fiscal/libro-compras/${fiscalMonth}/${fiscalYear}`,
                                 `libro-compras-${fiscalYear}-${String(fiscalMonth).padStart(2, '0')}.xlsx`
                             )}
-                            disabled={downloading === `/api/fiscal/libro-compras/${fiscalMonth}/${fiscalYear}`}
+                            disabled={downloading !== null}
                             className="flex flex-col items-center gap-3 bg-surface-900 border border-blue-500/20 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-blue-400 transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                             {downloading === `/api/fiscal/libro-compras/${fiscalMonth}/${fiscalYear}`
@@ -264,7 +270,7 @@ const AuditDashboard: React.FC = () => {
                                 `/api/fiscal/vet-export/${fiscalMonth}/${fiscalYear}`,
                                 `VET-${fiscalYear}${String(fiscalMonth).padStart(2, '0')}.txt`
                             )}
-                            disabled={downloading === `/api/fiscal/vet-export/${fiscalMonth}/${fiscalYear}`}
+                            disabled={downloading !== null}
                             className="flex flex-col items-center gap-3 bg-surface-900 border border-violet-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-violet-400 transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                             {downloading === `/api/fiscal/vet-export/${fiscalMonth}/${fiscalYear}`

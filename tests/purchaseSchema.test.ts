@@ -17,6 +17,7 @@ const basicItem = {
 const cashPurchase = {
     supplierId: 'supplier-pollos-molina',
     invoiceNumber: 'FAC-001',
+    date: '2026-08-21',
     paymentMethod: 'CASH' as const,
     items: [basicItem],
 };
@@ -26,6 +27,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
         const result = CreatePurchaseSchema.safeParse({
             supplierId: 'supplier-pollos-molina',
             invoiceNumber: 'FAC-088313330182',
+            date: '2026-08-21',
             paymentMethod: 'CREDIT',
             dueDate: '2026-08-25',
             notes: 'pedido diario',
@@ -38,6 +40,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
 
         expect(result.success).toBe(true);
         if (!result.success) return;
+        expect(result.data.date).toBe('2026-08-21T12:00:00.000Z');
         expect(result.data.dueDate).toBe('2026-08-25T12:00:00.000Z');
         expect(result.data.items[0].expiryDate).toBe('2027-01-09T12:00:00.000Z');
         expect(result.data.items[0].unitCost).toBe('13.5');
@@ -69,7 +72,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
         expect(result.success).toBe(true);
     });
 
-    it('acepta el payload de contado con null históricos y los normaliza', () => {
+    it('acepta null históricos únicamente en campos realmente opcionales', () => {
         const result = CreatePurchaseSchema.safeParse({
             ...cashPurchase,
             warehouseId: null,
@@ -86,6 +89,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
         expect(result.success).toBe(true);
         if (!result.success) return;
         expect(result.data.warehouseId).toBeUndefined();
+        expect(result.data.date).toBe('2026-08-21T12:00:00.000Z');
         expect(result.data.dueDate).toBeUndefined();
         expect(result.data.notes).toBeUndefined();
         expect(result.data.purchaseOrderId).toBeUndefined();
@@ -102,6 +106,7 @@ describe('CreatePurchaseSchema — integraciones programáticas', () => {
     const integrationPayload = {
         supplierId: 'supplier-smart',
         invoiceNumber: 'FAC-INTEGRACION-001',
+        date: '2026-08-21',
         notes: 'Compra generada por integración',
         items: [
             { productId: 'product-a', quantity: 8, unitCost: 24.5 },
@@ -127,6 +132,34 @@ describe('CreatePurchaseSchema — integraciones programáticas', () => {
 });
 
 describe('CreatePurchaseSchema — rechazos que protegen la persistencia', () => {
+    it.each([
+        ['omitida', undefined],
+        ['null', null],
+        ['vacía', ''],
+    ])('exige la fecha fiscal cuando viene %s', (_label, date) => {
+        const payload: Record<string, unknown> = { ...cashPurchase };
+        if (date === undefined) delete payload.date;
+        else payload.date = date;
+        const result = CreatePurchaseSchema.safeParse(payload);
+
+        expect(result.success).toBe(false);
+        if (result.success) return;
+        expect(result.error.issues.some(issue => issue.path.join('.') === 'date')).toBe(true);
+    });
+
+    it.each([
+        ['día inexistente', '2026-02-30'],
+        ['año no bisiesto', '2025-02-29'],
+        ['mes inexistente', '2026-13-01'],
+        ['datetime sin offset', '2026-08-21T07:49:00'],
+        ['sufijo parcial', '2026-08-21 basura'],
+    ])('rechaza %s en date (%s)', (_label, date) => {
+        expect(CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            date,
+        }).success).toBe(false);
+    });
+
     it.each([
         ['día inexistente', '2026-02-30'],
         ['año no bisiesto', '2025-02-29'],
@@ -154,6 +187,7 @@ describe('CreatePurchaseSchema — rechazos que protegen la persistencia', () =>
     it('acepta el 29 de febrero cuando el año sí es bisiesto', () => {
         expect(CreatePurchaseSchema.safeParse({
             ...cashPurchase,
+            date: '2028-02-29',
             paymentMethod: 'CREDIT',
             dueDate: '2028-02-29',
             items: [{ ...basicItem, expiryDate: '2028-02-29' }],
@@ -232,10 +266,10 @@ describe('CreatePurchaseSchema — rechazos que protegen la persistencia', () =>
     });
 
     it.each([
-        ['supplierId', { invoiceNumber: 'FAC-001', paymentMethod: 'CASH', items: [basicItem] }],
-        ['invoiceNumber', { supplierId: 'supplier-1', paymentMethod: 'CASH', items: [basicItem] }],
-        ['paymentMethod', { supplierId: 'supplier-1', invoiceNumber: 'FAC-001', items: [basicItem] }],
-        ['items', { supplierId: 'supplier-1', invoiceNumber: 'FAC-001', paymentMethod: 'CASH' }],
+        ['supplierId', { invoiceNumber: 'FAC-001', date: '2026-08-21', paymentMethod: 'CASH', items: [basicItem] }],
+        ['invoiceNumber', { supplierId: 'supplier-1', date: '2026-08-21', paymentMethod: 'CASH', items: [basicItem] }],
+        ['paymentMethod', { supplierId: 'supplier-1', invoiceNumber: 'FAC-001', date: '2026-08-21', items: [basicItem] }],
+        ['items', { supplierId: 'supplier-1', invoiceNumber: 'FAC-001', date: '2026-08-21', paymentMethod: 'CASH' }],
     ])('rechaza la cabecera sin %s', (_field, payload) => {
         expect(CreatePurchaseSchema.safeParse(payload).success).toBe(false);
     });

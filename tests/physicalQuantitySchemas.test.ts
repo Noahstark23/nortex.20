@@ -58,6 +58,7 @@ describe('esquemas de cantidades físicas', () => {
         const purchase = CreatePurchaseSchema.safeParse({
             supplierId: 'supplier-1',
             invoiceNumber: 'FAC-37-50',
+            date: '2026-08-22',
             paymentMethod: 'CASH',
             items: [{ productId: 'product-meat', quantity: 37.5, unitCost: 80 }],
         });
