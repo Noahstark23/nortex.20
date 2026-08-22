@@ -70,7 +70,7 @@ export function weightedAverageCost(
 
 export class StockError extends Error {
     constructor(
-        public readonly code: 'PRODUCT_NOT_FOUND' | 'INSUFFICIENT_STOCK' | 'WAREHOUSE_NOT_FOUND',
+        public readonly code: 'PRODUCT_NOT_FOUND' | 'INSUFFICIENT_STOCK' | 'WAREHOUSE_NOT_FOUND' | 'WAREHOUSE_REQUIRED',
         message: string
     ) {
         super(message);
@@ -86,6 +86,54 @@ export interface StockDeltaResult {
 }
 
 export const DEFAULT_WAREHOUSE_NAME = 'Principal';
+
+export interface OperationalWarehouse {
+    id: string;
+    name: string;
+    isDefault: boolean;
+}
+
+/**
+ * Resuelve la ubicación de una mutación operativa sin esconder ambigüedad.
+ * Un cliente legado puede omitir `warehouseId` mientras exista una sola bodega
+ * activa; con dos o más, elegir ubicación es obligatorio.
+ */
+export async function resolveOperationalWarehouse(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    requestedWarehouseId?: string | null,
+): Promise<OperationalWarehouse> {
+    if (requestedWarehouseId) {
+        const requested = await tx.warehouse.findFirst({
+            where: { id: requestedWarehouseId, tenantId, isActive: true },
+            select: { id: true, name: true, isDefault: true },
+        });
+        if (!requested) {
+            throw new StockError('WAREHOUSE_NOT_FOUND', 'La bodega seleccionada no existe o está inactiva.');
+        }
+        return requested;
+    }
+
+    const active = await tx.warehouse.findMany({
+        where: { tenantId, isActive: true },
+        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+        take: 2,
+        select: { id: true, name: true, isDefault: true },
+    });
+    if (active.length > 1) {
+        throw new StockError(
+            'WAREHOUSE_REQUIRED',
+            'Seleccioná la bodega de esta operación; el negocio tiene más de una ubicación activa.',
+        );
+    }
+    if (active.length === 1) return active[0];
+
+    const id = await resolveDefaultWarehouseId(tx, tenantId);
+    return tx.warehouse.findFirstOrThrow({
+        where: { id, tenantId },
+        select: { id: true, name: true, isDefault: true },
+    });
+}
 
 /**
  * Garantiza la bodega por defecto ANTES de abrir una transacción.

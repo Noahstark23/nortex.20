@@ -1,4 +1,4 @@
-import { AuthRequest } from './auth';
+import type { AuthRequest } from './auth';
 
 /**
  * Middleware para verificar roles de usuario.
@@ -52,9 +52,16 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
         'customers:read', 'customers:write',
         'reports:read',
     ],
+    BODEGUERO: [
+        'inventory:read', 'inventory:write',
+        'warehouses:read',
+        'stock-transfers:read', 'stock-transfers:write',
+        'stock-counts:read', 'stock-counts:write',
+        'purchase-orders:read', 'purchase-orders:receive',
+    ],
 };
 
-export const checkRole = (allowedRoles: string[]) => {
+export const checkRole = (allowedRoles: readonly string[]) => {
     return (req: AuthRequest, res: any, next: any) => {
         const userRole = req.role;
 

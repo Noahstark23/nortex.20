@@ -4,6 +4,7 @@ import {
     RefreshCw, X, XCircle,
 } from 'lucide-react';
 import { formatMoney } from '../utils/money';
+import { currentSessionRole, roleCapabilitiesFor } from '../utils/roleCapabilities';
 import { ToastViewport, useToast } from './ui/Toast';
 
 /** Órdenes de Compra: DRAFT → APPROVED → PARTIALLY_RECEIVED → RECEIVED. */
@@ -13,7 +14,7 @@ interface POItem {
     productName: string;
     quantityOrdered: number;
     quantityReceived: number;
-    unitCost: string | number;
+    unitCost?: string | number | null;
     product?: { requiresBatchTracking: boolean };
 }
 
@@ -65,6 +66,11 @@ const LABEL: Record<string, string> = {
 const emptyReceipt = (): ReceiptDraft => ({ quantity: '', batchNumber: '', expiryDate: '' });
 
 const PurchaseOrders: React.FC = () => {
+    const {
+        isBodeguero,
+        canManagePurchaseOrders,
+        canReceivePurchaseOrders,
+    } = roleCapabilitiesFor(currentSessionRole());
     const [orders, setOrders] = useState<PO[]>([]);
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [showCreate, setShowCreate] = useState(false);
@@ -92,6 +98,7 @@ const PurchaseOrders: React.FC = () => {
 
     useEffect(() => {
         void load();
+        if (!canManagePurchaseOrders) return;
         void requestWithTimeout('/api/suppliers', { headers: headers() })
             .then(async response => {
                 const data: any = await response.json().catch(() => []);
@@ -100,7 +107,7 @@ const PurchaseOrders: React.FC = () => {
             .catch(() => {
                 showToast({ tone: 'error', title: 'No se cargaron los proveedores', message: 'Revisá tu conexión e intentá de nuevo.' });
             });
-    }, [load, showToast]);
+    }, [canManagePurchaseOrders, load, showToast]);
 
     const searchProducts = async (query: string) => {
         setSearch(query);
@@ -283,17 +290,22 @@ const PurchaseOrders: React.FC = () => {
         <div className="p-4 sm:p-6 max-w-6xl mx-auto">
             <ToastViewport toast={toast} onDismiss={dismissToast} />
 
-            <div className="flex items-center justify-between mb-6">
-                <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                    <ClipboardList className="text-brand" /> Órdenes de Compra
-                </h1>
+            <div className="flex items-center justify-between gap-3 mb-6">
+                <div>
+                    <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+                        <ClipboardList className="text-brand" /> {isBodeguero ? 'Recepción de mercadería' : 'Órdenes de Compra'}
+                    </h1>
+                    {isBodeguero && <p className="mt-1 text-sm text-slate-400">Revisá lo pendiente y registrá únicamente lo que llegó físicamente.</p>}
+                </div>
                 <div className="flex gap-2">
                     <button onClick={() => void load()} className="p-2 text-slate-400 hover:text-white" aria-label="Actualizar órdenes">
                         <RefreshCw size={16} />
                     </button>
-                    <button onClick={() => setShowCreate(true)} className="px-4 py-2 bg-brand text-white rounded-lg font-bold text-sm flex items-center gap-1.5">
-                        <Plus size={16} /> Nueva OC
-                    </button>
+                    {canManagePurchaseOrders && (
+                        <button onClick={() => setShowCreate(true)} className="px-4 py-2 bg-brand text-white rounded-lg font-bold text-sm flex items-center gap-1.5">
+                            <Plus size={16} /> Nueva OC
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -311,7 +323,7 @@ const PurchaseOrders: React.FC = () => {
                                 </div>
                             </div>
                             <div className="flex gap-2">
-                                {po.status === 'DRAFT' && (
+                                {canManagePurchaseOrders && po.status === 'DRAFT' && (
                                     <>
                                         <button disabled={busy === po.id} onClick={() => void act(po, 'approve')} className="px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50">
                                             <CheckCircle size={13} /> Aprobar
@@ -321,7 +333,7 @@ const PurchaseOrders: React.FC = () => {
                                         </button>
                                     </>
                                 )}
-                                {(po.status === 'APPROVED' || po.status === 'PARTIALLY_RECEIVED') && (
+                                {canReceivePurchaseOrders && (po.status === 'APPROVED' || po.status === 'PARTIALLY_RECEIVED') && (
                                     <button disabled={Boolean(busy)} onClick={() => openReceipt(po)} className="px-3 py-1.5 bg-emerald-500/20 text-emerald-400 rounded-lg text-xs font-bold flex items-center gap-1 disabled:opacity-50">
                                         <PackageCheck size={13} /> Recibir
                                     </button>
@@ -339,7 +351,9 @@ const PurchaseOrders: React.FC = () => {
                                             )}
                                         </td>
                                         <td className="py-1.5 text-right font-mono">{item.quantityReceived}/{item.quantityOrdered} und</td>
-                                        <td className="py-1.5 text-right font-mono text-slate-400">{formatMoney(Number(item.unitCost))}</td>
+                                        {canManagePurchaseOrders && item.unitCost != null && (
+                                            <td className="py-1.5 text-right font-mono text-slate-400">{formatMoney(Number(item.unitCost))}</td>
+                                        )}
                                     </tr>
                                 ))}
                             </tbody>
@@ -347,11 +361,13 @@ const PurchaseOrders: React.FC = () => {
                     </div>
                 ))}
                 {orders.length === 0 && (
-                    <div className="text-center text-slate-500 py-12">Sin órdenes de compra. Creá la primera con “Nueva OC”.</div>
+                    <div className="text-center text-slate-500 py-12">
+                        {canManagePurchaseOrders ? 'Sin órdenes de compra. Creá la primera con “Nueva OC”.' : 'No hay órdenes pendientes para recibir.'}
+                    </div>
                 )}
             </div>
 
-            {showCreate && (
+            {canManagePurchaseOrders && showCreate && (
                 <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => { if (!busy) setShowCreate(false); }}>
                     <div role="dialog" aria-modal="true" aria-labelledby="new-po-title" className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-lg p-5 space-y-4 max-h-[90vh] overflow-y-auto" onClick={event => event.stopPropagation()}>
                         <div className="flex justify-between items-center">

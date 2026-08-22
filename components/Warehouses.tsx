@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { Warehouse as WarehouseIcon, Plus, ArrowRightLeft, Star, RefreshCw, X, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { InventoryTabs } from './ui/InventoryTabs';
+import { currentSessionRole, roleCapabilitiesFor } from '../utils/roleCapabilities';
 
 /** Multi-bodega: lista, stock por bodega y transferencias (Fase 3). */
 interface Warehouse {
@@ -24,6 +25,7 @@ const sinTildes = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, 
 const POR_PAGINA = 50;
 
 const Warehouses: React.FC = () => {
+    const { isBodeguero, canManageWarehouseTopology, canTransferStock } = roleCapabilitiesFor(currentSessionRole());
     const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
     const [selected, setSelected] = useState<Warehouse | null>(null);
     const [stock, setStock] = useState<StockItem[]>([]);
@@ -78,6 +80,7 @@ const Warehouses: React.FC = () => {
 
     useEffect(() => { load(); }, [load]);
     useEffect(() => {
+        if (!canManageWarehouseTopology) return;
         (async () => {
             try {
                 const res = await fetch('/api/team', { headers: authHeaders() });
@@ -87,7 +90,7 @@ const Warehouses: React.FC = () => {
                 setEquipo(users.filter((u: MiembroEquipo) => u.status !== 'DISABLED'));
             } catch { /* sin red: se oculta la asignación */ }
         })();
-    }, []);
+    }, [canManageWarehouseTopology]);
 
     // Asignar / quitar la carga de un vendedor a la bodega seleccionada. El
     // backend re-valida (mismo tenant, activo, no-default, único por vendedor).
@@ -134,10 +137,13 @@ const Warehouses: React.FC = () => {
                 Series salvo con el botón atrás del navegador. */}
             <InventoryTabs className="mb-4" />
 
-            <div className="flex items-center justify-between mb-6">
-                <h1 className="text-2xl font-bold flex items-center gap-2"><WarehouseIcon className="text-brand" /> Bodegas</h1>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+                <div>
+                    <h1 className="text-2xl font-bold flex items-center gap-2"><WarehouseIcon className="text-brand" /> Bodegas y existencias</h1>
+                    {isBodeguero && <p className="mt-1 text-sm text-slate-400">Consultá el stock y mové mercadería entre bodegas.</p>}
+                </div>
                 {msg && <span className="text-emerald-400 font-bold text-sm">{msg}</span>}
-                <button onClick={() => selected && loadStock(selected)} className="p-2 hover:bg-white/[0.06] rounded-lg"><RefreshCw size={16} /></button>
+                <button onClick={() => selected && loadStock(selected)} className="p-2 hover:bg-white/[0.06] rounded-lg" aria-label="Actualizar existencias"><RefreshCw size={16} /></button>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -156,7 +162,7 @@ const Warehouses: React.FC = () => {
                                     </span>
                                 )}
                             </button>
-                            {equipo.length > 0 && !w.isDefault && (
+                            {canManageWarehouseTopology && equipo.length > 0 && !w.isDefault && (
                                 <div className="px-3 pb-2">
                                     <select
                                         value={w.sellerId || ''}
@@ -170,11 +176,13 @@ const Warehouses: React.FC = () => {
                             )}
                         </div>
                     ))}
-                    <div className="flex gap-2 pt-2">
-                        <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nueva bodega"
-                            className="flex-1 px-3 py-2 border border-white/10 rounded-lg text-sm" />
-                        <button onClick={createWarehouse} className="p-2 bg-brand text-white rounded-lg"><Plus size={16} /></button>
-                    </div>
+                    {canManageWarehouseTopology && (
+                        <div className="flex gap-2 pt-2">
+                            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nueva bodega"
+                                className="flex-1 px-3 py-2 border border-white/10 rounded-lg text-sm" />
+                            <button onClick={createWarehouse} className="p-2 bg-brand text-white rounded-lg" aria-label="Crear bodega"><Plus size={16} /></button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Stock de la bodega seleccionada */}
@@ -239,7 +247,7 @@ const Warehouses: React.FC = () => {
                                     <td className="p-3 text-slate-500 font-mono text-xs">{it.sku}</td>
                                     <td className="p-3 text-right font-mono font-bold">{it.stock} {it.unit}</td>
                                     <td className="p-3 text-right">
-                                        {warehouses.filter(w => w.isActive).length > 1 && it.stock > 0 && (
+                                        {canTransferStock && warehouses.filter(w => w.isActive).length > 1 && it.stock > 0 && (
                                             <button onClick={() => setTransfer({ toId: warehouses.find(w => w.id !== selected?.id && w.isActive)!.id, productId: it.productId, qty: '' })}
                                                 className="text-brand hover:bg-brand/10 p-1.5 rounded" title="Transferir a otra bodega">
                                                 <ArrowRightLeft size={14} />

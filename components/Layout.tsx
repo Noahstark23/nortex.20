@@ -85,7 +85,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     try {
       role = JSON.parse(atob(storedToken.split('.')[1])).role || '';
     } catch { return; }
-    if (role === 'COLLECTOR') return;
+    if (role === 'COLLECTOR' || role === 'BODEGUERO') return;
 
     const poll = async () => {
       try {
@@ -179,8 +179,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const moreItems: NavItem[] = nav.more.map(toNavItem);
   // El overlay móvil muestra TODO (primary ∪ more) agrupado — nada se pierde.
   const allItems: NavItem[] = [...navItems, ...moreItems];
-  // LENDER y CONTADOR no tienen modo simple: ocultar el toggle.
-  const canToggleMode = !userRole.startsWith('LENDER_') && userRole !== 'ACCOUNTANT';
+  // Roles con menú dedicado no tienen modo simple/completo: el toggle no haría
+  // nada y prometería una personalización inexistente.
+  const canToggleMode = !userRole.startsWith('LENDER_') && !['ACCOUNTANT', 'BODEGUERO'].includes(userRole);
   const isMoreActive = moreItems.some(it => location.pathname.startsWith(it.path));
 
   // ── Navegación en 5 secciones (rediseño Fase 2) ───────────────────────────
@@ -189,7 +190,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   // "Mis Productos" (utils/navigation.ts). Sin esto, entrar ahí dejaba el
   // sidebar sin NINGÚN ítem marcado y con todas las secciones plegadas: el
   // usuario no sabía dónde estaba ni cómo volver.
-  const rutaDelMenu = navPathForRoute(location.pathname);
+  const rutaDelMenu = navPathForRoute(location.pathname, userRole);
   const sectionHasActive = (items: NavItem[]) => items.some(it => esRutaDe(it.path, rutaDelMenu));
   /** Activo real del ítem, contemplando sus pantallas satélite. */
   const itemActivo = (item: NavItem, isActive: boolean) => isActive || esRutaDe(item.path, rutaDelMenu);
@@ -546,8 +547,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         ))}
       </div>
 
-      {/* 🚀 Onboarding guiado (solo Dueño/Admin; se auto-oculta al completar) */}
-      <OnboardingHub />
+      {/* 🚀 Onboarding guiado: el flujo crea catálogo y configura el negocio,
+          por eso ni siquiera se monta en la sesión operativa de bodega. */}
+      {userRole !== 'BODEGUERO' && <OnboardingHub />}
 
       {/* 📲 Aviso de instalación de la PWA (solo si el navegador la ofrece) */}
       <InstallPrompt />

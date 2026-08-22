@@ -1069,6 +1069,7 @@ model Warehouse {
   kardexMovements KardexMovement[]
   transfersFrom   StockTransfer[]  @relation("TransferFrom")
   transfersTo     StockTransfer[]  @relation("TransferTo")
+  stockCounts     StockCount[]
 
   @@unique([tenantId, name])
   @@unique([tenantId, sellerId])
@@ -1172,23 +1173,28 @@ model SerialNumber {
 // ==========================================
 
 model StockCount {
-  id        String    @id @default(cuid())
-  tenantId  String
-  status    String    @default("OPEN") // OPEN | CLOSED | CANCELLED
-  scope     String    @default("ALL") // ALL | CATEGORY
-  category  String? // si scope=CATEGORY
-  notes     String?   @db.Text
-  createdBy String
-  createdAt DateTime  @default(now())
-  closedAt  DateTime?
-  closedBy  String? // userId que cerró (sin relación, solo traza)
+  id               String    @id @default(cuid())
+  tenantId         String
+  warehouseId      String? // null = conteo histórico anterior al alcance por bodega
+  openWarehouseKey String?   @unique // warehouseId mientras OPEN; null al cerrar/cancelar
+  status           String    @default("OPEN") // OPEN | CLOSING | CLOSED | CANCELLED
+  scope            String    @default("ALL") // ALL | CATEGORY
+  category         String? // si scope=CATEGORY
+  notes            String?   @db.Text
+  createdBy        String
+  createdAt        DateTime  @default(now())
+  closedAt         DateTime?
+  closedBy         String? // userId que cerró (sin relación, solo traza)
 
-  tenant  Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  creator User             @relation(fields: [createdBy], references: [id])
-  items   StockCountItem[]
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  warehouse Warehouse?       @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  creator   User             @relation(fields: [createdBy], references: [id])
+  items     StockCountItem[]
 
   @@index([tenantId])
   @@index([status])
+  @@index([warehouseId])
+  @@index([tenantId, warehouseId, status])
 }
 
 model StockCountItem {

@@ -96,8 +96,10 @@ const ProtectedApp = () => {
   // Excepción: el prestamista (LENDER) conserva su panel — "Mi Negocio" es una
   // pantalla de retail (ventas, fiado, productos) que no describe su operación.
   let homePath = '/app/inicio';
+  let authRole = '';
   try {
     const role: string = JSON.parse(atob(token.split('.')[1])).role || '';
+    authRole = role;
     let tenantType = '';
     try { tenantType = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.tenant?.type || ''; } catch { }
     homePath = tenantType === 'LENDER' ? '/app/dashboard' : homePathFor(role, 'simple');
@@ -120,6 +122,20 @@ const ProtectedApp = () => {
           visita a una pantalla. */}
       <Suspense fallback={<div className="min-h-[40vh] flex items-center justify-center text-slate-400">Cargando…</div>}>
       <Routes>
+        {authRole === 'BODEGUERO' ? (
+          <>
+            {/* El menú orienta; esta guarda evita que una URL guardada abra
+                pantallas administrativas antes de que responda el backend. La
+                autorización real sigue siendo server-side. */}
+            <Route path="inventory" element={<Inventory />} />
+            <Route path="warehouses" element={<Warehouses />} />
+            <Route path="inventory-count" element={<StockCount />} />
+            <Route path="purchase-orders" element={<PurchaseOrders />} />
+            <Route path="ayuda" element={<HelpCenter />} />
+            <Route path="*" element={<Navigate to={homePath} replace />} />
+          </>
+        ) : (
+          <>
         <Route path="inicio" element={<MiNegocio />} />
         <Route
           path="dashboard"
@@ -159,6 +175,8 @@ const ProtectedApp = () => {
         <Route path="cobradores" element={<Dashboard />} />
         <Route path="ayuda" element={<HelpCenter />} />
         <Route path="*" element={<Navigate to={homePath} replace />} />
+          </>
+        )}
       </Routes>
       </Suspense>
     </Layout>

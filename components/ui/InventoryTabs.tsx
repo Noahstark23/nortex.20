@@ -14,6 +14,7 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { esRutaDe } from '../../utils/navigation';
+import { currentSessionRole } from '../../utils/roleCapabilities';
 
 const PESTAÑAS = [
     { to: '/app/inventory', label: 'Mis Productos' },
@@ -21,12 +22,17 @@ const PESTAÑAS = [
     { to: '/app/serials', label: 'Series' },
 ] as const;
 
+export const inventoryTabsForRole = (role: string) => role === 'BODEGUERO'
+    ? PESTAÑAS.filter(p => p.to !== '/app/serials')
+    : [...PESTAÑAS];
+
 export const InventoryTabs: React.FC<{ className?: string }> = ({ className = '' }) => {
     const { pathname } = useLocation();
+    const pestañas = inventoryTabsForRole(currentSessionRole());
 
     return (
         <nav aria-label="Secciones de inventario" className={`flex items-center gap-2 ${className}`}>
-            {PESTAÑAS.map(p => {
+            {pestañas.map(p => {
                 const activa = esRutaDe(p.to, pathname);
                 return (
                     <Link

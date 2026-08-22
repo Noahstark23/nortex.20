@@ -83,6 +83,15 @@ const ACCOUNTANT_ITEMS: NavEntry[] = [
     { path: '/app/audit', label: 'Auditoría', shortLabel: 'Auditoría', group: 'Fiscal', iconKey: 'shield' },
 ];
 
+// Responsable de bodega: menú operativo y deliberadamente corto. Inventario
+// vive como pestaña dentro de "Bodegas y existencias"; no se duplica en el
+// sidebar y no se mezclan ventas, compras financieras ni configuración.
+const BODEGUERO_ITEMS: NavEntry[] = [
+    { path: '/app/warehouses', label: 'Bodegas y existencias', shortLabel: 'Bodegas', group: 'Bodega', iconKey: 'package' },
+    { path: '/app/inventory-count', label: 'Conteo físico', shortLabel: 'Conteo', group: 'Bodega', iconKey: 'clipboardList' },
+    { path: '/app/purchase-orders', label: 'Recibir mercadería', shortLabel: 'Recibir', group: 'Bodega', iconKey: 'truck' },
+];
+
 /** Roles con acceso a cada item gated (mismo gating que existía en Layout). */
 const GATE_MANAGER = ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'];
 const GATE_ADMIN = ['OWNER', 'ADMIN', 'SUPER_ADMIN'];
@@ -130,7 +139,17 @@ export function esRutaDe(navPath: string, ruta: string): boolean {
  * Ítem del menú "dueño" de una ruta: el que debe verse activo y cuya sección
  * debe estar abierta. Para una ruta normal es ella misma.
  */
-export function navPathForRoute(ruta: string): string {
+export function navPathForRoute(ruta: string, role = ''): string {
+    // Para BODEGUERO, Inventario es una subvista operativa de su destino
+    // principal "Bodegas y existencias". El resto de roles conserva la
+    // atribución histórica inversa (Bodegas como satélite de Mis Productos).
+    if (role === 'BODEGUERO') {
+        if (esRutaDe('/app/inventory', ruta) && !esRutaDe('/app/inventory-count', ruta)) {
+            return '/app/warehouses';
+        }
+        return ruta;
+    }
+
     const satelite = Object.keys(RUTAS_SATELITE).find(r => esRutaDe(r, ruta));
     return satelite ? RUTAS_SATELITE[satelite] : ruta;
 }
@@ -212,6 +231,9 @@ export function buildNavigation(ctx: NavContext): Navigation {
     if (role === 'VENDEDOR') {
         return { primary: [...VENDEDOR_ITEMS], more: [], homePath: '/app/pos' };
     }
+    if (role === 'BODEGUERO') {
+        return { primary: [...BODEGUERO_ITEMS], more: [], homePath: '/app/warehouses' };
+    }
 
     const all = retailItemsForRole(role);
     const homePath = homePathFor(role, simple ? 'simple' : 'full');
@@ -265,6 +287,7 @@ export function homePathFor(role: string, uiMode: UiMode = 'full'): string {
     if (role === 'CASHIER') return '/app/pos';
     if (role === 'VENDEDOR') return '/app/pos';
     if (role === 'ACCOUNTANT') return '/app/accounting';
+    if (role === 'BODEGUERO') return '/app/warehouses';
     if (uiMode === 'simple' && GATE_MANAGER.includes(role)) return '/app/inicio';
     return '/app/dashboard';
 }

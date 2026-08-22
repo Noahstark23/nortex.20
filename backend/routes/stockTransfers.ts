@@ -18,11 +18,12 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { authenticate } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
+import { BODEGUERO_ROLE } from '../security/bodegueroPolicy';
 import { materializeWarehouseRow } from '../services/stockService';
 import { validate, StockTransferSchema } from '../validation/schemas';
 
 const router = express.Router();
-const ROLES_WRITE = ['OWNER', 'ADMIN', 'MANAGER'];
+const ROLES_WRITE = ['OWNER', 'ADMIN', 'MANAGER', BODEGUERO_ROLE];
 
 /** Error de dominio con código + metadatos (no viaja info en strings con separador). */
 class TransferError extends Error {

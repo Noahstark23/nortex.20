@@ -15,6 +15,7 @@ import { sendPasswordResetEmail, sendWelcomeEmail, sendManualPaymentAlert } from
 import { runLifecycleEmails } from './services/lifecycleEmails';
 import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
+import { BODEGUERO_ROLE, redactBodegueroProduct } from './security/bodegueroPolicy';
 import { calculateTenantScore } from './services/scoring';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { seedCatalogFor } from './data/seedCatalogs';
@@ -22,7 +23,14 @@ import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_D
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent, PLAN_PRICE_USD, requiereConfirmacionDePagoCorto, calcularNuevoVencimiento } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
 import { calcularPulso, claveDelDiaManagua, inicioDelDiaManagua, MANAGUA_UTC_OFFSET_HOURS } from './services/pulsoPos';
-import { applyStockDelta, StockError, weightedAverageCost } from './services/stockService';
+import {
+    applyStockDelta,
+    asegurarBodegaPorDefecto,
+    materializeWarehouseRow,
+    resolveOperationalWarehouse,
+    StockError,
+    weightedAverageCost,
+} from './services/stockService';
 import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger, appendDriverWalletMovement, verifyDriverLedger } from './services/ledger';
 import { signAuthToken, verifyAuthToken } from './services/secrets';
 import { initObservability, errorTelemetry } from './services/observability';
@@ -542,7 +550,7 @@ app.post('/api/team/invite', authenticate, async (req: any, res: any) => {
             return res.status(400).json({ error: 'Email y rol son requeridos.' });
         }
 
-        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT', 'VENDEDOR'];
+        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT', 'VENDEDOR', BODEGUERO_ROLE];
         if (!validRoles.includes(role)) {
             return res.status(400).json({ error: `Rol inválido. Opciones: ${validRoles.join(', ')}` });
         }
@@ -669,7 +677,7 @@ app.patch('/api/team/:userId/role', authenticate, async (req: any, res: any) => 
             return res.status(400).json({ error: 'No puedes cambiar tu propio rol.' });
         }
 
-        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT', 'VENDEDOR'];
+        const validRoles = ['MANAGER', 'CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT', 'VENDEDOR', BODEGUERO_ROLE];
         if (!validRoles.includes(role)) {
             return res.status(400).json({ error: `Rol inválido. Opciones: ${validRoles.join(', ')}` });
         }
@@ -3510,8 +3518,12 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
         else if (status === 'published') whereClause.isPublished = true;
         else if (status === 'unpublished') whereClause.isPublished = false;
 
-        // Orden por columna válida (default: nombre).
-        const sortField = ['name', 'stock', 'price', 'cost', 'sku', 'category'].includes(String(sort)) ? String(sort) : 'name';
+        // El bodeguero no recibe precios/costos y tampoco puede inferirlos por
+        // el orden relativo de resultados usando `sort=cost|price`.
+        const sortableFields = authReq.role === BODEGUERO_ROLE
+            ? ['name', 'stock', 'sku', 'category']
+            : ['name', 'stock', 'price', 'cost', 'sku', 'category'];
+        const sortField = sortableFields.includes(String(sort)) ? String(sort) : 'name';
         const orderBy: any = { [sortField]: dir === 'desc' ? 'desc' : 'asc' };
 
         // Modo paginado (opt-in: solo si llega `page`) — para la vista de inventario.
@@ -3523,7 +3535,10 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
                 prisma.product.findMany({ where: whereClause, orderBy, skip, take, include: { creator: { select: { name: true, email: true } } } }),
                 prisma.product.count({ where: whereClause }),
             ]);
-            return res.json({ products, total, page: Math.max(1, parseInt(String(page)) || 1), pageSize: take });
+            const visibleProducts = authReq.role === BODEGUERO_ROLE
+                ? products.map(redactBodegueroProduct)
+                : products;
+            return res.json({ products: visibleProducts, total, page: Math.max(1, parseInt(String(page)) || 1), pageSize: take });
         }
 
         let products = await prisma.product.findMany({
@@ -3538,7 +3553,9 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
             products = products.filter((p: any) => Number(p.stock) <= Number(p.minStock));
         }
 
-        res.json(products);
+        res.json(authReq.role === BODEGUERO_ROLE
+            ? products.map(redactBodegueroProduct)
+            : products);
     } catch (error) {
         console.error('Error fetching products:', error);
         res.status(500).json({ error: 'Error obteniendo productos' });
@@ -4155,7 +4172,7 @@ app.delete('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), asy
 // [Bodeguero A5] Filtro por rango de fechas (hora Nicaragua, UTC-6) + paginación opt-in.
 //   - Sin ?page  → array (compat: últimos 50, respetando from/to si vienen).
 //   - Con  ?page → { entries, total, page, pageSize }.
-app.get('/api/kardex/:productId', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.get('/api/kardex/:productId', authenticate, checkRole(['OWNER', 'ADMIN', BODEGUERO_ROLE]), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { productId } = req.params;
     const { from, to, page, pageSize } = req.query;
@@ -4179,7 +4196,9 @@ app.get('/api/kardex/:productId', authenticate, checkRole(['OWNER', 'ADMIN']), a
         }
 
         const include = {
-            user: { select: { name: true, email: true } },
+            // El operador necesita saber quién hizo el movimiento, no el correo
+            // privado del compañero.
+            user: { select: authReq.role === BODEGUERO_ROLE ? { name: true } : { name: true, email: true } },
             product: { select: { name: true, sku: true } },
             batch: { select: { batchNumber: true, expiryDate: true } },
         };
@@ -4218,9 +4237,9 @@ app.get('/api/kardex/:productId', authenticate, checkRole(['OWNER', 'ADMIN']), a
 // 🛡️ AJUSTE DE INVENTARIO BLINDADO (SOLO OWNER)
 // ==========================================
 
-app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN']), validate(InventoryAdjustSchema), async (req: any, res: any) => {
+app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BODEGUERO_ROLE]), validate(InventoryAdjustSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { productId, quantity, reason, type } = req.body;
+    const { productId, warehouseId: requestedWarehouseId, quantity, reason, type } = req.body;
 
     // Validaciones estrictas
     if (!productId || quantity === undefined || quantity === null) {
@@ -4238,6 +4257,14 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN']), v
     if (!validTypes.includes(movementType)) {
         return res.status(400).json({ error: `Tipo inválido. Permitidos: ${validTypes.join(', ')}` });
     }
+    const isLoss = movementType === 'ADJUST_LOSS';
+    if ((isLoss && adjustQty > 0) || (!isLoss && adjustQty < 0)) {
+        return res.status(400).json({
+            error: isLoss
+                ? 'Una pérdida debe enviar una cantidad negativa.'
+                : 'Las entradas y devoluciones deben enviar una cantidad positiva.',
+        });
+    }
 
     // Reason es OBLIGATORIO para ajustes manuales
     if ((movementType === 'ADJUST_LOSS' || movementType === 'ADJUST_GAIN') && (!reason || reason.trim().length < 3)) {
@@ -4245,16 +4272,45 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN']), v
     }
 
     try {
+        await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
+
         // TRANSACCIÓN ACID
         const result = await prisma.$transaction(async (tx: any) => {
-            // 1. Verificar propiedad del producto (tenant) y traer datos para Kardex/auditoría.
-            const product = await tx.product.findFirst({
-                where: { id: productId, tenantId: authReq.tenantId! },
-                select: { name: true, sku: true }
-            });
+            const operationWarehouse = await resolveOperationalWarehouse(
+                tx,
+                authReq.tenantId!,
+                requestedWarehouseId,
+            );
 
-            if (!product) {
-                throw new Error('Producto no encontrado en tu inventario.');
+            // Orden único de locks para mutaciones: Product → ProductStock.
+            const productRows: Array<{ name: string; sku: string }> = await tx.$queryRaw`
+                SELECT name, sku FROM \`Product\`
+                WHERE id = ${productId} AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            const product = productRows[0];
+            if (!product) throw new StockError('PRODUCT_NOT_FOUND', 'Producto no encontrado en tu inventario.');
+
+            await materializeWarehouseRow(tx, {
+                tenantId: authReq.tenantId!,
+                productId,
+                warehouseId: operationWarehouse.id,
+                isDefault: operationWarehouse.isDefault,
+            });
+            const warehouseRows: Array<{ stock: any }> = await tx.$queryRaw`
+                SELECT stock FROM \`ProductStock\`
+                WHERE productId = ${productId}
+                  AND warehouseId = ${operationWarehouse.id}
+                  AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            if (warehouseRows.length === 0) {
+                throw new Error('No se pudo preparar el stock de la bodega seleccionada.');
+            }
+            const warehouseStockBefore = Number(warehouseRows[0].stock);
+            if (adjustQty < 0 && warehouseStockBefore < Math.abs(adjustQty)) {
+                throw new StockError(
+                    'INSUFFICIENT_STOCK',
+                    `Stock insuficiente en ${operationWarehouse.name}. Disponible: ${warehouseStockBefore}.`,
+                );
             }
 
             // 2. Mutar el stock de forma ATÓMICA (UPDATE condicional con row-lock).
@@ -4262,12 +4318,18 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN']), v
             //    escribía un valor ABSOLUTO, pisando cualquier venta concurrente (lost
             //    update). applyStockDelta aplica el delta relativo con lock de fila y, en
             //    pérdidas (delta<0), rechaza si el stock no alcanza.
-            const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+            const {
+                stockBefore: aggregateStockBefore,
+                stockAfter: aggregateStockAfter,
+                warehouseId,
+            } = await applyStockDelta(tx, {
                 tenantId: authReq.tenantId!,
                 productId,
                 delta: adjustQty,
                 enforceSufficient: adjustQty < 0,
+                warehouseId: operationWarehouse.id,
             });
+            const warehouseStockAfter = warehouseStockBefore + adjustQty;
 
             // 3. Crear registro Kardex inmutable
             const movement = await tx.kardexMovement.create({
@@ -4276,11 +4338,12 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN']), v
                     productId,
                     type: movementType,
                     quantity: adjustQty,
-                    stockBefore,
-                    stockAfter,
+                    stockBefore: warehouseStockBefore,
+                    stockAfter: warehouseStockAfter,
                     referenceType: 'ADJUSTMENT',
                     reason: reason?.trim() || `Ajuste manual: ${movementType}`,
-                    userId: authReq.userId!
+                    userId: authReq.userId!,
+                    warehouseId,
                 }
             });
 
@@ -4296,25 +4359,41 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN']), v
                         productName: product.name,
                         sku: product.sku,
                         movementType,
+                        warehouseId: operationWarehouse.id,
+                        warehouseName: operationWarehouse.name,
                         direction: adjustQty < 0 ? 'LOSS' : 'GAIN',
                         quantity: adjustQty,
-                        stockBefore,
-                        stockAfter,
+                        warehouseStockBefore,
+                        warehouseStockAfter,
+                        aggregateStockBefore,
+                        aggregateStockAfter,
                         reason: reason?.trim() || null,
                         timestamp: new Date().toISOString()
                     })
                 }
             });
 
-            return { movement, newStock: stockAfter, productName: product.name };
+            return {
+                movement,
+                productName: product.name,
+                warehouseName: operationWarehouse.name,
+                warehouseStock: warehouseStockAfter,
+                aggregateStock: aggregateStockAfter,
+            };
         });
 
         res.json({
-            message: `Ajuste registrado: ${result.productName} → Stock: ${result.newStock}`,
+            message: `Ajuste registrado en ${result.warehouseName}: ${result.productName} → ${result.warehouseStock}`,
             movement: result.movement,
-            newStock: result.newStock
+            newStock: result.aggregateStock,
+            warehouseStock: result.warehouseStock,
+            aggregateStock: result.aggregateStock,
         });
     } catch (error: any) {
+        if (error instanceof StockError) {
+            const status = error.code === 'PRODUCT_NOT_FOUND' ? 404 : 400;
+            return res.status(status).json({ error: error.message, code: error.code });
+        }
         console.error('Error en ajuste de inventario:', error);
         res.status(error.message?.includes('no encontrado') || error.message?.includes('insuficiente') ? 400 : 500)
             .json({ error: error.message || 'Error procesando ajuste de inventario' });
@@ -4543,32 +4622,78 @@ app.get('/api/inventory/low-stock', authenticate, checkRole(['OWNER', 'ADMIN']),
 // 🧮 TOMA FÍSICA / CONTEO CÍCLICO (Bodeguero B1) — Solo OWNER/ADMIN
 // ==========================================
 
+class StockCountFlowError extends Error {
+    constructor(
+        public readonly statusCode: number,
+        public readonly code: string,
+        message: string,
+        public readonly meta?: Record<string, unknown>,
+    ) {
+        super(message);
+        this.name = 'StockCountFlowError';
+    }
+}
+
 // POST /api/stock-counts - Crear conteo + snapshot del stock esperado
-app.post('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateStockCountSchema), async (req: any, res: any) => {
+app.post('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN', BODEGUERO_ROLE]), validate(CreateStockCountSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { scope, category, notes } = req.body;
+    const { scope, category, notes, warehouseId: requestedWarehouseId } = req.body;
     try {
-        // Solo un conteo abierto a la vez (evita snapshots solapados/confusos).
-        const open = await prisma.stockCount.findFirst({
-            where: { tenantId: authReq.tenantId!, status: 'OPEN' },
-            select: { id: true },
-        });
-        if (open) {
-            return res.status(409).json({ error: 'Ya hay una toma física abierta. Ciérrala o cancélala antes de crear otra.', openCountId: open.id });
-        }
+        await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
 
-        const where: any = { tenantId: authReq.tenantId! };
-        if (scope === 'CATEGORY') where.category = category;
+        const result = await prisma.$transaction(async (tx: any) => {
+            const warehouse = await resolveOperationalWarehouse(tx, authReq.tenantId!, requestedWarehouseId);
+            const open = await tx.stockCount.findFirst({
+                where: { tenantId: authReq.tenantId!, warehouseId: warehouse.id, status: 'OPEN' },
+                select: { id: true },
+            });
+            if (open) {
+                throw new StockCountFlowError(
+                    409,
+                    'STOCK_COUNT_ALREADY_OPEN',
+                    `Ya hay una toma física abierta en ${warehouse.name}.`,
+                    { openCountId: open.id, warehouseId: warehouse.id },
+                );
+            }
 
-        const products = await prisma.product.findMany({ where, select: { id: true, stock: true } });
-        if (products.length === 0) {
-            return res.status(400).json({ error: 'No hay productos en el alcance seleccionado.' });
-        }
+            const where: any = { tenantId: authReq.tenantId! };
+            if (scope === 'CATEGORY') where.category = category;
+            const products = await tx.product.findMany({
+                where,
+                select: { id: true, stock: true },
+                orderBy: { id: 'asc' },
+            });
+            if (products.length === 0) {
+                throw new StockCountFlowError(400, 'EMPTY_STOCK_COUNT_SCOPE', 'No hay productos en el alcance seleccionado.');
+            }
 
-        const count = await prisma.$transaction(async (tx: any) => {
+            const productIds = products.map((product: any) => product.id);
+            const stockRows = await tx.productStock.findMany({
+                where: { tenantId: authReq.tenantId!, productId: { in: productIds } },
+                select: { productId: true, warehouseId: true, stock: true },
+            });
+            const rowsByProduct = new Map<string, Array<{ warehouseId: string; stock: number }>>();
+            for (const row of stockRows) {
+                const rows = rowsByProduct.get(row.productId) || [];
+                rows.push({ warehouseId: row.warehouseId, stock: Number(row.stock) });
+                rowsByProduct.set(row.productId, rows);
+            }
+            const snapshot = products.map((product: any) => {
+                const rows = rowsByProduct.get(product.id) || [];
+                const explicit = rows.find((row) => row.warehouseId === warehouse.id);
+                const expected = explicit
+                    ? explicit.stock
+                    : warehouse.isDefault
+                        ? Number(product.stock) - rows.reduce((sum, row) => sum + row.stock, 0)
+                        : 0;
+                return { productId: product.id, expected };
+            });
+
             const created = await tx.stockCount.create({
                 data: {
                     tenantId: authReq.tenantId!,
+                    warehouseId: warehouse.id,
+                    openWarehouseKey: warehouse.id,
                     status: 'OPEN',
                     scope,
                     category: scope === 'CATEGORY' ? category : null,
@@ -4577,32 +4702,48 @@ app.post('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN']), valid
                 },
             });
             await tx.stockCountItem.createMany({
-                data: products.map((p: any) => ({
+                data: snapshot.map((item) => ({
                     countId: created.id,
-                    productId: p.id,
-                    expected: Number(p.stock),
+                    productId: item.productId,
+                    expected: item.expected,
                     counted: null,
                     diff: 0,
                 })),
             });
-            return created;
-        });
+            return { count: { ...created, warehouse }, items: snapshot.length };
+        }, { isolationLevel: 'RepeatableRead' });
 
-        res.json({ message: `Toma física creada con ${products.length} productos.`, count, items: products.length });
+        res.status(201).json({
+            message: `Toma física creada en ${result.count.warehouse.name} con ${result.items} productos.`,
+            ...result,
+        });
     } catch (error: any) {
+        if (error instanceof StockCountFlowError) {
+            return res.status(error.statusCode).json({ error: error.message, code: error.code, ...error.meta });
+        }
+        if (error instanceof StockError && (error.code === 'WAREHOUSE_REQUIRED' || error.code === 'WAREHOUSE_NOT_FOUND')) {
+            return res.status(400).json({ error: error.message, code: error.code });
+        }
+        if (error?.code === 'P2002') {
+            return res.status(409).json({
+                error: 'Ya hay una toma física abierta en esa bodega.',
+                code: 'STOCK_COUNT_ALREADY_OPEN',
+            });
+        }
         console.error('Error creando toma física:', error);
         res.status(500).json({ error: error.message || 'Error creando toma física' });
     }
 });
 
 // GET /api/stock-counts - Historial de conteos
-app.get('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.get('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN', BODEGUERO_ROLE]), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const counts = await prisma.stockCount.findMany({
             where: { tenantId: authReq.tenantId! },
             include: {
                 creator: { select: { name: true } },
+                warehouse: { select: { id: true, name: true } },
                 _count: { select: { items: true } },
             },
             orderBy: { createdAt: 'desc' },
@@ -4616,19 +4757,24 @@ app.get('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN']), async 
 });
 
 // GET /api/stock-counts/:id - Detalle + ítems (para captura / revisión)
-app.get('/api/stock-counts/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.get('/api/stock-counts/:id', authenticate, checkRole(['OWNER', 'ADMIN', BODEGUERO_ROLE]), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
     try {
         const count = await prisma.stockCount.findFirst({
             where: { id, tenantId: authReq.tenantId! },
-            include: { creator: { select: { name: true } } },
+            include: {
+                creator: { select: { name: true } },
+                warehouse: { select: { id: true, name: true } },
+            },
         });
         if (!count) return res.status(404).json({ error: 'Toma física no encontrada' });
 
+        const productSelect: any = { name: true, sku: true, unit: true };
+        if (authReq.role !== 'BODEGUERO') productSelect.cost = true;
         const items = await prisma.stockCountItem.findMany({
             where: { countId: id },
-            include: { product: { select: { name: true, sku: true, unit: true, cost: true, stock: true } } },
+            include: { product: { select: productSelect } },
             orderBy: { product: { name: 'asc' } },
         });
 
@@ -4640,33 +4786,51 @@ app.get('/api/stock-counts/:id', authenticate, checkRole(['OWNER', 'ADMIN']), as
 });
 
 // PATCH /api/stock-counts/:id/count - Capturar conteo físico de un producto (apto escáner)
-app.patch('/api/stock-counts/:id/count', authenticate, checkRole(['OWNER', 'ADMIN']), validate(RecordCountSchema), async (req: any, res: any) => {
+app.patch('/api/stock-counts/:id/count', authenticate, checkRole(['OWNER', 'ADMIN', BODEGUERO_ROLE]), validate(RecordCountSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
     const { productId, counted } = req.body;
     try {
-        const count = await prisma.stockCount.findFirst({
-            where: { id, tenantId: authReq.tenantId! },
-            select: { status: true },
-        });
-        if (!count) return res.status(404).json({ error: 'Toma física no encontrada' });
-        if (count.status !== 'OPEN') return res.status(400).json({ error: 'La toma física no está abierta.' });
+        const result = await prisma.$transaction(async (tx: any) => {
+            const countRows: Array<{ status: string; warehouseId: string | null }> = await tx.$queryRaw`
+                SELECT status, warehouseId FROM \`StockCount\`
+                WHERE id = ${id} AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            const count = countRows[0];
+            if (!count) throw new StockCountFlowError(404, 'STOCK_COUNT_NOT_FOUND', 'Toma física no encontrada.');
+            if (!count.warehouseId) {
+                throw new StockCountFlowError(
+                    409,
+                    'LEGACY_STOCK_COUNT_WITHOUT_WAREHOUSE',
+                    'Este conteo histórico no tiene bodega. Cancelalo y creá uno nuevo con ubicación.',
+                );
+            }
+            if (count.status !== 'OPEN') {
+                throw new StockCountFlowError(409, 'STOCK_COUNT_NOT_OPEN', 'La toma física ya no está abierta.');
+            }
 
-        const updated = await prisma.stockCountItem.updateMany({
-            where: { countId: id, productId },
-            data: { counted, countedAt: new Date() },
+            const updated = await tx.stockCountItem.updateMany({
+                where: { countId: id, productId },
+                data: { counted, countedAt: new Date() },
+            });
+            if (updated.count === 0) {
+                throw new StockCountFlowError(404, 'STOCK_COUNT_ITEM_NOT_FOUND', 'Este producto no pertenece a la toma física.');
+            }
+            return { productId, counted };
         });
-        if (updated.count === 0) return res.status(404).json({ error: 'Este producto no pertenece a la toma física.' });
 
-        res.json({ message: 'Conteo registrado', productId, counted });
+        res.json({ message: 'Conteo registrado', ...result });
     } catch (error: any) {
+        if (error instanceof StockCountFlowError) {
+            return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        }
         console.error('Error registrando conteo:', error);
         res.status(500).json({ error: error.message || 'Error registrando conteo' });
     }
 });
 
 // POST /api/stock-counts/:id/close - Cerrar: postea ajustes (Kardex) + asiento de merma/sobrante
-app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN', BODEGUERO_ROLE]), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
     try {
@@ -4674,18 +4838,42 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
         await seedChartOfAccounts(authReq.tenantId!);
 
         const result = await prisma.$transaction(async (tx: any) => {
+            const claimed = await tx.stockCount.updateMany({
+                where: { id, tenantId: authReq.tenantId!, status: 'OPEN' },
+                data: { status: 'CLOSING' },
+            });
+            if (claimed.count === 0) {
+                const existing = await tx.stockCount.findFirst({
+                    where: { id, tenantId: authReq.tenantId! },
+                    select: { id: true },
+                });
+                if (!existing) throw new StockCountFlowError(404, 'STOCK_COUNT_NOT_FOUND', 'Toma física no encontrada.');
+                throw new StockCountFlowError(409, 'STOCK_COUNT_NOT_OPEN', 'La toma física ya está cerrada o cancelada.');
+            }
+
             const count = await tx.stockCount.findFirst({
                 where: { id, tenantId: authReq.tenantId! },
+                include: { warehouse: { select: { id: true, name: true, isActive: true, isDefault: true } } },
             });
-            if (!count) throw new Error('Toma física no encontrada');
-            if (count.status !== 'OPEN') throw new Error('La toma física ya está cerrada o cancelada.');
+            if (!count) throw new StockCountFlowError(404, 'STOCK_COUNT_NOT_FOUND', 'Toma física no encontrada.');
+            if (!count.warehouseId || !count.warehouse) {
+                throw new StockCountFlowError(
+                    409,
+                    'LEGACY_STOCK_COUNT_WITHOUT_WAREHOUSE',
+                    'Este conteo histórico no tiene bodega. Cancelalo y creá uno nuevo con ubicación.',
+                );
+            }
+            if (!count.warehouse.isActive) {
+                throw new StockCountFlowError(409, 'WAREHOUSE_INACTIVE', 'La bodega del conteo está inactiva.');
+            }
             // Un período cerrado congela TODO ajuste de inventario, aun si el valor
             // de la merma fuese 0 (productos sin costo) y no se generara asiento.
             await assertPeriodOpen(tx, authReq.tenantId!, new Date());
 
             const items = await tx.stockCountItem.findMany({
                 where: { countId: id },
-                include: { product: { select: { name: true, cost: true, stock: true } } },
+                select: { id: true, productId: true, expected: true, counted: true },
+                orderBy: { productId: 'asc' },
             });
 
             let lossValue = new Decimal(0); // Σ |merma| · costo
@@ -4698,33 +4886,42 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
                 countedItems++;
                 const counted = Number(it.counted);
 
+                const productRows: Array<{ cost: any }> = await tx.$queryRaw`
+                    SELECT cost FROM \`Product\`
+                    WHERE id = ${it.productId} AND tenantId = ${authReq.tenantId!}
+                    FOR UPDATE`;
+                const product = productRows[0];
+                if (!product) continue;
+
                 // `variance` = conteo vs el snapshot inicial (informativo, para el reporte).
                 const variance = counted - Number(it.expected);
                 await tx.stockCountItem.update({ where: { id: it.id }, data: { diff: variance } });
 
-                // El ajuste REAL se mide contra el stock de LIBRO ACTUAL: así las ventas/
-                // compras ya contabilizadas (que movieron el libro entre snapshot y cierre)
-                // NO se cuentan como merma — solo la diferencia inexplicada cuadra el stock
-                // al conteo físico y evita re-contabilizar COGS como pérdida.
-                // Se relee el libro BAJO LOCK (FOR UPDATE) justo antes de calcular el delta:
-                // el snapshot del findMany inicial pudo quedar obsoleto por una venta
-                // commiteada en medio, dejando el libro final distinto del conteo físico.
-                // El row-lock se mantiene hasta el COMMIT, de modo que applyStockDelta escribe
-                // sobre el mismo valor leído y el libro queda EXACTAMENTE en el conteo.
+                await materializeWarehouseRow(tx, {
+                    tenantId: authReq.tenantId!,
+                    productId: it.productId,
+                    warehouseId: count.warehouseId,
+                    isDefault: count.warehouse.isDefault,
+                });
                 const lockedRows: Array<{ stock: any }> = await tx.$queryRaw`
-                    SELECT stock FROM \`Product\`
-                    WHERE id = ${it.productId} AND \`tenantId\` = ${authReq.tenantId!}
+                    SELECT stock FROM \`ProductStock\`
+                    WHERE productId = ${it.productId}
+                      AND warehouseId = ${count.warehouseId}
+                      AND tenantId = ${authReq.tenantId!}
                     FOR UPDATE`;
-                if (lockedRows.length === 0) continue;
+                if (lockedRows.length === 0) {
+                    throw new StockCountFlowError(500, 'WAREHOUSE_STOCK_ROW_MISSING', 'No se pudo preparar el stock de la bodega.');
+                }
                 const currentBook = Number(lockedRows[0].stock);
                 const delta = counted - currentBook;
                 if (delta === 0) continue;
 
-                const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+                await applyStockDelta(tx, {
                     tenantId: authReq.tenantId!,
                     productId: it.productId,
                     delta,
                     enforceSufficient: false,
+                    warehouseId: count.warehouseId,
                 });
 
                 await tx.kardexMovement.create({
@@ -4733,16 +4930,17 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
                         productId: it.productId,
                         type: delta < 0 ? 'ADJUST_LOSS' : 'ADJUST_GAIN',
                         quantity: delta,
-                        stockBefore,
-                        stockAfter,
+                        stockBefore: currentBook,
+                        stockAfter: counted,
                         referenceId: id,
                         referenceType: 'STOCK_COUNT',
-                        reason: `Toma física #${id.slice(0, 8)}: libro ${currentBook}, contado ${counted}`,
+                        reason: `Toma física #${id.slice(0, 8)} en ${count.warehouse.name}: libro ${currentBook}, contado ${counted}`,
                         userId: authReq.userId!,
+                        warehouseId: count.warehouseId,
                     },
                 });
 
-                const cost = new Decimal(Number(it.product.cost) || 0);
+                const cost = new Decimal(Number(product.cost) || 0);
                 if (delta < 0) lossValue = lossValue.plus(cost.times(Math.abs(delta)));
                 else gainValue = gainValue.plus(cost.times(delta));
                 adjusted++;
@@ -4755,7 +4953,12 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
 
             const closed = await tx.stockCount.update({
                 where: { id },
-                data: { status: 'CLOSED', closedAt: new Date(), closedBy: authReq.userId! },
+                data: {
+                    status: 'CLOSED',
+                    openWarehouseKey: null,
+                    closedAt: new Date(),
+                    closedBy: authReq.userId!,
+                },
             });
 
             // Asiento inmutable del cierre (Capa 3): el cierre aplica merma/sobrante
@@ -4768,6 +4971,8 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
                     action: 'STOCK_COUNT_CLOSED',
                     details: JSON.stringify({
                         countId: id,
+                        warehouseId: count.warehouseId,
+                        warehouseName: count.warehouse.name,
                         adjusted,
                         countedItems,
                         uncounted: items.length - countedItems,
@@ -4786,20 +4991,36 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
                 lossValue: lossValue.toDecimalPlaces(2).toNumber(),
                 gainValue: gainValue.toDecimalPlaces(2).toNumber(),
             };
-        });
+        }, { maxWait: 5_000, timeout: 30_000 });
 
+        if (authReq.role === 'BODEGUERO') {
+            const { lossValue: _lossValue, gainValue: _gainValue, ...operationalResult } = result;
+            return res.json({ message: `Toma física cerrada. ${result.adjusted} ajuste(s) aplicado(s).`, ...operationalResult });
+        }
         res.json({ message: `Toma física cerrada. ${result.adjusted} ajuste(s) aplicado(s).`, ...result });
     } catch (error: any) {
+        if (error instanceof StockCountFlowError) {
+            return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        }
+        if (error instanceof StockError && error.code === 'WAREHOUSE_NOT_FOUND') {
+            return res.status(409).json({ error: error.message, code: error.code });
+        }
+        if (error?.code === 'P2034') {
+            return res.status(409).json({
+                error: 'Otro movimiento actualizó el inventario al mismo tiempo; reintentá el cierre.',
+                code: 'STOCK_COUNT_CONCURRENCY_CONFLICT',
+            });
+        }
         console.error('Error cerrando toma física:', error);
         const msg = error?.message || 'Error cerrando toma física';
         const code = error instanceof PeriodLockedError ? 423
-            : (msg.includes('no encontrada') || msg.includes('cerrada') || msg.includes('cancelada')) ? 400 : 500;
+            : 500;
         res.status(code).json({ error: msg });
     }
 });
 
 // POST /api/stock-counts/:id/cancel - Cancelar una toma física abierta (sin ajustes)
-app.post('/api/stock-counts/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.post('/api/stock-counts/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', BODEGUERO_ROLE]), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
     try {

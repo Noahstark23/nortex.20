@@ -18,6 +18,7 @@ import { InventoryTabs } from './ui/InventoryTabs';
 import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
 import { maybeAutostartTour } from '../utils/tours';
+import { currentSessionRole, roleCapabilitiesFor } from '../utils/roleCapabilities';
 
 // ==========================================
 // TYPES
@@ -29,8 +30,8 @@ interface Product {
     sku: string;
     description?: string;
     category?: string;
-    price: number;
-    cost: number;
+    price?: number;
+    cost?: number;
     stock: number;
     minStock: number;
     unit: string;
@@ -162,6 +163,17 @@ const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', {
 // ==========================================
 
 export default function Inventory() {
+    const userRole = currentSessionRole() || 'EMPLOYEE';
+    const {
+        isBodeguero,
+        canManageProducts,
+        canAdjustStock,
+        canViewKardex,
+        canViewInventoryValuation,
+    } = roleCapabilitiesFor(userRole);
+    // Conserva el nombre histórico usado en el render; ahora su definición
+    // vive antes de hooks que dependen de ella y no mezcla ajustes con edición.
+    const isOwner = canManageProducts;
     const [products, setProducts] = useState<Product[]>([]);
     // Distingue "inventario vacío" de "no pudimos cargarlo" (auditoría C8).
     const [productsError, setProductsError] = useState(false);
@@ -172,7 +184,6 @@ export default function Inventory() {
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
-    const [userRole, setUserRole] = useState('EMPLOYEE');
 
     // Paginación / filtros / orden (server-side)
     const PAGE_SIZE = 50;
@@ -307,7 +318,10 @@ export default function Inventory() {
     }, [headers]);
 
     // Recarga todo (lista + KPIs) tras una mutación.
-    const reload = useCallback(() => { fetchProducts(); fetchStats(); }, [fetchProducts, fetchStats]);
+    const reload = useCallback(() => {
+        fetchProducts();
+        if (canViewInventoryValuation) fetchStats();
+    }, [canViewInventoryValuation, fetchProducts, fetchStats]);
 
     // Catálogo de EJEMPLO por giro (retención R2): mismo endpoint que el POS.
     const seedCatalog = useCallback(async () => {
@@ -364,7 +378,7 @@ export default function Inventory() {
         const labels = selected.map(p => `
             <div class="label">
                 <div class="name">${esc(p.name)}</div>
-                <div class="price">${esc(formatCurrency(p.price))}</div>
+                <div class="price">${esc(formatCurrency(Number(p.price ?? 0)))}</div>
                 <div class="sku">${esc(p.sku)}</div>
             </div>`).join('');
         const html = `<!doctype html><html><head><meta charset="utf-8"><title>Etiquetas</title><style>
@@ -387,21 +401,16 @@ export default function Inventory() {
     };
 
     useEffect(() => {
-        const userData = localStorage.getItem('nortex_user');
-        if (userData) {
-            try {
-                const user = JSON.parse(userData);
-                setUserRole(user.role || 'EMPLOYEE');
-            } catch (e) { /* ignore */ }
-        }
-        fetchStats();
+        if (canViewInventoryValuation) fetchStats();
         fetchCategories();
         // Proveedores para asignar el proveedor por defecto al editar (C2)
-        fetch('/api/suppliers', { headers })
-            .then(r => r.ok ? r.json() : [])
-            .then((data) => setSuppliers(Array.isArray(data) ? data.map((s: any) => ({ id: s.id, name: s.name })) : []))
-            .catch(() => { /* noop */ });
-    }, [fetchStats, fetchCategories, headers]);
+        if (canManageProducts) {
+            fetch('/api/suppliers', { headers })
+                .then(r => r.ok ? r.json() : [])
+                .then((data) => setSuppliers(Array.isArray(data) ? data.map((s: any) => ({ id: s.id, name: s.name })) : []))
+                .catch(() => { /* noop */ });
+        }
+    }, [canManageProducts, canViewInventoryValuation, fetchStats, fetchCategories, headers]);
 
     // Debounce de la búsqueda (y vuelve a la página 1).
     useEffect(() => {
@@ -413,17 +422,17 @@ export default function Inventory() {
     useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
     // Tutorial guiado: si entran con ?tour=inv (desde Ayuda o el checklist).
-    useEffect(() => { maybeAutostartTour(); }, []);
+    useEffect(() => { if (canManageProducts) maybeAutostartTour(); }, [canManageProducts]);
 
     // Alta rápida directa: si entran con ?quick=1 (botón "Agregar producto" del
     // home Mi Negocio), se abre el modal de 3 campos sin pasos intermedios.
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
-        if (params.get('quick') === '1') {
+        if (canManageProducts && params.get('quick') === '1') {
             setQuickAddSKU('');
             setShowQuickAddModal(true);
         }
-    }, []);
+    }, [canManageProducts]);
 
     // ==========================================
     // SCAN DETECTION
@@ -478,7 +487,13 @@ export default function Inventory() {
                             const arr = Array.isArray(data) ? data : (data.products || []);
                             const found = arr.find((p: any) => p.sku === scannedCode || p.sku === scannedCode.toUpperCase());
                             if (found) { playScanSound(true); setSearchTerm(found.sku); }
-                            else { playScanSound(false); setQuickAddSKU(scannedCode); setShowQuickAddModal(true); }
+                            else {
+                                playScanSound(false);
+                                if (canManageProducts) {
+                                    setQuickAddSKU(scannedCode);
+                                    setShowQuickAddModal(true);
+                                }
+                            }
                         } catch { playScanSound(false); }
                     })();
                 }
@@ -490,7 +505,7 @@ export default function Inventory() {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [headers, showCreateModal, showImportModal, showQuickAddModal, showKardexModal, showAdjustModal, showEditModal, playScanSound]);
+    }, [canManageProducts, headers, showCreateModal, showImportModal, showQuickAddModal, showKardexModal, showAdjustModal, showEditModal, playScanSound]);
 
     // ==========================================
     // INVENTORY TOTALS
@@ -963,38 +978,55 @@ export default function Inventory() {
 
     // El servidor ya filtra y pagina; la página actual es `products`.
     const filteredProducts = products;
-
-    const isOwner = userRole === 'OWNER' || userRole === 'ADMIN';
+    const inventoryTableColumnCount = isOwner ? 9 : isBodeguero ? 5 : 6;
 
     // Debajo de `lg` el catálogo se pinta como tarjetas y no como tabla (ver el
     // comentario del bloque de tarjetas). Las acciones del menú "…" son las
     // MISMAS en los dos modos, así que se arman una sola vez: duplicar el arreglo
     // era la forma segura de que un día "Eliminar" existiera en la tabla y no en
     // el teléfono, o peor, al revés.
-    const accionesDe = (product: Product) => [
-        {
-            label: product.isPublished ? 'Ocultar del catálogo' : 'Publicar en catálogo',
-            icon: <Globe size={16} />,
-            onClick: () => handleTogglePublish(product.id, product.isPublished || false, product.name),
-        },
-        {
-            label: 'Lotes y vencimientos',
-            icon: <Layers size={16} />,
-            onClick: () => openBatches(product),
-            hidden: !product.requiresBatchTracking,
-        },
-        {
-            label: 'Ajuste de stock (Kardex)',
-            icon: <Wrench size={16} />,
-            onClick: () => openAdjust(product),
-        },
-        {
-            label: 'Eliminar producto',
-            icon: <Trash2 size={16} />,
-            onClick: () => handleDelete(product.id, product.name),
-            danger: true,
-        },
-    ];
+    const accionesDe = (product: Product) => {
+        const actions: Array<{
+            label: string;
+            icon: React.ReactNode;
+            onClick: () => void;
+            hidden?: boolean;
+            danger?: boolean;
+        }> = [
+            {
+                label: 'Lotes y vencimientos',
+                icon: <Layers size={16} />,
+                onClick: () => openBatches(product),
+                hidden: !product.requiresBatchTracking,
+            },
+        ];
+
+        // Para BODEGUERO el ajuste queda visible como acción diaria. En roles
+        // administrativos permanece en el menú, conservando la jerarquía previa.
+        if (isOwner && canAdjustStock) {
+            actions.push({
+                label: 'Ajuste de stock (Kardex)',
+                icon: <Wrench size={16} />,
+                onClick: () => openAdjust(product),
+            });
+        }
+
+        if (canManageProducts) {
+            actions.unshift({
+                label: product.isPublished ? 'Ocultar del catálogo' : 'Publicar en catálogo',
+                icon: <Globe size={16} />,
+                onClick: () => handleTogglePublish(product.id, product.isPublished || false, product.name),
+            });
+            actions.push({
+                label: 'Eliminar producto',
+                icon: <Trash2 size={16} />,
+                onClick: () => handleDelete(product.id, product.name),
+                danger: true,
+            });
+        }
+
+        return actions;
+    };
 
     // El semáforo de existencias también es compartido entre tabla y tarjetas.
     const estadoStock = (product: Product) => ({
@@ -1023,7 +1055,9 @@ export default function Inventory() {
             : {
                 icon: <Package size={32} />,
                 title: 'Tu inventario está vacío',
-                description: 'Importá tu lista desde Excel y Nortex arma el catálogo solo.',
+                description: isBodeguero
+                    ? 'Todavía no hay productos para operar. Pedile a un administrador que cargue el catálogo.'
+                    : 'Importá tu lista desde Excel y Nortex arma el catálogo solo.',
                 action: isOwner ? { label: 'Modo rápido', icon: <Zap size={18} />, onClick: () => { setShowQuickAddModal(true); setQuickAddSKU(''); } } : undefined,
                 secondaryAction: isOwner ? { label: 'Cargar manual', icon: <Plus size={18} />, onClick: () => setShowCreateModal(true) } : undefined,
                 linkAction: isOwner ? { label: 'O cargá un catálogo de ejemplo de tu giro para probar', onClick: seedCatalog, loading: seeding, loadingLabel: 'Cargando catálogo…' } : undefined,
@@ -1057,8 +1091,10 @@ export default function Inventory() {
                 título y el subtítulo). */}
             <ModuleHeader
                 icon={<Shield size={20} />}
-                title="Mis Productos"
-                subtitle="Tu catálogo, precios y existencias — cada movimiento queda registrado"
+                title={isBodeguero ? 'Existencias' : 'Mis Productos'}
+                subtitle={isBodeguero
+                    ? 'Consultá el stock, revisá el Kardex y registrá ajustes justificados'
+                    : 'Tu catálogo, precios y existencias — cada movimiento queda registrado'}
                 // Las pestañas viven en un componente compartido montado también en
                 // Bodegas y Series: antes solo existían acá y entrar a las otras dos
                 // dejaba al usuario sin camino de vuelta.
@@ -1124,7 +1160,7 @@ export default function Inventory() {
                 productos bajo mínimo pero el número era decorativo — no se podía
                 hacer clic ni existía la opción en el filtro de estado. Había que
                 ordenar por stock ascendente y contar a ojo dónde terminaba el rojo. */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {canViewInventoryValuation && <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <TarjetaKpi
                     icono={<Package size={16} className="text-blue-400" />}
                     titulo="Productos"
@@ -1160,13 +1196,13 @@ export default function Inventory() {
                     onClick={() => aplicarFiltroEstado('out')}
                     etiquetaAccion="Ver solo los productos agotados"
                 />
-            </div>
+            </div>}
 
             {/* Las tarjetas cuentan SIEMPRE sobre el catálogo completo (vienen del
                 endpoint de stats, no de la página visible). Con un filtro puesto,
                 decirlo evita que el dueño lea "1,003 productos" sobre una tabla de 5
                 y no sepa si el valor del inventario es del filtro o del total. */}
-            {hayFiltro && (
+            {canViewInventoryValuation && hayFiltro && (
                 <p className="text-xs text-slate-400 -mt-2">
                     Los totales de arriba son de tu catálogo completo; la tabla está filtrada.
                 </p>
@@ -1205,8 +1241,8 @@ export default function Inventory() {
                     <option value="low">Bajo mínimo</option>
                     <option value="reorder">Toca reponer</option>
                     <option value="out">Agotados</option>
-                    <option value="published">Publicados</option>
-                    <option value="unpublished">Ocultos</option>
+                    {!isBodeguero && <option value="published">Publicados</option>}
+                    {!isBodeguero && <option value="unpublished">Ocultos</option>}
                 </select>
                 <select value={`${sortField}:${sortDir}`} onChange={(e) => { const [f, d] = e.target.value.split(':'); setSortField(f); setSortDir(d as 'asc' | 'desc'); setPage(1); }}
                     className="min-w-0 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
@@ -1214,14 +1250,16 @@ export default function Inventory() {
                     <option value="name:desc">Nombre Z-A</option>
                     <option value="stock:asc">Stock ↑ (bajos primero)</option>
                     <option value="stock:desc">Stock ↓</option>
-                    <option value="price:desc">Precio ↓</option>
-                    <option value="price:asc">Precio ↑</option>
-                    <option value="cost:desc">Costo ↓</option>
+                    {!isBodeguero && <option value="price:desc">Precio ↓</option>}
+                    {!isBodeguero && <option value="price:asc">Precio ↑</option>}
+                    {canViewInventoryValuation && <option value="cost:desc">Costo ↓</option>}
                 </select>
-                <button onClick={handleExport} disabled={exporting}
-                    className="min-w-0 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 border border-slate-600 disabled:opacity-50 transition-colors">
-                    <Download size={16} /> {exporting ? 'Exportando…' : 'Excel'}
-                </button>
+                {!isBodeguero && (
+                    <button onClick={handleExport} disabled={exporting}
+                        className="min-w-0 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 border border-slate-600 disabled:opacity-50 transition-colors">
+                        <Download size={16} /> {exporting ? 'Exportando…' : 'Excel'}
+                    </button>
+                )}
                 </div>
             </div>
 
@@ -1326,7 +1364,7 @@ export default function Inventory() {
                                 <th className="text-left px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Producto</th>
                                 <th className="text-left px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Categoría</th>
                                 <th className="text-right px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Stock</th>
-                                <th className="text-right px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Precio</th>
+                                {!isBodeguero && <th className="text-right px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Precio</th>}
                                 {isOwner && (
                                     <>
                                         <th className="hidden xl:table-cell text-right px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Costo</th>
@@ -1338,9 +1376,9 @@ export default function Inventory() {
                         </thead>
                         <tbody>
                             {loading ? (
-                                <SkeletonTableRows rows={6} cols={isOwner ? 8 : 6} />
+                                <SkeletonTableRows rows={6} cols={inventoryTableColumnCount} />
                             ) : filteredProducts.length === 0 ? (
-                                <TableEmptyState colSpan={isOwner ? 8 : 6} {...propsVacio} />
+                                <TableEmptyState colSpan={inventoryTableColumnCount} {...propsVacio} />
                             ) : (
                                 filteredProducts.map((product) => {
                                     const isLow = product.stock <= product.minStock && product.stock > 0;
@@ -1402,16 +1440,18 @@ export default function Inventory() {
                                                     )}
                                                 </div>
                                             </td>
-                                            <td className="px-2 xl:px-4 py-3 text-right text-emerald-400 font-semibold font-mono tabular-nums whitespace-nowrap">
-                                                {formatCurrency(product.price)}
-                                            </td>
+                                            {!isBodeguero && (
+                                                <td className="px-2 xl:px-4 py-3 text-right text-emerald-400 font-semibold font-mono tabular-nums whitespace-nowrap">
+                                                    {formatCurrency(Number(product.price ?? 0))}
+                                                </td>
+                                            )}
                                             {isOwner && (
                                                 <>
                                                     <td className="hidden xl:table-cell px-2 xl:px-4 py-3 text-right text-slate-400 font-mono tabular-nums whitespace-nowrap">
-                                                        {formatCurrency(product.cost)}
+                                                        {formatCurrency(Number(product.cost ?? 0))}
                                                     </td>
                                                     <td className="px-2 xl:px-4 py-3 text-right font-semibold text-cyan-400 font-mono tabular-nums whitespace-nowrap">
-                                                        {formatCurrency(product.stock * product.cost)}
+                                                        {formatCurrency(product.stock * Number(product.cost ?? 0))}
                                                     </td>
                                                 </>
                                             )}
@@ -1422,18 +1462,29 @@ export default function Inventory() {
                                                     las dos acciones de uso diario y el resto —incluida
                                                     la destructiva, separada— vive en el menú. */}
                                                 <div className="flex items-center justify-center gap-1">
-                                                    {isOwner && (
+                                                    {(canViewKardex || canAdjustStock) && (
                                                         <>
-                                                            <IconButton
-                                                                icon={<Eye size={16} />}
-                                                                label={`Auditar kardex de ${product.name}`}
-                                                                onClick={() => openKardex(product)}
-                                                            />
-                                                            <IconButton
-                                                                icon={<Edit size={16} />}
-                                                                label={`Editar ${product.name}`}
-                                                                onClick={() => openEditModal(product)}
-                                                            />
+                                                            {canViewKardex && (
+                                                                <IconButton
+                                                                    icon={<Eye size={16} />}
+                                                                    label={`Auditar kardex de ${product.name}`}
+                                                                    onClick={() => openKardex(product)}
+                                                                />
+                                                            )}
+                                                            {canManageProducts && (
+                                                                    <IconButton
+                                                                        icon={<Edit size={16} />}
+                                                                        label={`Editar ${product.name}`}
+                                                                        onClick={() => openEditModal(product)}
+                                                                    />
+                                                            )}
+                                                            {isBodeguero && canAdjustStock && (
+                                                                <IconButton
+                                                                    icon={<Wrench size={16} />}
+                                                                    label={`Ajustar existencias de ${product.name}`}
+                                                                    onClick={() => openAdjust(product)}
+                                                                />
+                                                            )}
                                                             <ActionMenu
                                                                 label={`Más acciones de ${product.name}`}
                                                                 items={accionesDe(product)}
@@ -1543,9 +1594,11 @@ export default function Inventory() {
                                                         <span className="badge-soft-success">OK</span>
                                                     )}
                                                 </div>
-                                                <span className="shrink-0 text-emerald-400 font-bold font-mono tabular-nums">
-                                                    {formatCurrency(product.price)}
-                                                </span>
+                                                {!isBodeguero && (
+                                                    <span className="shrink-0 text-emerald-400 font-bold font-mono tabular-nums">
+                                                        {formatCurrency(Number(product.price ?? 0))}
+                                                    </span>
+                                                )}
                                             </div>
 
                                             {isOwner && (
@@ -1555,7 +1608,7 @@ export default function Inventory() {
                                                         dice cuánta plata hay parada en ese producto. Que
                                                         baje a dos líneas es mejor que ocultarla. */}
                                                     <p className="min-w-0 text-xs text-slate-400 font-mono tabular-nums">
-                                                        Costo {formatCurrency(product.cost)} · Valor <span className="text-cyan-400">{formatCurrency(product.stock * product.cost)}</span>
+                                                        Costo {formatCurrency(Number(product.cost ?? 0))} · Valor <span className="text-cyan-400">{formatCurrency(product.stock * Number(product.cost ?? 0))}</span>
                                                     </p>
                                                     <div className="flex shrink-0 items-center gap-1">
                                                         <IconButton
@@ -1573,6 +1626,28 @@ export default function Inventory() {
                                                             items={accionesDe(product)}
                                                         />
                                                     </div>
+                                                </div>
+                                            )}
+                                            {isBodeguero && (
+                                                <div className="mt-3 flex items-center justify-end gap-1">
+                                                    {canViewKardex && (
+                                                        <IconButton
+                                                            icon={<Eye size={16} />}
+                                                            label={`Auditar kardex de ${product.name}`}
+                                                            onClick={() => openKardex(product)}
+                                                        />
+                                                    )}
+                                                    {canAdjustStock && (
+                                                        <IconButton
+                                                            icon={<Wrench size={16} />}
+                                                            label={`Ajustar existencias de ${product.name}`}
+                                                            onClick={() => openAdjust(product)}
+                                                        />
+                                                    )}
+                                                    <ActionMenu
+                                                        label={`Más acciones de ${product.name}`}
+                                                        items={accionesDe(product)}
+                                                    />
                                                 </div>
                                             )}
                                         </div>
@@ -1601,7 +1676,9 @@ export default function Inventory() {
                                 <p className="text-sm text-slate-400 mt-1">
                                     SKU: <span className="font-mono text-slate-300">{selectedProduct.sku}</span>
                                     {' '} | Stock Actual: <span className={`font-bold ${selectedProduct.stock <= selectedProduct.minStock ? 'text-red-400' : 'text-emerald-400'}`}>{selectedProduct.stock} {selectedProduct.unit}</span>
-                                    {' '} | Valor: <span className="text-cyan-400 font-semibold">{formatCurrency(selectedProduct.stock * selectedProduct.cost)}</span>
+                                    {canViewInventoryValuation && (
+                                        <> {' '} | Valor: <span className="text-cyan-400 font-semibold">{formatCurrency(selectedProduct.stock * Number(selectedProduct.cost ?? 0))}</span></>
+                                    )}
                                 </p>
                             </div>
                             <button onClick={() => setShowKardexModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">

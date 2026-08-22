@@ -195,6 +195,7 @@ export const CreatePurchaseSchema = z
 // POST /api/inventory/adjust
 export const InventoryAdjustSchema = z.object({
     productId: z.string().min(1, 'productId requerido'),
+    warehouseId: z.string().trim().min(1, 'Bodega requerida').optional(),
     quantity:  z.number().int().refine((v) => v !== 0, { message: 'La cantidad no puede ser cero' }),
     reason:    z.string().min(3, 'La justificación es obligatoria (mín. 3 caracteres)').max(300).optional(),
     type:      z.enum(['ADJUST_LOSS', 'ADJUST_GAIN', 'IN_PURCHASE', 'RETURN']).optional(),
@@ -236,6 +237,7 @@ export const CreateBatchSchema = z.object({
 export const CreateStockCountSchema = z
     .object({
         scope:    z.enum(['ALL', 'CATEGORY']).default('ALL'),
+        warehouseId: z.string().trim().min(1, 'Bodega requerida').optional(),
         category: z.string().trim().min(1).max(100).optional(),
         notes:    z.string().trim().max(300).optional(),
     })

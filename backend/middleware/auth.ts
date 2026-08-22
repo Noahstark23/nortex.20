@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import NodeCache from 'node-cache';
 import { verifyAuthToken } from '../services/secrets';
 import { isBillingExempt } from './billingExempt';
+import { BODEGUERO_ROLE, isBodegueroRouteAllowed } from '../security/bodegueroPolicy';
 
 const prisma = new PrismaClient();
 
@@ -97,6 +98,16 @@ export const authenticate = async (req: any, res: any, next: any) => {
     // Nunca se concede por el claim `email` del JWT (falsificable vía register).
     if (decoded.role === 'SUPER_ADMIN' && (await isVerifiedSuperAdmin(decoded.userId))) {
       next();
+      return;
+    }
+
+    // Privilegio mínimo DESPUÉS de validar el JWT y ANTES de cualquier bypass
+    // de billing. Así cubre también routers montados y toda ruta nueva queda
+    // denegada hasta incorporarla explícitamente a la allowlist.
+    if (decoded.role === BODEGUERO_ROLE && !isBodegueroRouteAllowed(req.method, req.originalUrl || req.url || '')) {
+      res.status(403).json({
+        error: 'Acceso Denegado: Este rol solo puede operar inventario, bodegas, conteos y recepciones.',
+      });
       return;
     }
 

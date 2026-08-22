@@ -3,6 +3,7 @@ import {
     Users, Plus, Shield, Eye, ShoppingCart, UserCog, Copy, Check,
     Trash2, Clock, Mail, ChevronDown, AlertCircle, Loader2, UserPlus, Calculator, Package
 } from 'lucide-react';
+import { TEAM_ASSIGNABLE_ROLES } from '../utils/roleCapabilities';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -76,6 +77,13 @@ const ROLE_CONFIG: Record<string, { label: string; icon: React.ReactNode; color:
         color: 'text-cyan-400',
         bg: 'bg-cyan-500/10 border-cyan-500/30',
         description: 'Vende y cobra su cartera: POS, sus clientes, fiado y su reporte'
+    },
+    BODEGUERO: {
+        label: 'Bodeguero',
+        icon: <Package size={14} />,
+        color: 'text-teal-300',
+        bg: 'bg-teal-500/10 border-teal-500/30',
+        description: 'Existencias, transferencias, conteos y recepción. Sin acceso a ventas ni dinero'
     },
     ACCOUNTANT: {
         label: 'Contador',
@@ -365,12 +373,9 @@ const TeamManagement: React.FC = () => {
                                             onChange={(e) => handleChangeRole(u.id, e.target.value)}
                                             className="bg-slate-800 border border-slate-600 rounded text-xs text-slate-300 px-2 py-1 cursor-pointer hover:border-slate-500"
                                         >
-                                            <option value="MANAGER">Gerente</option>
-                                            <option value="CASHIER">Cajero</option>
-                                            <option value="VENDEDOR">Vendedor</option>
-                                            <option value="VIEWER">Visor</option>
-                                            <option value="EMPLOYEE">Empleado</option>
-                                            <option value="ACCOUNTANT">Contador</option>
+                                            {TEAM_ASSIGNABLE_ROLES.map(role => (
+                                                <option key={role} value={role}>{ROLE_CONFIG[role].label}</option>
+                                            ))}
                                         </select>
                                         {u.role === 'VENDEDOR' && (
                                             <button
@@ -447,7 +452,7 @@ const TeamManagement: React.FC = () => {
             <div className="bg-nortex-800/50 border border-slate-700/50 rounded-xl p-5">
                 <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4">Permisos por Rol</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {['MANAGER', 'CASHIER', 'VENDEDOR', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'].map(role => {
+                    {TEAM_ASSIGNABLE_ROLES.map(role => {
                         const rc = ROLE_CONFIG[role];
                         return (
                             <div key={role} className={`p-3 rounded-lg border ${rc.bg}`}>
@@ -489,7 +494,7 @@ const TeamManagement: React.FC = () => {
                                     <div className="mb-6">
                                         <label className="text-sm font-medium text-slate-300 block mb-2">Rol</label>
                                         <div className="grid grid-cols-2 gap-2">
-                                            {['MANAGER', 'CASHIER', 'VENDEDOR', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT'].map(role => {
+                                            {TEAM_ASSIGNABLE_ROLES.map(role => {
                                                 const rc = ROLE_CONFIG[role];
                                                 const isSelected = inviteRole === role;
                                                 return (

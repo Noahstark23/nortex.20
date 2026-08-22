@@ -18,6 +18,7 @@ import Decimal from 'decimal.js';
 import { z } from 'zod';
 import { authenticate } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
+import { BODEGUERO_ROLE, redactBodegueroPurchaseOrder } from '../security/bodegueroPolicy';
 import { applyStockDelta, weightedAverageCost } from '../services/stockService';
 import { normalizeCalendarDateInput } from '../lib/calendarDate';
 
@@ -27,6 +28,7 @@ const prisma = new PrismaClient();
 const router = express.Router();
 
 const ROLES_WRITE = ['OWNER', 'ADMIN', 'MANAGER'];
+const ROLES_RECEIVE = ['OWNER', 'ADMIN', 'MANAGER', BODEGUERO_ROLE];
 
 interface ReceiptLine {
     itemId: string;
@@ -188,7 +190,12 @@ router.get('/', authenticate, async (req: any, res: any) => {
             orderBy: { createdAt: 'desc' },
             take: 200,
         });
-        res.json({ success: true, data: orders });
+        res.json({
+            success: true,
+            data: req.role === BODEGUERO_ROLE
+                ? orders.map(redactBodegueroPurchaseOrder)
+                : orders,
+        });
     } catch (e: any) {
         console.error('Error listando OC:', e.message);
         res.status(500).json({ error: 'Error al listar órdenes de compra' });
@@ -207,7 +214,12 @@ router.get('/:id', authenticate, async (req: any, res: any) => {
             },
         });
         if (!order) return res.status(404).json({ error: 'Orden de compra no encontrada' });
-        res.json({ success: true, data: order });
+        res.json({
+            success: true,
+            data: req.role === BODEGUERO_ROLE
+                ? redactBodegueroPurchaseOrder(order)
+                : order,
+        });
     } catch (e: any) {
         console.error('Error obteniendo OC:', e.message);
         res.status(500).json({ error: 'Error al obtener la orden de compra' });
@@ -323,7 +335,7 @@ router.post('/:id/cancel', authenticate, checkRole(ROLES_WRITE), async (req: any
 });
 
 // ── POST /:id/receive — recepción de mercadería (goods receipt) ─────────────
-router.post('/:id/receive', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any) => {
+router.post('/:id/receive', authenticate, checkRole(ROLES_RECEIVE), async (req: any, res: any) => {
     const tenantId: string = req.tenantId;
     const userId: string = req.userId;
     const lines: ReceiptLine[] = Array.isArray(req.body?.items) ? req.body.items : [];
