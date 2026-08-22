@@ -3,10 +3,12 @@ import { maybeAutostartTour } from '../utils/tours';
 import {
     Truck, Plus, Search, FileText, CreditCard, DollarSign, Package,
     Calendar, X, Check, AlertTriangle, Clock, Trash2,
-    ShoppingCart, Wallet, Printer, Eye, Stamp
+    ShoppingCart, Wallet, Printer, Eye, Stamp, Loader2
 } from 'lucide-react';
 import { formatMoney } from '../utils/money';
+import { currentSessionRole } from '../utils/roleCapabilities';
 import { ToastViewport, useToast } from './ui/Toast';
+import { authenticatedRequestErrorMessage, openAuthenticatedPreview } from '../utils/authenticatedDownload';
 
 // ==========================================
 // TYPES
@@ -83,6 +85,7 @@ interface Purchase {
 interface PurchaseFormErrors {
     supplierId?: string;
     invoiceNumber?: string;
+    date?: string;
     dueDate?: string;
     notes?: string;
     items?: string;
@@ -93,26 +96,49 @@ interface PurchaseFormErrors {
 // ==========================================
 
 const formatCurrency = (n: number) => formatMoney(n);
+const FISCAL_DOCUMENT_ROLES = new Set(['OWNER', 'ADMIN', 'ACCOUNTANT']);
 const escapeHtml = (value: unknown) => String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
-const formatDate = (d: string) => new Date(d).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: 'numeric' });
-// dueDate/expiryDate son días de calendario, no instantes. Prisma los devuelve
-// como UTC; formatearlos en la zona local puede mostrar el día anterior.
-const formatCalendarDate = (d: string) => new Date(d).toLocaleDateString('es-NI', {
+// Las fechas de factura, vencimiento y lote son días de calendario, no instantes.
+// Prisma las devuelve como UTC; formatearlas en la zona local puede mostrar el
+// día anterior.
+export const localCalendarDateInputValue = (date: Date = new Date()) => {
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+
+export const isValidCalendarDateInput = (value: string) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) return false;
+    const [, yearText, monthText, dayText] = match;
+    const year = Number(yearText);
+    const month = Number(monthText);
+    const day = Number(dayText);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    return parsed.getUTCFullYear() === year
+        && parsed.getUTCMonth() === month - 1
+        && parsed.getUTCDate() === day;
+};
+
+// Las filas nuevas se persisten al mediodía UTC; las históricas pueden conservar
+// el instante real de creación. Proyectarlas siempre a la zona fiscal oficial
+// evita tanto el día anterior en inputs civiles como el día siguiente en compras
+// antiguas registradas de noche.
+export const formatCalendarDate = (d: string) => new Date(d).toLocaleDateString('es-NI', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
-    timeZone: 'UTC',
+    timeZone: 'America/Managua',
 });
-const formatCalendarDateLong = (d: string) => new Date(d).toLocaleDateString('es-NI', {
+export const formatCalendarDateLong = (d: string) => new Date(d).toLocaleDateString('es-NI', {
     day: '2-digit',
     month: 'long',
     year: 'numeric',
-    timeZone: 'UTC',
+    timeZone: 'America/Managua',
 });
 
 const firstValidationMessage = (data: any): string | undefined => {
@@ -177,6 +203,7 @@ export default function Purchases() {
     const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderLite[]>([]);
     const [selectedPO, setSelectedPO] = useState('');
     const [invoiceNumber, setInvoiceNumber] = useState('');
+    const [purchaseDate, setPurchaseDate] = useState(() => localCalendarDateInputValue());
     const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CREDIT'>('CASH');
     const [dueDate, setDueDate] = useState('');
     const [notes, setNotes] = useState('');
@@ -186,6 +213,7 @@ export default function Purchases() {
     const [formErrors, setFormErrors] = useState<PurchaseFormErrors>({});
     const [paymentToConfirm, setPaymentToConfirm] = useState<{ id: string; invoiceNumber: string } | null>(null);
     const [paying, setPaying] = useState(false);
+    const [openingRetentionId, setOpeningRetentionId] = useState<string | null>(null);
     const { toast, showToast, dismissToast } = useToast();
 
     // Invoice modal
@@ -194,10 +222,30 @@ export default function Purchases() {
 
     // Auth
     const token = localStorage.getItem('nortex_token');
+    const canAccessFiscalDocuments = FISCAL_DOCUMENT_ROLES.has(currentSessionRole());
     const headers = useMemo(() => ({
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
     }), [token]);
+
+    const handleOpenRetention = async (purchaseId: string) => {
+        if (!canAccessFiscalDocuments) return;
+        if (openingRetentionId) return;
+        setOpeningRetentionId(purchaseId);
+        try {
+            // openAuthenticatedPreview crea la ventana antes de su primer await,
+            // todavía dentro del gesto del click, y recién después hace el fetch.
+            await openAuthenticatedPreview(`/api/fiscal/constancia-retencion/${purchaseId}`, { token });
+        } catch (error) {
+            showToast({
+                tone: 'error',
+                title: 'No se pudo abrir la constancia',
+                message: authenticatedRequestErrorMessage(error),
+            });
+        } finally {
+            setOpeningRetentionId(null);
+        }
+    };
 
     // ==========================================
     // DATA FETCHING
@@ -399,6 +447,8 @@ export default function Purchases() {
         const errors: PurchaseFormErrors = {};
         if (!selectedSupplier) errors.supplierId = 'Seleccioná un proveedor.';
         if (!invoiceNumber.trim()) errors.invoiceNumber = 'Ingresá el número de factura del proveedor.';
+        if (!purchaseDate) errors.date = 'Ingresá la fecha de la factura.';
+        else if (!isValidCalendarDateInput(purchaseDate)) errors.date = 'Ingresá una fecha de factura válida.';
         if (cart.length === 0) errors.items = 'Agregá al menos un producto.';
         if (paymentMethod === 'CREDIT' && !dueDate) errors.dueDate = 'Ingresá la fecha de vencimiento.';
         if (notes.trim().length > 500) errors.notes = 'Las notas no pueden superar 500 caracteres.';
@@ -443,10 +493,10 @@ export default function Purchases() {
                 body: JSON.stringify({
                     supplierId: selectedSupplier,
                     invoiceNumber: invoiceNumber.trim(),
+                    date: purchaseDate,
                     purchaseOrderId: selectedPO || undefined,
                     paymentMethod,
-                    // JSON.stringify omite undefined: los opcionales no viajan como
-                    // null y el API también conserva compatibilidad con clientes viejos.
+                    // JSON.stringify omite undefined: los opcionales no viajan como null.
                     dueDate: paymentMethod === 'CREDIT' && dueDate ? dueDate : undefined,
                     notes: notes.trim() || undefined,
                     items: cart.map(c => {
@@ -473,6 +523,7 @@ export default function Purchases() {
                 setSelectedSupplier('');
                 setSelectedPO('');
                 setInvoiceNumber('');
+                setPurchaseDate(localCalendarDateInputValue());
                 setPaymentMethod('CASH');
                 setDueDate('');
                 setNotes('');
@@ -484,6 +535,7 @@ export default function Purchases() {
                 setFormErrors({
                     supplierId: Array.isArray(details.supplierId) ? String(details.supplierId[0]) : undefined,
                     invoiceNumber: Array.isArray(details.invoiceNumber) ? String(details.invoiceNumber[0]) : undefined,
+                    date: Array.isArray(details.date) ? String(details.date[0]) : undefined,
                     dueDate: Array.isArray(details.dueDate) ? String(details.dueDate[0]) : undefined,
                     notes: Array.isArray(details.notes) ? String(details.notes[0]) : undefined,
                     items: Array.isArray(details.items) ? String(details.items[0]) : undefined,
@@ -621,7 +673,7 @@ export default function Purchases() {
     <div class="info">
         <div class="info-row"><span><strong>Factura #:</strong></span><span>${escapeHtml(p.invoiceNumber)}</span></div>
         <div class="info-row"><span><strong>Proveedor:</strong></span><span>${escapeHtml(p.supplier.name)}</span></div>
-        <div class="info-row"><span><strong>Fecha:</strong></span><span>${new Date(p.createdAt).toLocaleDateString('es-NI', { day: '2-digit', month: 'long', year: 'numeric' })}</span></div>
+        <div class="info-row"><span><strong>Fecha:</strong></span><span>${formatCalendarDateLong(p.date)}</span></div>
         ${p.dueDate ? `<div class="info-row"><span><strong>Vencimiento:</strong></span><span>${formatCalendarDateLong(p.dueDate)}</span></div>` : ''}
         <div class="info-row"><span><strong>Metodo:</strong></span><span>${p.paymentMethod === 'CASH' ? 'Contado' : 'Credito'}</span></div>
         <div class="info-row"><span><strong>Estado:</strong></span><span class="status ${p.status === 'COMPLETED' ? 'paid' : 'pending'}">${p.status === 'COMPLETED' ? 'PAGADO' : 'PENDIENTE'}</span></div>
@@ -806,6 +858,29 @@ export default function Purchases() {
                                             className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white font-mono focus:ring-1 ${formErrors.invoiceNumber ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
                                         />
                                         {formErrors.invoiceNumber && <p className="mt-1 text-xs text-red-300">{formErrors.invoiceNumber}</p>}
+                                    </div>
+                                    <div>
+                                        <label htmlFor="purchase-invoice-date" className="block text-sm text-slate-300 mb-1.5">
+                                            Fecha de la factura *
+                                        </label>
+                                        <input
+                                            id="purchase-invoice-date"
+                                            type="date"
+                                            required
+                                            value={purchaseDate}
+                                            onChange={(event) => {
+                                                setPurchaseDate(event.target.value);
+                                                setFormErrors(current => ({ ...current, date: undefined }));
+                                            }}
+                                            aria-invalid={Boolean(formErrors.date)}
+                                            aria-describedby={formErrors.date ? 'purchase-invoice-date-error' : undefined}
+                                            className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white focus:ring-1 ${formErrors.date ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
+                                        />
+                                        {formErrors.date && (
+                                            <p id="purchase-invoice-date-error" className="mt-1 text-xs text-red-300">
+                                                {formErrors.date}
+                                            </p>
+                                        )}
                                     </div>
                                     {selectedPO && (
                                         <div className="col-span-2 flex items-start gap-2 rounded-lg border border-sky-800 bg-sky-950/40 px-3 py-2.5 text-sm text-sky-200">
@@ -1131,7 +1206,7 @@ export default function Purchases() {
                                                 <div>
                                                     <p className="text-white font-semibold">{p.supplier.name}</p>
                                                     <p className="text-xs text-slate-400">
-                                                        Factura #{p.invoiceNumber} | {formatDate(p.createdAt)}
+                                                        Factura #{p.invoiceNumber} | {formatCalendarDate(p.date)}
                                                         {p.dueDate && (
                                                             <span className="text-amber-400 ml-2">Vence: {formatCalendarDate(p.dueDate)}</span>
                                                         )}
@@ -1147,15 +1222,20 @@ export default function Purchases() {
                                                 >
                                                     <Eye size={15} /> Factura
                                                 </button>
-                                                <a
-                                                    href={`/api/fiscal/constancia-retencion/${p.id}`}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="flex items-center gap-1.5 bg-violet-900/40 hover:bg-violet-800/60 border border-violet-700 px-3 py-2 rounded-lg text-violet-300 text-sm transition-colors"
-                                                    title="Constancia de Retención"
-                                                >
-                                                    <Stamp size={15} /> Retención
-                                                </a>
+                                                {canAccessFiscalDocuments && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleOpenRetention(p.id)}
+                                                        disabled={openingRetentionId !== null}
+                                                        className="flex items-center gap-1.5 bg-violet-900/40 hover:bg-violet-800/60 border border-violet-700 px-3 py-2 rounded-lg text-violet-300 text-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                                        title="Constancia de Retención"
+                                                    >
+                                                        {openingRetentionId === p.id
+                                                            ? <Loader2 size={15} className="animate-spin" />
+                                                            : <Stamp size={15} />}
+                                                        {openingRetentionId === p.id ? 'Generando…' : 'Retención'}
+                                                    </button>
+                                                )}
                                                 <button
                                                     onClick={() => handlePay(p.id, p.invoiceNumber)}
                                                     className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-lg text-white font-semibold text-sm transition-colors"
@@ -1200,7 +1280,7 @@ export default function Purchases() {
                                         <tbody className="divide-y divide-slate-700/50">
                                             {purchases.map(p => (
                                                 <tr key={p.id} className="hover:bg-slate-700/20 transition-colors">
-                                                    <td className="px-4 py-3 text-sm text-slate-300">{formatDate(p.createdAt)}</td>
+                                                    <td className="px-4 py-3 text-sm text-slate-300">{formatCalendarDate(p.date)}</td>
                                                     <td className="px-4 py-3 text-sm text-white font-medium">{p.supplier.name}</td>
                                                     <td className="px-4 py-3 text-sm text-slate-300 font-mono">{p.invoiceNumber}</td>
                                                     <td className="px-4 py-3 text-sm text-center text-slate-400">{p.items.length} prod.</td>
@@ -1230,15 +1310,19 @@ export default function Purchases() {
                                                             >
                                                                 <Eye size={17} />
                                                             </button>
-                                                            <a
-                                                                href={`/api/fiscal/constancia-retencion/${p.id}`}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                className="p-2 hover:bg-violet-500/20 rounded-lg text-violet-400 transition-colors inline-flex"
-                                                                title="Constancia de Retención"
-                                                            >
-                                                                <Stamp size={17} />
-                                                            </a>
+                                                            {canAccessFiscalDocuments && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleOpenRetention(p.id)}
+                                                                    disabled={openingRetentionId !== null}
+                                                                    className="p-2 hover:bg-violet-500/20 rounded-lg text-violet-400 transition-colors inline-flex disabled:opacity-60 disabled:cursor-not-allowed"
+                                                                    title="Constancia de Retención"
+                                                                >
+                                                                    {openingRetentionId === p.id
+                                                                        ? <Loader2 size={17} className="animate-spin" />
+                                                                        : <Stamp size={17} />}
+                                                                </button>
+                                                            )}
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -1336,7 +1420,7 @@ export default function Purchases() {
                                     Factura de Compra #{selectedPurchase.invoiceNumber}
                                 </h2>
                                 <p className="text-sm text-slate-400 mt-1">
-                                    {selectedPurchase.supplier.name} | {formatDate(selectedPurchase.createdAt)}
+                                    {selectedPurchase.supplier.name} | {formatCalendarDate(selectedPurchase.date)}
                                 </p>
                             </div>
                             <button onClick={() => setShowInvoiceModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
@@ -1366,7 +1450,7 @@ export default function Purchases() {
                                 </div>
                                 <div>
                                     <p className="text-xs text-slate-500">Fecha</p>
-                                    <p className="text-white">{formatDate(selectedPurchase.createdAt)}</p>
+                                    <p className="text-white">{formatCalendarDate(selectedPurchase.date)}</p>
                                 </div>
                                 <div>
                                     <p className="text-xs text-slate-500">Metodo</p>
@@ -1453,14 +1537,19 @@ export default function Purchases() {
                                 >
                                     <Printer size={16} /> Factura A4
                                 </button>
-                                <a
-                                    href={`/api/fiscal/constancia-retencion/${selectedPurchase.id}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center gap-2 px-4 py-2.5 bg-violet-700 hover:bg-violet-600 rounded-lg text-white font-bold text-sm transition-colors"
-                                >
-                                    <Stamp size={16} /> Constancia DGI
-                                </a>
+                                {canAccessFiscalDocuments && (
+                                    <button
+                                        type="button"
+                                        onClick={() => handleOpenRetention(selectedPurchase.id)}
+                                        disabled={openingRetentionId !== null}
+                                        className="flex items-center gap-2 px-4 py-2.5 bg-violet-700 hover:bg-violet-600 rounded-lg text-white font-bold text-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                    >
+                                        {openingRetentionId === selectedPurchase.id
+                                            ? <Loader2 size={16} className="animate-spin" />
+                                            : <Stamp size={16} />}
+                                        {openingRetentionId === selectedPurchase.id ? 'Generando…' : 'Constancia DGI'}
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </div>
