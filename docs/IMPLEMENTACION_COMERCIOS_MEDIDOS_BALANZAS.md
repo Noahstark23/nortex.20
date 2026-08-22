@@ -1,5 +1,8 @@
 # Implementación — comercios híbridos, productos medidos y balanzas
 
+> Guía para dueños y cajeros:
+> [Facturar carne por peso con Nortex](./GUIA_FACTURAR_CARNE_CON_BALANZA.md).
+>
 > Estado del alcance al 22 de agosto de 2026.
 >
 > Esta guía describe lo que Nortex implementa realmente, cómo operarlo y qué
