@@ -1,9 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { formatMoney } from '../utils/money';
 import { chartColors, gridProps, axisProps, tooltipProps } from '../utils/chartTheme';
+import { currentSessionRole } from '../utils/roleCapabilities';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { ShieldCheck, TrendingUp, TrendingDown, Package, DollarSign, Receipt, Warehouse, FileSpreadsheet, Loader2, Calendar, AlertTriangle, RefreshCw, Landmark, Scale, Copy, CheckCircle, Building2, Printer, Clock, Users, BookOpen, BarChart3, ArrowRight, Download } from 'lucide-react';
 import { ShiftReportTicket, type ShiftReportData } from './ShiftReportTicket';
+import { ToastViewport, useToast } from './ui/Toast';
+import {
+    authenticatedRequestErrorMessage,
+    downloadAuthenticatedFile,
+    downloadBlob,
+    fetchAuthenticatedJson,
+} from '../utils/authenticatedDownload';
 
 // Helpers
 const IVA_RATE = 0.15;
@@ -24,6 +32,20 @@ const getDefaultDates = () => {
         endDate: end.toISOString().split('T')[0],
     };
 };
+
+const fiscalPeriodFromDate = (isoDate: string) => {
+    const match = /^(\d{4})-(\d{2})-\d{2}$/.exec(isoDate);
+    const fallback = new Date();
+    if (!match) return { month: fallback.getMonth() + 1, year: fallback.getFullYear() };
+
+    const month = Number(match[2]);
+    const year = Number(match[1]);
+    return month >= 1 && month <= 12 && year >= 2020 && year <= 2100
+        ? { month, year }
+        : { month: fallback.getMonth() + 1, year: fallback.getFullYear() };
+};
+
+const FISCAL_REPORT_ROLES = new Set(['OWNER', 'ADMIN', 'ACCOUNTANT']);
 
 interface SalesReport {
     totalVentas: number;
@@ -63,11 +85,17 @@ interface TaxReportData {
     vetSummary: string;
 }
 
+interface DmiReportResponse {
+    dmiReport?: string;
+}
+
 const Reports: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'CONTADOR' | 'CAJAS' | 'CONTABILIDAD' | 'VENDEDORES'>('DASHBOARD');
     const [dates, setDates] = useState(getDefaultDates);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [fiscalDownloading, setFiscalDownloading] = useState<string | null>(null);
+    const { toast, showToast, dismissToast } = useToast();
 
     // Vendedores: cuánto vende y cuánto cobra cada uno (Fase A de cartera).
     // El backend fuerza self-only para roles no-admin — acá solo se pinta.
@@ -99,7 +127,60 @@ const Reports: React.FC = () => {
     const [accountingSubTab, setAccountingSubTab] = useState<'BALANCE' | 'ESTADO' | 'DIARIO'>('BALANCE');
 
     const token = localStorage.getItem('nortex_token');
+    const canAccessFiscalDocuments = FISCAL_REPORT_ROLES.has(currentSessionRole());
     const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+    const handleFiscalDownload = async (url: string, filename: string, label: string) => {
+        if (!canAccessFiscalDocuments) return;
+        if (fiscalDownloading) return;
+        setFiscalDownloading(url);
+        try {
+            await downloadAuthenticatedFile(url, filename, { token });
+            showToast({
+                tone: 'success',
+                title: `${label} generado`,
+                message: 'La descarga comenzó correctamente.',
+            });
+        } catch (error) {
+            showToast({
+                tone: 'error',
+                title: `No se pudo generar ${label.toLowerCase()}`,
+                message: authenticatedRequestErrorMessage(error),
+            });
+        } finally {
+            setFiscalDownloading(null);
+        }
+    };
+
+    const handleDownloadDmi = async (month: number, year: number) => {
+        if (!canAccessFiscalDocuments) return;
+        const url = `/api/tax-report/dmi?month=${month}&year=${year}`;
+        if (fiscalDownloading) return;
+        setFiscalDownloading(url);
+        try {
+            const report = await fetchAuthenticatedJson<DmiReportResponse>(url, { token });
+            if (!report.dmiReport?.trim()) {
+                throw new Error('El servidor no devolvió el contenido del reporte DMI.');
+            }
+            downloadBlob(
+                new Blob([report.dmiReport], { type: 'text/plain;charset=utf-8' }),
+                `reporte-dmi-${year}-${String(month).padStart(2, '0')}.txt`,
+            );
+            showToast({
+                tone: 'success',
+                title: 'Reporte DMI generado',
+                message: `Período ${monthNames[month - 1]} ${year}.`,
+            });
+        } catch (error) {
+            showToast({
+                tone: 'error',
+                title: 'No se pudo generar el reporte DMI',
+                message: authenticatedRequestErrorMessage(error),
+            });
+        } finally {
+            setFiscalDownloading(null);
+        }
+    };
 
     const fetchReports = useCallback(async (isRefresh = false) => {
         if (isRefresh) setRefreshing(true); else setLoading(true);
@@ -202,21 +283,30 @@ const Reports: React.FC = () => {
 
     // Tax report generation
     const handleGenerateTaxReport = async () => {
+        if (!canAccessFiscalDocuments) return;
         setGeneratingTax(true);
         try {
-            const res = await fetch('/api/tax-report/generate', {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({ month: taxMonth, year: taxYear }),
+            const data = await fetchAuthenticatedJson<TaxReportData>('/api/tax-report/generate', {
+                token,
+                init: {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ month: taxMonth, year: taxYear }),
+                },
             });
-            if (res.ok) {
-                const data = await res.json();
-                setTaxReport(data);
-            } else {
-                const err = await res.json();
-                alert(err.error || 'Error al generar reporte fiscal');
-            }
-        } catch (e: any) { alert('Error de conexión: ' + e?.message); }
+            setTaxReport(data);
+            showToast({
+                tone: 'success',
+                title: 'Declaración calculada',
+                message: `Período ${monthNames[taxMonth - 1]} ${taxYear}.`,
+            });
+        } catch (error) {
+            showToast({
+                tone: 'error',
+                title: 'No se pudo generar la declaración',
+                message: authenticatedRequestErrorMessage(error),
+            });
+        }
         finally { setGeneratingTax(false); }
     };
 
@@ -229,6 +319,7 @@ const Reports: React.FC = () => {
     };
 
     const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    const dashboardDmiPeriod = fiscalPeriodFromDate(dates.endDate);
 
     if (loading) {
         return (
@@ -240,6 +331,7 @@ const Reports: React.FC = () => {
 
     return (
         <div className="p-6 h-full overflow-y-auto bg-surface-800/40">
+            <ToastViewport toast={toast} onDismiss={dismissToast} />
             {/* HEADER */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
                 <div>
@@ -257,12 +349,14 @@ const Reports: React.FC = () => {
                     >
                         Dashboard
                     </button>
-                    <button
-                        onClick={() => setActiveTab('CONTADOR')}
-                        className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CONTADOR' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-surface-800/40'}`}
-                    >
-                        <Landmark size={14} /> Contador DGI
-                    </button>
+                    {canAccessFiscalDocuments && (
+                        <button
+                            onClick={() => setActiveTab('CONTADOR')}
+                            className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CONTADOR' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-surface-800/40'}`}
+                        >
+                            <Landmark size={14} /> Contador DGI
+                        </button>
+                    )}
                     <button
                         onClick={() => setActiveTab('CAJAS')}
                         className={`px-4 py-2 text-sm font-bold flex items-center gap-2 transition-colors ${activeTab === 'CAJAS' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-surface-800/40'}`}
@@ -313,12 +407,21 @@ const Reports: React.FC = () => {
                         >
                             <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
                         </button>
-                        <button
-                            onClick={() => alert('Generando archivo Excel para la DGI...\n\nEsta funcionalidad se conectara a un generador de XLSX en una proxima version.')}
-                            className="flex items-center gap-2 px-4 py-2 bg-nortex-900 text-white font-bold rounded-lg hover:bg-nortex-800 shadow-lg transition-colors text-sm"
-                        >
-                            <FileSpreadsheet size={16} /> Descargar Reporte DGI
-                        </button>
+                        {canAccessFiscalDocuments && (
+                            <button
+                                type="button"
+                                onClick={() => handleDownloadDmi(dashboardDmiPeriod.month, dashboardDmiPeriod.year)}
+                                disabled={fiscalDownloading !== null}
+                                className="flex items-center gap-2 px-4 py-2 bg-nortex-900 text-white font-bold rounded-lg hover:bg-nortex-800 shadow-lg transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                                {fiscalDownloading?.startsWith('/api/tax-report/dmi')
+                                    ? <Loader2 size={16} className="animate-spin" />
+                                    : <FileSpreadsheet size={16} />}
+                                {fiscalDownloading?.startsWith('/api/tax-report/dmi')
+                                    ? 'Generando DMI…'
+                                    : `Descargar DMI · ${monthNames[dashboardDmiPeriod.month - 1]} ${dashboardDmiPeriod.year}`}
+                            </button>
+                        )}
                     </div>
 
                     {/* KPI CARDS */}
@@ -612,7 +715,7 @@ const Reports: React.FC = () => {
             )}
 
             {/* ==================== TAB: CONTADOR DGI ==================== */}
-            {activeTab === 'CONTADOR' && (
+            {activeTab === 'CONTADOR' && canAccessFiscalDocuments && (
                 <div>
                     {/* Period Selector */}
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
@@ -644,6 +747,19 @@ const Reports: React.FC = () => {
                                 className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-blue-700 disabled:opacity-50"
                             >
                                 <Scale size={18} /> {generatingTax ? 'Calculando...' : 'Generar Declaración'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleDownloadDmi(taxMonth, taxYear)}
+                                disabled={fiscalDownloading !== null}
+                                className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {fiscalDownloading === `/api/tax-report/dmi?month=${taxMonth}&year=${taxYear}`
+                                    ? <Loader2 size={18} className="animate-spin" />
+                                    : <Download size={18} />}
+                                {fiscalDownloading === `/api/tax-report/dmi?month=${taxMonth}&year=${taxYear}`
+                                    ? 'Generando DMI…'
+                                    : 'Descargar DMI (.txt)'}
                             </button>
                         </div>
                     </div>
@@ -933,35 +1049,61 @@ const Reports: React.FC = () => {
                     </div>
 
                     {/* ── EXPORTACIONES DGI ── */}
+                    {canAccessFiscalDocuments && (
                     <div className="mb-6 bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-4">
                         <p className="text-xs font-black text-indigo-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                             <Download size={14} /> Exportaciones Fiscales DGI — {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][taxMonth-1]} {taxYear}
                         </p>
                         <div className="flex flex-wrap gap-2">
-                            <a
-                                href={`/api/fiscal/libro-ventas/${taxMonth}/${taxYear}`}
-                                download
-                                className="flex items-center gap-2 px-4 py-2 bg-surface-900 border border-indigo-300 text-indigo-400 rounded-lg text-sm font-semibold hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all shadow-sm"
+                            <button
+                                type="button"
+                                onClick={() => handleFiscalDownload(
+                                    `/api/fiscal/libro-ventas/${taxMonth}/${taxYear}`,
+                                    `libro-ventas-${taxYear}-${String(taxMonth).padStart(2, '0')}.xlsx`,
+                                    'Libro de Ventas',
+                                )}
+                                disabled={fiscalDownloading !== null}
+                                className="flex items-center gap-2 px-4 py-2 bg-surface-900 border border-indigo-300 text-indigo-400 rounded-lg text-sm font-semibold hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
                             >
-                                <FileSpreadsheet size={15} /> Libro de Ventas (.xlsx)
-                            </a>
-                            <a
-                                href={`/api/fiscal/libro-compras/${taxMonth}/${taxYear}`}
-                                download
-                                className="flex items-center gap-2 px-4 py-2 bg-surface-900 border border-indigo-300 text-indigo-400 rounded-lg text-sm font-semibold hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all shadow-sm"
+                                {fiscalDownloading === `/api/fiscal/libro-ventas/${taxMonth}/${taxYear}`
+                                    ? <Loader2 size={15} className="animate-spin" />
+                                    : <FileSpreadsheet size={15} />}
+                                {fiscalDownloading === `/api/fiscal/libro-ventas/${taxMonth}/${taxYear}` ? 'Generando…' : 'Libro de Ventas (.xlsx)'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleFiscalDownload(
+                                    `/api/fiscal/libro-compras/${taxMonth}/${taxYear}`,
+                                    `libro-compras-${taxYear}-${String(taxMonth).padStart(2, '0')}.xlsx`,
+                                    'Libro de Compras',
+                                )}
+                                disabled={fiscalDownloading !== null}
+                                className="flex items-center gap-2 px-4 py-2 bg-surface-900 border border-indigo-300 text-indigo-400 rounded-lg text-sm font-semibold hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
                             >
-                                <FileSpreadsheet size={15} /> Libro de Compras (.xlsx)
-                            </a>
-                            <a
-                                href={`/api/fiscal/vet-export/${taxMonth}/${taxYear}`}
-                                download
-                                className="flex items-center gap-2 px-4 py-2 bg-surface-900 border border-emerald-300 text-emerald-400 rounded-lg text-sm font-semibold hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all shadow-sm"
+                                {fiscalDownloading === `/api/fiscal/libro-compras/${taxMonth}/${taxYear}`
+                                    ? <Loader2 size={15} className="animate-spin" />
+                                    : <FileSpreadsheet size={15} />}
+                                {fiscalDownloading === `/api/fiscal/libro-compras/${taxMonth}/${taxYear}` ? 'Generando…' : 'Libro de Compras (.xlsx)'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleFiscalDownload(
+                                    `/api/fiscal/vet-export/${taxMonth}/${taxYear}`,
+                                    `VET-${taxYear}${String(taxMonth).padStart(2, '0')}.txt`,
+                                    'Resumen VET',
+                                )}
+                                disabled={fiscalDownloading !== null}
+                                className="flex items-center gap-2 px-4 py-2 bg-surface-900 border border-emerald-300 text-emerald-400 rounded-lg text-sm font-semibold hover:bg-emerald-600 hover:text-white hover:border-emerald-600 transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
                             >
-                                <Download size={15} /> Archivo VET (.txt)
-                            </a>
+                                {fiscalDownloading === `/api/fiscal/vet-export/${taxMonth}/${taxYear}`
+                                    ? <Loader2 size={15} className="animate-spin" />
+                                    : <Download size={15} />}
+                                {fiscalDownloading === `/api/fiscal/vet-export/${taxMonth}/${taxYear}` ? 'Generando…' : 'Resumen VET (.txt)'}
+                            </button>
                         </div>
                         <p className="text-xs text-indigo-500 mt-2">Usa los selectores de mes/año de la sección Reporte Fiscal para cambiar el período.</p>
                     </div>
+                    )}
 
                     {accountingLoading ? (
                         <div className="flex items-center justify-center py-20 text-slate-400 gap-2">

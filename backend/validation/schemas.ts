@@ -174,6 +174,10 @@ export const CreatePurchaseSchema = z
     .object({
         supplierId:     z.string().trim().min(1, 'supplierId requerido'),
         invoiceNumber:  z.string().trim().min(1, 'Número de factura requerido').max(100),
+        // La fecha de la factura define el período de constancias, libros, VET
+        // y retenciones. No existe un default seguro: usar "ahora" archivaría
+        // facturas retroactivas en el mes DGI equivocado.
+        date:            purchaseDateInput,
         paymentMethod:  z.enum(['CASH', 'CREDIT']),
         dueDate:        historicalOptional(purchaseDateInput),
         notes:          historicalOptional(z.string().trim().max(500)),
