@@ -96,12 +96,18 @@ puede ejecutarse manualmente con `workflow_dispatch`. Para activarla:
    | `PROD_URL` | `https://somosnortex.com` |
    | `NORTEX_DEPLOY_ENABLED` | `false` durante la preparación; `true` para habilitar la compuerta |
 
-6. **Crear los secrets en GitHub** (Actions → Secrets):
-   | Secret | Valor |
-   |---|---|
-   | `COOLIFY_STAGING_WEBHOOK` | URL del webhook de deploy de la app staging |
-   | `COOLIFY_PROD_WEBHOOK` | URL del webhook de deploy de la app prod |
-   | `COOLIFY_TOKEN` | (Solo si el webhook exige `Authorization: Bearer`) API token de Coolify |
+6. **Crear los secrets dentro de cada environment de GitHub** (Settings →
+   Environments). No guardarlos como secrets globales del repositorio:
+
+   | Environment | Secret | Valor |
+   |---|---|---|
+   | `staging` | `COOLIFY_STAGING_WEBHOOK` | URL del webhook de la app staging |
+   | `staging` | `COOLIFY_TOKEN` | Solo si el webhook de staging exige bearer token |
+   | `production` | `COOLIFY_PROD_WEBHOOK` | URL del webhook de la app productiva |
+   | `production` | `COOLIFY_TOKEN` | Solo si el webhook productivo exige bearer token |
+
+   La aprobación del environment `production` protege sus secretos: ningún job
+   de staging ni otro job anterior a esa aprobación puede leerlos.
 
    Con `NORTEX_DEPLOY_ENABLED` ausente o en `false`, ambos jobs aparecen
    `skipped`. Si se cambia a `true` y falta cualquier webhook o URL, el workflow

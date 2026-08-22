@@ -24,11 +24,14 @@ Variables públicas del repositorio:
 - `STAGING_URL`: `https://staging.somosnortex.com`
 - `PROD_URL`: `https://somosnortex.com`
 
-Secrets de GitHub Actions:
+Secrets por environment de GitHub Actions (nunca a nivel global del repositorio):
 
-- `COOLIFY_STAGING_WEBHOOK`
-- `COOLIFY_PROD_WEBHOOK`
-- `COOLIFY_TOKEN` solo si los webhooks requieren bearer token
+- `staging`: `COOLIFY_STAGING_WEBHOOK` y, solo si es necesario, `COOLIFY_TOKEN` de staging.
+- `production`: `COOLIFY_PROD_WEBHOOK` y, solo si es necesario, `COOLIFY_TOKEN` de producción.
+
+La aprobación obligatoria de `production` debe ocurrir antes de que ese job pueda
+leer sus secretos. El workflow usa concurrencia con cancelación: un push nuevo a
+`main` invalida cualquier promoción anterior todavía pendiente.
 
 En Coolify, `Auto Deploy` debe quedar apagado para staging y producción. GitHub Actions es la única ruta autorizada para promover esta release.
 

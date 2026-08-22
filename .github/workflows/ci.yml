@@ -10,6 +10,13 @@ on:
   # necesitar un commit vacío ni saltarse las verificaciones de la release.
   workflow_dispatch:
 
+# Un push nuevo invalida cualquier promoción anterior que aún esté verificando
+# staging o esperando aprobación de producción. Así nunca se puede aprobar por
+# accidente un SHA que ya dejó de ser el HEAD de main.
+concurrency:
+  group: nortex-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -132,9 +139,10 @@ jobs:
           TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
           if [ -n "$TOKEN" ]; then
-            curl -fsS -H "Authorization: Bearer $TOKEN" "$WEBHOOK"
+            curl --fail --show-error --silent --max-time 30 --retry 3 \
+              -H "Authorization: Bearer $TOKEN" "$WEBHOOK"
           else
-            curl -fsS "$WEBHOOK"
+            curl --fail --show-error --silent --max-time 30 --retry 3 "$WEBHOOK"
           fi
           echo "🚀 Deploy de staging disparado"
 
@@ -181,9 +189,10 @@ jobs:
           TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
           if [ -n "$TOKEN" ]; then
-            curl -fsS -H "Authorization: Bearer $TOKEN" "$WEBHOOK"
+            curl --fail --show-error --silent --max-time 30 --retry 3 \
+              -H "Authorization: Bearer $TOKEN" "$WEBHOOK"
           else
-            curl -fsS "$WEBHOOK"
+            curl --fail --show-error --silent --max-time 30 --retry 3 "$WEBHOOK"
           fi
           echo "🚀 Deploy de prod disparado"
 
