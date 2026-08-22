@@ -6,6 +6,7 @@ export const STOCK_COUNT_OPEN_WAREHOUSE_INDEX = 'StockCount_openWarehouseKey_key
 export const STOCK_COUNT_WAREHOUSE_INDEX = 'StockCount_warehouseId_idx';
 export const STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX = 'StockCount_tenantId_warehouseId_status_idx';
 export const STOCK_COUNT_WAREHOUSE_FOREIGN_KEY = 'StockCount_warehouseId_fkey';
+export const PRODUCT_RETURN_IDEMPOTENCY_INDEX = 'ProductReturn_tenantId_clientEventId_key';
 
 // Identificadores internos y constantes: nunca contienen entrada del usuario.
 const WAREHOUSE_TABLE_SQL = Prisma.raw('`Warehouse`');
@@ -22,6 +23,10 @@ const STOCK_COUNT_OPEN_WAREHOUSE_INDEX_SQL = Prisma.raw('`StockCount_openWarehou
 const STOCK_COUNT_WAREHOUSE_INDEX_SQL = Prisma.raw('`StockCount_warehouseId_idx`');
 const STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX_SQL = Prisma.raw('`StockCount_tenantId_warehouseId_status_idx`');
 const STOCK_COUNT_WAREHOUSE_FOREIGN_KEY_SQL = Prisma.raw('`StockCount_warehouseId_fkey`');
+const PRODUCT_RETURN_TABLE_SQL = Prisma.raw('`ProductReturn`');
+const CLIENT_EVENT_ID_COLUMN_SQL = Prisma.raw('`clientEventId`');
+const PAYLOAD_HASH_COLUMN_SQL = Prisma.raw('`payloadHash`');
+const PRODUCT_RETURN_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`ProductReturn_tenantId_clientEventId_key`');
 
 export class UnsafeSchemaStateError extends Error {
     constructor(message: string) {
@@ -66,6 +71,8 @@ export interface WarehouseSellerIndexRow {
 
 export type StockCountColumnRow = WarehouseSellerColumnRow;
 export type StockCountIndexRow = WarehouseSellerIndexRow;
+export type ProductReturnColumnRow = WarehouseSellerColumnRow;
+export type ProductReturnIndexRow = WarehouseSellerIndexRow;
 
 export interface StockCountForeignKeyRow {
     constraintName: string;
@@ -110,6 +117,12 @@ interface InvalidOpenWarehouseKeyRow {
     reason: 'MISSING_WAREHOUSE_ID' | 'KEY_MISMATCH' | 'INACTIVE_COUNT';
 }
 
+interface DuplicateProductReturnEventRow {
+    tenantId: string;
+    clientEventId: string;
+    duplicateCount: number | bigint;
+}
+
 export type SchemaObjectState = 'missing' | 'valid' | 'invalid';
 
 export function inspectWarehouseSellerColumn(rows: WarehouseSellerColumnRow[]): SchemaObjectState {
@@ -128,7 +141,38 @@ export function inspectWarehouseSellerColumn(rows: WarehouseSellerColumnRow[]): 
         : 'invalid';
 }
 
+function inspectNullableVarcharColumn(
+    rows: WarehouseSellerColumnRow[],
+    maximumLength: number,
+): SchemaObjectState {
+    if (rows.length === 0) return 'missing';
+    if (rows.length !== 1) return 'invalid';
+
+    const [column] = rows;
+    return column.dataType.toLowerCase() === 'varchar'
+        && column.columnType.toLowerCase() === `varchar(${maximumLength})`
+        && column.isNullable.toUpperCase() === 'YES'
+        && Number(column.characterMaximumLength) === maximumLength
+        && column.columnDefault === null
+        && column.extra === ''
+        && column.generationExpression === ''
+        ? 'valid'
+        : 'invalid';
+}
+
 export const inspectStockCountNullableIdColumn = inspectWarehouseSellerColumn;
+
+export function inspectProductReturnClientEventIdColumn(
+    rows: ProductReturnColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 128);
+}
+
+export function inspectProductReturnPayloadHashColumn(
+    rows: ProductReturnColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 64);
+}
 
 function columnsUseSameEncoding(
     sellerRows: WarehouseSellerColumnRow[],
@@ -218,6 +262,17 @@ export function inspectStockCountWarehouseForeignKey(rows: StockCountForeignKeyR
         : 'invalid';
 }
 
+export function inspectProductReturnIdempotencyIndex(
+    rows: ProductReturnIndexRow[],
+): SchemaObjectState {
+    return inspectExactIndex(
+        rows,
+        PRODUCT_RETURN_IDEMPOTENCY_INDEX,
+        ['tenantId', 'clientEventId'],
+        true,
+    );
+}
+
 async function readSellerColumn(db: DeploySchemaClient): Promise<WarehouseSellerColumnRow[]> {
     return db.query<WarehouseSellerColumnRow[]>(Prisma.sql`
         SELECT
@@ -273,6 +328,17 @@ async function stockCountTableExists(db: DeploySchemaClient): Promise<boolean> {
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'StockCount'
+        LIMIT 1
+    `);
+    return rows.length === 1;
+}
+
+async function productReturnTableExists(db: DeploySchemaClient): Promise<boolean> {
+    const rows = await db.query<Array<{ tableName: string }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'ProductReturn'
         LIMIT 1
     `);
     return rows.length === 1;
@@ -407,6 +473,71 @@ async function readStockCountWarehouseForeignKey(
             OR kcu.COLUMN_NAME = 'warehouseId'
           )
         ORDER BY rc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
+    `);
+}
+
+async function readProductReturnColumn(
+    db: DeploySchemaClient,
+    columnName: 'clientEventId' | 'payloadHash',
+): Promise<ProductReturnColumnRow[]> {
+    return db.query<ProductReturnColumnRow[]>(Prisma.sql`
+        SELECT
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'ProductReturn'
+          AND COLUMN_NAME = ${columnName}
+    `);
+}
+
+async function readProductReturnTenantIdColumn(
+    db: DeploySchemaClient,
+): Promise<ProductReturnColumnRow[]> {
+    return db.query<ProductReturnColumnRow[]>(Prisma.sql`
+        SELECT
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'ProductReturn'
+          AND COLUMN_NAME = 'tenantId'
+    `);
+}
+
+async function readProductReturnIdempotencyIndex(
+    db: DeploySchemaClient,
+): Promise<ProductReturnIndexRow[]> {
+    return db.query<ProductReturnIndexRow[]>(Prisma.sql`
+        SELECT
+            INDEX_NAME AS indexName,
+            NON_UNIQUE AS nonUnique,
+            SEQ_IN_INDEX AS seqInIndex,
+            COLUMN_NAME AS columnName,
+            SUB_PART AS subPart,
+            INDEX_TYPE AS indexType,
+            IS_VISIBLE AS isVisible,
+            COLLATION AS collation,
+            EXPRESSION AS expression
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'ProductReturn'
+          AND INDEX_NAME = ${PRODUCT_RETURN_IDEMPOTENCY_INDEX}
+        ORDER BY SEQ_IN_INDEX
     `);
 }
 
@@ -775,6 +906,149 @@ export async function applyStockCountSchemaPreflight(
     logger.info('Preflight DDL verificado: StockCount por bodega listo sin reasignar históricos.');
 }
 
+async function assertProductReturnEventsAreUnique(db: DeploySchemaClient): Promise<void> {
+    const duplicates = await db.query<DuplicateProductReturnEventRow[]>(Prisma.sql`
+        SELECT tenantId, clientEventId, COUNT(*) AS duplicateCount
+        FROM ${PRODUCT_RETURN_TABLE_SQL}
+        WHERE clientEventId IS NOT NULL
+        GROUP BY tenantId, clientEventId
+        HAVING COUNT(*) > 1
+        LIMIT 10
+    `);
+
+    if (duplicates.length === 0) return;
+
+    const detail = duplicates
+        .map(row => `${row.tenantId}/${row.clientEventId} (${String(row.duplicateCount)})`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `Hay devoluciones con clientEventId duplicado; no se creará el índice único: ${detail}`,
+    );
+}
+
+type ProductReturnNullableColumn = 'clientEventId' | 'payloadHash';
+
+function inspectProductReturnColumn(
+    columnName: ProductReturnNullableColumn,
+    rows: ProductReturnColumnRow[],
+): SchemaObjectState {
+    return columnName === 'clientEventId'
+        ? inspectProductReturnClientEventIdColumn(rows)
+        : inspectProductReturnPayloadHashColumn(rows);
+}
+
+async function ensureProductReturnColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    columnName: ProductReturnNullableColumn,
+): Promise<void> {
+    const initialState = inspectProductReturnColumn(
+        columnName,
+        await readProductReturnColumn(db, columnName),
+    );
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `ProductReturn.${columnName} existe con una definición incompatible; se requiere intervención manual.`,
+        );
+    }
+
+    if (initialState === 'missing') {
+        const length = columnName === 'clientEventId' ? 128 : 64;
+        logger.info(`Aplicando DDL seguro: ProductReturn.${columnName} VARCHAR(${length}) NULL.`);
+        try {
+            if (columnName === 'clientEventId') {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${PRODUCT_RETURN_TABLE_SQL}
+                    ADD COLUMN ${CLIENT_EVENT_ID_COLUMN_SQL} VARCHAR(128) NULL
+                `);
+            } else {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${PRODUCT_RETURN_TABLE_SQL}
+                    ADD COLUMN ${PAYLOAD_HASH_COLUMN_SQL} VARCHAR(64) NULL
+                `);
+            }
+        } catch (error) {
+            const concurrentState = inspectProductReturnColumn(
+                columnName,
+                await readProductReturnColumn(db, columnName),
+            );
+            if (concurrentState !== 'valid') throw error;
+            logger.warn(`ProductReturn.${columnName} fue creada concurrentemente; definición verificada.`);
+        }
+    }
+
+    const finalColumn = await readProductReturnColumn(db, columnName);
+    if (inspectProductReturnColumn(columnName, finalColumn) !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ProductReturn.${columnName}.`,
+        );
+    }
+
+    const tenantIdColumn = await readProductReturnTenantIdColumn(db);
+    if (!columnsUseSameEncoding(finalColumn, tenantIdColumn)) {
+        throw new UnsafeSchemaStateError(
+            `ProductReturn.${columnName} no usa el mismo charset/collation que ProductReturn.tenantId.`,
+        );
+    }
+}
+
+async function ensureProductReturnIdempotencyIndex(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+): Promise<void> {
+    const initialState = inspectProductReturnIdempotencyIndex(
+        await readProductReturnIdempotencyIndex(db),
+    );
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${PRODUCT_RETURN_IDEMPOTENCY_INDEX} existe con columnas u opciones incompatibles.`,
+        );
+    }
+
+    if (initialState === 'missing') {
+        logger.info(`Aplicando DDL seguro: índice único ${PRODUCT_RETURN_IDEMPOTENCY_INDEX}.`);
+        try {
+            await db.execute(Prisma.sql`
+                CREATE UNIQUE INDEX ${PRODUCT_RETURN_IDEMPOTENCY_INDEX_SQL}
+                ON ${PRODUCT_RETURN_TABLE_SQL}(${TENANT_ID_COLUMN_SQL}, ${CLIENT_EVENT_ID_COLUMN_SQL})
+            `);
+        } catch (error) {
+            if (inspectProductReturnIdempotencyIndex(
+                await readProductReturnIdempotencyIndex(db),
+            ) !== 'valid') {
+                await assertProductReturnEventsAreUnique(db);
+                throw error;
+            }
+            logger.warn(`${PRODUCT_RETURN_IDEMPOTENCY_INDEX} fue creado concurrentemente; definición verificada.`);
+        }
+    }
+
+    if (inspectProductReturnIdempotencyIndex(
+        await readProductReturnIdempotencyIndex(db),
+    ) !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${PRODUCT_RETURN_IDEMPOTENCY_INDEX}.`,
+        );
+    }
+}
+
+export async function applyProductReturnSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    if (!await productReturnTableExists(db)) {
+        logger.info('Preflight DDL: ProductReturn aún no existe; db push creará su schema completo.');
+        return;
+    }
+
+    await ensureProductReturnColumn(db, logger, 'clientEventId');
+    await ensureProductReturnColumn(db, logger, 'payloadHash');
+    await assertProductReturnEventsAreUnique(db);
+    await ensureProductReturnIdempotencyIndex(db, logger);
+    await assertProductReturnEventsAreUnique(db);
+    logger.info('Preflight DDL verificado: idempotencia de ProductReturn lista sin alterar históricos.');
+}
+
 /**
  * DDL expand-only que Prisma db push considera "data loss" aunque no borra filas.
  * Se ejecuta antes del db push normal y converge desde estados parciales.
@@ -786,9 +1060,11 @@ export async function applyDeploySchemaPreflight(
     // En una instalación vacía no hay nada que parchear: db push crea el schema
     // completo, incluido el índice, sin advertencias sobre datos existentes.
     if (!await warehouseTableExists(db)) {
-        if (await stockCountTableExists(db)) {
+        const stockCountExists = await stockCountTableExists(db);
+        const productReturnExists = await productReturnTableExists(db);
+        if (stockCountExists || productReturnExists) {
             throw new UnsafeSchemaStateError(
-                'StockCount existe pero Warehouse no; el schema parcial requiere intervención manual.',
+                'Hay tablas de negocio sin Warehouse; el schema parcial requiere intervención manual.',
             );
         }
         logger.info('Preflight DDL: Warehouse aún no existe; db push creará el schema completo.');
@@ -801,4 +1077,5 @@ export async function applyDeploySchemaPreflight(
     await assertAssignmentsAreSafe(db);
     logger.info('Preflight DDL verificado: Warehouse.sellerId e índice único listos.');
     await applyStockCountSchemaPreflight(db, logger);
+    await applyProductReturnSchemaPreflight(db, logger);
 }
