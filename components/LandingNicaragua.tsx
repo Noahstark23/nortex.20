@@ -7,11 +7,9 @@ const LandingNicaragua: React.FC = () => {
   const navigate = useNavigate();
 
   const handleCTA = () => {
-    if (email) {
-      navigate(`/register?email=${encodeURIComponent(email)}`);
-    } else {
-      navigate('/register');
-    }
+    const params = new URLSearchParams({ source: 'landing_nicaragua' });
+    if (email.trim()) params.set('email', email.trim());
+    navigate(`/register?${params.toString()}`);
   };
 
   return (

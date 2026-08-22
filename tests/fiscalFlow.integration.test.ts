@@ -425,13 +425,14 @@ qaDescribe('QA integracion: documentos, DGI y reportes autenticados', () => {
       expect(csp).toContain("default-src 'none'");
       expect(csp).toContain("base-uri 'none'");
       expect(csp).toContain("form-action 'none'");
-      expect(csp).toContain("frame-ancestors 'self'");
+      expect(csp).toContain("frame-ancestors 'none'");
+      expect(csp).not.toContain("frame-ancestors 'self'");
       const nonceMatch = csp.match(/script-src 'nonce-([^']+)'/);
       expect(nonceMatch).not.toBeNull();
       const nonce = nonceMatch?.[1] || '';
       expect(csp.match(/script-src[^;]*/)?.[0]).not.toContain("'unsafe-inline'");
       expect(html).toContain(`<script nonce="${nonce}">`);
-      expect(html).toContain(`script-src &#39;nonce-${nonce}&#39;`);
+      expect(html).toContain(`script-src &#039;nonce-${nonce}&#039;`);
       expect(html.match(/<script\b/g)).toHaveLength(1);
       expect(html).not.toContain('onclick=');
 

@@ -12,6 +12,7 @@ describe('contrato UI de documentos fiscales protegidos', () => {
         for (const component of [purchases, reports, audit]) {
             expect(component).not.toMatch(/href=\{`\/api\/fiscal\//);
             expect(component).not.toMatch(/href=["']\/api\/fiscal\//);
+            expect(component).not.toMatch(/\balert\s*\(/);
         }
     });
 
@@ -29,6 +30,13 @@ describe('contrato UI de documentos fiscales protegidos', () => {
         expect(reports).toContain('new Blob([report.dmiReport]');
         expect(reports).toContain('Descargar DMI (.txt)');
         expect(reports).not.toContain('Esta funcionalidad se conectara a un generador de XLSX');
+    });
+
+    it('conserva el Excel de cantidades medidas junto a las descargas DGI', () => {
+        expect(reports).toContain("buildMeasuredReportExportRows(salesData.quantityBreakdown)");
+        expect(reports).toContain("XLSX.writeFile(workbook, `Cantidades_vendidas_${dates.startDate}_${dates.endDate}.xlsx`)");
+        expect(reports).toContain('Descargar cantidades (.xlsx)');
+        expect(reports).toContain('Cantidad exacta');
     });
 
     it('no expone controles fiscales a cajeros ni vendedores', () => {

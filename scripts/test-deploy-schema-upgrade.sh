@@ -24,15 +24,18 @@ if (!localHosts.has(u.hostname) || dbName !== "nortex_deploy_test") {
 '
 
 CURRENT_SCHEMA="backend/prisma/schema.prisma"
+PRISMA_CLI="./node_modules/.bin/prisma"
+TSX_CLI="./node_modules/.bin/tsx"
 REPRO_LOG="$(mktemp /tmp/nortex-deploy-repro.XXXXXX)"
 DUPLICATE_LOG="$(mktemp /tmp/nortex-deploy-duplicates.XXXXXX)"
 CROSS_TENANT_LOG="$(mktemp /tmp/nortex-deploy-cross-tenant.XXXXXX)"
+RETURN_DUPLICATE_LOG="$(mktemp /tmp/nortex-deploy-return-duplicates.XXXXXX)"
 RACE_ONE_LOG="$(mktemp /tmp/nortex-deploy-race-one.XXXXXX)"
 RACE_TWO_LOG="$(mktemp /tmp/nortex-deploy-race-two.XXXXXX)"
 TIMEOUT_LOG="$(mktemp /tmp/nortex-deploy-timeout.XXXXXX)"
 cleanup_deploy_smoke_logs() {
   rm -f "$REPRO_LOG" "$DUPLICATE_LOG" "$CROSS_TENANT_LOG" \
-    "$RACE_ONE_LOG" "$RACE_TWO_LOG" "$TIMEOUT_LOG"
+    "$RETURN_DUPLICATE_LOG" "$RACE_ONE_LOG" "$RACE_TWO_LOG" "$TIMEOUT_LOG"
 }
 trap cleanup_deploy_smoke_logs EXIT HUP INT TERM
 
@@ -51,7 +54,7 @@ run_ci_entrypoint() {
 }
 
 echo "Verificando confinamiento y timeout externo…"
-npx tsx scripts/verify-deploy-schema-smoke.ts empty
+"$TSX_CLI" scripts/verify-deploy-schema-smoke.ts empty
 TIMEOUT_STATUS=0
 node scripts/run-with-timeout.mjs 5 node -e 'setTimeout(() => {}, 10000)' >"$TIMEOUT_LOG" 2>&1 || TIMEOUT_STATUS=$?
 sed -n '1,10000p' "$TIMEOUT_LOG"
@@ -64,12 +67,12 @@ echo "Verificando instalación completamente nueva por la ruta real de producci�
 run_ci_entrypoint
 
 echo "Restaurando el schema legado dentro de la BD efímera…"
-npx prisma db push --schema="$LEGACY_SCHEMA_PATH" --skip-generate --force-reset
-npx prisma db execute --schema="$LEGACY_SCHEMA_PATH" --file=tests/fixtures/deploy-schema-existing-data.sql
+"$PRISMA_CLI" db push --schema="$LEGACY_SCHEMA_PATH" --skip-generate --force-reset
+"$PRISMA_CLI" db execute --schema="$LEGACY_SCHEMA_PATH" --file=tests/fixtures/deploy-schema-existing-data.sql
 
 echo "Reproduciendo el bloqueo original de db push…"
 REPRO_STATUS=0
-npx prisma db push --schema="$CURRENT_SCHEMA" --skip-generate >"$REPRO_LOG" 2>&1 || REPRO_STATUS=$?
+"$PRISMA_CLI" db push --schema="$CURRENT_SCHEMA" --skip-generate >"$REPRO_LOG" 2>&1 || REPRO_STATUS=$?
 sed -n '1,10000p' "$REPRO_LOG"
 if [ "$REPRO_STATUS" -eq 0 ] || ! grep -Fq -- "--accept-data-loss" "$REPRO_LOG"; then
   echo "❌ No se reprodujo el warning esperado de Prisma."
@@ -78,14 +81,32 @@ fi
 
 echo "Aplicando el upgrade por la ruta real del entrypoint…"
 run_ci_entrypoint
-npx tsx scripts/verify-deploy-schema-smoke.ts success
+"$TSX_CLI" scripts/verify-deploy-schema-smoke.ts success
 
 echo "Verificando redeploy idempotente…"
 run_ci_entrypoint
-npx tsx scripts/verify-deploy-schema-smoke.ts success
+"$TSX_CLI" scripts/verify-deploy-schema-smoke.ts success
+
+echo "Verificando fallo inmediato ante devoluciones con clientEventId duplicado…"
+"$PRISMA_CLI" db execute --schema="$CURRENT_SCHEMA" --file=tests/fixtures/deploy-schema-duplicate-product-returns.sql
+RETURN_DUPLICATE_STATUS=0
+run_ci_entrypoint >"$RETURN_DUPLICATE_LOG" 2>&1 || RETURN_DUPLICATE_STATUS=$?
+sed -n '1,10000p' "$RETURN_DUPLICATE_LOG"
+if [ "$RETURN_DUPLICATE_STATUS" -eq 0 ] \
+  || ! grep -Fq "clientEventId duplicado" "$RETURN_DUPLICATE_LOG" \
+  || grep -Fq "reintentando" "$RETURN_DUPLICATE_LOG"; then
+  echo "❌ El entrypoint no falló inmediatamente ante devoluciones duplicadas."
+  exit 1
+fi
+"$TSX_CLI" scripts/verify-deploy-schema-smoke.ts return-duplicates
+
+echo "Restaurando el fixture de devoluciones y verificando convergencia…"
+"$PRISMA_CLI" db execute --schema="$CURRENT_SCHEMA" --file=tests/fixtures/deploy-schema-reset-product-return-duplicates.sql
+run_ci_entrypoint
+"$TSX_CLI" scripts/verify-deploy-schema-smoke.ts success
 
 echo "Verificando estado parcial y dos iniciadores concurrentes…"
-npx prisma db execute --schema="$CURRENT_SCHEMA" --file=tests/fixtures/deploy-schema-drop-seller-index.sql
+"$PRISMA_CLI" db execute --schema="$CURRENT_SCHEMA" --file=tests/fixtures/deploy-schema-drop-seller-index.sql
 RACE_ONE_STATUS=0
 RACE_TWO_STATUS=0
 run_ci_entrypoint >"$RACE_ONE_LOG" 2>&1 &
@@ -100,10 +121,10 @@ if [ "$RACE_ONE_STATUS" -ne 0 ] || [ "$RACE_TWO_STATUS" -ne 0 ]; then
   echo "❌ Uno de los iniciadores concurrentes no convergió."
   exit 1
 fi
-npx tsx scripts/verify-deploy-schema-smoke.ts success
+"$TSX_CLI" scripts/verify-deploy-schema-smoke.ts success
 
 echo "Verificando fallo inmediato ante asignaciones duplicadas…"
-npx prisma db execute --schema="$CURRENT_SCHEMA" --file=tests/fixtures/deploy-schema-duplicate-sellers.sql
+"$PRISMA_CLI" db execute --schema="$CURRENT_SCHEMA" --file=tests/fixtures/deploy-schema-duplicate-sellers.sql
 DUPLICATE_STATUS=0
 run_ci_entrypoint >"$DUPLICATE_LOG" 2>&1 || DUPLICATE_STATUS=$?
 sed -n '1,10000p' "$DUPLICATE_LOG"
@@ -113,10 +134,10 @@ if [ "$DUPLICATE_STATUS" -eq 0 ] \
   echo "❌ El entrypoint no falló inmediatamente ante duplicados."
   exit 1
 fi
-npx tsx scripts/verify-deploy-schema-smoke.ts duplicates
+"$TSX_CLI" scripts/verify-deploy-schema-smoke.ts duplicates
 
 echo "Verificando fallo inmediato ante relación cross-tenant…"
-npx prisma db execute --schema="$CURRENT_SCHEMA" --file=tests/fixtures/deploy-schema-cross-tenant.sql
+"$PRISMA_CLI" db execute --schema="$CURRENT_SCHEMA" --file=tests/fixtures/deploy-schema-cross-tenant.sql
 CROSS_TENANT_STATUS=0
 run_ci_entrypoint >"$CROSS_TENANT_LOG" 2>&1 || CROSS_TENANT_STATUS=$?
 sed -n '1,10000p' "$CROSS_TENANT_LOG"
@@ -126,6 +147,6 @@ if [ "$CROSS_TENANT_STATUS" -eq 0 ] \
   echo "❌ El entrypoint no falló inmediatamente ante una relación cross-tenant."
   exit 1
 fi
-npx tsx scripts/verify-deploy-schema-smoke.ts cross-tenant
+"$TSX_CLI" scripts/verify-deploy-schema-smoke.ts cross-tenant
 
 echo "✅ Smoke MySQL 8: fresh install, upgrade, idempotencia, carrera y fallos cerrados superados."

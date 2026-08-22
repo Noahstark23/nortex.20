@@ -11,6 +11,11 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
+import {
+    QUOTATION_READ_ROLES,
+    QUOTATION_WRITE_ROLES,
+    RETURN_SEARCH_ROLES,
+} from './middleware/accessPolicies';
 import { sendPasswordResetEmail, sendWelcomeEmail, sendManualPaymentAlert } from './services/email';
 import { runLifecycleEmails } from './services/lifecycleEmails';
 import crypto from 'crypto';
@@ -18,19 +23,28 @@ import { checkRole } from './middleware/checkRole';
 import { BODEGUERO_ROLE, redactBodegueroProduct } from './security/bodegueroPolicy';
 import { calculateTenantScore } from './services/scoring';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
-import { seedCatalogFor } from './data/seedCatalogs';
+import { composeSeedCatalog } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent, PLAN_PRICE_USD, requiereConfirmacionDePagoCorto, calcularNuevoVencimiento } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
 import { calcularPulso, claveDelDiaManagua, inicioDelDiaManagua, MANAGUA_UTC_OFFSET_HOURS } from './services/pulsoPos';
 import {
-    applyStockDelta,
-    asegurarBodegaPorDefecto,
-    materializeWarehouseRow,
-    resolveOperationalWarehouse,
-    StockError,
-    weightedAverageCost,
-} from './services/stockService';
+    BatchRestorationError,
+    restoreSaleItemBatchesForReturn,
+} from './services/saleBatchAllocationService.js';
+import {
+    allowedReturnRefundMethods,
+    assertMatchingReturnReplay,
+    buildReturnAvailability,
+    buildReturnPayloadHash,
+    resolveReturnRefundMethod,
+    resolveReturnWarehouseId,
+    resolveRequestedReturnItems,
+    ReturnResolutionError,
+    type ReturnProductAuthority,
+    type ReturnSaleItemSnapshot,
+} from './services/returnService';
+import { applyStockDelta, asegurarBodegaPorDefecto, materializeWarehouseRow, resolveOperationalWarehouse, StockError, weightedAverageCost } from './services/stockService';
 import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger, appendDriverWalletMovement, verifyDriverLedger } from './services/ledger';
 import { signAuthToken, verifyAuthToken } from './services/secrets';
 import { initObservability, errorTelemetry } from './services/observability';
@@ -54,11 +68,27 @@ import serialsRouter from './routes/serials';
 import warehousesRouter from './routes/warehouses';
 import stockTransfersRouter from './routes/stockTransfers';
 import syncRoutes from './routes/sync';
+import scaleLabelsRouter, { scaleDevicesRouter } from './routes/scaleLabels';
+import tenantCapabilitiesRouter from './routes/tenantCapabilities';
 import agentBankingRouter from './routes/agentBanking';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 import { normalizeCalendarDateInput } from './lib/calendarDate';
+import {
+    QuotationItemError,
+    resolveQuotationItems,
+    serializeQuotationItemsForClient,
+    type QuotationProductAuthority,
+} from './lib/quotationItems';
+import { buildSalesQuantityBreakdown } from './lib/salesQuantityReport';
 import { calculatePurchaseOrderInvoiceAvailability } from './lib/purchaseOrderAvailability';
+import { escapeHtml, fiscalPreviewCsp } from './lib/htmlSecurity';
+import {
+    publicOrderItemsForQuotation,
+    PublicOrderItemError,
+    resolvePublicOrderItems,
+    type PublicOrderProductAuthority,
+} from './services/publicOrderItemService.js';
 import {
     FISCAL_REPORT_ROLES,
     fiscalCivilDate,
@@ -66,7 +96,6 @@ import {
     fiscalRetentionScope,
     parseFiscalPeriod,
 } from './lib/fiscalAccess';
-import { constanciaContentSecurityPolicy, escapeHtml } from './lib/fiscalHtml';
 import { fiscalMonthRange } from './services/nicaTax';
 import {
     validate,
@@ -75,6 +104,9 @@ import {
     CreateCashMovementSchema,
     CreatePurchaseSchema,
     InventoryAdjustSchema,
+    CreateProductSchema,
+    UpdateProductSchema,
+    BulkImportProductsSchema,
     BulkEditProductsSchema,
     CreateBatchSchema,
     CreateStockCountSchema,
@@ -91,6 +123,18 @@ import {
     KardexRecordSchema,
     FinancePurchaseSchema,
 } from './validation/schemas.js';
+import {
+    assertBaseUnitChangeAllowed,
+    validateQuantity,
+    QuantityValidationError,
+    type SaleMode,
+} from '../utils/quantity.js';
+import { resolvePurchaseLine } from '../utils/purchasePackaging.js';
+import {
+    normalizeTenantCapabilities,
+    suggestedCapabilitiesForBusinessType,
+} from '../utils/tenantCapabilities.js';
+import { isPlaceholderTaxId } from '../utils/tenantTaxId.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -331,6 +375,9 @@ app.use('/api/warehouses', warehousesRouter); // Multi-bodega (Fase 2: fundació
 app.use('/api/stock-transfers', stockTransfersRouter); // Transferencias entre bodegas (Fase 3)
 app.use('/api/loans', loanRoutes);
 app.use('/api/sales/sync', syncRoutes);
+app.use('/api/scale-labels', scaleLabelsRouter);
+app.use('/api/scale-devices', scaleDevicesRouter);
+app.use('/api/tenant/capabilities', tenantCapabilitiesRouter);
 app.use('/api/agent-banking', agentBankingRouter); // Agente bancario (corresponsalía en caja)
 
 // Response time header (para monitoreo)
@@ -350,7 +397,11 @@ app.use((req: any, res: any, next: any) => {
 // ==========================================
 
 app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: any) => {
-    const { companyName, email, password, type, phone } = req.body;
+    const { companyName, email, password, type, phone, capabilities } = req.body;
+    const resolvedType = type || 'FERRETERIA';
+    const selectedCapabilities = normalizeTenantCapabilities(
+        capabilities ?? suggestedCapabilitiesForBusinessType(resolvedType),
+    );
     // Normalización del WhatsApp (retención R1): solo dígitos; si no llega a un
     // número usable (8 dígitos locales NIC), se guarda null — nunca basura.
     const phoneDigits = String(phone || '').replace(/\D/g, '');
@@ -384,8 +435,10 @@ app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: a
             const tenant = await tx.tenant.create({
                 data: {
                     businessName: companyName,
-                    type: type || 'FERRETERIA',
-                    taxId: `TAX-${Date.now()}`,
+                    type: resolvedType,
+                    // UUID evita colisión cuando dos registros llegan en el
+                    // mismo milisegundo; sigue siendo un marcador, no un RUC.
+                    taxId: `TAX-${crypto.randomUUID()}`,
                     // Sin números fantasma: el wallet arranca en 0 (solo sube con un
                     // desembolso real auditado o aprobación admin), la línea de crédito
                     // en 0 y el score en NULL ("sin datos") hasta que el motor real lo
@@ -398,6 +451,13 @@ app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: a
                     phone: normalizedPhone,
                 }
             });
+
+            if (selectedCapabilities.length > 0) {
+                await tx.tenantCapability.createMany({
+                    data: selectedCapabilities.map((code) => ({ tenantId: tenant.id, code })),
+                    skipDuplicates: true,
+                });
+            }
 
             // Create Admin User
             const user = await tx.user.create({
@@ -1103,10 +1163,17 @@ app.post('/api/onboarding/seed-catalog', authenticate, checkRole(['OWNER', 'ADMI
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     try {
-        const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { type: true } });
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: tenantId },
+            select: {
+                type: true,
+                tenantCapabilities: { select: { code: true } },
+            },
+        });
         if (!tenant) return res.status(404).json({ error: 'Negocio no encontrado' });
 
-        const catalog = seedCatalogFor(tenant.type);
+        const capabilityCodes = tenant.tenantCapabilities.map((entry) => entry.code);
+        const catalog = composeSeedCatalog(tenant.type, capabilityCodes);
         if (!catalog || catalog.length === 0) {
             return res.status(400).json({ error: 'Tu giro no tiene un catálogo de ejemplo disponible.' });
         }
@@ -1117,30 +1184,99 @@ app.post('/api/onboarding/seed-catalog', authenticate, checkRole(['OWNER', 'ADMI
             return res.status(409).json({ error: 'Ya tenés productos cargados; el catálogo de ejemplo es solo para empezar de cero.' });
         }
 
-        const data = catalog.map((p, i) => ({
-            tenantId,
-            name:      p.name,
-            sku:       `EJ-${tenant.type.slice(0, 3).toUpperCase()}-${String(i + 1).padStart(3, '0')}`,
-            category:  p.category,
-            price:     p.price,
-            cost:      p.cost,
-            stock:     p.stock,
-            unit:      p.unit ?? 'unidad',
-            createdBy: authReq.userId!,
-        }));
+        if (catalog.some((product) => product.stock > 0)) {
+            // `applyStockDelta` necesita la ubicación operativa ya materializada;
+            // se crea fuera de la tx para evitar la carrera de primer uso MySQL.
+            await asegurarBodegaPorDefecto(prisma, tenantId);
+        }
 
-        await prisma.product.createMany({ data, skipDuplicates: true });
+        const createdCount = await prisma.$transaction(async (tx: any) => {
+            let count = 0;
+            const now = new Date();
 
-        await prisma.auditLog.create({
-            data: {
-                tenantId,
-                userId:  authReq.userId!,
-                action:  'SEED_CATALOG',
-                details: JSON.stringify({ type: tenant.type, count: data.length }),
-            },
+            for (let i = 0; i < catalog.length; i += 1) {
+                const sample = catalog[i];
+                const sku = `EJ-${tenant.type.slice(0, 3).toUpperCase()}-${String(i + 1).padStart(3, '0')}`;
+                const product = await tx.product.create({
+                    data: {
+                        tenantId,
+                        name: sample.name,
+                        sku,
+                        category: sample.category,
+                        price: sample.price,
+                        cost: sample.cost,
+                        // El agregado y la bodega se mueven juntos abajo; crear la
+                        // fila ya cargada volvería a sumar la existencia dos veces.
+                        stock: 0,
+                        unit: sample.unit ?? 'unidad',
+                        saleMode: sample.saleMode ?? null,
+                        quantityStep: sample.quantityStep ?? null,
+                        productFamily: sample.productFamily ?? null,
+                        packUnit: sample.packUnit ?? null,
+                        packSize: sample.packSize ?? null,
+                        packPrice: sample.packPrice ?? null,
+                        requiresBatchTracking: sample.requiresBatchTracking ?? false,
+                        createdBy: authReq.userId!,
+                    },
+                });
+
+                if (sample.stock > 0) {
+                    const stock = await applyStockDelta(tx, {
+                        tenantId,
+                        productId: product.id,
+                        delta: sample.stock,
+                        enforceSufficient: false,
+                    });
+                    await tx.kardexMovement.create({
+                        data: {
+                            tenantId,
+                            productId: product.id,
+                            type: 'IN',
+                            quantity: sample.stock,
+                            stockBefore: stock.stockBefore,
+                            stockAfter: stock.stockAfter,
+                            referenceType: 'INITIAL',
+                            reason: 'Catálogo de ejemplo',
+                            userId: authReq.userId!,
+                            warehouseId: stock.warehouseId,
+                        },
+                    });
+
+                    if (sample.requiresBatchTracking) {
+                        const shelfLifeDays = sample.productFamily === 'MEAT' || sample.productFamily === 'POULTRY'
+                            ? 14
+                            : 365;
+                        await tx.productBatch.create({
+                            data: {
+                                tenantId,
+                                productId: product.id,
+                                batchNumber: `EJEMPLO-${String(i + 1).padStart(3, '0')}`,
+                                expiryDate: new Date(now.getTime() + shelfLifeDays * 24 * 60 * 60 * 1000),
+                                stock: sample.stock,
+                            },
+                        });
+                    }
+                }
+                count += 1;
+            }
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId,
+                    userId: authReq.userId!,
+                    action: 'SEED_CATALOG',
+                    details: JSON.stringify({
+                        type: tenant.type,
+                        capabilities: capabilityCodes,
+                        count,
+                        source: 'EXAMPLE_DATA',
+                    }),
+                },
+            });
+            return count;
         });
 
-        res.json({ message: `Cargamos ${data.length} productos de ejemplo. Editalos, borralos o sumá los tuyos.`, count: data.length });
+        res.json({ message: `Cargamos ${createdCount} productos de ejemplo. Editalos, borralos o sumá los tuyos.`, count: createdCount });
     } catch (error) {
         console.error('Seed catalog error:', error);
         res.status(500).json({ error: 'No se pudo cargar el catálogo de ejemplo.' });
@@ -1155,24 +1291,49 @@ app.get('/api/onboarding', authenticate, async (req: any, res: any) => {
         if (!tenant) return res.status(404).json({ error: 'Negocio no encontrado' });
 
         const isLender = tenant.type === 'LENDER';
+        const capabilityRows = isLender
+            ? []
+            : await prisma.tenantCapability.findMany({
+                where: { tenantId },
+                select: { code: true },
+            });
+        const capabilities = new Set(capabilityRows.map(row => row.code));
+        const wantsMeasured = tenant.type === 'CARNICERIA_POLLERIA'
+            || capabilities.has('CARNES_AVES')
+            || capabilities.has('ALIMENTO_ANIMAL');
+        const wantsPack = tenant.type === 'AGROPECUARIA'
+            || capabilities.has('ALIMENTO_ANIMAL')
+            || capabilities.has('MAYOREO');
+        const wantsBatch = capabilities.has('PERECEDEROS')
+            || capabilities.has('CARNES_AVES');
 
         // Conteos reales (alcance: este negocio). Los préstamos del prestamista se
         // identifican por lenderId; el Employee del dueño se crea al registrarse,
         // por eso "equipo" = más de 1 empleado.
-        const [products, sales, customers, employees, lenderLoans] = await Promise.all([
+        const [products, sales, customers, employees, lenderLoans, measuredProducts, packedProducts, batches] = await Promise.all([
             prisma.product.count({ where: { tenantId } }),
             prisma.sale.count({ where: { tenantId } }),
             prisma.customer.count({ where: { tenantId } }),
             prisma.employee.count({ where: { tenantId } }),
             isLender ? prisma.loan.count({ where: { lenderId: tenantId } }) : Promise.resolve(0),
+            wantsMeasured
+                ? prisma.product.count({ where: { tenantId, saleMode: 'MEASURED' } })
+                : Promise.resolve(0),
+            wantsPack
+                ? prisma.product.count({ where: { tenantId, packUnit: { not: null }, packSize: { gt: 0 } } })
+                : Promise.resolve(0),
+            wantsBatch
+                ? prisma.productBatch.count({ where: { tenantId } })
+                : Promise.resolve(0),
         ]);
 
-        // El registro siembra un taxId placeholder "TAX-<timestamp>"; el paso solo
+        // El registro siembra un taxId placeholder "TAX-<uuid>" (y existen
+        // filas legacy TAX-<timestamp>); el paso solo
         // se completa cuando el dueño guarda su RUC real (Configuración DGI).
         const hasFiscal = !!(
             tenant.taxId &&
             String(tenant.taxId).trim() &&
-            !/^TAX-\d+$/.test(String(tenant.taxId))
+            !isPlaceholderTaxId(tenant.taxId)
         );
         const teamReady = employees > 1;
 
@@ -1184,13 +1345,33 @@ app.get('/api/onboarding', authenticate, async (req: any, res: any) => {
                 { key: 'team',      label: 'Agregá un cobrador a tu equipo',     done: teamReady,        href: '/app/hr',        cta: 'Agregar cobrador' },
               ]
             : [
-                // El activation moment real es vender: primer producto y primera venta
-                // van primero; lo fiscal (RUC/DGI) queda al final porque no bloquea operar.
-                { key: 'product',   label: 'Agregá tu primer producto',          done: products > 0,     href: '/app/inventory?tour=inv',     cta: 'Agregar producto' },
-                { key: 'sale',      label: 'Hacé tu primera venta',              done: sales > 0,        href: '/app/pos?tour=pos',           cta: 'Ir al POS' },
-                { key: 'customer',  label: 'Registrá un cliente',                done: customers > 0,    href: '/app/clients',                cta: 'Agregar cliente' },
-                { key: 'team',      label: 'Invitá a tu equipo',                 done: teamReady,        href: '/app/team',                   cta: 'Invitar' },
-                { key: 'fiscal',    label: 'Configurá tus datos fiscales (DGI)', done: hasFiscal,        href: '/app/dashboard?config=fiscal', cta: 'Configurar' },
+                // Activación retail = tres resultados concretos. Equipo y DGI
+                // siguen disponibles en contexto, pero ya no compiten con la
+                // primera venta ni convierten el onboarding en una configuración
+                // de ERP antes de que la persona reciba valor.
+                {
+                    key: 'product',
+                    label: wantsMeasured ? 'Configurá tu primer producto por peso o medida' : 'Agregá tu primer producto',
+                    done: wantsMeasured ? measuredProducts > 0 : products > 0,
+                    href: '/app/inventory',
+                    cta: 'Configurar',
+                },
+                ...(wantsPack ? [{
+                    key: 'pack',
+                    label: 'Registrá una presentación por empaque o saco',
+                    done: packedProducts > 0,
+                    href: '/app/inventory',
+                    cta: 'Configurar empaque',
+                }] : []),
+                ...(wantsBatch ? [{
+                    key: 'batch',
+                    label: 'Registrá tu primer lote y vencimiento',
+                    done: batches > 0,
+                    href: '/app/inventory',
+                    cta: 'Registrar lote',
+                }] : []),
+                { key: 'sale',      label: 'Hacé tu primera venta',     done: sales > 0,     href: '/app/pos?first_sale=1', cta: 'Vender' },
+                { key: 'customer',  label: 'Registrá un cliente',       done: customers > 0, href: '/app/clients',          cta: 'Agregar' },
               ];
 
         const completed = steps.filter(s => s.done).length;
@@ -2096,177 +2277,558 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
 // ==========================================
 
 // Search sale for return flow
-app.get('/api/sales/search', authenticate, async (req: any, res: any) => {
+app.get('/api/sales/search', authenticate, checkRole(RETURN_SEARCH_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { q } = req.query;
+    const q = String(req.query.q ?? '').trim();
+    if (!q) return res.status(400).json({ error: 'Ingresá el ID de la venta', code: 'SALE_ID_REQUIRED' });
     try {
         const sale = await prisma.sale.findFirst({
             where: {
                 tenantId: authReq.tenantId,
-                id: { startsWith: String(q) }
+                id: { startsWith: q }
             },
             include: {
-                items: true,
-                customer: { select: { id: true, name: true } }
+                items: {
+                    select: {
+                        id: true,
+                        productId: true,
+                        quantity: true,
+                        priceAtSale: true,
+                        unitPriceExactAtSale: true,
+                        costAtSale: true,
+                        discount: true,
+                        ivaExento: true,
+                        productNameAtSale: true,
+                        unitAtSale: true,
+                        saleModeAtSale: true,
+                        quantityStepAtSale: true,
+                        presentationAtSale: true,
+                        presentationQuantityAtSale: true,
+                        measurement: { select: { source: true, sourceValue: true, sourceUnit: true } },
+                    },
+                },
+                customer: { select: { id: true, name: true } },
+                payments: { select: { method: true } },
             }
         });
         if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
-        res.json(sale);
-    } catch (error) { res.status(500).json({ error: 'Error buscando venta' }); }
+
+        const productIds = [...new Set(sale.items.map((item) => item.productId))];
+        const [previousReturns, products] = await Promise.all([
+            prisma.productReturn.findMany({
+                where: { saleId: sale.id, tenantId: authReq.tenantId },
+                select: { items: true },
+            }),
+            prisma.product.findMany({
+                where: { tenantId: authReq.tenantId, id: { in: productIds } },
+                select: { id: true, name: true, unit: true },
+            }),
+        ]);
+        const productsById = new Map<string, ReturnProductAuthority>(
+            products.map((product): [string, ReturnProductAuthority] => [product.id, product]),
+        );
+        const availability = buildReturnAvailability({
+            saleItems: sale.items as ReturnSaleItemSnapshot[],
+            previousReturns,
+            productsById,
+            globalDiscount: sale.globalDiscount,
+        });
+        const rawById = new Map(sale.items.map((item) => [item.id, item]));
+        const allowedRefundMethods = allowedReturnRefundMethods({
+            salePaymentMethod: sale.paymentMethod,
+            payments: sale.payments,
+        });
+        // Los métodos individuales de los abonos son autoridad interna. La UI
+        // recibe solo el conjunto deduplicado de opciones permitidas.
+        const { payments: _payments, ...saleForClient } = sale;
+
+        res.json({
+            ...saleForClient,
+            allowedRefundMethods,
+            items: availability.map((line) => ({
+                id: line.saleItemId,
+                saleItemId: line.saleItemId,
+                productId: line.productId,
+                productNameAtSale: line.name,
+                unitAtSale: line.unit,
+                saleModeAtSale: line.saleMode,
+                presentationAtSale: line.presentation,
+                presentationQuantityAtSale: line.presentationQuantity.toString(),
+                quantity: line.soldQuantity.toString(),
+                returnedQuantity: line.returnedQuantity.toString(),
+                returnableQuantity: line.returnableQuantity.toString(),
+                quantityStep: line.quantityStep.toString(),
+                priceAtSale: line.priceAtSale.toFixed(2),
+                refundUnitPrice: line.refundUnitPrice.toFixed(4),
+                ivaExento: line.ivaExento,
+                measurement: rawById.get(line.saleItemId)?.measurement
+                    ? {
+                        source: rawById.get(line.saleItemId)!.measurement!.source,
+                        sourceValue: rawById.get(line.saleItemId)!.measurement!.sourceValue.toString(),
+                        sourceUnit: rawById.get(line.saleItemId)!.measurement!.sourceUnit,
+                    }
+                    : null,
+            })),
+        });
+    } catch (error) {
+        if (error instanceof ReturnResolutionError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
+        console.error('Error buscando venta para devolución:', error);
+        res.status(500).json({ error: 'Error buscando venta' });
+    }
 });
 
 // Process return
 app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateReturnSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { saleId, items, reason } = req.body;
-    // items: [{productId, quantity, price}] — price/quantity del cliente NO son de confianza.
-
+    const { clientEventId, saleId, items, reason, refundMethod: explicitRefundMethod } = req.body;
+    const payloadHash = buildReturnPayloadHash({
+        saleId,
+        items,
+        reason,
+        refundMethod: explicitRefundMethod,
+    });
     try {
-        const sale = await prisma.sale.findFirst({
-            where: { id: saleId, tenantId: authReq.tenantId },
-            // Cargar cantidad, precio y costo REALES de la venta (fijados por el servidor).
-            include: { items: { select: { productId: true, quantity: true, priceAtSale: true, costAtSale: true } } },
+        // Fast path para retries ya confirmados y conflicto estable aun cuando
+        // el payload nuevo apunte a otra venta. La verificación se repite bajo
+        // lock dentro de la transacción para cerrar la carrera con este read.
+        const preexistingReturn = await prisma.productReturn.findFirst({
+            where: { tenantId: authReq.tenantId, clientEventId },
         });
-        if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
-
-        // Índices por producto tomados de la venta ORIGINAL (fuente de verdad del servidor).
-        const soldQtyByProduct = new Map<string, Decimal>();
-        const priceByProduct = new Map<string, Decimal>();
-        const costByProduct = new Map<string, Decimal>();
-        for (const it of sale.items) {
-            soldQtyByProduct.set(it.productId, new Decimal(it.quantity.toString()));
-            priceByProduct.set(it.productId, new Decimal(it.priceAtSale.toString()));
-            costByProduct.set(it.productId, new Decimal(it.costAtSale.toString()));
+        if (preexistingReturn) {
+            assertMatchingReturnReplay(preexistingReturn, payloadHash);
+            return res.json({ ...preexistingReturn, idempotentReplay: true });
         }
-
-        // Devoluciones previas de esta venta: acumular cantidad ya devuelta por producto
-        // para impedir devolver más de lo vendido a través de múltiples notas de crédito.
-        const previousReturns = await prisma.productReturn.findMany({
-            where: { saleId, tenantId: authReq.tenantId },
-            select: { items: true },
-        });
-        const returnedQtyByProduct = new Map<string, Decimal>();
-        for (const pr of previousReturns) {
-            const prevItems = Array.isArray(pr.items) ? (pr.items as any[]) : [];
-            for (const pi of prevItems) {
-                const pid = String(pi.productId);
-                const q = new Decimal(Number(pi.quantity) || 0);
-                returnedQtyByProduct.set(pid, (returnedQtyByProduct.get(pid) ?? new Decimal(0)).plus(q));
-            }
-        }
-
-        // Validar cada ítem contra la venta y construir la lista saneada (precio del servidor).
-        const validatedItems: { productId: string; quantity: Decimal; price: Decimal }[] = [];
-        for (const item of items) {
-            const pid = String(item.productId);
-            const soldQty = soldQtyByProduct.get(pid);
-            const unitPrice = priceByProduct.get(pid);
-            // (a) el producto debe pertenecer a la venta original.
-            if (soldQty === undefined || unitPrice === undefined) {
-                return res.status(400).json({ error: `El producto ${pid} no pertenece a la venta.` });
-            }
-            // (b) cantidad solicitada <= vendida - ya devuelta.
-            const reqQty = new Decimal(Number(item.quantity) || 0);
-            const alreadyReturned = returnedQtyByProduct.get(pid) ?? new Decimal(0);
-            const remaining = soldQty.minus(alreadyReturned);
-            if (reqQty.lessThanOrEqualTo(0) || reqQty.greaterThan(remaining)) {
-                return res.status(400).json({
-                    error: `Cantidad a devolver inválida para el producto ${pid} (disponible: ${remaining.toString()}).`,
-                });
-            }
-            // (c) usar el precio de la venta (no el del cliente).
-            validatedItems.push({ productId: pid, quantity: reqQty, price: unitPrice });
-        }
-
-        // returnTotal con el precio REAL de la venta, en decimal.js (Capa 4).
-        const returnTotalDec = validatedItems
-            .reduce((acc, it) => acc.plus(it.price.mul(it.quantity)), new Decimal(0))
-            .toDecimalPlaces(2);
-        const returnTotal = returnTotalDec.toNumber();
-
-        // Persistir los ítems saneados (cantidad y precio del servidor, no los del cliente).
-        const persistItems = validatedItems.map((it) => ({
-            productId: it.productId,
-            quantity: it.quantity.toNumber(),
-            price: it.price.toNumber(),
-        }));
 
         const result = await prisma.$transaction(async (tx: any) => {
-            // 1. Create return record
+            // Todas las devoluciones de una venta se serializan sobre la misma
+            // fila. La segunda solicitud concurrente espera, vuelve a sumar el
+            // historial y no puede sobrepasar la cantidad de la línea.
+            const locked: Array<{ id: string }> = await tx.$queryRaw`
+                SELECT id FROM \`Sale\`
+                WHERE id = ${saleId} AND \`tenantId\` = ${authReq.tenantId}
+                FOR UPDATE`;
+            if (locked.length === 0) {
+                throw new ReturnResolutionError('SALE_NOT_FOUND', 404, 'Venta no encontrada');
+            }
+
+            // Releer después del lock de Sale cierra la carrera para retries de
+            // una misma venta. El UNIQUE tenant+clientEventId arbitra requests
+            // que intenten reutilizar la clave en ventas distintas; el INSERT
+            // ocurre dentro de esta tx y cualquier perdedor revierte completo.
+            const existingReturn = await tx.productReturn.findFirst({
+                where: { tenantId: authReq.tenantId, clientEventId },
+            });
+            if (existingReturn) {
+                assertMatchingReturnReplay(existingReturn, payloadHash);
+                return { productReturn: existingReturn, idempotentReplay: true };
+            }
+
+            const sale = await tx.sale.findFirst({
+                where: { id: saleId, tenantId: authReq.tenantId },
+                include: {
+                    payments: { select: { method: true, amount: true } },
+                    // Una venta creada al entregar conserva el Pedido que hizo
+                    // el movimiento físico. Sus filas Kardex usan el id del
+                    // pedido, así que se necesitan para restaurar la bodega
+                    // original en una devolución posterior.
+                    pedidos: { select: { id: true } },
+                    items: {
+                        select: {
+                            id: true,
+                            productId: true,
+                            quantity: true,
+                            priceAtSale: true,
+                            unitPriceExactAtSale: true,
+                            costAtSale: true,
+                            discount: true,
+                            ivaExento: true,
+                            productNameAtSale: true,
+                            unitAtSale: true,
+                            saleModeAtSale: true,
+                            quantityStepAtSale: true,
+                            presentationAtSale: true,
+                            presentationQuantityAtSale: true,
+                        },
+                    },
+                },
+            });
+            if (!sale) throw new ReturnResolutionError('SALE_NOT_FOUND', 404, 'Venta no encontrada');
+
+            const productIds = [...new Set(sale.items.map((item: any) => item.productId as string))];
+            const pedidoReferenceIds = sale.pedidos.map((pedido: { id: string }) => pedido.id);
+            const [previousReturns, products, saleKardexLocations] = await Promise.all([
+                tx.productReturn.findMany({
+                    where: { saleId, tenantId: authReq.tenantId },
+                    select: { items: true },
+                }),
+                tx.product.findMany({
+                    where: { tenantId: authReq.tenantId, id: { in: productIds } },
+                    select: { id: true, name: true, unit: true },
+                }),
+                tx.kardexMovement.findMany({
+                    where: {
+                        tenantId: authReq.tenantId,
+                        OR: [
+                            { referenceId: saleId, referenceType: 'SALE', type: 'SALE' },
+                            ...(pedidoReferenceIds.length > 0
+                                ? [{
+                                    referenceId: { in: pedidoReferenceIds },
+                                    referenceType: { in: ['PEDIDO_RESERVA', 'PEDIDO_VENTA'] },
+                                    type: 'OUT',
+                                }]
+                                : []),
+                        ],
+                    },
+                    select: { warehouseId: true },
+                }),
+            ]);
+            if (products.length !== productIds.length) {
+                throw new ReturnResolutionError('RETURN_PRODUCT_NOT_FOUND', 409, 'Un producto de la venta ya no está disponible para restaurar stock');
+            }
+            const productsById = new Map<string, ReturnProductAuthority>(
+                products.map((product: ReturnProductAuthority): [string, ReturnProductAuthority] => [product.id, product]),
+            );
+            const returnWarehouseId = resolveReturnWarehouseId(saleKardexLocations);
+            const resolved = resolveRequestedReturnItems({
+                saleItems: sale.items as ReturnSaleItemSnapshot[],
+                previousReturns,
+                requestedItems: items,
+                productsById,
+                globalDiscount: sale.globalDiscount,
+            });
+
+            // La evidencia por lote se resuelve con el mismo snapshot de
+            // devoluciones leído bajo el lock de Sale. El helper restaura solo
+            // ProductBatch; el agregado y Kardex se completan abajo en esta tx.
+            const resolvedWithBatches = [];
+            for (const item of resolved.items) {
+                const batchRestoration = await restoreSaleItemBatchesForReturn(tx, {
+                    tenantId: authReq.tenantId!,
+                    saleItemId: item.saleItemId,
+                    productId: item.productId,
+                    quantity: item.quantity,
+                    previousReturns,
+                });
+                const restoredQuantity = batchRestoration.batchRestorations.reduce(
+                    (sum, restoration) => sum.plus(restoration.quantity),
+                    batchRestoration.aggregateOnlyQuantity,
+                );
+                if (!restoredQuantity.equals(item.quantity)) {
+                    throw new ReturnResolutionError(
+                        'RETURN_BATCH_RESTORATION_INVALID',
+                        500,
+                        'El desglose por lote no coincide con la cantidad devuelta',
+                    );
+                }
+                resolvedWithBatches.push({ item, batchRestoration });
+            }
+
+            const persistItems = resolvedWithBatches.map(({ item, batchRestoration }) => ({
+                saleItemId: item.saleItemId,
+                productId: item.productId,
+                name: item.name,
+                productNameAtSale: item.name,
+                unit: item.unit,
+                unitAtSale: item.unit,
+                saleModeAtSale: item.saleMode,
+                quantityStepAtSale: item.quantityStep.toString(),
+                presentation: item.presentation,
+                presentationAtSale: item.presentation,
+                presentationQuantity: item.presentationQuantity.toString(),
+                presentationQuantityAtSale: item.presentationQuantity.toString(),
+                soldQuantityAtSale: item.soldQuantity.toString(),
+                quantity: item.quantity.toString(),
+                priceAtSale: item.priceAtSale.toFixed(4),
+                refundUnitPrice: item.refundUnitPrice.toFixed(4),
+                lineTotal: item.lineTotal.toDecimalPlaces(2).toFixed(2),
+                ivaExento: item.ivaExento,
+                batchRestorationMode: batchRestoration.mode,
+                batchRestorations: batchRestoration.batchRestorations.map((restoration) => ({
+                    batchId: restoration.batchId,
+                    batchNumber: restoration.batchNumber,
+                    quantity: restoration.quantity.toString(),
+                })),
+                aggregateOnlyQuantity: batchRestoration.aggregateOnlyQuantity.toString(),
+            }));
+
             const productReturn = await tx.productReturn.create({
                 data: {
                     tenantId: authReq.tenantId,
                     saleId,
-                    total: returnTotal,
-                    reason: reason || 'Devolución de producto',
+                    total: resolved.total.toFixed(2),
+                    reason,
                     items: persistItems,
                     createdBy: authReq.userId,
+                    clientEventId,
+                    payloadHash,
                 }
             });
 
-            // 2. Restore stock for each returned item (incremento atómico —
-            //    stockBefore/After salen del row-lock, no de una lectura previa)
-            for (const item of validatedItems) {
+            // Stock y Kardex usan producto/cantidad resueltos desde SaleItem.
+            for (const { item, batchRestoration } of resolvedWithBatches) {
                 const qty = item.quantity.toNumber();
-                let stockResult;
-                try {
-                    stockResult = await applyStockDelta(tx, {
-                        tenantId: authReq.tenantId,
-                        productId: item.productId,
-                        delta: qty,
-                        enforceSufficient: false,
+                const stockResult = await applyStockDelta(tx, {
+                    tenantId: authReq.tenantId,
+                    productId: item.productId,
+                    delta: qty,
+                    enforceSufficient: false,
+                    // Ventas nuevas guardan una única ubicación en Kardex. Las
+                    // históricas sin snapshot conservan el fallback default.
+                    warehouseId: returnWarehouseId ?? undefined,
+                });
+
+                let stockCursor = new Decimal(stockResult.stockBefore);
+                for (const restoration of batchRestoration.batchRestorations) {
+                    const stockAfter = stockCursor.plus(restoration.quantity);
+                    await tx.kardexMovement.create({
+                        data: {
+                            tenantId: authReq.tenantId,
+                            productId: item.productId,
+                            type: 'RETURN',
+                            quantity: restoration.quantity.toNumber(),
+                            stockBefore: stockCursor.toNumber(),
+                            stockAfter: stockAfter.toNumber(),
+                            referenceId: productReturn.id,
+                            referenceType: 'RETURN',
+                            reason: `Devolución: ${reason} - lote ${restoration.batchNumber}`,
+                            userId: authReq.userId,
+                            batchId: restoration.batchId,
+                            warehouseId: stockResult.warehouseId,
+                        },
                     });
-                } catch (err) {
-                    if (err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') continue;
-                    throw err;
+                    stockCursor = stockAfter;
                 }
 
-                // Kardex: register stock return
-                await tx.kardexMovement.create({
-                    data: {
-                        tenantId: authReq.tenantId,
-                        productId: item.productId,
-                        type: 'RETURN',
-                        quantity: qty,
-                        stockBefore: stockResult.stockBefore,
-                        stockAfter: stockResult.stockAfter,
-                        referenceId: productReturn.id,
-                        referenceType: 'RETURN',
-                        reason: `Devolución: ${reason || 'Sin motivo'}`,
-                        userId: authReq.userId,
-                    }
-                });
+                if (batchRestoration.aggregateOnlyQuantity.greaterThan(0)) {
+                    const stockAfter = stockCursor.plus(batchRestoration.aggregateOnlyQuantity);
+                    await tx.kardexMovement.create({
+                        data: {
+                            tenantId: authReq.tenantId,
+                            productId: item.productId,
+                            type: 'RETURN',
+                            quantity: batchRestoration.aggregateOnlyQuantity.toNumber(),
+                            stockBefore: stockCursor.toNumber(),
+                            stockAfter: stockAfter.toNumber(),
+                            referenceId: productReturn.id,
+                            referenceType: 'RETURN',
+                            reason: batchRestoration.batchRestorations.length === 0
+                                ? `Devolución: ${reason}`
+                                : `Devolución: ${reason} - sin lote asignado`,
+                            userId: authReq.userId,
+                            warehouseId: stockResult.warehouseId,
+                        },
+                    });
+                    stockCursor = stockAfter;
+                }
+
+                if (stockCursor.minus(stockResult.stockAfter).abs().greaterThan('0.000001')) {
+                    throw new ReturnResolutionError(
+                        'RETURN_BATCH_RESTORATION_INVALID',
+                        500,
+                        'El Kardex por lote no coincide con el stock restaurado',
+                    );
+                }
             }
 
-            // 3. Update customer debt if credit sale
+            const balanceStored = new Decimal(sale.balance.toString());
+            const balanceBefore = Decimal.max(balanceStored, 0).toDecimalPlaces(2);
+            let creditReduction = new Decimal(0);
+            let settledRefund = resolved.total;
+            let balanceAfter = balanceBefore;
             let debtBefore: string | null = null;
             let debtAfter: string | null = null;
-            if (sale.customerId && sale.paymentMethod === 'CREDIT') {
-                // Capturar saldo previo del cliente (before) antes del decremento, para el AuditLog.
-                const prevCustomer = await tx.customer.findFirst({
-                    where: { id: sale.customerId, tenantId: authReq.tenantId },
-                    select: { currentDebt: true },
+
+            if (sale.paymentMethod === 'CREDIT') {
+                creditReduction = Decimal.min(resolved.total, balanceBefore).toDecimalPlaces(2);
+                settledRefund = resolved.total.minus(creditReduction).toDecimalPlaces(2);
+                balanceAfter = balanceBefore.minus(creditReduction).toDecimalPlaces(2);
+
+                // El lock de Sale serializa devoluciones/pagos de esta factura;
+                // el predicado de balance deja un segundo guard ante escrituras
+                // externas y evita cualquier saldo negativo.
+                const saleUpdated = await tx.sale.updateMany({
+                    where: { id: saleId, tenantId: authReq.tenantId, balance: sale.balance },
+                    data: {
+                        balance: balanceAfter.toFixed(2),
+                        status: balanceAfter.isZero() ? 'PAID' : 'CREDIT_PENDING',
+                    },
                 });
-                debtBefore = prevCustomer ? String(prevCustomer.currentDebt) : null;
-                const updatedCustomer = await tx.customer.update({
-                    where: { id: sale.customerId, tenantId: authReq.tenantId },  // tenant isolation
-                    data: { currentDebt: { decrement: returnTotal } }
-                });
-                debtAfter = String(updatedCustomer.currentDebt);
+                if (saleUpdated.count !== 1) {
+                    throw new ReturnResolutionError(
+                        'RETURN_CREDIT_CONCURRENCY_CONFLICT',
+                        409,
+                        'El saldo de la venta cambió mientras se procesaba la devolución; volvé a intentarlo',
+                    );
+                }
+
+                if (creditReduction.greaterThan(0)) {
+                    if (!sale.customerId) {
+                        throw new ReturnResolutionError(
+                            'RETURN_CREDIT_CUSTOMER_REQUIRED',
+                            409,
+                            'La venta a crédito no tiene un cliente válido para reducir su deuda',
+                        );
+                    }
+                    const customer = await tx.customer.findFirst({
+                        where: { id: sale.customerId, tenantId: authReq.tenantId },
+                        select: { currentDebt: true },
+                    });
+                    if (!customer) {
+                        throw new ReturnResolutionError(
+                            'RETURN_CREDIT_CUSTOMER_REQUIRED',
+                            409,
+                            'El cliente de la venta ya no está disponible para reducir su deuda',
+                        );
+                    }
+                    const currentDebt = new Decimal(customer.currentDebt.toString());
+                    debtBefore = currentDebt.toFixed(2);
+                    if (currentDebt.isNegative() || currentDebt.lessThan(creditReduction)) {
+                        throw new ReturnResolutionError(
+                            'RETURN_CREDIT_DEBT_RECONCILIATION_REQUIRED',
+                            409,
+                            'La deuda del cliente no coincide con el saldo de la venta; requiere conciliación',
+                        );
+                    }
+                    const customerUpdated = await tx.customer.updateMany({
+                        where: {
+                            id: sale.customerId,
+                            tenantId: authReq.tenantId,
+                            currentDebt: customer.currentDebt,
+                        },
+                        data: { currentDebt: { decrement: creditReduction.toFixed(2) } },
+                    });
+                    if (customerUpdated.count !== 1) {
+                        throw new ReturnResolutionError(
+                            'RETURN_CREDIT_CONCURRENCY_CONFLICT',
+                            409,
+                            'La deuda del cliente cambió mientras se procesaba la devolución; volvé a intentarlo',
+                        );
+                    }
+                    debtAfter = currentDebt.minus(creditReduction).toFixed(2);
+                }
             }
 
-            // 📊 MOTOR CONTABLE: Registrar devolución
-            // Costo de lo devuelto: reversa el costo REAL que la venta registró
-            // (SaleItem.costAtSale, fijado por el servidor), no una aproximación.
-            const costTotal = validatedItems.reduce(
-                (sum, item) => sum.plus((costByProduct.get(item.productId) ?? new Decimal(0)).mul(item.quantity)),
-                new Decimal(0)
-            ).toDecimalPlaces(2).toNumber();
-            try {
-                await recordReturn(tx, authReq.tenantId!, authReq.userId!, productReturn.id, returnTotal, costTotal);
-            } catch (accErr) { console.warn('⚠️ Accounting hook failed (return continues):', accErr); }
+            const refundMethod = resolveReturnRefundMethod({
+                salePaymentMethod: sale.paymentMethod,
+                payments: sale.payments,
+                explicitRefundMethod,
+                settledRefund,
+            });
 
-            // 📝 AUDITORÍA INMUTABLE: la devolución mueve dinero e inventario (Capa 3).
+            let cashMovementId: string | null = null;
+            let refundShiftId: string | null = null;
+            if (settledRefund.greaterThan(0) && refundMethod === 'CASH') {
+                // La plata sale de la gaveta ABIERTA ahora, no del turno histórico
+                // de la venta (que puede estar cerrado). Preferimos el turno propio
+                // y usamos el abierto del tenant como fallback, igual que el POS.
+                const ownShift = await tx.shift.findFirst({
+                    where: { tenantId: authReq.tenantId, userId: authReq.userId, status: 'OPEN' },
+                    orderBy: { startTime: 'desc' },
+                    select: { id: true },
+                });
+                const candidateShift = ownShift ?? await tx.shift.findFirst({
+                    where: { tenantId: authReq.tenantId, status: 'OPEN' },
+                    orderBy: { startTime: 'desc' },
+                    select: { id: true },
+                });
+                if (!candidateShift) {
+                    throw new ReturnResolutionError(
+                        'RETURN_OPEN_SHIFT_REQUIRED',
+                        409,
+                        'Abrí una caja antes de reembolsar efectivo',
+                    );
+                }
+
+                const lockedShifts: Array<{ id: string; initialCash: any; initialCashUsd: any }> = await tx.$queryRaw`
+                    SELECT id, initialCash, initialCashUsd
+                    FROM \`Shift\`
+                    WHERE id = ${candidateShift.id}
+                      AND \`tenantId\` = ${authReq.tenantId}
+                      AND status = 'OPEN'
+                    FOR UPDATE`;
+                const lockedShift = lockedShifts[0];
+                if (!lockedShift) {
+                    throw new ReturnResolutionError(
+                        'RETURN_OPEN_SHIFT_REQUIRED',
+                        409,
+                        'La caja cambió de estado; volvé a abrir la devolución',
+                    );
+                }
+
+                // Los OUT se serializan por Shift y las filas CashMovement se leen
+                // como lectura corriente. Las ventas solo SUMAN efectivo: no se
+                // bloquean para evitar invertir el orden Sale→Shift entre dos
+                // devoluciones concurrentes; una venta nueva omitida solo vuelve
+                // este guard más conservador, nunca permite sobregirar.
+                const cashSales: Array<{ total: any }> = await tx.$queryRaw`
+                    SELECT total FROM \`Sale\`
+                    WHERE \`tenantId\` = ${authReq.tenantId}
+                      AND shiftId = ${lockedShift.id}
+                      AND paymentMethod = 'CASH'`;
+                const cashMovements: Array<{
+                    type: string;
+                    amount: any;
+                    currency: string | null;
+                    category: string | null;
+                    isVoided: boolean;
+                }> = await tx.$queryRaw`
+                    SELECT type, amount, currency, category, isVoided
+                    FROM \`CashMovement\`
+                    WHERE \`tenantId\` = ${authReq.tenantId}
+                      AND shiftId = ${lockedShift.id}
+                    FOR UPDATE`;
+                const availableCash = calcularEfectivoTurno({
+                    initialCash: lockedShift.initialCash,
+                    initialCashUsd: lockedShift.initialCashUsd,
+                    cashSales: cashSales.reduce(
+                        (sum, cashSale) => sum.plus(new Decimal(cashSale.total.toString())),
+                        new Decimal(0),
+                    ),
+                    movimientos: cashMovements.map((movement) => ({
+                        ...movement,
+                        amount: movement.amount.toString(),
+                    })),
+                }).efectivoNIO;
+                if (settledRefund.greaterThan(availableCash)) {
+                    throw new ReturnResolutionError(
+                        'RETURN_CASH_INSUFFICIENT',
+                        409,
+                        `Efectivo insuficiente en caja: disponible C$${availableCash.toFixed(2)}, reembolso C$${settledRefund.toFixed(2)}`,
+                    );
+                }
+
+                const cashMovement = await appendSignedCashMovement(tx, {
+                    tenantId: authReq.tenantId!,
+                    shiftId: lockedShift.id,
+                    userId: authReq.userId!,
+                    type: 'OUT',
+                    amount: settledRefund.toNumber(),
+                    currency: 'NIO',
+                    category: 'DEVOLUCION',
+                    description: `Reembolso devolución #${productReturn.id.slice(0, 8)}`,
+                    expenseId: null,
+                });
+                cashMovementId = cashMovement.id;
+                refundShiftId = lockedShift.id;
+            }
+
+            await recordReturn(
+                tx,
+                authReq.tenantId!,
+                authReq.userId!,
+                productReturn.id,
+                resolved.total.toNumber(),
+                resolved.costTotal.toNumber(),
+                {
+                    exemptTotal: resolved.exemptTotal,
+                    creditReduction,
+                    settledRefund,
+                    refundMethod: refundMethod ?? 'CASH',
+                },
+            );
+
             await tx.auditLog.create({
                 data: {
                     tenantId: authReq.tenantId!,
@@ -2275,22 +2837,63 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                     details: JSON.stringify({
                         saleId,
                         returnId: productReturn.id,
-                        total: String(returnTotal),
-                        costTotal: String(costTotal),
+                        total: resolved.total.toFixed(2),
+                        costTotal: resolved.costTotal.toFixed(2),
+                        exemptTotal: resolved.exemptTotal.toFixed(2),
                         items: persistItems,
+                        balanceBefore: balanceBefore.toFixed(2),
+                        balanceAfter: balanceAfter.toFixed(2),
+                        creditReduction: creditReduction.toFixed(2),
+                        settledRefund: settledRefund.toFixed(2),
+                        refundMethod,
                         debtBefore,
                         debtAfter,
+                        cashMovementId,
+                        refundShiftId,
+                        warehouseId: returnWarehouseId,
                     }),
                 },
             });
 
-            return productReturn;
+            return { productReturn, idempotentReplay: false };
         });
 
-        res.json(result);
+        res.json({ ...result.productReturn, idempotentReplay: result.idempotentReplay });
     } catch (error: any) {
+        // Cinturón de carrera para motores/aislamientos donde dos locking reads
+        // sobre una clave aún inexistente alcancen el INSERT. El unique revierte
+        // íntegra la transacción perdedora; luego se clasifica replay/conflicto.
+        if (error?.code === 'P2002') {
+            const existingReturn = await prisma.productReturn.findFirst({
+                where: { tenantId: authReq.tenantId, clientEventId },
+            });
+            if (existingReturn) {
+                try {
+                    assertMatchingReturnReplay(existingReturn, payloadHash);
+                    return res.json({ ...existingReturn, idempotentReplay: true });
+                } catch (idempotencyError) {
+                    if (idempotencyError instanceof ReturnResolutionError) {
+                        return res.status(idempotencyError.httpStatus).json({
+                            error: idempotencyError.message,
+                            code: idempotencyError.code,
+                        });
+                    }
+                    throw idempotencyError;
+                }
+            }
+        }
+        if (error instanceof BatchRestorationError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
+        if (error instanceof ReturnResolutionError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
+        if (productQuantityErrorResponse(res, error)) return;
+        if (error instanceof StockError) {
+            return res.status(error.code === 'PRODUCT_NOT_FOUND' ? 409 : 400).json({ error: error.message, code: error.code });
+        }
         console.error(error);
-        res.status(500).json({ error: error.message || 'Error procesando devolución' });
+        res.status(500).json({ error: 'Error procesando devolución' });
     }
 });
 
@@ -3479,10 +4082,129 @@ app.post('/api/cash-movements/:id/void', authenticate, async (req: any, res: any
 // 📦 INVENTORY MANAGEMENT - PRODUCTS & KARDEX
 // ==========================================
 
+type QuantityConfiguredProduct = {
+    saleMode?: string | null;
+    quantityStep?: Decimal.Value | null;
+};
+
+/**
+ * D6: null legado conserva la semántica fraccionaria que Product.stock Float
+ * siempre tuvo. Solo COUNTED explícito exige enteros; el adaptador legado usa
+ * el paso mínimo persistible de 0.0001 sin reescribir filas históricas.
+ */
+const quantityRulesForProduct = (product: QuantityConfiguredProduct): { saleMode: SaleMode; quantityStep: Decimal.Value } => ({
+    saleMode: product.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED',
+    quantityStep: product.quantityStep?.toString() || (product.saleMode === 'COUNTED' ? '1' : '0.0001'),
+});
+
+/**
+ * Valida una cantidad contra el modo/paso autoritativo del producto y devuelve
+ * Number únicamente en el borde de las columnas Float legacy.
+ */
+const contextualProductQuantityDecimal = (
+    raw: Decimal.Value,
+    product: QuantityConfiguredProduct,
+    options: { allowZero?: boolean; signed?: boolean } = {},
+): Decimal => {
+    let decimal: Decimal;
+    try {
+        decimal = new Decimal(raw);
+    } catch {
+        throw new QuantityValidationError('INVALID_QUANTITY', 'La cantidad no es un decimal válido');
+    }
+    if (!decimal.isFinite()) {
+        throw new QuantityValidationError('NON_FINITE_QUANTITY', 'La cantidad debe ser finita');
+    }
+    if (decimal.isZero() && options.allowZero) return new Decimal(0);
+    if (decimal.isNegative() && !options.signed) {
+        throw new QuantityValidationError('NON_POSITIVE_QUANTITY', 'La cantidad no puede ser negativa');
+    }
+
+    const magnitude = validateQuantity(decimal.abs(), quantityRulesForProduct(product));
+    return decimal.isNegative() ? magnitude.negated() : magnitude;
+};
+
+const contextualProductQuantity = (
+    raw: Decimal.Value,
+    product: QuantityConfiguredProduct,
+    options: { allowZero?: boolean; signed?: boolean } = {},
+): number => contextualProductQuantityDecimal(raw, product, options).toNumber();
+
+/**
+ * Una unidad base tampoco puede cambiar mientras existan documentos abiertos
+ * expresados en esa unidad. Aunque el stock sea cero, recibir o entregar luego
+ * reinterpretaría la cantidad histórica y corrompería inventario/Kardex.
+ */
+const hasOpenProductUnitCommitments = async (
+    tx: any,
+    tenantId: string,
+    productId: string,
+): Promise<boolean> => {
+    const [purchaseOrderItem, pedidoItem, quotationItem, publicOrders] = await Promise.all([
+        tx.purchaseOrderItem.findFirst({
+            where: {
+                productId,
+                purchaseOrder: {
+                    tenantId,
+                    status: { in: ['DRAFT', 'APPROVED', 'PARTIALLY_RECEIVED'] },
+                },
+            },
+            select: { id: true },
+        }),
+        tx.pedidoItem.findFirst({
+            where: {
+                productoId: productId,
+                pedido: { tenantId, estado: { notIn: ['entregado', 'cancelado'] } },
+            },
+            select: { id: true },
+        }),
+        tx.quotationItem.findFirst({
+            where: {
+                productId,
+                quotation: { tenantId, status: 'SENT', expiresAt: { gte: new Date() } },
+            },
+            select: { id: true },
+        }),
+        tx.publicOrder.findMany({
+            where: { tenantId, status: 'PENDING' },
+            select: { items: true },
+        }),
+    ]);
+    const pendingPublicOrder = publicOrders.some((order: { items: unknown }) => (
+        Array.isArray(order.items)
+        && order.items.some((item) => (
+            item !== null
+            && typeof item === 'object'
+            && !Array.isArray(item)
+            && (item as Record<string, unknown>).productId === productId
+        ))
+    ));
+    return Boolean(purchaseOrderItem || pedidoItem || quotationItem || pendingPublicOrder);
+};
+
+const productQuantityErrorResponse = (res: any, error: unknown, productName?: string) => {
+    if (!(error instanceof QuantityValidationError)) return false;
+    res.status(400).json({
+        error: productName ? `${productName}: ${error.message}` : error.message,
+        code: error.code,
+    });
+    return true;
+};
+
+/**
+ * PurchaseItem.quantity es Int legacy. `quantityExact` es la autoridad nueva;
+ * para fracciones guardamos ceil en la sombra vieja (nunca cero ni menor que
+ * lo recibido). Ningún cálculo tocado vuelve a leer este surrogate.
+ */
+const legacyPurchaseQuantity = (quantity: Decimal): number => {
+    if (quantity.isInteger() && quantity.lessThanOrEqualTo(2_147_483_647)) return quantity.toNumber();
+    return Decimal.min(quantity.ceil(), 2_147_483_647).toNumber();
+};
+
 // GET /api/products - Lista todos los productos (disponible para todos)
 app.get('/api/products', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { search, lowStock, category, status, sort, dir, page, pageSize } = req.query;
+    const { search, lowStock, category, status, family, mode, sort, dir, page, pageSize } = req.query;
 
     try {
         const whereClause: any = { tenantId: authReq.tenantId };
@@ -3509,6 +4231,9 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
             ];
         }
         if (category) whereClause.category = String(category);
+        if (family) whereClause.productFamily = String(family);
+        if (mode === 'LEGACY') whereClause.saleMode = null;
+        else if (mode === 'COUNTED' || mode === 'MEASURED') whereClause.saleMode = mode;
         if (status === 'out') whereClause.stock = { lte: 0 };
         // "Bajo mínimo" y "punto de reorden" comparan DOS COLUMNAS de la misma
         // fila (stock contra su umbral), así que van por field reference: el
@@ -3589,34 +4314,39 @@ app.get('/api/products/categories', authenticate, async (req: any, res: any) => 
 });
 
 // POST /api/products - Crear producto (OWNER o ADMIN)
-app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateProductSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, sku, description, category, price, cost, stock, minStock, unit, isPublished, imageUrl, requiresBatchTracking, reorderPoint, maxStock, defaultSupplierId, wholesalePrice, wholesaleMinQty, packUnit, packSize, packPrice, ivaExento } = req.body;
+    const {
+        name, sku, description, category, price, cost, stock, minStock, unit,
+        saleMode, quantityStep, productFamily, isPublished, imageUrl,
+        requiresBatchTracking, reorderPoint, maxStock, defaultSupplierId,
+        wholesalePrice, wholesaleMinQty, packUnit, packSize, packPrice, ivaExento,
+    } = req.body;
 
-    // Venta por mayor: si vienen, deben ser números > 0 (null/'' = sin mayoreo).
-    const wp = wholesalePrice !== undefined && wholesalePrice !== null && wholesalePrice !== '' ? parseFloat(wholesalePrice) : null;
-    const wq = wholesaleMinQty !== undefined && wholesaleMinQty !== null && wholesaleMinQty !== '' ? parseFloat(wholesaleMinQty) : null;
-    if ((wp !== null && (!Number.isFinite(wp) || wp <= 0)) || (wq !== null && (!Number.isFinite(wq) || wq <= 0))) {
-        return res.status(400).json({ error: 'Precio de mayoreo y cantidad mínima deben ser números mayores a 0' });
-    }
-    // Empaque (Fase B): packSize/packPrice > 0 si vienen; packPrice exige packSize.
+    const decimalOrNull = (value: unknown): number | null =>
+        value === undefined || value === null || value === '' ? null : new Decimal(value as Decimal.Value).toNumber();
+    const wp = decimalOrNull(wholesalePrice);
+    const wq = decimalOrNull(wholesaleMinQty);
     const pUnit = typeof packUnit === 'string' && packUnit.trim() !== '' ? packUnit.trim() : null;
-    const pSize = packSize !== undefined && packSize !== null && packSize !== '' ? parseFloat(packSize) : null;
-    const pPrice = packPrice !== undefined && packPrice !== null && packPrice !== '' ? parseFloat(packPrice) : null;
-    if ((pSize !== null && (!Number.isFinite(pSize) || pSize <= 0)) || (pPrice !== null && (!Number.isFinite(pPrice) || pPrice <= 0))) {
-        return res.status(400).json({ error: 'Tamaño y precio del empaque deben ser números mayores a 0' });
-    }
+    const pSize = decimalOrNull(packSize);
+    const pPrice = decimalOrNull(packPrice);
     if (pPrice !== null && pSize === null) {
         return res.status(400).json({ error: 'El precio de empaque requiere definir el tamaño del empaque (unidades por caja/fardo)' });
     }
 
     try {
+        const config = { saleMode, quantityStep };
+        const initialStock = contextualProductQuantity(stock ?? '0', config, { allowZero: true });
+        const initialMinStock = contextualProductQuantity(minStock ?? '5', config, { allowZero: true });
+        const reorder = contextualProductQuantity(reorderPoint ?? '0', config, { allowZero: true });
+        const maximum = contextualProductQuantity(maxStock ?? '0', config, { allowZero: true });
+
         // Verificar que SKU no exista
         const existing = await prisma.product.findUnique({
             where: {
                 tenantId_sku: {
                     tenantId: authReq.tenantId!,
-                    sku
+                    sku: sku.toUpperCase(),
                 }
             }
         });
@@ -3625,80 +4355,122 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), async (re
             return res.status(400).json({ error: 'SKU ya existe en tu inventario' });
         }
 
-        // Crear producto
-        const product = await prisma.product.create({
-            data: {
-                tenantId: authReq.tenantId!,
-                name,
-                sku,
-                description,
-                category,
-                price: parseFloat(price),
-                // Costo opcional: un pulpero no siempre sabe el costo exacto al dar de
-                // alta. Ausente/''/NaN → 0 (el margen se corrige luego con la compra).
-                cost: parseFloat(cost) || 0,
-                stock: parseFloat(stock) || 0,
-                minStock: parseFloat(minStock) || 0,
-                unit: unit || 'unidad',
-                isPublished: Boolean(isPublished),
-                // T2: exoneración de IVA (canasta básica, medicamentos). Default
-                // false = gravado; la clasificación legal la decide el negocio.
-                ivaExento: Boolean(ivaExento),
-                imageUrl: imageUrl || null,
-                requiresBatchTracking: Boolean(requiresBatchTracking),
-                reorderPoint: parseFloat(reorderPoint) || 0,
-                maxStock: parseFloat(maxStock) || 0,
-                defaultSupplierId: defaultSupplierId || null,
-                wholesalePrice: wp,
-                wholesaleMinQty: wq,
-                packUnit: pUnit,
-                packSize: pSize,
-                packPrice: pPrice,
-                createdBy: authReq.userId!
-            }
-        });
+        // La bodega default se materializa antes de la tx para evitar la carrera
+        // de creación bajo REPEATABLE READ documentada en stockService.
+        if (initialStock > 0) await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
 
-        // Crear registro inicial en Kardex si hay stock inicial
-        if (product.stock > 0) {
-            await prisma.kardexMovement.create({
+        const product = await prisma.$transaction(async (tx: any) => {
+            if (defaultSupplierId) {
+                const supplier = await tx.supplier.findFirst({
+                    where: { id: defaultSupplierId, tenantId: authReq.tenantId! },
+                    select: { id: true },
+                });
+                if (!supplier) throw new Error('PROVEEDOR_NO_ENCONTRADO');
+            }
+
+            // Nace en cero y el stock inicial entra por el mismo camino atómico
+            // que cualquier otro movimiento, manteniendo ProductStock y Kardex.
+            const created = await tx.product.create({
                 data: {
                     tenantId: authReq.tenantId!,
-                    productId: product.id,
-                    type: 'IN',
-                    quantity: product.stock,
-                    stockBefore: 0,
-                    stockAfter: product.stock,
-                    referenceType: 'INITIAL',
-                    reason: 'Stock inicial al crear producto',
-                    userId: authReq.userId!
-                }
+                    name,
+                    sku: sku.toUpperCase(),
+                    description: description || null,
+                    category: category || null,
+                    price: new Decimal(price).toNumber(),
+                    cost: new Decimal(cost ?? 0).toNumber(),
+                    stock: 0,
+                    minStock: initialMinStock,
+                    unit,
+                    saleMode: saleMode ?? null,
+                    quantityStep: quantityStep || null,
+                    productFamily: productFamily ?? null,
+                    isPublished: Boolean(isPublished),
+                    ivaExento: Boolean(ivaExento),
+                    imageUrl: imageUrl || null,
+                    requiresBatchTracking: Boolean(requiresBatchTracking),
+                    reorderPoint: reorder,
+                    maxStock: maximum,
+                    defaultSupplierId: defaultSupplierId || null,
+                    wholesalePrice: wp,
+                    wholesaleMinQty: wq,
+                    packUnit: pUnit,
+                    packSize: pSize,
+                    packPrice: pPrice,
+                    createdBy: authReq.userId!,
+                },
             });
-        }
+
+            if (initialStock > 0) {
+                const stockResult = await applyStockDelta(tx, {
+                    tenantId: authReq.tenantId!,
+                    productId: created.id,
+                    delta: initialStock,
+                    enforceSufficient: false,
+                });
+                await tx.kardexMovement.create({
+                    data: {
+                        tenantId: authReq.tenantId!,
+                        productId: created.id,
+                        type: 'IN',
+                        quantity: initialStock,
+                        stockBefore: stockResult.stockBefore,
+                        stockAfter: stockResult.stockAfter,
+                        referenceType: 'INITIAL',
+                        reason: 'Stock inicial al crear producto',
+                        userId: authReq.userId!,
+                        warehouseId: stockResult.warehouseId,
+                    },
+                });
+            }
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'PRODUCT_CREATED',
+                    details: JSON.stringify({
+                        productId: created.id,
+                        after: {
+                            sku: created.sku,
+                            name: created.name,
+                            unit: created.unit,
+                            saleMode: created.saleMode,
+                            quantityStep: created.quantityStep?.toString() ?? null,
+                            productFamily: created.productFamily,
+                            stock: initialStock,
+                        },
+                    }),
+                },
+            });
+
+            return tx.product.findUniqueOrThrow({ where: { id: created.id } });
+        });
 
         res.json(product);
-    } catch (error) {
+    } catch (error: any) {
+        if (productQuantityErrorResponse(res, error)) return;
+        if (error?.message === 'PROVEEDOR_NO_ENCONTRADO') {
+            return res.status(400).json({ error: 'El proveedor por defecto no pertenece a tu negocio' });
+        }
         console.error('Error creating product:', error);
         res.status(500).json({ error: 'Error creando producto' });
     }
 });
 
 // POST /api/products/bulk - Carga masiva de productos (Solo OWNER)
-app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), validate(BulkImportProductsSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { products: productList } = req.body;
-
-    if (!Array.isArray(productList) || productList.length === 0) {
-        return res.status(400).json({ error: 'Se requiere un array de productos.' });
-    }
-
-    if (productList.length > 500) {
-        return res.status(400).json({ error: 'Máximo 500 productos por lote.' });
-    }
 
     try {
         let created = 0;
         let updated = 0;
         let errors: string[] = [];
+
+        // applyStockDelta mantiene también ProductStock. Materializar la bodega
+        // fuera de las transacciones evita carreras de primer uso.
+        await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
 
         // Process in batches of 50 for efficiency
         const batchSize = 50;
@@ -3716,14 +4488,8 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
                         ? Number(item.excelRow)
                         : i + batchIdx + 2; // +2: 1-based + fila de encabezado
                     try {
-                        const sku = String(item.sku || '').trim().toUpperCase();
-                        const name = String(item.name || item.nombre || '').trim();
-                        const price = parseFloat(item.price || item.precio || 0);
-                        const cost = parseFloat(item.cost || item.costo || item.costPrice || 0);
-                        const stock = parseFloat(item.stock || 0) || 0;
-                        const minStock = parseFloat(item.minStock || 5) || 5;
-                        const category = String(item.category || item.categoria || 'General').trim();
-                        const unit = String(item.unit || item.unidad || 'unidad').trim();
+                        const sku = String(item.sku ?? '').trim().toUpperCase();
+                        const name = String(item.name ?? item.nombre ?? '').trim();
 
                         // ⚠️ continue, NO return: un `return` acá sale del
                         // callback COMPLETO de la transacción (no de la
@@ -3735,29 +4501,150 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
                             continue;
                         }
 
-                        if (!Number.isFinite(price) || price <= 0) {
-                            errors.push(`Fila ${filaExcel} (${sku}): precio inválido`);
-                            continue;
-                        }
-
-                        // Upsert: si SKU existe, actualiza; si no, crea
+                        // Resolver primero la fila existente: una plantilla vieja que no
+                        // trae las columnas nuevas NO debe reclasificarla ni borrar stock.
                         const existing = await tx.product.findUnique({
                             where: { tenantId_sku: { tenantId: authReq.tenantId!, sku } }
                         });
 
+                        const has = (key: string) => Object.prototype.hasOwnProperty.call(item, key)
+                            && item[key] !== undefined && item[key] !== null && item[key] !== '';
+                        const firstPresent = (...keys: string[]) => {
+                            const key = keys.find(has);
+                            return key ? item[key] : undefined;
+                        };
+                        const rawSaleMode = firstPresent('saleMode', 'modoVenta', 'modo_venta');
+                        const rawStep = firstPresent('quantityStep', 'pasoCantidad', 'paso_cantidad');
+                        const rawFamily = firstPresent('productFamily', 'familiaProducto', 'familia_producto');
+                        const rawStock = firstPresent('stock', 'existencia');
+                        const rawPackUnit = firstPresent('packUnit', 'unidadEmpaque', 'unidad_empaque');
+                        const rawPackSize = firstPresent('packSize', 'tamanoEmpaque', 'tamano_empaque');
+                        const rawPackPrice = firstPresent('packPrice', 'precioEmpaque', 'precio_empaque');
+                        const rawBatchTracking = firstPresent('requiresBatchTracking', 'requiereLote', 'requiere_lote');
+                        const rawIvaExento = firstPresent('ivaExento', 'iva_exento');
+
+                        const parsed = CreateProductSchema.safeParse({
+                            name,
+                            sku,
+                            description: firstPresent('description', 'descripcion')
+                                ?? existing?.description ?? undefined,
+                            category: firstPresent('category', 'categoria')
+                                ?? existing?.category ?? 'General',
+                            price: firstPresent('price', 'precio') ?? existing?.price ?? 0,
+                            cost: firstPresent('cost', 'costo', 'costPrice') ?? existing?.cost ?? 0,
+                            stock: rawStock ?? existing?.stock ?? 0,
+                            minStock: firstPresent('minStock', 'stockMinimo', 'stock_minimo')
+                                ?? existing?.minStock ?? 5,
+                            unit: firstPresent('unit', 'unidad') ?? existing?.unit ?? 'unidad',
+                            saleMode: rawSaleMode !== undefined
+                                ? String(rawSaleMode).trim().toUpperCase()
+                                : existing?.saleMode ?? null,
+                            quantityStep: rawStep ?? existing?.quantityStep?.toString() ?? null,
+                            productFamily: rawFamily !== undefined
+                                ? String(rawFamily).trim().toUpperCase()
+                                : existing?.productFamily ?? null,
+                            packUnit: rawPackUnit ?? existing?.packUnit ?? null,
+                            packSize: rawPackSize ?? existing?.packSize ?? null,
+                            packPrice: rawPackPrice ?? existing?.packPrice ?? null,
+                            requiresBatchTracking: rawBatchTracking ?? existing?.requiresBatchTracking ?? false,
+                            ivaExento: rawIvaExento ?? existing?.ivaExento ?? false,
+                        });
+                        if (!parsed.success) {
+                            errors.push(`Fila ${filaExcel} (${sku}): ${parsed.error.issues.map(issue => issue.message).join('; ')}`);
+                            continue;
+                        }
+
+                        const normalized = parsed.data;
+                        const config = { saleMode: normalized.saleMode, quantityStep: normalized.quantityStep };
+                        const targetStock = contextualProductQuantity(normalized.stock, config, { allowZero: true });
+                        const normalizedMinStock = contextualProductQuantity(normalized.minStock, config, { allowZero: true });
+                        const normalizedPrice = new Decimal(normalized.price).toNumber();
+                        const normalizedCost = new Decimal(normalized.cost ?? 0).toNumber();
+                        const normalizedPackSize = normalized.packSize
+                            ? new Decimal(normalized.packSize).toNumber()
+                            : null;
+                        const normalizedPackPrice = normalized.packPrice
+                            ? new Decimal(normalized.packPrice).toNumber()
+                            : null;
+
                         if (existing) {
-                            const stockDiff = stock - existing.stock;
+                            const lockedRows: Array<{ stock: Decimal.Value }> = await tx.$queryRaw`
+                                SELECT stock FROM \`Product\`
+                                WHERE id = ${existing.id} AND tenantId = ${authReq.tenantId!}
+                                FOR UPDATE`;
+                            if (lockedRows.length === 0) throw new Error('Producto no encontrado');
+                            const stockBeforeLocked = new Decimal(lockedRows[0].stock);
+                            const stockDiff = new Decimal(targetStock).minus(stockBeforeLocked);
+
+                            if (normalized.unit.trim().toLowerCase() !== existing.unit.trim().toLowerCase()) {
+                                const [movement, hasOpenCommitments] = await Promise.all([
+                                    tx.kardexMovement.findFirst({
+                                        where: { tenantId: authReq.tenantId!, productId: existing.id },
+                                        select: { id: true },
+                                    }),
+                                    hasOpenProductUnitCommitments(tx, authReq.tenantId!, existing.id),
+                                ]);
+                                assertBaseUnitChangeAllowed({
+                                    currentUnit: existing.unit,
+                                    nextUnit: normalized.unit,
+                                    stock: stockBeforeLocked,
+                                    hasMovements: movement !== null,
+                                    hasOpenCommitments,
+                                });
+                            }
+
                             await tx.product.update({
                                 where: { id: existing.id },
-                                data: { name, price, cost, stock, minStock, category, unit }
+                                data: {
+                                    name: normalized.name,
+                                    description: normalized.description || null,
+                                    price: normalizedPrice,
+                                    cost: normalizedCost,
+                                    minStock: normalizedMinStock,
+                                    category: normalized.category || null,
+                                    unit: normalized.unit,
+                                    saleMode: normalized.saleMode ?? null,
+                                    quantityStep: normalized.quantityStep || null,
+                                    productFamily: normalized.productFamily ?? null,
+                                    packUnit: normalized.packUnit || null,
+                                    packSize: normalizedPackSize,
+                                    packPrice: normalizedPackPrice,
+                                    requiresBatchTracking: Boolean(normalized.requiresBatchTracking),
+                                    ivaExento: Boolean(normalized.ivaExento),
+                                }
                             });
+
+                            let stockAfter = stockBeforeLocked.toNumber();
+                            if (!stockDiff.isZero()) {
+                                const stockResult = await applyStockDelta(tx, {
+                                    tenantId: authReq.tenantId!,
+                                    productId: existing.id,
+                                    delta: stockDiff.toNumber(),
+                                    enforceSufficient: false,
+                                });
+                                stockAfter = stockResult.stockAfter;
+                                await tx.kardexMovement.create({
+                                    data: {
+                                        tenantId: authReq.tenantId!,
+                                        productId: existing.id,
+                                        type: 'ADJUSTMENT',
+                                        quantity: stockDiff.toNumber(),
+                                        stockBefore: stockResult.stockBefore,
+                                        stockAfter: stockResult.stockAfter,
+                                        referenceType: 'BULK_IMPORT',
+                                        reason: 'Carga masiva - actualización',
+                                        userId: authReq.userId!,
+                                        warehouseId: stockResult.warehouseId,
+                                    }
+                                });
+                            }
 
                             // Auditoría de cambio de precio/costo en carga masiva: el PUT
                             // unitario deja rastro PRICE_CHANGED; sin esto el bulk sería una
                             // vía de evasión para reescribir la base de valuación (cost) y el
                             // precio sin asiento inmutable before/after.
-                            const priceChanged = Number(existing.price) !== Number(price);
-                            const costChanged  = Number(existing.cost)  !== Number(cost);
+                            const priceChanged = !new Decimal(existing.price).equals(normalizedPrice);
+                            const costChanged  = !new Decimal(existing.cost).equals(normalizedCost);
                             if (priceChanged || costChanged) {
                                 await tx.auditLog.create({
                                     data: {
@@ -3766,56 +4653,121 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
                                         action: 'PRICE_CHANGED',
                                         details: JSON.stringify({
                                             productId: existing.id,
-                                            priceBefore: String(existing.price), priceAfter: String(price),
-                                            costBefore: String(existing.cost), costAfter: String(cost),
+                                            priceBefore: String(existing.price), priceAfter: String(normalizedPrice),
+                                            costBefore: String(existing.cost), costAfter: String(normalizedCost),
                                             origen: 'BULK_IMPORT',
                                         }),
                                     }
                                 });
                             }
 
-                            // Kardex para el cambio de stock
-                            if (stockDiff !== 0) {
-                                await tx.kardexMovement.create({
-                                    data: {
-                                        tenantId: authReq.tenantId!,
+                            await tx.auditLog.create({
+                                data: {
+                                    tenantId: authReq.tenantId!,
+                                    userId: authReq.userId!,
+                                    action: 'PRODUCT_BULK_UPDATED',
+                                    details: JSON.stringify({
                                         productId: existing.id,
-                                        type: 'IN_PURCHASE',
-                                        quantity: stockDiff,
-                                        stockBefore: existing.stock,
-                                        stockAfter: stock,
-                                        referenceType: 'BULK_IMPORT',
-                                        reason: 'Carga masiva - actualización',
-                                        userId: authReq.userId!
-                                    }
-                                });
-                            }
+                                        before: {
+                                            unit: existing.unit,
+                                            saleMode: existing.saleMode,
+                                            quantityStep: existing.quantityStep?.toString() ?? null,
+                                            productFamily: existing.productFamily,
+                                            packUnit: existing.packUnit,
+                                            packSize: existing.packSize,
+                                            packPrice: existing.packPrice,
+                                            requiresBatchTracking: existing.requiresBatchTracking,
+                                            ivaExento: existing.ivaExento,
+                                            stock: stockBeforeLocked.toString(),
+                                        },
+                                        after: {
+                                            unit: normalized.unit,
+                                            saleMode: normalized.saleMode ?? null,
+                                            quantityStep: normalized.quantityStep || null,
+                                            productFamily: normalized.productFamily ?? null,
+                                            packUnit: normalized.packUnit || null,
+                                            packSize: normalizedPackSize,
+                                            packPrice: normalizedPackPrice,
+                                            requiresBatchTracking: Boolean(normalized.requiresBatchTracking),
+                                            ivaExento: Boolean(normalized.ivaExento),
+                                            stock: String(stockAfter),
+                                        },
+                                    }),
+                                },
+                            });
                             updated++;
                         } else {
                             const product = await tx.product.create({
                                 data: {
                                     tenantId: authReq.tenantId!,
-                                    name, sku, price, cost, stock, minStock, category, unit,
+                                    name: normalized.name,
+                                    sku,
+                                    description: normalized.description || null,
+                                    price: normalizedPrice,
+                                    cost: normalizedCost,
+                                    stock: 0,
+                                    minStock: normalizedMinStock,
+                                    category: normalized.category || null,
+                                    unit: normalized.unit,
+                                    saleMode: normalized.saleMode ?? null,
+                                    quantityStep: normalized.quantityStep || null,
+                                    productFamily: normalized.productFamily ?? null,
+                                    packUnit: normalized.packUnit || null,
+                                    packSize: normalizedPackSize,
+                                    packPrice: normalizedPackPrice,
+                                    requiresBatchTracking: Boolean(normalized.requiresBatchTracking),
+                                    ivaExento: Boolean(normalized.ivaExento),
                                     createdBy: authReq.userId!
                                 }
                             });
 
                             // Kardex inicial
-                            if (stock > 0) {
+                            if (targetStock > 0) {
+                                const stockResult = await applyStockDelta(tx, {
+                                    tenantId: authReq.tenantId!,
+                                    productId: product.id,
+                                    delta: targetStock,
+                                    enforceSufficient: false,
+                                });
                                 await tx.kardexMovement.create({
                                     data: {
                                         tenantId: authReq.tenantId!,
                                         productId: product.id,
-                                        type: 'IN_PURCHASE',
-                                        quantity: stock,
-                                        stockBefore: 0,
-                                        stockAfter: stock,
+                                        type: 'IN',
+                                        quantity: targetStock,
+                                        stockBefore: stockResult.stockBefore,
+                                        stockAfter: stockResult.stockAfter,
                                         referenceType: 'BULK_IMPORT',
                                         reason: 'Carga masiva - producto nuevo',
-                                        userId: authReq.userId!
+                                        userId: authReq.userId!,
+                                        warehouseId: stockResult.warehouseId,
                                     }
                                 });
                             }
+                            await tx.auditLog.create({
+                                data: {
+                                    tenantId: authReq.tenantId!,
+                                    userId: authReq.userId!,
+                                    action: 'PRODUCT_CREATED',
+                                    details: JSON.stringify({
+                                        productId: product.id,
+                                        source: 'BULK_IMPORT',
+                                        after: {
+                                            sku,
+                                            unit: normalized.unit,
+                                            saleMode: normalized.saleMode ?? null,
+                                            quantityStep: normalized.quantityStep || null,
+                                            productFamily: normalized.productFamily ?? null,
+                                            packUnit: normalized.packUnit || null,
+                                            packSize: normalizedPackSize,
+                                            packPrice: normalizedPackPrice,
+                                            requiresBatchTracking: Boolean(normalized.requiresBatchTracking),
+                                            ivaExento: Boolean(normalized.ivaExento),
+                                            stock: targetStock,
+                                        },
+                                    }),
+                                },
+                            });
                             created++;
                         }
                     } catch (itemError: any) {
@@ -3841,10 +4793,15 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), asyn
 });
 
 // PUT /api/products/:id - Actualizar producto (Solo OWNER)
-app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), validate(UpdateProductSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
-    const { name, description, category, price, cost, stock, minStock, unit, imageUrl, reorderPoint, maxStock, defaultSupplierId, wholesalePrice, wholesaleMinQty, packUnit, packSize, packPrice, ivaExento } = req.body;
+    const {
+        name, sku, description, category, price, cost, stock, minStock, unit,
+        saleMode, quantityStep, productFamily, imageUrl, reorderPoint, maxStock,
+        defaultSupplierId, wholesalePrice, wholesaleMinQty, packUnit, packSize,
+        packPrice, ivaExento, isPublished, requiresBatchTracking,
+    } = req.body;
 
     try {
         const existing = await prisma.product.findFirst({
@@ -3855,37 +4812,52 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
             return res.status(404).json({ error: 'Producto no encontrado' });
         }
 
+        const finalSaleMode = saleMode !== undefined ? saleMode : existing.saleMode;
+        const finalQuantityStep = quantityStep !== undefined
+            ? (quantityStep || null)
+            : existing.quantityStep?.toString() ?? null;
+        const finalConfig = { saleMode: finalSaleMode, quantityStep: finalQuantityStep };
+
+        // Al reclasificar, también el stock/umbrales ya guardados deben ser
+        // representables con el nuevo paso; no dejamos una configuración rota.
+        const targetStock = contextualProductQuantity(stock ?? existing.stock, finalConfig, { allowZero: true });
+        const targetMinStock = contextualProductQuantity(minStock ?? existing.minStock, finalConfig, { allowZero: true });
+        const targetReorder = contextualProductQuantity(reorderPoint ?? existing.reorderPoint, finalConfig, { allowZero: true });
+        const targetMaximum = contextualProductQuantity(maxStock ?? existing.maxStock, finalConfig, { allowZero: true });
+        if (wholesaleMinQty !== undefined && wholesaleMinQty !== null && wholesaleMinQty !== '') {
+            contextualProductQuantity(wholesaleMinQty, finalConfig);
+        } else if (wholesaleMinQty === undefined && existing.wholesaleMinQty != null) {
+            contextualProductQuantity(existing.wholesaleMinQty, finalConfig);
+        }
+
         const updates: any = {};
         if (name !== undefined) updates.name = name;
+        if (sku !== undefined) updates.sku = sku.toUpperCase();
         if (description !== undefined) updates.description = description;
         if (category !== undefined) updates.category = category;
-        if (price !== undefined) updates.price = parseFloat(price);
-        if (cost !== undefined) updates.cost = parseFloat(cost);
-        // Stock/minStock son Float (admiten unidades fraccionables kg/litro/metro):
-        // parseFloat preserva la fracción; parseInt truncaba y perdía inventario.
-        if (minStock !== undefined) updates.minStock = parseFloat(minStock);
+        if (price !== undefined) updates.price = new Decimal(price).toNumber();
+        if (cost !== undefined) updates.cost = new Decimal(cost).toNumber();
+        if (minStock !== undefined) updates.minStock = targetMinStock;
         if (unit !== undefined) updates.unit = unit;
+        if (saleMode !== undefined) updates.saleMode = saleMode;
+        if (quantityStep !== undefined) updates.quantityStep = quantityStep || null;
+        if (productFamily !== undefined) updates.productFamily = productFamily;
         // T2: reclasificar exoneración de IVA. Las ventas YA registradas no cambian
         // (SaleItem.ivaExento es una foto del momento de la venta).
         if (ivaExento !== undefined) updates.ivaExento = Boolean(ivaExento);
-        if (imageUrl !== undefined) updates.imageUrl = imageUrl;
-        if (reorderPoint !== undefined) updates.reorderPoint = parseFloat(reorderPoint) || 0;
-        if (maxStock !== undefined) updates.maxStock = parseFloat(maxStock) || 0;
+        if (isPublished !== undefined) updates.isPublished = Boolean(isPublished);
+        if (requiresBatchTracking !== undefined) updates.requiresBatchTracking = Boolean(requiresBatchTracking);
+        if (imageUrl !== undefined) updates.imageUrl = imageUrl || null;
+        if (reorderPoint !== undefined) updates.reorderPoint = targetReorder;
+        if (maxStock !== undefined) updates.maxStock = targetMaximum;
         if (defaultSupplierId !== undefined) updates.defaultSupplierId = defaultSupplierId || null;
-        // Venta por mayor: '' o null limpian el mayoreo; si viene valor, debe ser > 0.
         if (wholesalePrice !== undefined) {
-            const wp = wholesalePrice === null || wholesalePrice === '' ? null : parseFloat(wholesalePrice);
-            if (wp !== null && (!Number.isFinite(wp) || wp <= 0)) {
-                return res.status(400).json({ error: 'El precio de mayoreo debe ser un número mayor a 0' });
-            }
-            updates.wholesalePrice = wp;
+            updates.wholesalePrice = wholesalePrice === null || wholesalePrice === ''
+                ? null : new Decimal(wholesalePrice).toNumber();
         }
         if (wholesaleMinQty !== undefined) {
-            const wq = wholesaleMinQty === null || wholesaleMinQty === '' ? null : parseFloat(wholesaleMinQty);
-            if (wq !== null && (!Number.isFinite(wq) || wq <= 0)) {
-                return res.status(400).json({ error: 'La cantidad mínima de mayoreo debe ser mayor a 0' });
-            }
-            updates.wholesaleMinQty = wq;
+            updates.wholesaleMinQty = wholesaleMinQty === null || wholesaleMinQty === ''
+                ? null : new Decimal(wholesaleMinQty).toNumber();
         }
         // Empaque (Fase B): '' o null limpian; valores > 0. La validación cruzada
         // (packPrice exige packSize) se hace sobre el ESTADO FINAL (update parcial).
@@ -3893,56 +4865,102 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
             updates.packUnit = typeof packUnit === 'string' && packUnit.trim() !== '' ? packUnit.trim() : null;
         }
         if (packSize !== undefined) {
-            const ps = packSize === null || packSize === '' ? null : parseFloat(packSize);
-            if (ps !== null && (!Number.isFinite(ps) || ps <= 0)) {
-                return res.status(400).json({ error: 'El tamaño del empaque debe ser mayor a 0' });
-            }
-            updates.packSize = ps;
+            updates.packSize = packSize === null || packSize === '' ? null : new Decimal(packSize).toNumber();
         }
         if (packPrice !== undefined) {
-            const pp = packPrice === null || packPrice === '' ? null : parseFloat(packPrice);
-            if (pp !== null && (!Number.isFinite(pp) || pp <= 0)) {
-                return res.status(400).json({ error: 'El precio del empaque debe ser mayor a 0' });
-            }
-            updates.packPrice = pp;
+            updates.packPrice = packPrice === null || packPrice === '' ? null : new Decimal(packPrice).toNumber();
         }
         {
+            const finalPackUnit = updates.packUnit !== undefined ? updates.packUnit : existing.packUnit;
             const finalSize = updates.packSize !== undefined ? updates.packSize : existing.packSize;
             const finalPackPrice = updates.packPrice !== undefined ? updates.packPrice : existing.packPrice;
+            const hasPackUnit = typeof finalPackUnit === 'string' && finalPackUnit.trim() !== '';
+            const hasPackSize = finalSize !== null && finalSize !== undefined;
+            if (hasPackUnit !== hasPackSize) {
+                return res.status(400).json({
+                    error: 'El empaque requiere definir juntos la unidad y el tamaño',
+                    code: 'INVALID_PACK_CONFIGURATION',
+                });
+            }
             if (finalPackPrice != null && finalSize == null) {
                 return res.status(400).json({ error: 'El precio de empaque requiere un tamaño de empaque definido' });
             }
+            if (hasPackSize) {
+                contextualProductQuantity(finalSize, finalConfig);
+            }
         }
 
-        // Kardex (ledger inmutable) + product.update + auditoría deben cuadrar o
-        // revertirse juntos: se ejecutan dentro de una única $transaction. El ajuste
-        // de stock se hace con applyStockDelta (UPDATE relativo con row-lock), de modo
-        // que stockBefore/stockAfter salen sin condición de carrera y el Kardex solo
-        // se escribe si el stock realmente cambió (delta != 0, sin truncar).
-        const updated = await prisma.$transaction(async (tx: any) => {
-            if (stock !== undefined) {
-                const newStock = parseFloat(stock);
-                const stockDiff = newStock - Number(existing.stock);
+        if (sku !== undefined && sku.toUpperCase() !== existing.sku) {
+            const duplicate = await prisma.product.findUnique({
+                where: { tenantId_sku: { tenantId: authReq.tenantId!, sku: sku.toUpperCase() } },
+                select: { id: true },
+            });
+            if (duplicate) return res.status(400).json({ error: 'SKU ya existe en tu inventario' });
+        }
+        if (defaultSupplierId) {
+            const supplier = await prisma.supplier.findFirst({
+                where: { id: defaultSupplierId, tenantId: authReq.tenantId! },
+                select: { id: true },
+            });
+            if (!supplier) return res.status(400).json({ error: 'El proveedor por defecto no pertenece a tu negocio' });
+        }
+        if (stock !== undefined) await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
 
-                if (stockDiff !== 0) {
-                    const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+        const updated = await prisma.$transaction(async (tx: any) => {
+            const lockedRows: Array<{ stock: Decimal.Value }> = await tx.$queryRaw`
+                SELECT stock FROM \`Product\`
+                WHERE id = ${id} AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            if (lockedRows.length === 0) throw new Error('PRODUCTO_NO_ENCONTRADO');
+            const lockedStock = new Decimal(lockedRows[0].stock);
+
+            if (unit !== undefined) {
+                const [movement, hasOpenCommitments] = await Promise.all([
+                    tx.kardexMovement.findFirst({
+                        where: { tenantId: authReq.tenantId!, productId: id },
+                        select: { id: true },
+                    }),
+                    hasOpenProductUnitCommitments(tx, authReq.tenantId!, id),
+                ]);
+                assertBaseUnitChangeAllowed({
+                    currentUnit: existing.unit,
+                    nextUnit: unit,
+                    stock: lockedStock,
+                    hasMovements: movement !== null,
+                    hasOpenCommitments,
+                });
+            }
+
+            // Revalidar el stock actual bajo lock si se cambió el modo/paso.
+            if (saleMode !== undefined || quantityStep !== undefined) {
+                contextualProductQuantity(lockedStock, finalConfig, { allowZero: true });
+            }
+
+            let stockAfter = lockedStock.toNumber();
+            if (stock !== undefined) {
+                const stockDiff = new Decimal(targetStock).minus(lockedStock);
+
+                if (!stockDiff.isZero()) {
+                    const stockResult = await applyStockDelta(tx, {
                         tenantId: authReq.tenantId!,
                         productId: id,
-                        delta: stockDiff,
+                        delta: stockDiff.toNumber(),
                         enforceSufficient: false,
                     });
+                    stockAfter = stockResult.stockAfter;
 
                     await tx.kardexMovement.create({
                         data: {
                             tenantId: authReq.tenantId!,
                             productId: id,
                             type: 'ADJUSTMENT',
-                            quantity: stockDiff,
-                            stockBefore,
-                            stockAfter,
+                            quantity: stockDiff.toNumber(),
+                            stockBefore: stockResult.stockBefore,
+                            stockAfter: stockResult.stockAfter,
                             referenceType: 'ADJUSTMENT',
                             reason: 'Ajuste manual de inventario',
-                            userId: authReq.userId!
+                            userId: authReq.userId!,
+                            warehouseId: stockResult.warehouseId,
                         }
                     });
                 }
@@ -3971,11 +4989,38 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async 
                 });
             }
 
-            return result;
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'PRODUCT_UPDATED',
+                    details: JSON.stringify({
+                        productId: id,
+                        before: {
+                            unit: existing.unit,
+                            saleMode: existing.saleMode,
+                            quantityStep: existing.quantityStep?.toString() ?? null,
+                            productFamily: existing.productFamily,
+                            stock: lockedStock.toString(),
+                        },
+                        after: {
+                            unit: result.unit,
+                            saleMode: result.saleMode,
+                            quantityStep: result.quantityStep?.toString() ?? null,
+                            productFamily: result.productFamily,
+                            stock: String(stockAfter),
+                        },
+                    }),
+                },
+            });
+
+            return tx.product.findUniqueOrThrow({ where: { id } });
         });
 
         res.json(updated);
-    } catch (error) {
+    } catch (error: any) {
+        if (productQuantityErrorResponse(res, error)) return;
+        if (error?.message === 'PRODUCTO_NO_ENCONTRADO') return res.status(404).json({ error: 'Producto no encontrado' });
         console.error('Error updating product:', error);
         res.status(500).json({ error: 'Error actualizando producto' });
     }
@@ -4255,13 +5300,10 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
         return res.status(400).json({ error: 'productId y quantity son obligatorios.' });
     }
 
-    const adjustQty = parseInt(quantity);
-    if (isNaN(adjustQty) || adjustQty === 0) {
-        return res.status(400).json({ error: 'La cantidad debe ser un número distinto de cero.' });
-    }
+    const requestedDelta = new Decimal(quantity);
 
     // Determinar tipo de movimiento
-    const movementType = type || (adjustQty > 0 ? 'ADJUST_GAIN' : 'ADJUST_LOSS');
+    const movementType = type || (requestedDelta.isPositive() ? 'ADJUST_GAIN' : 'ADJUST_LOSS');
     const validTypes = ['ADJUST_LOSS', 'ADJUST_GAIN', 'IN_PURCHASE', 'RETURN'];
     if (!validTypes.includes(movementType)) {
         return res.status(400).json({ error: `Tipo inválido. Permitidos: ${validTypes.join(', ')}` });
@@ -4272,10 +5314,10 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
             code: 'BODEGUERO_ADJUSTMENT_TYPE_FORBIDDEN',
         });
     }
-    const isLoss = movementType === 'ADJUST_LOSS';
-    if ((isLoss && adjustQty > 0) || (!isLoss && adjustQty < 0)) {
+    const lossMovement = movementType === 'ADJUST_LOSS';
+    if ((lossMovement && !requestedDelta.isNegative()) || (!lossMovement && !requestedDelta.isPositive())) {
         return res.status(400).json({
-            error: isLoss
+            error: lossMovement
                 ? 'Una pérdida debe enviar una cantidad negativa.'
                 : 'Las entradas y devoluciones deben enviar una cantidad positiva.',
         });
@@ -4287,6 +5329,9 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
     }
 
     try {
+        // Compatibilidad segura: si un cliente histórico omite warehouseId y el
+        // tenant todavía no tiene bodegas creadas, la "Principal" debe existir
+        // antes del snapshot transaccional para evitar la carrera del primer uso.
         await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
 
         // TRANSACCIÓN ACID
@@ -4297,14 +5342,25 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
                 requestedWarehouseId,
             );
 
-            // Orden único de locks para mutaciones: Product → ProductStock.
-            const productRows: Array<{ name: string; sku: string }> = await tx.$queryRaw`
-                SELECT name, sku FROM \`Product\`
+            // Orden único de locks para toda mutación: Product → ProductStock.
+            // Evita invertirlo frente a ventas, compras y cierres de conteo.
+            const productRows: Array<{
+                name: string;
+                sku: string;
+                saleMode: string | null;
+                quantityStep: any;
+            }> = await tx.$queryRaw`
+                SELECT name, sku, saleMode, quantityStep
+                FROM \`Product\`
                 WHERE id = ${productId} AND tenantId = ${authReq.tenantId!}
                 FOR UPDATE`;
             const product = productRows[0];
             if (!product) throw new StockError('PRODUCT_NOT_FOUND', 'Producto no encontrado en tu inventario.');
 
+            const adjustQty = contextualProductQuantity(requestedDelta, product, { signed: true });
+
+            // Materializar y bloquear SIEMPRE la ubicación permite que Kardex,
+            // respuesta y auditoría usen before/after locales, no el agregado.
             await materializeWarehouseRow(tx, {
                 tenantId: authReq.tenantId!,
                 productId,
@@ -4312,7 +5368,8 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
                 isDefault: operationWarehouse.isDefault,
             });
             const warehouseRows: Array<{ stock: any }> = await tx.$queryRaw`
-                SELECT stock FROM \`ProductStock\`
+                SELECT stock
+                FROM \`ProductStock\`
                 WHERE productId = ${productId}
                   AND warehouseId = ${operationWarehouse.id}
                   AND tenantId = ${authReq.tenantId!}
@@ -4324,7 +5381,7 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
             if (adjustQty < 0 && warehouseStockBefore < Math.abs(adjustQty)) {
                 throw new StockError(
                     'INSUFFICIENT_STOCK',
-                    `Stock insuficiente en ${operationWarehouse.name}. Disponible: ${warehouseStockBefore}.`,
+                    `Stock insuficiente en ${operationWarehouse.name}. Disponible: ${warehouseStockBefore}, se pidió ${Math.abs(adjustQty)}.`,
                 );
             }
 
@@ -4346,7 +5403,8 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
             });
             const warehouseStockAfter = warehouseStockBefore + adjustQty;
 
-            // 3. Crear registro Kardex inmutable
+            // 3. Kardex por bodega: con warehouseId presente, before/after son
+            // los de ESA ubicación (misma semántica que transferencias/conteos).
             const movement = await tx.kardexMovement.create({
                 data: {
                     tenantId: authReq.tenantId!,
@@ -4400,13 +5458,19 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
         res.json({
             message: `Ajuste registrado en ${result.warehouseName}: ${result.productName} → ${result.warehouseStock}`,
             movement: result.movement,
+            // Compatibilidad: newStock conserva el agregado que consumían
+            // clientes anteriores. La UI de bodega usa warehouseStock.
             newStock: result.aggregateStock,
             warehouseStock: result.warehouseStock,
             aggregateStock: result.aggregateStock,
         });
     } catch (error: any) {
+        if (productQuantityErrorResponse(res, error)) return;
         if (error instanceof StockError) {
-            const status = error.code === 'PRODUCT_NOT_FOUND' ? 404 : 400;
+            const status =
+                error.code === 'PRODUCT_NOT_FOUND' ? 404
+                    : error.code === 'WAREHOUSE_NOT_FOUND' || error.code === 'WAREHOUSE_REQUIRED' ? 400
+                        : 400;
             return res.status(status).json({ error: error.message, code: error.code });
         }
         console.error('Error en ajuste de inventario:', error);
@@ -4450,25 +5514,26 @@ app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), 
                 where: { id: productId, tenantId: authReq.tenantId! },
             });
             if (!product) throw new Error('Producto no encontrado en tu inventario.');
+            const batchQuantity = contextualProductQuantity(quantity, product);
 
             // 1. Sumar stock del producto (atómico, row-lock).
-            const { stockBefore, stockAfter } = await applyStockDelta(tx, {
+            const { stockBefore, stockAfter, warehouseId } = await applyStockDelta(tx, {
                 tenantId: authReq.tenantId!,
                 productId,
-                delta: quantity,
+                delta: batchQuantity,
                 enforceSufficient: false,
             });
 
             // 2. Crear o incrementar el lote (mismo lote = se acumula).
             const batch = await tx.productBatch.upsert({
                 where: { productId_batchNumber: { productId, batchNumber } },
-                update: { stock: { increment: quantity } },
+                update: { stock: { increment: batchQuantity } },
                 create: {
                     tenantId: authReq.tenantId!,
                     productId,
                     batchNumber,
                     expiryDate: expiry,
-                    stock: quantity,
+                    stock: batchQuantity,
                 },
             });
 
@@ -4486,13 +5551,31 @@ app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), 
                     tenantId: authReq.tenantId!,
                     productId,
                     type: 'IN_PURCHASE',
-                    quantity,
+                    quantity: batchQuantity,
                     stockBefore,
                     stockAfter,
                     referenceType: 'BATCH',
                     reason: `Alta de lote ${batchNumber} (vence ${expiry.toISOString().slice(0, 10)})`,
                     userId: authReq.userId!,
                     batchId: batch.id,
+                    warehouseId,
+                },
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'PRODUCT_BATCH_ADDED',
+                    details: JSON.stringify({
+                        productId,
+                        batchId: batch.id,
+                        batchNumber,
+                        quantity: batchQuantity,
+                        unit: product.unit,
+                        stockBefore,
+                        stockAfter,
+                    }),
                 },
             });
 
@@ -4505,6 +5588,7 @@ app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), 
             newStock: result.newStock,
         });
     } catch (error: any) {
+        if (productQuantityErrorResponse(res, error)) return;
         console.error('Error creando lote:', error);
         res.status(error.message?.includes('no encontrado') ? 400 : 500)
             .json({ error: error.message || 'Error creando lote' });
@@ -4649,7 +5733,7 @@ class StockCountFlowError extends Error {
     }
 }
 
-// POST /api/stock-counts - Crear conteo + snapshot del stock esperado
+// POST /api/stock-counts - Crear conteo + snapshot exclusivo de una bodega.
 app.post('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN', BODEGUERO_ROLE]), validate(CreateStockCountSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { scope, category, notes, warehouseId: requestedWarehouseId } = req.body;
@@ -4694,13 +5778,17 @@ app.post('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN', BODEGUE
                 throw new StockCountFlowError(400, 'EMPTY_STOCK_COUNT_SCOPE', 'No hay productos en el alcance seleccionado.');
             }
 
+            // Product.stock es agregado. Para la default, una fila ausente es
+            // stock implícito = agregado - Σ otras bodegas; para una no-default
+            // una fila ausente equivale a cero. Todas las lecturas pertenecen al
+            // mismo snapshot transaccional.
             const productIds = products.map((product: any) => product.id);
-            const stockRows = await tx.productStock.findMany({
+            const warehouseRows = await tx.productStock.findMany({
                 where: { tenantId: authReq.tenantId!, productId: { in: productIds } },
                 select: { productId: true, warehouseId: true, stock: true },
             });
             const rowsByProduct = new Map<string, Array<{ warehouseId: string; stock: number }>>();
-            for (const row of stockRows) {
+            for (const row of warehouseRows) {
                 const rows = rowsByProduct.get(row.productId) || [];
                 rows.push({ warehouseId: row.warehouseId, stock: Number(row.stock) });
                 rowsByProduct.set(row.productId, rows);
@@ -4737,7 +5825,10 @@ app.post('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN', BODEGUE
                     diff: 0,
                 })),
             });
-            return { count: { ...created, warehouse }, items: snapshot.length };
+            return {
+                count: { ...created, warehouse },
+                items: snapshot.length,
+            };
         }, { isolationLevel: 'RepeatableRead' });
 
         res.status(201).json({
@@ -4819,8 +5910,11 @@ app.patch('/api/stock-counts/:id/count', authenticate, checkRole(['OWNER', 'ADMI
     const { productId, counted } = req.body;
     try {
         const result = await prisma.$transaction(async (tx: any) => {
+            // PATCH, cierre y cancelación toman primero este mismo row-lock.
+            // Así un valor no puede entrar mientras el cierre ya lo está usando.
             const countRows: Array<{ status: string; warehouseId: string | null }> = await tx.$queryRaw`
-                SELECT status, warehouseId FROM \`StockCount\`
+                SELECT status, warehouseId
+                FROM \`StockCount\`
                 WHERE id = ${id} AND tenantId = ${authReq.tenantId!}
                 FOR UPDATE`;
             const count = countRows[0];
@@ -4836,14 +5930,23 @@ app.patch('/api/stock-counts/:id/count', authenticate, checkRole(['OWNER', 'ADMI
                 throw new StockCountFlowError(409, 'STOCK_COUNT_NOT_OPEN', 'La toma física ya no está abierta.');
             }
 
+            const countItem = await tx.stockCountItem.findFirst({
+                where: { countId: id, productId },
+                include: { product: { select: { name: true, unit: true, saleMode: true, quantityStep: true } } },
+            });
+            if (!countItem) {
+                throw new StockCountFlowError(404, 'STOCK_COUNT_ITEM_NOT_FOUND', 'Este producto no pertenece a la toma física.');
+            }
+            const countedQuantity = contextualProductQuantity(counted, countItem.product, { allowZero: true });
+
             const updated = await tx.stockCountItem.updateMany({
                 where: { countId: id, productId },
-                data: { counted, countedAt: new Date() },
+                data: { counted: countedQuantity, countedAt: new Date() },
             });
             if (updated.count === 0) {
                 throw new StockCountFlowError(404, 'STOCK_COUNT_ITEM_NOT_FOUND', 'Este producto no pertenece a la toma física.');
             }
-            return { productId, counted };
+            return { productId, counted: countedQuantity, unit: countItem.product.unit };
         });
 
         res.json({ message: 'Conteo registrado', ...result });
@@ -4851,6 +5954,7 @@ app.patch('/api/stock-counts/:id/count', authenticate, checkRole(['OWNER', 'ADMI
         if (error instanceof StockCountFlowError) {
             return res.status(error.statusCode).json({ error: error.message, code: error.code });
         }
+        if (productQuantityErrorResponse(res, error)) return;
         console.error('Error registrando conteo:', error);
         res.status(500).json({ error: error.message || 'Error registrando conteo' });
     }
@@ -4865,6 +5969,8 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
         await seedChartOfAccounts(authReq.tenantId!);
 
         const result = await prisma.$transaction(async (tx: any) => {
+            // Claim atómico del cierre. Un segundo cierre, una captura o una
+            // cancelación esperan este row-lock y luego observan el estado final.
             const claimed = await tx.stockCount.updateMany({
                 where: { id, tenantId: authReq.tenantId!, status: 'OPEN' },
                 data: { status: 'CLOSING' },
@@ -4891,7 +5997,7 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
                 );
             }
             if (!count.warehouse.isActive) {
-                throw new StockCountFlowError(409, 'WAREHOUSE_INACTIVE', 'La bodega del conteo está inactiva.');
+                throw new StockCountFlowError(409, 'WAREHOUSE_INACTIVE', 'La bodega del conteo está inactiva; reactívala antes de cerrar.');
             }
             // Un período cerrado congela TODO ajuste de inventario, aun si el valor
             // de la merma fuese 0 (productos sin costo) y no se generara asiento.
@@ -4911,42 +6017,57 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
             for (const it of items) {
                 if (it.counted === null) continue; // no contado → no se toca
                 countedItems++;
-                const counted = Number(it.counted);
 
-                const productRows: Array<{ cost: any }> = await tx.$queryRaw`
-                    SELECT cost FROM \`Product\`
+                // Orden global de locks: StockCount → Product (por id asc) →
+                // ProductStock. Coincide con applyStockDelta y evita inversión
+                // frente a ventas mientras dos bodegas cierran en paralelo.
+                const productRows: Array<{
+                    stock: any;
+                    cost: any;
+                    name: string;
+                    saleMode: string | null;
+                    quantityStep: any;
+                }> = await tx.$queryRaw`
+                    SELECT stock, cost, name, saleMode, quantityStep
+                    FROM \`Product\`
                     WHERE id = ${it.productId} AND tenantId = ${authReq.tenantId!}
                     FOR UPDATE`;
                 const product = productRows[0];
                 if (!product) continue;
 
-                // `variance` = conteo vs el snapshot inicial (informativo, para el reporte).
-                const variance = counted - Number(it.expected);
-                await tx.stockCountItem.update({ where: { id: it.id }, data: { diff: variance } });
+                const counted = new Decimal(contextualProductQuantity(it.counted, product, { allowZero: true }));
 
+                // `variance` = conteo vs el snapshot inicial (informativo, para el reporte).
+                const variance = counted.minus(new Decimal(it.expected));
+                await tx.stockCountItem.update({ where: { id: it.id }, data: { diff: variance.toNumber() } });
+
+                // Materializa el desglose legado y bloquea LA FILA DE LA BODEGA,
+                // no el agregado Product.stock. El delta real lleva esa fila al
+                // conteo capturado y applyStockDelta mantiene el agregado en la
+                // misma transacción.
                 await materializeWarehouseRow(tx, {
                     tenantId: authReq.tenantId!,
                     productId: it.productId,
                     warehouseId: count.warehouseId,
                     isDefault: count.warehouse.isDefault,
                 });
-                const lockedRows: Array<{ stock: any }> = await tx.$queryRaw`
+                const warehouseStockRows: Array<{ stock: any }> = await tx.$queryRaw`
                     SELECT stock FROM \`ProductStock\`
                     WHERE productId = ${it.productId}
                       AND warehouseId = ${count.warehouseId}
                       AND tenantId = ${authReq.tenantId!}
                     FOR UPDATE`;
-                if (lockedRows.length === 0) {
-                    throw new StockCountFlowError(500, 'WAREHOUSE_STOCK_ROW_MISSING', 'No se pudo preparar el stock de la bodega.');
+                if (warehouseStockRows.length === 0) {
+                    throw new StockCountFlowError(500, 'WAREHOUSE_STOCK_ROW_MISSING', 'No se pudo materializar el stock de la bodega.');
                 }
-                const currentBook = Number(lockedRows[0].stock);
-                const delta = counted - currentBook;
-                if (delta === 0) continue;
+                const currentBook = new Decimal(warehouseStockRows[0].stock);
+                const delta = counted.minus(currentBook);
+                if (delta.isZero()) continue;
 
                 await applyStockDelta(tx, {
                     tenantId: authReq.tenantId!,
                     productId: it.productId,
-                    delta,
+                    delta: delta.toNumber(),
                     enforceSufficient: false,
                     warehouseId: count.warehouseId,
                 });
@@ -4955,20 +6076,22 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
                     data: {
                         tenantId: authReq.tenantId!,
                         productId: it.productId,
-                        type: delta < 0 ? 'ADJUST_LOSS' : 'ADJUST_GAIN',
-                        quantity: delta,
-                        stockBefore: currentBook,
-                        stockAfter: counted,
+                        type: delta.isNegative() ? 'ADJUST_LOSS' : 'ADJUST_GAIN',
+                        quantity: delta.toNumber(),
+                        // Con warehouseId presente, before/after son los de la
+                        // ubicación (misma semántica que una transferencia).
+                        stockBefore: currentBook.toNumber(),
+                        stockAfter: counted.toNumber(),
                         referenceId: id,
                         referenceType: 'STOCK_COUNT',
-                        reason: `Toma física #${id.slice(0, 8)} en ${count.warehouse.name}: libro ${currentBook}, contado ${counted}`,
+                        reason: `Toma física #${id.slice(0, 8)} en ${count.warehouse.name}: libro ${currentBook.toString()}, contado ${counted.toString()}`,
                         userId: authReq.userId!,
                         warehouseId: count.warehouseId,
                     },
                 });
 
-                const cost = new Decimal(Number(product.cost) || 0);
-                if (delta < 0) lossValue = lossValue.plus(cost.times(Math.abs(delta)));
+                const cost = new Decimal(product.cost || 0);
+                if (delta.isNegative()) lossValue = lossValue.plus(cost.times(delta.abs()));
                 else gainValue = gainValue.plus(cost.times(delta));
                 adjusted++;
             }
@@ -5032,6 +6155,7 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
         if (error instanceof StockError && error.code === 'WAREHOUSE_NOT_FOUND') {
             return res.status(409).json({ error: error.message, code: error.code });
         }
+        if (productQuantityErrorResponse(res, error)) return;
         if (error?.code === 'P2034') {
             return res.status(409).json({
                 error: 'Otro movimiento actualizó el inventario al mismo tiempo; reintentá el cierre.',
@@ -5186,7 +6310,7 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
             totalVentas = totalVentas.plus(new Decimal(sale.total?.toString() ?? '0'));
             sale.items.forEach((item) => {
                 totalCOGS = totalCOGS.plus(
-                    new Decimal(item.costAtSale?.toString() ?? '0').mul(Number(item.quantity) || 0)
+                    new Decimal(item.costAtSale?.toString() ?? '0').mul(item.quantity?.toString() ?? '0')
                 );
             });
         });
@@ -5231,6 +6355,17 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
                     gastos: Math.round(data.gastos * 100) / 100,
                 };
             });
+        const quantityBreakdown = buildSalesQuantityBreakdown(
+            sales.flatMap((sale: any) => sale.items.map((item: any) => ({
+                productId: item.productId,
+                productNameAtSale: item.productNameAtSale ?? item.name,
+                unitAtSale: item.unitAtSale,
+                saleModeAtSale: item.saleModeAtSale,
+                presentationAtSale: item.presentationAtSale,
+                presentationQuantityAtSale: item.presentationQuantityAtSale,
+                quantity: item.quantity,
+            }))),
+        );
 
         res.json({
             totalVentas:        new Decimal(totalVentas.toNumber()).toDecimalPlaces(2).toNumber(),
@@ -5240,6 +6375,7 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
             utilidadBruta:      utilidadBruta.toDecimalPlaces(2).toNumber(),
             totalTransacciones: sales.length,
             chartData,
+            quantityBreakdown,
         });
     } catch (error) {
         console.error('Error en reporte de ventas:', error);
@@ -5330,7 +6466,17 @@ app.get('/api/reports/inventory', authenticate, async (req: any, res: any) => {
         let inventoryValue = new Decimal(0);
         let outOfStock = 0;
         let totalUnits = 0;
-        const lowStock: { id: string; name: string; sku: string; stock: number; minStock: number; cost: number }[] = [];
+        const lowStock: {
+            id: string;
+            name: string;
+            sku: string;
+            stock: number;
+            minStock: number;
+            cost: number;
+            unit: string;
+            saleMode: SaleMode;
+            productFamily: string | null;
+        }[] = [];
 
         products.forEach((p) => {
             inventoryValue = inventoryValue.plus(
@@ -5346,6 +6492,9 @@ app.get('/api/reports/inventory', authenticate, async (req: any, res: any) => {
                     stock: p.stock,
                     minStock: p.minStock,
                     cost: p.cost,
+                    unit: String(p.unit || 'unidad'),
+                    saleMode: p.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED',
+                    productFamily: p.productFamily ?? null,
                 });
             }
         });
@@ -5356,6 +6505,18 @@ app.get('/api/reports/inventory', authenticate, async (req: any, res: any) => {
             totalUnits,
             outOfStock,
             lowStock,
+            products: products.map((p) => ({
+                id: p.id,
+                name: p.name,
+                sku: p.sku,
+                stock: Number(p.stock),
+                minStock: Number(p.minStock),
+                cost: Number(p.cost),
+                price: Number(p.price),
+                unit: String(p.unit || 'unidad'),
+                saleMode: p.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED',
+                productFamily: p.productFamily ?? null,
+            })),
         });
     } catch (error) {
         console.error('Error en reporte de inventario:', error);
@@ -5425,7 +6586,25 @@ app.get('/api/purchases', authenticate, async (req: any, res: any) => {
             orderBy: { createdAt: 'desc' },
             take: 100
         });
-        res.json(purchases);
+        const productIds = [...new Set(purchases.flatMap((purchase: any) =>
+            purchase.items.map((item: any) => item.productId),
+        ))];
+        const purchaseProducts = productIds.length > 0
+            ? await prisma.product.findMany({
+                where: { tenantId: authReq.tenantId!, id: { in: productIds } },
+                select: { id: true, unit: true },
+                take: 20_000,
+            })
+            : [];
+        const unitsByProduct = new Map(purchaseProducts.map((product: any) => [product.id, product.unit]));
+        res.json(purchases.map((purchase: any) => ({
+            ...purchase,
+            items: purchase.items.map((item: any) => ({
+                ...item,
+                quantityExact: item.quantityExact?.toString() ?? null,
+                unit: unitsByProduct.get(item.productId) ?? 'unidad',
+            })),
+        })));
     } catch (error) {
         console.error('Error fetching purchases:', error);
         res.status(500).json({ error: 'Error al obtener compras' });
@@ -5435,7 +6614,7 @@ app.get('/api/purchases', authenticate, async (req: any, res: any) => {
 // POST /api/purchases - Registrar compra (Transacción ACID)
 app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), validate(CreatePurchaseSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { supplierId, invoiceNumber, date, dueDate, paymentMethod, notes, items, purchaseOrderId } = req.body;
+    const { supplierId, warehouseId, invoiceNumber, date, dueDate, paymentMethod, notes, items, purchaseOrderId } = req.body;
     // Validaciones de formato ya realizadas por Zod
 
     try {
@@ -5449,6 +6628,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             select: { id: true },
         });
         if (!anchorPurchase) await seedChartOfAccounts(authReq.tenantId!);
+        if (!purchaseOrderId) await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
 
         const result = await prisma.$transaction(async (tx: any) => {
             // Serializar las compras del proveedor antes de cualquier lectura consistente
@@ -5465,6 +6645,12 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             if (!supplier) {
                 throw new Error('Proveedor no encontrado');
             }
+            // Una compra directa siempre tiene ubicación. Clientes anteriores
+            // pueden omitirla solo cuando el negocio mantiene una única bodega
+            // activa; con multi-bodega la ambigüedad se rechaza.
+            const operationWarehouse = purchaseOrderId
+                ? null
+                : await resolveOperationalWarehouse(tx, authReq.tenantId!, warehouseId);
 
             const existingInvoice = await tx.purchase.findFirst({
                 where: { tenantId: authReq.tenantId!, supplierId, invoiceNumber },
@@ -5481,8 +6667,15 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 id: string;
                 supplierId: string;
                 status: string;
-                items: { productId: string; productName: string; quantityReceived: number | string }[];
-                receipts: { items: { productId: string; quantity: number }[] }[];
+                items: {
+                    productId: string;
+                    productName: string;
+                    quantityReceived: number | string;
+                    quantityReceivedExact: Decimal | null;
+                }[];
+                receipts: {
+                    items: { productId: string; quantity: number; quantityExact: Decimal | null }[];
+                }[];
             } | null = null;
             if (purchaseOrderId) {
                 linkedPurchaseOrder = await tx.purchaseOrder.findFirst({
@@ -5491,10 +6684,19 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                         id: true,
                         supplierId: true,
                         status: true,
-                        items: { select: { productId: true, productName: true, quantityReceived: true } },
+                        items: {
+                            select: {
+                                productId: true,
+                                productName: true,
+                                quantityReceived: true,
+                                quantityReceivedExact: true,
+                            },
+                        },
                         receipts: {
                             select: {
-                                items: { select: { productId: true, quantity: true } },
+                                items: {
+                                    select: { productId: true, quantity: true, quantityExact: true },
+                                },
                             },
                         },
                     },
@@ -5534,23 +6736,59 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             //    exonerados se acreditaba un crédito fiscal INEXISTENTE (menos IVA
             //    a pagar del que corresponde). `product.ivaExento` es autoritativo
             //    (viene de la BD scoped por tenant, nunca del cliente).
-            let subtotal = 0;
+            let subtotal = new Decimal(0);
             let taxableSubtotal = new Decimal(0);   // base gravada (no exonerada)
             const processedItems: any[] = [];
 
-            for (const item of items) {
-                if (!item.productId || !item.quantity || item.quantity <= 0 || !item.unitCost || item.unitCost <= 0) {
-                    throw new Error(`Item inválido: producto=${item.productId}, cantidad=${item.quantity}, costo=${item.unitCost}`);
-                }
+            const productIds = [...new Set(items.map((item: any) => String(item.productId)))];
+            const ownedProducts: Array<{
+                id: string;
+                name: string;
+                unit: string;
+                ivaExento: boolean;
+                requiresBatchTracking: boolean;
+                saleMode: SaleMode | null;
+                quantityStep: any;
+                packUnit: string | null;
+                packSize: number | null;
+            }> = await tx.product.findMany({
+                where: { id: { in: productIds }, tenantId: authReq.tenantId! },
+                select: {
+                    id: true,
+                    name: true,
+                    unit: true,
+                    ivaExento: true,
+                    requiresBatchTracking: true,
+                    saleMode: true,
+                    quantityStep: true,
+                    packUnit: true,
+                    packSize: true,
+                },
+            });
+            const productsById = new Map<string, (typeof ownedProducts)[number]>(
+                ownedProducts.map((product) => [product.id, product]),
+            );
 
-                const product = await tx.product.findFirst({
-                    where: { id: item.productId, tenantId: authReq.tenantId }
-                });
+            for (const item of items) {
+                const product = productsById.get(item.productId);
 
                 if (!product) {
                     throw new Error(`Producto no encontrado: ${item.productId}`);
                 }
 
+                let resolvedLine: ReturnType<typeof resolvePurchaseLine>;
+                try {
+                    resolvedLine = resolvePurchaseLine(item, product);
+                } catch (error) {
+                    if (error instanceof QuantityValidationError) {
+                        throw new QuantityValidationError(error.code, `${product.name}: ${error.message}`);
+                    }
+                    throw error;
+                }
+                const exactQuantity = resolvedLine.baseQuantity;
+                // PurchaseItem.unitCost sigue siendo Decimal(10,2) legacy; el
+                // promedio usa el cociente exacto del empaque, no esa sombra.
+                const unitCost = resolvedLine.baseUnitCost.toDecimalPlaces(2);
                 const linkedItem = linkedProductAvailability?.get(item.productId);
                 if (linkedProductAvailability && !linkedItem) {
                     throw new Error(`ITEM_FUERA_DE_OC|${product.name}`);
@@ -5558,7 +6796,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 if (linkedItem) {
                     const remainingToInvoice = linkedItem.remaining;
                     const requested = (requestedFromLinkedPO.get(item.productId) ?? new Decimal(0))
-                        .plus(item.quantity);
+                        .plus(exactQuantity);
                     if (remainingToInvoice.lte(0) || requested.greaterThan(remainingToInvoice)) {
                         throw new Error(`CANTIDAD_SUPERA_RECEPCION|${linkedItem.productName}|${Decimal.max(0, remainingToInvoice).toString()}`);
                     }
@@ -5569,15 +6807,19 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     throw new Error(`LOTE_REQUERIDO|${product.name}`);
                 }
 
-                const totalCost = new Decimal(item.quantity).mul(item.unitCost);
-                subtotal = new Decimal(subtotal).plus(totalCost).toNumber();
+                const totalCost = resolvedLine.lineTotal;
+                subtotal = subtotal.plus(totalCost);
                 if (!product.ivaExento) taxableSubtotal = taxableSubtotal.plus(totalCost);
 
                 processedItems.push({
                     productId:   item.productId,
                     productName: product.name,
-                    quantity:    item.quantity,
-                    unitCost:    item.unitCost,
+                    quantity:    legacyPurchaseQuantity(exactQuantity),
+                    quantityExact: exactQuantity.toFixed(),
+                    stockQuantity: exactQuantity.toNumber(),
+                    unit: product.unit,
+                    averageUnitCost: resolvedLine.baseUnitCost.toString(),
+                    unitCost:    unitCost.toFixed(2),
                     totalCost:   totalCost.toNumber(),
                     batchNumber: item.batchNumber || null,
                     expiryDate:  item.expiryDate ? normalizeCalendarDateInput(item.expiryDate) : null
@@ -5588,8 +6830,9 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             // se paga al proveedor el costo de TODA la mercancía más el IVA de la
             // parte gravada. En recordPurchase el asiento queda Debe 1.1.4 = subtotal
             // (todo el inventario) + Debe 1.1.5 = tax (crédito solo del gravado).
-            const tax   = taxableSubtotal.mul('0.15').toDecimalPlaces(4).toNumber(); // IVA 15% Nicaragua
-            const total = new Decimal(subtotal).plus(tax).toDecimalPlaces(4).toNumber();
+            const subtotalAmount = subtotal.toDecimalPlaces(4);
+            const taxAmount = taxableSubtotal.mul('0.15').toDecimalPlaces(4); // IVA 15% Nicaragua
+            const totalAmount = subtotalAmount.plus(taxAmount).toDecimalPlaces(4);
 
             // 2. Crear cabecera de compra
             const purchase = await tx.purchase.create({
@@ -5602,15 +6845,20 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     // mal las facturas retroactivas en constancias/libros/DGI.
                     date: normalizeCalendarDateInput(date),
                     dueDate: dueDate ? normalizeCalendarDateInput(dueDate) : null,
-                    subtotal,
-                    tax,
-                    total,
+                    subtotal: subtotalAmount.toNumber(),
+                    tax: taxAmount.toNumber(),
+                    total: totalAmount.toNumber(),
                     status: paymentMethod === 'CASH' ? 'COMPLETED' : 'PENDING_PAYMENT',
                     paymentMethod,
                     notes: notes || null,
                     createdBy: authReq.userId!,
                     items: {
-                        create: processedItems
+                        create: processedItems.map(({
+                            stockQuantity: _stockQuantity,
+                            unit: _unit,
+                            averageUnitCost: _averageUnitCost,
+                            ...persisted
+                        }) => persisted),
                     }
                 },
                 include: { items: true, supplier: true }
@@ -5620,7 +6868,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             // la recepción es la única responsable de estos movimientos.
             const costChanges: any[] = []; // before/after de stock y costo valorizado por producto
             for (const item of linkedPurchaseOrder ? [] : processedItems) {
-                const product = await tx.product.findUnique({ where: { id: item.productId } });
+                const product = productsById.get(item.productId);
                 if (!product) continue;
 
                 // Stock por applyStockDelta: incremento ATÓMICO (sin lost-update del
@@ -5629,8 +6877,9 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 const { stockBefore, stockAfter, warehouseId: purchaseWarehouseId } = await applyStockDelta(tx, {
                     tenantId: authReq.tenantId!,
                     productId: item.productId,
-                    delta: item.quantity,
+                    delta: item.stockQuantity,
                     enforceSufficient: false,
+                    warehouseId: operationWarehouse?.id,
                 });
                 const oldStock = stockBefore;
                 const newStock = stockAfter;
@@ -5646,7 +6895,12 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 const oldCost = new Decimal((lockedCostRows[0]?.cost ?? 0).toString());
 
                 // Promedio ponderado móvil (función pura compartida — regla C1 adentro).
-                const newAvgCost = weightedAverageCost(oldStock, oldCost, item.quantity, item.unitCost.toString()).toNumber();
+                const newAvgCost = weightedAverageCost(
+                    oldStock,
+                    oldCost,
+                    item.quantityExact,
+                    item.averageUnitCost,
+                ).toNumber();
 
                 await tx.product.update({
                     where: { id: item.productId },
@@ -5660,7 +6914,9 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     stockBefore: oldStock,
                     stockAfter: newStock,
                     costBefore: oldCost.toNumber(),
-                    costAfter: newAvgCost
+                    costAfter: newAvgCost,
+                    quantityExact: item.quantityExact,
+                    unit: item.unit,
                 });
 
                 // Control de Lotes
@@ -5670,7 +6926,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                         where: {
                             productId_batchNumber: { productId: item.productId, batchNumber: item.batchNumber }
                         },
-                        update: { stock: { increment: item.quantity } },
+                        update: { stock: { increment: item.stockQuantity } },
                         create: {
                             tenantId: authReq.tenantId!,
                             productId: item.productId,
@@ -5679,7 +6935,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                             // Volver a pasar el Date por el normalizador de strings
                             // produciría una fecha inválida para compras con lote.
                             expiryDate: item.expiryDate,
-                            stock: item.quantity
+                            stock: item.stockQuantity
                         }
                     });
                     batchId = batch.id;
@@ -5691,7 +6947,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                         tenantId: authReq.tenantId!,
                         productId: item.productId,
                         type: 'IN_PURCHASE',
-                        quantity: item.quantity,
+                        quantity: item.stockQuantity,
                         stockBefore: oldStock,
                         stockAfter: newStock,
                         referenceId: purchase.id,
@@ -5713,22 +6969,22 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 // row-lock), así dos compras de contado concurrentes no pueden ambas
                 // pasar el chequeo y dejar la billetera en negativo (TOCTOU).
                 const debited = await tx.tenant.updateMany({
-                    where: { id: authReq.tenantId, walletBalance: { gte: total } },
-                    data: { walletBalance: { decrement: total } }
+                    where: { id: authReq.tenantId, walletBalance: { gte: totalAmount.toNumber() } },
+                    data: { walletBalance: { decrement: totalAmount.toNumber() } }
                 });
                 if (debited.count === 0) {
                     const t = await tx.tenant.findUnique({
                         where: { id: authReq.tenantId },
                         select: { walletBalance: true }
                     });
-                    throw new Error(`SALDO_INSUFICIENTE: disponible C$ ${Number(t?.walletBalance ?? 0).toFixed(2)}, requerido C$ ${Number(total).toFixed(2)}. Usa crédito o recarga tu billetera.`);
+                    throw new Error(`SALDO_INSUFICIENTE: disponible C$ ${new Decimal(t?.walletBalance?.toString() ?? 0).toFixed(2)}, requerido C$ ${totalAmount.toFixed(2)}. Usa crédito o recarga tu billetera.`);
                 }
 
                 // Crear gasto
                 await tx.expense.create({
                     data: {
                         tenantId: authReq.tenantId!,
-                        amount: total,
+                        amount: totalAmount.toNumber(),
                         description: `Compra Factura #${invoiceNumber} - ${purchase.supplier.name}`,
                         category: 'COMPRA_MERCADERIA'
                     }
@@ -5749,15 +7005,15 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 authReq.tenantId!,
                 authReq.userId!,
                 purchase.id,
-                new Decimal(total).toNumber(),
-                new Decimal(tax).toNumber(),
+                totalAmount.toNumber(),
+                taxAmount.toNumber(),
                 paymentMethod
             );
 
             // Asiento inmutable de auditoría (Capa 3): toda compra mueve su efecto
             // financiero; solo una compra directa mueve además inventario valorizado.
             // Registrar before/after de billetera y los cambios de stock/costo aplicados.
-            const walletAfter = paymentMethod === 'CASH' ? walletBefore.minus(total) : walletBefore;
+            const walletAfter = paymentMethod === 'CASH' ? walletBefore.minus(totalAmount) : walletBefore;
             await tx.auditLog.create({
                 data: {
                     tenantId: authReq.tenantId!,
@@ -5768,10 +7024,11 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                         supplierId,
                         invoiceNumber,
                         purchaseOrderId: linkedPurchaseOrder?.id ?? null,
+                        warehouseId: operationWarehouse?.id ?? null,
                         paymentMethod,
-                        subtotal,
-                        tax,
-                        total,
+                        subtotal: subtotalAmount.toString(),
+                        tax: taxAmount.toString(),
+                        total: totalAmount.toString(),
                         walletBefore: walletBefore.toNumber(),
                         walletAfter: walletAfter.toNumber(),
                         productChanges: costChanges,
@@ -5786,12 +7043,13 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
         res.json({
             message: result.purchaseOrderId
                 ? 'Factura registrada y vinculada a la Orden de Compra. El inventario se actualiza únicamente al recibir la OC.'
-                : `Compra registrada. ${processedItemsCount(items)} productos ingresados al inventario.`,
+                : `Compra registrada. ${items.length} línea(s) ingresada(s) al inventario.`,
             purchase: result
         });
 
     } catch (error: any) {
         console.error('Error registrando compra:', error);
+        if (productQuantityErrorResponse(res, error)) return;
         // Período cerrado (A1): la compra ahora exige asiento, así que un período
         // bloqueado la RECHAZA (423) en vez de dejar entrar mercancía sin registrar.
         if (error instanceof PeriodLockedError) {
@@ -5799,6 +7057,12 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
         }
         if (error?.message === 'FACTURA_DUPLICADA') {
             return res.status(409).json({ error: `Ya existe la factura #${invoiceNumber} para este proveedor. No se registró nuevamente.` });
+        }
+        if (error instanceof StockError && error.code === 'WAREHOUSE_REQUIRED') {
+            return res.status(400).json({ error: error.message, code: error.code });
+        }
+        if (error instanceof StockError && error.code === 'WAREHOUSE_NOT_FOUND') {
+            return res.status(404).json({ error: error.message, code: error.code });
         }
         if (error?.message === 'OC_DE_OTRO_PROVEEDOR') {
             return res.status(400).json({ error: 'La orden de compra pertenece a otro proveedor' });
@@ -5827,10 +7091,6 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
         res.status(insufficient ? 400 : notFound ? 404 : 500).json({ error: error.message || 'Error al procesar la compra' });
     }
 });
-
-function processedItemsCount(items: any[]) {
-    return items.reduce((sum: number, i: any) => sum + (i.quantity || 0), 0);
-}
 
 // POST /api/purchases/:id/pay - Pagar cuenta pendiente
 app.post('/api/purchases/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), async (req: any, res: any) => {
@@ -7549,20 +8809,40 @@ app.post('/api/admin/manual-payments/:id/approve', authenticate, requireSuperAdm
 // ==========================================
 
 // GET /api/quotations - Historial
-app.get('/api/quotations', authenticate, async (req: any, res: any) => {
+app.get('/api/quotations', authenticate, checkRole(QUOTATION_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const quotes = await prisma.quotation.findMany({
             where: { tenantId: authReq.tenantId },
             orderBy: { createdAt: 'desc' },
-            take: 50
+            take: 50,
+            include: {
+                items: {
+                    orderBy: { id: 'asc' },
+                },
+            },
         });
-        // Frontend expects numbers, Prisma returns Decimal
+        const productIds = [...new Set(quotes.flatMap((quote) => quote.items.map((item) => item.productId)))];
+        const products: QuotationProductAuthority[] = productIds.length === 0
+            ? []
+            : await prisma.product.findMany({
+                where: { tenantId: authReq.tenantId, id: { in: productIds } },
+                select: {
+                    id: true,
+                    name: true,
+                    price: true,
+                    unit: true,
+                    ivaExento: true,
+                    saleMode: true,
+                    quantityStep: true,
+                },
+            });
         const safeQuotes = quotes.map((q: any) => ({
             ...q,
             subtotal: Number(q.subtotal),
             tax: Number(q.tax),
-            total: Number(q.total)
+            total: Number(q.total),
+            items: serializeQuotationItemsForClient(q.items, products),
         }));
         res.json(safeQuotes);
     } catch (error) {
@@ -7571,35 +8851,55 @@ app.get('/api/quotations', authenticate, async (req: any, res: any) => {
 });
 
 // POST /api/quotations - Crear
-app.post('/api/quotations', authenticate, async (req: any, res: any) => {
+app.post('/api/quotations', authenticate, checkRole(QUOTATION_WRITE_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { customerName, customerRuc, items, expiresAt } = req.body;
 
     if (!items || items.length === 0) return res.status(400).json({ error: 'Faltan items' });
 
     try {
-        // Totales server-side (nunca confiar en los del cliente), con decimal.js.
-        // T1: `item.price` es precio de GÓNDOLA — YA trae el IVA incluido, igual
-        // que en la venta (`recordSale` hace neto = total / 1.15). Antes se le
-        // sumaba 15% ENCIMA (`tax = subtotal * 0.15; total = subtotal + tax`), así
-        // que la cotización cobraba el IVA dos veces y NUNCA cuadraba con lo que
-        // el POS le cobra al cliente: un producto de C$115 se vendía a C$115 pero
-        // se cotizaba a C$132.25. Ahora se DESGLOSA desde el precio inclusivo.
-        let totalD = new Decimal(0);
-        const formattedItems = items.map((item: any) => {
-            totalD = totalD.plus(new Decimal(item.price).mul(item.quantity));
-            return {
-                productId: item.id || item.productId,
-                name: item.name,
-                price: item.price,
-                quantity: item.quantity
-            };
-        });
+        const parsedItems = z.array(z.object({
+            id: z.string().trim().min(1).max(191).optional(),
+            productId: z.string().trim().min(1).max(191).optional(),
+            quantity: z.union([z.string(), z.number()]),
+            price: z.union([z.string(), z.number()]).optional(),
+            name: z.string().trim().min(1).max(255).optional(),
+        }).strict()).min(1).max(500).parse(items).map((item) => ({
+            ...item,
+            quantity: item.quantity,
+        }));
 
-        const { neto, iva } = desglosarIvaIncluido(totalD);
-        const subtotal = neto.toNumber();
-        const tax = iva.toNumber();
-        const total = neto.plus(iva).toNumber();   // === totalD: lo que paga el cliente
+        const productIds = [...new Set(parsedItems.map((item) => String(item.productId ?? item.id)))];
+        const products: QuotationProductAuthority[] = await prisma.product.findMany({
+            where: { tenantId: authReq.tenantId!, id: { in: productIds } },
+            select: {
+                id: true,
+                name: true,
+                price: true,
+                unit: true,
+                ivaExento: true,
+                saleMode: true,
+                quantityStep: true,
+            },
+        });
+        const resolvedItems = resolveQuotationItems(parsedItems, products);
+
+        let subtotalD = new Decimal(0);
+        let taxD = new Decimal(0);
+        for (const item of resolvedItems) {
+            const lineTotal = item.price.mul(item.quantityExact).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            if (item.ivaExento) {
+                subtotalD = subtotalD.plus(lineTotal);
+                continue;
+            }
+            const { neto, iva } = desglosarIvaIncluido(lineTotal);
+            subtotalD = subtotalD.plus(neto);
+            taxD = taxD.plus(iva);
+        }
+
+        const subtotal = subtotalD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+        const tax = taxD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+        const total = new Decimal(subtotal).plus(tax).toNumber();
 
         const quote = await prisma.quotation.create({
             data: {
@@ -7611,13 +8911,46 @@ app.post('/api/quotations', authenticate, async (req: any, res: any) => {
                 total,
                 expiresAt: new Date(expiresAt),
                 items: {
-                    create: formattedItems
-                }
-            }
+                    create: resolvedItems.map((item) => ({
+                        productId: item.productId,
+                        name: item.name,
+                        price: item.price.toNumber(),
+                        unitPriceExact: item.price.toFixed(4),
+                        quantity: item.quantityLegacy,
+                        quantityExact: item.quantityExact.toFixed(),
+                        unitAtQuote: item.unit,
+                        saleModeAtQuote: item.saleMode,
+                        quantityStepAtQuote: item.quantityStep,
+                        presentationAtQuote: item.presentationAtQuote,
+                        presentationQuantityAtQuote: item.presentationQuantityAtQuote.toFixed(4),
+                        ivaExentoAtQuote: item.ivaExento,
+                    })),
+                },
+            },
+            include: {
+                items: {
+                    orderBy: { id: 'asc' },
+                },
+            },
         });
 
-        res.json({ ...quote, subtotal, tax, total });
+        res.json({
+            ...quote,
+            subtotal,
+            tax,
+            total,
+            items: serializeQuotationItemsForClient(quote.items, products),
+        });
     } catch (error) {
+        if (error instanceof QuotationItemError) {
+            return res.status(error.code === 'PRODUCT_NOT_FOUND' ? 404 : 400).json({ error: error.message, code: error.code });
+        }
+        if (error instanceof QuantityValidationError) {
+            return res.status(400).json({ error: error.message, code: error.code });
+        }
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: error.issues.map((issue) => issue.message).join(' | ') || 'Items inválidos' });
+        }
         console.error('Create quotation error:', error);
         res.status(500).json({ error: 'Error al crear cotización' });
     }
@@ -9132,6 +10465,7 @@ app.get('/api/inventory/reorder', authenticate, checkRole(['OWNER', 'ADMIN']), a
             select: {
                 id: true, name: true, sku: true, stock: true, cost: true, minStock: true,
                 reorderPoint: true, maxStock: true, category: true, defaultSupplierId: true,
+                unit: true, saleMode: true, quantityStep: true,
                 defaultSupplier: { select: { id: true, name: true } },
             },
         });
@@ -9151,8 +10485,24 @@ app.get('/api/inventory/reorder', authenticate, checkRole(['OWNER', 'ADMIN']), a
 
             // Cuánto reponer: llevar al máximo si está definido; si no, a 15 días de
             // venta o al doble del punto de reorden.
-            const target = maxStock > 0 ? maxStock : (vpd > 0 ? vpd * 15 : reorderPoint * 2);
-            const suggestedQty = Math.max(0, Math.ceil(target - stock));
+            const target = new Decimal(maxStock > 0 ? maxStock : (vpd > 0 ? vpd * 15 : reorderPoint * 2));
+            const rawSuggested = Decimal.max(target.minus(new Decimal(stock)), 0);
+            const quantityRules = quantityRulesForProduct(p);
+            let step: Decimal;
+            try {
+                step = new Decimal(quantityRules.quantityStep);
+                if (!step.isFinite() || !step.greaterThan(0) || step.decimalPlaces() > 4) throw new Error('invalid step');
+                if (quantityRules.saleMode === 'COUNTED' && !step.isInteger()) throw new Error('invalid counted step');
+            } catch {
+                // Catálogo legado mal configurado no debe romper toda la lista;
+                // el endpoint de OC vuelve a validar autoritativamente y lo
+                // rechazará hasta corregir el producto.
+                step = new Decimal(quantityRules.saleMode === 'COUNTED' ? 1 : '0.0001');
+            }
+            const suggestedQtyDecimal = rawSuggested.isZero()
+                ? new Decimal(0)
+                : rawSuggested.div(step).ceil().mul(step).toDecimalPlaces(4);
+            const suggestedQty = suggestedQtyDecimal.toNumber();
             const cost = Number(p.cost) || 0;
 
             items.push({
@@ -9160,6 +10510,9 @@ app.get('/api/inventory/reorder', authenticate, checkRole(['OWNER', 'ADMIN']), a
                 name: p.name,
                 sku: p.sku,
                 category: p.category,
+                unit: p.unit,
+                saleMode: p.saleMode,
+                quantityStep: p.quantityStep?.toString() ?? null,
                 currentStock: stock,
                 reorderPoint,
                 maxStock,
@@ -9203,7 +10556,7 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
         // El costo del proveedor (unitCost) NO trae IVA → el IVA se SUMA (15%),
         // igual que en /api/purchases (correcto para compras).
         const subtotalD = items.reduce(
-            (s: Decimal, i: any) => s.plus(new Decimal(i.quantity).mul(i.unitCost)),
+            (s: Decimal, i: any) => s.plus(new Decimal(i.quantity).mul(new Decimal(i.unitCost).toDecimalPlaces(2))),
             new Decimal(0)
         ).toDecimalPlaces(4);
         const taxD = subtotalD.mul('0.15').toDecimalPlaces(4);
@@ -9236,10 +10589,27 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
             if (!supplier) throw new Error('SUPPLIER_NOT_FOUND');
 
             const productIds: string[] = [...new Set(items.map((i: any) => i.productId))];
-            const ownedProducts = await tx.product.count({
+            const ownedProducts = await tx.product.findMany({
                 where: { id: { in: productIds }, tenantId: authReq.tenantId! },
             });
-            if (ownedProducts !== productIds.length) throw new Error('PRODUCT_NOT_FOUND');
+            if (ownedProducts.length !== productIds.length) throw new Error('PRODUCT_NOT_FOUND');
+            const capitalProducts = new Map<string, (typeof ownedProducts)[number]>(
+                ownedProducts.map((product: any) => [product.id, product] as const),
+            );
+            const capitalItems = items.map((item: any) => {
+                const product = capitalProducts.get(item.productId);
+                if (!product) throw new Error('PRODUCT_NOT_FOUND');
+                const exact = contextualProductQuantityDecimal(item.quantity, product);
+                const unitCost = new Decimal(item.unitCost).toDecimalPlaces(2);
+                return {
+                    productId: item.productId,
+                    productName: product.name,
+                    quantity: legacyPurchaseQuantity(exact),
+                    quantityExact: exact.toFixed(),
+                    unitCost: unitCost.toFixed(2),
+                    totalCost: exact.mul(unitCost).toDecimalPlaces(2).toNumber(),
+                };
+            });
 
             // a) Crear la compra al proveedor con estado PENDING_PAYMENT
             const purchase = await tx.purchase.create({
@@ -9255,13 +10625,7 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
                     notes: 'Compra financiada por Nortex Capital - Oráculo de Inventario',
                     createdBy: authReq.userId!,
                     items: {
-                        create: items.map((i: any) => ({
-                            productId: i.productId,
-                            productName: i.productName,
-                            quantity: i.quantity,
-                            unitCost: i.unitCost,
-                            totalCost: i.quantity * i.unitCost
-                        }))
+                        create: capitalItems,
                     }
                 }
             });
@@ -9322,6 +10686,7 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
             }
         });
     } catch (error) {
+        if (productQuantityErrorResponse(res, error)) return;
         if (error instanceof Error && error.message === 'SUPPLIER_NOT_FOUND') {
             return res.status(404).json({ error: 'Proveedor no encontrado.' });
         }
@@ -10117,7 +11482,7 @@ app.get('/api/debug/catalog/:slug', authenticate, async (req: any, res: any) => 
 });
 
 // GET /api/public/catalog/:slug — Catálogo público (NO requiere JWT)
-// 🔒 AUDITORÍA: Solo expone name, price, description, imageUrl, category, unit
+// 🔒 AUDITORÍA: Solo expone datos comerciales públicos y reglas de cantidad.
 // JAMÁS: cost, stock, tenantId, createdBy, sku, minStock
 app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) => {
     const { slug } = req.params;
@@ -10139,13 +11504,14 @@ app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) =
             select: {
                 id: true, name: true, price: true, description: true,
                 imageUrl: true, category: true, unit: true,
+                saleMode: true, quantityStep: true,
+                packUnit: true, packSize: true, packPrice: true,
             },
             orderBy: { name: 'asc' }
         });
 
         res.json({
             business: {
-                id: tenant.id,
                 name: tenant.businessName,
                 slug: tenant.slug,
                 phone: tenant.phone,
@@ -10170,14 +11536,19 @@ const orderLimiter = rateLimit({
 
 // Validación del pedido público: el cliente NUNCA fija precios (se resuelven de la BD).
 const PublicOrderSchema = z.object({
-    slug: z.string().min(1, 'slug requerido'),
+    slug: z.string().trim().min(1, 'slug requerido').max(191),
     customerName: z.string().trim().min(1, 'Nombre requerido').max(200),
     customerPhone: z.string().trim().max(20).optional(),
     items: z.array(z.object({
-        productId: z.string().min(1).max(50),
-        quantity: z.number().positive().max(9999),
-    })).min(1, 'Se requiere al menos 1 producto').max(50, 'Máximo 50 productos por pedido'),
-});
+        productId: z.string().trim().min(1).max(191),
+        quantity: z.union([z.string().trim().min(1).max(64), z.number().finite()]),
+        presentation: z.enum(['BASE', 'PACK']).optional(),
+        // Compatibilidad del cliente anterior: se aceptan y descartan; nombre y
+        // precio autoritativos siempre salen de Product.
+        name: z.string().max(255).optional(),
+        price: z.union([z.string(), z.number()]).optional(),
+    }).strict()).min(1, 'Se requiere al menos 1 producto').max(50, 'Máximo 50 productos por pedido'),
+}).strict();
 
 app.post('/api/public/orders', orderLimiter, async (req: any, res: any) => {
     const parsed = PublicOrderSchema.safeParse(req.body);
@@ -10197,56 +11568,76 @@ app.post('/api/public/orders', orderLimiter, async (req: any, res: any) => {
     }
 
     try {
-        // Buscar tenant por slug
-        const tenant = await prisma.tenant.findUnique({ where: { slug }, select: { id: true } });
-        if (!tenant) {
-            return res.status(404).json({ error: 'Negocio no encontrado' });
-        }
-
-        // 🔒 El precio SIEMPRE sale de la BD (productos del tenant y publicados);
-        // el cliente no puede fijar precios en el snapshot del pedido.
-        const productIds = items.map(i => i.productId);
-        const productsDB = await prisma.product.findMany({
-            where: { tenantId: tenant.id, id: { in: productIds }, isPublished: true },
-            select: { id: true, name: true, price: true },
-        });
-        if (productsDB.length !== items.length) {
-            return res.status(400).json({ error: 'Algunos productos no fueron encontrados o no están disponibles.' });
-        }
-
-        // Snapshot con precios congelados desde la BD (nunca del body)
-        const sanitizedItems = items.map(item => {
-            const prod = productsDB.find(p => p.id === item.productId)!;
-            return {
-                productId: prod.id,
-                name: prod.name,
-                quantity: item.quantity,
-                price: new Decimal(prod.price.toString()).toDecimalPlaces(2).toNumber(), // 🔒 SNAPSHOT server-side
-            };
-        });
-
-        const order = await prisma.publicOrder.create({
-            data: {
-                tenantId: tenant.id,
-                customerName: customerName.substring(0, 200),
-                customerPhone: customerPhone ? String(customerPhone).replace(/\D/g, '').substring(0, 15) : null,
-                items: sanitizedItems,
+        const created = await prisma.$transaction(async (tx) => {
+            const tenant = await tx.tenant.findUnique({ where: { slug }, select: { id: true } });
+            if (!tenant) {
+                throw new PublicOrderItemError('PRODUCT_NOT_FOUND', 'Negocio no encontrado', 404);
             }
+            const productIds = [...new Set(items.map((item) => item.productId))];
+            const productsDB: PublicOrderProductAuthority[] = await tx.product.findMany({
+                where: { tenantId: tenant.id, id: { in: productIds }, isPublished: true },
+                select: {
+                    id: true, tenantId: true, isPublished: true, name: true, unit: true,
+                    price: true, cost: true, ivaExento: true, saleMode: true, quantityStep: true,
+                    wholesalePrice: true, wholesaleMinQty: true, packUnit: true, packSize: true,
+                    packPrice: true, requiresBatchTracking: true,
+                },
+            });
+            const resolvedItems = resolvePublicOrderItems(
+                tenant.id,
+                items.map((item) => ({
+                    productId: item.productId,
+                    quantity: item.quantity,
+                    presentation: item.presentation,
+                })),
+                productsDB,
+            );
+            const total = resolvedItems.reduce(
+                (sum, item) => sum.plus(item.subtotal),
+                new Decimal(0),
+            ).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            const order = await tx.publicOrder.create({
+                data: {
+                    tenantId: tenant.id,
+                    customerName: customerName.substring(0, 200),
+                    customerPhone: customerPhone ? String(customerPhone).replace(/\D/g, '').substring(0, 15) : null,
+                    items: resolvedItems.map((item) => ({
+                        productId: item.productId,
+                        name: item.productName,
+                        quantity: item.quantityExact.toFixed(),
+                        quantityExact: item.quantityExact.toFixed(),
+                        price: Number(item.unitPrice.toFixed(2)),
+                        unitPriceExact: item.unitPrice.toFixed(4),
+                        subtotal: item.subtotal.toFixed(2),
+                        unit: item.unit,
+                        saleMode: item.saleMode,
+                        quantityStep: item.quantityStep,
+                        ivaExento: item.ivaExento,
+                        presentationAtSale: item.presentationAtSale,
+                        presentationQuantityAtSale: item.presentationQuantityAtSale.toFixed(),
+                    })),
+                },
+            });
+            return { order, total };
         });
 
         res.json({
             message: '¡Pedido enviado! El negocio lo revisará pronto.',
-            orderId: order.id,
+            orderId: created.order.id,
+            total: created.total.toNumber(),
         });
 
     } catch (error) {
+        if (error instanceof PublicOrderItemError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
         console.error('Public order error:', error);
         res.status(500).json({ error: 'Error al crear pedido' });
     }
 });
 
 // GET /api/public-orders — Pedidos web del tenant (requiere JWT)
-app.get('/api/public-orders', authenticate, async (req: any, res: any) => {
+app.get('/api/public-orders', authenticate, checkRole(QUOTATION_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const orders = await prisma.publicOrder.findMany({
@@ -10262,42 +11653,52 @@ app.get('/api/public-orders', authenticate, async (req: any, res: any) => {
 });
 
 // PATCH /api/public-orders/:id/convert — Convertir PublicOrder → Quotation
-app.patch('/api/public-orders/:id/convert', authenticate, async (req: any, res: any) => {
+app.patch('/api/public-orders/:id/convert', authenticate, checkRole(QUOTATION_WRITE_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
 
     try {
-        const order = await prisma.publicOrder.findUnique({ where: { id } });
-        if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
-        if (order.tenantId !== authReq.tenantId) return res.status(403).json({ error: 'No autorizado' });
-        if (order.status === 'CONVERTED') return res.status(400).json({ error: 'Este pedido ya fue convertido' });
+        const outcome = await prisma.$transaction(async (tx: any) => {
+            const order = await tx.publicOrder.findFirst({
+                where: { id, tenantId: authReq.tenantId! },
+            });
+            if (!order) {
+                throw new PublicOrderItemError('PRODUCT_NOT_FOUND', 'Pedido no encontrado', 404);
+            }
 
-        const items = order.items as any[];
+            // Claim condicional dentro de la misma tx: dos clicks/reintentos no
+            // pueden crear dos cotizaciones para el mismo pedido.
+            const claimed = await tx.publicOrder.updateMany({
+                where: { id, tenantId: authReq.tenantId!, status: { not: 'CONVERTED' } },
+                data: { status: 'CONVERTED' },
+            });
+            if (claimed.count !== 1) {
+                throw new PublicOrderItemError(
+                    'INVALID_QUANTITY',
+                    'Este pedido ya fue convertido',
+                    409,
+                );
+            }
 
-        // Calcular totales con decimal.js (cero aritmética float sobre dinero)
-        let subtotalD = new Decimal(0);
-        const formattedItems = items.map((item: any) => {
-            const precio = new Decimal(String(item.price)).toDecimalPlaces(2);
-            const cantidad = new Decimal(String(item.quantity));
-            subtotalD = subtotalD.plus(precio.mul(cantidad));
-            return {
-                productId: item.productId,
-                name: item.name,
-                price: precio.toNumber(),
-                quantity: cantidad.toNumber(),
-            };
-        });
-        // T1: los precios del pedido público son de GÓNDOLA (IVA incluido), igual
-        // que en la venta. Antes se sumaba 15% encima → doble IVA y un total que
-        // no coincidía con lo que el POS le cobra al cliente. Se desglosa.
-        const brutoD = subtotalD.toDecimalPlaces(2);
-        const { neto, iva } = desglosarIvaIncluido(brutoD);
-        const subtotal = neto.toNumber();
-        const tax = iva.toNumber();
-        const total = neto.plus(iva).toNumber();   // === brutoD
-
-        // Transacción: crear Quotation + marcar PublicOrder como CONVERTED
-        const result = await prisma.$transaction(async (tx: any) => {
+            const items = publicOrderItemsForQuotation(order.items);
+            // Los precios públicos ya incluyen IVA: desglosar línea por línea
+            // usando la clasificación congelada evita gravar productos exentos.
+            let subtotalD = new Decimal(0);
+            let taxD = new Decimal(0);
+            let totalD = new Decimal(0);
+            for (const item of items) {
+                totalD = totalD.plus(item.lineTotal);
+                if (item.ivaExento) {
+                    subtotalD = subtotalD.plus(item.lineTotal);
+                } else {
+                    const { neto, iva } = desglosarIvaIncluido(item.lineTotal);
+                    subtotalD = subtotalD.plus(neto);
+                    taxD = taxD.plus(iva);
+                }
+            }
+            const subtotal = subtotalD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+            const tax = taxD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+            const total = totalD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
             const quotation = await tx.quotation.create({
                 data: {
                     tenantId: authReq.tenantId!,
@@ -10308,25 +11709,40 @@ app.patch('/api/public-orders/:id/convert', authenticate, async (req: any, res: 
                     total,
                     expiresAt: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000),
                     items: {
-                        create: formattedItems,
+                        create: items.map((item) => ({
+                            productId: item.productId,
+                            name: item.name,
+                            price: item.priceLegacy.toFixed(2),
+                            unitPriceExact: item.unitPriceExact.toFixed(4),
+                            quantity: item.quantityLegacy,
+                            quantityExact: item.quantityExact.toFixed(4),
+                            unitAtQuote: item.unit,
+                            saleModeAtQuote: item.saleMode,
+                            quantityStepAtQuote: item.quantityStep.toFixed(4),
+                            presentationAtQuote: item.presentationAtQuote,
+                            presentationQuantityAtQuote: item.presentationQuantityAtQuote.toFixed(4),
+                            ivaExentoAtQuote: item.ivaExento,
+                        })),
                     },
                 },
             });
-
-            await tx.publicOrder.update({
-                where: { id },
-                data: { status: 'CONVERTED' },
-            });
-
-            return quotation;
+            return { quotation, subtotal, tax, total };
         });
 
         res.json({
             message: 'Pedido convertido en cotización exitosamente',
-            quotation: { ...result, subtotal, tax, total },
+            quotation: {
+                ...outcome.quotation,
+                subtotal: outcome.subtotal,
+                tax: outcome.tax,
+                total: outcome.total,
+            },
         });
 
     } catch (error) {
+        if (error instanceof PublicOrderItemError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
         console.error('Create public order error:', error);
         res.status(500).json({ error: 'Error al procesar el pedido' });
     }
@@ -10396,6 +11812,27 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
         const fecha = fiscalInvoiceDate.longLabel;
         const numeroConstancia = `RET-${purchase.id.slice(-8).toUpperCase()}`;
         const period = retentions[0]?.period || fiscalInvoiceDate.period;
+        const printNonce = crypto.randomBytes(18).toString('base64url');
+        const previewCsp = fiscalPreviewCsp(printNonce);
+
+        // Todos estos campos son persistidos y algunos pueden ser capturados por
+        // MANAGER. La constancia se abre como HTML autenticado en un `blob:`;
+        // por eso jamás se interpolan sin codificación, aunque el dato pertenezca
+        // al mismo tenant.
+        const safe = {
+            numeroConstancia: escapeHtml(numeroConstancia),
+            period: escapeHtml(period),
+            fecha: escapeHtml(fecha),
+            tenantBusinessName: escapeHtml(tenant.businessName),
+            tenantTaxId: escapeHtml(tenant.taxId || 'Por configurar'),
+            tenantAddress: escapeHtml(tenant.address || 'Por configurar'),
+            tenantPhone: escapeHtml(tenant.phone || '---'),
+            tenantDgiAuthCode: escapeHtml(tenant.dgiAuthCode || ''),
+            supplierName: escapeHtml(purchase.supplier.name),
+            supplierRuc: escapeHtml((purchase.supplier as any).ruc || 'Por registrar'),
+            supplierPhone: escapeHtml((purchase.supplier as any).phone || '---'),
+            invoiceNumber: escapeHtml(purchase.invoiceNumber),
+        };
 
         const typeLabel: Record<string, string> = {
             IR_2PCT: 'Retención IR (Renta) 2%',
@@ -10412,18 +11849,12 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
             </tr>
         `).join('');
 
-        // Script con nonce: conserva el boton de imprimir sin habilitar scripts
-        // inline arbitrarios en un documento construido con datos persistidos.
-        const printNonce = crypto.randomBytes(16).toString('base64');
-        const safePrintNonce = escapeHtml(printNonce);
-        const contentSecurityPolicy = constanciaContentSecurityPolicy(printNonce);
-
         const html = `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="${escapeHtml(contentSecurityPolicy)}">
-<title>Constancia de Retención ${escapeHtml(numeroConstancia)}</title>
+<meta http-equiv="Content-Security-Policy" content="${escapeHtml(previewCsp)}">
+<title>Constancia de Retención ${safe.numeroConstancia}</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: Arial, sans-serif; font-size: 11px; color: #1a1a1a; padding: 20mm; }
@@ -10459,34 +11890,34 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
 
 <div class="no-print" style="background:#1a56a0;color:white;padding:10px 16px;margin:-20mm -20mm 16px;display:flex;justify-content:space-between;align-items:center;">
   <span style="font-weight:bold;">Constancia de Retención — Vista Previa</span>
-  <button id="print-constancia" type="button" style="background:white;color:#1a56a0;border:none;padding:6px 16px;border-radius:4px;font-weight:bold;cursor:pointer;">🖨️ Imprimir / Guardar PDF</button>
+  <button id="print-document" type="button" style="background:white;color:#1a56a0;border:none;padding:6px 16px;border-radius:4px;font-weight:bold;cursor:pointer;">🖨️ Imprimir / Guardar PDF</button>
 </div>
 
 <div class="header">
   <h1>Constancia de Retención en la Fuente</h1>
   <h2>República de Nicaragua — Dirección General de Ingresos (DGI)</h2>
-  <div class="numero">N° ${escapeHtml(numeroConstancia)}</div>
-  <div class="badge">Período: ${escapeHtml(period)}</div>
+  <div class="numero">N° ${safe.numeroConstancia}</div>
+  <div class="badge">Período: ${safe.period}</div>
 </div>
 
 <div class="section">
   <div class="section-title">Agente Retenedor (Quien retiene)</div>
   <div class="grid">
-    <div class="field"><label>Razón Social</label><span>${escapeHtml(tenant.businessName)}</span></div>
-    <div class="field"><label>RUC / Cédula</label><span>${escapeHtml(tenant.taxId || 'Por configurar')}</span></div>
-    <div class="field"><label>Dirección Fiscal</label><span>${escapeHtml(tenant.address || 'Por configurar')}</span></div>
-    <div class="field"><label>Teléfono</label><span>${escapeHtml(tenant.phone || '---')}</span></div>
-    ${tenant.dgiAuthCode ? `<div class="field"><label>Código Autorización DGI</label><span>${escapeHtml(tenant.dgiAuthCode)}</span></div>` : ''}
+    <div class="field"><label>Razón Social</label><span>${safe.tenantBusinessName}</span></div>
+    <div class="field"><label>RUC / Cédula</label><span>${safe.tenantTaxId}</span></div>
+    <div class="field"><label>Dirección Fiscal</label><span>${safe.tenantAddress}</span></div>
+    <div class="field"><label>Teléfono</label><span>${safe.tenantPhone}</span></div>
+    ${tenant.dgiAuthCode ? `<div class="field"><label>Código Autorización DGI</label><span>${safe.tenantDgiAuthCode}</span></div>` : ''}
   </div>
 </div>
 
 <div class="section">
   <div class="section-title">Sujeto Retenido (Proveedor)</div>
   <div class="grid">
-    <div class="field"><label>Razón Social / Nombre</label><span>${escapeHtml(purchase.supplier.name)}</span></div>
-    <div class="field"><label>RUC / Cédula</label><span>${escapeHtml((purchase.supplier as any).ruc || 'Por registrar')}</span></div>
-    <div class="field"><label>Teléfono</label><span>${escapeHtml((purchase.supplier as any).phone || '---')}</span></div>
-    <div class="field"><label>N° Factura del Proveedor</label><span>${escapeHtml(purchase.invoiceNumber)}</span></div>
+    <div class="field"><label>Razón Social / Nombre</label><span>${safe.supplierName}</span></div>
+    <div class="field"><label>RUC / Cédula</label><span>${safe.supplierRuc}</span></div>
+    <div class="field"><label>Teléfono</label><span>${safe.supplierPhone}</span></div>
+    <div class="field"><label>N° Factura del Proveedor</label><span>${safe.invoiceNumber}</span></div>
   </div>
 </div>
 
@@ -10513,7 +11944,7 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
 
 <div class="section">
   <div class="grid">
-    <div class="field"><label>Fecha de Emisión</label><span>${escapeHtml(fecha)}</span></div>
+    <div class="field"><label>Fecha de Emisión</label><span>${safe.fecha}</span></div>
     <div class="field"><label>Monto Total Factura</label><span>C$ ${escapeHtml(Number(purchase.total).toFixed(2))}</span></div>
     <div class="field"><label>Neto a Pagar al Proveedor</label><span style="color:#1a56a0;font-size:13px;">C$ ${escapeHtml(new Decimal(purchase.total.toString()).minus(totalRetenido).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2))}</span></div>
   </div>
@@ -10523,12 +11954,12 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
   <div class="firma">
     <p>_________________________________</p>
     <p><strong>Firma y Sello del Agente Retenedor</strong></p>
-    <p>${escapeHtml(tenant.businessName)}</p>
+    <p>${safe.tenantBusinessName}</p>
   </div>
   <div class="firma">
     <p>_________________________________</p>
     <p><strong>Firma de Recibido — Proveedor</strong></p>
-    <p>${escapeHtml(purchase.supplier.name)}</p>
+    <p>${safe.supplierName}</p>
   </div>
 </div>
 
@@ -10537,23 +11968,20 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
   El agente retenedor está obligado a entregar esta constancia al momento de efectuar el pago.
 </div>
 
-<script nonce="${safePrintNonce}">
-  document.getElementById('print-constancia')?.addEventListener('click', () => window.print());
+<script nonce="${printNonce}">
+  document.getElementById('print-document').addEventListener('click', function () { window.print(); });
 </script>
 
 </body>
 </html>`;
 
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Content-Security-Policy', previewCsp);
         res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.setHeader('Pragma', 'no-cache');
         res.setHeader('Referrer-Policy', 'no-referrer');
         res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-        res.setHeader(
-            'Content-Security-Policy',
-            `${contentSecurityPolicy}; frame-ancestors 'self'`,
-        );
         res.send(html);
 
     } catch (error) {

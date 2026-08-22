@@ -21,9 +21,11 @@ let screenshotProductId = '';
 let receivedProductId = '';
 let concurrencyProductId = '';
 let duplicateInvoiceProductId = '';
+let packProductId = '';
+let secondaryWarehouseId = '';
 
 async function api<T = any>(path: string, init: RequestInit = {}): Promise<ApiResult<T>> {
-  if (!QA_BASE_URL) throw new Error('NORTEX_QA_BASE_URL no esta definido');
+  if (!QA_BASE_URL) throw new Error('NORTEX_QA_BASE_URL no está definido');
 
   const headers = new Headers(init.headers);
   headers.set('content-type', 'application/json');
@@ -72,6 +74,29 @@ async function createProduct(
   return result.body.id;
 }
 
+async function createPackProduct(name: string, sku: string): Promise<string> {
+  const result = await post('/api/products', {
+    name,
+    sku,
+    category: 'QA Compras',
+    price: 25,
+    cost: 0,
+    stock: 0,
+    minStock: 0,
+    unit: 'lb',
+    saleMode: 'MEASURED',
+    quantityStep: '0.25',
+    productFamily: 'ANIMAL_FEED',
+    packUnit: 'saco',
+    packSize: 100,
+    isPublished: false,
+    requiresBatchTracking: false,
+    ivaExento: false,
+  });
+  expectStatus(result, 200);
+  return result.body.id;
+}
+
 async function getProduct(productId: string): Promise<any> {
   const result = await api<any[]>('/api/products');
   expectStatus(result, 200);
@@ -95,7 +120,7 @@ async function getKardex(productId: string): Promise<any[]> {
 async function createApprovedPurchaseOrder(productId: string, quantity: number, unitCost: number) {
   const created = await post('/api/purchase-orders', {
     supplierId,
-    notes: 'QA integracion compras',
+    notes: 'QA integración compras',
     expectedDate: '2027-01-09',
     items: [{ productId, quantity, unitCost }],
   });
@@ -105,7 +130,13 @@ async function createApprovedPurchaseOrder(productId: string, quantity: number, 
   return created.body.data;
 }
 
-qaDescribe('QA integracion: compras y ordenes de compra', () => {
+async function createWarehouse(name: string): Promise<string> {
+  const result = await post('/api/warehouses', { name });
+  expectStatus(result, 201);
+  return result.body.data.id;
+}
+
+qaDescribe('QA integración: compras y órdenes de compra', () => {
   beforeAll(async () => {
     const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
     const registration = await post('/api/auth/register', {
@@ -124,10 +155,19 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
     expectStatus(supplier, 200);
     supplierId = supplier.body.id;
 
+    // GET materializa la bodega Principal del tenant. Sin este paso, la bodega
+    // creada abajo sería la primera/default y el escenario no sería realmente
+    // multi-bodega, por lo que omitir warehouseId seguiría siendo compatible.
+    const initialWarehouses = await api('/api/warehouses');
+    expectStatus(initialWarehouses, 200);
+    expect(initialWarehouses.body.data.some((warehouse: any) => warehouse.isDefault)).toBe(true);
+    secondaryWarehouseId = await createWarehouse(`Bodega QA ${runId}`);
+
     screenshotProductId = await createProduct('Salsa kerns jumbo', `QA-SCREEN-${runId}`, true);
     receivedProductId = await createProduct('QA Producto OC con lote', `QA-PO-${runId}`, true);
     concurrencyProductId = await createProduct('QA Producto concurrencia', `QA-CONC-${runId}`, false);
     duplicateInvoiceProductId = await createProduct('QA Factura concurrente', `QA-INV-${runId}`, false);
+    packProductId = await createPackProduct('QA Concentrado por saco', `QA-PACK-${runId}`);
   }, 120_000);
 
   it('persiste la fecha civil, rechaza fechas inválidas y bloquea el duplicado sin mover stock', async () => {
@@ -158,6 +198,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
     for (let index = 1; index <= loopCount; index += 1) {
       const result = await post('/api/purchases', {
         supplierId,
+        warehouseId: secondaryWarehouseId,
         invoiceNumber: `${invoicePrefix}-${index}`,
         date: '2026-08-21',
         paymentMethod: 'CREDIT',
@@ -190,6 +231,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
 
     const duplicate = await post('/api/purchases', {
       supplierId,
+      warehouseId: secondaryWarehouseId,
       invoiceNumber: `${invoicePrefix}-1`,
       date: '2026-08-21',
       paymentMethod: 'CREDIT',
@@ -213,7 +255,38 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
     expect(kardexAfterDuplicate).toHaveLength(kardexBeforeDuplicate.length);
   }, 120_000);
 
-  it('separa recepcion fisica de factura y limita lo facturable al saldo recibido', async () => {
+  it('convierte 2 sacos de 100 lb con factor del servidor y costo base', async () => {
+    const result = await post('/api/purchases', {
+      supplierId,
+      warehouseId: secondaryWarehouseId,
+      invoiceNumber: `FAC-PACK-${Date.now()}`,
+      date: '2026-08-21',
+      paymentMethod: 'CREDIT',
+      dueDate: '2026-08-25',
+      items: [{
+        productId: packProductId,
+        quantity: 2,
+        unitCost: 1250,
+        purchaseUnit: 'PACK',
+        // Ataque simulado: el contrato debe descartarlo y consultar Product.
+        packSize: 1,
+      }],
+    });
+
+    expectStatus(result, 200);
+    expect(result.body.purchase.items[0].quantityExact).toBe('200');
+    expect(Number(result.body.purchase.items[0].unitCost)).toBe(12.5);
+    expect(Number(result.body.purchase.items[0].totalCost)).toBe(2500);
+    expect(Number(result.body.purchase.subtotal)).toBe(2500);
+
+    const product = await getProduct(packProductId);
+    expect(Number(product.stock)).toBe(200);
+    expect(Number(product.cost)).toBe(12.5);
+    const kardex = await getKardex(packProductId);
+    expect(Number(kardex.at(-1)?.quantity)).toBe(200);
+  }, 120_000);
+
+  it('separa recepción física de factura y limita lo facturable al saldo recibido', async () => {
     const po = await createApprovedPurchaseOrder(receivedProductId, 12, 13.5);
     const poItemId = po.items[0].id;
     const invoicePrefix = `FAC-PO-${Date.now()}`;
@@ -230,6 +303,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
     expectStatus(invoiceBeforeReceipt, 400);
 
     const partialReceipt = await post(`/api/purchase-orders/${po.id}/receive`, {
+      warehouseId: secondaryWarehouseId,
       items: [{
         itemId: poItemId,
         quantityReceived: 5,
@@ -246,6 +320,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
     expect(Number(stockAfterReceipt.stock)).toBe(5);
     expect(Number(batchesAfterReceipt[0].stock)).toBe(5);
     expect(kardexAfterReceipt).toHaveLength(1);
+    expect(kardexAfterReceipt[0].warehouseId).toBe(secondaryWarehouseId);
 
     const firstInvoice = await post('/api/purchases', {
       supplierId,
@@ -288,6 +363,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
     expect(kardexAfterInvoices).toHaveLength(1);
 
     const finalReceipt = await post(`/api/purchase-orders/${po.id}/receive`, {
+      warehouseId: secondaryWarehouseId,
       items: [{
         itemId: poItemId,
         quantityReceived: 7,
@@ -328,11 +404,12 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
     expect(finalKardex).toHaveLength(2);
   }, 120_000);
 
-  it('rechaza sobrerrecepcion y lineas repetidas sin efectos parciales', async () => {
+  it('rechaza sobrerrecepción y líneas repetidas sin efectos parciales', async () => {
     const po = await createApprovedPurchaseOrder(concurrencyProductId, 10, 5);
     const itemId = po.items[0].id;
 
     const duplicateLines = await post(`/api/purchase-orders/${po.id}/receive`, {
+      warehouseId: secondaryWarehouseId,
       items: [
         { itemId, quantityReceived: 1 },
         { itemId, quantityReceived: 1 },
@@ -341,6 +418,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
     expectStatus(duplicateLines, 400);
 
     const overReceipt = await post(`/api/purchase-orders/${po.id}/receive`, {
+      warehouseId: secondaryWarehouseId,
       items: [{ itemId, quantityReceived: 11 }],
     });
     expectStatus(overReceipt, 400);
@@ -349,10 +427,34 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
     expect(await getKardex(concurrencyProductId)).toHaveLength(0);
   }, 120_000);
 
-  it('serializa dos recepciones simultaneas y solo incrementa el stock una vez', async () => {
+  it('exige bodega destino explícita cuando el negocio ya opera con varias bodegas', async () => {
+    const po = await createApprovedPurchaseOrder(concurrencyProductId, 4, 5);
+    const itemId = po.items[0].id;
+
+    const missingWarehouse = await post(`/api/purchase-orders/${po.id}/receive`, {
+      items: [{ itemId, quantityReceived: 2 }],
+    });
+    expectStatus(missingWarehouse, 400);
+    expect(String(missingWarehouse.body.error ?? '')).toContain('bodega');
+
+    const invalidWarehouse = await post(`/api/purchase-orders/${po.id}/receive`, {
+      warehouseId: 'bodega-que-no-pertenece-al-tenant',
+      items: [{ itemId, quantityReceived: 2 }],
+    });
+    expectStatus(invalidWarehouse, 404);
+    expect(String(invalidWarehouse.body.error ?? '')).toContain('bodega');
+
+    expect(Number((await getProduct(concurrencyProductId)).stock)).toBe(0);
+    expect(await getKardex(concurrencyProductId)).toHaveLength(0);
+  }, 120_000);
+
+  it('serializa dos recepciones simultáneas y solo incrementa el stock una vez', async () => {
     const po = await createApprovedPurchaseOrder(concurrencyProductId, 10, 5);
     const itemId = po.items[0].id;
-    const body = { items: [{ itemId, quantityReceived: 10 }] };
+    const body = {
+      warehouseId: secondaryWarehouseId,
+      items: [{ itemId, quantityReceived: 10 }],
+    };
 
     const results = await Promise.all([
       post(`/api/purchase-orders/${po.id}/receive`, body),
@@ -369,10 +471,11 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
     expect(Number(detail.body.data.items[0].quantityReceived)).toBe(10);
   }, 120_000);
 
-  it('serializa dos facturas identicas concurrentes sin duplicar inventario', async () => {
+  it('serializa dos facturas idénticas concurrentes sin duplicar inventario', async () => {
     const invoiceNumber = `FAC-CONCURRENT-${Date.now()}`;
     const payload = {
       supplierId,
+      warehouseId: secondaryWarehouseId,
       invoiceNumber,
       date: '2026-08-21',
       paymentMethod: 'CREDIT',

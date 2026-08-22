@@ -5,7 +5,10 @@ import { currentSessionRole } from '../utils/roleCapabilities';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { ShieldCheck, TrendingUp, TrendingDown, Package, DollarSign, Receipt, Warehouse, FileSpreadsheet, Loader2, Calendar, AlertTriangle, RefreshCw, Landmark, Scale, Copy, CheckCircle, Building2, Printer, Clock, Users, BookOpen, BarChart3, ArrowRight, Download } from 'lucide-react';
 import { ShiftReportTicket, type ShiftReportData } from './ShiftReportTicket';
+import { formatQuantityValue } from '../utils/quantity';
+import { buildMeasuredReportExportRows } from '../utils/measuredReportExport';
 import { ToastViewport, useToast } from './ui/Toast';
+import * as XLSX from 'xlsx';
 import {
     authenticatedRequestErrorMessage,
     downloadAuthenticatedFile,
@@ -55,12 +58,32 @@ interface SalesReport {
     utilidadBruta: number;
     totalTransacciones: number;
     chartData: { name: string; ventas: number; gastos: number }[];
+    quantityBreakdown: {
+        productId: string;
+        productName: string;
+        saleMode: 'COUNTED' | 'MEASURED';
+        presentation: 'BASE' | 'PACK';
+        baseUnit: string;
+        displayUnit: string;
+        usedFallbackUnit: boolean;
+        quantity: string;
+    }[];
 }
 
 interface InventoryReport {
     inventoryValue: number;
     totalProducts: number;
-    lowStock: { id: string; name: string; sku: string; stock: number; minStock: number; cost: number }[];
+    lowStock: {
+        id: string;
+        name: string;
+        sku: string;
+        stock: number;
+        minStock: number;
+        cost: number;
+        unit: string;
+        saleMode: 'COUNTED' | 'MEASURED';
+        productFamily: string | null;
+    }[];
 }
 
 interface ExpensesReport {
@@ -281,6 +304,37 @@ const Reports: React.FC = () => {
         ? (utilidadNeta / salesData.ventasNetas) * 100
         : 0;
 
+    const handleExportMeasuredBreakdown = () => {
+        if (!salesData?.quantityBreakdown.length) {
+            showToast({
+                tone: 'warning',
+                title: 'No hay cantidades para exportar',
+                message: 'Probá con un rango de fechas que tenga ventas.',
+            });
+            return;
+        }
+
+        const rows = buildMeasuredReportExportRows(salesData.quantityBreakdown);
+        const worksheet = XLSX.utils.json_to_sheet(rows, {
+            header: ['Producto', 'Unidad histórica', 'Modo', 'Presentación', 'Cantidad exacta'],
+        });
+        worksheet['!cols'] = [
+            { wch: 36 },
+            { wch: 28 },
+            { wch: 14 },
+            { wch: 16 },
+            { wch: 20 },
+        ];
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Cantidades vendidas');
+        XLSX.writeFile(workbook, `Cantidades_vendidas_${dates.startDate}_${dates.endDate}.xlsx`);
+        showToast({
+            tone: 'success',
+            title: 'Excel generado',
+            message: 'La descarga de cantidades vendidas ya salió del navegador.',
+        });
+    };
+
     // Tax report generation
     const handleGenerateTaxReport = async () => {
         if (!canAccessFiscalDocuments) return;
@@ -407,6 +461,17 @@ const Reports: React.FC = () => {
                         >
                             <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
                         </button>
+                        <button
+                            type="button"
+                            onClick={handleExportMeasuredBreakdown}
+                            disabled={!salesData?.quantityBreakdown.length}
+                            className="flex items-center gap-2 px-4 py-2 bg-nortex-900 text-white font-bold rounded-lg hover:bg-nortex-800 shadow-lg transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                            <FileSpreadsheet size={16} /> Descargar cantidades (.xlsx)
+                        </button>
+                        <p className="text-xs text-slate-500">
+                            Conserva producto, unidad histórica, modo, presentación y cantidad decimal exacta.
+                        </p>
                         {canAccessFiscalDocuments && (
                             <button
                                 type="button"
@@ -619,7 +684,44 @@ const Reports: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* Low Stock Alert */}
+                        {/* Cantidades por producto y unidad histórica */}
+                        <div className="bg-surface-900 p-6 rounded-xl border border-white/[0.06] shadow-sm">
+                            <h3 className="font-bold text-slate-100 mb-4 flex items-center gap-2">
+                                <BarChart3 size={18} className="text-cyan-400" /> Cantidades vendidas
+                            </h3>
+                            <div className="space-y-3 max-h-72 overflow-y-auto custom-scrollbar pr-1">
+                                {salesData && salesData.quantityBreakdown.length > 0 ? (
+                                    salesData.quantityBreakdown.map((row) => (
+                                        <div key={`${row.productId}-${row.presentation}-${row.displayUnit}`} className="rounded-lg border border-white/[0.06] bg-surface-800/40 p-3">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <div className="font-bold text-slate-100 text-sm">{row.productName}</div>
+                                                    <div className="mt-1 flex flex-wrap gap-2 text-[10px]">
+                                                        <span className="rounded bg-cyan-500/10 px-2 py-0.5 font-bold text-cyan-300">{row.displayUnit}</span>
+                                                        <span className={`rounded px-2 py-0.5 font-bold ${row.presentation === 'PACK' ? 'bg-violet-500/10 text-violet-300' : 'bg-slate-500/10 text-slate-300'}`}>
+                                                            {row.presentation === 'PACK' ? 'EMPAQUE' : 'BASE'}
+                                                        </span>
+                                                        <span className="rounded bg-white/[0.06] px-2 py-0.5 font-bold text-slate-300">{row.saleMode}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className="font-mono text-lg font-bold text-slate-100">{formatQuantityValue(row.quantity)}</div>
+                                                    <div className="text-[10px] text-slate-500">{row.usedFallbackUnit ? 'unidad histórica faltante' : `base ${row.baseUnit}`}</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="text-center py-8 text-slate-400 text-sm">
+                                        Sin cantidades vendidas para desglosar en este período.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Low Stock Alert */}
+                    <div className="grid grid-cols-1 gap-6 mb-8">
                         <div className="bg-surface-900 p-6 rounded-xl border border-red-500/15 shadow-sm relative">
                             <div className="absolute top-0 right-0 p-4 opacity-10">
                                 <AlertTriangle size={64} className="text-red-500" />
@@ -633,11 +735,18 @@ const Reports: React.FC = () => {
                                         <div key={p.id} className="flex justify-between items-center bg-red-500/10 p-3 rounded-lg border border-red-500/15">
                                             <div>
                                                 <div className="font-bold text-slate-100 text-sm">{p.name}</div>
-                                                <div className="text-xs text-red-500 font-mono">SKU: {p.sku} | Min: {p.minStock}</div>
+                                                <div className="text-xs text-red-500 font-mono">
+                                                    SKU: {p.sku} | Min: {formatQuantityValue(p.minStock)} {p.unit}
+                                                </div>
+                                                <div className="mt-1 flex flex-wrap gap-2 text-[10px]">
+                                                    <span className="rounded bg-white/[0.08] px-2 py-0.5 font-bold text-slate-300">{p.saleMode}</span>
+                                                    <span className="rounded bg-white/[0.08] px-2 py-0.5 font-bold text-slate-300">{p.unit}</span>
+                                                    {p.productFamily && <span className="rounded bg-white/[0.08] px-2 py-0.5 font-bold text-slate-300">{p.productFamily}</span>}
+                                                </div>
                                             </div>
                                             <div className="text-right">
-                                                <span className="text-2xl font-bold text-red-400">{p.stock}</span>
-                                                <div className="text-[10px] text-red-400">unidades</div>
+                                                <span className="text-2xl font-bold text-red-400">{formatQuantityValue(p.stock)}</span>
+                                                <div className="text-[10px] text-red-400">{p.unit}</div>
                                             </div>
                                         </div>
                                     ))

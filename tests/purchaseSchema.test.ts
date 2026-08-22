@@ -75,6 +75,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
     it('acepta null históricos únicamente en campos realmente opcionales', () => {
         const result = CreatePurchaseSchema.safeParse({
             ...cashPurchase,
+            warehouseId: null,
             dueDate: null,
             notes: null,
             purchaseOrderId: null,
@@ -87,6 +88,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
 
         expect(result.success).toBe(true);
         if (!result.success) return;
+        expect(result.data.warehouseId).toBeUndefined();
         expect(result.data.date).toBe('2026-08-21T12:00:00.000Z');
         expect(result.data.dueDate).toBeUndefined();
         expect(result.data.notes).toBeUndefined();
@@ -115,6 +117,7 @@ describe('CreatePurchaseSchema — integraciones programáticas', () => {
     it('acepta el payload sin campos de lote cuando se genera de contado', () => {
         expect(CreatePurchaseSchema.safeParse({
             ...integrationPayload,
+            warehouseId: 'warehouse-principal',
             paymentMethod: 'CASH',
         }).success).toBe(true);
     });
@@ -219,6 +222,21 @@ describe('CreatePurchaseSchema — rechazos que protegen la persistencia', () =>
 
         expect(linked.success).toBe(true);
         if (linked.success) expect(linked.data.purchaseOrderId).toBe('po-approved-123');
+        expect(empty.success).toBe(false);
+    });
+
+    it('acepta warehouseId opcional y rechaza uno vacío', () => {
+        const linked = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            warehouseId: 'warehouse-principal',
+        });
+        const empty = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            warehouseId: '',
+        });
+
+        expect(linked.success).toBe(true);
+        if (linked.success) expect(linked.data.warehouseId).toBe('warehouse-principal');
         expect(empty.success).toBe(false);
     });
 

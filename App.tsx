@@ -21,6 +21,7 @@ import MiNegocio from './components/MiNegocio';
 const Blog = lazy(() => import('./components/Blog'));
 const BlogPost = lazy(() => import('./components/BlogPost'));
 const ClusterPage = lazy(() => import('./components/ClusterPage'));
+const GuestPOS = lazy(() => import('./components/GuestPOS'));
 const POS = lazy(() => import('./components/POS'));
 const Dashboard = lazy(() => import('./components/Dashboard'));
 const BlueprintViewer = lazy(() => import('./components/BlueprintViewer'));
@@ -42,6 +43,7 @@ const Warehouses = lazy(() => import('./components/Warehouses'));
 const CargaVendedor = lazy(() => import('./components/CargaVendedor'));
 const PurchaseOrders = lazy(() => import('./components/PurchaseOrders'));
 const Serials = lazy(() => import('./components/Serials'));
+const ScaleSettings = lazy(() => import('./components/ScaleSettings'));
 const StockCount = lazy(() => import('./components/StockCount'));
 const SmartPurchases = lazy(() => import('./components/SmartPurchases'));
 const CashRegisters = lazy(() => import('./components/CashRegisters'));
@@ -156,6 +158,7 @@ const ProtectedApp = () => {
         <Route path="mi-carga" element={<CargaVendedor />} />
         <Route path="purchase-orders" element={<PurchaseOrders />} />
         <Route path="serials" element={<Serials />} />
+        <Route path="scales" element={<ScaleSettings />} />
         <Route path="inventory-count" element={<StockCount />} />
         {/* ── Rutas registradas para evitar redirección silenciosa ── */}
         <Route path="cash-registers" element={<CashRegisters />} />
@@ -183,6 +186,84 @@ const ProtectedApp = () => {
   );
 };
 
+type LocalAuthPayload = {
+  userId?: string;
+  tenantId?: string;
+  role?: string;
+  exp?: number;
+  nbf?: number;
+};
+
+/**
+ * Decodifica solo el payload local del JWT para decidir la navegación inicial.
+ * La autorización real sigue perteneciendo al backend; aquí únicamente evitamos
+ * tratar como visitante a quien acaba de volver con una sesión local coherente.
+ */
+function decodeLocalAuthPayload(token: string): LocalAuthPayload | null {
+  const parts = token.split('.');
+  if (parts.length !== 3 || !parts[1]) return null;
+
+  try {
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
+    return JSON.parse(atob(padded)) as LocalAuthPayload;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Devuelve el inicio correcto solo si token y usuario guardado describen la
+ * misma sesión y el JWT todavía está dentro de su ventana de validez.
+ * Un dato incompleto o contradictorio degrada a la landing pública, nunca a un
+ * destino privilegiado. El backend vuelve a verificar firma, usuario y tenant
+ * al cargar cualquier dato protegido.
+ */
+function returningUserHomePath(): string | null {
+  try {
+    const token = localStorage.getItem('nortex_token');
+    const storedUser = localStorage.getItem('nortex_user');
+    if (!token || !storedUser) return null;
+
+    const payload = decodeLocalAuthPayload(token);
+    const user = JSON.parse(storedUser) as {
+      id?: string;
+      role?: string;
+      tenant?: { id?: string; type?: string };
+    };
+    if (!payload?.userId || !payload.tenantId || !payload.role || !user.id || !user.role) return null;
+
+    const now = Date.now();
+    if (typeof payload.exp !== 'number' || payload.exp * 1000 <= now) return null;
+    if (typeof payload.nbf === 'number' && payload.nbf * 1000 > now) return null;
+    if (payload.userId !== user.id || payload.role !== user.role) return null;
+
+    const storedTenantId = localStorage.getItem('nortex_tenant_id');
+    if (storedTenantId && storedTenantId !== payload.tenantId) return null;
+    if (user.tenant?.id && user.tenant.id !== payload.tenantId) return null;
+
+    if (payload.role === 'SUPER_ADMIN') return '/admin';
+
+    let tenantType = user.tenant?.type || '';
+    if (!tenantType) {
+      try {
+        tenantType = JSON.parse(localStorage.getItem('nortex_tenant_data') || '{}')?.type || '';
+      } catch { /* el tipo es opcional; el rol sigue definiendo un home seguro */ }
+    }
+    // Debe coincidir con ProtectedApp: el modo del menú no altera el lugar al
+    // que la persona vuelve. El dueño/admin retoma en Mi Negocio, mientras los
+    // roles operativos aterrizan directamente en su tarea diaria.
+    return tenantType === 'LENDER' ? '/app/dashboard' : homePathFor(payload.role, 'simple');
+  } catch {
+    return null;
+  }
+}
+
+const PublicLanding = () => {
+  const homePath = returningUserHomePath();
+  return homePath ? <Navigate to={homePath} replace /> : <LandingPage />;
+};
+
 /**
  * Envía un page_view de GA4 en cada cambio de ruta del SPA. React Router no
  * recarga la página, así que sin esto GA4 solo vería el primer load. Salta el
@@ -208,8 +289,9 @@ function App() {
       <RouteAnalytics />
       <Suspense fallback={<div className="min-h-[60vh] flex items-center justify-center text-slate-400">Cargando…</div>}>
         <Routes>
-          <Route path="/" element={<LandingPage />} />
+          <Route path="/" element={<PublicLanding />} />
           <Route path="/register" element={<RegisterTenant />} />
+          <Route path="/demo" element={<GuestPOS />} />
           <Route path="/login" element={<Login />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/terms" element={<TermsOfService />} />

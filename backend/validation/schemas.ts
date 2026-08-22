@@ -12,6 +12,8 @@
 
 import { z } from 'zod';
 import type { Request, Response, NextFunction } from 'express';
+import Decimal from 'decimal.js';
+import { MAX_QUANTITY, QUANTITY_DECIMAL_PLACES, validateQuantity } from '../../utils/quantity.js';
 
 // ============================================================
 // HELPERS
@@ -35,6 +37,62 @@ const moneyAmountPositive = moneyAmount.refine((v) => parseFloat(v) > 0, {
 
 /** Entero positivo */
 const positiveInt = z.number().int().positive();
+
+/**
+ * Cantidad física persistible en las columnas legacy Float.
+ *
+ * Aunque esas columnas todavía no migran a Decimal, la frontera conserva el
+ * texto decimal hasta que el handler valida el modo/paso del producto. Esto
+ * evita aceptar `1.00001`, `Infinity` o notación que exceda Decimal(18,4) y
+ * recién descubrirlo dentro de la transacción.
+ */
+const physicalQuantity = z
+    .union([z.string(), z.number()])
+    .transform((value) => typeof value === 'string' ? value.trim() : value.toString())
+    .superRefine((value, ctx) => {
+        if (value === '') {
+            ctx.addIssue({ code: 'custom', message: 'La cantidad es obligatoria' });
+            return;
+        }
+        let parsed: Decimal;
+        try {
+            parsed = new Decimal(value);
+        } catch {
+            ctx.addIssue({ code: 'custom', message: 'La cantidad debe ser un decimal válido' });
+            return;
+        }
+        if (!parsed.isFinite()) {
+            ctx.addIssue({ code: 'custom', message: 'La cantidad debe ser finita' });
+        } else if (parsed.decimalPlaces() > QUANTITY_DECIMAL_PLACES) {
+            ctx.addIssue({ code: 'custom', message: `La cantidad admite máximo ${QUANTITY_DECIMAL_PLACES} decimales` });
+        } else if (parsed.abs().greaterThan(MAX_QUANTITY)) {
+            ctx.addIssue({ code: 'custom', message: 'La cantidad excede el máximo permitido' });
+        }
+    });
+
+const decimalPredicate = (value: string, predicate: (decimal: Decimal) => boolean): boolean => {
+    try {
+        const parsed = new Decimal(value);
+        return parsed.isFinite() && predicate(parsed);
+    } catch {
+        return false;
+    }
+};
+
+/** Cantidad física positiva; sale como string Decimal-safe. */
+export const positiveQuantity = physicalQuantity.refine((value) => decimalPredicate(value, (decimal) => decimal.greaterThan(0)), {
+    message: 'La cantidad debe ser mayor que cero',
+});
+
+/** Cantidad física mayor o igual a cero; sale como string Decimal-safe. */
+export const nonNegativeQuantity = physicalQuantity.refine((value) => decimalPredicate(value, (decimal) => decimal.greaterThanOrEqualTo(0)), {
+    message: 'La cantidad no puede ser negativa',
+});
+
+/** Delta de inventario con signo, pero nunca cero; sale como string Decimal-safe. */
+export const nonZeroQuantityDelta = physicalQuantity.refine((value) => decimalPredicate(value, (decimal) => !decimal.isZero()), {
+    message: 'La cantidad no puede ser cero',
+});
 
 /** Número que acepta string o number (defensa ante payloads con strings). */
 const numeric = z
@@ -73,13 +131,29 @@ export const CreateSaleSchema = z.object({
 
 // POST /api/returns
 export const CreateReturnSchema = z.object({
+    // Contrato de clientes actuales: una misma UUID se conserva en reintentos
+    // del mismo payload. ProductReturn mantiene la columna nullable únicamente
+    // para poder convivir con devoluciones históricas.
+    clientEventId: z.string().trim().min(8, 'clientEventId inválido').max(128, 'clientEventId inválido'),
     saleId: z.string().min(1, 'saleId requerido'),
-    items:  z.array(z.object({
-        productId: z.string().min(1),
-        quantity:  positiveInt,
-        price:     moneyAmountPositive,
-    })).min(1, 'Se requiere al menos 1 producto a devolver'),
-    reason:  z.string().min(3, 'La razón debe tener al menos 3 caracteres').max(500),
+    items: z.array(z.object({
+        // Contrato canónico: la identidad es la línea vendida, no el SKU.
+        saleItemId: z.string().trim().min(1).max(191).optional(),
+        // Compatibilidad de despliegue: solo se resolverá cuando el producto
+        // aparezca en exactamente una línea de la venta.
+        productId: z.string().trim().min(1).max(191).optional(),
+        quantity: positiveQuantity,
+        // Campo legacy tolerado y descartado. El servidor usa priceAtSale.
+        price: moneyAmountPositive.optional(),
+    }).superRefine((item, ctx) => {
+        if (!item.saleItemId && !item.productId) {
+            ctx.addIssue({ code: 'custom', message: 'saleItemId requerido' });
+        }
+    })).min(1, 'Se requiere al menos 1 producto a devolver').max(100, 'Máximo 100 líneas por devolución'),
+    reason: z.string().trim().min(3, 'La razón debe tener al menos 3 caracteres').max(500),
+    // Solo se necesita cuando una venta CREDIT fue abonada por métodos mixtos
+    // o históricos no derivables. La ruta exige OWNER/ADMIN antes de aceptarlo.
+    refundMethod: z.enum(['CASH', 'CARD', 'QR', 'TRANSFER']).optional(),
 });
 
 // POST /api/expenses
@@ -126,9 +200,10 @@ export const StockTransferSchema = z.object({
     items: z
         .array(z.object({
             productId: z.string().min(1, 'productId requerido'),
-            quantity:  numeric.refine((v) => Number.isFinite(v) && v > 0, {
-                message: 'quantity debe ser un número > 0',
-            }),
+            // Conserva el decimal como texto hasta consultar el modo/paso del
+            // producto dentro de la transacción. Convertir aquí a Number
+            // ocultaba entradas con más precisión de la soportada.
+            quantity:  positiveQuantity,
         }))
         .min(1, 'Se requiere al menos un ítem')
         .max(50, 'Máximo 50 ítems por transferencia'),
@@ -162,10 +237,15 @@ const historicalOptional = <T extends z.ZodTypeAny>(schema: T) => z.preprocess(
     schema.optional(),
 );
 
+export const PurchaseUnitSchema = z.enum(['BASE', 'PACK']);
+
 export const PurchaseItemSchema = z.object({
     productId:   z.string().trim().min(1),
-    quantity:    positiveInt,
+    quantity:    positiveQuantity,
     unitCost:    moneyAmountPositive,
+    // Compatibilidad: clientes anteriores siempre expresaron cantidad/costo en
+    // unidad base. El factor de PACK jamás forma parte de este contrato.
+    purchaseUnit: PurchaseUnitSchema.optional().default('BASE'),
     batchNumber: historicalOptional(z.string().trim().min(1).max(100)),
     expiryDate:  historicalOptional(purchaseDateInput),
 });
@@ -173,6 +253,7 @@ export const PurchaseItemSchema = z.object({
 export const CreatePurchaseSchema = z
     .object({
         supplierId:     z.string().trim().min(1, 'supplierId requerido'),
+        warehouseId:    historicalOptional(z.string().trim().min(1, 'warehouseId inválido')),
         invoiceNumber:  z.string().trim().min(1, 'Número de factura requerido').max(100),
         // La fecha de la factura define el período de constancias, libros, VET
         // y retenciones. No existe un default seguro: usar "ahora" archivaría
@@ -199,10 +280,154 @@ export const CreatePurchaseSchema = z
 // POST /api/inventory/adjust
 export const InventoryAdjustSchema = z.object({
     productId: z.string().min(1, 'productId requerido'),
-    warehouseId: z.string().trim().min(1, 'Bodega requerida').optional(),
-    quantity:  z.number().int().refine((v) => v !== 0, { message: 'La cantidad no puede ser cero' }),
+    // La UI nueva siempre envía la ubicación. Se conserva opcional para
+    // clientes de una sola bodega; el handler rechaza la omisión ambigua.
+    warehouseId: z.string().trim().min(1, 'warehouseId inválido').optional(),
+    quantity:  nonZeroQuantityDelta,
     reason:    z.string().min(3, 'La justificación es obligatoria (mín. 3 caracteres)').max(300).optional(),
     type:      z.enum(['ADJUST_LOSS', 'ADJUST_GAIN', 'IN_PURCHASE', 'RETURN']).optional(),
+});
+
+// POST/PUT /api/products — contrato único para altas y edición. Los campos de
+// dinero siguen el tipo Float legacy del modelo; las cantidades físicas sí se
+// conservan como texto Decimal-safe hasta su validación contextual.
+export const ProductSaleModeSchema = z.enum(['COUNTED', 'MEASURED']);
+export const ProductFamilySchema = z.enum([
+    'GENERAL',
+    'MEAT',
+    'POULTRY',
+    'ANIMAL_FEED',
+    'AGRO_INPUT',
+    'VETERINARY',
+]);
+
+const nullablePositiveMoney = z.union([moneyAmountPositive, z.literal(''), z.null()]).optional();
+const nullablePositiveQuantity = z.union([positiveQuantity, z.literal(''), z.null()]).optional();
+const optionalNonNegativeQuantity = nonNegativeQuantity.optional();
+
+const ProductFieldsSchema = z.object({
+    name:                  z.string().trim().min(1, 'Nombre requerido').max(200),
+    sku:                   z.string().trim().min(1, 'SKU requerido').max(100),
+    description:           z.string().trim().max(1000).optional().nullable(),
+    category:              z.string().trim().max(100).optional().nullable(),
+    price:                 moneyAmountPositive,
+    cost:                  moneyAmount.optional(),
+    stock:                 optionalNonNegativeQuantity,
+    minStock:              optionalNonNegativeQuantity,
+    unit:                  z.string().trim().min(1, 'Unidad requerida').max(40).optional(),
+    saleMode:              ProductSaleModeSchema.optional().nullable(),
+    quantityStep:          nullablePositiveQuantity,
+    productFamily:         ProductFamilySchema.optional().nullable(),
+    isPublished:           z.boolean().optional(),
+    ivaExento:             z.boolean().optional(),
+    imageUrl:              z.string().trim().max(2000).optional().nullable(),
+    requiresBatchTracking: z.boolean().optional(),
+    reorderPoint:          optionalNonNegativeQuantity,
+    maxStock:              optionalNonNegativeQuantity,
+    defaultSupplierId:     z.string().trim().max(191).optional().nullable(),
+    wholesalePrice:        nullablePositiveMoney,
+    wholesaleMinQty:       nullablePositiveQuantity,
+    packUnit:              z.string().trim().max(40).optional().nullable(),
+    packSize:              nullablePositiveQuantity,
+    packPrice:             nullablePositiveMoney,
+});
+
+const addQuantityConfigurationIssues = (
+    product: {
+        saleMode?: 'COUNTED' | 'MEASURED' | null;
+        quantityStep?: string | null;
+        stock?: string;
+        minStock?: string;
+        reorderPoint?: string;
+        maxStock?: string;
+        wholesaleMinQty?: string | null;
+        packUnit?: string | null;
+        packSize?: string | null;
+        packPrice?: string | null;
+    },
+    ctx: z.RefinementCtx,
+) => {
+    // D6: `null` es producto legado, no sinónimo de contado. Antes de estos
+    // campos Product.stock ya era Float y aceptaba fracciones; conservarlo con
+    // paso efectivo 0.0001 evita quebrar catálogos históricos.
+    const saleMode = product.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED';
+    const quantityStep = product.quantityStep || (saleMode === 'COUNTED' ? '1' : '0.0001');
+    const quantities = [
+        ['stock', product.stock],
+        ['minStock', product.minStock],
+        ['reorderPoint', product.reorderPoint],
+        ['maxStock', product.maxStock],
+        ['wholesaleMinQty', product.wholesaleMinQty],
+        ['packSize', product.packSize],
+    ] as const;
+
+    const hasPackUnit = Boolean(product.packUnit?.trim());
+    const hasPackSize = product.packSize !== undefined && product.packSize !== null && product.packSize !== '';
+    const hasPackPrice = product.packPrice !== undefined && product.packPrice !== null && product.packPrice !== '';
+    if (hasPackUnit !== hasPackSize) {
+        ctx.addIssue({
+            code: 'custom',
+            path: hasPackUnit ? ['packSize'] : ['packUnit'],
+            message: 'El empaque requiere unidad y tamaño',
+        });
+    }
+    if (hasPackPrice && (!hasPackUnit || !hasPackSize)) {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['packPrice'],
+            message: 'El precio de empaque requiere unidad y tamaño',
+        });
+    }
+
+    // El propio paso también debe ser compatible con COUNTED (entero) o
+    // MEASURED (hasta 4 decimales). validateQuantity garantiza ambas reglas.
+    try {
+        validateQuantity(quantityStep, { saleMode, quantityStep });
+    } catch (error) {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['quantityStep'],
+            message: error instanceof Error ? error.message : 'Paso de cantidad inválido',
+        });
+        return;
+    }
+
+    for (const [field, raw] of quantities) {
+        if (raw === undefined || raw === null || raw === '' || new Decimal(raw).isZero()) continue;
+        try {
+            validateQuantity(raw, { saleMode, quantityStep });
+        } catch (error) {
+            ctx.addIssue({
+                code: 'custom',
+                path: [field],
+                message: error instanceof Error ? error.message : 'Cantidad inválida',
+            });
+        }
+    }
+};
+
+export const CreateProductSchema = ProductFieldsSchema
+    .extend({
+        saleMode:     ProductSaleModeSchema.optional().nullable(),
+        quantityStep: nullablePositiveQuantity,
+        productFamily: ProductFamilySchema.optional().nullable(),
+        unit:          z.string().trim().min(1).max(40).default('unidad'),
+        stock:         nonNegativeQuantity.default('0'),
+        minStock:      nonNegativeQuantity.default('5'),
+    })
+    .superRefine(addQuantityConfigurationIssues);
+
+export const UpdateProductSchema = ProductFieldsSchema.partial().refine(
+    (data) => Object.keys(data).length > 0,
+    { message: 'Indicá al menos un cambio' },
+);
+
+// El bulk conserva aliases históricos (nombre/precio/etc.); cada fila se
+// normaliza y valida con CreateProductSchema dentro del handler.
+export const BulkImportProductsSchema = z.object({
+    products: z.array(z.record(z.string(), z.unknown()))
+        .min(1, 'Se requiere al menos un producto')
+        .max(500, 'Máximo 500 productos por lote'),
 });
 
 // PATCH /api/products/bulk-edit  [Bodeguero A2 — edición masiva]
@@ -234,14 +459,17 @@ export const CreateBatchSchema = z.object({
     productId:   z.string().min(1, 'productId requerido'),
     batchNumber: z.string().trim().min(1, 'Número de lote requerido').max(100),
     expiryDate:  z.string().min(1, 'Fecha de vencimiento requerida'),
-    quantity:    z.number().int().positive('La cantidad debe ser mayor que cero'),
+    quantity:    positiveQuantity,
 });
 
 // POST /api/stock-counts  [Bodeguero B1 — toma física]
 export const CreateStockCountSchema = z
     .object({
-        scope:    z.enum(['ALL', 'CATEGORY']).default('ALL'),
+        // Compatibilidad: clientes anteriores pueden omitirlo. El handler solo
+        // resuelve la bodega por defecto cuando el tenant tiene una única
+        // ubicación activa; con multi-bodega exige selección explícita.
         warehouseId: z.string().trim().min(1, 'Bodega requerida').optional(),
+        scope:    z.enum(['ALL', 'CATEGORY']).default('ALL'),
         category: z.string().trim().min(1).max(100).optional(),
         notes:    z.string().trim().max(300).optional(),
     })
@@ -253,7 +481,7 @@ export const CreateStockCountSchema = z
 // PATCH /api/stock-counts/:id/count  [Bodeguero B1 — captura de conteo]
 export const RecordCountSchema = z.object({
     productId: z.string().min(1, 'productId requerido'),
-    counted:   z.number().int('El conteo debe ser un número entero').min(0, 'El conteo no puede ser negativo'),
+    counted:   nonNegativeQuantity,
 });
 
 // POST /api/shifts/open
@@ -286,7 +514,13 @@ export const TaxReportSchema = PayrollCalculateSchema;
 // ============================================================
 // AUTH
 // ============================================================
-const businessType = z.enum(['FERRETERIA', 'PULPERIA', 'FARMACIA', 'BOUTIQUE', 'RETAIL', 'LENDER', 'DISTRIBUIDORA', 'MISCELANEA']);
+const businessType = z.enum([
+    'FERRETERIA', 'PULPERIA', 'FARMACIA', 'BOUTIQUE', 'RETAIL', 'LENDER',
+    'DISTRIBUIDORA', 'MISCELANEA', 'CARNICERIA_POLLERIA', 'AGROPECUARIA',
+]);
+const tenantCapability = z.enum([
+    'CARNES_AVES', 'ALIMENTO_ANIMAL', 'AGROINSUMOS', 'PERECEDEROS', 'MAYOREO',
+]);
 
 // POST /api/auth/register
 export const RegisterSchema = z.object({
@@ -294,6 +528,7 @@ export const RegisterSchema = z.object({
     email:       z.string().trim().email('Correo inválido'),
     password:    z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(200),
     type:        businessType.optional(),
+    capabilities: z.array(tenantCapability).max(5, 'Máximo 5 capacidades').optional(),
     // Retención R1: el WhatsApp del dueño es EL canal de rescate en Nicaragua.
     // Opcional para no bajar la conversión del formulario; '' cuenta como vacío.
     phone:       z.string().trim().max(20, 'Teléfono demasiado largo')
@@ -498,7 +733,7 @@ export const FinancePurchaseSchema = z.object({
     items: z.array(z.object({
         productId:   z.string().min(1),
         productName: z.string().optional(),
-        quantity:    positiveInt,
+        quantity:    positiveQuantity,
         unitCost:    moneyAmountPositive,
     })).min(1, 'Se requiere al menos 1 ítem'),
 });

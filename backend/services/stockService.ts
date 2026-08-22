@@ -31,8 +31,10 @@
  *    producto sin fila ProductStock, la fila se crea con el stock agregado YA
  *    actualizado (stockAfter) — la bodega principal absorbe el total legado.
  *    Para bodegas no-default, la fila nace con el delta.
- *  - La suficiencia se garantiza sobre el AGREGADO (invariante de dinero). La
- *    suficiencia POR BODEGA llega con las transferencias (Fase 3).
+ *  - Este helper garantiza suficiencia sobre el AGREGADO. Los flujos que
+ *    representan una salida de una ubicación concreta (transferencia, ajuste,
+ *    carga de vendedor) bloquean y validan además su fila ProductStock antes
+ *    de llamar aquí.
  */
 
 import { Prisma } from '@prisma/client';
@@ -95,8 +97,11 @@ export interface OperationalWarehouse {
 
 /**
  * Resuelve la ubicación de una mutación operativa sin esconder ambigüedad.
- * Un cliente legado puede omitir `warehouseId` mientras exista una sola bodega
- * activa; con dos o más, elegir ubicación es obligatorio.
+ *
+ * Compatibilidad: un cliente anterior puede omitir `warehouseId` mientras el
+ * tenant tenga una sola bodega activa. En cuanto existen dos, elegir ubicación
+ * es obligatorio: caer silenciosamente en Principal sería una corrupción de
+ * intención aunque el agregado siguiera cuadrando.
  */
 export async function resolveOperationalWarehouse(
     tx: Prisma.TransactionClient,

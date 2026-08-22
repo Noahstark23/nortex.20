@@ -4,11 +4,13 @@ export interface ReceivedPurchaseOrderItem {
     productId: string;
     productName: string;
     quantityReceived: number | string;
+    quantityReceivedExact?: number | string | Decimal | null;
 }
 
 export interface PreviouslyInvoicedPurchaseItem {
     productId: string;
     quantity: number | string;
+    quantityExact?: number | string | Decimal | null;
 }
 
 export interface PurchaseOrderInvoiceAvailability {
@@ -28,13 +30,16 @@ export function calculatePurchaseOrderInvoiceAvailability(
     const availability = new Map<string, PurchaseOrderInvoiceAvailability>();
 
     for (const item of receivedItems) {
+        const received = new Decimal(
+            item.quantityReceivedExact?.toString() ?? item.quantityReceived.toString(),
+        );
         const current = availability.get(item.productId);
         if (current) {
-            current.remaining = current.remaining.plus(item.quantityReceived.toString());
+            current.remaining = current.remaining.plus(received);
         } else {
             availability.set(item.productId, {
                 productName: item.productName,
-                remaining: new Decimal(item.quantityReceived.toString()),
+                remaining: received,
             });
         }
     }
@@ -42,7 +47,10 @@ export function calculatePurchaseOrderInvoiceAvailability(
     for (const invoice of priorInvoices) {
         for (const item of invoice.items) {
             const current = availability.get(item.productId);
-            if (current) current.remaining = current.remaining.minus(item.quantity.toString());
+            if (current) {
+                const invoiced = item.quantityExact?.toString() ?? item.quantity.toString();
+                current.remaining = current.remaining.minus(invoiced);
+            }
         }
     }
 

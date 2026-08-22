@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { verifyAuthToken } = vi.hoisted(() => ({ verifyAuthToken: vi.fn() }));
+const { verifyAuthToken, userFindUnique, tenantFindUnique } = vi.hoisted(() => ({
+    verifyAuthToken: vi.fn(),
+    userFindUnique: vi.fn(),
+    tenantFindUnique: vi.fn(),
+}));
 
 vi.mock('../backend/services/secrets', () => ({ verifyAuthToken }));
 vi.mock('@prisma/client', () => ({
     PrismaClient: class {
-        user = { findUnique: vi.fn() };
-        tenant = { findUnique: vi.fn() };
+        user = { findUnique: userFindUnique };
+        tenant = { findUnique: tenantFindUnique };
     },
 }));
 
@@ -32,6 +36,14 @@ describe('authenticate — frontera BODEGUERO post-JWT', () => {
         verifyAuthToken.mockReturnValue({
             userId: 'user_1', tenantId: 'tenant_1', role: 'BODEGUERO', email: 'bodega@example.com',
         });
+        userFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+            id: where.id,
+            tenantId: 'tenant_1',
+            role: where.id === 'manager_1' ? 'MANAGER' : 'BODEGUERO',
+            status: 'ACTIVE',
+            email: where.id === 'manager_1' ? 'manager@example.com' : 'bodega@example.com',
+        }));
+        tenantFindUnique.mockResolvedValue({ subscriptionStatus: 'ACTIVE', trialEndsAt: null });
     });
 
     it('bloquea una lectura financiera aunque GET normalmente esté exento del paywall', async () => {
@@ -82,5 +94,20 @@ describe('authenticate — frontera BODEGUERO post-JWT', () => {
 
         expect(next).toHaveBeenCalledOnce();
         expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it('aplica el rol persistido cuando un JWT conserva privilegios anteriores', async () => {
+        verifyAuthToken.mockReturnValue({
+            userId: 'user_1', tenantId: 'tenant_1', role: 'OWNER', email: 'owner-viejo@example.com',
+        });
+        const req = request('GET', '/api/purchases');
+        const res = responseDouble();
+        const next = vi.fn();
+
+        await authenticate(req, res, next);
+
+        expect(req.role).toBe('BODEGUERO');
+        expect(res.status).toHaveBeenCalledWith(403);
+        expect(next).not.toHaveBeenCalled();
     });
 });

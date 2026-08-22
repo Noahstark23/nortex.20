@@ -3,7 +3,16 @@ import {
     AlertTriangle, CheckCircle, ClipboardList, PackageCheck, Plus,
     RefreshCw, X, XCircle,
 } from 'lucide-react';
-import { formatMoney } from '../utils/money';
+import Decimal from 'decimal.js';
+import { formatMoney, sanitizeDecimalInput } from '../utils/money';
+import { formatQuantityValue, validateQuantity } from '../utils/quantity';
+import {
+    orderedQuantityForItem,
+    purchaseOrderRulesForProduct,
+    purchaseOrderRulesForReceipt,
+    receivedQuantityForItem,
+    sanitizePurchaseQuantityInput,
+} from '../utils/purchaseOrderQuantities';
 import { currentSessionRole, roleCapabilitiesFor } from '../utils/roleCapabilities';
 import { ToastViewport, useToast } from './ui/Toast';
 
@@ -12,10 +21,20 @@ interface POItem {
     id: string;
     productId: string;
     productName: string;
-    quantityOrdered: number;
-    quantityReceived: number;
-    unitCost?: string | number | null;
-    product?: { requiresBatchTracking: boolean };
+    quantityOrdered: string | number;
+    quantityReceived: string | number;
+    quantityOrderedExact?: string | number | null;
+    quantityReceivedExact?: string | number | null;
+    unitAtOrder?: string | null;
+    saleModeAtOrder?: string | null;
+    quantityStepAtOrder?: string | number | null;
+    unitCost: string | number;
+    product?: {
+        requiresBatchTracking: boolean;
+        unit: string;
+        saleMode: string | null;
+        quantityStep: string | number | null;
+    };
 }
 
 interface PO {
@@ -29,9 +48,18 @@ interface PO {
 }
 
 interface Supplier { id: string; name: string; }
-interface ProductLite { id: string; name: string; sku: string; cost: number; }
+interface ProductLite {
+    id: string;
+    name: string;
+    sku: string;
+    cost: number;
+    unit: string;
+    saleMode: string | null;
+    quantityStep: string | number | null;
+}
+interface PORow extends ProductLite { quantity: string; unitCost: string; }
 interface ReceiptDraft { quantity: string; batchNumber: string; expiryDate: string; }
-interface WarehouseOption { id: string; name: string; isActive: boolean; isDefault: boolean; }
+interface WarehouseOption { id: string; name: string; isDefault: boolean; isActive: boolean; }
 
 /** Una sola bodega puede preseleccionarse; con dos o más decide la persona. */
 export const soleActiveReceiptWarehouseId = (warehouses: WarehouseOption[]): string => {
@@ -72,6 +100,26 @@ const LABEL: Record<string, string> = {
 
 const emptyReceipt = (): ReceiptDraft => ({ quantity: '', batchNumber: '', expiryDate: '' });
 
+const isValidCost = (value: string): boolean => {
+    try {
+        const parsed = new Decimal(value);
+        return parsed.isFinite() && !parsed.isNegative() && parsed.decimalPlaces() <= 2;
+    } catch {
+        return false;
+    }
+};
+
+const receiptRules = (item: POItem) => purchaseOrderRulesForReceipt(
+    item,
+    {
+        id: item.productId,
+        name: item.productName,
+        unit: item.product?.unit || item.unitAtOrder || 'unidad',
+        saleMode: item.product?.saleMode ?? null,
+        quantityStep: item.product?.quantityStep ?? null,
+    },
+);
+
 const PurchaseOrders: React.FC = () => {
     const {
         isBodeguero,
@@ -86,7 +134,7 @@ const PurchaseOrders: React.FC = () => {
     const [busy, setBusy] = useState<string | null>(null);
 
     const [supplierId, setSupplierId] = useState('');
-    const [rows, setRows] = useState<{ productId: string; name: string; quantity: string; unitCost: string }[]>([]);
+    const [rows, setRows] = useState<PORow[]>([]);
     const [search, setSearch] = useState('');
     const [results, setResults] = useState<ProductLite[]>([]);
     const [receiptDrafts, setReceiptDrafts] = useState<Record<string, ReceiptDraft>>({});
@@ -146,15 +194,25 @@ const PurchaseOrders: React.FC = () => {
             return;
         }
 
-        const items = rows.map(row => ({
-            productId: row.productId,
-            quantity: Number(row.quantity),
-            unitCost: Number(row.unitCost),
-        }));
-        if (items.some(item => !(item.quantity > 0) || !(item.unitCost >= 0))) {
+        const invalidRow = rows.find(row => {
+            try {
+                validateQuantity(row.quantity, purchaseOrderRulesForProduct(row));
+                return !isValidCost(row.unitCost);
+            } catch {
+                return true;
+            }
+        });
+        if (invalidRow) {
             showToast({ tone: 'warning', title: 'Revisá los productos', message: 'Las cantidades deben ser mayores que cero y los costos no pueden ser negativos.' });
             return;
         }
+        const items = rows.map(row => ({
+            productId: row.id,
+            // Se envían strings: el servidor valida Decimal y nunca recibe un
+            // Number ya redondeado por IEEE-754.
+            quantity: row.quantity,
+            unitCost: row.unitCost,
+        }));
 
         setBusy('create');
         try {
@@ -272,10 +330,34 @@ const PurchaseOrders: React.FC = () => {
             return;
         }
 
+        const invalidReceipt = receiving.items.find(item => {
+            const raw = receiptDrafts[item.id]?.quantity;
+            if (!raw) return false;
+            try {
+                validateQuantity(raw, receiptRules(item));
+                return false;
+            } catch {
+                return true;
+            }
+        });
+        if (invalidReceipt) {
+            showToast({
+                tone: 'warning',
+                title: 'Cantidad recibida inválida',
+                message: `Revisá la cantidad y el paso de ${invalidReceipt.productName}.`,
+            });
+            return;
+        }
+
         const items = receiving.items.flatMap(item => {
             const draft = receiptDrafts[item.id] ?? emptyReceipt();
-            const quantityReceived = Number(draft.quantity);
-            if (!(quantityReceived > 0)) return [];
+            if (!draft.quantity) return [];
+            let quantityReceived: string;
+            try {
+                quantityReceived = validateQuantity(draft.quantity, receiptRules(item)).toString();
+            } catch {
+                return [];
+            }
             return [{
                 itemId: item.id,
                 quantityReceived,
@@ -287,10 +369,15 @@ const PurchaseOrders: React.FC = () => {
             showToast({ tone: 'warning', title: 'Falta la cantidad recibida', message: 'Indicá al menos una cantidad mayor que cero.' });
             return;
         }
-
         const overReceived = receiving.items.find(item => {
-            const quantity = Number(receiptDrafts[item.id]?.quantity ?? 0);
-            return quantity > Number(item.quantityOrdered) - Number(item.quantityReceived);
+            const raw = receiptDrafts[item.id]?.quantity;
+            if (!raw) return false;
+            try {
+                return validateQuantity(raw, receiptRules(item))
+                    .greaterThan(orderedQuantityForItem(item).minus(receivedQuantityForItem(item)));
+            } catch {
+                return false;
+            }
         });
         if (overReceived) {
             showToast({ tone: 'warning', title: 'Cantidad mayor que la pendiente', message: `Revisá ${overReceived.productName}.` });
@@ -299,8 +386,13 @@ const PurchaseOrders: React.FC = () => {
 
         const incompleteBatch = receiving.items.find(item => {
             const draft = receiptDrafts[item.id] ?? emptyReceipt();
-            return Number(draft.quantity) > 0 && item.product?.requiresBatchTracking &&
-                (!draft.batchNumber.trim() || !draft.expiryDate);
+            if (!draft.quantity || !item.product?.requiresBatchTracking) return false;
+            try {
+                return validateQuantity(draft.quantity, receiptRules(item)).greaterThan(0)
+                    && (!draft.batchNumber.trim() || !draft.expiryDate);
+            } catch {
+                return false;
+            }
         });
         if (incompleteBatch) {
             showToast({
@@ -413,8 +505,10 @@ const PurchaseOrders: React.FC = () => {
                                                 <span className="ml-2 rounded bg-orange-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-orange-300">LOTE</span>
                                             )}
                                         </td>
-                                        <td className="py-1.5 text-right font-mono">{item.quantityReceived}/{item.quantityOrdered} und</td>
-                                        {canManagePurchaseOrders && item.unitCost != null && (
+                                        <td className="py-1.5 text-right font-mono">
+                                            {formatQuantityValue(receivedQuantityForItem(item))}/{formatQuantityValue(orderedQuantityForItem(item))} {item.unitAtOrder || item.product?.unit || 'unidad'}
+                                        </td>
+                                        {canManagePurchaseOrders && (
                                             <td className="py-1.5 text-right font-mono text-slate-400">{formatMoney(Number(item.unitCost))}</td>
                                         )}
                                     </tr>
@@ -437,10 +531,27 @@ const PurchaseOrders: React.FC = () => {
                             <h2 id="new-po-title" className="font-bold text-white">Nueva Orden de Compra</h2>
                             <button onClick={() => setShowCreate(false)} disabled={Boolean(busy)} className="text-slate-400 disabled:opacity-50" aria-label="Cerrar"><X size={18} /></button>
                         </div>
-                        <select value={supplierId} onChange={event => setSupplierId(event.target.value)} className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm">
-                            <option value="">— Proveedor —</option>
-                            {suppliers.map(supplier => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
-                        </select>
+                        <div>
+                            <label htmlFor="po-supplier" className="block text-xs font-semibold uppercase tracking-wide text-slate-400">Proveedor *</label>
+                            <select
+                                id="po-supplier"
+                                value={supplierId}
+                                onChange={event => setSupplierId(event.target.value)}
+                                disabled={suppliers.length === 0}
+                                className="mt-1 w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm disabled:text-slate-500"
+                            >
+                                <option value="">{suppliers.length === 0 ? 'Todavía no hay proveedores' : 'Seleccionar proveedor…'}</option>
+                                {suppliers.map(supplier => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+                            </select>
+                            {suppliers.length === 0 && (
+                                <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-amber-800/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-100">
+                                    <span>Necesitás un proveedor para crear la orden.</span>
+                                    <a href="/app/suppliers" className="shrink-0 font-bold text-amber-300 underline decoration-amber-500/60 underline-offset-2 hover:text-amber-200">
+                                        Crear proveedor
+                                    </a>
+                                </div>
+                            )}
+                        </div>
                         <div>
                             <input value={search} onChange={event => void searchProducts(event.target.value)} placeholder="Buscar producto para agregar…" className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm" />
                             {results.length > 0 && (
@@ -449,9 +560,13 @@ const PurchaseOrders: React.FC = () => {
                                         <button
                                             key={product.id}
                                             onClick={() => {
-                                                setRows(current => current.some(row => row.productId === product.id)
+                                                setRows(current => current.some(row => row.id === product.id)
                                                     ? current
-                                                    : [...current, { productId: product.id, name: product.name, quantity: '1', unitCost: String(product.cost ?? 0) }]);
+                                                    : [...current, {
+                                                        ...product,
+                                                        quantity: purchaseOrderRulesForProduct(product).quantityStep,
+                                                        unitCost: String(product.cost ?? 0),
+                                                    }]);
                                                 setSearch('');
                                                 setResults([]);
                                             }}
@@ -464,10 +579,10 @@ const PurchaseOrders: React.FC = () => {
                             )}
                         </div>
                         {rows.map((row, index) => (
-                            <div key={row.productId} className="flex gap-2 items-center text-sm">
-                                <span className="flex-1 text-slate-200 truncate">{row.name}</span>
-                                <input value={row.quantity} onChange={event => setRows(current => current.map((candidate, i) => i === index ? { ...candidate, quantity: event.target.value.replace(/[^\d.]/g, '') } : candidate))} className="w-16 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white font-mono text-right" aria-label={`Cantidad de ${row.name}`} />
-                                <input value={row.unitCost} onChange={event => setRows(current => current.map((candidate, i) => i === index ? { ...candidate, unitCost: event.target.value.replace(/[^\d.]/g, '') } : candidate))} className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white font-mono text-right" aria-label={`Costo de ${row.name}`} />
+                            <div key={row.id} className="flex gap-2 items-center text-sm">
+                                <span className="flex-1 text-slate-200 truncate">{row.name} <span className="text-xs text-slate-500">({row.unit || 'unidad'})</span></span>
+                                <input inputMode="decimal" value={row.quantity} onChange={event => setRows(current => current.map((candidate, i) => i === index ? { ...candidate, quantity: sanitizePurchaseQuantityInput(event.target.value) } : candidate))} className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white font-mono text-right" aria-label={`Cantidad de ${row.name}`} />
+                                <input inputMode="decimal" value={row.unitCost} onChange={event => setRows(current => current.map((candidate, i) => i === index ? { ...candidate, unitCost: sanitizeDecimalInput(event.target.value) } : candidate))} className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white font-mono text-right" aria-label={`Costo de ${row.name}`} />
                                 <button onClick={() => setRows(current => current.filter((_, i) => i !== index))} className="text-red-400" aria-label={`Quitar ${row.name}`}><X size={14} /></button>
                             </div>
                         ))}
@@ -517,32 +632,37 @@ const PurchaseOrders: React.FC = () => {
                                     </option>
                                 ))}
                             </select>
-                            {selectedReceiptWarehouse && (
-                                <p className="mt-2 text-xs text-emerald-300">
+                            {selectedReceiptWarehouse ? (
+                                <p className="mt-1.5 text-xs text-emerald-300">
                                     Todo lo recibido en esta operación ingresará a <strong>{selectedReceiptWarehouse.name}</strong>.
                                 </p>
+                            ) : (
+                                <p className="mt-1.5 text-xs text-slate-400">Elegí la ubicación física antes de confirmar.</p>
+                            )}
+                            {receiptWarehouses.length === 0 && !receiptWarehousesLoading && (
+                                <p role="alert" className="mt-2 text-xs text-red-300">No hay una bodega activa disponible. Actualizá la página o revisá Bodegas.</p>
                             )}
                         </div>
                         {receiving.items.map(item => {
-                            const pending = Number(item.quantityOrdered) - Number(item.quantityReceived);
+                            const pending = orderedQuantityForItem(item).minus(receivedQuantityForItem(item));
                             const draft = receiptDrafts[item.id] ?? emptyReceipt();
                             return (
                                 <div key={item.id} className="rounded-lg border border-slate-700 bg-slate-800/60 p-3">
                                     <div className="flex gap-3 items-center text-sm">
                                         <span className="flex-1 text-slate-200 truncate">
-                                            {item.productName} <span className="text-slate-500 text-xs">(pendiente {pending})</span>
+                                            {item.productName} <span className="text-slate-500 text-xs">(pendiente {formatQuantityValue(pending)} {item.unitAtOrder || item.product?.unit || 'unidad'})</span>
                                         </span>
                                         <input
                                             value={draft.quantity}
-                                            onChange={event => updateReceipt(item.id, { quantity: event.target.value.replace(/[^\d.]/g, '') })}
+                                            onChange={event => updateReceipt(item.id, { quantity: sanitizePurchaseQuantityInput(event.target.value) })}
                                             inputMode="decimal"
                                             placeholder="0"
                                             className="w-24 px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-white font-mono text-right"
-                                            disabled={pending <= 0}
+                                            disabled={pending.lessThanOrEqualTo(0)}
                                             aria-label={`Cantidad recibida de ${item.productName}`}
                                         />
                                     </div>
-                                    {item.product?.requiresBatchTracking && Number(draft.quantity) > 0 && (
+                                    {item.product?.requiresBatchTracking && draft.quantity !== '' && (
                                         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                                             <div>
                                                 <label className="block text-xs text-orange-300 mb-1">Número de lote *</label>

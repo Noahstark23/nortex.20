@@ -186,13 +186,26 @@ router.get('/:id/stock', authenticate, async (req: any, res: any) => {
         // Filas explícitas de esta bodega.
         const rows = await prisma.productStock.findMany({
             where: { warehouseId: wh.id, tenantId },
-            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+            include: {
+                product: {
+                    select: {
+                        id: true,
+                        name: true,
+                        sku: true,
+                        unit: true,
+                        saleMode: true,
+                        quantityStep: true,
+                    },
+                },
+            },
         });
         const explicit = rows.map((r) => ({
             productId: r.product.id,
             name: r.product.name,
             sku: r.product.sku,
             unit: r.product.unit,
+            saleMode: r.product.saleMode,
+            quantityStep: r.product.quantityStep?.toString() ?? null,
             stock: Number(r.stock),
             implicit: false,
         }));
@@ -208,6 +221,7 @@ router.get('/:id/stock', authenticate, async (req: any, res: any) => {
             where: { tenantId, id: { notIn: [...explicitIds] } },
             select: {
                 id: true, name: true, sku: true, unit: true, stock: true,
+                saleMode: true, quantityStep: true,
                 productStocks: { select: { stock: true } },
             },
         });
@@ -218,6 +232,8 @@ router.get('/:id/stock', authenticate, async (req: any, res: any) => {
                 name: p.name,
                 sku: p.sku,
                 unit: p.unit,
+                saleMode: p.saleMode,
+                quantityStep: p.quantityStep?.toString() ?? null,
                 stock: Number(p.stock) - others,
                 implicit: true,
             };

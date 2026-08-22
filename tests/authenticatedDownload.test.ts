@@ -1,25 +1,126 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     AuthenticatedRequestError,
+    authenticatedDownload,
     downloadAuthenticatedFile,
     fetchAuthenticatedBlob,
     openAuthenticatedPreview,
 } from '../utils/authenticatedDownload';
 
+const response = (
+    body: BodyInit,
+    status = 200,
+    contentType = 'text/plain',
+    extraHeaders: Record<string, string> = {},
+) => new Response(body, {
+    status,
+    headers: {
+        'Content-Type': contentType,
+        ...extraHeaders,
+    },
+});
+
 afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
 });
 
-const response = (body: BodyInit, status = 200, contentType = 'text/plain') => new Response(body, {
-    status,
-    headers: { 'Content-Type': contentType },
+describe('authenticatedDownload', () => {
+    it('descarga el archivo con Bearer y respeta el filename del servidor', async () => {
+        vi.useFakeTimers();
+
+        const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => response(
+            'excel',
+            200,
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            { 'Content-Disposition': 'attachment; filename="libro-compras.xlsx"' },
+        ));
+        const anchor = {
+            href: '',
+            download: '',
+            style: { display: '' },
+            click: vi.fn(),
+        } as unknown as HTMLAnchorElement;
+        const documentRef = {
+            createElement: vi.fn(() => anchor),
+            body: { appendChild: vi.fn(), removeChild: vi.fn() },
+        };
+        const urlApi = {
+            createObjectURL: vi.fn(() => 'blob:nortex-file'),
+            revokeObjectURL: vi.fn(),
+        };
+
+        const result = await authenticatedDownload('/api/fiscal/libro-compras/8/2026', {
+            token: 'jwt-demo',
+            fetchImpl,
+            documentRef: documentRef as any,
+            urlApi,
+        });
+
+        const init = fetchImpl.mock.calls[0][1] as RequestInit;
+        expect(new Headers(init.headers).get('Authorization')).toBe('Bearer jwt-demo');
+        expect(anchor.href).toBe('blob:nortex-file');
+        expect(anchor.download).toBe('libro-compras.xlsx');
+        expect(anchor.click).toHaveBeenCalledTimes(1);
+        expect(result).toEqual({ filename: 'libro-compras.xlsx' });
+
+        await vi.runAllTimersAsync();
+        expect(urlApi.revokeObjectURL).toHaveBeenCalledWith('blob:nortex-file');
+    });
+
+    it('abre la constancia en una pestaña preabierta y la cierra si el backend responde error', async () => {
+        const previewWindow = {
+            opener: {},
+            closed: false,
+            close: vi.fn(),
+            location: { replace: vi.fn() },
+            document: {
+                title: '',
+                body: { innerHTML: '' },
+                write: vi.fn(),
+                close: vi.fn(),
+            },
+        };
+        const open = vi.fn(() => previewWindow);
+        const fetchImpl = vi.fn(async () => response(
+            JSON.stringify({ error: 'No autorizado.' }),
+            403,
+            'application/json',
+        ));
+
+        const promise = authenticatedDownload('/api/fiscal/constancia-retencion/abc', {
+            token: 'jwt-demo',
+            openInNewTab: true,
+            fetchImpl,
+            windowRef: { open } as unknown as Window,
+        });
+
+        await expect(promise).rejects.toMatchObject({ status: 403 });
+        await expect(promise).rejects.toThrow('No autorizado.');
+        expect(open).toHaveBeenCalledWith('about:blank', '_blank', undefined);
+        expect(previewWindow.close).toHaveBeenCalledTimes(1);
+        expect(previewWindow.location.replace).not.toHaveBeenCalled();
+    });
+
+    it('falla rápido cuando la sesión ya no tiene token', async () => {
+        const fetchImpl = vi.fn();
+        await expect(authenticatedDownload('/api/fiscal/vet-export/8/2026', {
+            token: null,
+            fetchImpl,
+        })).rejects.toEqual(expect.objectContaining<Partial<AuthenticatedRequestError>>({
+            code: 'NO_SESSION',
+            status: 401,
+            message: 'Tu sesión expiró. Iniciá sesión de nuevo.',
+        }));
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
 });
 
 describe('descargas autenticadas', () => {
     it('adjunta el Bearer, descarga el Blob con el nombre pedido y limpia la URL temporal', async () => {
         vi.useFakeTimers();
-        const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response('LIBRO'));
+        const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async (_input: RequestInfo | URL, _init?: RequestInit) => response('LIBRO'));
         const anchor = {
             href: '',
             download: '',
@@ -100,7 +201,6 @@ describe('vista previa autenticada', () => {
             opener: {} as Window,
             document: { write: vi.fn(), close: vi.fn() },
             location: { replace: vi.fn() },
-            addEventListener: vi.fn(),
             close: vi.fn(),
         };
         const windowRef = {
@@ -140,7 +240,6 @@ describe('vista previa autenticada', () => {
             opener: null,
             document: { write: vi.fn(), close: vi.fn() },
             location: { replace: vi.fn() },
-            addEventListener: vi.fn(),
             close: vi.fn(),
         };
 

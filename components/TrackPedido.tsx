@@ -1,27 +1,24 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { Loader2, MapPin, Phone, PackageCheck, ChefHat, Bike, CheckCircle2, XCircle, Clock } from 'lucide-react';
+import { Loader2, MapPin, PackageCheck, ChefHat, Bike, CheckCircle2, XCircle, Clock } from 'lucide-react';
 
 /**
  * Seguimiento público de un Pedido a domicilio (/track/:pedidoId).
- * Consume GET /api/v1/pedidos/:id/tracking (sin JWT) y refresca cada 30 s.
+ * Consume GET /api/v1/pedidos/:id/tracking con la capacidad firmada que viene
+ * en el fragmento del enlace y refresca cada 30 s.
  * Es la página que el cliente recibe por WhatsApp al confirmar su pedido.
  */
 
 interface TrackingEvento {
-    id: string;
     estado: string;
-    nota?: string | null;
     createdAt: string;
 }
 
 interface TrackingData {
-    id: string;
     estado: string;
     createdAt: string;
-    clienteNombre: string;
     eventos: TrackingEvento[];
-    motorizado: { nombre: string; telefono: string } | null;
+    motorizado: { nombre: string } | null;
 }
 
 const PASOS: { estado: string; label: string; icon: React.ComponentType<{ size?: number; className?: string }> }[] = [
@@ -33,16 +30,24 @@ const PASOS: { estado: string; label: string; icon: React.ComponentType<{ size?:
 
 const TrackPedido: React.FC = () => {
     const { pedidoId } = useParams<{ pedidoId: string }>();
+    const trackingToken = new URLSearchParams(window.location.hash.slice(1)).get('token') ?? '';
     const [data, setData] = useState<TrackingData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
     const fetchTracking = useCallback(async () => {
-        if (!pedidoId) return;
+        if (!pedidoId || !trackingToken) {
+            setError('El enlace de seguimiento es inválido o venció.');
+            setLoading(false);
+            return;
+        }
         try {
-            const res = await fetch(`/api/v1/pedidos/${pedidoId}/tracking`);
+            const res = await fetch(`/api/v1/pedidos/${pedidoId}/tracking`, {
+                headers: { 'X-Pedido-Tracking-Token': trackingToken },
+                cache: 'no-store',
+            });
             if (!res.ok) {
-                setError('Pedido no encontrado. Verifica el enlace.');
+                setError('El enlace de seguimiento es inválido o venció.');
                 return;
             }
             const json = await res.json();
@@ -53,7 +58,7 @@ const TrackPedido: React.FC = () => {
         } finally {
             setLoading(false);
         }
-    }, [pedidoId]);
+    }, [pedidoId, trackingToken]);
 
     useEffect(() => {
         fetchTracking();
@@ -83,7 +88,7 @@ const TrackPedido: React.FC = () => {
 
     const cancelado = data.estado === 'cancelado';
     const pasoActual = PASOS.findIndex(p => p.estado === data.estado);
-    const orderNum = data.id.slice(-8).toUpperCase();
+    const orderNum = (pedidoId ?? '').slice(-8).toUpperCase();
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50 flex items-center justify-center p-4">
@@ -92,7 +97,7 @@ const TrackPedido: React.FC = () => {
                 <div className="text-center mb-6">
                     <p className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-1">Pedido #{orderNum}</p>
                     <h1 className="text-2xl font-bold text-slate-900">
-                        {cancelado ? 'Pedido cancelado' : `¡Hola, ${data.clienteNombre.split(' ')[0]}!`}
+                        {cancelado ? 'Pedido cancelado' : 'Seguimiento de tu pedido'}
                     </h1>
                     {!cancelado && (
                         <p className="text-slate-500 text-sm mt-1">
@@ -146,12 +151,6 @@ const TrackPedido: React.FC = () => {
                                     <p className="text-sm font-bold text-emerald-900 truncate">{data.motorizado.nombre}</p>
                                     <p className="text-xs text-emerald-600">Tu repartidor asignado</p>
                                 </div>
-                                <a
-                                    href={`tel:${data.motorizado.telefono}`}
-                                    className="p-2.5 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-colors"
-                                >
-                                    <Phone size={18} />
-                                </a>
                             </div>
                         )}
                     </>
@@ -164,9 +163,9 @@ const TrackPedido: React.FC = () => {
                             <Clock size={12} /> Historial
                         </p>
                         <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                            {data.eventos.map(ev => (
-                                <div key={ev.id} className="flex justify-between items-baseline text-xs gap-2">
-                                    <span className="text-slate-600 truncate">{ev.nota || ev.estado.replace('_', ' ')}</span>
+                            {data.eventos.map((ev, index) => (
+                                <div key={`${ev.estado}-${ev.createdAt}-${index}`} className="flex justify-between items-baseline text-xs gap-2">
+                                    <span className="text-slate-600 truncate">{ev.estado.replaceAll('_', ' ')}</span>
                                     <span className="text-slate-400 font-mono tabular-nums flex-shrink-0">
                                         {new Date(ev.createdAt).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })}
                                     </span>

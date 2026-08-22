@@ -1,4 +1,8 @@
 
+export type SaleMode = 'COUNTED' | 'MEASURED';
+export type MeasurementSource = 'MANUAL' | 'SCALE_LABEL' | 'LIVE_SCALE';
+export type MeasurementPricePolicy = 'RECALCULATE' | 'REQUIRE_MATCH' | 'ACCEPT_LABEL_TOTAL';
+
 export interface Product {
   id: string;
   name: string;
@@ -19,6 +23,11 @@ export interface Product {
   packUnit?: string | null;  // nombre del empaque (caja, fardo, docena)
   packSize?: number | null;  // unidades base por empaque (ej: 12)
   packPrice?: number | null; // precio del empaque completo (null = solo atajo)
+  /** Unidad base que se descuenta del inventario y se factura. */
+  unit?: string | null;
+  saleMode?: SaleMode | null;
+  quantityStep?: number | null;
+  productFamily?: string | null;
 }
 
 export interface ProductBatch {
@@ -31,8 +40,52 @@ export interface ProductBatch {
 
 export interface CartItem extends Product {
   quantity: number;
+  /** Referencia opaca a la línea de cotización autoritativa. */
+  quotationItemId?: string;
+  /** Snapshots decimales enviados por el serializer de cotizaciones. */
+  quantityExact?: string | null;
+  unitPriceExact?: string | null;
+  presentationAtQuote?: 'BASE' | 'PACK';
+  ivaExento?: boolean;
   batchNumber?: string;
   expiryDate?: string;
+  cartLineId?: string;
+  /** Presentación que vio el cajero; quantity siempre queda en unidad base. */
+  presentation?: {
+    quantity: string;
+    unit: string;
+  };
+  /**
+   * Evidencia de captura. Para SCALE_LABEL el código crudo solo vive en el
+   * carrito/venta pendiente: el servidor lo reparsea y la cola se elimina al
+   * sincronizar. Nunca es autoridad de producto, cantidad ni precio.
+   */
+  measurement?: {
+    source: MeasurementSource;
+    clientEventId: string;
+    capturedAt: string;
+    rawCode?: string;
+    profileVersionId?: string;
+    previewBaseQuantity?: string;
+    sourceValue?: string;
+    sourceUnit?: string;
+    encodedPrice?: string;
+    pricingPolicy?: MeasurementPricePolicy;
+    managerOverride?: boolean;
+    deviceId?: string;
+    stable?: boolean;
+  };
+  // Campos legacy de la primera exploración. Se leen para no romper carritos
+  // ya guardados; todo dato nuevo usa `presentation` + `measurement`.
+  displayQuantity?: number;
+  displayUnit?: string;
+  measurementSource?: MeasurementSource;
+  measurementCode?: string;
+  scaleProfileVersionId?: string;
+  scalePlu?: string;
+  measuredValue?: number;
+  measuredUnit?: string;
+  measurementPricePolicy?: MeasurementPricePolicy;
 }
 
 export interface Tenant {
@@ -168,7 +221,7 @@ export interface Quotation {
   id: string;
   customerName: string;
   customerRuc?: string;
-  items: CartItem[];
+  items: Array<CartItem & { quantityExact?: string | null }>;
   subtotal: number;
   tax: number;
   total: number;

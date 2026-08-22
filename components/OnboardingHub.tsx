@@ -1,15 +1,15 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, Circle, X, Rocket, ArrowRight, Sparkles, PartyPopper, RefreshCw } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { CheckCircle2, Circle, X, Sparkles, PartyPopper, RefreshCw } from 'lucide-react';
 import { trackEvent } from '../utils/analytics';
 
 /**
  * OnboardingHub — onboarding guiado de activación.
  *
- * - Modal de bienvenida la primera vez (tras registrarse).
- * - Checklist flotante de "Primeros pasos" que se AUTO-COMPLETA: los hitos los
- *   deriva el backend (GET /api/onboarding) de los datos reales del negocio, así
- *   que no hay nada que marcar a mano. Se ramifica por tipo de negocio.
+ * - Checklist flotante de "Primeros pasos", disponible cuando el usuario lo pide.
+ * - Los hitos se AUTO-COMPLETAN: el backend (GET /api/onboarding) los deriva
+ *   de los datos reales del negocio, así que no hay nada que marcar a mano.
+ *   Se ramifica por tipo de negocio.
  *
  * Diseño: las banderas cosméticas (bienvenida vista / descartado) viven en
  * localStorage, igual que el resto del estado de la app. Sin migraciones de BD.
@@ -35,29 +35,26 @@ interface OnbData {
 const WELCOME_KEY = 'nortex_onb_welcome';
 const DISMISS_KEY = 'nortex_onb_dismissed';
 
-/** Lee rol y tipo de negocio del usuario guardado, sin reventar si falta algo. */
-function readUser(): { role: string; type: string; businessName: string } {
+/** Lee el rol del usuario guardado, sin reventar si falta algo. */
+function readRole(): string {
   try {
     const u = JSON.parse(localStorage.getItem('nortex_user') || '{}');
-    return {
-      role: u?.role || '',
-      type: u?.tenant?.type || '',
-      businessName: u?.tenant?.businessName || u?.tenant?.name || '',
-    };
+    return u?.role || '';
   } catch {
-    return { role: '', type: '', businessName: '' };
+    return '';
   }
 }
 
 const OnboardingHub: React.FC = () => {
   const navigate = useNavigate();
-  const { role, businessName } = React.useMemo(readUser, []);
+  const location = useLocation();
+  const isPos = location.pathname === '/app/pos';
+  const role = React.useMemo(readRole, []);
   const isEligible = role === 'OWNER' || role === 'ADMIN';
 
   const [data, setData] = React.useState<OnbData | null>(null);
   const [fetchFailed, setFetchFailed] = React.useState(false);
   const [open, setOpen] = React.useState(false);
-  const [showWelcome, setShowWelcome] = React.useState(false);
   // 🎉 Cierre del loop "aha": cuando la primera venta se detecta en vivo.
   const [celebration, setCelebration] = React.useState<string | null>(null);
   const [dismissed, setDismissed] = React.useState(
@@ -94,14 +91,13 @@ const OnboardingHub: React.FC = () => {
       prevStepsRef.current = new Map(json.steps.map((s) => [s.key, s.done]));
       setData(json);
 
-      // Bienvenida: se muestra al llegar con ?welcome=1 (registro) O cuando el
-      // negocio no completó NINGÚN paso — el hilo de ?welcome=1 era frágil (se
-      // perdía si no tocaban "Continuar" o entraban por login) y dejaba al
-      // usuario nuevo sin guía. Una sola vez por navegador, saltable siempre.
+      // Registramos la primera exposición al onboarding sin interrumpir al
+      // usuario con un modal. El checklist queda disponible cuando lo necesite.
+      // Guardamos la marca antes del evento para que un reintento no lo duplique.
       const welcomeSeen = localStorage.getItem(WELCOME_KEY) === '1';
       const forced = new URLSearchParams(window.location.search).get('welcome') === '1';
       if ((forced || json.completed === 0) && !welcomeSeen && !json.allDone) {
-        setShowWelcome(true);
+        localStorage.setItem(WELCOME_KEY, '1');
         trackEvent('onboarding_shown', { forced });
       }
     } catch {
@@ -149,13 +145,7 @@ const OnboardingHub: React.FC = () => {
       </div>
     );
   }
-  if (data.allDone && !showWelcome && !celebration) return null;
-
-  const closeWelcome = (startTour: boolean) => {
-    localStorage.setItem(WELCOME_KEY, '1');
-    setShowWelcome(false);
-    if (startTour) setOpen(true);
-  };
+  if (data.allDone && !celebration) return null;
 
   const dismissChecklist = () => {
     localStorage.setItem(DISMISS_KEY, '1');
@@ -185,56 +175,6 @@ const OnboardingHub: React.FC = () => {
         </div>
       )}
 
-      {/* ---------- MODAL DE BIENVENIDA ---------- */}
-      {showWelcome && (
-        <div className="fixed inset-0 z-modal bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/[0.06]">
-            <div className="bg-nortex-900 p-8 relative overflow-hidden">
-              <div className="absolute -top-10 -right-10 w-48 h-48 bg-nortex-accent blur-[70px] opacity-25" />
-              <div className="relative z-10">
-                <div className="w-14 h-14 bg-nortex-accent/20 text-nortex-accent rounded-2xl flex items-center justify-center mb-4">
-                  <Rocket size={28} />
-                </div>
-                <h2 className="text-2xl font-bold text-white">
-                  ¡Bienvenido a Nortex{businessName ? `, ${businessName}` : ''}!                 </h2>
-                <p className="text-slate-300 mt-2 text-sm leading-relaxed">
-                  Te preparamos una guía de <span className="text-white font-semibold">primeros pasos</span> para
-                  que pongas tu negocio a funcionar en minutos. Se va completando sola a medida que usás el sistema.
-                </p>
-              </div>
-            </div>
-            <div className="p-6">
-              <ul className="space-y-2 mb-6">
-                {data.steps.map((s) => (
-                  <li key={s.key} className="flex items-center gap-3 text-sm text-slate-300">
-                    {s.done ? (
-                      <CheckCircle2 size={18} className="text-emerald-500 shrink-0" />
-                    ) : (
-                      <Circle size={18} className="text-slate-300 shrink-0" />
-                    )}
-                    <span className={s.done ? 'line-through text-slate-400' : ''}>{s.label}</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => closeWelcome(false)}
-                  className="flex-1 py-3 text-slate-300 font-bold hover:bg-white/[0.06] rounded-lg transition-colors"
-                >
-                  Ahora no
-                </button>
-                <button
-                  onClick={() => closeWelcome(true)}
-                  className="flex-1 py-3 bg-nortex-900 hover:bg-nortex-800 text-white font-bold rounded-lg shadow-lg transition-colors flex items-center justify-center gap-2"
-                >
-                  Empezar <ArrowRight size={18} />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ---------- LANZADOR + PANEL ---------- */}
       {/* Anclado BAJO EL HEADER, no abajo a la derecha: ahí se superponía al
           botón EFECTIVO del POS y cortaba el texto de CRÉDITO. La zona de cobro
@@ -243,7 +183,7 @@ const OnboardingHub: React.FC = () => {
       {/* En móvil baja a top-[8.5rem]: a 4.5rem quedaba impresa ENCIMA de la
           barra de búsqueda y del botón "Agregar" del POS (auditoría de uso
           real en 390px). En md+ vuelve a su lugar bajo el header. */}
-      <div className="fixed top-[8.5rem] md:top-[4.5rem] right-4 lg:right-6 z-sticky print:hidden flex flex-col items-end">
+      {!isPos && <div className="fixed top-[8.5rem] md:top-[4.5rem] right-4 lg:right-6 z-sticky print:hidden flex flex-col items-end">
         {open && (
           <div className="order-2 mt-3 w-[22rem] max-w-[calc(100vw-2.5rem)] bg-surface-900 rounded-card shadow-2xl border border-white/[0.06] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
             <div className="bg-nortex-900 px-5 py-4 flex items-center justify-between">
@@ -342,7 +282,7 @@ const OnboardingHub: React.FC = () => {
             {data.completed}/{data.total}
           </span>
         </button>
-      </div>
+      </div>}
     </>
   );
 };

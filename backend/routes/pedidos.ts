@@ -1,15 +1,31 @@
 import express from 'express';
 // @ts-ignore
-import { PrismaClient } from '@prisma/client';
-// @ts-ignore
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import Decimal from 'decimal.js';
 import { authenticate, AuthRequest } from '../middleware/auth';
-import { recordSale } from '../services/accounting';
-import { applyStockDelta, StockError } from '../services/stockService';
+import { checkRole } from '../middleware/checkRole';
+import { PEDIDO_READ_ROLES, PEDIDO_WRITE_ROLES } from '../middleware/accessPolicies';
+import prisma from '../lib/prisma.js';
+import { StockError } from '../services/stockService';
+import {
+    cancelPedidoInTransaction,
+    completePedidoDeliveryInTransaction,
+    lockPedidoForFulfillment,
+    PedidoFulfillmentError,
+    reservePedidoInTransaction,
+} from '../services/pedidoFulfillmentService.js';
+import {
+    PublicOrderItemError,
+    resolvePublicOrderItems,
+    type PublicOrderProductAuthority,
+} from '../services/publicOrderItemService.js';
+import { signPedidoTrackingToken, verifyPedidoTrackingToken } from '../services/secrets.js';
+import {
+    PUBLIC_PEDIDO_TRACKING_SELECT,
+    toPublicPedidoTrackingDto,
+} from '../services/pedidoTrackingService.js';
 
-const prisma = new PrismaClient();
 const router = express.Router();
 
 /**
@@ -40,7 +56,8 @@ const CreatePedidoSchema = z.object({
         .array(
             z.object({
                 productoId: z.string().min(1),
-                cantidad: z.number().int().positive().max(999),
+                cantidad: z.union([z.string().trim().min(1).max(64), z.number().finite()]),
+                presentation: z.enum(['BASE', 'PACK']).optional(),
             })
         )
         .min(1, 'Se requiere al menos 1 producto')
@@ -69,37 +86,33 @@ router.post('/', createPedidoLimiter, async (req: any, res: any) => {
 
         // Solo productos del tenant Y publicados en el catálogo: el precio
         // SIEMPRE sale de la BD (el cliente no manda precios).
-        const productIds = items.map(i => i.productoId);
-        const productsDB = await prisma.product.findMany({
-            where: { tenantId, id: { in: productIds }, isPublished: true },
-        });
-
-        if (productsDB.length !== items.length) {
-            return res.status(400).json({ error: 'Algunos productos no fueron encontrados o no están disponibles.' });
-        }
-
-        // Totales en Decimal.js (cero aritmética float con dinero)
-        let totalSuma = new Decimal(0);
-        const pedidoItemsData = items.map(item => {
-            const prod = productsDB.find(p => p.id === item.productoId)!;
-            const precioUnitario = new Decimal(prod.price.toString());
-            const subtotal = precioUnitario.mul(item.cantidad);
-            totalSuma = totalSuma.plus(subtotal);
-
-            return {
-                productoId: prod.id,
-                cantidad: item.cantidad,
-                precioUnitario: precioUnitario.toDecimalPlaces(2).toNumber(),
-                subtotal: subtotal.toDecimalPlaces(2).toNumber(),
-            };
-        });
-
-        // Flete: SERVER-SIDE desde la config del negocio (jamás del body)
-        const costoEntrega = new Decimal(tenant.deliveryFee.toString());
-        const granTotal = totalSuma.plus(costoEntrega).toDecimalPlaces(2);
-
-        // $transaction para atomicidad total
         const pedidoCreated = await prisma.$transaction(async (tx: any) => {
+            const productIds = [...new Set(items.map((item) => item.productoId))];
+            const productsDB: PublicOrderProductAuthority[] = await tx.product.findMany({
+                where: { tenantId, id: { in: productIds }, isPublished: true },
+                select: {
+                    id: true, tenantId: true, isPublished: true, name: true, unit: true,
+                    price: true, cost: true, ivaExento: true, saleMode: true, quantityStep: true,
+                    wholesalePrice: true, wholesaleMinQty: true, packUnit: true, packSize: true,
+                    packPrice: true, requiresBatchTracking: true,
+                },
+            });
+            const resolvedItems = resolvePublicOrderItems(
+                tenantId,
+                items.map((item) => ({
+                    productId: item.productoId,
+                    quantity: item.cantidad,
+                    presentation: item.presentation,
+                })),
+                productsDB,
+            );
+            const totalSuma = resolvedItems.reduce(
+                (sum, item) => sum.plus(item.subtotal),
+                new Decimal(0),
+            );
+            // Flete: SERVER-SIDE desde la config del negocio (jamás del body).
+            const costoEntrega = new Decimal(tenant.deliveryFee.toString()).toDecimalPlaces(2);
+            const granTotal = totalSuma.plus(costoEntrega).toDecimalPlaces(2);
             const pedido = await tx.pedido.create({
                 data: {
                     tenantId,
@@ -112,7 +125,21 @@ router.post('/', createPedidoLimiter, async (req: any, res: any) => {
                     costoEntrega: costoEntrega.toNumber(),
                     total: granTotal.toNumber(),
                     items: {
-                        create: pedidoItemsData
+                        create: resolvedItems.map((item) => ({
+                            productoId: item.productId,
+                            cantidad: item.quantityLegacy,
+                            cantidadExact: item.quantityExact.toFixed(),
+                            precioUnitario: item.unitPrice.toFixed(2),
+                            unitPriceExactAtOrder: item.unitPrice.toFixed(4),
+                            subtotal: item.subtotal.toFixed(2),
+                            productNameAtOrder: item.productName,
+                            unitAtOrder: item.unit,
+                            saleModeAtOrder: item.saleMode,
+                            quantityStepAtOrder: item.quantityStep,
+                            ivaExentoAtOrder: item.ivaExento,
+                            presentationAtSale: item.presentationAtSale,
+                            presentationQuantityAtSale: item.presentationQuantityAtSale.toFixed(4),
+                        })),
                     },
                     eventos: {
                         create: {
@@ -127,27 +154,36 @@ router.post('/', createPedidoLimiter, async (req: any, res: any) => {
                 }
             });
 
-            return pedido;
+            return { pedido, granTotal, costoEntrega };
         });
 
+        const trackingToken = signPedidoTrackingToken(
+            pedidoCreated.pedido.id,
+            tenantId,
+        );
         res.status(201).json({
             message: 'Pedido creado exitosamente',
-            pedidoId: pedidoCreated.id,
-            estado: pedidoCreated.estado,
-            total: granTotal.toNumber(),
-            costoEntrega: costoEntrega.toNumber(),
-            trackingPath: `/track/${pedidoCreated.id}`,
-            pedido: pedidoCreated
+            pedidoId: pedidoCreated.pedido.id,
+            estado: pedidoCreated.pedido.estado,
+            total: pedidoCreated.granTotal.toNumber(),
+            costoEntrega: pedidoCreated.costoEntrega.toNumber(),
+            // El token queda en el fragmento: el navegador no lo incluye en la
+            // petición HTML ni en Referer. TrackPedido lo envía al API por header.
+            trackingPath: `/track/${pedidoCreated.pedido.id}#token=${encodeURIComponent(trackingToken)}`,
+            pedido: pedidoCreated.pedido,
         });
 
     } catch (error) {
+        if (error instanceof PublicOrderItemError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
         console.error('Create Pedido Error:', error);
         res.status(500).json({ error: 'Error al procesar el pedido.' });
     }
 });
 
 // GET /api/v1/pedidos -> (Privado) Listar pedidos del Dashboard
-router.get('/', authenticate, async (req: any, res: any) => {
+router.get('/', authenticate, checkRole(PEDIDO_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const pedidos = await prisma.pedido.findMany({
@@ -173,7 +209,7 @@ router.get('/', authenticate, async (req: any, res: any) => {
 });
 
 // GET /api/v1/pedidos/:id -> (Privado) Detalle de pedido
-router.get('/:id', authenticate, async (req: any, res: any) => {
+router.get('/:id', authenticate, checkRole(PEDIDO_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
 
@@ -202,38 +238,34 @@ router.get('/:id', authenticate, async (req: any, res: any) => {
     }
 });
 
-// GET /api/v1/pedidos/:id/tracking -> (Público) Ver tracking del pedido
+// GET /api/v1/pedidos/:id/tracking -> tracking mediante capacidad firmada
 router.get('/:id/tracking', async (req: any, res: any) => {
     const { id } = req.params;
+    const token = req.get('x-pedido-tracking-token');
+    res.set('Cache-Control', 'private, no-store, max-age=0');
 
     try {
-        const pedido = await prisma.pedido.findUnique({
-            where: { id },
-            select: {
-                id: true,
-                estado: true,
-                createdAt: true,
-                eventos: {
-                    orderBy: { createdAt: 'desc' }
-                },
-                clienteNombre: true,
-                motorizado: {
-                    select: { nombre: true, telefono: true }
-                }
-            }
+        if (typeof token !== 'string' || !token) {
+            return res.status(404).json({ error: 'Enlace de seguimiento inválido o vencido.' });
+        }
+        const capability = verifyPedidoTrackingToken(token, id);
+        const pedido = await prisma.pedido.findFirst({
+            where: { id, tenantId: capability.tenantId },
+            select: PUBLIC_PEDIDO_TRACKING_SELECT,
         });
 
-        if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado.' });
+        if (!pedido) return res.status(404).json({ error: 'Enlace de seguimiento inválido o vencido.' });
 
-        res.json({ tracking: pedido });
-    } catch (error) {
-        console.error('Tracking Error:', error);
-        res.status(500).json({ error: 'Error al cargar el tracking.' });
+        res.json({ tracking: toPublicPedidoTrackingDto(pedido) });
+    } catch {
+        // Firma inválida, token de otro pedido y expiración responden igual. No
+        // revelamos si el UUID existe ni registramos la capacidad secreta.
+        res.status(404).json({ error: 'Enlace de seguimiento inválido o vencido.' });
     }
 });
 
 // PATCH /api/v1/pedidos/:id/estado -> (Privado) Cambiar estado
-router.patch('/:id/estado', authenticate, async (req: any, res: any) => {
+router.patch('/:id/estado', authenticate, checkRole(PEDIDO_WRITE_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
     const { estado, nota, lat, lng } = req.body;
@@ -245,246 +277,103 @@ router.patch('/:id/estado', authenticate, async (req: any, res: any) => {
     }
 
     try {
-        const pedido = await prisma.pedido.findFirst({
-            where: { id, tenantId: authReq.tenantId },
-            include: { items: true } // Necesitamos los items para facturar
-        });
+        const numericLat = lat === undefined || lat === null ? null : Number(lat);
+        const numericLng = lng === undefined || lng === null ? null : Number(lng);
+        if ((numericLat !== null && !Number.isFinite(numericLat)) || (numericLng !== null && !Number.isFinite(numericLng))) {
+            return res.status(400).json({ error: 'Coordenadas inválidas.' });
+        }
 
-        if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado.' });
+        if (estado === 'entregado') {
+            const result = await prisma.$transaction((tx) => completePedidoDeliveryInTransaction(tx, {
+                pedidoId: id,
+                tenantId: authReq.tenantId,
+                actorUserId: authReq.userId,
+                source: 'DELIVERY_DASHBOARD',
+                nota: typeof nota === 'string' ? nota : null,
+                lat: numericLat,
+                lng: numericLng,
+            }));
+            return res.json({ message: 'Estado actualizado a entregado', pedido: result.pedido });
+        }
 
-        const entregadoAt = estado === 'entregado' ? new Date() : pedido.entregadoAt;
+        if (estado === 'preparando') {
+            const updated = await prisma.$transaction((tx) => reservePedidoInTransaction(tx, {
+                pedidoId: id,
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                nota: typeof nota === 'string' ? nota : null,
+                lat: numericLat,
+                lng: numericLng,
+            }));
+            return res.json({ message: 'Estado actualizado a preparando', pedido: updated });
+        }
+
+        if (estado === 'cancelado') {
+            const result = await prisma.$transaction((tx) => cancelPedidoInTransaction(tx, {
+                pedidoId: id,
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                nota: typeof nota === 'string' ? nota : null,
+                lat: numericLat,
+                lng: numericLng,
+            }));
+            return res.json({
+                message: 'Estado actualizado a cancelado',
+                pedido: result.pedido,
+                idempotentReplay: result.idempotentReplay,
+                releasedQuantity: result.releasedQuantity,
+            });
+        }
 
         const updated = await prisma.$transaction(async (tx) => {
-            let p;
-            if (estado === 'entregado') {
-                // CLAIM atómico de la entrega: guard y escritura en la MISMA
-                // sentencia. Sin esto, dos requests concurrentes de 'entregado'
-                // pasaban ambas el chequeo `!pedido.facturaId` (leído fuera de
-                // la tx) y facturaban DOS veces (doble Sale + Payment + asiento).
-                const claim = await tx.pedido.updateMany({
-                    where: { id, tenantId: authReq.tenantId, estado: { not: 'entregado' } },
-                    data: { estado, entregadoAt }
-                });
-                if (claim.count === 0) throw new Error('YA_ENTREGADO');
-                p = await tx.pedido.findFirstOrThrow({ where: { id, tenantId: authReq.tenantId } });
-            } else {
-                p = await tx.pedido.update({
-                    where: { id },
-                    data: {
-                        estado,
-                        entregadoAt
-                    }
-                });
+            await lockPedidoForFulfillment(tx, {
+                pedidoId: id,
+                tenantId: authReq.tenantId!,
+            });
+            const pedido = await tx.pedido.findFirst({
+                where: { id, tenantId: authReq.tenantId },
+                select: { id: true, estado: true, facturaId: true },
+            });
+            if (!pedido) {
+                throw new PedidoFulfillmentError('PEDIDO_NOT_FOUND', 404, 'Pedido no encontrado.');
             }
-
+            if (pedido.facturaId || pedido.estado === 'entregado' || pedido.estado === 'cancelado') {
+                throw new PedidoFulfillmentError(
+                    'PEDIDO_ALREADY_PROCESSED',
+                    409,
+                    'Un pedido entregado, facturado o cancelado no se puede reabrir.',
+                );
+            }
+            const changed = await tx.pedido.updateMany({
+                where: {
+                    id,
+                    tenantId: authReq.tenantId,
+                    facturaId: null,
+                    estado: { notIn: ['entregado', 'cancelado'] },
+                },
+                data: { estado },
+            });
+            if (changed.count !== 1) {
+                throw new PedidoFulfillmentError(
+                    'PEDIDO_ALREADY_PROCESSED',
+                    409,
+                    'El pedido fue procesado por otra operación.',
+                );
+            }
             await tx.trackingEvento.create({
                 data: {
                     pedidoId: id,
                     estado,
-                    nota,
-                    lat: lat ? Number(lat) : null,
-                    lng: lng ? Number(lng) : null
-                }
+                    nota: typeof nota === 'string' ? nota : null,
+                    lat: numericLat,
+                    lng: numericLng,
+                },
             });
-
-            // FASE: Reserva Exclusiva de Kardex (Inventario)
-            if (estado === 'preparando') {
-                const existingReservas = await tx.kardexMovement.count({
-                    where: { referenceId: id, referenceType: 'PEDIDO_RESERVA' }
-                });
-
-                if (existingReservas === 0) {
-                    // Política de stock negativo del tenant: por defecto se exige
-                    // suficiencia; si el tenant la permite, la reserva puede dejar
-                    // el stock negativo (backorder) y el Kardex refleja la realidad.
-                    const tenantCfg = await tx.tenant.findUnique({
-                        where: { id: authReq.tenantId },
-                        select: { allowNegativeStock: true }
-                    });
-                    const enforceStock = !(tenantCfg?.allowNegativeStock ?? false);
-
-                    for (const item of pedido.items) {
-                        // Decremento ATÓMICO y con filtro de tenant: la suficiencia
-                        // y la escritura son el mismo UPDATE (WHERE stock >= qty),
-                        // sin ventana para sobreventa por lost-update.
-                        const { stockBefore, stockAfter } = await applyStockDelta(tx, {
-                            tenantId: authReq.tenantId,
-                            productId: item.productoId,
-                            delta: -item.cantidad,
-                            enforceSufficient: enforceStock,
-                        });
-
-                        // Registrar en Kardex
-                        await tx.kardexMovement.create({
-                            data: {
-                                tenantId: authReq.tenantId,
-                                productId: item.productoId,
-                                type: 'OUT',
-                                quantity: -item.cantidad,
-                                stockBefore,
-                                stockAfter,
-                                referenceId: id,
-                                referenceType: 'PEDIDO_RESERVA',
-                                reason: `Reserva para envío. Pedido: ${id}`,
-                                userId: authReq.userId
-                            }
-                        });
-                    }
-                }
-            }
-
-            // FASE: Auditoría de Geolocalización (Proximity Alert)
-            if (estado === 'entregado' && lat && lng) {
-                // Generamos una Alerta de Auditoría simulando un cálculo de distancia
-                // ya que no almacenamos lat/lng del cliente originalmente, 
-                // pero alertaremos al dueño del negocio para revisión si el delivery "lo cerró desde la calle"
-                await tx.auditLog.create({
-                    data: {
-                        tenantId: authReq.tenantId,
-                        userId: authReq.userId,
-                        action: 'GPS_AUDIT_ALERT',
-                        details: JSON.stringify({
-                            mensaje: 'Pedido entregado. Coordenadas GPS han sido registradas para verificación cruzada.',
-                            lat: Number(lat),
-                            lng: Number(lng),
-                            pedidoId: id
-                        })
-                    }
-                });
-            }
-
-            // FASE 2: Integración de Facturación
-            // Si el estado pasa a "entregado" y no tiene factura asociada, procedemos a facturar.
-            if (estado === 'entregado' && !pedido.facturaId) {
-                // ¿El stock ya se descontó al reservar en 'preparando'? Si el pedido
-                // nunca pasó por esa fase (p. ej. se asignó saltando a 'en_camino' o
-                // un admin marcó 'entregado' directo), hay que descontarlo ahora al
-                // facturar la venta, de forma IDEMPOTENTE (referenceType PEDIDO_VENTA)
-                // para no duplicar el egreso si ya hubo reserva o venta previa.
-                const yaReservado = await tx.kardexMovement.count({
-                    where: { referenceId: id, referenceType: 'PEDIDO_RESERVA' }
-                });
-                const yaVendido = await tx.kardexMovement.count({
-                    where: { referenceId: id, referenceType: 'PEDIDO_VENTA' }
-                });
-                const descontarStock = yaReservado === 0 && yaVendido === 0;
-
-                let enforceStock = true;
-                if (descontarStock) {
-                    const tenantCfg = await tx.tenant.findUnique({
-                        where: { id: authReq.tenantId },
-                        select: { allowNegativeStock: true }
-                    });
-                    enforceStock = !(tenantCfg?.allowNegativeStock ?? false);
-                }
-
-                // 1. Calcular costos para contabilidad (COGS con decimal.js, cero float)
-                let costTotal = new Decimal(0);
-                const saleItemsData = [];
-
-                for (const item of pedido.items) {
-                    const prod = await tx.product.findFirst({
-                        where: { id: item.productoId, tenantId: authReq.tenantId }
-                    });
-                    if (prod) {
-                        const unitCost = new Decimal(prod.cost || 0);
-                        costTotal = costTotal.plus(unitCost.mul(item.cantidad));
-
-                        saleItemsData.push({
-                            productId: item.productoId,
-                            quantity: item.cantidad,
-                            priceAtSale: item.precioUnitario,
-                            costAtSale: unitCost.toNumber(),
-                            discount: 0
-                        });
-
-                        // Descontar stock + Kardex si la venta no reservó antes:
-                        // decremento ATÓMICO (WHERE stock >= qty) con filtro de tenant.
-                        if (descontarStock) {
-                            const { stockBefore, stockAfter } = await applyStockDelta(tx, {
-                                tenantId: authReq.tenantId,
-                                productId: item.productoId,
-                                delta: -item.cantidad,
-                                enforceSufficient: enforceStock,
-                            });
-
-                            await tx.kardexMovement.create({
-                                data: {
-                                    tenantId: authReq.tenantId,
-                                    productId: item.productoId,
-                                    type: 'OUT',
-                                    quantity: -item.cantidad,
-                                    stockBefore,
-                                    stockAfter,
-                                    referenceId: id,
-                                    referenceType: 'PEDIDO_VENTA',
-                                    reason: `Venta por entrega. Pedido: ${id}`,
-                                    userId: authReq.userId
-                                }
-                            });
-                        }
-                    }
-                }
-
-                // 2. Crear la Factura (Sale)
-                const sale = await tx.sale.create({
-                    data: {
-                        tenantId: authReq.tenantId,
-                        total: pedido.total,
-                        status: 'COMPLETED',
-                        paymentMethod: 'CASH', // Asumiendo pago contra entrega
-                        // Vendedores: quien marca entregado factura la venta.
-                        soldById: authReq.userId,
-                        customerName: pedido.clienteNombre,
-                        items: {
-                            create: saleItemsData
-                        }
-                    }
-                });
-
-                // 3. Crear pago asociado
-                await tx.payment.create({
-                    data: {
-                        saleId: sale.id,
-                        amount: pedido.total,
-                        method: 'CASH',
-                        collectedBy: authReq.userId // El usuario que marca como entregado
-                    }
-                });
-
-                // 4. Registrar en contabilidad mediante el motor (recordSale)
-                await recordSale(tx, authReq.tenantId, authReq.userId, sale.id, Number(pedido.total), costTotal.toDecimalPlaces(4).toNumber(), 'CASH');
-
-                // 5. Vincular la factura al pedido
-                await tx.pedido.update({
-                    where: { id },
-                    data: { facturaId: sale.id }
-                });
-
-                // 6. AuditLog inmutable de la venta, DENTRO de la misma $transaction
-                //    (paridad con el POS canónico: toda venta deja asiento SALE_CREATED
-                //    con atribución y before/after).
-                await tx.auditLog.create({
-                    data: {
-                        tenantId: authReq.tenantId,
-                        userId: authReq.userId,
-                        action: 'SALE_CREATED',
-                        details: JSON.stringify({
-                            pedidoId: id,
-                            saleId: sale.id,
-                            total: pedido.total.toString(),
-                            paymentMethod: 'CASH',
-                            before: { estado: pedido.estado, facturaId: null },
-                            after: { estado: 'entregado', facturaId: sale.id }
-                        })
-                    }
-                });
-            }
-
-            return p;
+            return tx.pedido.findFirstOrThrow({
+                where: { id, tenantId: authReq.tenantId },
+            });
         });
-
-        res.json({ message: `Estado actualizado a ${estado}`, pedido: updated });
+        return res.json({ message: `Estado actualizado a ${estado}`, pedido: updated });
     } catch (error) {
         // Stock insuficiente / producto inexistente: la transacción abortó por el
         // decremento atómico. Devolvemos un estado claro en vez de un 500 genérico.
@@ -492,8 +381,8 @@ router.patch('/:id/estado', authenticate, async (req: any, res: any) => {
             const status = error.code === 'PRODUCT_NOT_FOUND' ? 404 : 422;
             return res.status(status).json({ error: error.message });
         }
-        if (error instanceof Error && error.message === 'YA_ENTREGADO') {
-            return res.status(409).json({ error: 'El pedido ya fue marcado como entregado.' });
+        if (error instanceof PedidoFulfillmentError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
         console.error('Patch Estado Error:', error);
         res.status(500).json({ error: 'Error al actualizar el estado.' });
@@ -501,7 +390,7 @@ router.patch('/:id/estado', authenticate, async (req: any, res: any) => {
 });
 
 // PATCH /api/v1/pedidos/:id/motorizado -> (Privado) Asignar motorizado
-router.patch('/:id/motorizado', authenticate, async (req: any, res: any) => {
+router.patch('/:id/motorizado', authenticate, checkRole(PEDIDO_WRITE_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
     const { motorizadoId } = req.body;

@@ -1,5 +1,10 @@
 # Nortex — Plan «Bodeguero Experto»
 
+> **SUPERSEDIDO PARA TRABAJO NUEVO:** este documento fue escrito bajo el
+> supuesto de una sola ubicación. Nortex ya opera con multi-bodega; el plan
+> vigente es `PLAN_BODEGA_CONFIABLE_2026.md`. Se conserva como historial de las
+> capacidades originales.
+
 > Objetivo: que gestionar productos en Nortex sea **fácil y rápido**, y que el negocio
 > tenga **control real de sus existencias** — del mostrador a la bodega.
 > Auditoría realizada sobre `main` (Inventory.tsx, POS.tsx, stockService.ts, ProductImporter.tsx,

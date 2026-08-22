@@ -77,6 +77,11 @@
         location: a.getAttribute('data-loc') || 'unknown',
         href: href
       });
+    } else if (href === '/demo' || href.indexOf('/demo?') === 0) {
+      window.nxTrack('demo_cta_click', {
+        location: a.getAttribute('data-loc') || 'unknown',
+        source: 'landing_html'
+      });
     } else if (href === '/register' || href.indexOf('/register?') === 0) {
       window.nxTrack('register_cta_click', {
         location: a.getAttribute('data-loc') || 'unknown'

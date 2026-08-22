@@ -19,6 +19,12 @@
  *    como NaN con check verde ni entra como C$ 1.00.
  */
 
+import Decimal from 'decimal.js';
+import { validateQuantity } from './quantity';
+
+export type ImportedSaleMode = 'COUNTED' | 'MEASURED';
+export type ImportedProductFamily = 'GENERAL' | 'MEAT' | 'POULTRY' | 'ANIMAL_FEED' | 'AGRO_INPUT' | 'VETERINARY';
+
 export interface ParsedProduct {
     sku: string;
     nombre: string;
@@ -29,6 +35,14 @@ export interface ParsedProduct {
     minStock: number;
     unidad: string;
     descripcion: string;
+    modoVenta: ImportedSaleMode;
+    pasoCantidad: number;
+    familiaProducto: ImportedProductFamily;
+    unidadEmpaque: string | null;
+    tamanoEmpaque: number | null;
+    precioEmpaque: number | null;
+    requiereLote: boolean;
+    ivaExento: boolean;
 }
 
 export interface ParsedRow {
@@ -41,7 +55,10 @@ export interface ParsedRow {
 
 export type CanonicalField =
     | 'sku' | 'nombre' | 'precio' | 'costo' | 'stock'
-    | 'minStock' | 'categoria' | 'unidad' | 'descripcion';
+    | 'minStock' | 'categoria' | 'unidad' | 'descripcion'
+    | 'modoVenta' | 'pasoCantidad' | 'familiaProducto'
+    | 'unidadEmpaque' | 'tamanoEmpaque' | 'precioEmpaque'
+    | 'requiereLote' | 'ivaExento';
 
 export interface ColumnResolution {
     /** Campo canónico → encabezado original del archivo (o null si no está). */
@@ -87,6 +104,16 @@ const SYNONYMS: Record<CanonicalField, string[]> = {
     // 'descripcion' es secundaria: si el archivo NO trae columna de nombre,
     // "Descripción" ES el nombre (el Excel clásico del sobrino).
     descripcion: ['descripcion', 'description', 'observaciones', 'notas', 'detalle largo'],
+    modoVenta: ['modo venta', 'modo de venta', 'sale mode', 'salemode', 'venta por', 'tipo cantidad'],
+    pasoCantidad: ['paso cantidad', 'paso de cantidad', 'quantity step', 'quantitystep', 'incremento', 'precision cantidad'],
+    // `familia` solo conserva su significado histórico de categoría. Para la
+    // clasificación operativa nueva exigimos un encabezado no ambiguo.
+    familiaProducto: ['familia producto', 'familia de producto', 'product family', 'productfamily', 'giro producto'],
+    unidadEmpaque: ['unidad empaque', 'unidad de empaque', 'pack unit', 'packunit', 'tipo empaque', 'empaque compra'],
+    tamanoEmpaque: ['tamano empaque', 'tamano de empaque', 'pack size', 'packsize', 'unidades por empaque', 'contenido empaque', 'factor empaque'],
+    precioEmpaque: ['precio empaque', 'precio de empaque', 'precio por empaque', 'pack price', 'packprice'],
+    requiereLote: ['requiere lote', 'seguimiento lote', 'seguimiento de lote', 'control lote', 'control de lote', 'batch tracking', 'requires batch tracking', 'lote'],
+    ivaExento: ['iva exento', 'exento iva', 'exento de iva', 'ivaexento', 'tax exempt'],
 };
 
 /** Resuelve qué encabezado del archivo alimenta cada campo canónico. */
@@ -191,12 +218,81 @@ export function normalizeSku(raw: unknown): string {
     return s.toUpperCase();
 }
 
+const text = (value: unknown): string =>
+    value === null || value === undefined ? '' : String(value).trim();
+
+const SALE_MODE_ALIASES: Record<string, ImportedSaleMode> = {
+    counted: 'COUNTED', contado: 'COUNTED', unidad: 'COUNTED', unidades: 'COUNTED', piezas: 'COUNTED', pieza: 'COUNTED',
+    measured: 'MEASURED', medido: 'MEASURED', peso: 'MEASURED', 'por peso': 'MEASURED',
+    pesable: 'MEASURED', granel: 'MEASURED', medida: 'MEASURED', 'por medida': 'MEASURED',
+};
+
+const FAMILY_ALIASES: Record<string, ImportedProductFamily> = {
+    general: 'GENERAL',
+    meat: 'MEAT', carne: 'MEAT', carnes: 'MEAT', carniceria: 'MEAT',
+    poultry: 'POULTRY', pollo: 'POULTRY', pollos: 'POULTRY', aves: 'POULTRY',
+    animalfeed: 'ANIMAL_FEED', 'animal feed': 'ANIMAL_FEED', alimentoanimal: 'ANIMAL_FEED', 'alimento animal': 'ANIMAL_FEED', concentrado: 'ANIMAL_FEED',
+    agroinput: 'AGRO_INPUT', 'agro input': 'AGRO_INPUT', agroinsumo: 'AGRO_INPUT', agroinsumos: 'AGRO_INPUT',
+    veterinary: 'VETERINARY', veterinaria: 'VETERINARY', veterinario: 'VETERINARY',
+};
+
+export function parseImportedSaleMode(raw: unknown): ImportedSaleMode | null {
+    const normalized = normalizeKey(text(raw));
+    if (!normalized) return null;
+    return SALE_MODE_ALIASES[normalized] ?? SALE_MODE_ALIASES[normalized.replace(/ /g, '')] ?? null;
+}
+
+export function parseImportedProductFamily(raw: unknown): ImportedProductFamily | null {
+    const normalized = normalizeKey(text(raw));
+    if (!normalized) return null;
+    return FAMILY_ALIASES[normalized] ?? FAMILY_ALIASES[normalized.replace(/ /g, '')] ?? null;
+}
+
+const BOOLEAN_TRUE = new Set(['1', 'si', 's', 'true', 'yes', 'y', 'x', 'requiere', 'exento']);
+const BOOLEAN_FALSE = new Set(['0', 'no', 'n', 'false', 'gravado']);
+
+/** Booleanos habituales de Excel/CSV en español; vacío queda a cargo del default. */
+export function parseBooleanNi(raw: unknown): boolean | null {
+    if (typeof raw === 'boolean') return raw;
+    if (typeof raw === 'number') {
+        if (raw === 1) return true;
+        if (raw === 0) return false;
+        return null;
+    }
+    const normalized = normalizeKey(text(raw));
+    if (!normalized) return null;
+    if (BOOLEAN_TRUE.has(normalized)) return true;
+    if (BOOLEAN_FALSE.has(normalized)) return false;
+    return null;
+}
+
+/** Decimal de cantidad (hasta 4 d.p.); `,` se admite como separador decimal. */
+export function parseQuantityNi(raw: unknown): number | null {
+    if (raw === null || raw === undefined || text(raw) === '') return null;
+    let normalized = text(raw).replace(/\s+/g, '');
+    if (normalized.includes(',') && normalized.includes('.')) {
+        const comma = normalized.lastIndexOf(',');
+        const dot = normalized.lastIndexOf('.');
+        normalized = dot > comma
+            ? normalized.replace(/,/g, '')
+            : normalized.replace(/\./g, '').replace(',', '.');
+    } else if (normalized.includes(',')) {
+        normalized = normalized.replace(',', '.');
+    }
+    if (!/^\d+(\.\d+)?$/.test(normalized)) return null;
+    try {
+        const value = new Decimal(normalized);
+        if (!value.isFinite() || !value.greaterThan(0) || value.decimalPlaces() > 4) return null;
+        return value.toNumber();
+    } catch {
+        return null;
+    }
+}
+
 // ── Parseo de filas ──────────────────────────────────────────────────────────
 
 const cell = (row: Record<string, unknown>, header: string | null): unknown =>
     header === null ? undefined : row[header];
-
-const text = (v: unknown): string => (v === null || v === undefined) ? '' : String(v).trim();
 
 /**
  * Parsea las filas crudas de sheet_to_json con la resolución de columnas.
@@ -234,6 +330,23 @@ export function parseProductRows(
         const categoria = text(cell(raw, mapping.categoria)) || 'General';
         const unidad = text(cell(raw, mapping.unidad)) || 'unidad';
         const descripcion = text(cell(raw, mapping.descripcion));
+        const modoRaw = cell(raw, mapping.modoVenta);
+        const modoVenta = text(modoRaw) === '' ? 'COUNTED' : parseImportedSaleMode(modoRaw);
+        const pasoRaw = cell(raw, mapping.pasoCantidad);
+        const defaultStep = modoVenta === 'MEASURED' ? 0.001 : 1;
+        const pasoCantidad = text(pasoRaw) === '' ? defaultStep : parseQuantityNi(pasoRaw);
+        const familiaRaw = cell(raw, mapping.familiaProducto);
+        const familiaProducto = text(familiaRaw) === '' ? 'GENERAL' : parseImportedProductFamily(familiaRaw);
+        const unidadEmpaqueRaw = cell(raw, mapping.unidadEmpaque);
+        const unidadEmpaque = text(unidadEmpaqueRaw) || null;
+        const tamanoEmpaqueRaw = cell(raw, mapping.tamanoEmpaque);
+        const tamanoEmpaque = text(tamanoEmpaqueRaw) === '' ? null : parseQuantityNi(tamanoEmpaqueRaw);
+        const precioEmpaqueRaw = cell(raw, mapping.precioEmpaque);
+        const precioEmpaque = text(precioEmpaqueRaw) === '' ? null : parseMoneyNi(precioEmpaqueRaw);
+        const requiereLoteRaw = cell(raw, mapping.requiereLote);
+        const requiereLote = text(requiereLoteRaw) === '' ? false : parseBooleanNi(requiereLoteRaw);
+        const ivaExentoRaw = cell(raw, mapping.ivaExento);
+        const ivaExento = text(ivaExentoRaw) === '' ? false : parseBooleanNi(ivaExentoRaw);
 
         if (!sku) errors.push('Sin código (SKU)');
         if (sku.length > 50) errors.push('Código muy largo (máx. 50)');
@@ -246,6 +359,58 @@ export function parseProductRows(
         if (stock === null) errors.push(`Existencia ilegible: "${text(stockRaw)}"`);
         else if (stock < 0) errors.push('Existencia no puede ser negativa');
         if (minStock === null) errors.push(`Mínimo ilegible: "${text(minRaw)}"`);
+        else if (minStock < 0) errors.push('Mínimo no puede ser negativo');
+        if (modoVenta === null) errors.push(`Modo de venta inválido: "${text(modoRaw)}"`);
+        if (pasoCantidad === null) errors.push(`Paso de cantidad inválido: "${text(pasoRaw)}"`);
+        if (familiaProducto === null) errors.push(`Familia de producto inválida: "${text(familiaRaw)}"`);
+        if (text(tamanoEmpaqueRaw) !== '' && tamanoEmpaque === null) {
+            errors.push(`Tamaño de empaque inválido: "${text(tamanoEmpaqueRaw)}"`);
+        }
+        if (text(precioEmpaqueRaw) !== '' && precioEmpaque === null) {
+            errors.push(`Precio de empaque ilegible: "${text(precioEmpaqueRaw)}"`);
+        } else if (precioEmpaque !== null && precioEmpaque <= 0) {
+            errors.push('Precio de empaque debe ser mayor que 0');
+        }
+        if (text(requiereLoteRaw) !== '' && requiereLote === null) {
+            errors.push(`Lote debe ser sí/no: "${text(requiereLoteRaw)}"`);
+        }
+        if (text(ivaExentoRaw) !== '' && ivaExento === null) {
+            errors.push(`IVA exento debe ser sí/no: "${text(ivaExentoRaw)}"`);
+        }
+        if (unidadEmpaque && tamanoEmpaque === null) {
+            errors.push('La unidad de empaque requiere tamaño de empaque');
+        }
+        if (!unidadEmpaque && tamanoEmpaque !== null) {
+            errors.push('El tamaño de empaque requiere unidad de empaque');
+        }
+        if (precioEmpaque !== null && (!unidadEmpaque || tamanoEmpaque === null)) {
+            errors.push('El precio de empaque requiere unidad y tamaño de empaque');
+        }
+
+        if (modoVenta && pasoCantidad !== null) {
+            try {
+                // Valida el propio paso (COUNTED exige entero) y cada cantidad
+                // física importada como múltiplo exacto de ese paso.
+                validateQuantity(pasoCantidad, { saleMode: modoVenta, quantityStep: pasoCantidad });
+                for (const [label, value] of [['Existencia', stock], ['Mínimo', minStock]] as const) {
+                    if (value === null || value === 0) continue;
+                    try {
+                        validateQuantity(value, { saleMode: modoVenta, quantityStep: pasoCantidad });
+                    } catch (error) {
+                        errors.push(`${label}: ${error instanceof Error ? error.message : 'cantidad inválida'}`);
+                    }
+                }
+                if (tamanoEmpaque !== null) {
+                    try {
+                        validateQuantity(tamanoEmpaque, { saleMode: modoVenta, quantityStep: pasoCantidad });
+                    } catch (error) {
+                        errors.push(`Tamaño de empaque: ${error instanceof Error ? error.message : 'cantidad inválida'}`);
+                    }
+                }
+            } catch (error) {
+                errors.push(`Paso de cantidad: ${error instanceof Error ? error.message : 'inválido'}`);
+            }
+        }
 
         // Duplicados DENTRO del archivo: el upsert del backend haría que la
         // última fila pise a la primera sin aviso (auditoría E8).
@@ -267,6 +432,14 @@ export function parseProductRows(
                 stock: stock ?? 0,
                 minStock: minStock ?? 5,
                 unidad, descripcion,
+                modoVenta: modoVenta ?? 'COUNTED',
+                pasoCantidad: pasoCantidad ?? defaultStep,
+                familiaProducto: familiaProducto ?? 'GENERAL',
+                unidadEmpaque,
+                tamanoEmpaque,
+                precioEmpaque: precioEmpaque ?? null,
+                requiereLote: requiereLote ?? false,
+                ivaExento: ivaExento ?? false,
             },
             valid: errors.length === 0,
             errors,

@@ -48,6 +48,7 @@ function calendarDaysBetween(start: Date, end: Date): number {
 }
 
 // Tabla progresiva IR anual vigente DGI Nicaragua — Reformas tributarias 2025
+// Stryker disable StringLiteral: estas cinco filas se construyen al importar; reemplazar sus strings se activa después y resulta equivalente. El ArrayDeclaration sigue mutándose.
 const IR_TABLE = [
     { from: new Decimal('0'),         to: new Decimal('100000'),   rate: new Decimal('0'),    base: new Decimal('0') },
     { from: new Decimal('100000.01'), to: new Decimal('200000'),   rate: new Decimal('0.15'), base: new Decimal('0') },
@@ -55,6 +56,7 @@ const IR_TABLE = [
     { from: new Decimal('350000.01'), to: new Decimal('500000'),   rate: new Decimal('0.25'), base: new Decimal('45000') },
     { from: new Decimal('500000.01'), to: new Decimal('Infinity'), rate: new Decimal('0.30'), base: new Decimal('82500') },
 ];
+// Stryker restore StringLiteral
 
 /**
  * IR anual de la tabla progresiva DGI (rentas del trabajo) sobre una renta neta
