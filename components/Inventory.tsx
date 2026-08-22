@@ -949,7 +949,6 @@ export default function Inventory() {
                 const warehouseName = selectedAdjustWarehouse?.name || 'la bodega seleccionada';
                 setShowAdjustModal(false);
                 reload();
-                // Contrato auditado histórico: title: 'Existencias ajustadas'
                 showToast({
                     tone: 'success',
                     title: 'Ajuste registrado',

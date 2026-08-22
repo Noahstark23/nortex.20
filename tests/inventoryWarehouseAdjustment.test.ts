@@ -42,7 +42,7 @@ describe('ajuste de inventario por bodega', () => {
         expect(source).toContain('inputMode="numeric"');
         expect(source).toContain('pattern="[0-9]*"');
         expect(source).toContain('sanitizeWholeNumberInput(e.target.value)');
-        expect(source).toContain("title: 'Existencias ajustadas'");
+        expect(source).toContain("title: 'Ajuste registrado'");
         expect(source).not.toContain('alert(`Ajuste registrado:');
     });
 
