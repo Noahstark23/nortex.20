@@ -6,6 +6,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Permite ejecutar la misma compuerta después de configurar Coolify, sin
+  # necesitar un commit vacío ni saltarse las verificaciones de la release.
+  workflow_dispatch:
 
 jobs:
   verify:
@@ -89,24 +92,45 @@ jobs:
           LEGACY_SCHEMA_PATH: ${{ runner.temp }}/schema-before-pr158.prisma
           NORTEX_ALLOW_DESTRUCTIVE_SCHEMA_SMOKE: issue-159-ci-only
 
-  # ── Despliegue con COMPUERTA: solo corre en main y solo si verify +
-  # deploy-schema-smoke pasaron. Para que la compuerta sea real, el auto-deploy
-  # de Coolify debe estar APAGADO (Coolify → app → desactivar "Auto Deploy"):
-  # quien dispara el deploy es este job, vía webhook, nunca el push directo.
-  # Cada paso se activa con su secret; sin secrets configurados el job es un
-  # no-op inofensivo (el repo no depende de infra que todavía no existe).
-  # Orden: staging → smoke de staging (bloquea) → prod → smoke de prod (avisa).
-  deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  # ── Despliegue con COMPUERTA: solo corre en main, cuando la variable
+  # NORTEX_DEPLOY_ENABLED vale "true", y después de verify + schema smoke.
+  # Sin esa variable el job aparece SKIPPED (no como un falso deploy verde).
+  # Cuando está habilitado, la configuración faltante falla de forma explícita.
+  # Coolify Auto Deploy debe permanecer APAGADO: GitHub es la única compuerta.
+  deploy-staging:
+    name: deploy-staging
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      vars.NORTEX_DEPLOY_ENABLED == 'true'
     needs: [verify, deploy-schema-smoke]
     runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_URL }}
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validar configuración de STAGING
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_STAGING_WEBHOOK }}
+          APP_URL: ${{ vars.STAGING_URL }}
+        run: |
+          test -n "$WEBHOOK" || { echo "::error::Falta COOLIFY_STAGING_WEBHOOK"; exit 1; }
+          test -n "$APP_URL" || { echo "::error::Falta la variable STAGING_URL"; exit 1; }
+          case "$APP_URL" in
+            https://*) ;;
+            *) echo "::error::STAGING_URL debe usar https://"; exit 1 ;;
+          esac
+
       - name: Desplegar STAGING (webhook de Coolify)
         env:
           WEBHOOK: ${{ secrets.COOLIFY_STAGING_WEBHOOK }}
           TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
-          if [ -z "$WEBHOOK" ]; then echo "COOLIFY_STAGING_WEBHOOK no configurado — paso omitido"; exit 0; fi
           if [ -n "$TOKEN" ]; then
             curl -fsS -H "Authorization: Bearer $TOKEN" "$WEBHOOK"
           else
@@ -114,28 +138,48 @@ jobs:
           fi
           echo "🚀 Deploy de staging disparado"
 
-      # El smoke de staging BLOQUEA prod: si staging no queda sano, prod no se
-      # toca. Espera hasta 8 min (build de imagen + db push + arranque).
-      - name: Smoke de STAGING (/api/health)
+      # No basta con que staging esté sano: tiene que servir ESTE commit. Así un
+      # webhook roto o un deploy que no avanzó nunca habilita producción.
+      - name: Verificar STAGING sano y en el commit esperado
         env:
-          STAGING_URL: ${{ secrets.STAGING_URL }}
-          WEBHOOK: ${{ secrets.COOLIFY_STAGING_WEBHOOK }}
+          APP_URL: ${{ vars.STAGING_URL }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: node scripts/verify-deployed-release.mjs "$APP_URL" "$EXPECTED_COMMIT"
+
+  deploy-production:
+    name: deploy-production
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      vars.NORTEX_DEPLOY_ENABLED == 'true'
+    needs: [deploy-staging]
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PROD_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validar configuración de PROD
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
+          APP_URL: ${{ vars.PROD_URL }}
         run: |
-          if [ -z "$STAGING_URL" ] || [ -z "$WEBHOOK" ]; then echo "STAGING_URL/webhook no configurados — paso omitido"; exit 0; fi
-          for i in $(seq 1 48); do
-            if curl -fsS --max-time 10 "$STAGING_URL/api/health" | grep -q '"ok":true'; then
-              echo "✅ Staging sano — se habilita prod"; exit 0
-            fi
-            sleep 10
-          done
-          echo "❌ Staging NO quedó sano en 8 min — prod NO se despliega"; exit 1
+          test -n "$WEBHOOK" || { echo "::error::Falta COOLIFY_PROD_WEBHOOK"; exit 1; }
+          test -n "$APP_URL" || { echo "::error::Falta la variable PROD_URL"; exit 1; }
+          case "$APP_URL" in
+            https://*) ;;
+            *) echo "::error::PROD_URL debe usar https://"; exit 1 ;;
+          esac
 
       - name: Desplegar PROD (webhook de Coolify)
         env:
           WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
           TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
-          if [ -z "$WEBHOOK" ]; then echo "COOLIFY_PROD_WEBHOOK no configurado — paso omitido"; exit 0; fi
           if [ -n "$TOKEN" ]; then
             curl -fsS -H "Authorization: Bearer $TOKEN" "$WEBHOOK"
           else
@@ -143,18 +187,8 @@ jobs:
           fi
           echo "🚀 Deploy de prod disparado"
 
-      # El smoke de prod no puede "bloquear" (ya se desplegó): existe para que
-      # el workflow quede ROJO y llegue el correo de GitHub si prod no levantó.
-      - name: Smoke de PROD (/api/health)
+      - name: Verificar PROD sano y en el commit esperado
         env:
-          PROD_URL: ${{ secrets.PROD_URL }}
-          WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
-        run: |
-          if [ -z "$PROD_URL" ] || [ -z "$WEBHOOK" ]; then echo "PROD_URL/webhook no configurados — paso omitido"; exit 0; fi
-          for i in $(seq 1 48); do
-            if curl -fsS --max-time 10 "$PROD_URL/api/health" | grep -q '"ok":true'; then
-              echo "✅ Prod sano"; exit 0
-            fi
-            sleep 10
-          done
-          echo "❌ Prod NO respondió sano en 8 min — revisar Coolify YA"; exit 1
+          APP_URL: ${{ vars.PROD_URL }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: node scripts/verify-deployed-release.mjs "$APP_URL" "$EXPECTED_COMMIT"
