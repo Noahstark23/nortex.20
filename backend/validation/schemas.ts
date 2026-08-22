@@ -174,6 +174,7 @@ export const CreatePurchaseSchema = z
     .object({
         supplierId:     z.string().trim().min(1, 'supplierId requerido'),
         invoiceNumber:  z.string().trim().min(1, 'Número de factura requerido').max(100),
+        date:            historicalOptional(purchaseDateInput),
         paymentMethod:  z.enum(['CASH', 'CREDIT']),
         dueDate:        historicalOptional(purchaseDateInput),
         notes:          historicalOptional(z.string().trim().max(500)),

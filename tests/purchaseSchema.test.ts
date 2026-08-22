@@ -26,6 +26,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
         const result = CreatePurchaseSchema.safeParse({
             supplierId: 'supplier-pollos-molina',
             invoiceNumber: 'FAC-088313330182',
+            date: '2026-08-21',
             paymentMethod: 'CREDIT',
             dueDate: '2026-08-25',
             notes: 'pedido diario',
@@ -38,6 +39,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
 
         expect(result.success).toBe(true);
         if (!result.success) return;
+        expect(result.data.date).toBe('2026-08-21T12:00:00.000Z');
         expect(result.data.dueDate).toBe('2026-08-25T12:00:00.000Z');
         expect(result.data.items[0].expiryDate).toBe('2027-01-09T12:00:00.000Z');
         expect(result.data.items[0].unitCost).toBe('13.5');
@@ -72,6 +74,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
     it('acepta el payload de contado con null históricos y los normaliza', () => {
         const result = CreatePurchaseSchema.safeParse({
             ...cashPurchase,
+            date: null,
             dueDate: null,
             notes: null,
             purchaseOrderId: null,
@@ -84,6 +87,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
 
         expect(result.success).toBe(true);
         if (!result.success) return;
+        expect(result.data.date).toBeUndefined();
         expect(result.data.dueDate).toBeUndefined();
         expect(result.data.notes).toBeUndefined();
         expect(result.data.purchaseOrderId).toBeUndefined();
@@ -128,6 +132,19 @@ describe('CreatePurchaseSchema — rechazos que protegen la persistencia', () =>
         ['día inexistente', '2026-02-30'],
         ['año no bisiesto', '2025-02-29'],
         ['mes inexistente', '2026-13-01'],
+        ['datetime sin offset', '2026-08-21T07:49:00'],
+        ['sufijo parcial', '2026-08-21 basura'],
+    ])('rechaza %s en date (%s)', (_label, date) => {
+        expect(CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            date,
+        }).success).toBe(false);
+    });
+
+    it.each([
+        ['día inexistente', '2026-02-30'],
+        ['año no bisiesto', '2025-02-29'],
+        ['mes inexistente', '2026-13-01'],
         ['datetime sin offset', '2026-08-25T07:49:00'],
     ])('rechaza %s en dueDate (%s)', (_label, dueDate) => {
         expect(CreatePurchaseSchema.safeParse({
@@ -151,6 +168,7 @@ describe('CreatePurchaseSchema — rechazos que protegen la persistencia', () =>
     it('acepta el 29 de febrero cuando el año sí es bisiesto', () => {
         expect(CreatePurchaseSchema.safeParse({
             ...cashPurchase,
+            date: '2028-02-29',
             paymentMethod: 'CREDIT',
             dueDate: '2028-02-29',
             items: [{ ...basicItem, expiryDate: '2028-02-29' }],
