@@ -6,7 +6,7 @@
  * ítem "posee" cada ruta vive en el módulo puro, así que se testea sin React.
  */
 import { describe, it, expect } from 'vitest';
-import { navPathForRoute, esRutaDe, RUTAS_SATELITE } from '../utils/navigation';
+import { buildNavigation, homePathFor, navPathForRoute, esRutaDe, RUTAS_SATELITE } from '../utils/navigation';
 
 describe('esRutaDe', () => {
     it('la ruta exacta pertenece a su propio ítem', () => {
@@ -51,5 +51,43 @@ describe('navPathForRoute', () => {
             expect(dueño).not.toBe(satelite);
             expect(dueño.startsWith('/app/')).toBe(true);
         }
+    });
+
+    it('atribuye Inventario a Bodegas para el menú dedicado del bodeguero', () => {
+        expect(navPathForRoute('/app/inventory', 'BODEGUERO')).toBe('/app/warehouses');
+        expect(navPathForRoute('/app/warehouses', 'BODEGUERO')).toBe('/app/warehouses');
+        expect(navPathForRoute('/app/inventory-count', 'BODEGUERO')).toBe('/app/inventory-count');
+    });
+});
+
+describe('navegación de BODEGUERO', () => {
+    it('ofrece solo los tres flujos operativos y aterriza en Bodegas', () => {
+        const nav = buildNavigation({ tenantType: 'RETAIL', role: 'BODEGUERO', simple: true });
+
+        expect(nav.homePath).toBe('/app/warehouses');
+        expect(nav.more).toEqual([]);
+        expect(nav.primary.map(item => item.path)).toEqual([
+            '/app/warehouses',
+            '/app/inventory-count',
+            '/app/purchase-orders',
+        ]);
+        expect(nav.primary.map(item => item.label)).toEqual([
+            'Bodegas y existencias',
+            'Conteo físico',
+            'Recibir mercadería',
+        ]);
+    });
+
+    it('no cambia con el modo del menú ni expone ventas, dinero o administración', () => {
+        const simple = buildNavigation({ tenantType: 'FERRETERIA', role: 'BODEGUERO', simple: true });
+        const full = buildNavigation({ tenantType: 'FERRETERIA', role: 'BODEGUERO', simple: false });
+        const paths = full.primary.map(item => item.path);
+
+        expect(full).toEqual(simple);
+        expect(paths).not.toContain('/app/pos');
+        expect(paths).not.toContain('/app/purchases');
+        expect(paths).not.toContain('/app/dashboard');
+        expect(paths).not.toContain('/app/team');
+        expect(homePathFor('BODEGUERO')).toBe('/app/warehouses');
     });
 });

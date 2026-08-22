@@ -19,6 +19,7 @@ import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
 import { maybeAutostartTour } from '../utils/tours';
 import { currentSessionRole, roleCapabilitiesFor } from '../utils/roleCapabilities';
+import { ToastViewport, useToast } from './ui/Toast';
 
 // ==========================================
 // TYPES
@@ -57,6 +58,28 @@ interface ProductBatch {
     expiryDate: string;
     stock: number;
 }
+
+interface WarehouseOption {
+    id: string;
+    name: string;
+    isActive: boolean;
+    isDefault: boolean;
+}
+
+interface WarehouseStockItem {
+    productId: string;
+    stock: number;
+}
+
+/** Nunca adivina una ubicación cuando hay más de una bodega activa. */
+export const soleActiveWarehouseId = (warehouses: WarehouseOption[]): string => {
+    const active = warehouses.filter(warehouse => warehouse.isActive);
+    return active.length === 1 ? active[0].id : '';
+};
+
+/** Un producto sin fila explícita en una bodega secundaria tiene stock local 0. */
+export const localStockForProduct = (items: WarehouseStockItem[], productId: string): number =>
+    Number(items.find(item => item.productId === productId)?.stock ?? 0);
 
 interface KardexEntry {
     id: string;
@@ -153,6 +176,9 @@ const sanitizeSignedDecimal = (raw: string): string => {
     return (neg ? '-' : '') + cleaned;
 };
 
+/** Los ajustes de existencias son unidades enteras (contrato Zod `.int()`). */
+const sanitizeWholeNumberInput = (raw: string): string => raw.replace(/\D/g, '');
+
 const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit'
@@ -174,6 +200,7 @@ export default function Inventory() {
     // Conserva el nombre histórico usado en el render; ahora su definición
     // vive antes de hooks que dependen de ella y no mezcla ajustes con edición.
     const isOwner = canManageProducts;
+    const { toast, showToast, dismissToast } = useToast();
     const [products, setProducts] = useState<Product[]>([]);
     // Distingue "inventario vacío" de "no pudimos cargarlo" (auditoría C8).
     const [productsError, setProductsError] = useState(false);
@@ -242,6 +269,12 @@ export default function Inventory() {
         reason: ''
     });
     const [adjustSubmitting, setAdjustSubmitting] = useState(false);
+    const [adjustWarehouses, setAdjustWarehouses] = useState<WarehouseOption[]>([]);
+    const [adjustWarehouseId, setAdjustWarehouseId] = useState('');
+    const [adjustWarehouseStock, setAdjustWarehouseStock] = useState<number | null>(null);
+    const [adjustWarehousesLoading, setAdjustWarehousesLoading] = useState(false);
+    const [adjustStockLoading, setAdjustStockLoading] = useState(false);
+    const [adjustError, setAdjustError] = useState('');
 
     // Edit form (solo datos cosméticos/comerciales — sin stock para no disparar Kardex)
     const [editForm, setEditForm] = useState({
@@ -661,10 +694,71 @@ export default function Inventory() {
     // ADJUST
     // ==========================================
 
+    const loadAdjustWarehouses = useCallback(async () => {
+        setAdjustWarehousesLoading(true);
+        setAdjustError('');
+        setAdjustWarehouseId('');
+        setAdjustWarehouseStock(null);
+        try {
+            const response = await fetch('/api/warehouses', { headers });
+            const data: any = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                setAdjustWarehouses([]);
+                setAdjustError(data.error || 'No se pudieron cargar las bodegas activas.');
+                return;
+            }
+
+            const available = (Array.isArray(data.data) ? data.data : [])
+                .filter((warehouse: WarehouseOption) => warehouse.isActive);
+            setAdjustWarehouses(available);
+            setAdjustWarehouseId(soleActiveWarehouseId(available));
+            if (available.length === 0) {
+                setAdjustError('No hay una bodega activa. Pedile a un administrador que active una.');
+            }
+        } catch {
+            setAdjustWarehouses([]);
+            setAdjustError('No pudimos cargar las bodegas. Revisá tu conexión e intentá de nuevo.');
+        } finally {
+            setAdjustWarehousesLoading(false);
+        }
+    }, [headers]);
+
+    useEffect(() => {
+        if (!showAdjustModal || !selectedProduct || !adjustWarehouseId) {
+            setAdjustWarehouseStock(null);
+            setAdjustStockLoading(false);
+            return;
+        }
+
+        let cancelled = false;
+        setAdjustStockLoading(true);
+        setAdjustWarehouseStock(null);
+        setAdjustError('');
+        void fetch(`/api/warehouses/${adjustWarehouseId}/stock`, { headers })
+            .then(async response => {
+                const data: any = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || 'No se pudo leer el stock de esta bodega.');
+                if (cancelled) return;
+                const items = Array.isArray(data.data?.items) ? data.data.items : [];
+                setAdjustWarehouseStock(localStockForProduct(items, selectedProduct.id));
+            })
+            .catch(error => {
+                if (!cancelled) setAdjustError(error?.message || 'No se pudo leer el stock local.');
+            })
+            .finally(() => {
+                if (!cancelled) setAdjustStockLoading(false);
+            });
+
+        return () => { cancelled = true; };
+    }, [adjustWarehouseId, headers, selectedProduct, showAdjustModal]);
+
     const openAdjust = (product: Product) => {
         setSelectedProduct(product);
         setAdjustForm({ type: 'ADJUST_LOSS', quantity: '', reason: '' });
+        setAdjustError('');
+        setAdjustWarehouseStock(null);
         setShowAdjustModal(true);
+        void loadAdjustWarehouses();
     };
 
     // ==========================================
@@ -734,16 +828,31 @@ export default function Inventory() {
     const handleAdjust = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!selectedProduct) return;
+        setAdjustError('');
+
+        if (!adjustWarehouseId) {
+            setAdjustError('Seleccioná la bodega donde ocurrió este movimiento.');
+            return;
+        }
+        if (adjustWarehouseStock === null) {
+            setAdjustError('Esperá a que cargue el stock de la bodega seleccionada.');
+            return;
+        }
 
         const qty = parseInt(adjustForm.quantity);
         if (isNaN(qty) || qty === 0) {
-            alert('La cantidad debe ser un numero distinto de cero.');
+            setAdjustError('La cantidad debe ser un número entero distinto de cero.');
             return;
         }
 
         const adjustedQty = adjustForm.type === 'ADJUST_LOSS'
             ? -Math.abs(qty)
             : Math.abs(qty);
+
+        if (adjustedQty < 0 && Math.abs(adjustedQty) > adjustWarehouseStock) {
+            setAdjustError(`Stock insuficiente en esta bodega. Disponible: ${adjustWarehouseStock}.`);
+            return;
+        }
 
         setAdjustSubmitting(true);
 
@@ -753,6 +862,7 @@ export default function Inventory() {
                 headers,
                 body: JSON.stringify({
                     productId: selectedProduct.id,
+                    warehouseId: adjustWarehouseId,
                     quantity: adjustedQty,
                     reason: adjustForm.reason.trim(),
                     type: adjustForm.type
@@ -764,12 +874,16 @@ export default function Inventory() {
             if (res.ok) {
                 setShowAdjustModal(false);
                 reload();
-                alert(`Ajuste registrado: ${data.message}`);
+                showToast({
+                    tone: 'success',
+                    title: 'Existencias ajustadas',
+                    message: data.message,
+                });
             } else {
-                alert(`Error: ${data.error}`);
+                setAdjustError(data.error || 'No se pudo registrar el ajuste.');
             }
         } catch (e) {
-            alert('Error procesando ajuste');
+            setAdjustError('No pudimos registrar el ajuste. Revisá tu conexión e intentá de nuevo.');
         } finally {
             setAdjustSubmitting(false);
         }
@@ -979,6 +1093,21 @@ export default function Inventory() {
     // El servidor ya filtra y pagina; la página actual es `products`.
     const filteredProducts = products;
     const inventoryTableColumnCount = isOwner ? 9 : isBodeguero ? 5 : 6;
+    const selectedAdjustWarehouse = adjustWarehouses.find(warehouse => warehouse.id === adjustWarehouseId);
+    const adjustmentQuantity = Math.abs(parseInt(adjustForm.quantity) || 0);
+    const projectedWarehouseStock = adjustWarehouseStock === null
+        ? null
+        : adjustForm.type === 'ADJUST_LOSS'
+            ? adjustWarehouseStock - adjustmentQuantity
+            : adjustWarehouseStock + adjustmentQuantity;
+    const adjustmentExceedsStock = projectedWarehouseStock !== null && projectedWarehouseStock < 0;
+    const adjustmentFormReady = Boolean(
+        adjustWarehouseId
+        && adjustWarehouseStock !== null
+        && adjustmentQuantity > 0
+        && adjustForm.reason.trim().length >= 3
+        && !adjustmentExceedsStock
+    );
 
     // Debajo de `lg` el catálogo se pinta como tarjetas y no como tabla (ver el
     // comentario del bloque de tarjetas). Las acciones del menú "…" son las
@@ -1086,6 +1215,7 @@ export default function Inventory() {
 
     return (
         <div className="h-full overflow-y-auto p-6 space-y-6">
+            <ToastViewport toast={toast} onDismiss={dismissToast} />
             {/* HEADER — altura única de módulo (antes: bloque de ~110px con un
                 cuadrado degradado azul→cian y los enlaces incrustados entre el
                 título y el subtítulo). */}
@@ -1835,10 +1965,10 @@ export default function Inventory() {
                                 <div>
                                     <h2 className="text-xl font-bold text-white flex items-center gap-2">
                                         <Shield size={20} className="text-amber-400" />
-                                        Ajuste Manual de Inventario
+                                        Ajustar existencias
                                     </h2>
                                     <p className="text-sm text-slate-400 mt-1">
-                                        {selectedProduct.name} | Stock actual: <span className="font-bold text-white">{selectedProduct.stock}</span>
+                                        {selectedProduct.name}
                                     </p>
                                 </div>
                                 <button onClick={() => setShowAdjustModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white">
@@ -1854,6 +1984,47 @@ export default function Inventory() {
                                 <p className="text-xs text-amber-300/80">
                                     Este movimiento queda registrado permanentemente en el Kardex con tu nombre, fecha y justificación. No se puede borrar ni editar.
                                 </p>
+                            </div>
+
+                            {/* La ubicación es parte del movimiento, no un detalle
+                                implícito: con varias bodegas nunca se preselecciona. */}
+                            <div>
+                                <label htmlFor="adjust-warehouse" className="block text-sm text-slate-300 mb-1.5 font-medium">
+                                    Bodega del ajuste <span className="text-red-400">*</span>
+                                </label>
+                                <select
+                                    id="adjust-warehouse"
+                                    required
+                                    value={adjustWarehouseId}
+                                    onChange={event => {
+                                        setAdjustWarehouseId(event.target.value);
+                                        setAdjustError('');
+                                    }}
+                                    disabled={adjustWarehousesLoading}
+                                    className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-brand focus:ring-1 focus:ring-brand disabled:opacity-60"
+                                >
+                                    <option value="">
+                                        {adjustWarehousesLoading
+                                            ? 'Cargando bodegas…'
+                                            : adjustWarehouses.length === 0
+                                                ? 'No hay bodegas activas'
+                                                : 'Seleccioná una bodega'}
+                                    </option>
+                                    {adjustWarehouses.map(warehouse => (
+                                        <option key={warehouse.id} value={warehouse.id}>
+                                            {warehouse.name}{warehouse.isDefault ? ' · Principal' : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                                {adjustStockLoading && (
+                                    <p className="mt-2 text-xs text-slate-400">Consultando el stock de esta bodega…</p>
+                                )}
+                                {!adjustStockLoading && selectedAdjustWarehouse && adjustWarehouseStock !== null && (
+                                    <div className="mt-2 rounded-lg border border-brand/20 bg-brand/5 px-3 py-2 text-sm text-slate-300">
+                                        Stock en <strong className="text-white">{selectedAdjustWarehouse.name}</strong>:{' '}
+                                        <span className="font-mono font-bold text-brand">{adjustWarehouseStock} {selectedProduct.unit}</span>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Type */}
@@ -1894,20 +2065,18 @@ export default function Inventory() {
                                 <input
                                     required
                                     type="text"
-                                    inputMode="decimal"
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
                                     value={adjustForm.quantity}
-                                    onChange={(e) => setAdjustForm({ ...adjustForm, quantity: sanitizeDecimalInput(e.target.value) })}
+                                    onChange={(e) => setAdjustForm({ ...adjustForm, quantity: sanitizeWholeNumberInput(e.target.value) })}
                                     placeholder="Ej: 5"
                                     className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg font-bold font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
                                 />
-                                {adjustForm.quantity && (
+                                {adjustForm.quantity && projectedWarehouseStock !== null && (
                                     <p className="text-xs mt-1.5 text-slate-400">
-                                        Stock resultante:{' '}
-                                        <span className="font-bold text-white">
-                                            {adjustForm.type === 'ADJUST_LOSS'
-                                                ? selectedProduct.stock - Math.abs(parseInt(adjustForm.quantity) || 0)
-                                                : selectedProduct.stock + Math.abs(parseInt(adjustForm.quantity) || 0)
-                                            }
+                                        Stock resultante en {selectedAdjustWarehouse?.name ?? 'la bodega'}:{' '}
+                                        <span className={`font-bold ${adjustmentExceedsStock ? 'text-red-400' : 'text-white'}`}>
+                                            {projectedWarehouseStock}
                                         </span>
                                     </p>
                                 )}
@@ -1929,11 +2098,17 @@ export default function Inventory() {
                                 />
                             </div>
 
+                            {adjustError && (
+                                <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+                                    {adjustError}
+                                </div>
+                            )}
+
                             {/* Actions */}
                             <div className="flex gap-3 pt-2">
                                 <button
                                     type="submit"
-                                    disabled={adjustSubmitting}
+                                    disabled={adjustSubmitting || adjustWarehousesLoading || adjustStockLoading || !adjustmentFormReady}
                                     className={`flex-1 py-3 rounded-lg font-bold text-white transition-all ${adjustForm.type === 'ADJUST_LOSS'
                                         ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-800'
                                         : 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800'

@@ -4257,6 +4257,12 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
     if (!validTypes.includes(movementType)) {
         return res.status(400).json({ error: `Tipo inválido. Permitidos: ${validTypes.join(', ')}` });
     }
+    if (authReq.role === BODEGUERO_ROLE && !['ADJUST_LOSS', 'ADJUST_GAIN'].includes(movementType)) {
+        return res.status(403).json({
+            error: 'El rol Bodeguero solo puede registrar ajustes físicos de pérdida o ganancia.',
+            code: 'BODEGUERO_ADJUSTMENT_TYPE_FORBIDDEN',
+        });
+    }
     const isLoss = movementType === 'ADJUST_LOSS';
     if ((isLoss && adjustQty > 0) || (!isLoss && adjustQty < 0)) {
         return res.status(400).json({
@@ -4643,6 +4649,18 @@ app.post('/api/stock-counts', authenticate, checkRole(['OWNER', 'ADMIN', BODEGUE
 
         const result = await prisma.$transaction(async (tx: any) => {
             const warehouse = await resolveOperationalWarehouse(tx, authReq.tenantId!, requestedWarehouseId);
+            const legacyOpen = await tx.stockCount.findFirst({
+                where: { tenantId: authReq.tenantId!, warehouseId: null, status: 'OPEN' },
+                select: { id: true },
+            });
+            if (legacyOpen) {
+                throw new StockCountFlowError(
+                    409,
+                    'LEGACY_STOCK_COUNT_WITHOUT_WAREHOUSE',
+                    'Hay una toma física antigua sin bodega. Cancelala antes de iniciar un conteo por ubicación.',
+                    { openCountId: legacyOpen.id },
+                );
+            }
             const open = await tx.stockCount.findFirst({
                 where: { tenantId: authReq.tenantId!, warehouseId: warehouse.id, status: 'OPEN' },
                 select: { id: true },
@@ -5026,9 +5044,19 @@ app.post('/api/stock-counts/:id/cancel', authenticate, checkRole(['OWNER', 'ADMI
     try {
         const updated = await prisma.stockCount.updateMany({
             where: { id, tenantId: authReq.tenantId!, status: 'OPEN' },
-            data: { status: 'CANCELLED', closedAt: new Date(), closedBy: authReq.userId! },
+            data: {
+                status: 'CANCELLED',
+                openWarehouseKey: null,
+                closedAt: new Date(),
+                closedBy: authReq.userId!,
+            },
         });
-        if (updated.count === 0) return res.status(400).json({ error: 'No se encontró una toma física abierta con ese id.' });
+        if (updated.count === 0) {
+            return res.status(409).json({
+                error: 'No se encontró una toma física abierta con ese id.',
+                code: 'STOCK_COUNT_NOT_OPEN',
+            });
+        }
         res.json({ message: 'Toma física cancelada' });
     } catch (error: any) {
         console.error('Error cancelando toma física:', error);

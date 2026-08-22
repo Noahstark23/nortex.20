@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import { VentaEnCursoProvider } from './components/VentaEnCursoContext';
 import { trackPageView } from './utils/analytics';
 import { homePathFor } from './utils/navigation';
+import { currentSessionRole } from './utils/roleCapabilities';
 
 // ── Camino crítico EAGER: login, registro y la primera pantalla post-login.
 // Solo esto entra al bundle inicial — es lo que un usuario NUEVO necesita
@@ -96,13 +97,11 @@ const ProtectedApp = () => {
   // Excepción: el prestamista (LENDER) conserva su panel — "Mi Negocio" es una
   // pantalla de retail (ventas, fiado, productos) que no describe su operación.
   let homePath = '/app/inicio';
-  let authRole = '';
+  const authRole = currentSessionRole();
   try {
-    const role: string = JSON.parse(atob(token.split('.')[1])).role || '';
-    authRole = role;
     let tenantType = '';
     try { tenantType = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.tenant?.type || ''; } catch { }
-    homePath = tenantType === 'LENDER' ? '/app/dashboard' : homePathFor(role, 'simple');
+    homePath = tenantType === 'LENDER' ? '/app/dashboard' : homePathFor(authRole, 'simple');
   } catch { /* token ilegible → Mi Negocio, que degrada sin datos a "—" */ }
 
   // El registro (RegisterTenant) y el correo de bienvenida mandan a

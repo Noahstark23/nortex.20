@@ -50,12 +50,14 @@ describe('Toma Física responsive y no bloqueante', () => {
         expect(component).toContain("['OPEN', 'CLOSING'].includes(count.status)");
         expect(component).toContain("CLOSING: { label: 'Cerrando'");
         expect(component).toContain("c.warehouse?.name || 'Bodega no especificada'");
-        expect(component).toContain('roleCapabilitiesFor(currentSessionRole()).canManageWarehouseTopology');
+        expect(component).toContain('roleCapabilitiesFor(currentSessionRole())');
+        expect(component).toContain('canManageWarehouseTopology, canViewInventoryValuation');
+        expect(component).toContain('{canViewInventoryValuation && (');
         expect(component).toContain('Pedile a un administrador que active una bodega.');
     });
 
     it('conserva conteos enteros y teclado numérico en el contrato operativo', () => {
-        expect(component).toContain("value.replace(/\\D/g, '')");
+        expect(component).toContain("if (!/^\\d*$/.test(value)) return null;");
         expect(component).toContain('Number.isSafeInteger(parsed)');
         expect(component).toContain('parseCountInput(rawValue)');
         expect(component).not.toContain('sanitizeDecimalInput');

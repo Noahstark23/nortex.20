@@ -31,6 +31,13 @@ interface PO {
 interface Supplier { id: string; name: string; }
 interface ProductLite { id: string; name: string; sku: string; cost: number; }
 interface ReceiptDraft { quantity: string; batchNumber: string; expiryDate: string; }
+interface WarehouseOption { id: string; name: string; isActive: boolean; isDefault: boolean; }
+
+/** Una sola bodega puede preseleccionarse; con dos o más decide la persona. */
+export const soleActiveReceiptWarehouseId = (warehouses: WarehouseOption[]): string => {
+    const active = warehouses.filter(warehouse => warehouse.isActive);
+    return active.length === 1 ? active[0].id : '';
+};
 
 const headers = (): Record<string, string> => ({
     'Content-Type': 'application/json',
@@ -83,6 +90,10 @@ const PurchaseOrders: React.FC = () => {
     const [search, setSearch] = useState('');
     const [results, setResults] = useState<ProductLite[]>([]);
     const [receiptDrafts, setReceiptDrafts] = useState<Record<string, ReceiptDraft>>({});
+    const [receiptWarehouses, setReceiptWarehouses] = useState<WarehouseOption[]>([]);
+    const [receiptWarehouseId, setReceiptWarehouseId] = useState('');
+    const [receiptWarehousesLoading, setReceiptWarehousesLoading] = useState(false);
+    const [receiptWarehouseError, setReceiptWarehouseError] = useState('');
     const { toast, showToast, dismissToast } = useToast();
 
     const load = useCallback(async () => {
@@ -202,11 +213,47 @@ const PurchaseOrders: React.FC = () => {
         }
     };
 
+    const loadReceiptWarehouses = async () => {
+        setReceiptWarehousesLoading(true);
+        setReceiptWarehouseError('');
+        setReceiptWarehouses([]);
+        setReceiptWarehouseId('');
+        try {
+            const response = await requestWithTimeout('/api/warehouses', { headers: headers() });
+            const data: any = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                setReceiptWarehouseError(data.error || 'No se pudieron cargar las bodegas activas.');
+                return;
+            }
+
+            const available = (Array.isArray(data.data) ? data.data : [])
+                .filter((warehouse: WarehouseOption) => warehouse.isActive);
+            setReceiptWarehouses(available);
+            setReceiptWarehouseId(soleActiveReceiptWarehouseId(available));
+            if (available.length === 0) {
+                setReceiptWarehouseError('No hay una bodega activa. Pedile a un administrador que active una.');
+            }
+        } catch {
+            setReceiptWarehouseError('No pudimos cargar las bodegas. Revisá tu conexión e intentá de nuevo.');
+        } finally {
+            setReceiptWarehousesLoading(false);
+        }
+    };
+
+    const closeReceipt = () => {
+        setReceiving(null);
+        setReceiptDrafts({});
+        setReceiptWarehouseId('');
+        setReceiptWarehouses([]);
+        setReceiptWarehouseError('');
+    };
+
     const openReceipt = (po: PO) => {
         setReceiving(po);
         setReceiptDrafts(Object.fromEntries(
             po.items.map(item => [item.id, emptyReceipt()]),
         ) as Record<string, ReceiptDraft>);
+        void loadReceiptWarehouses();
     };
 
     const updateReceipt = (itemId: string, patch: Partial<ReceiptDraft>) => {
@@ -218,6 +265,12 @@ const PurchaseOrders: React.FC = () => {
 
     const receive = async () => {
         if (!receiving || busy) return;
+        setReceiptWarehouseError('');
+
+        if (!receiptWarehouseId) {
+            setReceiptWarehouseError('Seleccioná la bodega donde ingresará esta mercadería.');
+            return;
+        }
 
         const items = receiving.items.flatMap(item => {
             const draft = receiptDrafts[item.id] ?? emptyReceipt();
@@ -263,17 +316,25 @@ const PurchaseOrders: React.FC = () => {
             const response = await requestWithTimeout(`/api/purchase-orders/${receiving.id}/receive`, {
                 method: 'POST',
                 headers: headers(),
-                body: JSON.stringify({ items }),
+                body: JSON.stringify({ warehouseId: receiptWarehouseId, items }),
             });
             const data: any = await response.json().catch(() => ({}));
             if (!response.ok) {
-                showToast({ tone: 'error', title: 'No se pudo registrar la recepción', message: data.error || `El servidor respondió ${response.status}.` });
+                const message = data.error || `El servidor respondió ${response.status}.`;
+                setReceiptWarehouseError(message);
+                showToast({ tone: 'error', title: 'No se pudo registrar la recepción', message });
                 return;
             }
 
-            showToast({ tone: 'success', title: 'Mercadería recibida', message: 'Stock, costo promedio, lotes y Kardex quedaron actualizados.' });
-            setReceiving(null);
-            setReceiptDrafts({});
+            const warehouseName = receiptWarehouses.find(warehouse => warehouse.id === receiptWarehouseId)?.name;
+            showToast({
+                tone: 'success',
+                title: 'Mercadería recibida',
+                message: warehouseName
+                    ? `Las existencias ingresaron a ${warehouseName} y el Kardex quedó actualizado.`
+                    : 'Las existencias y el Kardex quedaron actualizados.',
+            });
+            closeReceipt();
             void load();
         } catch (error: any) {
             showToast({
@@ -285,6 +346,8 @@ const PurchaseOrders: React.FC = () => {
             setBusy(null);
         }
     };
+
+    const selectedReceiptWarehouse = receiptWarehouses.find(warehouse => warehouse.id === receiptWarehouseId);
 
     return (
         <div className="p-4 sm:p-6 max-w-6xl mx-auto">
@@ -416,13 +479,50 @@ const PurchaseOrders: React.FC = () => {
             )}
 
             {receiving && (
-                <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => { if (!busy) setReceiving(null); }}>
+                <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => { if (!busy) closeReceipt(); }}>
                     <div role="dialog" aria-modal="true" aria-labelledby="receive-po-title" className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-xl p-5 space-y-4 max-h-[90vh] overflow-y-auto" onClick={event => event.stopPropagation()}>
                         <div className="flex justify-between items-center">
                             <h2 id="receive-po-title" className="font-bold text-white">Recibir {receiving.orderNumber}</h2>
-                            <button onClick={() => setReceiving(null)} disabled={Boolean(busy)} className="text-slate-400 disabled:opacity-50" aria-label="Cerrar"><X size={18} /></button>
+                            <button onClick={closeReceipt} disabled={Boolean(busy)} className="text-slate-400 disabled:opacity-50" aria-label="Cerrar"><X size={18} /></button>
                         </div>
-                        <p className="text-xs text-slate-400">Ingresá lo que llegó físicamente. El stock, costo promedio, lotes y Kardex se actualizan en una sola operación.</p>
+                        <p className="text-xs text-slate-400">
+                            Ingresá lo que llegó físicamente. Las existencias, lotes y Kardex se actualizan en una sola operación.
+                        </p>
+
+                        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                            <label htmlFor="receipt-warehouse" className="mb-1.5 block text-sm font-semibold text-slate-200">
+                                Bodega de destino <span className="text-red-400">*</span>
+                            </label>
+                            <select
+                                id="receipt-warehouse"
+                                required
+                                value={receiptWarehouseId}
+                                onChange={event => {
+                                    setReceiptWarehouseId(event.target.value);
+                                    setReceiptWarehouseError('');
+                                }}
+                                disabled={receiptWarehousesLoading}
+                                className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2.5 text-sm text-white focus:border-emerald-500 focus:outline-none disabled:opacity-60"
+                            >
+                                <option value="">
+                                    {receiptWarehousesLoading
+                                        ? 'Cargando bodegas…'
+                                        : receiptWarehouses.length === 0
+                                            ? 'No hay bodegas activas'
+                                            : 'Seleccioná dónde ingresará'}
+                                </option>
+                                {receiptWarehouses.map(warehouse => (
+                                    <option key={warehouse.id} value={warehouse.id}>
+                                        {warehouse.name}{warehouse.isDefault ? ' · Principal' : ''}
+                                    </option>
+                                ))}
+                            </select>
+                            {selectedReceiptWarehouse && (
+                                <p className="mt-2 text-xs text-emerald-300">
+                                    Todo lo recibido en esta operación ingresará a <strong>{selectedReceiptWarehouse.name}</strong>.
+                                </p>
+                            )}
+                        </div>
                         {receiving.items.map(item => {
                             const pending = Number(item.quantityOrdered) - Number(item.quantityReceived);
                             const draft = receiptDrafts[item.id] ?? emptyReceipt();
@@ -468,8 +568,21 @@ const PurchaseOrders: React.FC = () => {
                                 </div>
                             );
                         })}
-                        <button onClick={() => void receive()} disabled={busy === receiving.id} className="w-full py-2.5 bg-emerald-600 text-white rounded-lg font-bold text-sm disabled:opacity-60">
-                            {busy === receiving.id ? 'Recibiendo…' : 'Confirmar recepción'}
+                        {receiptWarehouseError && (
+                            <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+                                {receiptWarehouseError}
+                            </div>
+                        )}
+                        <button
+                            onClick={() => void receive()}
+                            disabled={busy === receiving.id || receiptWarehousesLoading || !receiptWarehouseId}
+                            className="w-full py-2.5 bg-emerald-600 text-white rounded-lg font-bold text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                            {busy === receiving.id
+                                ? 'Recibiendo…'
+                                : receiptWarehousesLoading
+                                    ? 'Cargando bodegas…'
+                                    : 'Confirmar recepción'}
                         </button>
                     </div>
                 </div>

@@ -1,108 +1,264 @@
+import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import {
     applyDeploySchemaPreflight,
+    applyStockCountSchemaPreflight,
+    inspectStockCountNullableIdColumn,
+    inspectStockCountOpenWarehouseIndex,
+    inspectStockCountTenantWarehouseStatusIndex,
+    inspectStockCountWarehouseForeignKey,
+    inspectStockCountWarehouseIndex,
     inspectWarehouseSellerColumn,
     inspectWarehouseSellerIndex,
+    STOCK_COUNT_OPEN_WAREHOUSE_INDEX,
+    STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX,
+    STOCK_COUNT_WAREHOUSE_FOREIGN_KEY,
+    STOCK_COUNT_WAREHOUSE_INDEX,
+    UnsafeSchemaStateError,
     WAREHOUSE_SELLER_INDEX,
+    type DeploySchemaClient,
+    type StockCountColumnRow,
+    type StockCountForeignKeyRow,
+    type StockCountIndexRow,
     type WarehouseSellerIndexRow,
 } from '../scripts/deploy-schema-preflight';
 
-const validIndexRows: WarehouseSellerIndexRow[] = [
-    {
-        indexName: WAREHOUSE_SELLER_INDEX,
-        nonUnique: 0n,
-        seqInIndex: 1n,
-        columnName: 'tenantId',
+const validColumn: StockCountColumnRow = {
+    dataType: 'varchar',
+    columnType: 'varchar(191)',
+    isNullable: 'YES',
+    characterMaximumLength: 191n,
+    characterSetName: 'utf8mb4',
+    collationName: 'utf8mb4_unicode_ci',
+    columnDefault: null,
+    extra: '',
+    generationExpression: '',
+};
+
+const invalidColumn: StockCountColumnRow = {
+    ...validColumn,
+    columnType: 'varchar(255)',
+    characterMaximumLength: 255n,
+};
+
+function exactIndexRows(name: string, columns: string[], unique: boolean): StockCountIndexRow[] {
+    return columns.map((columnName, index) => ({
+        indexName: name,
+        nonUnique: unique ? 0n : 1n,
+        seqInIndex: BigInt(index + 1),
+        columnName,
         subPart: null,
         indexType: 'BTREE',
         isVisible: 'YES',
         collation: 'A',
         expression: null,
-    },
-    {
-        indexName: WAREHOUSE_SELLER_INDEX,
-        nonUnique: 0n,
-        seqInIndex: 2n,
-        columnName: 'sellerId',
-        subPart: null,
-        indexType: 'BTREE',
-        isVisible: 'YES',
-        collation: 'A',
-        expression: null,
-    },
-];
+    }));
+}
+
+const validSellerIndexRows: WarehouseSellerIndexRow[] = exactIndexRows(
+    WAREHOUSE_SELLER_INDEX,
+    ['tenantId', 'sellerId'],
+    true,
+);
+
+const validForeignKey: StockCountForeignKeyRow = {
+    constraintName: STOCK_COUNT_WAREHOUSE_FOREIGN_KEY,
+    columnName: 'warehouseId',
+    referencedTableName: 'Warehouse',
+    referencedColumnName: 'id',
+    ordinalPosition: 1n,
+    deleteRule: 'RESTRICT',
+    updateRule: 'CASCADE',
+};
+
+type State = 'missing' | 'valid' | 'invalid';
+type Action =
+    | 'column:warehouseId'
+    | 'column:openWarehouseKey'
+    | 'index:openWarehouseKey'
+    | 'index:warehouseId'
+    | 'index:tenantWarehouseStatus'
+    | 'foreignKey:warehouseId';
+
+function sqlText(statement: Prisma.Sql): string {
+    return statement.strings.join('?').replace(/\s+/g, ' ').trim();
+}
+
+class StockCountSchemaFake implements DeploySchemaClient {
+    stockCountExists = true;
+    columns: Record<'warehouseId' | 'openWarehouseKey', State> = {
+        warehouseId: 'missing',
+        openWarehouseKey: 'missing',
+    };
+    indexes: Record<'openWarehouseKey' | 'warehouseId' | 'tenantWarehouseStatus', State> = {
+        openWarehouseKey: 'missing',
+        warehouseId: 'missing',
+        tenantWarehouseStatus: 'missing',
+    };
+    foreignKey: State = 'missing';
+    duplicateOpenWarehouses: unknown[] = [];
+    invalidWarehouses: unknown[] = [];
+    invalidOpenKeys: unknown[] = [];
+    raceWins = new Set<Action>();
+    hardFailures = new Set<Action>();
+    events: string[] = [];
+
+    makeEverythingValid(): this {
+        this.columns.warehouseId = 'valid';
+        this.columns.openWarehouseKey = 'valid';
+        this.indexes.openWarehouseKey = 'valid';
+        this.indexes.warehouseId = 'valid';
+        this.indexes.tenantWarehouseStatus = 'valid';
+        this.foreignKey = 'valid';
+        return this;
+    }
+
+    private columnRows(state: State): StockCountColumnRow[] {
+        if (state === 'missing') return [];
+        return [{ ...(state === 'valid' ? validColumn : invalidColumn) }];
+    }
+
+    private indexRows(
+        state: State,
+        name: string,
+        columns: string[],
+        unique: boolean,
+    ): StockCountIndexRow[] {
+        if (state === 'missing') return [];
+        const rows = exactIndexRows(name, columns, unique);
+        return state === 'valid' ? rows : rows.map(row => ({ ...row, isVisible: 'NO' }));
+    }
+
+    async query<T>(statement: Prisma.Sql): Promise<T> {
+        const text = sqlText(statement);
+        const values = statement.values as unknown[];
+
+        if (text.includes("TABLE_NAME = 'StockCount'") && text.includes('information_schema.TABLES')) {
+            return (this.stockCountExists ? [{ tableName: 'StockCount' }] : []) as T;
+        }
+        if (text.includes('FROM information_schema.COLUMNS')
+            && text.includes("TABLE_NAME = 'StockCount'")
+            && text.includes("COLUMN_NAME = 'warehouseId'")) {
+            return this.columnRows(this.columns.warehouseId) as T;
+        }
+        if (text.includes('FROM information_schema.COLUMNS')
+            && text.includes("TABLE_NAME = 'StockCount'")
+            && text.includes("COLUMN_NAME = 'openWarehouseKey'")) {
+            return this.columnRows(this.columns.openWarehouseKey) as T;
+        }
+        if (text.includes('FROM information_schema.COLUMNS')
+            && text.includes("TABLE_NAME = 'Warehouse'")
+            && text.includes("COLUMN_NAME = 'id'")) {
+            return [{ ...validColumn, isNullable: 'NO' }] as T;
+        }
+        if (text.includes('information_schema.STATISTICS')) {
+            const indexName = values.find(value => typeof value === 'string');
+            if (indexName === STOCK_COUNT_OPEN_WAREHOUSE_INDEX) {
+                return this.indexRows(
+                    this.indexes.openWarehouseKey,
+                    STOCK_COUNT_OPEN_WAREHOUSE_INDEX,
+                    ['openWarehouseKey'],
+                    true,
+                ) as T;
+            }
+            if (indexName === STOCK_COUNT_WAREHOUSE_INDEX) {
+                return this.indexRows(
+                    this.indexes.warehouseId,
+                    STOCK_COUNT_WAREHOUSE_INDEX,
+                    ['warehouseId'],
+                    false,
+                ) as T;
+            }
+            if (indexName === STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX) {
+                return this.indexRows(
+                    this.indexes.tenantWarehouseStatus,
+                    STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX,
+                    ['tenantId', 'warehouseId', 'status'],
+                    false,
+                ) as T;
+            }
+        }
+        if (text.includes('information_schema.REFERENTIAL_CONSTRAINTS')) {
+            if (this.foreignKey === 'missing') return [] as T;
+            return [{
+                ...validForeignKey,
+                ...(this.foreignKey === 'invalid' ? { deleteRule: 'CASCADE' } : {}),
+            }] as T;
+        }
+        if (text.includes('GROUP BY openWarehouseKey')) {
+            this.events.push('query:safety:duplicates');
+            return this.duplicateOpenWarehouses as T;
+        }
+        if (text.includes('LEFT JOIN `Warehouse` w ON w.id = sc.warehouseId')) {
+            this.events.push('query:safety:warehouses');
+            return this.invalidWarehouses as T;
+        }
+        if (text.includes('id AS stockCountId') && text.includes('openWarehouseKey')) {
+            this.events.push('query:safety:openKeys');
+            return this.invalidOpenKeys as T;
+        }
+
+        throw new Error(`Query inesperada en fake: ${text}`);
+    }
+
+    private actionFor(statement: Prisma.Sql): Action {
+        const text = sqlText(statement);
+        if (text.includes('ADD COLUMN `warehouseId`')) return 'column:warehouseId';
+        if (text.includes('ADD COLUMN `openWarehouseKey`')) return 'column:openWarehouseKey';
+        if (text.includes(`CREATE UNIQUE INDEX \`${STOCK_COUNT_OPEN_WAREHOUSE_INDEX}\``)) {
+            return 'index:openWarehouseKey';
+        }
+        if (text.includes(`CREATE INDEX \`${STOCK_COUNT_WAREHOUSE_INDEX}\``)) return 'index:warehouseId';
+        if (text.includes(`CREATE INDEX \`${STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX}\``)) {
+            return 'index:tenantWarehouseStatus';
+        }
+        if (text.includes(`ADD CONSTRAINT \`${STOCK_COUNT_WAREHOUSE_FOREIGN_KEY}\``)) {
+            return 'foreignKey:warehouseId';
+        }
+        throw new Error(`DDL inesperado en fake: ${text}`);
+    }
+
+    private apply(action: Action): void {
+        if (action === 'column:warehouseId') this.columns.warehouseId = 'valid';
+        if (action === 'column:openWarehouseKey') this.columns.openWarehouseKey = 'valid';
+        if (action === 'index:openWarehouseKey') this.indexes.openWarehouseKey = 'valid';
+        if (action === 'index:warehouseId') this.indexes.warehouseId = 'valid';
+        if (action === 'index:tenantWarehouseStatus') this.indexes.tenantWarehouseStatus = 'valid';
+        if (action === 'foreignKey:warehouseId') this.foreignKey = 'valid';
+    }
+
+    async execute(statement: Prisma.Sql): Promise<number> {
+        const action = this.actionFor(statement);
+        this.events.push(`execute:${action}`);
+        if (this.hardFailures.has(action)) throw new Error(`fallo ${action}`);
+        this.apply(action);
+        if (this.raceWins.has(action)) throw new Error(`otro iniciador ganó ${action}`);
+        return 0;
+    }
+}
 
 describe('deploy schema preflight', () => {
     it('acepta únicamente Warehouse.sellerId nullable varchar(191)', () => {
         expect(inspectWarehouseSellerColumn([])).toBe('missing');
-        expect(inspectWarehouseSellerColumn([{
-            dataType: 'varchar',
-            columnType: 'varchar(191)',
-            isNullable: 'YES',
-            characterMaximumLength: 191n,
-            characterSetName: 'utf8mb4',
-            collationName: 'utf8mb4_unicode_ci',
-            columnDefault: null,
-            extra: '',
-            generationExpression: '',
-        }])).toBe('valid');
-        expect(inspectWarehouseSellerColumn([{
-            dataType: 'varchar',
-            columnType: 'varchar(255)',
-            isNullable: 'YES',
-            characterMaximumLength: 255n,
-            characterSetName: 'utf8mb4',
-            collationName: 'utf8mb4_unicode_ci',
-            columnDefault: null,
-            extra: '',
-            generationExpression: '',
-        }])).toBe('invalid');
-        expect(inspectWarehouseSellerColumn([{
-            dataType: 'varchar',
-            columnType: 'varchar(191)',
-            isNullable: 'NO',
-            characterMaximumLength: 191n,
-            characterSetName: 'utf8mb4',
-            collationName: 'utf8mb4_unicode_ci',
-            columnDefault: null,
-            extra: '',
-            generationExpression: '',
-        }])).toBe('invalid');
-        expect(inspectWarehouseSellerColumn([{
-            dataType: 'varchar',
-            columnType: 'varchar(191)',
-            isNullable: 'YES',
-            characterMaximumLength: 191n,
-            characterSetName: 'utf8mb4',
-            collationName: 'utf8mb4_unicode_ci',
-            columnDefault: 'seller-default',
-            extra: '',
-            generationExpression: '',
-        }])).toBe('invalid');
+        expect(inspectWarehouseSellerColumn([validColumn])).toBe('valid');
+        expect(inspectWarehouseSellerColumn([invalidColumn])).toBe('invalid');
+        expect(inspectWarehouseSellerColumn([{ ...validColumn, isNullable: 'NO' }])).toBe('invalid');
+        expect(inspectWarehouseSellerColumn([{ ...validColumn, columnDefault: 'seller-default' }])).toBe('invalid');
     });
 
     it('acepta únicamente el unique tenantId + sellerId en el orden exacto', () => {
         expect(inspectWarehouseSellerIndex([])).toBe('missing');
-        expect(inspectWarehouseSellerIndex([...validIndexRows].reverse())).toBe('valid');
-        expect(inspectWarehouseSellerIndex(validIndexRows.map(row => ({
-            ...row,
-            nonUnique: 1n,
-        })))).toBe('invalid');
+        expect(inspectWarehouseSellerIndex([...validSellerIndexRows].reverse())).toBe('valid');
+        expect(inspectWarehouseSellerIndex(validSellerIndexRows.map(row => ({ ...row, nonUnique: 1n })))).toBe('invalid');
         expect(inspectWarehouseSellerIndex([
-            { ...validIndexRows[0], columnName: 'sellerId' },
-            { ...validIndexRows[1], columnName: 'tenantId' },
+            { ...validSellerIndexRows[0], columnName: 'sellerId' },
+            { ...validSellerIndexRows[1], columnName: 'tenantId' },
         ])).toBe('invalid');
     });
 
-    it('rechaza un índice homónimo por prefijos o invisible', () => {
-        expect(inspectWarehouseSellerIndex(validIndexRows.map(row => ({
-            ...row,
-            subPart: 10n,
-        })))).toBe('invalid');
-        expect(inspectWarehouseSellerIndex(validIndexRows.map(row => ({
-            ...row,
-            isVisible: 'NO',
-        })))).toBe('invalid');
+    it('rechaza un índice de vendedor homónimo por prefijos o invisible', () => {
+        expect(inspectWarehouseSellerIndex(validSellerIndexRows.map(row => ({ ...row, subPart: 10n })))).toBe('invalid');
+        expect(inspectWarehouseSellerIndex(validSellerIndexRows.map(row => ({ ...row, isVisible: 'NO' })))).toBe('invalid');
     });
 
     it('no aplica DDL sobre una instalación completamente vacía', async () => {
@@ -112,8 +268,202 @@ describe('deploy schema preflight', () => {
 
         await applyDeploySchemaPreflight({ query, execute }, { info, warn: vi.fn() });
 
-        expect(query).toHaveBeenCalledOnce();
+        expect(query).toHaveBeenCalledTimes(2);
         expect(execute).not.toHaveBeenCalled();
         expect(info).toHaveBeenCalledWith(expect.stringContaining('Warehouse aún no existe'));
+    });
+
+    it('falla cerrado si StockCount existe sin Warehouse', async () => {
+        const query = vi.fn()
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{ tableName: 'StockCount' }]);
+
+        await expect(applyDeploySchemaPreflight(
+            { query, execute: vi.fn() },
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(UnsafeSchemaStateError);
+    });
+});
+
+describe('StockCount deploy schema preflight', () => {
+    it('valida columnas, índices y FK con la forma exacta de Prisma', () => {
+        expect(inspectStockCountNullableIdColumn([])).toBe('missing');
+        expect(inspectStockCountNullableIdColumn([validColumn])).toBe('valid');
+        expect(inspectStockCountNullableIdColumn([invalidColumn])).toBe('invalid');
+
+        const openIndex = exactIndexRows(STOCK_COUNT_OPEN_WAREHOUSE_INDEX, ['openWarehouseKey'], true);
+        const warehouseIndex = exactIndexRows(STOCK_COUNT_WAREHOUSE_INDEX, ['warehouseId'], false);
+        const compositeIndex = exactIndexRows(
+            STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX,
+            ['tenantId', 'warehouseId', 'status'],
+            false,
+        );
+        expect(inspectStockCountOpenWarehouseIndex(openIndex)).toBe('valid');
+        expect(inspectStockCountOpenWarehouseIndex([{ ...openIndex[0], nonUnique: 1n }])).toBe('invalid');
+        expect(inspectStockCountWarehouseIndex(warehouseIndex)).toBe('valid');
+        expect(inspectStockCountWarehouseIndex([{ ...warehouseIndex[0], columnName: 'tenantId' }])).toBe('invalid');
+        expect(inspectStockCountTenantWarehouseStatusIndex([...compositeIndex].reverse())).toBe('valid');
+        expect(inspectStockCountTenantWarehouseStatusIndex(compositeIndex.slice(0, 2))).toBe('invalid');
+        expect(inspectStockCountWarehouseForeignKey([validForeignKey])).toBe('valid');
+        expect(inspectStockCountWarehouseForeignKey([{ ...validForeignKey, deleteRule: 'CASCADE' }])).toBe('invalid');
+        expect(inspectStockCountWarehouseForeignKey([
+            validForeignKey,
+            { ...validForeignKey, constraintName: 'otra_fkey' },
+        ])).toBe('invalid');
+    });
+
+    it('deja que db push cree StockCount en una instalación sin esa tabla', async () => {
+        const db = new StockCountSchemaFake();
+        db.stockCountExists = false;
+        const info = vi.fn();
+
+        await applyStockCountSchemaPreflight(db, { info, warn: vi.fn() });
+
+        expect(db.events).toEqual([]);
+        expect(info).toHaveBeenCalledWith(expect.stringContaining('StockCount aún no existe'));
+    });
+
+    it('crea solo DDL expand-only, en orden seguro, sin reasignar conteos legados', async () => {
+        const db = new StockCountSchemaFake();
+
+        await applyStockCountSchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+
+        expect(db.columns).toEqual({ warehouseId: 'valid', openWarehouseKey: 'valid' });
+        expect(db.indexes).toEqual({
+            openWarehouseKey: 'valid',
+            warehouseId: 'valid',
+            tenantWarehouseStatus: 'valid',
+        });
+        expect(db.foreignKey).toBe('valid');
+        expect(db.events.filter(event => event.startsWith('execute:'))).toEqual([
+            'execute:column:warehouseId',
+            'execute:column:openWarehouseKey',
+            'execute:index:openWarehouseKey',
+            'execute:index:warehouseId',
+            'execute:index:tenantWarehouseStatus',
+            'execute:foreignKey:warehouseId',
+        ]);
+        expect(db.events.indexOf('query:safety:duplicates')).toBeLessThan(
+            db.events.indexOf('execute:index:openWarehouseKey'),
+        );
+    });
+
+    it('es idempotente cuando el schema ya está completo', async () => {
+        const db = new StockCountSchemaFake().makeEverythingValid();
+
+        await applyStockCountSchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+        await applyStockCountSchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('converge desde un estado parcial sin tocar objetos válidos', async () => {
+        const db = new StockCountSchemaFake().makeEverythingValid();
+        db.columns.openWarehouseKey = 'missing';
+        db.indexes.openWarehouseKey = 'missing';
+        db.foreignKey = 'missing';
+
+        await applyStockCountSchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+
+        expect(db.events.filter(event => event.startsWith('execute:'))).toEqual([
+            'execute:column:openWarehouseKey',
+            'execute:index:openWarehouseKey',
+            'execute:foreignKey:warehouseId',
+        ]);
+    });
+
+    it.each([
+        ['columna', (db: StockCountSchemaFake) => { db.columns.warehouseId = 'invalid'; }, 'StockCount.warehouseId'],
+        ['índice', (db: StockCountSchemaFake) => { db.indexes.warehouseId = 'invalid'; }, STOCK_COUNT_WAREHOUSE_INDEX],
+        ['FK', (db: StockCountSchemaFake) => { db.foreignKey = 'invalid'; }, STOCK_COUNT_WAREHOUSE_FOREIGN_KEY],
+    ])('falla cerrado ante %s incompatible', async (_label, arrange, expectedMessage) => {
+        const db = new StockCountSchemaFake().makeEverythingValid();
+        arrange(db);
+
+        await expect(applyStockCountSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(expectedMessage);
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it.each([
+        [
+            'duplicados activos',
+            (db: StockCountSchemaFake) => {
+                db.duplicateOpenWarehouses = [{ openWarehouseKey: 'warehouse-1', duplicateCount: 2n }];
+            },
+            'conteos activos duplicados',
+        ],
+        [
+            'bodega ajena o inexistente',
+            (db: StockCountSchemaFake) => {
+                db.invalidWarehouses = [{
+                    stockCountId: 'count-1',
+                    tenantId: 'tenant-1',
+                    warehouseId: 'warehouse-2',
+                    reason: 'CROSS_TENANT',
+                }];
+            },
+            'bodega inexistente o de otro tenant',
+        ],
+        [
+            'clave activa incoherente',
+            (db: StockCountSchemaFake) => {
+                db.invalidOpenKeys = [{
+                    stockCountId: 'count-1',
+                    status: 'CLOSED',
+                    warehouseId: 'warehouse-1',
+                    openWarehouseKey: 'warehouse-1',
+                    reason: 'INACTIVE_COUNT',
+                }];
+            },
+            'claves de conteo activo incoherentes',
+        ],
+    ])('falla cerrado sin DDL ante datos con %s', async (_label, arrange, expectedMessage) => {
+        const db = new StockCountSchemaFake().makeEverythingValid();
+        arrange(db);
+
+        await expect(applyStockCountSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(expectedMessage);
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('tolera carreras solo después de releer y verificar cada objeto', async () => {
+        const db = new StockCountSchemaFake();
+        const actions: Action[] = [
+            'column:warehouseId',
+            'column:openWarehouseKey',
+            'index:openWarehouseKey',
+            'index:warehouseId',
+            'index:tenantWarehouseStatus',
+            'foreignKey:warehouseId',
+        ];
+        actions.forEach(action => db.raceWins.add(action));
+        const warn = vi.fn();
+
+        await applyStockCountSchemaPreflight(db, { info: vi.fn(), warn });
+
+        expect(db.columns).toEqual({ warehouseId: 'valid', openWarehouseKey: 'valid' });
+        expect(db.indexes).toEqual({
+            openWarehouseKey: 'valid',
+            warehouseId: 'valid',
+            tenantWarehouseStatus: 'valid',
+        });
+        expect(db.foreignKey).toBe('valid');
+        expect(warn).toHaveBeenCalledTimes(actions.length);
+    });
+
+    it('propaga un error DDL si la relectura no confirma convergencia', async () => {
+        const db = new StockCountSchemaFake();
+        db.hardFailures.add('column:warehouseId');
+
+        await expect(applyStockCountSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('fallo column:warehouseId');
+        expect(db.columns.warehouseId).toBe('missing');
     });
 });

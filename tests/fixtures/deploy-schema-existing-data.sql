@@ -9,3 +9,28 @@ INSERT INTO `Warehouse` (`id`, `tenantId`, `name`, `isDefault`, `isActive`, `cre
 VALUES
     ('warehouse-deploy-1', 'tenant-deploy-smoke', 'Principal Smoke', TRUE, TRUE, CURRENT_TIMESTAMP(3)),
     ('warehouse-deploy-2', 'tenant-deploy-smoke', 'Carga Smoke', FALSE, TRUE, CURRENT_TIMESTAMP(3));
+
+-- Conteos anteriores al alcance por bodega. El upgrade debe conservarlos sin
+-- inventar ubicación; esto es especialmente obligatorio para el OPEN legado.
+INSERT INTO `StockCount` (`id`, `tenantId`, `status`, `scope`, `createdBy`, `createdAt`, `closedAt`, `closedBy`)
+VALUES
+    (
+        'stock-count-deploy-closed',
+        'tenant-deploy-smoke',
+        'CLOSED',
+        'ALL',
+        'user-deploy-smoke',
+        CURRENT_TIMESTAMP(3),
+        CURRENT_TIMESTAMP(3),
+        'user-deploy-smoke'
+    ),
+    (
+        'stock-count-deploy-open',
+        'tenant-deploy-smoke',
+        'OPEN',
+        'ALL',
+        'user-deploy-smoke',
+        CURRENT_TIMESTAMP(3),
+        NULL,
+        NULL
+    );

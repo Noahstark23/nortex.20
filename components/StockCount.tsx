@@ -32,7 +32,7 @@ interface CountItem {
     counted: number | null;
     diff: number;
     countedAt: string | null;
-    product: { name: string; sku: string; unit: string; cost: number };
+    product: { name: string; sku: string; unit: string; cost?: number };
 }
 
 interface CountDetail {
@@ -49,8 +49,11 @@ interface WarehouseOption {
 
 const formatCurrency = (n: number) => formatMoney(n);
 const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-const sanitizeCountInput = (value: string) => value.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
-const parseCountInput = (value: string): number | null => {
+export const sanitizeCountInput = (value: string): string | null => {
+    if (!/^\d*$/.test(value)) return null;
+    return value.replace(/^0+(?=\d)/, '');
+};
+export const parseCountInput = (value: string): number | null => {
     if (!/^\d+$/.test(value)) return null;
     const parsed = Number(value);
     return Number.isSafeInteger(parsed) ? parsed : null;
@@ -98,10 +101,8 @@ export default function StockCount() {
 
     const token = localStorage.getItem('nortex_token');
     const headers = useMemo(() => ({ 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }), [token]);
-    const canManageWarehouseTopology = useMemo(
-        () => roleCapabilitiesFor(currentSessionRole()).canManageWarehouseTopology,
-        [],
-    );
+    const roleCapabilities = useMemo(() => roleCapabilitiesFor(currentSessionRole()), []);
+    const { canManageWarehouseTopology, canViewInventoryValuation } = roleCapabilities;
 
     // ==========================================
     // DATA
@@ -254,6 +255,20 @@ export default function StockCount() {
         }
     }, [detail, headers, showToast]);
 
+    const updateCountInput = useCallback((productId: string, value: string) => {
+        const sanitized = sanitizeCountInput(value);
+        if (sanitized === null) {
+            setInputs(prev => ({ ...prev, [productId]: '' }));
+            showToast({
+                tone: 'warning',
+                title: 'Usá unidades enteras',
+                message: 'El conteo no acepta puntos, comas, letras ni cantidades negativas.',
+            });
+            return;
+        }
+        setInputs(prev => ({ ...prev, [productId]: sanitized }));
+    }, [showToast]);
+
     const commitCountInput = useCallback((item: CountItem, rawValue: string) => {
         if (rawValue === '') return;
         const counted = parseCountInput(rawValue);
@@ -283,8 +298,8 @@ export default function StockCount() {
             if (res.ok) {
                 setShowCloseConfirm(false);
                 const resultParts = [`${data.adjusted} ajuste(s) aplicado(s)`];
-                if (data.lossValue > 0) resultParts.push(`merma ${formatCurrency(data.lossValue)}`);
-                if (data.gainValue > 0) resultParts.push(`sobrante ${formatCurrency(data.gainValue)}`);
+                if (canViewInventoryValuation && data.lossValue > 0) resultParts.push(`merma ${formatCurrency(data.lossValue)}`);
+                if (canViewInventoryValuation && data.gainValue > 0) resultParts.push(`sobrante ${formatCurrency(data.gainValue)}`);
                 if (data.uncounted > 0) resultParts.push(`${data.uncounted} producto(s) sin contar no se ajustaron`);
                 showToast({ tone: 'success', title: 'Toma física cerrada', message: `${resultParts.join(' · ')}.` });
                 setDetail(null);
@@ -516,7 +531,7 @@ export default function StockCount() {
                     )}
 
                     {/* Stats */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+                    <div className={`grid grid-cols-2 ${canViewInventoryValuation ? 'sm:grid-cols-4' : 'sm:grid-cols-2'} gap-3 mt-4`}>
                         <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
                             <p className="text-xs text-slate-400">Progreso</p>
                             <p className="text-lg font-bold text-white">{detailStats.counted}<span className="text-sm text-slate-500"> / {detailStats.total}</span></p>
@@ -527,14 +542,18 @@ export default function StockCount() {
                                 {detailStats.diffUnits > 0 ? '+' : ''}{detailStats.diffUnits}
                             </p>
                         </div>
-                        <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
-                            <p className="text-xs text-slate-400 flex items-center gap-1"><TrendingDown size={12} className="text-red-400" /> Merma estimada</p>
-                            <p className="text-lg font-bold text-red-400">{formatCurrency(detailStats.lossValue)}</p>
-                        </div>
-                        <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
-                            <p className="text-xs text-slate-400 flex items-center gap-1"><TrendingUp size={12} className="text-emerald-400" /> Sobrante estimado</p>
-                            <p className="text-lg font-bold text-emerald-400">{formatCurrency(detailStats.gainValue)}</p>
-                        </div>
+                        {canViewInventoryValuation && (
+                            <>
+                                <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+                                    <p className="text-xs text-slate-400 flex items-center gap-1"><TrendingDown size={12} className="text-red-400" /> Merma estimada</p>
+                                    <p className="text-lg font-bold text-red-400">{formatCurrency(detailStats.lossValue)}</p>
+                                </div>
+                                <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+                                    <p className="text-xs text-slate-400 flex items-center gap-1"><TrendingUp size={12} className="text-emerald-400" /> Sobrante estimado</p>
+                                    <p className="text-lg font-bold text-emerald-400">{formatCurrency(detailStats.gainValue)}</p>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
 
@@ -607,7 +626,7 @@ export default function StockCount() {
                                                         pattern="[0-9]*"
                                                         value={raw ?? ''}
                                                         placeholder="Ingresa las unidades contadas"
-                                                        onChange={(e) => setInputs(prev => ({ ...prev, [it.productId]: sanitizeCountInput(e.target.value) }))}
+                                                        onChange={(e) => updateCountInput(it.productId, e.target.value)}
                                                         onBlur={(e) => commitCountInput(it, e.target.value)}
                                                         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                                                         className="w-full min-h-11 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-base text-white text-right focus:outline-none focus:border-blue-500"
@@ -665,7 +684,7 @@ export default function StockCount() {
                                                             pattern="[0-9]*"
                                                             value={raw ?? ''}
                                                             placeholder="—"
-                                                            onChange={(e) => setInputs(prev => ({ ...prev, [it.productId]: sanitizeCountInput(e.target.value) }))}
+                                                            onChange={(e) => updateCountInput(it.productId, e.target.value)}
                                                             onBlur={(e) => commitCountInput(it, e.target.value)}
                                                             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                                                             className="w-24 bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-sm text-white text-right focus:outline-none focus:border-blue-500"
@@ -721,8 +740,12 @@ export default function StockCount() {
                                     {detailStats.total - detailStats.counted > 0 && (
                                         <div className="flex justify-between"><span className="text-amber-400">Sin contar (no se ajustan)</span><span className="text-amber-400 font-semibold">{detailStats.total - detailStats.counted}</span></div>
                                     )}
-                                    <div className="flex justify-between"><span className="text-red-400">Merma estimada</span><span className="text-red-400 font-semibold">{formatCurrency(detailStats.lossValue)}</span></div>
-                                    <div className="flex justify-between"><span className="text-emerald-400">Sobrante estimado</span><span className="text-emerald-400 font-semibold">{formatCurrency(detailStats.gainValue)}</span></div>
+                                    {canViewInventoryValuation && (
+                                        <>
+                                            <div className="flex justify-between"><span className="text-red-400">Merma estimada</span><span className="text-red-400 font-semibold">{formatCurrency(detailStats.lossValue)}</span></div>
+                                            <div className="flex justify-between"><span className="text-emerald-400">Sobrante estimado</span><span className="text-emerald-400 font-semibold">{formatCurrency(detailStats.gainValue)}</span></div>
+                                        </>
+                                    )}
                                 </div>
                                 {detailStats.total - detailStats.counted > 0 && (
                                     <div className="bg-amber-950/40 border border-amber-800/50 rounded-lg p-3 flex items-start gap-2">

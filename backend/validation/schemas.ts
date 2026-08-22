@@ -249,7 +249,7 @@ export const CreateStockCountSchema = z
 // PATCH /api/stock-counts/:id/count  [Bodeguero B1 — captura de conteo]
 export const RecordCountSchema = z.object({
     productId: z.string().min(1, 'productId requerido'),
-    counted:   z.number().min(0, 'El conteo no puede ser negativo'),
+    counted:   z.number().int('El conteo debe ser un número entero').min(0, 'El conteo no puede ser negativo'),
 });
 
 // POST /api/shifts/open

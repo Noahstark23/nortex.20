@@ -19,7 +19,13 @@ import { z } from 'zod';
 import { authenticate } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
 import { BODEGUERO_ROLE, redactBodegueroPurchaseOrder } from '../security/bodegueroPolicy';
-import { applyStockDelta, weightedAverageCost } from '../services/stockService';
+import {
+    applyStockDelta,
+    asegurarBodegaPorDefecto,
+    resolveOperationalWarehouse,
+    StockError,
+    weightedAverageCost,
+} from '../services/stockService';
 import { normalizeCalendarDateInput } from '../lib/calendarDate';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
@@ -67,6 +73,7 @@ async function applyGoodsReceipt(
     userId: string,
     poId: string,
     poNumber: string,
+    destinationWarehouseId: string,
     lines: { item: { id: string; productId: string; unitCost: Prisma.Decimal }; line: ReceiptLine }[]
 ): Promise<ReceiptResult[]> {
     const results: ReceiptResult[] = [];
@@ -99,6 +106,7 @@ async function applyGoodsReceipt(
             productId: product.id,
             delta: recv,
             enforceSufficient: false,
+            warehouseId: destinationWarehouseId,
         });
 
         // Costo promedio ponderado con el costo de la OC.
@@ -338,7 +346,13 @@ router.post('/:id/cancel', authenticate, checkRole(ROLES_WRITE), async (req: any
 router.post('/:id/receive', authenticate, checkRole(ROLES_RECEIVE), async (req: any, res: any) => {
     const tenantId: string = req.tenantId;
     const userId: string = req.userId;
+    const requestedWarehouseId = req.body?.warehouseId;
     const lines: ReceiptLine[] = Array.isArray(req.body?.items) ? req.body.items : [];
+
+    if (requestedWarehouseId !== undefined
+        && (typeof requestedWarehouseId !== 'string' || !requestedWarehouseId.trim())) {
+        return res.status(400).json({ error: 'La bodega de destino es inválida', code: 'WAREHOUSE_NOT_FOUND' });
+    }
 
     if (lines.length === 0) {
         return res.status(400).json({ error: 'Se requiere al menos un ítem a recibir' });
@@ -350,6 +364,7 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_RECEIVE), async (req: 
     }
 
     try {
+        await asegurarBodegaPorDefecto(prisma, tenantId);
         const result = await prisma.$transaction(async (tx) => {
             // S38 — lock del header ANTES de cualquier lectura: dos receives
             // concurrentes de la misma OC pasaban ambos el chequeo de estado (el
@@ -366,6 +381,12 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_RECEIVE), async (req: 
             if (po.status !== 'APPROVED' && po.status !== 'PARTIALLY_RECEIVED') {
                 throw new Error(`INVALID_STATUS:${po.status}`);
             }
+
+            const destinationWarehouse = await resolveOperationalWarehouse(
+                tx,
+                tenantId,
+                typeof requestedWarehouseId === 'string' ? requestedWarehouseId.trim() : null,
+            );
 
             // Emparejar cada línea con su ítem de la OC (del mismo tenant por construcción).
             const itemById = new Map(po.items.map((i) => [i.id, i]));
@@ -388,7 +409,15 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_RECEIVE), async (req: 
                 matched.push({ item, line: { ...line, quantityReceived: recv } });
             }
 
-            const receiptResults = await applyGoodsReceipt(tx, tenantId, userId, po.id, po.orderNumber, matched);
+            const receiptResults = await applyGoodsReceipt(
+                tx,
+                tenantId,
+                userId,
+                po.id,
+                po.orderNumber,
+                destinationWarehouse.id,
+                matched,
+            );
 
             // Recalcular estado: RECEIVED si todo lo pedido fue recibido, si no PARTIALLY_RECEIVED.
             const fresh = await tx.purchaseOrder.findUniqueOrThrow({
@@ -407,7 +436,11 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_RECEIVE), async (req: 
                 data: {
                     tenantId, userId, action: 'PO_RECEIVED',
                     details: JSON.stringify({
-                        poId: po.id, orderNumber: po.orderNumber, newStatus,
+                        poId: po.id,
+                        orderNumber: po.orderNumber,
+                        newStatus,
+                        warehouseId: destinationWarehouse.id,
+                        warehouseName: destinationWarehouse.name,
                         received: matched.map((m, idx) => {
                             const r = receiptResults[idx];
                             return {
@@ -428,8 +461,15 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_RECEIVE), async (req: 
             return updated;
         });
 
-        res.json({ success: true, data: result });
+        res.json({
+            success: true,
+            data: req.role === BODEGUERO_ROLE ? redactBodegueroPurchaseOrder(result) : result,
+        });
     } catch (e: any) {
+        if (e instanceof StockError
+            && (e.code === 'WAREHOUSE_REQUIRED' || e.code === 'WAREHOUSE_NOT_FOUND')) {
+            return res.status(400).json({ error: e.message, code: e.code });
+        }
         const msg: string = e?.message ?? '';
         if (msg === 'NOT_FOUND') return res.status(404).json({ error: 'Orden de compra no encontrada' });
         if (msg.startsWith('INVALID_STATUS:')) return res.status(400).json({ error: `No se puede recibir una OC en estado ${msg.split(':')[1]}` });
