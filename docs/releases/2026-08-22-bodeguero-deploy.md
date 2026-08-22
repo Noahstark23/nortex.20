@@ -1,6 +1,7 @@
 # Despliegue del rol BODEGUERO — 2026-08-22
 
-Release de aplicación: `ec8018443d3d1d00954823d1845d9e4ebf51b226`  
+Release de aplicación: `ec8018443d3d1d00954823d1845d9e4ebf51b226`
+
 Versión anterior conocida en producción: `ba7beb9bdf8d0af025652e613609fb55741553c7`
 
 ## Estado actual
