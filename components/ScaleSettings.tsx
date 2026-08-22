@@ -616,6 +616,27 @@ const ScaleSettings: React.FC = () => {
                 </div>
             </div>
 
+            <section aria-labelledby="scale-sale-guide-title" className="rounded-2xl border border-slate-700 bg-slate-800/40 p-5">
+                <h2 id="scale-sale-guide-title" className="font-bold text-white">Cómo se factura carne por peso hoy</h2>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    <div className="rounded-xl border border-slate-700 bg-slate-950/60 p-4">
+                        <p className="text-xs font-bold uppercase text-brand">1 · Cualquier balanza</p>
+                        <p className="mt-2 text-sm font-semibold text-white">Escribir el peso</p>
+                        <p className="mt-1 text-xs leading-relaxed text-slate-400">Pesá la carne, elegí el producto medido en Vender y escribí la lectura estable. No hace falta conectar un cable.</p>
+                    </div>
+                    <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-4">
+                        <p className="text-xs font-bold uppercase text-emerald-300">2 · Con impresora</p>
+                        <p className="mt-2 text-sm font-semibold text-white">Escanear la etiqueta</p>
+                        <p className="mt-1 text-xs leading-relaxed text-slate-400">La balanza imprime el EAN-13 con peso. Conectá al POS un lector USB/Bluetooth en modo teclado, no la balanza.</p>
+                    </div>
+                    <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">
+                        <p className="text-xs font-bold uppercase text-amber-300">3 · Cable serial</p>
+                        <p className="mt-2 text-sm font-semibold text-white">Solo diagnóstico</p>
+                        <p className="mt-1 text-xs leading-relaxed text-slate-400">La prueba Web Serial muestra lecturas, pero todavía no agrega peso al ticket ni está certificada para ventas reales.</p>
+                    </div>
+                </div>
+            </section>
+
             {error && (
                 <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
                     <XCircle className="mt-0.5 shrink-0" size={18} /><span>{error}</span>
