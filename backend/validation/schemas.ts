@@ -135,33 +135,62 @@ export const StockTransferSchema = z.object({
 });
 
 // POST /api/purchases
-export const PurchaseItemSchema = z.object({
-    productId:   z.string().min(1),
-    quantity:    positiveInt,
-    unitCost:    moneyAmountPositive,
-    batchNumber: z.string().optional(),
-    expiryDate:  z.string().datetime({ offset: true }).optional(),
+// Los dos formularios usan <input type="date">, cuyo valor es YYYY-MM-DD.
+// También conservamos compatibilidad con integraciones que envían un datetime
+// ISO con zona horaria. Los validadores ISO de Zod comprueban el calendario
+// real (incluidos años bisiestos), cosa que Date.parse/regex por sí solos no hacen.
+const purchaseDateOnly = z.iso.date();
+const purchaseDateTimeWithOffset = z.iso.datetime({ offset: true });
+const purchaseDateInput = z.string().refine(
+    (value) => purchaseDateOnly.safeParse(value).success
+        || purchaseDateTimeWithOffset.safeParse(value).success,
+    { message: 'Fecha inválida: usa YYYY-MM-DD o datetime ISO con zona horaria' },
+).transform((value) => {
+    // Date-only representa un día de negocio, no medianoche UTC. Persistirlo al
+    // mediodía UTC mantiene el mismo día en Nicaragua/zonas americanas cuando
+    // reportes existentes usan getters locales para calcular vencimiento.
+    return purchaseDateOnly.safeParse(value).success
+        ? `${value}T12:00:00.000Z`
+        : value;
 });
 
-export const CreatePurchaseSchema = z.object({
-    supplierId:    z.string().min(1, 'supplierId requerido'),
-    invoiceNumber: z.string().min(1, 'Número de factura requerido'),
-    paymentMethod: z.enum(['CASH', 'CREDIT']),
-    // El form de Compras manda `dueDate` de un <input type="date"> (YYYY-MM-DD,
-    // sin hora) y `null` en contado/notas vacías. Con `.datetime().optional()` a
-    // secas, TODA compra manual devolvía 400 («Datos de entrada inválidos») y el
-    // form quedó muerto sin que nadie lo notara — SmartPurchases pasaba porque
-    // manda notas fijas y sin dueDate. Aceptar fecha-sola o ISO completo, y null.
-    dueDate:       z.union([
-        z.string().datetime({ offset: true }),
-        z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)'),
-    ]).nullish(),
-    notes:         z.string().max(500).nullish(),
-    // S45 — factura vinculada a una OC: los bienes entran por la recepción de la
-    // OC y el handler NO re-ingresa stock (la factura registra solo el dinero).
-    purchaseOrderId: z.string().min(1).optional(),
-    items:         z.array(PurchaseItemSchema).min(1, 'Se requiere al menos 1 ítem'),
+// Clientes anteriores serializaban campos opcionales vacíos como null. Aceptar
+// ese formato en la frontera y normalizarlo a undefined evita propagar null a
+// consumidores que esperan el contrato opcional de TypeScript.
+const historicalOptional = <T extends z.ZodTypeAny>(schema: T) => z.preprocess(
+    (value) => value === null ? undefined : value,
+    schema.optional(),
+);
+
+export const PurchaseItemSchema = z.object({
+    productId:   z.string().trim().min(1),
+    quantity:    positiveInt,
+    unitCost:    moneyAmountPositive,
+    batchNumber: historicalOptional(z.string().trim().min(1).max(100)),
+    expiryDate:  historicalOptional(purchaseDateInput),
 });
+
+export const CreatePurchaseSchema = z
+    .object({
+        supplierId:     z.string().trim().min(1, 'supplierId requerido'),
+        invoiceNumber:  z.string().trim().min(1, 'Número de factura requerido').max(100),
+        paymentMethod:  z.enum(['CASH', 'CREDIT']),
+        dueDate:        historicalOptional(purchaseDateInput),
+        notes:          historicalOptional(z.string().trim().max(500)),
+        purchaseOrderId: historicalOptional(z.string().trim().min(1, 'purchaseOrderId inválido')),
+        items:          z.array(PurchaseItemSchema)
+            .min(1, 'Se requiere al menos 1 ítem')
+            .max(200, 'Máximo 200 ítems por compra'),
+    })
+    .superRefine((purchase, ctx) => {
+        if (purchase.paymentMethod === 'CREDIT' && !purchase.dueDate) {
+            ctx.addIssue({
+                code: 'custom',
+                path: ['dueDate'],
+                message: 'La fecha de vencimiento es obligatoria para compras a crédito',
+            });
+        }
+    });
 
 // POST /api/inventory/adjust
 export const InventoryAdjustSchema = z.object({

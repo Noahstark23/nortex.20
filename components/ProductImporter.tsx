@@ -138,7 +138,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
         setProgress({ done: 0, total: validRows.length });
 
         const token = localStorage.getItem('nortex_token');
-        const result = await importInChunks(
+        const result = await importInChunks<ParsedRow>(
             validRows,
             async (chunk) => {
                 const res = await fetch('/api/products/bulk', {

@@ -49,6 +49,8 @@ import syncRoutes from './routes/sync';
 import agentBankingRouter from './routes/agentBanking';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
+import { normalizeCalendarDateInput } from './lib/calendarDate';
+import { calculatePurchaseOrderInvoiceAvailability } from './lib/purchaseOrderAvailability';
 import {
     validate,
     CreateReturnSchema,
@@ -5191,12 +5193,9 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
         if (!anchorPurchase) await seedChartOfAccounts(authReq.tenantId!);
 
         const result = await prisma.$transaction(async (tx: any) => {
-            // S39 — punto de serialización: lock de la fila del proveedor como PRIMERA
-            // sentencia de la tx. Dos submits concurrentes de la misma factura
-            // serializan acá; el segundo abre su snapshot DESPUÉS del commit del
-            // primero, así que el dup-check de abajo SÍ ve la fila recién creada.
-            // (El @@unique([tenantId, supplierId, invoiceNumber]) de refuerzo entra
-            // en el lote DDL post-dump — este guard es a nivel aplicación.)
+            // Serializar las compras del proveedor antes de cualquier lectura consistente
+            // de la transacción. Así, un doble envío concurrente no puede pasar dos veces
+            // el chequeo de factura duplicada.
             await tx.$queryRaw`SELECT id FROM \`Supplier\` WHERE id = ${supplierId} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
 
             // Verificar propiedad del proveedor: nunca confiar en supplierId del body sin
@@ -5209,33 +5208,60 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 throw new Error('Proveedor no encontrado');
             }
 
-            // S39 — idempotencia del registro de factura: el mismo proveedor no puede
-            // tener dos facturas con el mismo número (doble-click / reintento de red
-            // duplicaban factura, inventario y CxP). Bajo el lock del proveedor este
-            // chequeo es race-safe.
-            const facturaExistente = await tx.purchase.findFirst({
+            const existingInvoice = await tx.purchase.findFirst({
                 where: { tenantId: authReq.tenantId!, supplierId, invoiceNumber },
                 select: { id: true },
             });
-            if (facturaExistente) throw new Error('FACTURA_DUPLICADA');
+            if (existingInvoice) {
+                throw new Error('FACTURA_DUPLICADA');
+            }
 
-            // S45 — factura vinculada a una Orden de Compra: los bienes entran al
-            // inventario con la RECEPCIÓN de la OC (goods receipt), así que esta
-            // factura registra SOLO el dinero (CxP/caja, IVA, asiento). Sin este
-            // vínculo, seguir el flujo documentado (recibir OC + registrar factura)
-            // sumaba el stock 2×.
-            let ocVinculada: { id: string; supplierId: string; status: string } | null = null;
+            // Una OC ya mueve (o moverá) las existencias mediante su recepción. La
+            // factura vinculada registra únicamente el efecto financiero para evitar
+            // duplicar stock, costo promedio, lotes y Kardex.
+            let linkedPurchaseOrder: {
+                id: string;
+                supplierId: string;
+                status: string;
+                items: { productId: string; productName: string; quantityReceived: number | string }[];
+                receipts: { items: { productId: string; quantity: number }[] }[];
+            } | null = null;
             if (purchaseOrderId) {
-                ocVinculada = await tx.purchaseOrder.findFirst({
+                linkedPurchaseOrder = await tx.purchaseOrder.findFirst({
                     where: { id: purchaseOrderId, tenantId: authReq.tenantId! },
-                    select: { id: true, supplierId: true, status: true },
+                    select: {
+                        id: true,
+                        supplierId: true,
+                        status: true,
+                        items: { select: { productId: true, productName: true, quantityReceived: true } },
+                        receipts: {
+                            select: {
+                                items: { select: { productId: true, quantity: true } },
+                            },
+                        },
+                    },
                 });
-                if (!ocVinculada) throw new Error('Orden de compra no encontrada');
-                if (ocVinculada.supplierId !== supplierId) throw new Error('OC_DE_OTRO_PROVEEDOR');
-                if (ocVinculada.status === 'DRAFT' || ocVinculada.status === 'CANCELLED') {
-                    throw new Error(`OC_ESTADO:${ocVinculada.status}`);
+                if (!linkedPurchaseOrder) {
+                    throw new Error('OC_NO_ENCONTRADA');
+                }
+                if (linkedPurchaseOrder.supplierId !== supplierId) {
+                    throw new Error('OC_DE_OTRO_PROVEEDOR');
+                }
+                if (!['PARTIALLY_RECEIVED', 'RECEIVED'].includes(linkedPurchaseOrder.status)) {
+                    throw new Error(`OC_ESTADO:${linkedPurchaseOrder.status}`);
                 }
             }
+            // Disponibilidad facturable por producto = recibido físicamente menos
+            // lo ya incluido en facturas anteriores de la misma OC. Sin este saldo,
+            // una segunda factura parcial podía volver a cobrar todas las unidades
+            // recibidas desde el inicio.
+            const linkedProductAvailability = linkedPurchaseOrder
+                ? calculatePurchaseOrderInvoiceAvailability(
+                    linkedPurchaseOrder.items,
+                    linkedPurchaseOrder.receipts,
+                )
+                : null;
+            const requestedFromLinkedPO = new Map<string, Decimal>();
 
             // Snapshot del saldo de billetera para el asiento de auditoría (before/after).
             const tenantBefore = await tx.tenant.findUnique({
@@ -5267,6 +5293,24 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     throw new Error(`Producto no encontrado: ${item.productId}`);
                 }
 
+                const linkedItem = linkedProductAvailability?.get(item.productId);
+                if (linkedProductAvailability && !linkedItem) {
+                    throw new Error(`ITEM_FUERA_DE_OC|${product.name}`);
+                }
+                if (linkedItem) {
+                    const remainingToInvoice = linkedItem.remaining;
+                    const requested = (requestedFromLinkedPO.get(item.productId) ?? new Decimal(0))
+                        .plus(item.quantity);
+                    if (remainingToInvoice.lte(0) || requested.greaterThan(remainingToInvoice)) {
+                        throw new Error(`CANTIDAD_SUPERA_RECEPCION|${linkedItem.productName}|${Decimal.max(0, remainingToInvoice).toString()}`);
+                    }
+                    requestedFromLinkedPO.set(item.productId, requested);
+                }
+
+                if (!linkedPurchaseOrder && product.requiresBatchTracking && (!item.batchNumber || !item.expiryDate)) {
+                    throw new Error(`LOTE_REQUERIDO|${product.name}`);
+                }
+
                 const totalCost = new Decimal(item.quantity).mul(item.unitCost);
                 subtotal = new Decimal(subtotal).plus(totalCost).toNumber();
                 if (!product.ivaExento) taxableSubtotal = taxableSubtotal.plus(totalCost);
@@ -5278,7 +5322,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     unitCost:    item.unitCost,
                     totalCost:   totalCost.toNumber(),
                     batchNumber: item.batchNumber || null,
-                    expiryDate:  item.expiryDate ? new Date(item.expiryDate) : null
+                    expiryDate:  item.expiryDate ? normalizeCalendarDateInput(item.expiryDate) : null
                 });
             }
 
@@ -5295,8 +5339,8 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     tenantId: authReq.tenantId!,
                     supplierId,
                     invoiceNumber,
-                    purchaseOrderId: ocVinculada?.id ?? null,
-                    dueDate: dueDate ? new Date(dueDate) : null,
+                    purchaseOrderId: linkedPurchaseOrder?.id ?? null,
+                    dueDate: dueDate ? normalizeCalendarDateInput(dueDate) : null,
                     subtotal,
                     tax,
                     total,
@@ -5311,12 +5355,10 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 include: { items: true, supplier: true }
             });
 
-            // 3. Actualizar inventario + Kardex + Costo promedio ponderado.
-            //    S45 — con OC vinculada este paso NO corre: el stock, el costo
-            //    promedio, los lotes y el Kardex ya los aplicó (o los aplicará) la
-            //    recepción de la OC; repetirlos acá era el doble ingreso.
+            // 3. Actualizar inventario + Kardex + Costo promedio ponderado. Si hay OC,
+            // la recepción es la única responsable de estos movimientos.
             const costChanges: any[] = []; // before/after de stock y costo valorizado por producto
-            for (const item of ocVinculada ? [] : processedItems) {
+            for (const item of linkedPurchaseOrder ? [] : processedItems) {
                 const product = await tx.product.findUnique({ where: { id: item.productId } });
                 if (!product) continue;
 
@@ -5372,7 +5414,10 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                             tenantId: authReq.tenantId!,
                             productId: item.productId,
                             batchNumber: item.batchNumber,
-                            expiryDate: new Date(item.expiryDate),
+                            // `processedItems` ya normalizó la fecha calendario a Date.
+                            // Volver a pasar el Date por el normalizador de strings
+                            // produciría una fecha inválida para compras con lote.
+                            expiryDate: item.expiryDate,
                             stock: item.quantity
                         }
                     });
@@ -5448,9 +5493,9 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 paymentMethod
             );
 
-            // Asiento inmutable de auditoría (Capa 3): la compra mueve dinero (billetera
-            // + gasto) e inventario valorizado (stock + costo promedio). Registrar
-            // before/after de billetera y de costo/stock por producto.
+            // Asiento inmutable de auditoría (Capa 3): toda compra mueve su efecto
+            // financiero; solo una compra directa mueve además inventario valorizado.
+            // Registrar before/after de billetera y los cambios de stock/costo aplicados.
             const walletAfter = paymentMethod === 'CASH' ? walletBefore.minus(total) : walletBefore;
             await tx.auditLog.create({
                 data: {
@@ -5461,7 +5506,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                         purchaseId: purchase.id,
                         supplierId,
                         invoiceNumber,
-                        purchaseOrderId: ocVinculada?.id ?? null,
+                        purchaseOrderId: linkedPurchaseOrder?.id ?? null,
                         paymentMethod,
                         subtotal,
                         tax,
@@ -5479,7 +5524,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
 
         res.json({
             message: result.purchaseOrderId
-                ? 'Factura registrada y vinculada a la Orden de Compra. El inventario entra con la recepción de la OC; esta factura registra el dinero.'
+                ? 'Factura registrada y vinculada a la Orden de Compra. El inventario se actualiza únicamente al recibir la OC.'
                 : `Compra registrada. ${processedItemsCount(items)} productos ingresados al inventario.`,
             purchase: result
         });
@@ -5492,13 +5537,29 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             return res.status(423).json({ error: error.message });
         }
         if (error?.message === 'FACTURA_DUPLICADA') {
-            return res.status(409).json({ error: `Ya existe una factura #${invoiceNumber} de este proveedor — parece un doble envío.` });
+            return res.status(409).json({ error: `Ya existe la factura #${invoiceNumber} para este proveedor. No se registró nuevamente.` });
         }
         if (error?.message === 'OC_DE_OTRO_PROVEEDOR') {
             return res.status(400).json({ error: 'La orden de compra pertenece a otro proveedor' });
         }
+        if (error?.message === 'OC_NO_ENCONTRADA') {
+            return res.status(404).json({ error: 'Orden de compra no encontrada' });
+        }
+        if (error?.message?.startsWith('LOTE_REQUERIDO|')) {
+            const productName = error.message.slice('LOTE_REQUERIDO|'.length);
+            return res.status(400).json({ error: `Ingresá el lote y la fecha de vencimiento de ${productName}` });
+        }
+        if (error?.message?.startsWith('ITEM_FUERA_DE_OC|')) {
+            const productName = error.message.slice('ITEM_FUERA_DE_OC|'.length);
+            return res.status(400).json({ error: `${productName} no pertenece a la orden de compra vinculada` });
+        }
+        if (error?.message?.startsWith('CANTIDAD_SUPERA_RECEPCION|')) {
+            const [, productName, remainingQty] = error.message.split('|');
+            return res.status(400).json({ error: `${productName} solo tiene ${remainingQty} unidades recibidas pendientes de facturar en esta OC` });
+        }
         if (error?.message?.startsWith('OC_ESTADO:')) {
-            return res.status(400).json({ error: `No se puede facturar una OC en estado ${error.message.split(':')[1]}` });
+            const status = error.message.split(':')[1];
+            return res.status(400).json({ error: status === 'APPROVED' ? 'Recibí la mercadería antes de facturar una orden de compra aprobada' : `No se puede facturar una orden de compra en estado ${status}` });
         }
         const insufficient = error?.message?.includes('SALDO_INSUFICIENTE');
         const notFound = error?.message?.includes('no encontrado');

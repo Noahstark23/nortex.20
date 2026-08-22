@@ -24,9 +24,9 @@ const path = require('path');
 const REPORT = path.join(__dirname, '..', 'reports', 'mutation', 'mutation.json');
 
 // Piso de mutantes por archivo. Medido en la línea base; si agregás cobertura,
-// SUBÍ el número (nunca lo bajes para que pase un PR — eso es el juego que esto
-// viene a prevenir; si un refactor legítimo reduce mutantes, ajustá el rango del
-// config primero y recién ahí revisá este piso, explicando el porqué en el PR).
+// SUBÍ el número. Un piso solo puede bajar cuando se BORRÓ código de producción,
+// nunca para esconder sobrevivientes: primero se realinea el rango y luego se
+// documenta el conteo exacto y la razón de la reducción.
 const PISO_MUTANTES = {
     // money.ts entró con el rediseño (formatMoney + los parsers de captura):
     // 60 mutantes, score medido 98.33%. El único sobreviviente es equivalente
@@ -75,13 +75,19 @@ const PISO_MUTANTES = {
     // nicaLabor.ts es el motor de nómina del ERP: lo que de verdad se le paga a un
     // trabajador (planilla, retención de IR, finiquito). Entró sin ninguna red —
     // el 95,59% histórico protegía utils/calc-laborales.ts, que es el ESPEJO
-    // público del blog, no esto. 107 mutantes, score medido 98.17%. Escribir la
+    // público del blog, no esto. Entró con 107 mutantes y score 98.17%. El fix de
+    // fechas calendario eliminó dos restas de timestamps duplicadas (antigüedad
+    // y aguinaldo) y las concentró en calendarDaysBetween, cuyos 3 mutantes
+    // mueren con la regresión de horas/DST. Con los CUATRO rangos realineados el
+    // conteo exacto es 106 y el score 98.11%: la baja de un mutante viene de
+    // código aritmético borrado, no de una función que haya quedado fuera.
+    // Escribir la
     // red destapó tres errores de dinero: el techo cotizable del INSS (derogado
     // por el Decreto 06-2019), un hueco de un centavo entre tramos de la tabla IR
     // que devolvía IR = 0, y un finiquito que imprimía los días sin topar junto a
     // un monto topado. Entra por rangos: las constantes de módulo y
     // calculateLaborLiability (llama `new Date()`) quedan fuera — ver el config.
-    'backend/services/nicaLabor.ts': 107,
+    'backend/services/nicaLabor.ts': 106,
     'backend/services/nicaTax.ts': 7,
     // sellerReport.ts: fold puro del reporte por vendedor (cuánto vende y
     // cuánto cobra cada quien — el número con el que el dueño paga o reclama).

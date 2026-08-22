@@ -1,107 +1,235 @@
 /**
- * NORTEX — CreatePurchaseSchema contra los payloads REALES de sus dos clientes.
+ * Contrato de entrada de POST /api/purchases.
  *
- * El bug que esta red congela: el form de Compras manda `dueDate` de un
- * <input type="date"> (YYYY-MM-DD) y `null` en contado / notas vacías, y el
- * schema con `.datetime().optional()` a secas rechazaba TODA compra manual con
- * 400 — el form estuvo muerto en prod sin que nadie lo notara, porque
- * SmartPurchases (notas fijas, sin dueDate) sí pasaba. Estos tests parsean los
- * payloads tal como los arma cada componente: si alguien "endurece" el schema
- * de vuelta, esto se pone rojo antes que el form.
+ * Estos payloads representan el formulario y clientes históricos del API. En especial,
+ * <input type="date"> envía YYYY-MM-DD (no un timestamp) y el formulario de
+ * contado envía null en campos opcionales.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { CreatePurchaseSchema } from '../backend/validation/schemas';
 
-const itemBase = { productId: 'p1', quantity: 3, unitCost: 25.5 };
+const basicItem = {
+    productId: 'product-salsa-kerns-jumbo',
+    quantity: 12,
+    unitCost: 13.5,
+};
 
-describe('CreatePurchaseSchema — payload del form de Compras (Purchases.tsx)', () => {
-    it('acepta contado sin dueDate ni notas (claves omitidas, como manda el form)', () => {
-        const r = CreatePurchaseSchema.safeParse({
-            supplierId: 's1',
-            invoiceNumber: 'FAC-001234',
-            paymentMethod: 'CASH',
-            items: [itemBase],
+const cashPurchase = {
+    supplierId: 'supplier-pollos-molina',
+    invoiceNumber: 'FAC-001',
+    paymentMethod: 'CASH' as const,
+    items: [basicItem],
+};
+
+describe('CreatePurchaseSchema — fechas que realmente envían los formularios', () => {
+    it('acepta la compra a crédito con lote reportada por el cliente', () => {
+        const result = CreatePurchaseSchema.safeParse({
+            supplierId: 'supplier-pollos-molina',
+            invoiceNumber: 'FAC-088313330182',
+            paymentMethod: 'CREDIT',
+            dueDate: '2026-08-25',
+            notes: 'pedido diario',
+            items: [{
+                ...basicItem,
+                batchNumber: '088313330182',
+                expiryDate: '2027-01-09',
+            }],
         });
-        expect(r.success).toBe(true);
+
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+        expect(result.data.dueDate).toBe('2026-08-25T12:00:00.000Z');
+        expect(result.data.items[0].expiryDate).toBe('2027-01-09T12:00:00.000Z');
+        expect(result.data.items[0].unitCost).toBe('13.5');
+
+        const managuaParts = Object.fromEntries(
+            new Intl.DateTimeFormat('en', {
+                timeZone: 'America/Managua',
+                year: 'numeric',
+                month: 'numeric',
+                day: 'numeric',
+            }).formatToParts(new Date(result.data.dueDate!))
+                .filter(part => part.type !== 'literal')
+                .map(part => [part.type, Number(part.value)]),
+        );
+        expect(managuaParts).toMatchObject({ year: 2026, month: 8, day: 25 });
     });
 
-    it('acepta null explícito en dueDate/notes (payload histórico del form)', () => {
-        const r = CreatePurchaseSchema.safeParse({
-            supplierId: 's1',
-            invoiceNumber: 'FAC-001234',
-            paymentMethod: 'CASH',
+    it('también acepta datetime ISO cuando incluye offset explícito o Z', () => {
+        const result = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            paymentMethod: 'CREDIT',
+            dueDate: '2026-08-25T07:49:00-06:00',
+            items: [{
+                ...basicItem,
+                expiryDate: '2027-01-09T00:00:00.000Z',
+            }],
+        });
+
+        expect(result.success).toBe(true);
+    });
+
+    it('acepta el payload de contado con null históricos y los normaliza', () => {
+        const result = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
             dueDate: null,
             notes: null,
-            items: [itemBase],
+            purchaseOrderId: null,
+            items: [{
+                ...basicItem,
+                batchNumber: null,
+                expiryDate: null,
+            }],
         });
-        expect(r.success).toBe(true);
+
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+        expect(result.data.dueDate).toBeUndefined();
+        expect(result.data.notes).toBeUndefined();
+        expect(result.data.purchaseOrderId).toBeUndefined();
+        expect(result.data.items[0].batchNumber).toBeUndefined();
+        expect(result.data.items[0].expiryDate).toBeUndefined();
     });
 
-    it('acepta crédito con fecha de <input type="date"> (YYYY-MM-DD, sin hora)', () => {
-        const r = CreatePurchaseSchema.safeParse({
-            supplierId: 's1',
-            invoiceNumber: 'FAC-9',
-            paymentMethod: 'CREDIT',
-            dueDate: '2026-09-15',
-            items: [itemBase],
-        });
-        expect(r.success).toBe(true);
+    it('mantiene válida una compra CASH sin dueDate', () => {
+        expect(CreatePurchaseSchema.safeParse(cashPurchase).success).toBe(true);
     });
+});
 
-    it('sigue aceptando ISO completo con offset (clientes de API)', () => {
-        const r = CreatePurchaseSchema.safeParse({
-            supplierId: 's1',
-            invoiceNumber: 'FAC-9',
-            paymentMethod: 'CREDIT',
-            dueDate: '2026-09-15T00:00:00-06:00',
-            items: [itemBase],
-        });
-        expect(r.success).toBe(true);
-    });
+describe('CreatePurchaseSchema — integraciones programáticas', () => {
+    const integrationPayload = {
+        supplierId: 'supplier-smart',
+        invoiceNumber: 'FAC-INTEGRACION-001',
+        notes: 'Compra generada por integración',
+        items: [
+            { productId: 'product-a', quantity: 8, unitCost: 24.5 },
+            { productId: 'product-b', quantity: 3, unitCost: 9 },
+        ],
+    };
 
-    it('rechaza una fecha que no es ni date-only ni ISO', () => {
-        const r = CreatePurchaseSchema.safeParse({
-            supplierId: 's1',
-            invoiceNumber: 'FAC-9',
-            paymentMethod: 'CREDIT',
-            dueDate: '15/09/2026',
-            items: [itemBase],
-        });
-        expect(r.success).toBe(false);
-    });
-
-    it('S45: deja pasar purchaseOrderId (antes el schema lo STRIPEABA en silencio)', () => {
-        const r = CreatePurchaseSchema.safeParse({
-            supplierId: 's1',
-            invoiceNumber: 'FAC-77',
+    it('acepta el payload sin campos de lote cuando se genera de contado', () => {
+        expect(CreatePurchaseSchema.safeParse({
+            ...integrationPayload,
             paymentMethod: 'CASH',
-            purchaseOrderId: 'po_123',
-            items: [itemBase],
-        });
-        expect(r.success).toBe(true);
-        expect(r.success && r.data.purchaseOrderId).toBe('po_123');
+        }).success).toBe(true);
     });
 
-    it('purchaseOrderId vacío se rechaza (el form manda undefined, no "")', () => {
-        const r = CreatePurchaseSchema.safeParse({
-            supplierId: 's1',
-            invoiceNumber: 'FAC-77',
-            paymentMethod: 'CASH',
+    it('acepta la variante a crédito cuando incluye su vencimiento', () => {
+        expect(CreatePurchaseSchema.safeParse({
+            ...integrationPayload,
+            paymentMethod: 'CREDIT',
+            dueDate: '2026-09-21',
+        }).success).toBe(true);
+    });
+});
+
+describe('CreatePurchaseSchema — rechazos que protegen la persistencia', () => {
+    it.each([
+        ['día inexistente', '2026-02-30'],
+        ['año no bisiesto', '2025-02-29'],
+        ['mes inexistente', '2026-13-01'],
+        ['datetime sin offset', '2026-08-25T07:49:00'],
+    ])('rechaza %s en dueDate (%s)', (_label, dueDate) => {
+        expect(CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            paymentMethod: 'CREDIT',
+            dueDate,
+        }).success).toBe(false);
+    });
+
+    it.each([
+        '2027-02-29',
+        '2027-04-31',
+        '2027-01-09T00:00:00',
+    ])('rechaza expiryDate inválida o sin offset: %s', (expiryDate) => {
+        expect(CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            items: [{ ...basicItem, expiryDate }],
+        }).success).toBe(false);
+    });
+
+    it('acepta el 29 de febrero cuando el año sí es bisiesto', () => {
+        expect(CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            paymentMethod: 'CREDIT',
+            dueDate: '2028-02-29',
+            items: [{ ...basicItem, expiryDate: '2028-02-29' }],
+        }).success).toBe(true);
+    });
+
+    it.each([
+        ['omitido', undefined],
+        ['null histórico', null],
+        ['vacío', ''],
+    ])('exige dueDate para CREDIT cuando viene %s', (_label, dueDate) => {
+        const result = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            paymentMethod: 'CREDIT',
+            ...(dueDate === undefined ? {} : { dueDate }),
+        });
+
+        expect(result.success).toBe(false);
+        if (result.success) return;
+        expect(result.error.issues.some(issue => issue.path.join('.') === 'dueDate')).toBe(true);
+    });
+
+    it('acepta purchaseOrderId opcional y rechaza uno vacío', () => {
+        const linked = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            purchaseOrderId: 'po-approved-123',
+        });
+        const empty = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
             purchaseOrderId: '',
-            items: [itemBase],
         });
-        expect(r.success).toBe(false);
+
+        expect(linked.success).toBe(true);
+        if (linked.success) expect(linked.data.purchaseOrderId).toBe('po-approved-123');
+        expect(empty.success).toBe(false);
     });
 
-    it('sigue exigiendo proveedor, factura e ítems', () => {
+    it('normaliza espacios en identificadores y número de factura', () => {
+        const result = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            supplierId: '  supplier-1  ',
+            invoiceNumber: '  FAC-001  ',
+            items: [{ ...basicItem, productId: '  product-1  ' }],
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+        expect(result.data.supplierId).toBe('supplier-1');
+        expect(result.data.invoiceNumber).toBe('FAC-001');
+        expect(result.data.items[0].productId).toBe('product-1');
+    });
+
+    it('limita el tamaño de una compra para proteger la transacción', () => {
         expect(CreatePurchaseSchema.safeParse({
-            invoiceNumber: 'F', paymentMethod: 'CASH', items: [itemBase],
+            ...cashPurchase,
+            items: Array.from({ length: 201 }, (_, index) => ({
+                ...basicItem,
+                productId: `product-${index}`,
+            })),
         }).success).toBe(false);
+    });
+
+    it.each([
+        ['supplierId', { invoiceNumber: 'FAC-001', paymentMethod: 'CASH', items: [basicItem] }],
+        ['invoiceNumber', { supplierId: 'supplier-1', paymentMethod: 'CASH', items: [basicItem] }],
+        ['paymentMethod', { supplierId: 'supplier-1', invoiceNumber: 'FAC-001', items: [basicItem] }],
+        ['items', { supplierId: 'supplier-1', invoiceNumber: 'FAC-001', paymentMethod: 'CASH' }],
+    ])('rechaza la cabecera sin %s', (_field, payload) => {
+        expect(CreatePurchaseSchema.safeParse(payload).success).toBe(false);
+    });
+
+    it.each([
+        ['productId', { quantity: 1, unitCost: 10 }],
+        ['quantity', { productId: 'product-1', unitCost: 10 }],
+        ['unitCost', { productId: 'product-1', quantity: 1 }],
+    ])('rechaza un ítem sin %s', (_field, item) => {
         expect(CreatePurchaseSchema.safeParse({
-            supplierId: 's1', paymentMethod: 'CASH', items: [itemBase],
-        }).success).toBe(false);
-        expect(CreatePurchaseSchema.safeParse({
-            supplierId: 's1', invoiceNumber: 'F', paymentMethod: 'CASH', items: [],
+            ...cashPurchase,
+            items: [item],
         }).success).toBe(false);
     });
 });

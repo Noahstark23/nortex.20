@@ -32,6 +32,20 @@ const INATEC_RATE         = new Decimal('0.02');    // 2% (Ley 40)
 // Art. 45: un "mes" de indemnización son 30 días; piso 1 mes, techo 5 meses.
 const INDEMNIZACION_DIAS_MIN = 30;
 const INDEMNIZACION_DIAS_MAX = 150;
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Diferencia de días para valores que representan una fecha calendario.
+ *
+ * Las fechas laborales (ingreso, salida, inicio de aguinaldo) no representan
+ * horas trabajadas. Restar sus timestamps directamente introduce horas de más
+ * o de menos al cruzar horario de verano y puede mover el redondeo monetario.
+ */
+function calendarDaysBetween(start: Date, end: Date): number {
+    const startDay = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+    const endDay = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+    return (endDay - startDay) / MS_PER_DAY;
+}
 
 // Tabla progresiva IR anual vigente DGI Nicaragua — Reformas tributarias 2025
 const IR_TABLE = [
@@ -273,8 +287,8 @@ export function calculateLaborLiability(
 ): LaborLiability {
     const now = new Date();
     const hire = new Date(hireDate);
-    const diffMs = now.getTime() - hire.getTime();
-    const monthsWorked = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24 * 30.44)));
+    const daysWorked = calendarDaysBetween(hire, now);
+    const monthsWorked = Math.max(0, Math.floor(daysWorked / 30.44));
 
     const dBase = new Decimal(baseSalary);
     const salarioDiario = dBase.dividedBy(30);
@@ -286,17 +300,18 @@ export function calculateLaborLiability(
     const vacacionesPendientes = diasVacaciones.mul(salarioDiario).toDecimalPlaces(4);
 
     // Aguinaldo (Art. 93): días desde max(último 1-dic, contratación), /360.
-    const lastDec1 = now.getMonth() >= 11
-        ? new Date(now.getFullYear(), 11, 1)
-        : new Date(now.getFullYear() - 1, 11, 1);
+    const lastDec1 = now.getUTCMonth() >= 11
+        ? new Date(Date.UTC(now.getUTCFullYear(), 11, 1))
+        : new Date(Date.UTC(now.getUTCFullYear() - 1, 11, 1));
     const aguinaldoStart = hire > lastDec1 ? hire : lastDec1;
-    const diasAguinaldo = now >= aguinaldoStart
-        ? Math.min(360, Math.floor((now.getTime() - aguinaldoStart.getTime()) / 86400000) + 1)
+    const diasDesdeInicioAguinaldo = calendarDaysBetween(aguinaldoStart, now);
+    const diasAguinaldo = diasDesdeInicioAguinaldo >= 0
+        ? Math.min(360, diasDesdeInicioAguinaldo + 1)
         : 0;
     const aguinaldoAcumulado = dBase.mul(Math.min(1, diasAguinaldo / 360)).toDecimalPlaces(4);
 
     // Indemnización (Art. 45): tramos 30/20 días con fracción, techo 150 días.
-    const anios = Math.max(0, diffMs / (1000 * 60 * 60 * 24 * 365.25));
+    const anios = Math.max(0, daysWorked / 365.25);
     let indemnizacionDias = 0;
     if (anios > 0) {
         const completos = Math.floor(anios);
@@ -360,7 +375,7 @@ export function calculateSettlement(params: {
     const salarioMensual = new Decimal(params.salarioMensual);
     const salarioDiario = salarioMensual.dividedBy(30);
 
-    const anios = Math.max(0, (term.getTime() - hire.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
+    const anios = Math.max(0, calendarDaysBetween(hire, term) / 365.25);
 
     // ── Indemnización por antigüedad (Art. 45) ──
     const aplicaIndemnizacion = params.reason === 'DISMISSAL' || params.reason === 'MUTUAL';
@@ -399,14 +414,14 @@ export function calculateSettlement(params: {
     const vacaciones = salarioDiario.mul(diasVacaciones).toDecimalPlaces(2);
 
     // ── Aguinaldo proporcional (desde el último 1-dic) ──
-    const lastDec1 = term.getMonth() >= 11
-        ? new Date(term.getFullYear(), 11, 1)
-        : new Date(term.getFullYear() - 1, 11, 1);
+    const lastDec1 = term.getUTCMonth() >= 11
+        ? new Date(Date.UTC(term.getUTCFullYear(), 11, 1))
+        : new Date(Date.UTC(term.getUTCFullYear() - 1, 11, 1));
     const aguinaldoStart = hire > lastDec1 ? hire : lastDec1;
-    let diasAguinaldo = 0;
-    if (term >= aguinaldoStart) {
-        diasAguinaldo = Math.min(360, Math.floor((term.getTime() - aguinaldoStart.getTime()) / 86400000) + 1);
-    }
+    const diasDesdeInicioAguinaldo = calendarDaysBetween(aguinaldoStart, term);
+    const diasAguinaldo = diasDesdeInicioAguinaldo >= 0
+        ? Math.min(360, diasDesdeInicioAguinaldo + 1)
+        : 0;
     const aguinaldo = salarioMensual.mul(Math.min(1, diasAguinaldo / 360)).toDecimalPlaces(2);
 
     // El total se suma sobre los componentes YA redondeados, que son los que se

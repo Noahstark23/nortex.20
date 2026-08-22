@@ -15,9 +15,11 @@
 import express from 'express';
 import { PrismaClient, Prisma } from '@prisma/client';
 import Decimal from 'decimal.js';
+import { z } from 'zod';
 import { authenticate } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
 import { applyStockDelta, weightedAverageCost } from '../services/stockService';
+import { normalizeCalendarDateInput } from '../lib/calendarDate';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -44,6 +46,14 @@ interface ReceiptResult {
     costAfter: string;
 }
 
+const receiptDateOnly = z.iso.date();
+const receiptDateTimeWithOffset = z.iso.datetime({ offset: true });
+const parseReceiptExpiryDate = (value: string): Date | null => {
+    if (!receiptDateOnly.safeParse(value).success
+        && !receiptDateTimeWithOffset.safeParse(value).success) return null;
+    return normalizeCalendarDateInput(value);
+};
+
 /**
  * Aplica la entrada física de una recepción dentro de una transacción:
  * stock (incremento atómico) + costo promedio + lote (FEFO) + Kardex, y suma a
@@ -63,9 +73,21 @@ async function applyGoodsReceipt(
 
         const product = await tx.product.findFirst({
             where: { id: item.productId, tenantId },
-            select: { id: true, cost: true, requiresBatchTracking: true },
+            select: { id: true, name: true, cost: true, requiresBatchTracking: true },
         });
         if (!product) throw new Error(`Producto no encontrado: ${item.productId}`);
+
+        const batchNumber = typeof line.batchNumber === 'string' ? line.batchNumber.trim() : '';
+        const expiryDate = typeof line.expiryDate === 'string' ? parseReceiptExpiryDate(line.expiryDate) : null;
+        if (product.requiresBatchTracking && (!batchNumber || !line.expiryDate)) {
+            throw new Error(`LOTE_REQUERIDO|${product.name}`);
+        }
+        if (product.requiresBatchTracking && batchNumber.length > 100) {
+            throw new Error(`LOTE_INVALIDO|${product.name}`);
+        }
+        if (product.requiresBatchTracking && !expiryDate) {
+            throw new Error(`FECHA_LOTE_INVALIDA|${product.name}`);
+        }
 
         // Stock por applyStockDelta: incremento ATÓMICO + doble escritura del
         // desglose por bodega (invariante multi-bodega: Σ bodegas == agregado).
@@ -97,15 +119,15 @@ async function applyGoodsReceipt(
 
         // Control de lotes (FEFO/alertas) si el producto lo requiere y vino lote+vencimiento.
         let batchId: string | null = null;
-        if (product.requiresBatchTracking && line.batchNumber && line.expiryDate) {
+        if (product.requiresBatchTracking && batchNumber && expiryDate) {
             const batch = await tx.productBatch.upsert({
-                where: { productId_batchNumber: { productId: product.id, batchNumber: line.batchNumber } },
+                where: { productId_batchNumber: { productId: product.id, batchNumber } },
                 update: { stock: { increment: recv } },
                 create: {
                     tenantId,
                     productId: product.id,
-                    batchNumber: line.batchNumber,
-                    expiryDate: new Date(line.expiryDate),
+                    batchNumber,
+                    expiryDate,
                     stock: recv,
                 },
             });
@@ -154,7 +176,15 @@ router.get('/', authenticate, async (req: any, res: any) => {
     try {
         const orders = await prisma.purchaseOrder.findMany({
             where: { tenantId: req.tenantId },
-            include: { supplier: { select: { name: true } }, items: true },
+            include: {
+                supplier: { select: { name: true } },
+                items: { include: { product: { select: { requiresBatchTracking: true } } } },
+                receipts: {
+                    select: {
+                        items: { select: { productId: true, quantity: true } },
+                    },
+                },
+            },
             orderBy: { createdAt: 'desc' },
             take: 200,
         });
@@ -170,7 +200,11 @@ router.get('/:id', authenticate, async (req: any, res: any) => {
     try {
         const order = await prisma.purchaseOrder.findFirst({
             where: { id: req.params.id, tenantId: req.tenantId },
-            include: { supplier: true, items: true, receipts: { select: { id: true, invoiceNumber: true, total: true, createdAt: true } } },
+            include: {
+                supplier: true,
+                items: { include: { product: { select: { requiresBatchTracking: true } } } },
+                receipts: { select: { id: true, invoiceNumber: true, total: true, createdAt: true } },
+            },
         });
         if (!order) return res.status(404).json({ error: 'Orden de compra no encontrada' });
         res.json({ success: true, data: order });
@@ -389,6 +423,9 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_WRITE), async (req: an
         if (msg.startsWith('INVALID_STATUS:')) return res.status(400).json({ error: `No se puede recibir una OC en estado ${msg.split(':')[1]}` });
         if (msg.startsWith('ITEM_NOT_IN_PO:')) return res.status(400).json({ error: 'Una línea no pertenece a esta orden de compra' });
         if (msg.startsWith('ITEM_REPETIDO:')) return res.status(400).json({ error: 'Hay líneas repetidas del mismo ítem en la recepción' });
+        if (msg.startsWith('LOTE_REQUERIDO|')) return res.status(400).json({ error: `Ingresá lote y vencimiento para ${msg.slice('LOTE_REQUERIDO|'.length)}` });
+        if (msg.startsWith('LOTE_INVALIDO|')) return res.status(400).json({ error: `El lote de ${msg.slice('LOTE_INVALIDO|'.length)} es inválido` });
+        if (msg.startsWith('FECHA_LOTE_INVALIDA|')) return res.status(400).json({ error: `La fecha de vencimiento de ${msg.slice('FECHA_LOTE_INVALIDA|'.length)} es inválida` });
         if (msg.startsWith('SOBRE_RECEPCION|')) {
             const [, nombre, pendiente] = msg.split('|');
             return res.status(400).json({ error: `No podés recibir más de lo pedido: a "${nombre}" le quedan ${pendiente} por recibir` });

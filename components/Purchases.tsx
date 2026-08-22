@@ -2,10 +2,11 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { maybeAutostartTour } from '../utils/tours';
 import {
     Truck, Plus, Search, FileText, CreditCard, DollarSign, Package,
-    Calendar, Hash, X, Check, AlertTriangle, Clock, ArrowRight, Trash2,
-    ShoppingCart, TrendingUp, Wallet, Printer, Eye, Stamp
+    Calendar, X, Check, AlertTriangle, Clock, Trash2,
+    ShoppingCart, Wallet, Printer, Eye, Stamp
 } from 'lucide-react';
 import { formatMoney } from '../utils/money';
+import { ToastViewport, useToast } from './ui/Toast';
 
 // ==========================================
 // TYPES
@@ -26,6 +27,7 @@ interface Product {
     cost: number;
     stock: number;
     unit: string;
+    ivaExento?: boolean;
     requiresBatchTracking?: boolean;
 }
 
@@ -37,6 +39,7 @@ interface CartItem {
     unitCost: number;
     totalCost: number;
     currentStock: number;
+    ivaExento?: boolean;
     requiresBatchTracking?: boolean;
     batchNumber?: string;
     expiryDate?: string;
@@ -46,8 +49,8 @@ interface PurchaseOrderItemLite {
     id: string;
     productId: string;
     productName: string;
-    quantityOrdered: number;
-    quantityReceived: number;
+    quantityOrdered: number | string;
+    quantityReceived: number | string;
     unitCost: number | string;
 }
 
@@ -57,6 +60,7 @@ interface PurchaseOrderLite {
     orderNumber: string;
     status: string;
     items: PurchaseOrderItemLite[];
+    receipts?: { items: { productId: string; quantity: number | string }[] }[];
 }
 
 interface Purchase {
@@ -76,12 +80,83 @@ interface Purchase {
     createdAt: string;
 }
 
+interface PurchaseFormErrors {
+    supplierId?: string;
+    invoiceNumber?: string;
+    dueDate?: string;
+    notes?: string;
+    items?: string;
+}
+
 // ==========================================
 // HELPERS
 // ==========================================
 
 const formatCurrency = (n: number) => formatMoney(n);
+const escapeHtml = (value: unknown) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 const formatDate = (d: string) => new Date(d).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: 'numeric' });
+// dueDate/expiryDate son días de calendario, no instantes. Prisma los devuelve
+// como UTC; formatearlos en la zona local puede mostrar el día anterior.
+const formatCalendarDate = (d: string) => new Date(d).toLocaleDateString('es-NI', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+});
+const formatCalendarDateLong = (d: string) => new Date(d).toLocaleDateString('es-NI', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+});
+
+const firstValidationMessage = (data: any): string | undefined => {
+    if (!data?.details || typeof data.details !== 'object') return undefined;
+    for (const value of Object.values(data.details)) {
+        if (Array.isArray(value) && value.length > 0) return String(value[0]);
+    }
+    return undefined;
+};
+
+const availablePurchaseOrderItems = (purchaseOrder: PurchaseOrderLite) => {
+    const billedByProduct = new Map<string, number>();
+    for (const receipt of purchaseOrder.receipts ?? []) {
+        for (const item of receipt.items) {
+            billedByProduct.set(
+                item.productId,
+                (billedByProduct.get(item.productId) ?? 0) + Number(item.quantity),
+            );
+        }
+    }
+
+    const receivedByProduct = new Map<string, PurchaseOrderItemLite & { availableQuantity: number }>();
+    for (const item of purchaseOrder.items) {
+        const current = receivedByProduct.get(item.productId);
+        if (current) {
+            current.availableQuantity += Number(item.quantityReceived);
+        } else {
+            receivedByProduct.set(item.productId, {
+                ...item,
+                availableQuantity: Number(item.quantityReceived),
+            });
+        }
+    }
+
+    return [...receivedByProduct.values()]
+        .map(item => ({
+            ...item,
+            availableQuantity: Math.max(
+                0,
+                item.availableQuantity - (billedByProduct.get(item.productId) ?? 0),
+            ),
+        }))
+        .filter(item => item.availableQuantity > 0);
+};
 
 // ==========================================
 // MAIN COMPONENT
@@ -108,6 +183,10 @@ export default function Purchases() {
     const [cart, setCart] = useState<CartItem[]>([]);
     const [productSearch, setProductSearch] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    const [formErrors, setFormErrors] = useState<PurchaseFormErrors>({});
+    const [paymentToConfirm, setPaymentToConfirm] = useState<{ id: string; invoiceNumber: string } | null>(null);
+    const [paying, setPaying] = useState(false);
+    const { toast, showToast, dismissToast } = useToast();
 
     // Invoice modal
     const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
@@ -126,29 +205,59 @@ export default function Purchases() {
 
     const fetchAll = useCallback(async () => {
         setLoading(true);
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
         try {
             const [suppRes, prodRes, purchRes, poRes] = await Promise.all([
-                fetch('/api/suppliers', { headers }),
-                fetch('/api/products', { headers }),
-                fetch('/api/purchases', { headers }),
-                fetch('/api/purchase-orders', { headers })
+                fetch('/api/suppliers', { headers, signal: controller.signal }),
+                fetch('/api/products', { headers, signal: controller.signal }),
+                fetch('/api/purchases', { headers, signal: controller.signal }),
+                fetch('/api/purchase-orders', { headers, signal: controller.signal }),
             ]);
 
             if (suppRes.ok) setSuppliers(await suppRes.json());
-            if (prodRes.ok) setProducts(await prodRes.json());
+            if (prodRes.ok) {
+                const productData = await prodRes.json();
+                setProducts(Array.isArray(productData) ? productData.map((product: Product) => ({
+                    ...product,
+                    price: Number(product.price),
+                    cost: Number(product.cost),
+                    stock: Number(product.stock),
+                })) : []);
+            }
             if (purchRes.ok) setPurchases(await purchRes.json());
             if (poRes.ok) {
                 const poData = await poRes.json();
                 setPurchaseOrders(Array.isArray(poData?.data) ? poData.data : []);
             }
-        } catch (e) {
+            const failed = [
+                [suppRes, 'proveedores'],
+                [prodRes, 'productos'],
+                [purchRes, 'historial'],
+                [poRes, 'órdenes de compra'],
+            ].filter(([response]) => !(response as Response).ok)
+                .map(([, label]) => label as string);
+            if (failed.length > 0) {
+                showToast({
+                    tone: 'warning',
+                    title: 'Algunos datos no se cargaron',
+                    message: `Reintentá para actualizar: ${failed.join(', ')}.`,
+                });
+            }
+        } catch (e: any) {
             console.error('Error fetching data:', e);
+            showToast({
+                tone: 'error',
+                title: e?.name === 'AbortError' ? 'La carga tardó demasiado' : 'No pudimos cargar Compras',
+                message: 'Revisá tu conexión y volvé a abrir el módulo para reintentar.',
+            });
         } finally {
+            window.clearTimeout(timeoutId);
             setLoading(false);
         }
-    }, [headers]);
+    }, [headers, showToast]);
 
-    useEffect(() => { fetchAll(); }, []);
+    useEffect(() => { void fetchAll(); }, [fetchAll]);
 
     // Tutorial guiado: si entran con ?tour=compras (desde Ayuda).
     useEffect(() => { maybeAutostartTour(); }, []);
@@ -167,15 +276,17 @@ export default function Purchases() {
     }, [products, productSearch]);
 
     const addToCart = (product: Product) => {
-        const existing = cart.find(c => c.productId === product.id);
-        if (existing) {
-            setCart(cart.map(c =>
-                c.productId === product.id
-                    ? { ...c, quantity: c.quantity + 1, totalCost: (c.quantity + 1) * c.unitCost }
-                    : c
-            ));
-        } else {
-            setCart([...cart, {
+        setCart(currentCart => {
+            const existing = currentCart.find(c => c.productId === product.id);
+            if (existing) {
+                return currentCart.map(c =>
+                    c.productId === product.id
+                        ? { ...c, quantity: c.quantity + 1, totalCost: (c.quantity + 1) * c.unitCost }
+                        : c
+                );
+            }
+
+            return [...currentCart, {
                 productId: product.id,
                 productName: product.name,
                 sku: product.sku,
@@ -183,70 +294,87 @@ export default function Purchases() {
                 unitCost: product.cost,
                 totalCost: product.cost,
                 currentStock: product.stock,
+                ivaExento: product.ivaExento,
                 requiresBatchTracking: product.requiresBatchTracking,
                 batchNumber: '',
                 expiryDate: ''
-            }]);
-        }
+            }];
+        });
+        setFormErrors(current => ({ ...current, items: undefined }));
         setProductSearch('');
     };
 
     const updateCartItem = (productId: string, field: 'quantity' | 'unitCost' | 'batchNumber' | 'expiryDate', value: any) => {
-        setCart(cart.map(c => {
+        setCart(currentCart => currentCart.map(c => {
             if (c.productId !== productId) return c;
             const updated = { ...c, [field]: value };
             updated.totalCost = updated.quantity * updated.unitCost;
             return updated;
         }));
+        setFormErrors(current => ({ ...current, items: undefined }));
     };
 
     const removeFromCart = (productId: string) => {
-        setCart(cart.filter(c => c.productId !== productId));
+        setCart(currentCart => currentCart.filter(c => c.productId !== productId));
     };
 
-    // ==========================================
-    // VINCULAR A ORDEN DE COMPRA (S45)
-    // ==========================================
-
-    // OCs facturables del proveedor elegido (no DRAFT/CANCELLED): la factura se
-    // vincula y el backend NO re-ingresa stock (los bienes entran con la recepción).
-    const ocsDelProveedor = useMemo(() =>
+    // Una factura vinculada a una OC registra el dinero, no vuelve a ingresar
+    // mercadería: el stock y los lotes pertenecen al acto de recepción.
+    const purchaseOrdersForSupplier = useMemo(() =>
         purchaseOrders.filter(po =>
             po.supplierId === selectedSupplier &&
-            ['APPROVED', 'PARTIALLY_RECEIVED', 'RECEIVED'].includes(po.status)
+            ['PARTIALLY_RECEIVED', 'RECEIVED'].includes(po.status) &&
+            availablePurchaseOrderItems(po).length > 0
         ), [purchaseOrders, selectedSupplier]);
 
-    const vincularOC = (poId: string) => {
+    const linkPurchaseOrder = (poId: string) => {
+        if (!poId) {
+            setSelectedPO('');
+            setCart([]);
+            setFormErrors(current => ({ ...current, items: undefined }));
+            return;
+        }
+
+        const purchaseOrder = purchaseOrders.find(po => po.id === poId);
+        if (!purchaseOrder) return;
+
+        const receivedItems = availablePurchaseOrderItems(purchaseOrder);
+        if (receivedItems.length === 0) {
+            showToast({
+                tone: 'warning',
+                title: 'Primero recibí la mercadería',
+                message: 'Solo podés facturar una orden de compra después de registrar al menos una recepción.',
+            });
+            return;
+        }
+
         setSelectedPO(poId);
-        if (!poId) return;
-        const po = purchaseOrders.find(p => p.id === poId);
-        if (!po) return;
-        // Prefill del carrito desde la OC: lo recibido si ya hubo recepción, si no
-        // lo pedido. Los montos siguen editables (la factura real puede diferir).
-        setCart(po.items.map(it => {
-            const prod = products.find(p => p.id === it.productId);
-            const qty = Number(it.quantityReceived) > 0 ? Number(it.quantityReceived) : Number(it.quantityOrdered);
-            const cost = Number(it.unitCost);
+        setCart(receivedItems.map(item => {
+            const product = products.find(candidate => candidate.id === item.productId);
+            const quantity = item.availableQuantity;
+            const unitCost = Number(item.unitCost);
             return {
-                productId: it.productId,
-                productName: it.productName,
-                sku: prod?.sku ?? '',
-                quantity: qty,
-                unitCost: cost,
-                totalCost: qty * cost,
-                currentStock: prod?.stock ?? 0,
-                // La factura vinculada no re-ingresa stock ni lotes (eso lo hizo la
-                // recepción), así que no se exige lote/vencimiento acá.
+                productId: item.productId,
+                productName: item.productName,
+                sku: product?.sku ?? '',
+                quantity,
+                unitCost,
+                totalCost: quantity * unitCost,
+                currentStock: product?.stock ?? 0,
+                ivaExento: product?.ivaExento,
+                // Los datos de lote se capturan al recibir la OC; exigirlos otra
+                // vez en la factura induciría a duplicar la recepción.
                 requiresBatchTracking: false,
                 batchNumber: '',
-                expiryDate: ''
+                expiryDate: '',
             };
         }));
+        setFormErrors(current => ({ ...current, items: undefined }));
     };
 
-    const cambiarProveedor = (supplierId: string) => {
+    const changeSupplier = (supplierId: string) => {
         setSelectedSupplier(supplierId);
-        // La OC (y su carrito prefijado) pertenecen al proveedor anterior.
+        setFormErrors(current => ({ ...current, supplierId: undefined }));
         if (selectedPO) {
             setSelectedPO('');
             setCart([]);
@@ -255,9 +383,10 @@ export default function Purchases() {
 
     const cartTotals = useMemo(() => {
         const subtotal = cart.reduce((sum, c) => sum + c.totalCost, 0);
-        const tax = subtotal * 0.15;
+        const taxableSubtotal = cart.reduce((sum, c) => c.ivaExento ? sum : sum + c.totalCost, 0);
+        const tax = taxableSubtotal * 0.15;
         const total = subtotal + tax;
-        return { subtotal, tax, total };
+        return { subtotal, taxableSubtotal, tax, total };
     }, [cart]);
 
     // ==========================================
@@ -265,44 +394,81 @@ export default function Purchases() {
     // ==========================================
 
     const handleSubmit = async () => {
-        if (!selectedSupplier) return alert('Selecciona un proveedor.');
-        if (!invoiceNumber.trim()) return alert('Ingresa el # de factura.');
-        if (cart.length === 0) return alert('Agrega al menos un producto.');
-        if (paymentMethod === 'CREDIT' && !dueDate) return alert('Ingresa la fecha de vencimiento para compras a credito.');
+        if (submitting) return;
 
+        const errors: PurchaseFormErrors = {};
+        if (!selectedSupplier) errors.supplierId = 'Seleccioná un proveedor.';
+        if (!invoiceNumber.trim()) errors.invoiceNumber = 'Ingresá el número de factura del proveedor.';
+        if (cart.length === 0) errors.items = 'Agregá al menos un producto.';
+        if (paymentMethod === 'CREDIT' && !dueDate) errors.dueDate = 'Ingresá la fecha de vencimiento.';
+        if (notes.trim().length > 500) errors.notes = 'Las notas no pueden superar 500 caracteres.';
+
+        const invalidItem = cart.find(item =>
+            !Number.isInteger(item.quantity) || item.quantity <= 0 ||
+            !Number.isFinite(item.unitCost) || item.unitCost <= 0
+        );
+        if (invalidItem) {
+            errors.items = `Revisá cantidad y costo de ${invalidItem.productName}.`;
+        }
+
+        const incompleteBatch = cart.find(item =>
+            item.requiresBatchTracking && (!item.batchNumber?.trim() || !item.expiryDate)
+        );
+        if (incompleteBatch) {
+            errors.items = `Completá el lote y vencimiento de ${incompleteBatch.productName}.`;
+        }
+
+        if (Object.keys(errors).length > 0) {
+            setFormErrors(errors);
+            showToast({
+                tone: 'warning',
+                title: 'Revisá los datos de la compra',
+                message: Object.values(errors)[0],
+            });
+            window.setTimeout(() => {
+                document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+            }, 0);
+            return;
+        }
+
+        setFormErrors({});
         setSubmitting(true);
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
         try {
             const res = await fetch('/api/purchases', {
                 method: 'POST',
                 headers,
+                signal: controller.signal,
                 body: JSON.stringify({
                     supplierId: selectedSupplier,
                     invoiceNumber: invoiceNumber.trim(),
                     purchaseOrderId: selectedPO || undefined,
                     paymentMethod,
-                    // undefined (no null): JSON.stringify omite la clave y el campo
-                    // queda realmente opcional para Zod.
+                    // JSON.stringify omite undefined: los opcionales no viajan como
+                    // null y el API también conserva compatibilidad con clientes viejos.
                     dueDate: paymentMethod === 'CREDIT' && dueDate ? dueDate : undefined,
                     notes: notes.trim() || undefined,
                     items: cart.map(c => {
-                        if (c.requiresBatchTracking && (!c.batchNumber || !c.expiryDate)) {
-                            throw new Error(`Falta lote o fecha de vencimiento para ${c.productName}`);
-                        }
                         return {
                             productId: c.productId,
                             quantity: c.quantity,
                             unitCost: c.unitCost,
-                            batchNumber: c.batchNumber || undefined,
+                            batchNumber: c.batchNumber?.trim() || undefined,
                             expiryDate: c.expiryDate || undefined
                         };
                     })
                 })
             });
 
-            const data = await res.json();
+            const data = await res.json().catch(() => ({}));
 
             if (res.ok) {
-                alert(data.message || 'Compra registrada exitosamente.');
+                showToast({
+                    tone: 'success',
+                    title: 'Compra registrada',
+                    message: data.message || 'El inventario y los saldos quedaron actualizados.',
+                });
                 // Reset form
                 setSelectedSupplier('');
                 setSelectedPO('');
@@ -311,13 +477,34 @@ export default function Purchases() {
                 setDueDate('');
                 setNotes('');
                 setCart([]);
-                fetchAll();
+                setFormErrors({});
+                void fetchAll();
             } else {
-                alert(`Error: ${data.error}`);
+                const details = data?.details && typeof data.details === 'object' ? data.details : {};
+                setFormErrors({
+                    supplierId: Array.isArray(details.supplierId) ? String(details.supplierId[0]) : undefined,
+                    invoiceNumber: Array.isArray(details.invoiceNumber) ? String(details.invoiceNumber[0]) : undefined,
+                    dueDate: Array.isArray(details.dueDate) ? String(details.dueDate[0]) : undefined,
+                    notes: Array.isArray(details.notes) ? String(details.notes[0]) : undefined,
+                    items: Array.isArray(details.items) ? String(details.items[0]) : undefined,
+                });
+                showToast({
+                    tone: 'error',
+                    title: res.status === 409 ? 'Esta factura ya fue registrada' : 'No se pudo registrar la compra',
+                    message: firstValidationMessage(data) || data.error || `El servidor respondió ${res.status}.`,
+                });
             }
         } catch (e: any) {
-            alert(e.message || 'Error de conexion al servidor.');
+            const timedOut = e?.name === 'AbortError';
+            showToast({
+                tone: 'error',
+                title: timedOut ? 'La conexión tardó demasiado' : 'No pudimos conectar con el servidor',
+                message: timedOut
+                    ? 'Revisá el historial antes de reintentar: la compra pudo terminar de procesarse.'
+                    : 'Conservamos todos los datos del formulario para que podás volver a intentar.',
+            });
         } finally {
+            window.clearTimeout(timeoutId);
             setSubmitting(false);
         }
     };
@@ -326,24 +513,48 @@ export default function Purchases() {
     // PAY PENDING
     // ==========================================
 
-    const handlePay = async (purchaseId: string, invoiceNum: string) => {
-        if (!confirm(`Pagar factura #${invoiceNum}? Se descontara de tu caja.`)) return;
+    const handlePay = (purchaseId: string, invoiceNum: string) => {
+        setPaymentToConfirm({ id: purchaseId, invoiceNumber: invoiceNum });
+    };
 
+    const confirmPayment = async () => {
+        if (!paymentToConfirm || paying) return;
+
+        setPaying(true);
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
         try {
-            const res = await fetch(`/api/purchases/${purchaseId}/pay`, {
+            const res = await fetch(`/api/purchases/${paymentToConfirm.id}/pay`, {
                 method: 'POST',
-                headers
+                headers,
+                signal: controller.signal,
             });
-            const data = await res.json();
+            const data = await res.json().catch(() => ({}));
 
             if (res.ok) {
-                alert(data.message);
-                fetchAll();
+                showToast({
+                    tone: 'success',
+                    title: 'Factura pagada',
+                    message: data.message || `La factura #${paymentToConfirm.invoiceNumber} quedó pagada.`,
+                });
+                setPaymentToConfirm(null);
+                void fetchAll();
             } else {
-                alert(`Error: ${data.error}`);
+                showToast({
+                    tone: 'error',
+                    title: 'No se pudo pagar la factura',
+                    message: data.error || `El servidor respondió ${res.status}.`,
+                });
             }
-        } catch (e) {
-            alert('Error de conexion.');
+        } catch (e: any) {
+            showToast({
+                tone: 'error',
+                title: e?.name === 'AbortError' ? 'La conexión tardó demasiado' : 'Error de conexión',
+                message: 'No se confirmó el pago. Revisá el historial antes de volver a intentar.',
+            });
+        } finally {
+            window.clearTimeout(timeoutId);
+            setPaying(false);
         }
     };
 
@@ -369,7 +580,7 @@ export default function Purchases() {
 
         const itemsHTML = p.items.map(item => `
             <tr>
-                <td style="padding:4px 8px;border-bottom:1px solid #ddd;font-size:${format === 'ticket' ? '11px' : '13px'}">${item.productName}</td>
+                <td style="padding:4px 8px;border-bottom:1px solid #ddd;font-size:${format === 'ticket' ? '11px' : '13px'}">${escapeHtml(item.productName)}</td>
                 <td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:center;font-size:${format === 'ticket' ? '11px' : '13px'}">${item.quantity}</td>
                 <td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:right;font-size:${format === 'ticket' ? '11px' : '13px'}">${formatMoney(parseFloat(item.unitCost as any))}</td>
                 <td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:right;font-weight:bold;font-size:${format === 'ticket' ? '11px' : '13px'}">${formatMoney(parseFloat(item.totalCost as any))}</td>
@@ -381,7 +592,7 @@ export default function Purchases() {
         const fontFamily = isTicket ? 'monospace' : 'Arial, sans-serif';
 
         const html = `<!DOCTYPE html>
-<html><head><title>Factura Compra #${p.invoiceNumber}</title>
+<html><head><title>Factura Compra #${escapeHtml(p.invoiceNumber)}</title>
 <style>
     @page { size: ${isTicket ? '80mm auto' : 'A4'}; margin: ${isTicket ? '2mm' : '15mm'}; }
     body { font-family: ${fontFamily}; max-width: ${width}; margin: 0 auto; color: #333; }
@@ -403,15 +614,15 @@ export default function Purchases() {
 </style></head><body>
     <div class="header">
         <div class="title">${isTicket ? '' : 'FACTURA DE COMPRA'}</div>
-        <div class="title">${tenantName}</div>
+        <div class="title">${escapeHtml(tenantName)}</div>
         <div class="subtitle">Documento de Ingreso de Mercaderia</div>
     </div>
 
     <div class="info">
-        <div class="info-row"><span><strong>Factura #:</strong></span><span>${p.invoiceNumber}</span></div>
-        <div class="info-row"><span><strong>Proveedor:</strong></span><span>${p.supplier.name}</span></div>
+        <div class="info-row"><span><strong>Factura #:</strong></span><span>${escapeHtml(p.invoiceNumber)}</span></div>
+        <div class="info-row"><span><strong>Proveedor:</strong></span><span>${escapeHtml(p.supplier.name)}</span></div>
         <div class="info-row"><span><strong>Fecha:</strong></span><span>${new Date(p.createdAt).toLocaleDateString('es-NI', { day: '2-digit', month: 'long', year: 'numeric' })}</span></div>
-        ${p.dueDate ? `<div class="info-row"><span><strong>Vencimiento:</strong></span><span>${new Date(p.dueDate).toLocaleDateString('es-NI', { day: '2-digit', month: 'long', year: 'numeric' })}</span></div>` : ''}
+        ${p.dueDate ? `<div class="info-row"><span><strong>Vencimiento:</strong></span><span>${formatCalendarDateLong(p.dueDate)}</span></div>` : ''}
         <div class="info-row"><span><strong>Metodo:</strong></span><span>${p.paymentMethod === 'CASH' ? 'Contado' : 'Credito'}</span></div>
         <div class="info-row"><span><strong>Estado:</strong></span><span class="status ${p.status === 'COMPLETED' ? 'paid' : 'pending'}">${p.status === 'COMPLETED' ? 'PAGADO' : 'PENDIENTE'}</span></div>
     </div>
@@ -434,7 +645,7 @@ export default function Purchases() {
         <div class="total-row grand-total"><span>TOTAL:</span><span>${formatMoney(parseFloat(p.total as any))}</span></div>
     </div>
 
-    ${p.notes ? `<div style="margin-top:10px;font-size:${isTicket ? '10px' : '12px'};color:#666"><strong>Notas:</strong> ${p.notes}</div>` : ''}
+    ${p.notes ? `<div style="margin-top:10px;font-size:${isTicket ? '10px' : '12px'};color:#666"><strong>Notas:</strong> ${escapeHtml(p.notes)}</div>` : ''}
 
     <div class="footer">
         <p>Generado por NORTEX ERP | ${new Date().toLocaleString('es-NI')}</p>
@@ -446,6 +657,12 @@ export default function Purchases() {
             printWindow.document.write(html);
             printWindow.document.close();
             setTimeout(() => printWindow.print(), 300);
+        } else {
+            showToast({
+                tone: 'warning',
+                title: 'El navegador bloqueó la impresión',
+                message: 'Permití las ventanas emergentes para imprimir esta factura.',
+            });
         }
     };
 
@@ -457,6 +674,9 @@ export default function Purchases() {
     const completedPurchases = purchases.filter(p => p.status === 'COMPLETED');
     const totalDebt = pendingPurchases.reduce((sum, p) => sum + parseFloat(p.total as any), 0);
     const totalPurchasesMonth = purchases.reduce((sum, p) => sum + parseFloat(p.total as any), 0);
+    const paymentPurchase = paymentToConfirm
+        ? purchases.find(p => p.id === paymentToConfirm.id)
+        : undefined;
 
     // ==========================================
     // RENDER
@@ -464,6 +684,7 @@ export default function Purchases() {
 
     return (
         <div className="h-full overflow-y-auto bg-slate-900">
+            <ToastViewport toast={toast} onDismiss={dismissToast} />
             {/* HEADER */}
             <div className="bg-slate-800/80 border-b border-slate-700 px-6 py-4">
                 <div className="flex items-center justify-between">
@@ -513,6 +734,19 @@ export default function Purchases() {
 
             {/* CONTENT */}
             <div className="p-6">
+                {activeTab === 'new' && Object.values(formErrors).some(Boolean) && (
+                    <div role="alert" className="mb-4 flex items-start gap-3 rounded-xl border border-red-700/70 bg-red-950/40 px-4 py-3 text-red-100">
+                        <AlertTriangle size={19} className="mt-0.5 shrink-0 text-red-300" />
+                        <div>
+                            <p className="font-semibold">Hay datos que necesitan tu atención</p>
+                            <ul className="mt-1 list-disc pl-4 text-sm text-red-200">
+                                {[...new Set(Object.values(formErrors).filter(Boolean))].map(message => (
+                                    <li key={message}>{message}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    </div>
+                )}
                 {activeTab === 'new' ? (
                     /* ==========================================
                        TAB: NUEVA COMPRA
@@ -531,51 +765,66 @@ export default function Purchases() {
                                         <label className="block text-sm text-slate-300 mb-1.5">Proveedor *</label>
                                         <select
                                             value={selectedSupplier}
-                                            onChange={(e) => cambiarProveedor(e.target.value)}
-                                            className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+                                            onChange={(e) => changeSupplier(e.target.value)}
+                                            aria-invalid={Boolean(formErrors.supplierId)}
+                                            className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white focus:ring-1 ${formErrors.supplierId ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
                                         >
                                             <option value="">Seleccionar proveedor...</option>
                                             {suppliers.map(s => (
                                                 <option key={s.id} value={s.id}>{s.name}</option>
                                             ))}
                                         </select>
+                                        {formErrors.supplierId && <p className="mt-1 text-xs text-red-300">{formErrors.supplierId}</p>}
                                     </div>
-                                    {ocsDelProveedor.length > 0 && (
+                                    {purchaseOrdersForSupplier.length > 0 && (
                                         <div>
-                                            <label className="block text-sm text-slate-300 mb-1.5">Orden de Compra (opcional)</label>
+                                            <label className="block text-sm text-slate-300 mb-1.5">Orden de compra (opcional)</label>
                                             <select
                                                 value={selectedPO}
-                                                onChange={(e) => vincularOC(e.target.value)}
-                                                className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+                                                onChange={(event) => linkPurchaseOrder(event.target.value)}
+                                                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
                                             >
-                                                <option value="">Sin OC (compra directa)</option>
-                                                {ocsDelProveedor.map(po => (
-                                                    <option key={po.id} value={po.id}>{po.orderNumber} · {po.status === 'RECEIVED' ? 'Recibida' : po.status === 'PARTIALLY_RECEIVED' ? 'Recepción parcial' : 'Aprobada'}</option>
+                                                <option value="">Compra directa, sin OC</option>
+                                                {purchaseOrdersForSupplier.map(po => (
+                                                    <option key={po.id} value={po.id}>
+                                                        {po.orderNumber} · {po.status === 'RECEIVED' ? 'Recibida' : po.status === 'PARTIALLY_RECEIVED' ? 'Recepción parcial' : 'Aprobada'}
+                                                    </option>
                                                 ))}
                                             </select>
-                                        </div>
-                                    )}
-                                    {selectedPO && (
-                                        <div className="col-span-2 flex items-start gap-2 px-3 py-2.5 rounded-lg border border-sky-800 bg-sky-950/40 text-sky-300 text-sm">
-                                            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                                            <span>Factura vinculada a la OC: el inventario entra (o entró) con la <strong>recepción</strong> de la orden — esta factura registra solo el dinero (cuenta por pagar o caja, e IVA). El stock NO se vuelve a sumar.</span>
                                         </div>
                                     )}
                                     <div>
                                         <label className="block text-sm text-slate-300 mb-1.5"># Factura Proveedor *</label>
                                         <input
                                             value={invoiceNumber}
-                                            onChange={(e) => setInvoiceNumber(e.target.value)}
+                                            onChange={(e) => {
+                                                setInvoiceNumber(e.target.value);
+                                                setFormErrors(current => ({ ...current, invoiceNumber: undefined }));
+                                            }}
                                             placeholder="FAC-001234"
-                                            className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+                                            aria-invalid={Boolean(formErrors.invoiceNumber)}
+                                            className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white font-mono focus:ring-1 ${formErrors.invoiceNumber ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
                                         />
+                                        {formErrors.invoiceNumber && <p className="mt-1 text-xs text-red-300">{formErrors.invoiceNumber}</p>}
                                     </div>
+                                    {selectedPO && (
+                                        <div className="col-span-2 flex items-start gap-2 rounded-lg border border-sky-800 bg-sky-950/40 px-3 py-2.5 text-sm text-sky-200">
+                                            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                                            <span>
+                                                Esta factura queda vinculada a la OC. La recepción maneja el stock y los lotes; aquí solo se registra el dinero y el IVA.
+                                            </span>
+                                        </div>
+                                    )}
                                     <div>
                                         <label className="block text-sm text-slate-300 mb-1.5">Metodo de Pago *</label>
                                         <div className="flex gap-2">
                                             <button
                                                 type="button"
-                                                onClick={() => setPaymentMethod('CASH')}
+                                                onClick={() => {
+                                                    setPaymentMethod('CASH');
+                                                    setDueDate('');
+                                                    setFormErrors(current => ({ ...current, dueDate: undefined }));
+                                                }}
                                                 className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${paymentMethod === 'CASH'
                                                     ? 'border-emerald-500 bg-emerald-950/40 text-emerald-300'
                                                     : 'border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-600'}`}
@@ -599,9 +848,14 @@ export default function Purchases() {
                                             <input
                                                 type="date"
                                                 value={dueDate}
-                                                onChange={(e) => setDueDate(e.target.value)}
-                                                className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+                                                onChange={(e) => {
+                                                    setDueDate(e.target.value);
+                                                    setFormErrors(current => ({ ...current, dueDate: undefined }));
+                                                }}
+                                                aria-invalid={Boolean(formErrors.dueDate)}
+                                                className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white focus:ring-1 ${formErrors.dueDate ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
                                             />
+                                            {formErrors.dueDate && <p className="mt-1 text-xs text-red-300">{formErrors.dueDate}</p>}
                                         </div>
                                     )}
                                 </div>
@@ -609,15 +863,21 @@ export default function Purchases() {
                                     <label className="block text-sm text-slate-300 mb-1.5">Notas (opcional)</label>
                                     <input
                                         value={notes}
-                                        onChange={(e) => setNotes(e.target.value)}
+                                        onChange={(e) => {
+                                            setNotes(e.target.value);
+                                            setFormErrors(current => ({ ...current, notes: undefined }));
+                                        }}
                                         placeholder="Ej: Pedido semanal, entrega parcial..."
-                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+                                        maxLength={500}
+                                        aria-invalid={Boolean(formErrors.notes)}
+                                        className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white focus:ring-1 ${formErrors.notes ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
                                     />
+                                    {formErrors.notes && <p className="mt-1 text-xs text-red-300">{formErrors.notes}</p>}
                                 </div>
                             </div>
 
                             {/* Product Search + Add */}
-                            <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-5">
+                            <div className={`bg-slate-800/80 border rounded-xl p-5 ${formErrors.items ? 'border-red-600/80' : 'border-slate-700'}`}>
                                 <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
                                     <Package size={18} className="text-blue-400" />
                                     Agregar Productos
@@ -627,10 +887,11 @@ export default function Purchases() {
                                     <input
                                         value={productSearch}
                                         onChange={(e) => setProductSearch(e.target.value)}
-                                        placeholder="Buscar producto por nombre o SKU..."
-                                        className="w-full pl-10 pr-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+                                        disabled={Boolean(selectedPO)}
+                                        placeholder={selectedPO ? 'Los productos vienen de la orden de compra vinculada' : 'Buscar producto por nombre o SKU...'}
+                                        className="w-full pl-10 pr-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-orange-500 focus:ring-1 focus:ring-orange-500 disabled:cursor-not-allowed disabled:text-slate-500"
                                     />
-                                    {filteredProducts.length > 0 && (
+                                    {!selectedPO && filteredProducts.length > 0 && (
                                         <div className="absolute top-full left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl z-20 max-h-60 overflow-y-auto">
                                             {filteredProducts.map(p => (
                                                 <button
@@ -684,6 +945,7 @@ export default function Purchases() {
                                                                     min="1"
                                                                     value={item.quantity}
                                                                     onChange={(e) => updateCartItem(item.productId, 'quantity', parseInt(e.target.value) || 1)}
+                                                                    aria-invalid={Boolean(formErrors.items)}
                                                                     className="w-full text-center bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-sm focus:border-orange-500"
                                                                 />
                                                             </td>
@@ -694,6 +956,7 @@ export default function Purchases() {
                                                                     step="0.01"
                                                                     value={item.unitCost}
                                                                     onChange={(e) => updateCartItem(item.productId, 'unitCost', parseFloat(e.target.value) || 0)}
+                                                                    aria-invalid={Boolean(formErrors.items)}
                                                                     className="w-full text-center bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-sm focus:border-orange-500"
                                                                 />
                                                             </td>
@@ -722,12 +985,14 @@ export default function Purchases() {
                                                                                 placeholder="Nº Lote"
                                                                                 value={item.batchNumber || ''}
                                                                                 onChange={(e) => updateCartItem(item.productId, 'batchNumber', e.target.value)}
+                                                                                aria-invalid={Boolean(formErrors.items)}
                                                                                 className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-xs focus:border-orange-500"
                                                                             />
                                                                             <input
                                                                                 type="date"
                                                                                 value={item.expiryDate || ''}
                                                                                 onChange={(e) => updateCartItem(item.productId, 'expiryDate', e.target.value)}
+                                                                                aria-invalid={Boolean(formErrors.items)}
                                                                                 className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-xs focus:border-orange-500"
                                                                             />
                                                                         </div>
@@ -747,6 +1012,11 @@ export default function Purchases() {
                                         <ShoppingCart size={32} className="mx-auto mb-2 opacity-30" />
                                         <p className="text-sm">Busca y agrega productos a la compra</p>
                                     </div>
+                                )}
+                                {formErrors.items && (
+                                    <p className="mt-3 flex items-center gap-1.5 text-sm text-red-300">
+                                        <AlertTriangle size={15} /> {formErrors.items}
+                                    </p>
                                 )}
                             </div>
                         </div>
@@ -769,6 +1039,18 @@ export default function Purchases() {
                                         <span className="text-slate-400">Subtotal</span>
                                         <span className="text-white">{formatCurrency(cartTotals.subtotal)}</span>
                                     </div>
+                                    {cartTotals.taxableSubtotal !== cartTotals.subtotal && (
+                                        <>
+                                            <div className="flex justify-between text-xs">
+                                                <span className="text-slate-500">Base gravada</span>
+                                                <span className="text-slate-300">{formatCurrency(cartTotals.taxableSubtotal)}</span>
+                                            </div>
+                                            <div className="flex justify-between text-xs">
+                                                <span className="text-slate-500">Productos exentos</span>
+                                                <span className="text-slate-300">{formatCurrency(cartTotals.subtotal - cartTotals.taxableSubtotal)}</span>
+                                            </div>
+                                        </>
+                                    )}
                                     <div className="flex justify-between text-sm">
                                         <span className="text-slate-400">IVA (15%)</span>
                                         <span className="text-white">{formatCurrency(cartTotals.tax)}</span>
@@ -783,7 +1065,7 @@ export default function Purchases() {
                                     <div className="mt-3 bg-amber-950/40 border border-amber-800/50 rounded-lg p-3">
                                         <p className="text-xs text-amber-300 flex items-center gap-1.5">
                                             <Clock size={14} />
-                                            Compra a credito - No se descuenta de caja
+                                            Compra a crédito · No se descuenta de caja
                                         </p>
                                     </div>
                                 )}
@@ -792,7 +1074,7 @@ export default function Purchases() {
                                     <div className="mt-3 bg-emerald-950/40 border border-emerald-800/50 rounded-lg p-3">
                                         <p className="text-xs text-emerald-300 flex items-center gap-1.5">
                                             <DollarSign size={14} />
-                                            Pago de contado - Se descuenta de caja
+                                            Pago de contado · Se descuenta de caja
                                         </p>
                                     </div>
                                 )}
@@ -800,6 +1082,7 @@ export default function Purchases() {
                                 <button
                                     onClick={handleSubmit}
                                     disabled={submitting || cart.length === 0}
+                                    aria-busy={submitting}
                                     className="w-full mt-5 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-700 disabled:text-slate-500 py-3.5 rounded-lg text-white font-bold text-lg transition-all flex items-center justify-center gap-2"
                                 >
                                     {submitting ? (
@@ -810,13 +1093,15 @@ export default function Purchases() {
                                     ) : (
                                         <>
                                             <Truck size={20} />
-                                            Procesar Ingreso
+                                            {selectedPO ? 'Registrar factura' : 'Procesar ingreso'}
                                         </>
                                     )}
                                 </button>
 
                                 <p className="text-xs text-slate-500 text-center mt-2">
-                                    Stock se actualiza automaticamente
+                                    {selectedPO
+                                        ? 'El stock se actualiza desde la recepción de la OC'
+                                        : 'El stock se actualiza automáticamente'}
                                 </p>
                             </div>
                         </div>
@@ -848,7 +1133,7 @@ export default function Purchases() {
                                                     <p className="text-xs text-slate-400">
                                                         Factura #{p.invoiceNumber} | {formatDate(p.createdAt)}
                                                         {p.dueDate && (
-                                                            <span className="text-amber-400 ml-2">Vence: {formatDate(p.dueDate)}</span>
+                                                            <span className="text-amber-400 ml-2">Vence: {formatCalendarDate(p.dueDate)}</span>
                                                         )}
                                                     </p>
                                                 </div>
@@ -968,6 +1253,76 @@ export default function Purchases() {
             </div>
 
             {/* ==========================================
+                MODAL: CONFIRMAR PAGO
+               ========================================== */}
+            {paymentToConfirm && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+                    onClick={() => { if (!paying) setPaymentToConfirm(null); }}
+                >
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="confirm-payment-title"
+                        className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-800 shadow-2xl"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div className="flex items-start justify-between border-b border-slate-700 px-5 py-4">
+                            <div className="flex items-center gap-3">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-300">
+                                    <DollarSign size={21} />
+                                </div>
+                                <div>
+                                    <h2 id="confirm-payment-title" className="font-semibold text-white">Confirmar pago</h2>
+                                    <p className="text-sm text-slate-400">Factura #{paymentToConfirm.invoiceNumber}</p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setPaymentToConfirm(null)}
+                                disabled={paying}
+                                className="rounded-lg p-2 text-slate-400 hover:bg-slate-700 hover:text-white disabled:opacity-50"
+                                aria-label="Cancelar pago"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="px-5 py-5">
+                            <p className="text-sm leading-6 text-slate-300">
+                                Este pago se descontará de tu caja y la cuenta quedará marcada como pagada.
+                            </p>
+                            {paymentPurchase && (
+                                <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-800/60 bg-emerald-950/30 px-4 py-3">
+                                    <span className="text-sm text-slate-300">Monto a pagar</span>
+                                    <span className="text-xl font-bold text-emerald-300">{formatCurrency(Number(paymentPurchase.total))}</span>
+                                </div>
+                            )}
+                        </div>
+                        <div className="flex justify-end gap-3 border-t border-slate-700 px-5 py-4">
+                            <button
+                                type="button"
+                                onClick={() => setPaymentToConfirm(null)}
+                                disabled={paying}
+                                className="rounded-lg border border-slate-600 px-4 py-2.5 text-sm font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="button"
+                                onClick={confirmPayment}
+                                disabled={paying}
+                                aria-busy={paying}
+                                className="flex min-w-32 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-60"
+                            >
+                                {paying && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+                                {paying ? 'Pagando…' : 'Confirmar pago'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ==========================================
                 MODAL: VISTA PREVIA DE FACTURA
                ========================================== */}
             {showInvoiceModal && selectedPurchase && (
@@ -1032,7 +1387,7 @@ export default function Purchases() {
                             {selectedPurchase.dueDate && (
                                 <div className="bg-amber-950/30 border border-amber-800/50 rounded-lg p-3 mb-6 flex items-center gap-2">
                                     <Calendar size={16} className="text-amber-400" />
-                                    <span className="text-sm text-amber-300">Vencimiento: {formatDate(selectedPurchase.dueDate)}</span>
+                                    <span className="text-sm text-amber-300">Vencimiento: {formatCalendarDate(selectedPurchase.dueDate)}</span>
                                 </div>
                             )}
 

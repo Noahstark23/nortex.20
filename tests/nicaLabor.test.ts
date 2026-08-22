@@ -348,6 +348,24 @@ describe('Finiquito — calculateSettlement', () => {
         expect(r.indemnizacion).toBeCloseTo(100030, 2);
     });
 
+    it('trata ingreso y salida como fechas calendario, sin depender de la hora', () => {
+        const alInicioDelDia = calculateSettlement({
+            ...base,
+            hireDate: new Date('2021-07-15T00:00:00.000Z'),
+            terminationDate: new Date('2024-01-15T00:00:00.000Z'),
+        });
+        const conHorasDistintas = calculateSettlement({
+            ...base,
+            hireDate: new Date('2021-07-15T23:59:59.999Z'),
+            terminationDate: new Date('2024-01-15T00:00:00.001Z'),
+        });
+
+        expect(conHorasDistintas.indemnizacionDias).toBe(alInicioDelDia.indemnizacionDias);
+        expect(conHorasDistintas.indemnizacion).toBe(alInicioDelDia.indemnizacion);
+        expect(conHorasDistintas.diasAguinaldo).toBe(alInicioDelDia.diasAguinaldo);
+        expect(conHorasDistintas.antiguedadAnios).toBe(alInicioDelDia.antiguedadAnios);
+    });
+
     // ── Aguinaldo proporcional (Art. 93): el período corre 1-dic → 30-nov ─────
     it('cuenta el aguinaldo desde el 1-dic anterior cuando la salida es en enero', () => {
         // 1-dic-2023 → 15-ene-2024 = 46 días → 30.000 × 46/360 = 3.833,33
