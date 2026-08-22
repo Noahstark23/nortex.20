@@ -128,11 +128,16 @@ export async function resolveOperationalWarehouse(
     }
     if (active.length === 1) return active[0];
 
-    const id = await resolveDefaultWarehouseId(tx, tenantId);
-    return tx.warehouse.findFirstOrThrow({
-        where: { id, tenantId },
-        select: { id: true, name: true, isDefault: true },
-    });
+    // `asegurarBodegaPorDefecto` crea una Principal activa para tenants sin
+    // bodegas antes de abrir la transacción. Llegar acá significa que sí hay
+    // topología, pero ninguna ubicación está operable (por ejemplo, datos
+    // legacy con todas las bodegas inactivas). No debemos promover ni reutilizar
+    // una inactiva: el movimiento quedaría escondido y una toma física abierta
+    // allí no podría cerrarse después.
+    throw new StockError(
+        'WAREHOUSE_NOT_FOUND',
+        'No hay una bodega activa para registrar esta operación. Activá una ubicación e intentá nuevamente.',
+    );
 }
 
 /**
