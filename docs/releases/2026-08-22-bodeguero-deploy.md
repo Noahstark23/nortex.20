@@ -1,8 +1,10 @@
 # Despliegue del rol BODEGUERO — 2026-08-22
 
-Release de aplicación: `ec8018443d3d1d00954823d1845d9e4ebf51b226`
+Baseline funcional del rol: `ec8018443d3d1d00954823d1845d9e4ebf51b226`
 
 Versión anterior conocida en producción: `ba7beb9bdf8d0af025652e613609fb55741553c7`
+
+El SHA que se despliega no se fija manualmente en este documento: será el SHA exacto de `main` que ejecute el workflow después de integrar la compuerta. Ese commit contiene la baseline `ec80184` más la preparación de despliegue y queda registrado como `github.sha`.
 
 ## Estado actual
 
@@ -30,6 +32,8 @@ Secrets de GitHub Actions:
 
 En Coolify, `Auto Deploy` debe quedar apagado para staging y producción. GitHub Actions es la única ruta autorizada para promover esta release.
 
+En ambas aplicaciones de Coolify también debe activarse **Include Source Commit in Build**. Nortex expone ese valor como `SOURCE_COMMIT` en `/api/health`; sin esa opción la compuerta recibe `commit: null` y falla con `COMMIT_MISSING`.
+
 ## Pre-deploy
 
 - [x] Typecheck, tests, auditoría de dependencias, mutación y build aprobados.
@@ -43,21 +47,23 @@ En Coolify, `Auto Deploy` debe quedar apagado para staging y producción. GitHub
 - [ ] Staging vuelve a responder por HTTPS.
 - [ ] Secrets de Coolify cargados.
 - [ ] `Auto Deploy` apagado en ambas aplicaciones de Coolify.
+- [ ] `Include Source Commit in Build` activado en ambas aplicaciones.
 
 ## Ejecución
 
 1. Mantener `NORTEX_DEPLOY_ENABLED=false` mientras se carga y valida la configuración.
 2. Recuperar staging y comprobar que su dominio apunta a la aplicación correcta de Coolify.
-3. Cargar los webhooks como secrets y las URLs como variables del repositorio.
-4. Cambiar `NORTEX_DEPLOY_ENABLED=true`.
-5. Ejecutar manualmente el workflow `CI` sobre `main`.
-6. Confirmar que `deploy-staging` observa simultáneamente:
+3. Activar `Include Source Commit in Build` y mantener `Auto Deploy` apagado en ambas aplicaciones.
+4. Cargar los webhooks como secrets y las URLs como variables del repositorio.
+5. Cambiar `NORTEX_DEPLOY_ENABLED=true`.
+6. Ejecutar manualmente el workflow `CI` sobre `main` y registrar su `github.sha` como objetivo.
+7. Confirmar que `deploy-staging` observa simultáneamente:
    - HTTP `200`;
    - `ok: true`;
    - `db: "up"`;
    - `commit` igual al SHA exacto del workflow.
-7. Aprobar el environment `production` solo después del smoke funcional de staging.
-8. Confirmar las mismas cuatro condiciones en `deploy-production`.
+8. Aprobar el environment `production` solo después del smoke funcional de staging.
+9. Confirmar las mismas cuatro condiciones en `deploy-production`.
 
 ## Smoke funcional
 

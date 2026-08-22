@@ -1,8 +1,10 @@
 import { pathToFileURL } from 'node:url';
 
 const DEFAULT_ATTEMPTS = 48;
-const DEFAULT_INTERVAL_MS = 10_000;
-const DEFAULT_TIMEOUT_MS = 10_000;
+// 48 × 5 s de timeout + 47 × 5 s entre intentos = 475 s como peor caso.
+// La compuerta siempre decide dentro de la ventana operativa de ocho minutos.
+const DEFAULT_INTERVAL_MS = 5_000;
+const DEFAULT_TIMEOUT_MS = 5_000;
 
 export const assessReleaseHealth = (payload, expectedCommit) => {
     if (!expectedCommit || typeof expectedCommit !== 'string') {
@@ -13,6 +15,9 @@ export const assessReleaseHealth = (payload, expectedCommit) => {
     }
     if (payload.ok !== true || payload.db !== 'up') {
         return { ready: false, reason: 'UNHEALTHY' };
+    }
+    if (typeof payload.commit !== 'string' || payload.commit.length === 0) {
+        return { ready: false, reason: 'COMMIT_MISSING' };
     }
     if (payload.commit !== expectedCommit) {
         return { ready: false, reason: 'COMMIT_MISMATCH', observedCommit: payload.commit ?? null };

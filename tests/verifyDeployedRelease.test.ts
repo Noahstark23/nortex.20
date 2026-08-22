@@ -23,6 +23,10 @@ describe('verificación post-deploy por commit', () => {
             ready: false,
             reason: 'UNHEALTHY',
         });
+        expect(assessReleaseHealth({ ok: true, db: 'up', commit: null }, SHA)).toEqual({
+            ready: false,
+            reason: 'COMMIT_MISSING',
+        });
     });
 
     it('normaliza la URL sin duplicar /api/health', () => {
