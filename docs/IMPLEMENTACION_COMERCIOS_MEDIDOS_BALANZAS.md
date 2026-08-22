@@ -576,13 +576,13 @@ npm run build
 git diff --check
 ```
 
-La revisión integrada final aprobó 81 archivos de pruebas y omitió 4 suites de
-integración sin entorno: 1,140 casos pasaron y 14 quedaron omitidos en esa
+La revisión integrada final aprobó 94 archivos de pruebas y omitió 4 suites de
+integración sin entorno: 1,242 casos pasaron y 14 quedaron omitidos en esa
 corrida. Esos 14 casos se ejecutaron aparte contra el backend real y MySQL 8,
 con resultado 14/14. También pasaron TypeScript, Prisma 6.4.1
 (`validate`/`generate`), el build de producción, el guard del sistema de diseño
-y `git diff --check`. El único aviso no bloqueante es el tamaño histórico del
-chunk principal de Vite.
+y `git diff --check`. El único aviso no bloqueante es que el chunk dinámico de
+XLSX queda apenas sobre 500 kB; POS y el núcleo principal permanecen separados.
 
 El gate oficial de mutación final protege 27 módulos: instrumentó 1,905
 mutantes, de los cuales 1,885 son puntuables; 1,873 murieron, 4 terminaron por
@@ -596,6 +596,14 @@ Las pruebas de integración que requieren base deben ejecutarse contra una base
 MySQL 8 descartable, nunca contra producción. Además del resultado verde, se
 debe inspeccionar que `db push` solo proponga altas y que no aparezca
 `--accept-data-loss`.
+
+La compuerta de despliegue reproduce primero el warning de Prisma en una base
+legada y luego exige que el entrypoint real lo resuelva mediante DDL expand-only
+acotado, sin habilitar ese flag. El smoke final verifica 36 columnas nullable,
+7 tablas, 18 FKs, históricos intactos, redeploy idempotente y dos iniciadores
+concurrentes. Para `ProductReturn(tenantId, clientEventId)`, un fixture con
+duplicados no-null debe abortar con el código seguro del preflight, conservar
+ambas filas y permitir convergencia solo después de una reparación explícita.
 
 Con backend y base descartables ya iniciados:
 
