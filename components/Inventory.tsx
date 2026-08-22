@@ -98,6 +98,12 @@ interface KardexEntry {
 
 type AdjustType = 'ADJUST_LOSS' | 'ADJUST_GAIN' | 'IN_PURCHASE' | 'RETURN';
 
+/** El bodeguero registra hallazgos físicos; compras y devoluciones tienen su flujo propio. */
+export const adjustmentTypesForRole = (isBodeguero: boolean): AdjustType[] =>
+    isBodeguero
+        ? ['ADJUST_LOSS', 'ADJUST_GAIN']
+        : ['ADJUST_LOSS', 'ADJUST_GAIN', 'IN_PURCHASE', 'RETURN'];
+
 // ==========================================
 // HELPERS
 // ==========================================
@@ -829,6 +835,11 @@ export default function Inventory() {
         e.preventDefault();
         if (!selectedProduct) return;
         setAdjustError('');
+
+        if (!adjustmentTypesForRole(isBodeguero).includes(adjustForm.type)) {
+            setAdjustError('Usá Compras o Devoluciones para registrar ese movimiento.');
+            return;
+        }
 
         if (!adjustWarehouseId) {
             setAdjustError('Seleccioná la bodega donde ocurrió este movimiento.');
@@ -1954,7 +1965,7 @@ export default function Inventory() {
             )}
 
             {/* ==========================================
-                MODAL: AJUSTE MANUAL (SOLO OWNER)
+                MODAL: AJUSTE MANUAL (ROLES AUTORIZADOS)
                ========================================== */}
             {showAdjustModal && selectedProduct && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowAdjustModal(false)}>
@@ -2036,7 +2047,9 @@ export default function Inventory() {
                                         { value: 'ADJUST_GAIN', label: 'Ganancia / Hallazgo', icon: TrendingUp, color: 'emerald' },
                                         { value: 'IN_PURCHASE', label: 'Compra / Entrada', icon: ArrowDownCircle, color: 'blue' },
                                         { value: 'RETURN', label: 'Devolución', icon: RotateCcw, color: 'purple' },
-                                    ] as const).map(opt => {
+                                    ] as const)
+                                        .filter(opt => adjustmentTypesForRole(isBodeguero).includes(opt.value))
+                                        .map(opt => {
                                         const Icon = opt.icon;
                                         const isSelected = adjustForm.type === opt.value;
                                         return (
@@ -2092,7 +2105,9 @@ export default function Inventory() {
                                     minLength={3}
                                     value={adjustForm.reason}
                                     onChange={(e) => setAdjustForm({ ...adjustForm, reason: e.target.value })}
-                                    placeholder='Ej: "Producto dañado por lluvia", "Conteo físico encontró 3 extra", "Compra a Proveedor X Factura #123"'
+                                    placeholder={isBodeguero
+                                        ? 'Ej: "Producto dañado por lluvia" o "Conteo físico encontró 3 extra"'
+                                        : 'Ej: "Producto dañado por lluvia", "Conteo físico encontró 3 extra", "Compra a Proveedor X Factura #123"'}
                                     rows={3}
                                     className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors resize-none"
                                 />

@@ -182,6 +182,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   // Roles con menú dedicado no tienen modo simple/completo: el toggle no haría
   // nada y prometería una personalización inexistente.
   const canToggleMode = !userRole.startsWith('LENDER_') && !['ACCOUNTANT', 'BODEGUERO'].includes(userRole);
+  // El terminal usa un PIN compartido por empleado y no tiene lockout propio.
+  // El rol operativo de bodega no necesita esa superficie: RRHH queda cerrado
+  // en backend y tampoco mostramos un control que el servidor va a rechazar.
+  const canUseAttendanceClock = userRole !== 'BODEGUERO';
   const isMoreActive = moreItems.some(it => location.pathname.startsWith(it.path));
 
   // ── Navegación en 5 secciones (rediseño Fase 2) ───────────────────────────
@@ -329,13 +333,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div >
 
         <div className="p-4 border-t border-white/[0.06]">
-          <button
-            onClick={() => setShowClock(true)}
-            className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-3 rounded-xl bg-brand/10 text-brand-300 hover:bg-brand/20 hover:text-brand-200 transition-all active:scale-[0.98] border border-brand/20 shadow-glow shadow-brand/10"
-          >
-            <Clock size={20} />
-            <span className="font-bold text-sm uppercase tracking-wider">Marcar Entrada/Salida</span>
-          </button>
+          {canUseAttendanceClock && (
+            <button
+              onClick={() => setShowClock(true)}
+              className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-3 rounded-xl bg-brand/10 text-brand-300 hover:bg-brand/20 hover:text-brand-200 transition-all active:scale-[0.98] border border-brand/20 shadow-glow shadow-brand/10"
+            >
+              <Clock size={20} />
+              <span className="font-bold text-sm uppercase tracking-wider">Marcar Entrada/Salida</span>
+            </button>
+          )}
           <button
             onClick={() => navigate('/app/ayuda')}
             className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-3 rounded-xl text-slate-400 hover:bg-white/[0.06] hover:text-white transition-colors"
@@ -452,13 +458,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <BookOpen size={18} />
               ¿Cómo hago…? (Ayuda)
             </button>
-            <button
-              onClick={() => { setShowMobileMenu(false); setShowClock(true); }}
-              className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-indigo-500/10 text-indigo-400 font-bold border border-indigo-500/20"
-            >
-              <Clock size={18} />
-              Marcar Entrada / Salida
-            </button>
+            {canUseAttendanceClock && (
+              <button
+                onClick={() => { setShowMobileMenu(false); setShowClock(true); }}
+                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-indigo-500/10 text-indigo-400 font-bold border border-indigo-500/20"
+              >
+                <Clock size={18} />
+                Marcar Entrada / Salida
+              </button>
+            )}
             <button
               onClick={handleLogout}
               className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-red-500/10 text-red-500 font-bold border border-red-500/20"
@@ -521,7 +529,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div>
       )}
 
-      {showClock && <PinPadClock onClose={() => setShowClock(false)} />}
+      {canUseAttendanceClock && showClock && <PinPadClock onClose={() => setShowClock(false)} />}
 
       {/* 🔔 Toast de pedidos web */}
       <div className="fixed top-4 right-4 z-toast flex flex-col gap-2 max-w-xs w-full pointer-events-none">

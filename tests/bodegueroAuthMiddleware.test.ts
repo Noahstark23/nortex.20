@@ -57,6 +57,20 @@ describe('authenticate — frontera BODEGUERO post-JWT', () => {
         expect(res.status).not.toHaveBeenCalled();
     });
 
+    it('mantiene todo RRHH fuera del rol operativo', async () => {
+        const clockRes = responseDouble();
+        const clockNext = vi.fn();
+        await authenticate(request('POST', '/api/hr/clock-in'), clockRes, clockNext);
+        expect(clockRes.status).toHaveBeenCalledWith(403);
+        expect(clockNext).not.toHaveBeenCalled();
+
+        const payrollRes = responseDouble();
+        const payrollNext = vi.fn();
+        await authenticate(request('GET', '/api/hr/attendance/2026/08'), payrollRes, payrollNext);
+        expect(payrollRes.status).toHaveBeenCalledWith(403);
+        expect(payrollNext).not.toHaveBeenCalled();
+    });
+
     it('no cambia el acceso existente de otros roles', async () => {
         verifyAuthToken.mockReturnValue({
             userId: 'manager_1', tenantId: 'tenant_1', role: 'MANAGER', email: 'manager@example.com',

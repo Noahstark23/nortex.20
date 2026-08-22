@@ -44,6 +44,10 @@ describe('isBodegueroRouteAllowed', () => {
         expect(isBodegueroRouteAllowed('GET', '/api/accounting/balance-general')).toBe(false);
         expect(isBodegueroRouteAllowed('POST', '/api/payments')).toBe(false);
         expect(isBodegueroRouteAllowed('GET', '/api/team')).toBe(false);
+        expect(isBodegueroRouteAllowed('POST', '/api/hr/clock-in')).toBe(false);
+        expect(isBodegueroRouteAllowed('POST', '/api/hr/clock-out')).toBe(false);
+        expect(isBodegueroRouteAllowed('GET', '/api/hr/attendance/2026/08')).toBe(false);
+        expect(isBodegueroRouteAllowed('POST', '/api/hr/advance/request')).toBe(false);
         expect(isBodegueroRouteAllowed('GET', '/api/warehouses/wh_1/stock/extra')).toBe(false);
         expect(isBodegueroRouteAllowed('POST', '/api/kardex/record')).toBe(false);
     });

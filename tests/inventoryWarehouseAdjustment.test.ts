@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { localStockForProduct, soleActiveWarehouseId } from '../components/Inventory';
+import { adjustmentTypesForRole, localStockForProduct, soleActiveWarehouseId } from '../components/Inventory';
 
 const source = readFileSync(resolve(process.cwd(), 'components/Inventory.tsx'), 'utf8');
 
@@ -44,5 +44,13 @@ describe('ajuste de inventario por bodega', () => {
         expect(source).toContain('sanitizeWholeNumberInput(e.target.value)');
         expect(source).toContain("title: 'Existencias ajustadas'");
         expect(source).not.toContain('alert(`Ajuste registrado:');
+    });
+
+    it('no ofrece compras ni devoluciones dentro del ajuste BODEGUERO', () => {
+        expect(adjustmentTypesForRole(true)).toEqual(['ADJUST_LOSS', 'ADJUST_GAIN']);
+        expect(adjustmentTypesForRole(false)).toEqual([
+            'ADJUST_LOSS', 'ADJUST_GAIN', 'IN_PURCHASE', 'RETURN',
+        ]);
+        expect(source).toContain('.filter(opt => adjustmentTypesForRole(isBodeguero).includes(opt.value))');
     });
 });
