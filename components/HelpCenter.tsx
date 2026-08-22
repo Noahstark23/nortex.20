@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   BookOpen, ShoppingCart, Package, PlayCircle, ArrowRight, Sparkles,
-  Banknote, Users, Calculator, Truck, HandCoins,
+  Banknote, Users, Calculator, Truck, HandCoins, Scale,
 } from 'lucide-react';
 import { homePathFor, resolveUiMode, UI_MODE_KEY } from '../utils/navigation';
 
@@ -41,6 +41,17 @@ const GUIDES: QuickGuide[] = [
       'Definí precio, stock mínimo y punto de reorden.',
       'Registrá lotes con vencimiento si tu rubro lo necesita.',
       'El stock baja solo con cada venta; revisá el Kardex para ver el historial.',
+    ],
+  },
+  {
+    icon: <Scale size={18} />,
+    title: 'Facturar carne por peso',
+    steps: [
+      'Configurá la carne como “Peso/medida”, con unidad, paso y precio por lb o kg.',
+      'Con cualquier balanza: pesá, tocá el producto y escribí el peso estable en el POS.',
+      'Para automatizar: usá una etiqueta EAN-13 que codifique peso y mapeá su PLU en Balanzas y Etiquetas.',
+      'Conectá al equipo del POS un lector USB/Bluetooth en modo teclado con Enter; no hace falta conectar la balanza.',
+      'Revisá peso, precio unitario y total antes de cobrar. La conexión serial directa sigue siendo experimental.',
     ],
   },
   {
