@@ -39,13 +39,13 @@
     "prisma": "^6.4.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-router-dom": "6.22.0",
+    "react-router-dom": "7.18.2",
     "recharts": "^3.7.0",
     "resend": "^4.0.0",
     "stripe": "^17.0.0",
     "swr": "^2.4.2",
-    "tsx": "^4.19.0",
-    "xlsx": "^0.18.5",
+    "tsx": "^4.23.12",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -67,5 +67,8 @@
     "vite-plugin-pwa": "^1.2.0",
     "vitest": "^4.1.10",
     "workbox-window": "^7.4.0"
+  },
+  "overrides": {
+    "qs": "6.15.3"
   }
 }

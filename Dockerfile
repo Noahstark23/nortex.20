@@ -10,8 +10,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY backend/prisma ./backend/prisma/
 
-# 4. Instalar dependencias
-RUN npm install
+# 4. Instalar exactamente el árbol bloqueado que CI audita
+RUN npm ci
 
 # 5. Generar Prisma explicitamente con variables de entorno limpias
 RUN DATABASE_URL="mysql://dummy:dummy@localhost:3306/dummy" npx prisma generate --schema=backend/prisma/schema.prisma
@@ -21,6 +21,11 @@ COPY . .
 
 # 7. Construir la aplicación (React + Backend) + prerender SEO por-ruta
 RUN NODE_OPTIONS="--max-old-space-size=3072" npm run build:seo
+
+# La imagen de runtime no necesita compiladores ni herramientas de desarrollo
+# (Vite, Capacitor CLI, Stryker, etc.). Quitarlas reduce superficie de ataque y
+# hace que lo instalado en producción coincida con `npm audit --omit=dev`.
+RUN npm prune --omit=dev
 
 # 8. Puerto en el que corre la app
 EXPOSE 3000
