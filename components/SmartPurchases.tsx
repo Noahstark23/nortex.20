@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-    Zap, Loader2, AlertTriangle, ShoppingCart, Check, RefreshCw, Truck, Package, X, TrendingDown
+    Zap, Loader2, AlertTriangle, ShoppingCart, Check, RefreshCw, Truck, X
 } from 'lucide-react';
 import { sanitizeDecimalInput, formatMoney } from '../utils/money';
+import { ToastViewport, useToast } from './ui/Toast';
 
 // ==========================================
 // TYPES
@@ -43,19 +44,21 @@ export default function SmartPurchases() {
     const [edits, setEdits] = useState<Record<string, RowEdit>>({});
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [loading, setLoading] = useState(true);
-    const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CREDIT'>('CREDIT');
     const [showConfirm, setShowConfirm] = useState(false);
     const [generating, setGenerating] = useState(false);
+    const { toast, showToast, dismissToast } = useToast();
 
     const token = localStorage.getItem('nortex_token');
     const headers = useMemo(() => ({ 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }), [token]);
 
     const fetchReorder = useCallback(async () => {
         setLoading(true);
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
         try {
             const [r1, r2] = await Promise.all([
-                fetch('/api/inventory/reorder', { headers }),
-                fetch('/api/suppliers', { headers }),
+                fetch('/api/inventory/reorder', { headers, signal: controller.signal }),
+                fetch('/api/suppliers', { headers, signal: controller.signal }),
             ]);
             if (r1.ok) {
                 const data = await r1.json();
@@ -73,12 +76,25 @@ export default function SmartPurchases() {
                 setEdits(init);
             }
             if (r2.ok) setSuppliers(await r2.json());
-        } catch (e) {
+            if (!r1.ok || !r2.ok) {
+                showToast({
+                    tone: 'warning',
+                    title: 'La reposición no está completa',
+                    message: !r1.ok ? 'No se pudo calcular qué productos reponer.' : 'No se pudieron cargar los proveedores.',
+                });
+            }
+        } catch (e: any) {
             console.error('Error fetching reorder:', e);
+            showToast({
+                tone: 'error',
+                title: e?.name === 'AbortError' ? 'La carga tardó demasiado' : 'No pudimos calcular la reposición',
+                message: 'Revisá tu conexión e intentá de nuevo.',
+            });
         } finally {
+            window.clearTimeout(timeoutId);
             setLoading(false);
         }
-    }, [headers]);
+    }, [headers, showToast]);
 
     useEffect(() => { fetchReorder(); }, [fetchReorder]);
 
@@ -89,7 +105,7 @@ export default function SmartPurchases() {
     // DERIVED
     // ==========================================
     // Una fila marcada está LISTA para ordenar si tiene cantidad entera ≥ 1,
-    // costo > 0 y proveedor (POST /api/purchases exige int positivo y costo > 0).
+    // costo > 0 y proveedor antes de crear el borrador de la OC.
     const rowReady = (it: ReorderItem) => {
         const e = edits[it.productId];
         if (!e || !e.selected) return false;
@@ -124,31 +140,32 @@ export default function SmartPurchases() {
     }, [validRows, edits, suppliers]);
 
     // ==========================================
-    // GENERAR ÓRDENES → POST /api/purchases por proveedor
+    // GENERAR BORRADORES DE OC → la recepción posterior es la única que mueve stock.
     // ==========================================
     const generateOrders = async () => {
+        if (generating) return;
         setGenerating(true);
-        // Sello con milisegundos + sufijo aleatorio → evita choque de nº de orden
-        // si se genera dos veces en el mismo segundo (p. ej. reintento).
-        const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 17);
-        const rnd = Math.random().toString(36).slice(2, 5).toUpperCase();
         let ok = 0, fail = 0;
         const errors: string[] = [];
         try {
-            for (let i = 0; i < groups.length; i++) {
-                const g = groups[i];
+            for (const g of groups) {
                 const body = {
                     supplierId: g.supplierId,
-                    invoiceNumber: `OC-${stamp}-${rnd}-${i + 1}`,
-                    paymentMethod,
-                    notes: 'Orden generada por reposición inteligente',
+                    notes: 'Borrador generado por reposición inteligente',
                     items: g.rows.map(it => {
                         const e = edits[it.productId];
                         return { productId: it.productId, quantity: parseInt(e.qty, 10), unitCost: parseFloat(e.cost) };
                     }),
                 };
                 try {
-                    const res = await fetch('/api/purchases', { method: 'POST', headers, body: JSON.stringify(body) });
+                    const controller = new AbortController();
+                    const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
+                    const res = await fetch('/api/purchase-orders', {
+                        method: 'POST',
+                        headers,
+                        signal: controller.signal,
+                        body: JSON.stringify(body),
+                    }).finally(() => window.clearTimeout(timeoutId));
                     if (res.ok) ok++;
                     else { fail++; const d = await res.json().catch(() => ({})); errors.push(`${g.supplierName}: ${d.error || res.status}`); }
                 } catch {
@@ -156,10 +173,17 @@ export default function SmartPurchases() {
                 }
             }
             setShowConfirm(false);
-            let msg = `${ok} orden(es) de compra creada(s).`;
-            if (fail > 0) msg += `\n${fail} fallaron:\n${errors.join('\n')}`;
-            alert(msg);
-            fetchReorder();
+            showToast({
+                tone: fail === 0 ? 'success' : ok > 0 ? 'warning' : 'error',
+                title: fail === 0
+                    ? `${ok} orden${ok === 1 ? '' : 'es'} creada${ok === 1 ? '' : 's'}`
+                    : `${ok} creada${ok === 1 ? '' : 's'} · ${fail} con error`,
+                message: errors.length > 0
+                    ? errors.join(' · ')
+                    : 'Quedaron como borradores: todavía no movieron inventario ni dinero.',
+                durationMs: fail > 0 ? 10_000 : undefined,
+            });
+            void fetchReorder();
         } finally {
             setGenerating(false);
         }
@@ -170,6 +194,7 @@ export default function SmartPurchases() {
     // ==========================================
     return (
         <div className="p-4 sm:p-6 max-w-6xl mx-auto">
+            <ToastViewport toast={toast} onDismiss={dismissToast} />
             <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
                 <div>
                     <h1 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -276,13 +301,6 @@ export default function SmartPurchases() {
                                 <p className="text-xs text-slate-400">Total estimado</p>
                                 <p className="text-lg font-bold text-amber-400">{formatCurrency(totalSelected)}</p>
                             </div>
-                            <div>
-                                <p className="text-xs text-slate-400 mb-1">Forma de pago</p>
-                                <div className="flex gap-1">
-                                    <button onClick={() => setPaymentMethod('CREDIT')} className={`px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${paymentMethod === 'CREDIT' ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>Crédito</button>
-                                    <button onClick={() => setPaymentMethod('CASH')} className={`px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${paymentMethod === 'CASH' ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>Contado</button>
-                                </div>
-                            </div>
                         </div>
                         <button
                             onClick={() => setShowConfirm(true)}
@@ -304,7 +322,7 @@ export default function SmartPurchases() {
                             <button onClick={() => setShowConfirm(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white"><X size={20} /></button>
                         </div>
                         <div className="p-6 overflow-y-auto space-y-3">
-                            <p className="text-sm text-slate-300">Se creará <strong className="text-white">una compra por proveedor</strong> ({paymentMethod === 'CREDIT' ? 'a crédito → cuenta por pagar' : 'de contado'}), ingresando el stock al inventario.</p>
+                            <p className="text-sm text-slate-300">Se creará <strong className="text-white">un borrador de orden por proveedor</strong>. Luego podrás aprobarlo y registrar lo que realmente llegó.</p>
                             {groups.map(g => (
                                 <div key={g.supplierId} className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
                                     <div className="flex items-center justify-between mb-1">
@@ -316,13 +334,13 @@ export default function SmartPurchases() {
                             ))}
                             <div className="bg-amber-950/40 border border-amber-800/50 rounded-lg p-3 flex items-start gap-2">
                                 <AlertTriangle size={16} className="text-amber-400 mt-0.5 shrink-0" />
-                                <p className="text-xs text-amber-300/80">Se genera un número de orden automático (OC-…). Podrás editar la factura real del proveedor desde Compras al recibir la mercadería.</p>
+                                <p className="text-xs text-amber-300/80">Crear el borrador no cambia stock, costos, caja ni cuentas por pagar. Esos efectos ocurren al recibir la mercadería y registrar la factura real.</p>
                             </div>
                         </div>
                         <div className="px-6 py-4 border-t border-slate-700 flex gap-3">
                             <button onClick={() => setShowConfirm(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors">Cancelar</button>
                             <button onClick={generateOrders} disabled={generating} className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors">
-                                {generating ? <><Loader2 size={15} className="animate-spin" /> Creando...</> : `Crear ${groups.length} compra(s)`}
+                                {generating ? <><Loader2 size={15} className="animate-spin" /> Creando...</> : `Crear ${groups.length} orden(es)`}
                             </button>
                         </div>
                     </div>
