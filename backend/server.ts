@@ -5598,10 +5598,9 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     supplierId,
                     invoiceNumber,
                     purchaseOrderId: linkedPurchaseOrder?.id ?? null,
-                    // `date` es el día civil de la factura del proveedor. Si un
-                    // cliente histórico no lo envía, omitimos la propiedad para
-                    // conservar el @default(now()) de Prisma.
-                    ...(date ? { date: normalizeCalendarDateInput(date) } : {}),
+                    // `date` es obligatorio: inferirlo desde createdAt clasifica
+                    // mal las facturas retroactivas en constancias/libros/DGI.
+                    date: normalizeCalendarDateInput(date),
                     dueDate: dueDate ? normalizeCalendarDateInput(dueDate) : null,
                     subtotal,
                     tax,

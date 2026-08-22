@@ -145,6 +145,16 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
     expectStatus(invalidDate, 400);
     expect(invalidDate.body.details.date).toBeTruthy();
 
+    const missingDate = await post('/api/purchases', {
+      supplierId,
+      invoiceNumber: `${invoicePrefix}-FECHA-OMITIDA`,
+      paymentMethod: 'CREDIT',
+      dueDate: '2026-08-25',
+      items: [{ productId: screenshotProductId, quantity: 1, unitCost: 13.5 }],
+    });
+    expectStatus(missingDate, 400);
+    expect(missingDate.body.details.date).toBeTruthy();
+
     for (let index = 1; index <= loopCount; index += 1) {
       const result = await post('/api/purchases', {
         supplierId,
@@ -181,6 +191,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
     const duplicate = await post('/api/purchases', {
       supplierId,
       invoiceNumber: `${invoicePrefix}-1`,
+      date: '2026-08-21',
       paymentMethod: 'CREDIT',
       dueDate: '2026-08-25',
       notes: 'pedido diario',
@@ -211,6 +222,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
       supplierId,
       purchaseOrderId: po.id,
       invoiceNumber: `${invoicePrefix}-ANTES`,
+      date: '2026-08-21',
       paymentMethod: 'CREDIT',
       dueDate: '2026-08-25',
       items: [{ productId: receivedProductId, quantity: 1, unitCost: 13.5 }],
@@ -239,6 +251,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
       supplierId,
       purchaseOrderId: po.id,
       invoiceNumber: `${invoicePrefix}-1`,
+      date: '2026-08-21',
       paymentMethod: 'CREDIT',
       dueDate: '2026-08-25',
       items: [{ productId: receivedProductId, quantity: 3, unitCost: 13.5 }],
@@ -249,6 +262,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
       supplierId,
       purchaseOrderId: po.id,
       invoiceNumber: `${invoicePrefix}-EXCESO`,
+      date: '2026-08-21',
       paymentMethod: 'CREDIT',
       dueDate: '2026-08-25',
       items: [{ productId: receivedProductId, quantity: 3, unitCost: 13.5 }],
@@ -259,6 +273,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
       supplierId,
       purchaseOrderId: po.id,
       invoiceNumber: `${invoicePrefix}-2`,
+      date: '2026-08-21',
       paymentMethod: 'CREDIT',
       dueDate: '2026-08-25',
       items: [{ productId: receivedProductId, quantity: 2, unitCost: 13.5 }],
@@ -287,6 +302,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
       supplierId,
       purchaseOrderId: po.id,
       invoiceNumber: `${invoicePrefix}-3`,
+      date: '2026-08-21',
       paymentMethod: 'CREDIT',
       dueDate: '2026-08-25',
       items: [{ productId: receivedProductId, quantity: 7, unitCost: 13.5 }],
@@ -297,6 +313,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
       supplierId,
       purchaseOrderId: po.id,
       invoiceNumber: `${invoicePrefix}-4`,
+      date: '2026-08-21',
       paymentMethod: 'CREDIT',
       dueDate: '2026-08-25',
       items: [{ productId: receivedProductId, quantity: 1, unitCost: 13.5 }],
@@ -354,10 +371,10 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
 
   it('serializa dos facturas identicas concurrentes sin duplicar inventario', async () => {
     const invoiceNumber = `FAC-CONCURRENT-${Date.now()}`;
-    const requestStartedAt = Date.now();
     const payload = {
       supplierId,
       invoiceNumber,
+      date: '2026-08-21',
       paymentMethod: 'CREDIT',
       dueDate: '2026-08-25',
       items: [{ productId: duplicateInvoiceProductId, quantity: 1, unitCost: 5 }],
@@ -370,8 +387,7 @@ qaDescribe('QA integracion: compras y ordenes de compra', () => {
 
     expect(results.map((result) => result.status).sort()).toEqual([200, 409]);
     const createdPurchase = results.find((result) => result.status === 200)?.body.purchase;
-    expect(new Date(createdPurchase.date).getTime()).toBeGreaterThanOrEqual(requestStartedAt - 2_000);
-    expect(new Date(createdPurchase.date).getTime()).toBeLessThanOrEqual(Date.now() + 2_000);
+    expect(createdPurchase.date).toBe('2026-08-21T12:00:00.000Z');
     expect(Number((await getProduct(duplicateInvoiceProductId)).stock)).toBe(1);
     expect(await getKardex(duplicateInvoiceProductId)).toHaveLength(1);
   }, 120_000);

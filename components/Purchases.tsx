@@ -496,8 +496,7 @@ export default function Purchases() {
                     date: purchaseDate,
                     purchaseOrderId: selectedPO || undefined,
                     paymentMethod,
-                    // JSON.stringify omite undefined: los opcionales no viajan como
-                    // null y el API también conserva compatibilidad con clientes viejos.
+                    // JSON.stringify omite undefined: los opcionales no viajan como null.
                     dueDate: paymentMethod === 'CREDIT' && dueDate ? dueDate : undefined,
                     notes: notes.trim() || undefined,
                     items: cart.map(c => {
