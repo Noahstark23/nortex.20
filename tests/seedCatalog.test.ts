@@ -5,7 +5,12 @@
  * precio negativo o vacía un campo requerido, el CI lo atrapa.
  */
 import { describe, it, expect } from 'vitest';
-import { SEED_CATALOGS, seedCatalogFor } from '../backend/data/seedCatalogs';
+import {
+    composeSeedCatalog,
+    SEED_CAPABILITY_MODULES,
+    SEED_CATALOGS,
+    seedCatalogFor,
+} from '../backend/data/seedCatalogs';
 
 describe('catálogos semilla — integridad de datos', () => {
     for (const [type, items] of Object.entries(SEED_CATALOGS)) {
@@ -38,5 +43,28 @@ describe('ruteo por giro — seedCatalogFor', () => {
         expect(seedCatalogFor('XYZ')).toBeNull();
         expect(seedCatalogFor(null)).toBeNull();
         expect(seedCatalogFor(undefined)).toBeNull();
+    });
+});
+
+describe('compositor por capacidades', () => {
+    it('combina miscelánea con carnes sin duplicar el catálogo base', () => {
+        const catalog = composeSeedCatalog('MISCELANEA', ['CARNES_AVES']);
+        expect(catalog).not.toBeNull();
+        expect(catalog).toHaveLength(SEED_CATALOGS.MISCELANEA.length + SEED_CAPABILITY_MODULES.CARNES_AVES.length);
+        expect(catalog?.find((item) => item.name === 'Pollo entero por libra')).toMatchObject({
+            saleMode: 'MEASURED',
+            unit: 'lb',
+            quantityStep: '0.01',
+        });
+    });
+
+    it('permite agropecuaria basada solo en módulos', () => {
+        const catalog = composeSeedCatalog('AGROPECUARIA', ['ALIMENTO_ANIMAL', 'AGROINSUMOS']);
+        expect(catalog?.some((item) => item.productFamily === 'ANIMAL_FEED')).toBe(true);
+        expect(catalog?.some((item) => item.productFamily === 'AGRO_INPUT')).toBe(true);
+    });
+
+    it('no cambia el ruteo legado cuando no se solicitan módulos', () => {
+        expect(composeSeedCatalog('FERRETERIA', [])).toEqual(SEED_CATALOGS.FERRETERIA);
     });
 });

@@ -47,12 +47,61 @@ export function verifyAuthToken(token: string): AuthTokenPayload {
     for (const secret of KEYRING) {
         try {
             const decoded = jwt.verify(token, secret) as AuthTokenPayload & { kind?: string };
-            // Un token de DRIVER jamás debe pasar por el authenticate de usuarios
-            // (no trae tenantId/role): se rechaza explícito, no por accidente.
-            if (decoded.kind === 'DRIVER') {
-                throw new jwt.JsonWebTokenError('driver token no válido para sesión de usuario');
+            // Los tokens de capacidades públicas y de repartidor comparten el
+            // keyring solo para permitir una rotación coordinada, pero jamás son
+            // sesiones de usuario. El discriminador hace fail-closed cualquier
+            // clase presente o futura distinta al token de autenticación legacy.
+            if (decoded.kind !== undefined) {
+                throw new jwt.JsonWebTokenError('token de capacidad no válido para sesión de usuario');
             }
             return decoded;
+        } catch (err) {
+            if (err instanceof jwt.TokenExpiredError) throw err;
+            lastError = err;
+        }
+    }
+    throw lastError;
+}
+
+// ── Capacidad pública de TRACKING DE PEDIDO ────────────────────────────────
+// El UUID del pedido identifica el recurso, pero no lo autoriza. Este token
+// liga de forma firmada pedido + tenant y expira; se entrega en el fragmento
+// del enlace (#token=...), para que no aparezca en access logs ni Referer.
+
+export interface PedidoTrackingTokenPayload {
+    pedidoId: string;
+    tenantId: string;
+    kind: 'PEDIDO_TRACKING';
+}
+
+const PEDIDO_TRACKING_TOKEN_TTL = '7d';
+
+export function signPedidoTrackingToken(pedidoId: string, tenantId: string): string {
+    const payload: PedidoTrackingTokenPayload = { pedidoId, tenantId, kind: 'PEDIDO_TRACKING' };
+    return jwt.sign(payload, KEYRING[0], { expiresIn: PEDIDO_TRACKING_TOKEN_TTL });
+}
+
+export function verifyPedidoTrackingToken(
+    token: string,
+    expectedPedidoId: string,
+): PedidoTrackingTokenPayload {
+    let lastError: unknown;
+    for (const secret of KEYRING) {
+        try {
+            const decoded = jwt.verify(token, secret) as Partial<PedidoTrackingTokenPayload>;
+            if (
+                decoded.kind !== 'PEDIDO_TRACKING'
+                || typeof decoded.pedidoId !== 'string'
+                || typeof decoded.tenantId !== 'string'
+                || decoded.pedidoId !== expectedPedidoId
+            ) {
+                throw new jwt.JsonWebTokenError('capacidad de tracking inválida');
+            }
+            return {
+                pedidoId: decoded.pedidoId,
+                tenantId: decoded.tenantId,
+                kind: 'PEDIDO_TRACKING',
+            };
         } catch (err) {
             if (err instanceof jwt.TokenExpiredError) throw err;
             lastError = err;

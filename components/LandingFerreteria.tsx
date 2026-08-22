@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, CheckCircle, Package, BarChart2, Users, Zap } from 'lucide-react';
 
 const LandingFerreteria: React.FC = () => {
+  const registerUrl = '/register?type=FERRETERIA&source=landing_ferreteria';
+
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
       <nav className="fixed top-0 w-full bg-white/90 backdrop-blur-md border-b border-slate-200 z-50">
@@ -11,7 +13,7 @@ const LandingFerreteria: React.FC = () => {
             <div className="w-8 h-8 bg-slate-900 rounded flex items-center justify-center text-white font-bold">N</div>
             <span className="font-bold text-lg text-slate-900">NORTEX</span>
           </Link>
-          <Link to="/register" className="bg-slate-900 text-white text-sm font-bold px-5 py-2 rounded-lg hover:bg-slate-700 transition-colors">
+          <Link to={registerUrl} className="bg-slate-900 text-white text-sm font-bold px-5 py-2 rounded-lg hover:bg-slate-700 transition-colors">
             Prueba Gratis
           </Link>
         </div>
@@ -28,7 +30,7 @@ const LandingFerreteria: React.FC = () => {
           Diseñado específicamente para el ritmo de una ferretería nicaragüense.
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Link to="/register" className="flex items-center justify-center gap-2 bg-slate-900 text-white font-bold px-8 py-4 rounded-xl hover:bg-slate-700 transition-colors">
+          <Link to={registerUrl} className="flex items-center justify-center gap-2 bg-slate-900 text-white font-bold px-8 py-4 rounded-xl hover:bg-slate-700 transition-colors">
             Crear mi cuenta gratis <ArrowRight size={18} />
           </Link>
           <span className="text-sm text-slate-500 flex items-center justify-center">Sin tarjeta de crédito · 30 días gratis</span>
@@ -116,7 +118,7 @@ const LandingFerreteria: React.FC = () => {
           Cientos de ferreterías en Nicaragua ya usan Nortex. 
           Configura tu cuenta en 2 minutos y empieza a facturar hoy.
         </p>
-        <Link to="/register" className="inline-flex items-center gap-2 bg-emerald-500 text-white font-bold px-10 py-4 rounded-xl hover:bg-emerald-400 transition-colors text-lg">
+        <Link to={registerUrl} className="inline-flex items-center gap-2 bg-emerald-500 text-white font-bold px-10 py-4 rounded-xl hover:bg-emerald-400 transition-colors text-lg">
           Empieza gratis — 30 días sin costo <ArrowRight size={20} />
         </Link>
       </section>
@@ -128,7 +130,7 @@ const LandingFerreteria: React.FC = () => {
             <Link to="/" className="hover:text-white">Inicio</Link>
             <Link to="/farmacias" className="hover:text-white">Para Farmacias</Link>
             <Link to="/blog" className="hover:text-white">Blog</Link>
-            <Link to="/register" className="hover:text-white">Registrarse</Link>
+            <Link to={registerUrl} className="hover:text-white">Registrarse</Link>
           </div>
         </div>
       </footer>

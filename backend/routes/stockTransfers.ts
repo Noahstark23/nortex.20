@@ -21,6 +21,8 @@ import { checkRole } from '../middleware/checkRole';
 import { BODEGUERO_ROLE } from '../security/bodegueroPolicy';
 import { materializeWarehouseRow } from '../services/stockService';
 import { validate, StockTransferSchema } from '../validation/schemas';
+import { QuantityValidationError } from '../../utils/quantity.js';
+import { validateStockTransferQuantity } from '../../utils/stockTransferQuantity.js';
 
 const router = express.Router();
 const ROLES_WRITE = ['OWNER', 'ADMIN', 'MANAGER', BODEGUERO_ROLE];
@@ -72,16 +74,19 @@ router.post('/', authenticate, checkRole(ROLES_WRITE), validate(StockTransferSch
             const productIds = items.map((it: { productId: string }) => it.productId);
             const products = await tx.product.findMany({
                 where: { id: { in: productIds }, tenantId },
-                select: { id: true, name: true },
+                select: { id: true, name: true, saleMode: true, quantityStep: true },
             });
             const productById = new Map(products.map((p) => [p.id, p]));
 
             const snapshot: { productId: string; name: string; quantity: number }[] = [];
 
             for (const it of items) {
-                const qty = Number(it.quantity);
                 const product = productById.get(it.productId);
                 if (!product) throw new TransferError('PRODUCT_NOT_FOUND');
+                // La BD de existencias sigue siendo Float por compatibilidad,
+                // pero el valor solo cruza ese borde después de validar
+                // Decimal(18,4), modo y múltiplo exacto del paso autoritativo.
+                const qty = validateStockTransferQuantity(it.quantity, product).toNumber();
 
                 // Materializar AMBAS filas si su stock era implícito (default
                 // perezosa): la de origen para poder aplicar el guard condicional,
@@ -157,6 +162,9 @@ router.post('/', authenticate, checkRole(ROLES_WRITE), validate(StockTransferSch
 
         res.status(201).json({ success: true, data: result });
     } catch (e: any) {
+        if (e instanceof QuantityValidationError) {
+            return res.status(422).json({ error: e.message, code: e.code });
+        }
         if (e instanceof TransferError) {
             if (e.code === 'WAREHOUSE_NOT_FOUND') return res.status(404).json({ error: 'Bodega no encontrada o inactiva' });
             if (e.code === 'PRODUCT_NOT_FOUND') return res.status(404).json({ error: 'Producto no encontrado' });

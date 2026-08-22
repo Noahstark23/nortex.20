@@ -1,5 +1,9 @@
 # Plan de ejecución — Bodeguero Fase B (+ loop para terminar el Bodeguero)
 
+> **SUPERSEDIDO PARA TRABAJO NUEVO:** este plan asumía una sola ubicación. La
+> corrección y evolución multi-bodega se gobierna desde
+> `PLAN_BODEGA_CONFIABLE_2026.md`.
+
 Continuación del arco «Bodeguero Experto» (roadmap: `PLAN_BODEGUERO_EXPERTO.md`).
 La Fase A («sin fricción», RF A1–A5) quedó en los PRs #44 (A1) y #45 (A2).
 Esta es la **Fase B — cuadrar el inventario real** y el **loop** para cerrar

@@ -28,3 +28,13 @@ dist-ssr
 # Artefactos de pruebas de mutación (Stryker)
 .stryker-tmp/
 reports/mutation/
+
+# Evidencia local de QA visual y auditorías (no forma parte del artefacto)
+.codex-audit/
+.codex/audits/
+artifacts/
+design-qa.md
+
+# El pipeline canónico usa npm + package-lock.json
+pnpm-lock.yaml
+pnpm-workspace.yaml

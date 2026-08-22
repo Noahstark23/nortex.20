@@ -4,6 +4,8 @@ import {
     AlertTriangle, Shield, Package, XCircle, Percent, Clock, User, ChevronDown,
     Loader2, RefreshCw, Filter, Eye, FileSpreadsheet, Download, Stamp
 } from 'lucide-react';
+import { authenticatedDownload } from '../utils/authenticatedDownload';
+import { ToastViewport, useToast } from './ui/Toast';
 
 // Types
 interface AuditAlert {
@@ -52,6 +54,7 @@ interface DiscountAnalysis {
 type Tab = 'feed' | 'kardex' | 'voids' | 'discounts' | 'fiscal';
 
 const AuditDashboard: React.FC = () => {
+    const { toast, showToast, dismissToast } = useToast();
     // ACCOUNTANT role defaults to fiscal tab
     const getUserRole = () => {
         try {
@@ -104,29 +107,16 @@ const AuditDashboard: React.FC = () => {
 
     useEffect(() => { fetchTab(tab); }, [tab]);
 
-    // Descarga fiscal DGI: los endpoints /api/fiscal/* exigen Bearer en el header
-    // (authenticate), por eso no se puede usar un <a href download> nativo — la
-    // navegación del anchor no adjunta el JWT y devuelve 401. Se descarga vía fetch
-    // con la cabecera Authorization y se dispara la descarga con un blob URL.
     const downloadFiscal = async (url: string, filename: string) => {
         setDownloading(url);
         try {
-            const res = await fetch(url, { headers });
-            if (!res.ok) {
-                alert('No se pudo generar la descarga. Verificá tu sesión e intentá de nuevo.');
-                return;
-            }
-            const blob = await res.blob();
-            const blobUrl = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = blobUrl;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(blobUrl);
-        } catch (e) {
-            alert('No se pudo generar la descarga. Verificá tu conexión e intentá de nuevo.');
+            await authenticatedDownload(url, { token, filename });
+        } catch (error: any) {
+            showToast({
+                tone: 'error',
+                title: 'No se pudo generar la descarga',
+                message: error?.message || 'Verificá tu conexión e intentá de nuevo.',
+            });
         } finally {
             setDownloading(null);
         }
@@ -163,6 +153,7 @@ const AuditDashboard: React.FC = () => {
 
     return (
         <div className="h-full overflow-y-auto bg-surface-800/40 p-6 custom-scrollbar">
+            <ToastViewport toast={toast} onDismiss={dismissToast} />
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
                 <div>

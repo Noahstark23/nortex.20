@@ -16,18 +16,20 @@
 
 import express from 'express';
 // @ts-ignore
-import { PrismaClient } from '@prisma/client';
-// @ts-ignore
 import bcrypt from 'bcryptjs';
 // @ts-ignore
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import Decimal from 'decimal.js';
 import { signDriverToken, verifyDriverToken } from '../services/secrets';
-import { recordSale } from '../services/accounting';
 import { appendDriverWalletMovement } from '../services/ledger';
+import prisma from '../lib/prisma.js';
+import { StockError } from '../services/stockService.js';
+import {
+    completePedidoDeliveryInTransaction,
+    PedidoFulfillmentError,
+} from '../services/pedidoFulfillmentService.js';
 
-const prisma = new PrismaClient();
 const router = express.Router();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -243,150 +245,53 @@ router.patch('/me/orders/:orderId/deliver', authenticateDriver, async (req: any,
     const { lat, lng } = req.body || {};
 
     try {
-        const pedido = await prisma.pedido.findFirst({
-            where: { id: orderId, motorizadoId },
-            include: { items: true }
-        });
-
-        if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado o no asignado a ti.' });
-        if (pedido.estado === 'entregado' || pedido.estado === 'cancelado') {
-            return res.status(400).json({ error: 'El pedido ya fue procesado.' });
+        const numericLat = lat === undefined || lat === null ? null : Number(lat);
+        const numericLng = lng === undefined || lng === null ? null : Number(lng);
+        if ((numericLat !== null && !Number.isFinite(numericLat)) || (numericLng !== null && !Number.isFinite(numericLng))) {
+            return res.status(400).json({ error: 'Coordenadas inválidas.' });
         }
 
         const updated = await prisma.$transaction(async (tx: any) => {
-            // Guard de concurrencia: la transición a 'entregado' es CONDICIONAL
-            // (mismo patrón que stockService). Dos taps simultáneos → el segundo
-            // no afecta filas y aborta: sin doble factura ni doble comisión.
-            const transition = await tx.pedido.updateMany({
-                where: { id: orderId, motorizadoId, estado: { notIn: ['entregado', 'cancelado'] } },
-                data: { estado: 'entregado', entregadoAt: new Date() }
+            const result = await completePedidoDeliveryInTransaction(tx, {
+                pedidoId: orderId,
+                motorizadoId,
+                actorUserId: null,
+                source: 'DRIVER_APP',
+                nota: 'Entregado vía App del Motorizado',
+                lat: numericLat,
+                lng: numericLng,
             });
-            if (transition.count === 0) {
-                throw new Error('PEDIDO_YA_PROCESADO');
-            }
-            const p = await tx.pedido.findUniqueOrThrow({ where: { id: orderId } });
-
-            await tx.trackingEvento.create({
-                data: {
-                    pedidoId: orderId,
-                    estado: 'entregado',
-                    nota: 'Entregado vía App del Motorizado',
-                    lat: lat ? Number(lat) : null,
-                    lng: lng ? Number(lng) : null
-                }
-            });
-
-            if (lat && lng) {
-                await tx.auditLog.create({
-                    data: {
-                        tenantId: pedido.tenantId,
-                        userId: 'SYSTEM',
-                        action: 'GPS_AUDIT_ALERT',
-                        details: JSON.stringify({
-                            mensaje: 'Pedido entregado por motorizado desde la Driver App.',
-                            lat: Number(lat),
-                            lng: Number(lng),
-                            pedidoId: orderId,
-                            motorizadoId
-                        })
-                    }
-                });
-            }
-
-            if (!pedido.facturaId) {
-                let costTotal = new Decimal(0);
-                const saleItemsData = [];
-                for (const item of pedido.items) {
-                    const prod = await tx.product.findUnique({ where: { id: item.productoId } });
-                    if (prod) {
-                        const unitCost = new Decimal(prod.cost?.toString() ?? '0');
-                        costTotal = costTotal.plus(unitCost.mul(item.cantidad));
-                        saleItemsData.push({
-                            productId: item.productoId,
-                            quantity: item.cantidad,
-                            priceAtSale: item.precioUnitario,
-                            costAtSale: unitCost.toDecimalPlaces(4).toNumber(),
-                            discount: 0
-                        });
-                    }
-                }
-
-                const sale = await tx.sale.create({
-                    data: {
-                        tenantId: pedido.tenantId,
-                        total: pedido.total,
-                        status: 'COMPLETED',
-                        paymentMethod: 'CASH',
-                        customerName: pedido.clienteNombre,
-                        items: { create: saleItemsData }
-                    }
-                });
-
-                await tx.payment.create({
-                    data: {
-                        saleId: sale.id,
-                        amount: pedido.total,
-                        method: 'CASH',
-                        collectedBy: motorizadoId ?? null
-                    }
-                });
-
-                await recordSale(tx, pedido.tenantId, motorizadoId ?? null, sale.id, Number(pedido.total), costTotal.toDecimalPlaces(4).toNumber(), 'CASH');
-
-                await tx.pedido.update({
-                    where: { id: orderId },
-                    data: { facturaId: sale.id }
-                });
-
-                // Capa 3 — asiento inmutable de la venta. La entrega vía Driver App
-                // cierra una venta en efectivo cobrada por un tercero externo
-                // (collectedBy=motorizadoId): debe dejar el mismo rastro SALE_CREATED
-                // que el POS canónico (salesService.executeSale), dentro de la misma
-                // $transaction. userId='SYSTEM' (misma convención que el GPS_AUDIT_ALERT
-                // de esta ruta); el actor real queda en details.collectedBy.
-                await tx.auditLog.create({
-                    data: {
-                        tenantId: pedido.tenantId,
-                        userId: 'SYSTEM',
-                        action: 'SALE_CREATED',
-                        details: JSON.stringify({
-                            pedidoId: orderId,
-                            saleId: sale.id,
-                            total: pedido.total.toString(),
-                            paymentMethod: 'CASH',
-                            source: 'DRIVER_APP',
-                            collectedBy: `driver:${motorizadoId}`,
-                            before: { estado: pedido.estado, facturaId: null },
-                            after: { estado: 'entregado', facturaId: sale.id },
-                        }),
-                    }
-                });
-            }
 
             // 💰 FASE 3 — Wallet del Real Money Protocol (solo Red NORTEX):
             // la comisión de la entrega (costoEntrega) se acredita como
             // movimiento FIRMADO en la cadena del repartidor. pedidoId @unique
             // garantiza 1 entrega = 1 comisión incluso ante carreras.
             // (Flota PROPIA liquida en efectivo con su negocio: sin wallet.)
-            const comision = Number(pedido.costoEntrega);
+            const comision = Number(result.costoEntrega);
             if (req.driver.tipoFlota === 'NORTEX' && comision > 0) {
                 await appendDriverWalletMovement(tx, {
                     motorizadoId,
-                    tenantId: pedido.tenantId,
+                    tenantId: result.tenantId,
                     pedidoId: orderId,
                     type: 'COMISION_ENTREGA',
                     amount: comision,
-                    descripcion: `Comisión por entrega #${orderId.slice(0, 8)} (${pedido.clienteNombre})`,
+                    descripcion: `Comisión por entrega #${orderId.slice(0, 8)} (${result.clienteNombre})`,
                 });
             }
 
-            return p;
+            return result.pedido;
         });
 
         res.json({ message: 'Entregado exitosamente', pedido: updated });
     } catch (error) {
-        if (error instanceof Error && error.message === 'PEDIDO_YA_PROCESADO') {
-            return res.status(400).json({ error: 'El pedido ya fue procesado.' });
+        if (error instanceof PedidoFulfillmentError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
+        if (error instanceof StockError) {
+            return res.status(error.code === 'PRODUCT_NOT_FOUND' ? 404 : 422).json({
+                error: error.message,
+                code: error.code,
+            });
         }
         console.error('Driver deliver error:', error);
         res.status(500).json({ error: 'Error al procesar la entrega.' });

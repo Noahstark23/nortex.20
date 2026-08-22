@@ -1,7 +1,12 @@
 import React from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { Building2, Mail, Lock, ArrowRight, Loader2, Check, AlertCircle, Phone } from 'lucide-react';
 import { trackEvent } from '../utils/analytics';
+import { UI_MODE_KEY } from '../utils/navigation';
+import {
+  suggestedCapabilitiesForBusinessType,
+  type TenantCapabilityCode,
+} from '../utils/tenantCapabilities';
 
 interface RegisterTenantProps {
   isModal?: boolean;
@@ -27,8 +32,74 @@ PageWrapper.displayName = 'PageWrapper';
 // El backend exige mínimo 8 caracteres (RegisterSchema en backend/validation/schemas.ts).
 const PASSWORD_MIN = 8;
 
+const BUSINESS_TYPES = [
+  { value: 'FERRETERIA', label: 'Ferretería / Construcción' },
+  { value: 'PULPERIA', label: 'Pulpería / Abarrotes' },
+  { value: 'FARMACIA', label: 'Farmacia' },
+  { value: 'DISTRIBUIDORA', label: 'Distribuidora / Mayorista' },
+  { value: 'MISCELANEA', label: 'Miscelánea' },
+  { value: 'CARNICERIA_POLLERIA', label: 'Carnicería / Pollería' },
+  { value: 'AGROPECUARIA', label: 'Agropecuaria' },
+  { value: 'BOUTIQUE', label: 'Boutique / Ropa' },
+  { value: 'RETAIL', label: 'Retail General' },
+  { value: 'LENDER', label: 'Financiera / Prestamista' },
+] as const;
+
+const BUSINESS_TYPE_ALIASES: Record<string, string> = {
+  FERRETERIA: 'FERRETERIA',
+  FERRETERIAS: 'FERRETERIA',
+  CONSTRUCCION: 'FERRETERIA',
+  PULPERIA: 'PULPERIA',
+  ABARROTES: 'PULPERIA',
+  FARMACIA: 'FARMACIA',
+  FARMACIAS: 'FARMACIA',
+  DISTRIBUIDORA: 'DISTRIBUIDORA',
+  MAYORISTA: 'DISTRIBUIDORA',
+  MISCELANEA: 'MISCELANEA',
+  CARNICERIA: 'CARNICERIA_POLLERIA',
+  POLLERIA: 'CARNICERIA_POLLERIA',
+  CARNICERIA_POLLERIA: 'CARNICERIA_POLLERIA',
+  AGROPECUARIA: 'AGROPECUARIA',
+  BOUTIQUE: 'BOUTIQUE',
+  ROPA: 'BOUTIQUE',
+  RETAIL: 'RETAIL',
+  COMERCIO: 'RETAIL',
+  LENDER: 'LENDER',
+  FINANCIERA: 'LENDER',
+  PRESTAMISTA: 'LENDER',
+};
+
+const normalizeBusinessType = (value: string | null): string => {
+  if (!value) return '';
+  const normalized = value
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\s-]+/g, '_');
+  return BUSINESS_TYPE_ALIASES[normalized] || '';
+};
+
 const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initialCart = [] }) => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const registrationContext = React.useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const type = [params.get('type'), params.get('giro')]
+      .map(normalizeBusinessType)
+      .find(Boolean) || '';
+
+    return {
+      email: params.get('email')?.trim() || '',
+      type,
+    };
+  }, [location.search]);
+  const registrationSource = React.useMemo(() => {
+    if (isModal) return 'demo_modal';
+    return new URLSearchParams(location.search).get('source') || 'direct';
+  }, [isModal, location.search]);
+  const startedAtRef = React.useRef(Date.now());
+  const trackedStartRef = React.useRef(false);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
   // Errores por campo, mapeados desde `details` (validate() los devuelve como
@@ -36,11 +107,24 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
   const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   const [formData, setFormData] = React.useState({
     companyName: '',
-    email: '',
+    email: registrationContext.email,
     password: '',
     phone: '',
-    type: 'FERRETERIA'
+    // Sin contexto explícito, pedimos el giro. El backend conserva FERRETERIA
+    // como fallback legado, pero el alta pública ya no debe clasificar negocios
+    // distintos silenciosamente.
+    type: registrationContext.type,
+    capabilities: suggestedCapabilitiesForBusinessType(registrationContext.type),
   });
+
+  React.useEffect(() => {
+    if (trackedStartRef.current) return;
+    trackedStartRef.current = true;
+    trackEvent('register_started', {
+      source: registrationSource,
+      has_demo_cart: initialCart.length > 0,
+    });
+  }, [initialCart.length, registrationSource]);
 
   const updateField = React.useCallback((field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -53,6 +137,29 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
     });
   }, []);
 
+  const updateBusinessType = React.useCallback((value: string) => {
+    setFormData(prev => ({
+      ...prev,
+      type: value,
+      capabilities: suggestedCapabilitiesForBusinessType(value),
+    }));
+    setFieldErrors(prev => {
+      if (!prev.type) return prev;
+      const next = { ...prev };
+      delete next.type;
+      return next;
+    });
+  }, []);
+
+  const updateCapability = React.useCallback((code: TenantCapabilityCode, checked: boolean) => {
+    setFormData(prev => ({
+      ...prev,
+      capabilities: checked
+        ? [...new Set([...prev.capabilities, code])]
+        : prev.capabilities.filter(item => item !== code),
+    }));
+  }, []);
+
   // Validación en vivo de la contraseña (espejo de la regla del backend).
   const passwordLen = formData.password.length;
   const passwordTooShort = passwordLen > 0 && passwordLen < PASSWORD_MIN;
@@ -63,10 +170,17 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
     setError('');
     setFieldErrors({});
 
-    // Cortamos antes de ir al server si la contraseña no cumple el mínimo: evita
-    // el ida-y-vuelta y le da al usuario el motivo exacto de inmediato.
+    // Cortamos antes de ir al server si falta contexto o la contraseña no cumple:
+    // evita el ida-y-vuelta y muestra todos los ajustes en un solo intento.
+    const clientErrors: Record<string, string> = {};
     if (formData.password.length < PASSWORD_MIN) {
-      setFieldErrors({ password: `La contraseña debe tener al menos ${PASSWORD_MIN} caracteres` });
+      clientErrors.password = `La contraseña debe tener al menos ${PASSWORD_MIN} caracteres`;
+    }
+    if (!formData.type) {
+      clientErrors.type = 'Seleccioná el tipo de negocio para continuar';
+    }
+    if (Object.keys(clientErrors).length > 0) {
+      setFieldErrors(clientErrors);
       setError('Revisá los campos marcados en rojo.');
       return;
     }
@@ -106,12 +220,22 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
       localStorage.setItem('nortex_tenant_id', data.tenant.id);
       localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
       localStorage.setItem('nortex_onboarding_pin', '1234');
+      // La preferencia era global al navegador: al crear una empresa nueva podía
+      // heredar el modo completo de otra cuenta usada antes en el mismo equipo.
+      // Cada alta empieza en la experiencia calmada; el prestamista conserva su
+      // panel dedicado, que ya es reducido.
+      localStorage.setItem(UI_MODE_KEY, formData.type === 'LENDER' ? 'full' : 'simple');
 
       // Conversiones GA4: el registro exitoso ES el alta (sign_up) y a la vez el
       // inicio de la prueba gratis (el tenant nace en TRIAL). Se disparan acá, en
       // el callback de ÉXITO — nunca en el submit — para no contar intentos fallidos.
-      trackEvent('sign_up', { method: 'email', business_type: formData.type });
-      trackEvent('begin_trial', { business_type: formData.type });
+      trackEvent('sign_up', {
+        method: 'email',
+        business_type: formData.type,
+        source: registrationSource,
+        seconds_to_signup: Math.max(0, Math.round((Date.now() - startedAtRef.current) / 1000)),
+      });
+      trackEvent('begin_trial', { business_type: formData.type, source: registrationSource });
 
       // Navegación DIRECTA al valor (retención R1): el modal-peaje del PIN
       // interrumpía el momento de máximo impulso con un concepto ("apertura de
@@ -139,7 +263,7 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
     } finally {
       setLoading(false);
     }
-  }, [formData, initialCart]);
+  }, [formData, initialCart, navigate, registrationSource]);
 
   const containerClasses = React.useMemo(() =>
     isModal
@@ -162,7 +286,7 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
             {isModal ? '¡Casi listo! Guarda tu venta' : 'Crea tu Cuenta Nortex'}
           </h2>
           <p className="text-slate-400 text-sm mt-2">
-            {isModal ? 'Registra tu ferretería gratis para imprimir este ticket.' : 'Empieza a gestionar tu negocio hoy.'}
+            {isModal ? 'Registra tu negocio gratis para imprimir este ticket.' : 'Empieza a gestionar tu negocio hoy.'}
           </p>
         </div>
 
@@ -180,9 +304,11 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
               <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
               <input
                 type="text"
+                name="organization"
+                autoComplete="organization"
                 required
                 className={`w-full bg-nortex-800 border text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none transition-colors ${fieldErrors.companyName ? 'border-red-500/70 focus:border-red-500' : 'border-nortex-700 focus:border-nortex-accent'}`}
-                placeholder="Ej. Ferretería Los Andes"
+                placeholder="Ej. Mi Negocio"
                 value={formData.companyName}
                 onChange={e => updateField('companyName', e.target.value)}
               />
@@ -192,25 +318,49 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
             )}
           </div>
 
-          {!isModal && (
-            <div>
-              <label className="block text-xs font-mono text-slate-400 mb-1">TIPO DE NEGOCIO</label>
-              <select
-                className="w-full bg-nortex-800 border border-nortex-700 text-white px-4 py-3 rounded-lg focus:outline-none focus:border-nortex-accent transition-colors"
-                value={formData.type}
-                onChange={e => updateField('type', e.target.value)}
-              >
-                <option value="FERRETERIA">Ferretería / Construcción</option>
-                <option value="PULPERIA">Pulpería / Abarrotes</option>
-                <option value="FARMACIA">Farmacia</option>
-                <option value="DISTRIBUIDORA">Distribuidora / Mayorista</option>
-                <option value="MISCELANEA">Miscelánea</option>
-                <option value="BOUTIQUE">Boutique / Ropa</option>
-                <option value="RETAIL">Retail General</option>
-                <option value="LENDER">Financiera / Prestamista</option>
-              </select>
+          <div>
+            <label className="block text-xs font-mono text-slate-400 mb-1">TIPO DE NEGOCIO</label>
+            <select
+              name="businessType"
+              required
+              aria-invalid={Boolean(fieldErrors.type)}
+              className={`w-full bg-nortex-800 border text-white px-4 py-3 rounded-lg focus:outline-none transition-colors ${fieldErrors.type ? 'border-red-500/70 focus:border-red-500' : 'border-nortex-700 focus:border-nortex-accent'}`}
+              value={formData.type}
+              onChange={e => updateBusinessType(e.target.value)}
+            >
+              <option value="" disabled>Seleccioná tu tipo de negocio</option>
+              {BUSINESS_TYPES.map(({ value, label }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+            {fieldErrors.type && (
+              <p className="text-xs text-red-400 mt-1">{fieldErrors.type}</p>
+            )}
+          </div>
+
+          <fieldset className="rounded-lg border border-nortex-700 bg-nortex-800/50 p-3">
+            <legend className="px-1 text-xs font-mono text-slate-400">TAMBIÉN VENDO</legend>
+            <p className="mb-2 text-xs text-slate-500">Podés combinar opciones; no cambian tus impuestos automáticamente.</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {([
+                ['CARNES_AVES', 'Carne o pollo por peso'],
+                ['ALIMENTO_ANIMAL', 'Alimento para animales'],
+                ['AGROINSUMOS', 'Insumos agropecuarios'],
+                ['PERECEDEROS', 'Productos con lote/vencimiento'],
+                ['MAYOREO', 'Venta por mayor o sacos'],
+              ] as const).map(([code, label]) => (
+                <label key={code} className="flex cursor-pointer items-start gap-2 text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 rounded border-nortex-600 bg-nortex-900 text-nortex-accent"
+                    checked={formData.capabilities.includes(code)}
+                    onChange={event => updateCapability(code, event.target.checked)}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
             </div>
-          )}
+          </fieldset>
 
           <div>
             <label className="block text-xs font-mono text-slate-400 mb-1">EMAIL ADMINISTRADOR</label>
@@ -218,6 +368,8 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
               <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
               <input
                 type="email"
+                name="email"
+                autoComplete="email"
                 required
                 className={`w-full bg-nortex-800 border text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none transition-colors ${fieldErrors.email ? 'border-red-500/70 focus:border-red-500' : 'border-nortex-700 focus:border-nortex-accent'}`}
                 placeholder="dueno@empresa.com"
@@ -238,6 +390,8 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
               <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
               <input
                 type="tel"
+                name="tel"
+                autoComplete="tel"
                 inputMode="tel"
                 className={`w-full bg-nortex-800 border text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none transition-colors ${fieldErrors.phone ? 'border-red-500/70 focus:border-red-500' : 'border-nortex-700 focus:border-nortex-accent'}`}
                 placeholder="8888 8888"
@@ -256,6 +410,8 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
               <input
                 type="password"
+                name="new-password"
+                autoComplete="new-password"
                 required
                 minLength={PASSWORD_MIN}
                 aria-describedby="password-hint"

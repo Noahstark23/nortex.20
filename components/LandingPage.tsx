@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CheckCircle, Shield, Zap, TrendingUp, ChevronRight } from 'lucide-react';
+import { ArrowRight, CheckCircle, Shield, Zap, TrendingUp, ChevronRight, Play } from 'lucide-react';
 
 const LandingPage: React.FC = () => {
     return (
@@ -19,8 +19,8 @@ const LandingPage: React.FC = () => {
                         <Link to="/login" className="text-sm font-semibold text-slate-600 hover:text-nortex-900 transition-colors">
                             Iniciar Sesión
                         </Link>
-                        <Link to="/register" className="text-sm font-bold bg-nortex-900 text-white px-5 py-2 rounded-lg hover:bg-slate-800 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-nortex-900">
-                            Empieza Gratis
+                        <Link to="/demo?source=landing_spa&location=nav" className="text-sm font-bold bg-nortex-900 text-white px-5 py-2 rounded-lg hover:bg-slate-800 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-nortex-900">
+                            Probar una venta
                         </Link>
                     </div>
                 </div>
@@ -45,11 +45,14 @@ const LandingPage: React.FC = () => {
                     Facturación DGI, Kardex Inteligente y Planillas (Ley 185). Diseñado específicamente para que las Ferreterías y Farmacias nicaragüenses crezcan sin estrés.
                 </p>
                 <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-                    <Link to="/register" className="group w-full sm:w-auto flex items-center justify-center gap-2 bg-nortex-900 text-white text-lg font-bold px-8 py-4 rounded-xl border border-nortex-700/50 hover:border-nortex-accent/50 shadow-xl hover:shadow-[0_0_30px_rgba(16,185,129,0.3)] transition-all duration-300 hover:-translate-y-1 focus:outline-none focus:ring-4 focus:ring-nortex-accent/30">
-                        Crear mi cuenta gratis
-                        <ArrowRight size={20} className="transition-transform duration-300 group-hover:translate-x-1.5" />
+                    <Link to="/demo?source=landing_spa&location=hero" className="group w-full sm:w-auto flex items-center justify-center gap-2 bg-nortex-900 text-white text-lg font-bold px-8 py-4 rounded-xl border border-nortex-700/50 hover:border-nortex-accent/50 shadow-xl hover:shadow-[0_0_30px_rgba(16,185,129,0.3)] transition-all duration-300 hover:-translate-y-1 focus:outline-none focus:ring-4 focus:ring-nortex-accent/30">
+                        <Play size={19} fill="currentColor" />
+                        Probar una venta
                     </Link>
-                    <span className="text-sm text-slate-500 font-medium tracking-wide">No requiere tarjeta de crédito • Configuración en 2 min</span>
+                    <Link to="/register?source=landing_spa&location=hero" className="group w-full sm:w-auto flex items-center justify-center gap-2 border border-slate-300 bg-white text-slate-800 text-base font-bold px-7 py-4 rounded-xl hover:border-slate-400 hover:shadow-md transition-all focus:outline-none focus:ring-4 focus:ring-slate-200">
+                        Crear cuenta gratis
+                        <ArrowRight size={18} className="transition-transform duration-300 group-hover:translate-x-1" />
+                    </Link>
                 </div>
             </section>
 

@@ -72,6 +72,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
     it('acepta el payload de contado con null históricos y los normaliza', () => {
         const result = CreatePurchaseSchema.safeParse({
             ...cashPurchase,
+            warehouseId: null,
             dueDate: null,
             notes: null,
             purchaseOrderId: null,
@@ -84,6 +85,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
 
         expect(result.success).toBe(true);
         if (!result.success) return;
+        expect(result.data.warehouseId).toBeUndefined();
         expect(result.data.dueDate).toBeUndefined();
         expect(result.data.notes).toBeUndefined();
         expect(result.data.purchaseOrderId).toBeUndefined();
@@ -110,6 +112,7 @@ describe('CreatePurchaseSchema — integraciones programáticas', () => {
     it('acepta el payload sin campos de lote cuando se genera de contado', () => {
         expect(CreatePurchaseSchema.safeParse({
             ...integrationPayload,
+            warehouseId: 'warehouse-principal',
             paymentMethod: 'CASH',
         }).success).toBe(true);
     });
@@ -185,6 +188,21 @@ describe('CreatePurchaseSchema — rechazos que protegen la persistencia', () =>
 
         expect(linked.success).toBe(true);
         if (linked.success) expect(linked.data.purchaseOrderId).toBe('po-approved-123');
+        expect(empty.success).toBe(false);
+    });
+
+    it('acepta warehouseId opcional y rechaza uno vacío', () => {
+        const linked = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            warehouseId: 'warehouse-principal',
+        });
+        const empty = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            warehouseId: '',
+        });
+
+        expect(linked.success).toBe(true);
+        if (linked.success) expect(linked.data.warehouseId).toBe('warehouse-principal');
         expect(empty.success).toBe(false);
     });
 

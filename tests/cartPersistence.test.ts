@@ -2,8 +2,13 @@ import { describe, it, expect } from 'vitest';
 import Decimal from 'decimal.js';
 import {
     VERSION_CARRITO,
+    VERSION_CARRITO_LEGACY,
     claveCarrito,
     claveAparcados,
+    claveCarritoLegacy,
+    claveAparcadosLegacy,
+    claveLineaCarrito,
+    esReescaneoRapido,
     leerCarritoGuardado,
     serializarCarrito,
     decidirRestauracion,
@@ -61,6 +66,66 @@ describe('claves de storage', () => {
         expect(claveCarrito('t1', 'u1')).not.toContain('nortex_pending_cart');
         expect(claveAparcados('t1', 'u1')).not.toContain('nortex_pending_cart');
     });
+
+    it('mantiene las claves v1 localizables durante la migración a v2', () => {
+        expect(VERSION_CARRITO_LEGACY).toBe(1);
+        expect(claveCarritoLegacy('t1', 'u1')).toBe('nortex_cart_v1:t1:u1');
+        expect(claveAparcadosLegacy('t1', 'u1')).toBe('nortex_held_v1:t1:u1');
+        expect(claveCarritoLegacy('t1', 'u1')).not.toBe(claveCarrito('t1', 'u1'));
+    });
+});
+
+describe('doble escaneo de etiqueta', () => {
+    it('pide confirmación solo para el mismo código dentro de la ventana corta', () => {
+        const ultimo = { rawCode: '2012345012509', scannedAt: AHORA };
+        expect(esReescaneoRapido({ rawCode: ultimo.rawCode, ultimo, ahoraMs: AHORA + 3999, ventanaMs: 4000 })).toBe(true);
+        expect(esReescaneoRapido({ rawCode: ultimo.rawCode, ultimo, ahoraMs: AHORA + 4001, ventanaMs: 4000 })).toBe(false);
+        expect(esReescaneoRapido({ rawCode: 'otro-paquete', ultimo, ahoraMs: AHORA + 10, ventanaMs: 4000 })).toBe(false);
+    });
+
+    it('no bloquea para siempre ni confunde un reloj que retrocedió', () => {
+        const ultimo = { rawCode: '2012345012509', scannedAt: AHORA };
+        expect(esReescaneoRapido({ rawCode: ultimo.rawCode, ultimo, ahoraMs: AHORA - 1, ventanaMs: 4000 })).toBe(false);
+        expect(esReescaneoRapido({ rawCode: ultimo.rawCode, ultimo: null, ahoraMs: AHORA, ventanaMs: 4000 })).toBe(false);
+    });
+
+    it('incluye exactamente los dos bordes de una ventana positiva', () => {
+        const rawCode = '2012345012509';
+        const ultimo = { rawCode, scannedAt: AHORA };
+
+        // Un reescaneo en el mismo instante y otro exactamente al vencer la
+        // ventana siguen perteneciendo a la misma pulsación del escáner.
+        expect(esReescaneoRapido({ rawCode, ultimo, ahoraMs: AHORA, ventanaMs: 4000 })).toBe(true);
+        expect(esReescaneoRapido({ rawCode, ultimo, ahoraMs: AHORA + 4000, ventanaMs: 4000 })).toBe(true);
+    });
+
+    it('una ventana cero o negativa está deshabilitada', () => {
+        const rawCode = '2012345012509';
+        const ultimo = { rawCode, scannedAt: AHORA };
+
+        expect(esReescaneoRapido({ rawCode, ultimo, ahoraMs: AHORA, ventanaMs: 0 })).toBe(false);
+        expect(esReescaneoRapido({ rawCode, ultimo, ahoraMs: AHORA, ventanaMs: -1 })).toBe(false);
+    });
+
+    it.each([
+        ['ahoraMs', { ahoraMs: String(AHORA + 1) }],
+        ['scannedAt', { scannedAt: String(AHORA) }],
+        ['ventanaMs', { ventanaMs: '4000' }],
+    ])('rechaza %s no numérico aunque JavaScript pudiera coaccionarlo', (_campo, cambio) => {
+        const rawCode = '2012345012509';
+        const ultimo = {
+            rawCode,
+            scannedAt: 'scannedAt' in cambio ? cambio.scannedAt : AHORA,
+        };
+
+        expect(esReescaneoRapido({
+            rawCode,
+            // Caso deliberadamente inválido para comprobar el guard runtime.
+            ultimo: ultimo as never,
+            ahoraMs: ('ahoraMs' in cambio ? cambio.ahoraMs : AHORA + 1) as never,
+            ventanaMs: ('ventanaMs' in cambio ? cambio.ventanaMs : 4000) as never,
+        })).toBe(false);
+    });
 });
 
 describe('leerCarritoGuardado — basura adentro, null afuera', () => {
@@ -79,6 +144,17 @@ describe('leerCarritoGuardado — basura adentro, null afuera', () => {
 
     it('descarta otra versión de esquema en vez de hidratar campos que ya no son', () => {
         expect(leerCarritoGuardado(JSON.stringify({ ...guardado(), v: VERSION_CARRITO + 1 }))).toBeNull();
+    });
+
+    it('migra un carrito v1 en memoria y conserva sus líneas', () => {
+        const legacy = JSON.stringify({
+            ...guardado(),
+            v: VERSION_CARRITO_LEGACY,
+            lineas: [{ id: 'p1', name: 'Carne molida', price: 120, quantity: 1.25, unit: 'lb' }],
+        });
+        const migrated = leerCarritoGuardado(legacy);
+        expect(migrated?.v).toBe(VERSION_CARRITO);
+        expect(migrated?.lineas[0]).toMatchObject({ id: 'p1', quantity: 1.25, unit: 'lb' });
     });
 
     it('exige turno: una venta sin turno no se puede atribuir a nadie', () => {
@@ -137,6 +213,31 @@ describe('leerCarritoGuardado — rescata lo que se puede', () => {
         expect(l.basePrice).toBe(22);
         expect(l.wholesaleMinQty).toBe(12);
         expect(l.packUnit).toBe('caja');
+    });
+
+    it('preserva el pin y snapshots de una línea de cotización', () => {
+        const crudo = JSON.stringify(guardado({
+            lineas: [{
+                id: 'p-cotizado',
+                name: 'Pollo cotizado',
+                price: 47.1234,
+                quantity: 0.75,
+                quotationItemId: 'quote-item-a',
+                cartLineId: 'quotation:quote-item-a',
+                quantityExact: '0.7500',
+                unitPriceExact: '47.1234',
+                presentationAtQuote: 'BASE',
+                presentation: { quantity: '0.7500', unit: 'lb' },
+            }] as never,
+        }));
+
+        expect(leerCarritoGuardado(crudo)?.lineas[0]).toMatchObject({
+            quotationItemId: 'quote-item-a',
+            cartLineId: 'quotation:quote-item-a',
+            quantityExact: '0.7500',
+            unitPriceExact: '47.1234',
+            presentation: { quantity: '0.7500', unit: 'lb' },
+        });
     });
 
     it('normaliza clienteId y descuentoGlobal cuando vienen mal', () => {
@@ -211,6 +312,59 @@ describe('serializarCarrito', () => {
         expect(leido?.clienteId).toBe('cli-1');
         expect(leido?.descuentoGlobal).toBe('5');
         expect(leido?.lineas[0].basePrice).toBe(430);
+    });
+
+    it('conserva dos etiquetas del mismo producto como líneas independientes', () => {
+        const crudo = serializarCarrito({
+            shiftId: 'turno-peso',
+            lineas: [
+                {
+                    id: 'carne-1', cartLineId: 'paquete-a', name: 'Carne', price: 95,
+                    quantity: 1.125, unit: 'lb',
+                    presentation: { quantity: '1.125', unit: 'lb' },
+                    measurement: { source: 'SCALE_LABEL', clientEventId: 'evento-a', rawCode: 'codigo-a' },
+                },
+                {
+                    id: 'carne-1', cartLineId: 'paquete-b', name: 'Carne', price: 95,
+                    quantity: 0.875, unit: 'lb',
+                    presentation: { quantity: '0.875', unit: 'lb' },
+                    measurement: { source: 'SCALE_LABEL', clientEventId: 'evento-b', rawCode: 'codigo-b' },
+                },
+            ],
+            clienteId: null,
+            descuentoGlobal: '',
+            ahoraMs: AHORA,
+        });
+        const lines = leerCarritoGuardado(crudo)?.lineas ?? [];
+        expect(lines).toHaveLength(2);
+        expect(lines.map(claveLineaCarrito)).toEqual(['paquete-a', 'paquete-b']);
+        expect(new Set(lines.map(claveLineaCarrito)).size).toBe(2);
+    });
+
+    it('serializa quotationItemId sin convertirlo en identidad de producto', () => {
+        const crudo = serializarCarrito({
+            shiftId: 'turno-cotizacion',
+            lineas: [{
+                id: 'producto-a',
+                name: 'Producto cotizado',
+                price: 3.3333,
+                quantity: 3,
+                quotationItemId: 'quotation-item-pack',
+                cartLineId: 'quotation:quotation-item-pack',
+                quantityExact: '3.0000',
+                presentation: { quantity: '1', unit: 'empaque' },
+            }],
+            clienteId: null,
+            descuentoGlobal: '',
+            ahoraMs: AHORA,
+        });
+
+        expect(leerCarritoGuardado(crudo)?.lineas[0]).toMatchObject({
+            id: 'producto-a',
+            quotationItemId: 'quotation-item-pack',
+            cartLineId: 'quotation:quotation-item-pack',
+            quantityExact: '3.0000',
+        });
     });
 });
 
@@ -296,6 +450,7 @@ describe('aparcados (F4) — la promesa de "Aparcar y salir" tiene que ser ciert
         heldAt: AHORA,
         lineas: [{ id: 'p1', name: 'Cemento', price: 420, quantity: 1 }],
         clienteId: null,
+        descuentoGlobal: '7.5',
         ...p,
     });
 
@@ -304,6 +459,14 @@ describe('aparcados (F4) — la promesa de "Aparcar y salir" tiene que ser ciert
         expect(leidos).toHaveLength(1);
         expect(leidos[0].label).toBe('Doña María');
         expect(leidos[0].shiftId).toBe('turno-1');
+    });
+
+    it('lee aparcados v1 y los deja listos para reescribir como v2', () => {
+        const legacy = JSON.stringify({ v: VERSION_CARRITO_LEGACY, aparcados: [aparcado()] });
+        const migrated = leerAparcados(legacy);
+        expect(migrated).toHaveLength(1);
+        const rewritten = JSON.parse(serializarAparcados(migrated) as string);
+        expect(rewritten.v).toBe(VERSION_CARRITO);
     });
 
     it('lista vacía no guarda nada', () => {
@@ -371,6 +534,16 @@ describe('aparcados (F4) — la promesa de "Aparcar y salir" tiene que ser ciert
         const leidos = leerAparcados(crudo);
         expect(leidos[0].clienteId).toBe('cli-7');
         expect(leidos[1].clienteId).toBeNull();
+    });
+
+    it('conserva el descuento global para retomar la venta tal cual quedó', () => {
+        const crudo = JSON.stringify({
+            v: VERSION_CARRITO,
+            aparcados: [aparcado({ descuentoGlobal: '12' }), aparcado({ id: 'h2', descuentoGlobal: '  ' })],
+        });
+        const leidos = leerAparcados(crudo);
+        expect(leidos[0].descuentoGlobal).toBe('12');
+        expect(leidos[1].descuentoGlobal).toBe('');
     });
 
     it('preserva heldAt tal cual para poder ordenarlos por antigüedad', () => {

@@ -46,7 +46,9 @@
     box-shadow: none !important;
   }
   @page {
-    size: 80mm auto;
+    /* Fallback válido. El POS inyecta el alto exacto del ticket antes de
+       imprimir; los reportes largos continúan en páginas adicionales. */
+    size: 80mm 200mm;
     margin: 0mm;
   }
 }

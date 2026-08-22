@@ -2,7 +2,10 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Zap, Loader2, AlertTriangle, ShoppingCart, Check, RefreshCw, Truck, X
 } from 'lucide-react';
+import Decimal from 'decimal.js';
 import { sanitizeDecimalInput, formatMoney } from '../utils/money';
+import { formatQuantityValue, validateQuantity } from '../utils/quantity';
+import { purchaseOrderRulesForProduct, sanitizePurchaseQuantityInput } from '../utils/purchaseOrderQuantities';
 import { ToastViewport, useToast } from './ui/Toast';
 
 // ==========================================
@@ -23,8 +26,11 @@ interface ReorderItem {
     vpd: number;
     daysRemaining: number | null;
     reason: 'BOTH' | 'REORDER_POINT' | 'VELOCITY';
-    suggestedQty: number;
+    suggestedQty: string | number;
     suggestedCost: number;
+    unit: string;
+    saleMode: string | null;
+    quantityStep: string | number | null;
 }
 
 interface Supplier { id: string; name: string; }
@@ -32,6 +38,24 @@ interface Supplier { id: string; name: string; }
 interface RowEdit { selected: boolean; qty: string; cost: string; supplierId: string; }
 
 const formatCurrency = (n: number) => formatMoney(n);
+
+const decimalOrZero = (value: string | number): Decimal => {
+    try {
+        const parsed = new Decimal(value);
+        return parsed.isFinite() ? parsed : new Decimal(0);
+    } catch {
+        return new Decimal(0);
+    }
+};
+
+const validReorderQuantity = (item: ReorderItem, value: string): boolean => {
+    try {
+        validateQuantity(value, purchaseOrderRulesForProduct(item));
+        return true;
+    } catch {
+        return false;
+    }
+};
 
 const REASON_META: Record<string, { label: string; color: string }> = {
     BOTH: { label: 'Reorden + Rotación', color: 'bg-red-900/50 text-red-300 border-red-700' },
@@ -104,14 +128,13 @@ export default function SmartPurchases() {
     // ==========================================
     // DERIVED
     // ==========================================
-    // Una fila marcada está LISTA para ordenar si tiene cantidad entera ≥ 1,
-    // costo > 0 y proveedor antes de crear el borrador de la OC.
+    // Una fila marcada está lista si respeta modo/paso (hasta 4 decimales),
+    // costo > 0 y proveedor. El servidor vuelve a validar todo con su Product.
     const rowReady = (it: ReorderItem) => {
         const e = edits[it.productId];
         if (!e || !e.selected) return false;
-        const q = parseInt(e.qty, 10);
-        const c = parseFloat(e.cost);
-        return q >= 1 && c > 0 && !!e.supplierId;
+        const c = decimalOrZero(e.cost);
+        return validReorderQuantity(it, e.qty) && c.greaterThan(0) && c.decimalPlaces() <= 2 && !!e.supplierId;
     };
 
     const checkedRows = useMemo(() => items.filter(it => edits[it.productId]?.selected), [items, edits]);
@@ -120,8 +143,8 @@ export default function SmartPurchases() {
 
     const totalSelected = useMemo(() => validRows.reduce((s, it) => {
         const e = edits[it.productId];
-        return s + (parseInt(e.qty, 10) || 0) * (parseFloat(e.cost) || 0);
-    }, 0), [validRows, edits]);
+        return s.plus(decimalOrZero(e.qty).times(decimalOrZero(e.cost)));
+    }, new Decimal(0)).toNumber(), [validRows, edits]);
 
     // Agrupado por proveedor para el modal de confirmación (solo filas listas)
     const groups = useMemo(() => {
@@ -134,7 +157,9 @@ export default function SmartPurchases() {
                 map[sid] = { supplierId: sid, supplierName: sup?.name || it.supplierName || 'Proveedor', rows: [], total: 0 };
             }
             map[sid].rows.push(it);
-            map[sid].total += (parseInt(e.qty, 10) || 0) * (parseFloat(e.cost) || 0);
+            map[sid].total = new Decimal(map[sid].total)
+                .plus(decimalOrZero(e.qty).times(decimalOrZero(e.cost)))
+                .toNumber();
         }
         return Object.values(map);
     }, [validRows, edits, suppliers]);
@@ -154,7 +179,7 @@ export default function SmartPurchases() {
                     notes: 'Borrador generado por reposición inteligente',
                     items: g.rows.map(it => {
                         const e = edits[it.productId];
-                        return { productId: it.productId, quantity: parseInt(e.qty, 10), unitCost: parseFloat(e.cost) };
+                        return { productId: it.productId, quantity: e.qty, unitCost: e.cost };
                     }),
                 };
                 try {
@@ -240,9 +265,10 @@ export default function SmartPurchases() {
                                     {items.map((it) => {
                                         const e = edits[it.productId];
                                         if (!e) return null;
-                                        const subtotal = (parseInt(e.qty, 10) || 0) * (parseFloat(e.cost) || 0);
-                                        const badQty = e.selected && !(parseInt(e.qty, 10) >= 1);
-                                        const badCost = e.selected && !(parseFloat(e.cost) > 0);
+                                        const subtotal = decimalOrZero(e.qty).times(decimalOrZero(e.cost)).toNumber();
+                                        const badQty = e.selected && !validReorderQuantity(it, e.qty);
+                                        const parsedCost = decimalOrZero(e.cost);
+                                        const badCost = e.selected && (!parsedCost.greaterThan(0) || parsedCost.decimalPlaces() > 2);
                                         const noSupplier = e.selected && !e.supplierId;
                                         return (
                                             <tr key={it.productId} className={`transition-colors ${e.selected ? 'bg-slate-800/40' : 'opacity-60'} hover:bg-slate-700/20`}>
@@ -257,14 +283,14 @@ export default function SmartPurchases() {
                                                 <td className="px-3 py-3 text-center">
                                                     <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${REASON_META[it.reason]?.color}`}>{REASON_META[it.reason]?.label}</span>
                                                 </td>
-                                                <td className="px-3 py-3 text-right text-sm text-slate-300">{it.currentStock}</td>
+                                                <td className="px-3 py-3 text-right text-sm text-slate-300">{formatQuantityValue(it.currentStock)} {it.unit || 'unidad'}</td>
                                                 <td className="px-3 py-3 text-right text-sm">
                                                     {it.daysRemaining === null ? <span className="text-slate-600">—</span> :
                                                         <span className={it.daysRemaining <= 3 ? 'text-red-400 font-semibold' : 'text-slate-300'}>{it.daysRemaining}d</span>}
                                                 </td>
                                                 <td className="px-3 py-3 text-right">
-                                                    <input type="text" inputMode="numeric" value={e.qty} disabled={!e.selected}
-                                                        onChange={(ev) => setEdit(it.productId, { qty: ev.target.value.replace(/[^\d]/g, '') })}
+                                                    <input type="text" inputMode="decimal" value={e.qty} disabled={!e.selected}
+                                                        onChange={(ev) => setEdit(it.productId, { qty: sanitizePurchaseQuantityInput(ev.target.value) })}
                                                         className={`w-20 bg-slate-900 border rounded-lg px-2 py-1.5 text-sm text-white text-right focus:outline-none focus:border-amber-500 disabled:opacity-50 ${badQty ? 'border-red-600/70' : 'border-slate-600'}`} />
                                                 </td>
                                                 <td className="px-3 py-3 text-right">
