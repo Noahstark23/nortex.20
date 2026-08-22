@@ -27,6 +27,14 @@ import {
     weightedAverageCost,
 } from '../services/stockService';
 import { normalizeCalendarDateInput } from '../lib/calendarDate';
+import {
+    extractPurchaseOrderProductIds,
+    normalizePurchaseOrderLines,
+    normalizePurchaseOrderReceiptLines,
+    orderedQuantityForItem,
+    PurchaseOrderQuantityError,
+    receivedQuantityForItem,
+} from '../../utils/purchaseOrderQuantities.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -36,17 +44,65 @@ const router = express.Router();
 const ROLES_WRITE = ['OWNER', 'ADMIN', 'MANAGER'];
 const ROLES_RECEIVE = ['OWNER', 'ADMIN', 'MANAGER', BODEGUERO_ROLE];
 
+/**
+ * Mantiene la redacción financiera del rol BODEGUERO, pero conserva el
+ * snapshot físico necesario para recibir productos medidos sin degradarlos a
+ * la sombra Float ni depender de la configuración actual del producto.
+ */
+const redactBodegueroMeasuredOrder = (order: Record<string, any>): Record<string, any> => {
+    const redacted = redactBodegueroPurchaseOrder(order);
+    const sourceItems = new Map<string, Record<string, any>>(
+        Array.isArray(order.items) ? order.items.map((item: Record<string, any>) => [item.id, item]) : [],
+    );
+
+    return {
+        ...redacted,
+        items: Array.isArray(redacted.items)
+            ? redacted.items.map((item: Record<string, any>) => {
+                const source = sourceItems.get(item.id);
+                if (!source) return item;
+                return {
+                    ...item,
+                    quantityOrderedExact: source.quantityOrderedExact?.toString() ?? null,
+                    quantityReceivedExact: source.quantityReceivedExact?.toString() ?? null,
+                    unitAtOrder: source.unitAtOrder ?? null,
+                    saleModeAtOrder: source.saleModeAtOrder ?? null,
+                    quantityStepAtOrder: source.quantityStepAtOrder?.toString() ?? null,
+                    ...(source.product ? {
+                        product: {
+                            requiresBatchTracking: Boolean(source.product.requiresBatchTracking),
+                            unit: source.product.unit,
+                            saleMode: source.product.saleMode,
+                            quantityStep: source.product.quantityStep?.toString() ?? null,
+                        },
+                    } : {}),
+                };
+            })
+            : [],
+    };
+};
+
 interface ReceiptLine {
     itemId: string;
-    quantityReceived: number;
+    quantityReceived: unknown;
     batchNumber?: string | null;
     expiryDate?: string | null;
+}
+
+interface ValidatedReceiptLine extends Omit<ReceiptLine, 'quantityReceived'> {
+    quantityReceived: string;
+    quantityOrderedExact: string;
+    quantityReceivedExact: string;
+    unitAtOrder: string;
+    saleModeAtOrder: 'COUNTED' | 'MEASURED';
+    quantityStepAtOrder: string;
 }
 
 // Resumen before/after por producto de una recepción, para el AuditLog inmutable.
 interface ReceiptResult {
     productId: string;
-    quantityReceived: number;
+    warehouseId: string;
+    quantityReceived: string;
     unitCost: string;
     stockBefore: string;
     stockAfter: string;
@@ -73,12 +129,16 @@ async function applyGoodsReceipt(
     userId: string,
     poId: string,
     poNumber: string,
-    destinationWarehouseId: string,
-    lines: { item: { id: string; productId: string; unitCost: Prisma.Decimal }; line: ReceiptLine }[]
+    lines: { item: { id: string; productId: string; unitCost: Prisma.Decimal }; line: ValidatedReceiptLine }[],
+    destinationWarehouseId: string
 ): Promise<ReceiptResult[]> {
     const results: ReceiptResult[] = [];
     for (const { item, line } of lines) {
-        const recv = line.quantityReceived;
+        const recvExact = new Decimal(line.quantityReceived);
+        // Stock/Kardex/lotes aún son Float en el esquema legado. La autoridad
+        // de la OC permanece Decimal(18,4); esta conversión sucede únicamente
+        // en el borde de compatibilidad y nunca pasa por parseInt/redondeo.
+        const recv = recvExact.toNumber();
 
         const product = await tx.product.findFirst({
             where: { id: item.productId, tenantId },
@@ -120,7 +180,7 @@ async function applyGoodsReceipt(
         const oldCost = new Decimal((lockedCostRows[0]?.cost ?? 0).toString());
         const newStock = new Decimal(stockAfter);
         // Promedio ponderado móvil (función pura compartida — regla C1 adentro).
-        const newAvgCostD = weightedAverageCost(oldStock, oldCost, recv, item.unitCost.toString());
+        const newAvgCostD = weightedAverageCost(oldStock, oldCost, recvExact, item.unitCost.toString());
 
         await tx.product.update({
             where: { id: product.id },
@@ -165,12 +225,20 @@ async function applyGoodsReceipt(
 
         await tx.purchaseOrderItem.update({
             where: { id: item.id },
-            data: { quantityReceived: { increment: recv } },
+            data: {
+                quantityReceived: { increment: recv },
+                quantityOrderedExact: line.quantityOrderedExact,
+                quantityReceivedExact: line.quantityReceivedExact,
+                unitAtOrder: line.unitAtOrder,
+                saleModeAtOrder: line.saleModeAtOrder,
+                quantityStepAtOrder: line.quantityStepAtOrder,
+            },
         });
 
         results.push({
             productId: product.id,
-            quantityReceived: recv,
+            warehouseId,
+            quantityReceived: recvExact.toString(),
             unitCost: item.unitCost.toString(),
             stockBefore: oldStock.toString(),
             stockAfter: newStock.toString(),
@@ -188,10 +256,23 @@ router.get('/', authenticate, async (req: any, res: any) => {
             where: { tenantId: req.tenantId },
             include: {
                 supplier: { select: { name: true } },
-                items: { include: { product: { select: { requiresBatchTracking: true } } } },
+                items: {
+                    include: {
+                        product: {
+                            select: {
+                                requiresBatchTracking: true,
+                                unit: true,
+                                saleMode: true,
+                                quantityStep: true,
+                            },
+                        },
+                    },
+                },
                 receipts: {
                     select: {
-                        items: { select: { productId: true, quantity: true } },
+                        items: {
+                            select: { productId: true, quantity: true, quantityExact: true },
+                        },
                     },
                 },
             },
@@ -201,7 +282,7 @@ router.get('/', authenticate, async (req: any, res: any) => {
         res.json({
             success: true,
             data: req.role === BODEGUERO_ROLE
-                ? orders.map(redactBodegueroPurchaseOrder)
+                ? orders.map(redactBodegueroMeasuredOrder)
                 : orders,
         });
     } catch (e: any) {
@@ -217,7 +298,18 @@ router.get('/:id', authenticate, async (req: any, res: any) => {
             where: { id: req.params.id, tenantId: req.tenantId },
             include: {
                 supplier: true,
-                items: { include: { product: { select: { requiresBatchTracking: true } } } },
+                items: {
+                    include: {
+                        product: {
+                            select: {
+                                requiresBatchTracking: true,
+                                unit: true,
+                                saleMode: true,
+                                quantityStep: true,
+                            },
+                        },
+                    },
+                },
                 receipts: { select: { id: true, invoiceNumber: true, total: true, createdAt: true } },
             },
         });
@@ -225,7 +317,7 @@ router.get('/:id', authenticate, async (req: any, res: any) => {
         res.json({
             success: true,
             data: req.role === BODEGUERO_ROLE
-                ? redactBodegueroPurchaseOrder(order)
+                ? redactBodegueroMeasuredOrder(order)
                 : order,
         });
     } catch (e: any) {
@@ -245,27 +337,21 @@ router.post('/', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any
     if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: 'Se requiere al menos un ítem' });
     }
-    for (const it of items) {
-        if (!it?.productId || typeof it.productId !== 'string' ||
-            !(Number(it.quantity) > 0) || !(Number(it.unitCost) >= 0)) {
-            return res.status(400).json({ error: 'Cada ítem requiere productId, quantity > 0 y unitCost ≥ 0' });
-        }
-    }
 
     try {
         // Validar proveedor y productos pertenecientes al tenant.
         const supplier = await prisma.supplier.findFirst({ where: { id: supplierId, tenantId } });
         if (!supplier) return res.status(404).json({ error: 'Proveedor no encontrado' });
 
-        const productIds = [...new Set(items.map((i: any) => String(i.productId)))];
+        // Estructura y duplicados se validan antes de consultar. Después, cada
+        // producto se vuelve a cargar con tenantId: el cliente no decide modo,
+        // paso, unidad, nombre ni pertenencia.
+        const productIds = extractPurchaseOrderProductIds(items);
         const products = await prisma.product.findMany({
             where: { id: { in: productIds }, tenantId },
-            select: { id: true, name: true },
+            select: { id: true, name: true, unit: true, saleMode: true, quantityStep: true },
         });
-        const nameById = new Map(products.map((p) => [p.id, p.name]));
-        if (nameById.size !== productIds.length) {
-            return res.status(400).json({ error: 'Uno o más productos no pertenecen a tu negocio' });
-        }
+        const normalizedItems = normalizePurchaseOrderLines(items, products);
 
         // Correlativo por tenant. El @@unique([tenantId, orderNumber]) protege la integridad.
         const count = await prisma.purchaseOrder.count({ where: { tenantId } });
@@ -281,11 +367,18 @@ router.post('/', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any
                 expectedDate: expectedDate ? new Date(expectedDate) : null,
                 createdBy: req.userId,
                 items: {
-                    create: items.map((it: any) => ({
-                        productId: String(it.productId),
-                        productName: nameById.get(String(it.productId))!,
-                        quantityOrdered: Number(it.quantity),
-                        unitCost: new Decimal(it.unitCost).toDecimalPlaces(2).toNumber(),
+                    create: normalizedItems.map((item) => ({
+                        productId: item.productId,
+                        productName: item.productName,
+                        // Float queda como sombra para clientes históricos; el
+                        // Decimal nullable es la autoridad en toda fila nueva.
+                        quantityOrdered: item.quantity.toNumber(),
+                        quantityOrderedExact: item.quantity.toString(),
+                        quantityReceivedExact: '0',
+                        unitAtOrder: item.unitAtOrder,
+                        saleModeAtOrder: item.saleModeAtOrder,
+                        quantityStepAtOrder: item.quantityStepAtOrder,
+                        unitCost: item.unitCost.toFixed(2),
                     })),
                 },
             },
@@ -294,6 +387,9 @@ router.post('/', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any
 
         res.status(201).json({ success: true, data: created });
     } catch (e: any) {
+        if (e instanceof PurchaseOrderQuantityError) {
+            return res.status(400).json({ error: e.message, code: e.code });
+        }
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
             return res.status(409).json({ error: 'Número de orden duplicado, reintentá.' });
         }
@@ -346,21 +442,19 @@ router.post('/:id/cancel', authenticate, checkRole(ROLES_WRITE), async (req: any
 router.post('/:id/receive', authenticate, checkRole(ROLES_RECEIVE), async (req: any, res: any) => {
     const tenantId: string = req.tenantId;
     const userId: string = req.userId;
-    const requestedWarehouseId = req.body?.warehouseId;
     const lines: ReceiptLine[] = Array.isArray(req.body?.items) ? req.body.items : [];
+    const rawWarehouseId = req.body?.warehouseId;
+    const requestedWarehouseId = typeof rawWarehouseId === 'string' && rawWarehouseId.trim()
+        ? rawWarehouseId.trim()
+        : undefined;
 
-    if (requestedWarehouseId !== undefined
-        && (typeof requestedWarehouseId !== 'string' || !requestedWarehouseId.trim())) {
+    if (rawWarehouseId !== undefined
+        && (typeof rawWarehouseId !== 'string' || !rawWarehouseId.trim())) {
         return res.status(400).json({ error: 'La bodega de destino es inválida', code: 'WAREHOUSE_NOT_FOUND' });
     }
 
     if (lines.length === 0) {
         return res.status(400).json({ error: 'Se requiere al menos un ítem a recibir' });
-    }
-    for (const l of lines) {
-        if (!l?.itemId || typeof l.itemId !== 'string' || !(Number(l.quantityReceived) > 0)) {
-            return res.status(400).json({ error: 'Cada línea requiere itemId y quantityReceived > 0' });
-        }
     }
 
     try {
@@ -382,32 +476,45 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_RECEIVE), async (req: 
                 throw new Error(`INVALID_STATUS:${po.status}`);
             }
 
+            // La bodega es parte del acto físico de recepción. Clientes nuevos
+            // siempre la envían. Por compatibilidad, clientes anteriores solo
+            // pueden omitirla si el negocio tiene una única bodega activa; con
+            // varias ubicaciones no inferimos un destino que podría ser erróneo.
             const destinationWarehouse = await resolveOperationalWarehouse(
                 tx,
                 tenantId,
-                typeof requestedWarehouseId === 'string' ? requestedWarehouseId.trim() : null,
+                requestedWarehouseId,
             );
 
-            // Emparejar cada línea con su ítem de la OC (del mismo tenant por construcción).
-            const itemById = new Map(po.items.map((i) => [i.id, i]));
-            const seenItemIds = new Set<string>();
-            const matched: { item: typeof po.items[number]; line: ReceiptLine }[] = [];
-            for (const line of lines) {
-                const item = itemById.get(line.itemId);
-                if (!item) throw new Error(`ITEM_NOT_IN_PO:${line.itemId}`);
-                // S46 — un itemId repetido en el payload sumaría stock 2× en la misma recepción.
-                if (seenItemIds.has(line.itemId)) throw new Error(`ITEM_REPETIDO:${line.itemId}`);
-                seenItemIds.add(line.itemId);
-                // S46 — tope: lo recibido acumulado no puede exceder lo pedido. Un
-                // sobre-envío real del proveedor se registra como compra directa o
-                // ajuste explícito, no inflando la OC.
-                const recv = Number(line.quantityReceived);
-                const pendiente = new Decimal(item.quantityOrdered.toString()).minus(item.quantityReceived.toString());
-                if (new Decimal(recv.toString()).greaterThan(pendiente)) {
-                    throw new Error(`SOBRE_RECEPCION|${item.productName}|${pendiente.toString()}`);
-                }
-                matched.push({ item, line: { ...line, quantityReceived: recv } });
-            }
+            const orderProductIds = [...new Set(po.items.map(item => item.productId))];
+            const products = await tx.product.findMany({
+                where: { tenantId, id: { in: orderProductIds } },
+                select: {
+                    id: true,
+                    name: true,
+                    unit: true,
+                    saleMode: true,
+                    quantityStep: true,
+                },
+            });
+            const normalizedReceipts = normalizePurchaseOrderReceiptLines(lines, po.items, products);
+            const matched = normalizedReceipts.map((normalized, index) => {
+                const raw = lines[index];
+                return {
+                    item: normalized.item,
+                    line: {
+                        itemId: normalized.item.id,
+                        quantityReceived: normalized.quantity.toString(),
+                        batchNumber: typeof raw.batchNumber === 'string' ? raw.batchNumber : null,
+                        expiryDate: typeof raw.expiryDate === 'string' ? raw.expiryDate : null,
+                        quantityOrderedExact: normalized.ordered.toString(),
+                        quantityReceivedExact: normalized.receivedAfter.toString(),
+                        unitAtOrder: normalized.unitAtOrder,
+                        saleModeAtOrder: normalized.rules.saleMode,
+                        quantityStepAtOrder: normalized.rules.quantityStep,
+                    },
+                };
+            });
 
             const receiptResults = await applyGoodsReceipt(
                 tx,
@@ -415,15 +522,17 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_RECEIVE), async (req: 
                 userId,
                 po.id,
                 po.orderNumber,
-                destinationWarehouse.id,
                 matched,
+                destinationWarehouse.id,
             );
 
             // Recalcular estado: RECEIVED si todo lo pedido fue recibido, si no PARTIALLY_RECEIVED.
             const fresh = await tx.purchaseOrder.findUniqueOrThrow({
                 where: { id: po.id }, include: { items: true },
             });
-            const fullyReceived = fresh.items.every((i) => Number(i.quantityReceived) >= Number(i.quantityOrdered));
+            const fullyReceived = fresh.items.every((item) =>
+                receivedQuantityForItem(item).greaterThanOrEqualTo(orderedQuantityForItem(item)),
+            );
             const newStatus = fullyReceived ? 'RECEIVED' : 'PARTIALLY_RECEIVED';
 
             const updated = await tx.purchaseOrder.update({
@@ -446,7 +555,8 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_RECEIVE), async (req: 
                             return {
                                 itemId: m.item.id,
                                 productId: r.productId,
-                                qty: m.line.quantityReceived,
+                                warehouseId: r.warehouseId,
+                                qty: r.quantityReceived,
                                 unitCost: r.unitCost,
                                 stockBefore: r.stockBefore,
                                 stockAfter: r.stockAfter,
@@ -463,25 +573,24 @@ router.post('/:id/receive', authenticate, checkRole(ROLES_RECEIVE), async (req: 
 
         res.json({
             success: true,
-            data: req.role === BODEGUERO_ROLE ? redactBodegueroPurchaseOrder(result) : result,
+            data: req.role === BODEGUERO_ROLE ? redactBodegueroMeasuredOrder(result) : result,
         });
     } catch (e: any) {
-        if (e instanceof StockError
-            && (e.code === 'WAREHOUSE_REQUIRED' || e.code === 'WAREHOUSE_NOT_FOUND')) {
+        const msg: string = e?.message ?? '';
+        if (e instanceof PurchaseOrderQuantityError) {
             return res.status(400).json({ error: e.message, code: e.code });
         }
-        const msg: string = e?.message ?? '';
         if (msg === 'NOT_FOUND') return res.status(404).json({ error: 'Orden de compra no encontrada' });
         if (msg.startsWith('INVALID_STATUS:')) return res.status(400).json({ error: `No se puede recibir una OC en estado ${msg.split(':')[1]}` });
-        if (msg.startsWith('ITEM_NOT_IN_PO:')) return res.status(400).json({ error: 'Una línea no pertenece a esta orden de compra' });
-        if (msg.startsWith('ITEM_REPETIDO:')) return res.status(400).json({ error: 'Hay líneas repetidas del mismo ítem en la recepción' });
+        if (e instanceof StockError && e.code === 'WAREHOUSE_REQUIRED') {
+            return res.status(400).json({ error: 'Seleccioná la bodega destino para recibir esta orden de compra', code: e.code });
+        }
+        if (e instanceof StockError && e.code === 'WAREHOUSE_NOT_FOUND') {
+            return res.status(404).json({ error: 'La bodega destino no existe, está inactiva o no pertenece a tu negocio', code: e.code });
+        }
         if (msg.startsWith('LOTE_REQUERIDO|')) return res.status(400).json({ error: `Ingresá lote y vencimiento para ${msg.slice('LOTE_REQUERIDO|'.length)}` });
         if (msg.startsWith('LOTE_INVALIDO|')) return res.status(400).json({ error: `El lote de ${msg.slice('LOTE_INVALIDO|'.length)} es inválido` });
         if (msg.startsWith('FECHA_LOTE_INVALIDA|')) return res.status(400).json({ error: `La fecha de vencimiento de ${msg.slice('FECHA_LOTE_INVALIDA|'.length)} es inválida` });
-        if (msg.startsWith('SOBRE_RECEPCION|')) {
-            const [, nombre, pendiente] = msg.split('|');
-            return res.status(400).json({ error: `No podés recibir más de lo pedido: a "${nombre}" le quedan ${pendiente} por recibir` });
-        }
         console.error('Error recibiendo OC:', msg);
         res.status(500).json({ error: 'Error al recibir la orden de compra' });
     }

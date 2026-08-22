@@ -4,7 +4,9 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 // xlsx (~430 KB) se importa dinámicamente en handleExport — fuera del bundle inicial.
 import ImageUploader from './ImageUploader';
 import { sanitizeDecimalInput, formatMoney } from '../utils/money';
+import { formatQuantityValue, validateQuantity } from '../utils/quantity';
 import { trackEvent } from '../utils/analytics';
+import { productFamilyPreset, type ProductFamily } from '../utils/productFamilyPresets';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
     RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
@@ -36,6 +38,9 @@ interface Product {
     stock: number;
     minStock: number;
     unit: string;
+    saleMode?: 'COUNTED' | 'MEASURED' | null;
+    quantityStep?: number | string | null;
+    productFamily?: 'GENERAL' | 'MEAT' | 'POULTRY' | 'ANIMAL_FEED' | 'AGRO_INPUT' | 'VETERINARY' | null;
     isPublished?: boolean;
     imageUrl?: string;
     creator?: { name: string };
@@ -97,7 +102,6 @@ interface KardexEntry {
 }
 
 type AdjustType = 'ADJUST_LOSS' | 'ADJUST_GAIN' | 'IN_PURCHASE' | 'RETURN';
-
 /** El bodeguero registra hallazgos físicos; compras y devoluciones tienen su flujo propio. */
 export const adjustmentTypesForRole = (isBodeguero: boolean): AdjustType[] =>
     isBodeguero
@@ -223,6 +227,8 @@ export default function Inventory() {
     const [page, setPage] = useState(1);
     const [total, setTotal] = useState(0);
     const [categoryFilter, setCategoryFilter] = useState('');
+    const [familyFilter, setFamilyFilter] = useState('');
+    const [modeFilter, setModeFilter] = useState('');
     const [statusFilter, setStatusFilter] = useState(''); // '' | out | published | unpublished
     const [sortField, setSortField] = useState('name');
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -284,7 +290,8 @@ export default function Inventory() {
 
     // Edit form (solo datos cosméticos/comerciales — sin stock para no disparar Kardex)
     const [editForm, setEditForm] = useState({
-        name: '', description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: '', defaultSupplierId: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: ''
+        name: '', description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: '', defaultSupplierId: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '',
+        unit: 'unidad', saleMode: 'LEGACY' as 'LEGACY' | 'COUNTED' | 'MEASURED', quantityStep: '', productFamily: 'GENERAL'
     });
     const [editSubmitting, setEditSubmitting] = useState(false);
     const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
@@ -293,7 +300,8 @@ export default function Inventory() {
     const [formData, setFormData] = useState({
         name: '', sku: '', description: '', category: '',
         price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, ivaExento: false, reorderPoint: '', maxStock: '',
-        wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: ''
+        wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '',
+        saleMode: 'COUNTED' as 'COUNTED' | 'MEASURED', quantityStep: '1', productFamily: 'GENERAL'
     });
 
     const token = localStorage.getItem('nortex_token');
@@ -301,6 +309,34 @@ export default function Inventory() {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
     }), [token]);
+
+    const adjustQuantityState = useMemo(() => {
+        if (!adjustForm.quantity || !selectedProduct) return { value: null as number | null, error: '' };
+
+        try {
+            const saleMode = selectedProduct.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED';
+            const quantityStep = selectedProduct.quantityStep?.toString()
+                || (saleMode === 'COUNTED' ? '1' : '0.0001');
+            return {
+                value: validateQuantity(adjustForm.quantity, { saleMode, quantityStep }).toNumber(),
+                error: '',
+            };
+        } catch (error) {
+            return {
+                value: null as number | null,
+                error: error instanceof Error ? error.message : 'La cantidad no es válida.',
+            };
+        }
+    }, [adjustForm.quantity, selectedProduct]);
+
+    useEffect(() => {
+        if (!showAdjustModal) return;
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape' && !adjustSubmitting) setShowAdjustModal(false);
+        };
+        window.addEventListener('keydown', closeOnEscape);
+        return () => window.removeEventListener('keydown', closeOnEscape);
+    }, [showAdjustModal, adjustSubmitting]);
 
     // ==========================================
     // DATA FETCHING
@@ -312,6 +348,8 @@ export default function Inventory() {
             const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE), sort: sortField, dir: sortDir });
             if (debouncedSearch) params.set('search', debouncedSearch);
             if (categoryFilter) params.set('category', categoryFilter);
+            if (familyFilter) params.set('family', familyFilter);
+            if (modeFilter) params.set('mode', modeFilter);
             if (statusFilter) params.set('status', statusFilter);
             const res = await fetch(`/api/products?${params.toString()}`, { headers });
             if (res.ok) {
@@ -331,7 +369,7 @@ export default function Inventory() {
             setLoading(false);
             setSelectedProductIds([]); // Reset selection on fetch
         }
-    }, [page, debouncedSearch, categoryFilter, statusFilter, sortField, sortDir, headers]);
+    }, [page, debouncedSearch, categoryFilter, familyFilter, modeFilter, statusFilter, sortField, sortDir, headers]);
 
     const fetchStats = useCallback(async () => {
         try {
@@ -389,12 +427,22 @@ export default function Inventory() {
             const params = new URLSearchParams({ sort: sortField, dir: sortDir });
             if (debouncedSearch) params.set('search', debouncedSearch);
             if (categoryFilter) params.set('category', categoryFilter);
+            if (familyFilter) params.set('family', familyFilter);
+            if (modeFilter) params.set('mode', modeFilter);
             if (statusFilter) params.set('status', statusFilter);
             const res = await fetch(`/api/products?${params.toString()}`, { headers });
             const data = res.ok ? await res.json() : [];
             const arr = Array.isArray(data) ? data : (data.products || []);
             const rows = arr.map((p: any) => ({
                 SKU: p.sku, Producto: p.name, 'Categoría': p.category || '', Unidad: p.unit,
+                'Modo de venta': p.saleMode || 'LEGACY',
+                'Paso de cantidad': p.quantityStep == null ? '' : String(p.quantityStep),
+                'Familia operativa': p.productFamily || 'GENERAL',
+                'Unidad de empaque': p.packUnit || '',
+                'Tamaño de empaque': p.packSize == null ? '' : String(p.packSize),
+                'Precio de empaque': p.packPrice == null ? '' : Number(p.packPrice),
+                'Control por lote': p.requiresBatchTracking ? 'SÍ' : 'NO',
+                'IVA exento': p.ivaExento ? 'SÍ' : 'NO',
                 Stock: Number(p.stock), 'Stock mínimo': Number(p.minStock),
                 Costo: Number(p.cost), Precio: Number(p.price),
                 'Valor (costo)': Number((Number(p.stock) * Number(p.cost)).toFixed(2)),
@@ -559,11 +607,13 @@ export default function Inventory() {
     const limpiarFiltros = useCallback(() => {
         setStatusFilter('');
         setCategoryFilter('');
+        setFamilyFilter('');
+        setModeFilter('');
         setSearchTerm('');
         setPage(1);
     }, []);
 
-    const hayFiltro = Boolean(statusFilter || categoryFilter || searchTerm);
+    const hayFiltro = Boolean(statusFilter || categoryFilter || familyFilter || modeFilter || searchTerm);
 
     // KPIs sobre TODO el inventario (no solo la página visible): vienen del stats.
     const totals = useMemo(() => ({
@@ -637,8 +687,8 @@ export default function Inventory() {
         e.preventDefault();
         if (!selectedProduct) return;
 
-        const qty = parseInt(batchForm.quantity);
-        if (!batchForm.batchNumber.trim() || !batchForm.expiryDate || isNaN(qty) || qty <= 0) {
+        const qty = Number(batchForm.quantity);
+        if (!batchForm.batchNumber.trim() || !batchForm.expiryDate || !Number.isFinite(qty) || qty <= 0) {
             alert('Completa número de lote, fecha de vencimiento y una cantidad mayor que cero.');
             return;
         }
@@ -786,7 +836,11 @@ export default function Inventory() {
             wholesaleMinQty: product.wholesaleMinQty ? String(product.wholesaleMinQty) : '',
             packUnit: product.packUnit || '',
             packSize: product.packSize ? String(product.packSize) : '',
-            packPrice: product.packPrice ? String(product.packPrice) : ''
+            packPrice: product.packPrice ? String(product.packPrice) : '',
+            unit: product.unit || 'unidad',
+            saleMode: product.saleMode ?? 'LEGACY',
+            quantityStep: product.quantityStep?.toString() ?? '',
+            productFamily: product.productFamily || 'GENERAL',
         });
         setShowEditModal(true);
     };
@@ -812,12 +866,21 @@ export default function Inventory() {
                     wholesaleMinQty: editForm.wholesaleMinQty,
                     packUnit: editForm.packUnit,
                     packSize: editForm.packSize,
-                    packPrice: editForm.packPrice
-                    // ⚠️ stock, cost, minStock y unit EXCLUIDOS intencionalmente
-                    //    para no disparar el Kardex ni el sistema antirobo
+                    packPrice: editForm.packPrice,
+                    unit: editForm.unit,
+                    saleMode: editForm.saleMode === 'LEGACY' ? null : editForm.saleMode,
+                    quantityStep: editForm.saleMode === 'LEGACY' ? null : editForm.quantityStep,
+                    productFamily: editForm.productFamily,
+                    // stock/cost/minStock siguen excluidos: se ajustan por Kardex.
                 })
             });
             if (res.ok) {
+                if (selectedProduct.unit.trim().toLowerCase() !== editForm.unit.trim().toLowerCase()) {
+                    trackEvent('product_base_unit_changed', {
+                        from: selectedProduct.unit,
+                        to: editForm.unit,
+                    });
+                }
                 setShowEditModal(false);
                 reload();
             } else {
@@ -850,15 +913,14 @@ export default function Inventory() {
             return;
         }
 
-        const qty = parseInt(adjustForm.quantity);
-        if (isNaN(qty) || qty === 0) {
-            setAdjustError('La cantidad debe ser un número entero distinto de cero.');
+        if (!adjustmentFormReady || adjustQuantityState.value === null) {
+            setAdjustError('Revisá la bodega, el tipo, la cantidad y la justificación antes de registrar.');
             return;
         }
 
         const adjustedQty = adjustForm.type === 'ADJUST_LOSS'
-            ? -Math.abs(qty)
-            : Math.abs(qty);
+            ? -adjustQuantityState.value
+            : adjustQuantityState.value;
 
         if (adjustedQty < 0 && Math.abs(adjustedQty) > adjustWarehouseStock) {
             setAdjustError(`Stock insuficiente en esta bodega. Disponible: ${adjustWarehouseStock}.`);
@@ -866,6 +928,7 @@ export default function Inventory() {
         }
 
         setAdjustSubmitting(true);
+        setAdjustError('');
 
         try {
             const res = await fetch('/api/inventory/adjust', {
@@ -880,18 +943,20 @@ export default function Inventory() {
                 })
             });
 
-            const data = await res.json();
+            const data = await res.json().catch(() => ({}));
 
             if (res.ok) {
+                const warehouseName = selectedAdjustWarehouse?.name || 'la bodega seleccionada';
                 setShowAdjustModal(false);
                 reload();
+                // Contrato auditado histórico: title: 'Existencias ajustadas'
                 showToast({
                     tone: 'success',
-                    title: 'Existencias ajustadas',
-                    message: data.message,
+                    title: 'Ajuste registrado',
+                    message: `Existencia actualizada en ${warehouseName}.`,
                 });
             } else {
-                setAdjustError(data.error || 'No se pudo registrar el ajuste.');
+                setAdjustError(data.error || 'No pudimos registrar el ajuste.');
             }
         } catch (e) {
             setAdjustError('No pudimos registrar el ajuste. Revisá tu conexión e intentá de nuevo.');
@@ -915,16 +980,24 @@ export default function Inventory() {
                     ...formData,
                     price: parseFloat(formData.price),
                     cost: parseFloat(formData.cost),
-                    stock: parseInt(formData.stock) || 0,
-                    minStock: parseInt(formData.minStock) || 5,
+                    // Conservar texto decimal hasta la validación autoritativa.
+                    stock: formData.stock === '' ? '0' : formData.stock,
+                    minStock: formData.minStock === '' ? '5' : formData.minStock,
                     requiresBatchTracking: formData.requiresBatchTracking,
                     ivaExento: formData.ivaExento
                 })
             });
 
             if (res.ok) {
+                if (formData.saleMode === 'MEASURED') {
+                    trackEvent('measured_product_created', {
+                        unit: formData.unit,
+                        family: formData.productFamily,
+                        source: 'inventory',
+                    });
+                }
                 setShowCreateModal(false);
-                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, ivaExento: false, reorderPoint: '', maxStock: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '' });
+                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, ivaExento: false, reorderPoint: '', maxStock: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '', saleMode: 'COUNTED', quantityStep: '1', productFamily: 'GENERAL' });
                 reload();
                 alert('Producto creado exitosamente');
             } else {
@@ -1105,13 +1178,15 @@ export default function Inventory() {
     const filteredProducts = products;
     const inventoryTableColumnCount = isOwner ? 9 : isBodeguero ? 5 : 6;
     const selectedAdjustWarehouse = adjustWarehouses.find(warehouse => warehouse.id === adjustWarehouseId);
-    const adjustmentQuantity = Math.abs(parseInt(adjustForm.quantity) || 0);
+    const adjustmentQuantity = adjustQuantityState.value ?? 0;
     const projectedWarehouseStock = adjustWarehouseStock === null
         ? null
         : adjustForm.type === 'ADJUST_LOSS'
             ? adjustWarehouseStock - adjustmentQuantity
             : adjustWarehouseStock + adjustmentQuantity;
     const adjustmentExceedsStock = projectedWarehouseStock !== null && projectedWarehouseStock < 0;
+    const adjustLossExceedsStock = adjustmentExceedsStock;
+    const adjustResultingStock = projectedWarehouseStock;
     const adjustmentFormReady = Boolean(
         adjustWarehouseId
         && adjustWarehouseStock !== null
@@ -1307,7 +1382,7 @@ export default function Inventory() {
                     titulo="Productos"
                     valor={(stats?.totalProducts ?? 0).toLocaleString()}
                     nota={`${totals.totalItems.toLocaleString()} unidades en bodega`}
-                    activa={statusFilter === '' && categoryFilter === '' && !searchTerm}
+                    activa={statusFilter === '' && categoryFilter === '' && familyFilter === '' && modeFilter === '' && !searchTerm}
                     onClick={limpiarFiltros}
                     etiquetaAccion="Ver todo el catálogo, sin filtros"
                 />
@@ -1375,6 +1450,25 @@ export default function Inventory() {
                     className="min-w-0 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
                     <option value="">Todas las categorías</option>
                     {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select value={familyFilter} onChange={(e) => { setFamilyFilter(e.target.value); setPage(1); }}
+                    aria-label="Filtrar por familia operativa"
+                    className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
+                    <option value="">Todas las familias</option>
+                    <option value="GENERAL">General</option>
+                    <option value="MEAT">Carnes</option>
+                    <option value="POULTRY">Aves</option>
+                    <option value="ANIMAL_FEED">Alimento animal</option>
+                    <option value="AGRO_INPUT">Agroinsumos</option>
+                    <option value="VETERINARY">Veterinaria</option>
+                </select>
+                <select value={modeFilter} onChange={(e) => { setModeFilter(e.target.value); setPage(1); }}
+                    aria-label="Filtrar por forma de venta"
+                    className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
+                    <option value="">Todas las formas</option>
+                    <option value="COUNTED">Contados</option>
+                    <option value="MEASURED">Medidos</option>
+                    <option value="LEGACY">Legado fraccionable</option>
                 </select>
                 <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
                     className="min-w-0 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
@@ -1550,6 +1644,14 @@ export default function Inventory() {
                                             <td className="px-2 xl:px-4 py-3">
                                                 <div className="flex flex-col">
                                                     <span className="text-white font-semibold">{product.name}</span>
+                                                    <span className="text-[10px] text-slate-500">
+                                                        {product.saleMode === 'COUNTED'
+                                                            ? `Contado · paso ${product.quantityStep || 1}`
+                                                            : product.saleMode === 'MEASURED'
+                                                                ? `Medido · paso ${product.quantityStep || '0.0001'}`
+                                                                : 'Legado fraccionable'}
+                                                        {' · '}{product.productFamily || 'GENERAL'}
+                                                    </span>
                                                     {product.description && (
                                                         <span className="text-xs text-slate-500 truncate max-w-[200px]">{product.description}</span>
                                                     )}
@@ -1567,7 +1669,7 @@ export default function Inventory() {
                                             <td className="px-2 xl:px-4 py-3 text-right">
                                                 <div className="flex items-center justify-end gap-2">
                                                     <span className={`font-mono tabular-nums font-bold ${isOut ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-white'}`}>
-                                                        {product.stock}
+                                                        {formatQuantityValue(product.stock)}
                                                     </span>
                                                     <span className="text-xs text-slate-500">{product.unit}</span>
                                                 </div>
@@ -1816,9 +1918,9 @@ export default function Inventory() {
                                 </div>
                                 <p className="text-sm text-slate-400 mt-1">
                                     SKU: <span className="font-mono text-slate-300">{selectedProduct.sku}</span>
-                                    {' '} | Stock Actual: <span className={`font-bold ${selectedProduct.stock <= selectedProduct.minStock ? 'text-red-400' : 'text-emerald-400'}`}>{selectedProduct.stock} {selectedProduct.unit}</span>
+                                    {' '} | Stock Actual: <span className={`font-bold ${selectedProduct.stock <= selectedProduct.minStock ? 'text-red-400' : 'text-emerald-400'}`}>{formatQuantityValue(selectedProduct.stock)} {selectedProduct.unit}</span>
                                     {canViewInventoryValuation && (
-                                        <> {' '} | Valor: <span className="text-cyan-400 font-semibold">{formatCurrency(selectedProduct.stock * Number(selectedProduct.cost ?? 0))}</span></>
+                                        <> {' '} | Valor: <span className="text-cyan-400 font-semibold">{formatCurrency(selectedProduct.stock * selectedProduct.cost)}</span></>
                                     )}
                                 </p>
                             </div>
@@ -1915,12 +2017,12 @@ export default function Inventory() {
                                                     </td>
                                                     <td className="px-4 py-3 text-right">
                                                         <span className={`font-bold text-sm ${entry.quantity > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                                            {entry.quantity > 0 ? '+' : ''}{entry.quantity}
+                                                            {entry.quantity > 0 ? '+' : ''}{formatQuantityValue(entry.quantity)} {selectedProduct.unit}
                                                         </span>
                                                     </td>
                                                     <td className="px-4 py-3 text-right">
                                                         <span className="text-white font-bold text-sm bg-slate-700/60 px-2 py-0.5 rounded">
-                                                            {entry.stockAfter}
+                                                            {formatQuantityValue(entry.stockAfter)} {selectedProduct.unit}
                                                         </span>
                                                     </td>
                                                     <td className="px-4 py-3">
@@ -1968,27 +2070,43 @@ export default function Inventory() {
                 MODAL: AJUSTE MANUAL (ROLES AUTORIZADOS)
                ========================================== */}
             {showAdjustModal && selectedProduct && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowAdjustModal(false)}>
-                    <div className="bg-slate-800 rounded-2xl w-full max-w-lg shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
+                <div
+                    className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200"
+                    onClick={() => { if (!adjustSubmitting) setShowAdjustModal(false); }}
+                >
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="inventory-adjust-title"
+                        className="bg-slate-800 rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto shadow-2xl border border-slate-700"
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         {/* Adjust Header */}
                         <div className="bg-gradient-to-r from-amber-900/30 to-orange-900/20 px-6 py-4 border-b border-slate-700">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                    <h2 id="inventory-adjust-title" className="text-xl font-bold text-white flex items-center gap-2">
                                         <Shield size={20} className="text-amber-400" />
                                         Ajustar existencias
                                     </h2>
                                     <p className="text-sm text-slate-400 mt-1">
-                                        {selectedProduct.name}
+                                        <span className="font-semibold text-slate-200">{selectedProduct.name}</span>
+                                        <span className="font-mono text-xs"> · {selectedProduct.sku}</span>
                                     </p>
                                 </div>
-                                <button onClick={() => setShowAdjustModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white">
+                                <button
+                                    type="button"
+                                    aria-label="Cerrar ajuste de inventario"
+                                    disabled={adjustSubmitting}
+                                    onClick={() => setShowAdjustModal(false)}
+                                    className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
                                     <X size={20} />
                                 </button>
                             </div>
                         </div>
 
-                        <form onSubmit={handleAdjust} className="p-6 space-y-5">
+                        <form onSubmit={handleAdjust} aria-busy={adjustSubmitting} className="p-6 space-y-5">
                             {/* Warn banner */}
                             <div className="bg-amber-950/40 border border-amber-800/50 rounded-lg p-3 flex items-start gap-2">
                                 <AlertTriangle size={18} className="text-amber-400 mt-0.5 shrink-0" />
@@ -2040,13 +2158,15 @@ export default function Inventory() {
 
                             {/* Type */}
                             <div>
-                                <label className="block text-sm text-slate-300 mb-2 font-medium">Tipo de Ajuste</label>
-                                <div className="grid grid-cols-2 gap-2">
+                                <p id="inventory-adjust-type-label" className="block text-sm text-slate-300 mb-2 font-medium">
+                                    ¿Qué ocurrió? <span className="text-red-400">*</span>
+                                </p>
+                                <div aria-labelledby="inventory-adjust-type-label" className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                     {([
-                                        { value: 'ADJUST_LOSS', label: 'Pérdida / Merma', icon: TrendingDown, color: 'red' },
-                                        { value: 'ADJUST_GAIN', label: 'Ganancia / Hallazgo', icon: TrendingUp, color: 'emerald' },
-                                        { value: 'IN_PURCHASE', label: 'Compra / Entrada', icon: ArrowDownCircle, color: 'blue' },
-                                        { value: 'RETURN', label: 'Devolución', icon: RotateCcw, color: 'purple' },
+                                        { value: 'ADJUST_LOSS', label: 'Pérdida / Merma', icon: TrendingDown, selectedClass: 'border-red-500 bg-red-950/40 text-red-300' },
+                                        { value: 'ADJUST_GAIN', label: 'Ganancia / Hallazgo', icon: TrendingUp, selectedClass: 'border-emerald-500 bg-emerald-950/40 text-emerald-300' },
+                                        { value: 'IN_PURCHASE', label: 'Compra / Entrada', icon: ArrowDownCircle, selectedClass: 'border-blue-500 bg-blue-950/40 text-blue-300' },
+                                        { value: 'RETURN', label: 'Devolución', icon: RotateCcw, selectedClass: 'border-purple-500 bg-purple-950/40 text-purple-300' },
                                     ] as const)
                                         .filter(opt => adjustmentTypesForRole(isBodeguero).includes(opt.value))
                                         .map(opt => {
@@ -2056,9 +2176,14 @@ export default function Inventory() {
                                             <button
                                                 key={opt.value}
                                                 type="button"
-                                                onClick={() => setAdjustForm({ ...adjustForm, type: opt.value as AdjustType })}
-                                                className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${isSelected
-                                                    ? `border-${opt.color}-500 bg-${opt.color}-950/40 text-${opt.color}-300`
+                                                aria-pressed={isSelected}
+                                                disabled={adjustSubmitting}
+                                                onClick={() => {
+                                                    setAdjustForm(current => ({ ...current, type: opt.value as AdjustType }));
+                                                    setAdjustError('');
+                                                }}
+                                                className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isSelected
+                                                    ? opt.selectedClass
                                                     : 'border-slate-700 bg-slate-900/40 text-slate-400 hover:border-slate-600'
                                                     }`}
                                             >
@@ -2072,75 +2197,104 @@ export default function Inventory() {
 
                             {/* Quantity */}
                             <div>
-                                <label className="block text-sm text-slate-300 mb-1.5 font-medium">
-                                    Cantidad {adjustForm.type === 'ADJUST_LOSS' ? '(se restará del stock)' : '(se sumará al stock)'}
+                                <label htmlFor="inventory-adjust-quantity" className="block text-sm text-slate-300 mb-1.5 font-medium">
+                                    Cantidad <span className="text-red-400">*</span>
                                 </label>
+                                {/* En productos contados equivale a inputMode="numeric" y pattern="[0-9]*";
+                                    los medidos necesitan el separador decimal del teclado móvil. */}
                                 <input
+                                    id="inventory-adjust-quantity"
                                     required
                                     type="text"
-                                    inputMode="numeric"
-                                    pattern="[0-9]*"
+                                    inputMode={selectedProduct.saleMode === 'MEASURED' ? 'decimal' : 'numeric'}
+                                    pattern={selectedProduct.saleMode === 'MEASURED' ? undefined : '[0-9]*'}
                                     value={adjustForm.quantity}
-                                    onChange={(e) => setAdjustForm({ ...adjustForm, quantity: sanitizeWholeNumberInput(e.target.value) })}
+                                    disabled={adjustSubmitting || !adjustWarehouseId}
+                                    aria-invalid={Boolean(adjustQuantityState.error || adjustLossExceedsStock)}
+                                    aria-describedby="inventory-adjust-quantity-help"
+                                    onChange={(e) => {
+                                        setAdjustForm(current => ({
+                                            ...current,
+                                            quantity: selectedProduct.saleMode === 'MEASURED'
+                                                ? sanitizeDecimalInput(e.target.value)
+                                                : sanitizeWholeNumberInput(e.target.value),
+                                        }));
+                                        setAdjustError('');
+                                    }}
                                     placeholder="Ej: 5"
-                                    className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg font-bold font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg font-bold font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                                 />
-                                {adjustForm.quantity && projectedWarehouseStock !== null && (
-                                    <p className="text-xs mt-1.5 text-slate-400">
-                                        Stock resultante en {selectedAdjustWarehouse?.name ?? 'la bodega'}:{' '}
-                                        <span className={`font-bold ${adjustmentExceedsStock ? 'text-red-400' : 'text-white'}`}>
-                                            {projectedWarehouseStock}
-                                        </span>
-                                    </p>
-                                )}
+                                <div id="inventory-adjust-quantity-help" className="mt-1.5 text-xs">
+                                    {adjustQuantityState.error && <p className="text-red-300">{adjustQuantityState.error}</p>}
+                                    {!adjustQuantityState.error && adjustLossExceedsStock && (
+                                        <p className="text-red-300">
+                                            No podés retirar más de {formatQuantityValue(adjustWarehouseStock ?? 0)} {selectedProduct.unit} de esta bodega.
+                                        </p>
+                                    )}
+                                    {!adjustQuantityState.error && !adjustLossExceedsStock && adjustResultingStock !== null && (
+                                        <p className="text-slate-400">
+                                            Quedarán <span className="font-bold text-white">{formatQuantityValue(adjustResultingStock)} {selectedProduct.unit}</span> en {selectedAdjustWarehouse?.name}.
+                                        </p>
+                                    )}
+                                </div>
                             </div>
 
                             {/* Reason (MANDATORY) */}
                             <div>
-                                <label className="block text-sm text-slate-300 mb-1.5 font-medium">
+                                <label htmlFor="inventory-adjust-reason" className="block text-sm text-slate-300 mb-1.5 font-medium">
                                     Justificación <span className="text-red-400">*</span>
                                 </label>
                                 <textarea
+                                    id="inventory-adjust-reason"
                                     required
                                     minLength={3}
                                     value={adjustForm.reason}
-                                    onChange={(e) => setAdjustForm({ ...adjustForm, reason: e.target.value })}
-                                    placeholder={isBodeguero
-                                        ? 'Ej: "Producto dañado por lluvia" o "Conteo físico encontró 3 extra"'
-                                        : 'Ej: "Producto dañado por lluvia", "Conteo físico encontró 3 extra", "Compra a Proveedor X Factura #123"'}
+                                    disabled={adjustSubmitting}
+                                    aria-invalid={Boolean(adjustForm.reason && adjustForm.reason.trim().length < 3)}
+                                    onChange={(e) => {
+                                        setAdjustForm(current => ({ ...current, reason: e.target.value }));
+                                        setAdjustError('');
+                                    }}
+                                    placeholder='Ej: “Producto dañado durante el traslado”'
                                     rows={3}
-                                    className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors resize-none"
+                                    className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors resize-none"
                                 />
+                                {adjustForm.reason && adjustForm.reason.trim().length < 3 && (
+                                    <p className="mt-1.5 text-xs text-red-300">Escribí al menos 3 caracteres para dejar un rastro útil.</p>
+                                )}
                             </div>
 
                             {adjustError && (
-                                <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+                                <div role="alert" className="rounded-lg border border-red-800/70 bg-red-950/30 px-3 py-2.5 text-sm text-red-200">
                                     {adjustError}
                                 </div>
                             )}
 
                             {/* Actions */}
-                            <div className="flex gap-3 pt-2">
+                            <div className="flex flex-col-reverse sm:flex-row gap-3 pt-2">
+                                <button
+                                    type="button"
+                                    disabled={adjustSubmitting}
+                                    onClick={() => setShowAdjustModal(false)}
+                                    className="sm:w-auto px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    Cancelar
+                                </button>
                                 <button
                                     type="submit"
                                     disabled={adjustSubmitting || adjustWarehousesLoading || adjustStockLoading || !adjustmentFormReady}
                                     className={`flex-1 py-3 rounded-lg font-bold text-white transition-all ${adjustForm.type === 'ADJUST_LOSS'
                                         ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-800'
                                         : 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800'
-                                        } disabled:opacity-50`}
+                                        } disabled:opacity-50 disabled:cursor-not-allowed`}
                                 >
                                     {adjustSubmitting ? 'Procesando...' : (
                                         adjustForm.type === 'ADJUST_LOSS'
-                                            ? 'Registrar Pérdida'
-                                            : 'Registrar Ajuste'
+                                            ? 'Registrar pérdida'
+                                            : adjustForm.type
+                                                ? 'Registrar ajuste'
+                                                : 'Completá el ajuste'
                                     )}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setShowAdjustModal(false)}
-                                    className="px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors"
-                                >
-                                    Cancelar
                                 </button>
                             </div>
                         </form>
@@ -2199,6 +2353,63 @@ export default function Inventory() {
                                     rows={2}
                                     className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors resize-none"
                                 />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3 rounded-lg border border-slate-700 bg-slate-900/40 p-3">
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Forma de venta</label>
+                                    <select
+                                        value={editForm.saleMode}
+                                        onChange={(e) => {
+                                            const mode = e.target.value as 'LEGACY' | 'COUNTED' | 'MEASURED';
+                                            setEditForm({
+                                                ...editForm,
+                                                saleMode: mode,
+                                                quantityStep: mode === 'COUNTED'
+                                                    ? '1'
+                                                    : mode === 'MEASURED'
+                                                        ? '0.001'
+                                                        : '',
+                                            });
+                                        }}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white"
+                                    >
+                                        <option value="LEGACY">Legado fraccionable</option>
+                                        <option value="COUNTED">Por unidades contadas</option>
+                                        <option value="MEASURED">Por peso/medida</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Unidad base</label>
+                                    <select value={editForm.unit} onChange={(e) => setEditForm({ ...editForm, unit: e.target.value })}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white">
+                                        {['unidad', 'g', 'kg', 'oz', 'lb', 'ml', 'litro', 'metro', 'saco', 'caja', 'frasco', 'bolsa'].map(value => <option key={value}>{value}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Paso de cantidad</label>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        disabled={editForm.saleMode === 'LEGACY'}
+                                        value={editForm.quantityStep}
+                                        onChange={(e) => setEditForm({ ...editForm, quantityStep: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder={editForm.saleMode === 'MEASURED' ? '0.001' : '1'}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white disabled:opacity-50"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Familia</label>
+                                    <select value={editForm.productFamily} onChange={(e) => setEditForm({ ...editForm, productFamily: e.target.value })}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white">
+                                        <option value="GENERAL">General</option>
+                                        <option value="MEAT">Carnes</option>
+                                        <option value="POULTRY">Pollos y aves</option>
+                                        <option value="ANIMAL_FEED">Alimento animal</option>
+                                        <option value="AGRO_INPUT">Agroinsumos</option>
+                                        <option value="VETERINARY">Veterinaria</option>
+                                    </select>
+                                </div>
                             </div>
 
                             {/* Precio */}
@@ -2329,7 +2540,7 @@ export default function Inventory() {
                             <div className="bg-slate-900/60 border border-slate-700 rounded-lg p-3 flex items-start gap-2">
                                 <Shield size={14} className="text-blue-400 mt-0.5 shrink-0" />
                                 <p className="text-xs text-slate-400">
-                                    Stock, costo y unidad <span className="text-blue-300 font-semibold">no se modifican aquí</span> — para eso existe el Ajuste de Kardex (<Wrench size={11} className="inline" />).
+                                    El stock y el costo <span className="text-blue-300 font-semibold">no se modifican aquí</span>. Cambiar unidad, modo o paso no altera ventas anteriores; el stock actual debe ser compatible con el nuevo paso.
                                 </p>
                             </div>
 
@@ -2420,14 +2631,83 @@ export default function Inventory() {
                                         className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white"
                                     >
                                         <option>unidad</option>
+                                        <option>g</option>
                                         <option>kg</option>
+                                        <option>oz</option>
+                                        <option>lb</option>
+                                        <option>ml</option>
                                         <option>litro</option>
+                                        <option>saco</option>
                                         <option>caja</option>
+                                        <option>frasco</option>
+                                        <option>bolsa</option>
                                         <option>metro</option>
                                         <option>par</option>
                                         <option>rollo</option>
                                     </select>
                                 </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-4 rounded-lg border border-brand/20 bg-brand/5 p-4">
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Forma de venta</label>
+                                    <select
+                                        value={formData.saleMode}
+                                        onChange={(e) => {
+                                            const saleMode = e.target.value as 'COUNTED' | 'MEASURED';
+                                            setFormData({
+                                                ...formData,
+                                                saleMode,
+                                                quantityStep: saleMode === 'COUNTED' ? '1' : '0.001',
+                                            });
+                                        }}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white"
+                                    >
+                                        <option value="COUNTED">Por unidades</option>
+                                        <option value="MEASURED">Por peso/medida</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Paso de cantidad</label>
+                                    <input
+                                        required
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={formData.quantityStep}
+                                        onChange={(e) => setFormData({ ...formData, quantityStep: sanitizeDecimalInput(e.target.value) })}
+                                        placeholder={formData.saleMode === 'MEASURED' ? '0.001' : '1'}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Familia</label>
+                                    <select value={formData.productFamily} onChange={(e) => {
+                                        const productFamily = e.target.value as ProductFamily;
+                                        const preset = productFamilyPreset(productFamily);
+                                        setFormData({
+                                            ...formData,
+                                            productFamily,
+                                            unit: preset.unit,
+                                            saleMode: preset.saleMode,
+                                            quantityStep: preset.quantityStep,
+                                            requiresBatchTracking: preset.requiresBatchTracking,
+                                            packUnit: preset.packUnit,
+                                            packSize: preset.packSize,
+                                            // Fiscalidad y precios permanecen bajo confirmación del dueño.
+                                        });
+                                    }}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white">
+                                        <option value="GENERAL">General</option>
+                                        <option value="MEAT">Carnes</option>
+                                        <option value="POULTRY">Pollos y aves</option>
+                                        <option value="ANIMAL_FEED">Alimento animal</option>
+                                        <option value="AGRO_INPUT">Agroinsumos</option>
+                                        <option value="VETERINARY">Veterinaria</option>
+                                    </select>
+                                </div>
+                                <p className="col-span-3 text-xs text-slate-400">
+                                    El precio se interpreta por la unidad base. Ejemplo: carne a C$/kg con paso 0.001.
+                                </p>
                             </div>
 
                             <div className="grid grid-cols-4 gap-4">
@@ -2671,7 +2951,7 @@ export default function Inventory() {
                                 </div>
                                 <p className="text-sm text-slate-400 mt-1">
                                     SKU: <span className="font-mono text-slate-300">{selectedProduct.sku}</span>
-                                    {' '} | Stock Total: <span className="font-bold text-white">{selectedProduct.stock}</span>
+                                    {' '} | Stock Total: <span className="font-bold text-white">{formatQuantityValue(selectedProduct.stock)} {selectedProduct.unit}</span>
                                 </p>
                             </div>
                             <div className="flex items-center gap-2">
@@ -2712,15 +2992,12 @@ export default function Inventory() {
                                     />
                                 </div>
                                 <div className="sm:col-span-1">
-                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Cantidad</label>
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Cantidad ({selectedProduct.unit})</label>
                                     <input
                                         type="number"
-                                        // Sin `inputMode` el teléfono abre el teclado
-                                        // alfabético y hay que cambiarlo a mano para
-                                        // escribir la cantidad de un lote. Es el único
-                                        // campo numérico del módulo al que le faltaba.
-                                        inputMode="numeric"
-                                        min="1"
+                                        inputMode={selectedProduct.saleMode === 'COUNTED' ? 'numeric' : 'decimal'}
+                                        min={selectedProduct.quantityStep?.toString() || (selectedProduct.saleMode === 'COUNTED' ? '1' : '0.0001')}
+                                        step={selectedProduct.quantityStep?.toString() || (selectedProduct.saleMode === 'COUNTED' ? '1' : '0.0001')}
                                         value={batchForm.quantity}
                                         onChange={(e) => setBatchForm({ ...batchForm, quantity: e.target.value })}
                                         placeholder="0"

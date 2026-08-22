@@ -3,8 +3,9 @@
  * NORTEX — Guardia de ALCANCE de las pruebas de mutación.
  *
  * PROBLEMA QUE RESUELVE (verificado ejecutándolo, no teórico):
- * el `mutate` de stryker.config.json apunta a las funciones puras de dinero por
- * RANGO DE LÍNEAS. Esos rangos se desfasan con cualquier refactor que mueva la
+ * el `mutate` de stryker.config.json apunta a módulos puros completos y a ciertas
+ * funciones de infraestructura por RANGO DE LÍNEAS. Esos rangos se desfasan
+ * con cualquier refactor que mueva la
  * función — y Stryker NO avisa:
  *   · Insertar 8 líneas arriba de buildSaleJournalLines dejó el archivo con 7
  *     mutantes en vez de 18 (el `return [...]` con los CINCO códigos de cuenta
@@ -42,7 +43,13 @@ const PISO_MUTANTES = {
     // —el piso de 1 mes no le toca a quien entra y sale el mismo día— y cuyos
     // mutantes SÍ mueren. Menos mutantes, más score (96.81% → 98.86%).
     'utils/calc-laborales.ts': 88,
-    'utils/pricing.ts': 66,
+    // pricing.ts bajó de 66 a 51 mutantes cuando el contrato de empaque dejó
+    // de inferirse por umbral y pasó a requerir `presentation: 'PACK'`
+    // explícita. En esa limpieza se borraron guardas redundantes (`x != null`
+    // con `x > 0`) y el default string del parámetro, que eran equivalentes:
+    // no había aserción honesta que los distinguiera porque cualquier valor
+    // distinto de 'PACK' se trata como BASE. Menos mutantes, mayor señal.
+    'utils/pricing.ts': 51,
     // margen.ts entró con NX-01/02/03 (ganancia bruta real, retiro seguro y
     // efectivo del turno): 66 mutantes, score medido 100.00% — sin
     // sobrevivientes. El 15% de IVA se construye DENTRO de la función a
@@ -71,7 +78,38 @@ const PISO_MUTANTES = {
     // se haga en silencio (visibles + ocultos == total) y que el SKU exacto —el
     // camino del escáner— le siga ganando a cualquier coincidencia parcial.
     'utils/posSearch.ts': 46,
+    // Los seis presets operativos se validan completos, sin fiscalidad/precio:
+    // 45/45 mutantes detectados.
+    'utils/productFamilyPresets.ts': 45,
+    // Dominio exacto de cantidad: 257 mutantes, 99.61%. El único survivor es
+    // la construcción exportada de MAX_QUANTITY al importar el módulo, antes
+    // de que coverageAnalysis=perTest pueda activar un mutante estático.
+    'utils/quantity.ts': 257,
+    // Transferencias de bodega reutilizan modo/paso autoritativos: 18/18.
+    'utils/stockTransferQuantity.ts': 18,
+    // Parser declarativo completo de etiquetas: 370 mutantes, 100.00% (incluye
+    // un timeout por hit-limit que Stryker cuenta como detectado).
+    'utils/scaleLabels.ts': 370,
+    // Conversión autoritativa BASE/PACK y costo unitario: 117/117.
+    'utils/purchasePackaging.ts': 117,
+    // Serialización pura de filas para el XLSX de reportes medidos: 3/3.
+    'utils/measuredReportExport.ts': 3,
+    // Agrupación exacta de cantidades vendidas: 67/67.
+    'backend/lib/salesQuantityReport.ts': 67,
+    // Saldo recibido aún facturable por producto: 16/16.
+    'backend/lib/purchaseOrderAvailability.ts': 16,
+    // Telemetría de rechazo sin barcode crudo: 31/31.
+    'backend/lib/scaleLabelTelemetry.ts': 31,
+    // Huella canónica del replay offline: 54/54. Incluye identidad económica,
+    // mediciones y privacidad (solo SHA-256 del código; nunca código crudo).
+    'backend/lib/offlineSaleReplay.ts': 54,
+    // Escape de HTML + CSP con nonce acotado para vistas fiscales: 27/27.
+    'backend/lib/htmlSecurity.ts': 27,
     'backend/services/loanMath.ts': 12,
+    // DTO público mínimo de tracking: 5/5; descarta notas, GPS y teléfonos.
+    'backend/services/pedidoTrackingService.ts': 5,
+    // Decimal finito + huella v1 + conflicto idempotente de devolución: 39/39.
+    'backend/services/returnService.ts': 39,
     // nicaLabor.ts es el motor de nómina del ERP: lo que de verdad se le paga a un
     // trabajador (planilla, retención de IR, finiquito). Entró sin ninguna red —
     // el 95,59% histórico protegía utils/calc-laborales.ts, que es el ESPEJO
@@ -125,7 +163,7 @@ for (const [ruta, piso] of Object.entries(PISO_MUTANTES)) {
 }
 
 if (fallas.length > 0) {
-    console.error('\n❌ ALCANCE DE MUTACIÓN ROTO — la red de seguridad de dinero perdió cobertura.\n');
+    console.error('\n❌ ALCANCE DE MUTACIÓN ROTO — la red de seguridad de dominio perdió cobertura.\n');
     for (const f of fallas) {
         console.error(
             f.ausente
@@ -140,4 +178,4 @@ if (fallas.length > 0) {
 }
 
 const total = Object.values(archivos).reduce((s, f) => s + (f.mutants?.length ?? 0), 0);
-console.log(`✅ Alcance de mutación intacto: ${total} mutantes sobre ${Object.keys(PISO_MUTANTES).length} módulos de dinero protegidos.`);
+console.log(`✅ Alcance de mutación intacto: ${total} mutantes sobre ${Object.keys(PISO_MUTANTES).length} módulos puros protegidos.`);

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ShoppingCart, Wallet, PackagePlus, LayoutGrid, ArrowRight } from 'lucide-react';
+import { ShoppingCart, Wallet, PackagePlus, LayoutGrid, ArrowRight, PlayCircle } from 'lucide-react';
 import { formatMoney } from '../utils/money';
+import { trackEvent } from '../utils/analytics';
 
 /**
  * Mi Negocio — pantalla de inicio del modo simple (Fase B del plan UX Simple).
@@ -22,6 +23,11 @@ interface DayNumbers {
     meDeben: number | null;
     enCaja: number | null;
     gananciaHoy: number | null;
+}
+
+interface ActivationStatus {
+    hasProduct: boolean;
+    hasSale: boolean;
 }
 
 const formatCordobas = (n: number | null): string => {
@@ -45,6 +51,9 @@ const MiNegocio: React.FC = () => {
     // Líneas vendidas hoy SIN costo cargado: la ganancia está sobreestimada y
     // hay que decirlo, no maquillarlo (NX-01).
     const [lineasSinCosto, setLineasSinCosto] = useState(0);
+    // Una venta real es el momento de activación. El backend deriva ambos hitos
+    // de los datos del negocio; esta pantalla no guarda progreso paralelo.
+    const [activation, setActivation] = useState<ActivationStatus | null>(null);
 
     useEffect(() => {
         try {
@@ -109,9 +118,54 @@ const MiNegocio: React.FC = () => {
                 }
             } catch { /* sin red — se queda en "—" */ }
         })();
+
+        (async () => {
+            try {
+                const res = await fetch('/api/onboarding', { headers });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!Array.isArray(data?.steps)) return;
+
+                const product = data.steps.find((step: { key?: string }) => step.key === 'product');
+                const sale = data.steps.find((step: { key?: string }) => step.key === 'sale');
+
+                // LENDER no tiene estos pasos y conserva su experiencia propia.
+                if (sale) {
+                    const next = { hasProduct: Boolean(product?.done), hasSale: Boolean(sale.done) };
+                    setActivation(next);
+                    if (!next.hasSale) {
+                        trackEvent('activation_first_sale_viewed', {
+                            source: 'mi_negocio',
+                            has_product: next.hasProduct,
+                        });
+                    }
+                }
+            } catch { /* sin red — el inicio operativo sigue disponible */ }
+        })();
     }, []);
 
+    const startFirstSale = () => {
+        if (!activation || activation.hasSale) return;
+
+        trackEvent('activation_first_sale_started', {
+            source: 'mi_negocio',
+            has_product: activation.hasProduct,
+        });
+        // La primera venta es REAL. Nunca sembramos productos ficticios dentro
+        // del inventario del negocio: si falta catálogo, el POS permite crear un
+        // producto mínimo (nombre + precio) dentro del mismo flujo.
+        navigate('/app/pos?first_sale=1');
+    };
+
+    const startPracticeSale = () => {
+        trackEvent('activation_practice_started', { source: 'mi_negocio' });
+        // /demo vive fuera del ledger autenticado: no abre turno, no descuenta
+        // inventario y no altera reportes. Es la única práctica honesta.
+        navigate('/demo?source=onboarding');
+    };
+
     const hoy = new Date().toLocaleDateString('es-NI', { weekday: 'long', day: 'numeric', month: 'long' });
+    const needsActivation = activation !== null && !activation.hasSale;
 
     const acciones = [
         { label: 'Vender', desc: 'Cobrar en caja', path: '/app/pos', icon: ShoppingCart, principal: true },
@@ -130,6 +184,54 @@ const MiNegocio: React.FC = () => {
                     </h1>
                     <p className="text-slate-400 capitalize mt-1">{hoy}</p>
                 </header>
+
+                {needsActivation && (
+                    <section
+                        aria-labelledby="first-sale-title"
+                        className="bg-surface-900 border border-white/[0.08] rounded-card p-5 sm:p-8 mb-8 shadow-premium"
+                    >
+                        <div className="max-w-2xl">
+                            <p className="text-emerald-400 text-sm font-bold mb-2">Empezá por lo importante</p>
+                            <h2 id="first-sale-title" className="text-2xl sm:text-3xl font-extrabold text-white leading-tight">
+                                Hacé tu primera venta
+                            </h2>
+                            <p className="text-slate-300 mt-3 leading-relaxed max-w-xl">
+                                Elegí un producto, cobrá y listo. Si todavía no cargaste ninguno, te pediremos solo el nombre y el precio.
+                            </p>
+
+                            <div className="mt-6 flex flex-col sm:flex-row sm:items-center gap-3">
+                                <button
+                                    type="button"
+                                    onClick={startFirstSale}
+                                    className="min-h-[52px] w-full sm:w-auto inline-flex items-center justify-center gap-3 px-6 py-3 bg-emerald-600 border border-emerald-500 text-white font-extrabold rounded-control hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-900 active:scale-[0.98] transition-all"
+                                >
+                                    <ShoppingCart size={20} aria-hidden="true" />
+                                    Registrar una venta real
+                                    <ArrowRight size={20} aria-hidden="true" />
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={startPracticeSale}
+                                    className="min-h-[52px] w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 text-slate-200 font-bold rounded-control border border-white/[0.08] hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 transition-colors"
+                                >
+                                    <PlayCircle size={19} aria-hidden="true" />
+                                    Practicar sin guardar datos
+                                </button>
+                            </div>
+
+                            <p className="text-xs text-slate-500 mt-4">
+                                La venta real actualiza tu caja e inventario. La práctica no toca la información de tu negocio.
+                            </p>
+                        </div>
+                    </section>
+                )}
+
+                {needsActivation && (
+                    <div className="border-t border-white/[0.06] pt-7 mb-4">
+                        <h2 className="text-lg font-bold text-white">Tu negocio en un vistazo</h2>
+                        <p className="text-sm text-slate-400 mt-1">Estos datos se van a completar a medida que usás Nortex.</p>
+                    </div>
+                )}
 
                 {/* El día en 3 números */}
                 <section aria-label="Resumen del día" className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
@@ -164,29 +266,34 @@ const MiNegocio: React.FC = () => {
                     </div>
                 </section>
 
+                {needsActivation && (
+                    <h2 className="text-base font-bold text-slate-300 mb-3">Otras cosas que podés hacer</h2>
+                )}
+
                 {/* Las 4 acciones del día — botones grandes, ícono + palabra */}
                 <section aria-label="Acciones" className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {acciones.map(a => {
                         const Icon = a.icon;
+                        const isPrincipal = a.principal && !needsActivation;
                         return (
                             <button
                                 key={a.path}
                                 onClick={() => navigate(a.path)}
                                 className={`
                                     flex items-center gap-4 p-6 rounded-2xl border text-left transition-all active:scale-[0.98] min-h-[96px]
-                                    ${a.principal
+                                    ${isPrincipal
                                         ? 'bg-emerald-600 border-emerald-500 text-white hover:bg-emerald-500 shadow-glow shadow-emerald-500/20'
                                         : 'bg-white/[0.03] border-white/[0.08] text-white hover:bg-white/[0.06] hover:border-white/[0.16]'}
                                 `}
                             >
-                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 ${a.principal ? 'bg-white/20' : 'bg-white/[0.06]'}`}>
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 ${isPrincipal ? 'bg-white/20' : 'bg-white/[0.06]'}`}>
                                     <Icon size={28} />
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="font-extrabold text-lg leading-tight">{a.label}</p>
-                                    <p className={`text-sm mt-0.5 ${a.principal ? 'text-emerald-100' : 'text-slate-400'}`}>{a.desc}</p>
+                                    <p className={`text-sm mt-0.5 ${isPrincipal ? 'text-emerald-100' : 'text-slate-400'}`}>{a.desc}</p>
                                 </div>
-                                <ArrowRight size={20} className={a.principal ? 'text-emerald-200' : 'text-slate-500'} />
+                                <ArrowRight size={20} className={isPrincipal ? 'text-emerald-200' : 'text-slate-500'} />
                             </button>
                         );
                     })}

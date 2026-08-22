@@ -164,8 +164,11 @@ const RETAIL_CATALOG: CatalogEntry[] = [
     { path: '/app/delivery', label: 'Entregas', shortLabel: 'Entregas', group: 'VENDER', iconKey: 'truck' },
     // ── STOCK ──
     { path: '/app/inventory', label: 'Mis Productos', shortLabel: 'Productos', group: 'STOCK', iconKey: 'package' },
+    { path: '/app/warehouses', label: 'Bodegas', shortLabel: 'Bodegas', group: 'STOCK', iconKey: 'layoutGrid', roles: GATE_MANAGER },
+    { path: '/app/scales', label: 'Balanzas y Etiquetas', shortLabel: 'Balanzas', group: 'STOCK', iconKey: 'monitor', roles: GATE_ADMIN },
     { path: '/app/inventory-count', label: 'Contar Productos', shortLabel: 'Conteo', group: 'STOCK', iconKey: 'clipboardList', roles: GATE_ADMIN },
     { path: '/app/purchases', label: 'Compras', shortLabel: 'Compras', group: 'STOCK', iconKey: 'truck' },
+    { path: '/app/purchase-orders', label: 'Órdenes de compra', shortLabel: 'Órdenes', group: 'STOCK', iconKey: 'fileText', roles: GATE_MANAGER },
     { path: '/app/smart-purchases', label: 'Compras Inteligentes', shortLabel: 'Smart', group: 'STOCK', iconKey: 'zap', roles: GATE_ADMIN },
     { path: '/app/suppliers', label: 'Proveedores', shortLabel: 'Proveed.', group: 'STOCK', iconKey: 'clipboardList' },
     // Mercado B2B oculto del nav hasta tener catálogo real (no mock que debite
@@ -196,14 +199,14 @@ const RETAIL_CATALOG: CatalogEntry[] = [
 // "Mi Negocio" (/app/inicio) va primero para roles administradores; para roles
 // sin acceso (p. ej. CASHIER) simplemente se filtra por el gating del catálogo.
 const SIMPLE_SETS: Record<string, string[]> = {
-    PULPERIA: ['/app/inicio', '/app/pos', '/app/receivables', '/app/inventory', '/app/dashboard'],
-    FERRETERIA: ['/app/inicio', '/app/pos', '/app/receivables', '/app/inventory', '/app/quotations', '/app/purchases', '/app/dashboard'],
-    FARMACIA: ['/app/inicio', '/app/pos', '/app/inventory', '/app/purchases', '/app/receivables', '/app/dashboard'],
-    DISTRIBUIDORA: ['/app/inicio', '/app/pos', '/app/quotations', '/app/inventory', '/app/purchases', '/app/receivables', '/app/delivery', '/app/dashboard'],
+    PULPERIA: ['/app/inicio', '/app/pos', '/app/receivables', '/app/inventory', '/app/warehouses', '/app/scales', '/app/dashboard'],
+    FERRETERIA: ['/app/inicio', '/app/pos', '/app/receivables', '/app/inventory', '/app/warehouses', '/app/quotations', '/app/purchases', '/app/dashboard'],
+    FARMACIA: ['/app/inicio', '/app/pos', '/app/inventory', '/app/warehouses', '/app/purchases', '/app/receivables', '/app/dashboard'],
+    DISTRIBUIDORA: ['/app/inicio', '/app/pos', '/app/quotations', '/app/inventory', '/app/warehouses', '/app/purchases', '/app/receivables', '/app/delivery', '/app/dashboard'],
 };
 
 /** Set simple por defecto para giros sin set propio (RETAIL, BOUTIQUE, MISCELANEA…). */
-const SIMPLE_DEFAULT: string[] = ['/app/inicio', '/app/pos', '/app/receivables', '/app/inventory', '/app/purchases', '/app/dashboard'];
+const SIMPLE_DEFAULT: string[] = ['/app/inicio', '/app/pos', '/app/receivables', '/app/inventory', '/app/warehouses', '/app/scales', '/app/purchases', '/app/dashboard'];
 
 // ── API ──────────────────────────────────────────────────────────────────────
 
@@ -308,14 +311,13 @@ export function resolveUiMode(tenantType: string, stored: string | null): UiMode
 }
 
 /**
- * Modo simple del POS — desacoplado del menú (QA R2.6): el POS simple esconde
- * tiquetera, parqueo, devoluciones e importación. Que el MENÚ de una ferretería
- * arranque simple está bien; esconderle Devoluciones y la tiquetera al
- * mostrador sería una regresión real. Por eso el POS solo se simplifica por
- * defecto en PULPERIA (el comportamiento de siempre); la elección explícita
- * del usuario (mismo UI_MODE_KEY) sí aplica en todos lados.
+ * Modo simple del POS. La investigación de Square, Shopify, Lightspeed,
+ * Loyverse, Alegra y Tiendanube converge en la misma capa inicial:
+ * producto → carrito → cobro. Ferretería y farmacia no necesitan aprender una
+ * pantalla más compleja para hacer esa tarea; las herramientas avanzadas siguen
+ * disponibles al elegir explícitamente el modo completo.
  */
 export function resolvePosSimple(tenantType: string, stored: string | null): boolean {
     if (stored === 'simple' || stored === 'full') return stored === 'simple';
-    return tenantType === 'PULPERIA';
+    return tenantType !== 'LENDER';
 }

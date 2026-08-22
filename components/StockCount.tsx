@@ -50,13 +50,13 @@ interface WarehouseOption {
 const formatCurrency = (n: number) => formatMoney(n);
 const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 export const sanitizeCountInput = (value: string): string | null => {
-    if (!/^\d*$/.test(value)) return null;
+    if (!/^\d*(?:\.\d{0,4})?$/.test(value)) return null;
     return value.replace(/^0+(?=\d)/, '');
 };
 export const parseCountInput = (value: string): number | null => {
-    if (!/^\d+$/.test(value)) return null;
+    if (!/^\d+(?:\.\d{1,4})?$/.test(value)) return null;
     const parsed = Number(value);
-    return Number.isSafeInteger(parsed) ? parsed : null;
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
@@ -261,8 +261,8 @@ export default function StockCount() {
             setInputs(prev => ({ ...prev, [productId]: '' }));
             showToast({
                 tone: 'warning',
-                title: 'Usá unidades enteras',
-                message: 'El conteo no acepta puntos, comas, letras ni cantidades negativas.',
+                title: 'Cantidad inválida',
+                message: 'Usá un valor positivo con hasta cuatro decimales y punto como separador.',
             });
             return;
         }
@@ -282,7 +282,7 @@ export default function StockCount() {
             showToast({
                 tone: 'warning',
                 title: 'Cantidad inválida',
-                message: 'Ingresá un número entero igual o mayor que cero.',
+                message: 'Ingresá un número igual o mayor que cero, con hasta cuatro decimales.',
             });
             return;
         }
@@ -537,7 +537,7 @@ export default function StockCount() {
                             <p className="text-lg font-bold text-white">{detailStats.counted}<span className="text-sm text-slate-500"> / {detailStats.total}</span></p>
                         </div>
                         <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
-                            <p className="text-xs text-slate-400">Diferencia (uds)</p>
+                            <p className="text-xs text-slate-400">Diferencia</p>
                             <p className={`text-lg font-bold ${detailStats.diffUnits < 0 ? 'text-red-400' : detailStats.diffUnits > 0 ? 'text-emerald-400' : 'text-white'}`}>
                                 {detailStats.diffUnits > 0 ? '+' : ''}{detailStats.diffUnits}
                             </p>
@@ -622,8 +622,8 @@ export default function StockCount() {
                                                         id={inputId}
                                                         aria-label={`Conteo físico de ${it.product.name}`}
                                                         type="text"
-                                                        inputMode="numeric"
-                                                        pattern="[0-9]*"
+                                                        inputMode="decimal"
+                                                        pattern="[0-9]*([.][0-9]{0,4})?"
                                                         value={raw ?? ''}
                                                         placeholder="Ingresa las unidades contadas"
                                                         onChange={(e) => updateCountInput(it.productId, e.target.value)}
@@ -680,8 +680,8 @@ export default function StockCount() {
                                                         <input
                                                             aria-label={`Conteo físico de ${it.product.name}`}
                                                             type="text"
-                                                            inputMode="numeric"
-                                                            pattern="[0-9]*"
+                                                            inputMode="decimal"
+                                                            pattern="[0-9]*([.][0-9]{0,4})?"
                                                             value={raw ?? ''}
                                                             placeholder="—"
                                                             onChange={(e) => updateCountInput(it.productId, e.target.value)}

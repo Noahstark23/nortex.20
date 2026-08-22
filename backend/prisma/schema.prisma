@@ -82,6 +82,13 @@ model Tenant {
   invoiceSeries    InvoiceSeries[]
   publicOrders     PublicOrder[]
   capitalLoans     CapitalLoan[]
+  tenantCapabilities        TenantCapability[]
+  scaleLabelProfiles        ScaleLabelProfile[]
+  scaleLabelProfileVersions ScaleLabelProfileVersion[]
+  scaleProductMappings      ScaleProductMapping[]
+  scaleDevices              ScaleDevice[]
+  saleMeasurements          SaleMeasurement[]
+  saleItemBatchAllocations  SaleItemBatchAllocation[]
 
   // HR Module
   leaveRequests          LeaveRequest[]
@@ -128,6 +135,9 @@ model User {
   loansAssigned   Loan[]           @relation("LoanCollector")
   whatsappNumber  String?          @unique @db.VarChar(20)
   whatsappSession WhatsappSession?
+  scaleLabelProfileVersionsCreated ScaleLabelProfileVersion[] @relation("ScaleLabelProfileVersionCreator")
+  scaleDevicesCreated              ScaleDevice[]              @relation("ScaleDeviceCreator")
+  saleMeasurements                 SaleMeasurement[]          @relation("SaleMeasurementUser")
 
   @@index([tenantId])
   // Retención: escaneo de usuarios activos por recencia de login (métricas admin
@@ -268,6 +278,7 @@ model PurchaseItem {
   productId   String
   productName String // Snapshot del nombre al momento de compra
   quantity    Int
+  quantityExact Decimal? @db.Decimal(18, 4)
   unitCost    Decimal   @db.Decimal(10, 2)
   totalCost   Decimal   @db.Decimal(10, 2)
   batchNumber String? // Número de lote ingresado en la compra
@@ -314,6 +325,13 @@ model PurchaseOrderItem {
   productName      String // snapshot del nombre al crear la OC
   quantityOrdered  Float
   quantityReceived Float   @default(0)
+  // Autoridad decimal y reglas congeladas de la OC. Los Float anteriores se
+  // conservan como sombras para compatibilidad con filas/clientes históricos.
+  quantityOrderedExact  Decimal? @db.Decimal(18, 4)
+  quantityReceivedExact Decimal? @db.Decimal(18, 4)
+  unitAtOrder           String?
+  saleModeAtOrder       String?
+  quantityStepAtOrder   Decimal? @db.Decimal(18, 4)
   unitCost         Decimal @db.Decimal(10, 2)
 
   purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
@@ -558,6 +576,9 @@ model Sale {
   invoiceSeries  String? // Serie: "A", "B" (por sucursal)
   // PWA Offline Sync — UUID generado en el cliente para idempotencia
   offlineId      String?   @unique
+  // Hash canónico del payload offline. Nullable solo para ventas históricas;
+  // permite distinguir un replay real de la reutilización conflictiva del ID.
+  offlinePayloadHash String? @db.VarChar(64)
 
   tenant         Tenant          @relation(fields: [tenantId], references: [id])
   customer       Customer?       @relation(fields: [customerId], references: [id])
@@ -586,15 +607,191 @@ model SaleItem {
   productId   String
   quantity    Float
   priceAtSale Decimal @db.Decimal(10, 2)
+  // Precio unitario autoritativo antes de redondear a centavos. Permite que
+  // presentaciones como C$10 / 3 unidades totalicen C$10.00 y se devuelvan
+  // con el mismo valor histórico; priceAtSale queda como shadow legado.
+  unitPriceExactAtSale Decimal? @db.Decimal(18, 4)
   costAtSale  Decimal @db.Decimal(10, 2)
   discount    Float   @default(0) // Item discount percentage (0-100)
+  productNameAtSale          String?
+  unitAtSale                 String?
+  saleModeAtSale             String?
+  quantityStepAtSale         Decimal? @db.Decimal(18, 4)
+  presentationAtSale         String? // BASE | PACK
+  presentationQuantityAtSale Decimal? @db.Decimal(18, 4)
   // T2: foto del trato fiscal AL MOMENTO de vender (igual que costAtSale).
   // Si el dueño reclasifica el producto después, las ventas viejas no cambian.
   ivaExento   Boolean @default(false)
 
   sale Sale @relation(fields: [saleId], references: [id])
+  measurement      SaleMeasurement?
+  batchAllocations SaleItemBatchAllocation[]
 
   @@index([saleId])
+}
+
+// Capacidades opt-in: un tenant puede combinar carnes, alimento animal y otros
+// giros sin convertir Tenant.type en una clasificación mutuamente excluyente.
+model TenantCapability {
+  id        String   @id @default(cuid())
+  tenantId  String
+  code      String
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId, createdAt])
+}
+
+// Identidad estable del formato de etiqueta. Las reglas de parseo viven en
+// versiones inmutables para que las ventas offline sean reproducibles.
+model ScaleLabelProfile {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  status    String   @default("ACTIVE") // ACTIVE | INACTIVE
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  versions ScaleLabelProfileVersion[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, status])
+}
+
+model ScaleLabelProfileVersion {
+  id                String    @id @default(cuid())
+  tenantId          String
+  profileId         String
+  version           Int
+  status            String    @default("DRAFT") // DRAFT | PUBLISHED | REVOKED
+  symbology         String
+  totalLength       Int
+  prefixes          Json
+  itemStart         Int
+  itemLength        Int
+  valueStart        Int
+  valueLength       Int
+  valueKind         String // WEIGHT | TOTAL_PRICE | COUNT
+  impliedDecimals   Int
+  sourceUnit        String
+  checksumMode      String
+  pricePolicy       String // RECALCULATE | REQUIRE_MATCH | ACCEPT_LABEL_TOTAL
+  roundingTolerance Decimal   @db.Decimal(18, 4)
+  minValue          Decimal   @db.Decimal(18, 4)
+  maxValue          Decimal   @db.Decimal(18, 4)
+  publishedAt       DateTime?
+  revokedAt         DateTime?
+  createdBy         String
+  createdAt         DateTime  @default(now())
+
+  tenant       Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  profile      ScaleLabelProfile     @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  creator      User                  @relation("ScaleLabelProfileVersionCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  mappings     ScaleProductMapping[]
+  measurements SaleMeasurement[]
+
+  @@unique([tenantId, profileId, version])
+  @@index([profileId])
+  @@index([createdBy])
+  @@index([tenantId, status, createdAt])
+}
+
+model ScaleProductMapping {
+  id               String   @id @default(cuid())
+  tenantId         String
+  profileVersionId String
+  plu              String
+  productId        String
+  sourceUnit       String
+  createdAt        DateTime @default(now())
+
+  tenant         Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  profileVersion ScaleLabelProfileVersion @relation(fields: [profileVersionId], references: [id], onDelete: Restrict)
+  product        Product                  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, profileVersionId, plu])
+  @@index([profileVersionId])
+  @@index([tenantId, productId])
+}
+
+model ScaleDevice {
+  id             String    @id @default(cuid())
+  tenantId       String
+  name           String
+  manufacturer   String?
+  model          String?
+  transport      String
+  protocolKey    String
+  adapterVersion String
+  status         String    @default("ACTIVE") // ACTIVE | INACTIVE | UNSUPPORTED
+  config         Json?
+  createdBy      String
+  lastSeenAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  creator      User              @relation("ScaleDeviceCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  measurements SaleMeasurement[]
+
+  @@index([createdBy])
+  @@index([tenantId, status])
+  @@index([tenantId, transport])
+}
+
+// Evidencia auditable de una etiqueta o lectura en vivo. Es uno-a-uno con la
+// línea de venta; precio, impuesto y stock siguen siendo autoritativos server-side.
+model SaleMeasurement {
+  id               String   @id @default(cuid())
+  tenantId         String
+  saleItemId       String   @unique
+  source           String // SCALE_LABEL | LIVE_SCALE
+  profileVersionId String?
+  deviceId         String?
+  sourceValue      Decimal  @db.Decimal(18, 4)
+  sourceUnit       String
+  baseQuantity     Decimal  @db.Decimal(18, 4)
+  encodedPrice     Decimal? @db.Decimal(18, 4)
+  pricingPolicy    String // RECALCULATE | REQUIRE_MATCH | ACCEPT_LABEL_TOTAL
+  stable           Boolean?
+  clientEventId    String
+  payloadHash      String?
+  capturedAt       DateTime
+  createdAt        DateTime @default(now())
+  userId           String
+
+  tenant         Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  saleItem       SaleItem                  @relation(fields: [saleItemId], references: [id], onDelete: Restrict)
+  profileVersion ScaleLabelProfileVersion? @relation(fields: [profileVersionId], references: [id], onDelete: Restrict)
+  device         ScaleDevice?              @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+  user           User                      @relation("SaleMeasurementUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, clientEventId])
+  @@index([profileVersionId])
+  @@index([deviceId])
+  @@index([userId])
+  @@index([tenantId, capturedAt])
+  @@index([tenantId, source, capturedAt])
+}
+
+model SaleItemBatchAllocation {
+  id         String   @id @default(cuid())
+  tenantId   String
+  saleItemId String
+  batchId    String
+  quantity   Decimal  @db.Decimal(18, 4)
+  createdAt  DateTime @default(now())
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  saleItem SaleItem     @relation(fields: [saleItemId], references: [id], onDelete: Restrict)
+  batch    ProductBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@unique([saleItemId, batchId])
+  @@index([tenantId, saleItemId])
+  @@index([tenantId, batchId])
 }
 
 model Payment {
@@ -919,6 +1116,9 @@ model Product {
   packUnit  String? // nombre del empaque (caja, fardo, docena)
   packSize  Float? // unidades base por empaque (ej: 12)
   packPrice Float? // precio del empaque completo (null = solo atajo de cantidad)
+  saleMode     String? // COUNTED | MEASURED; null = producto legado
+  quantityStep Decimal? @db.Decimal(18, 4)
+  productFamily String? // GENERAL | MEAT | POULTRY | ANIMAL_FEED | AGRO_INPUT | VETERINARY
 
   // Inventario
   stock    Float  @default(0)
@@ -964,6 +1164,7 @@ model Product {
   productStocks   ProductStock[]
   sellerCatalog   SellerProduct[]
   defaultSupplier Supplier?        @relation("DefaultSupplier", fields: [defaultSupplierId], references: [id], onDelete: SetNull)
+  scaleProductMappings ScaleProductMapping[]
 
   @@unique([tenantId, sku])
   @@index([defaultSupplierId])
@@ -1133,6 +1334,7 @@ model ProductBatch {
   tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   product         Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
   kardexMovements KardexMovement[]
+  saleItemAllocations SaleItemBatchAllocation[]
 
   @@unique([productId, batchNumber])
   @@index([tenantId])
@@ -1187,6 +1389,8 @@ model StockCount {
   closedBy         String? // userId que cerró (sin relación, solo traza)
 
   tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // El historial de un conteo es evidencia auditable: una bodega referenciada
+  // no se elimina físicamente (se desactiva), para no borrar su procedencia.
   warehouse Warehouse?       @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   creator   User             @relation(fields: [createdBy], references: [id])
   items     StockCountItem[]
@@ -1266,7 +1470,15 @@ model QuotationItem {
   quotationId String
   productId   String
   quantity    Int
+  quantityExact Decimal? @db.Decimal(18, 4)
   price       Decimal @db.Decimal(10, 2)
+  unitPriceExact             Decimal? @db.Decimal(18, 4)
+  unitAtQuote                String?
+  saleModeAtQuote            String?
+  quantityStepAtQuote        Decimal? @db.Decimal(18, 4)
+  presentationAtQuote        String?  // BASE | PACK
+  presentationQuantityAtQuote Decimal? @db.Decimal(18, 4)
+  ivaExentoAtQuote           Boolean?
   name        String // Snapshot name
 
   quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
@@ -1279,20 +1491,25 @@ model QuotationItem {
 // ==========================================
 
 model ProductReturn {
-  id        String   @id @default(cuid())
-  tenantId  String
-  saleId    String
-  total     Decimal  @db.Decimal(10, 2) // Total del reembolso
-  reason    String   @db.Text
-  items     Json // [{productId, name, quantity, price}]
-  createdBy String
-  createdAt DateTime @default(now())
+  id            String   @id @default(cuid())
+  tenantId      String
+  saleId        String
+  total         Decimal  @db.Decimal(10, 2) // Total del reembolso
+  reason        String   @db.Text
+  items         Json // [{productId, name, quantity, price}]
+  createdBy     String
+  // Nullable solo para filas históricas. La API actual exige clientEventId y
+  // escribe siempre su huella SHA-256 canónica en la misma transacción.
+  clientEventId String?   @db.VarChar(128)
+  payloadHash   String?   @db.VarChar(64)
+  createdAt     DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
   sale   Sale   @relation(fields: [saleId], references: [id])
 
   @@index([tenantId])
   @@index([saleId])
+  @@unique([tenantId, clientEventId])
 }
 
 // ==========================================
@@ -1763,6 +1980,15 @@ model PedidoItem {
   pedidoId       String
   productoId     String
   cantidad       Int
+  cantidadExact              Decimal? @db.Decimal(18, 4)
+  presentationAtSale         String?  // BASE | PACK, snapshot desde el pedido
+  presentationQuantityAtSale Decimal? @db.Decimal(18, 4)
+  productNameAtOrder         String?
+  unitAtOrder                String?
+  saleModeAtOrder            String?
+  quantityStepAtOrder        Decimal? @db.Decimal(18, 4)
+  unitPriceExactAtOrder      Decimal? @db.Decimal(18, 4)
+  ivaExentoAtOrder           Boolean?
   precioUnitario Decimal @db.Decimal(10, 2)
   subtotal       Decimal @db.Decimal(10, 2)
 

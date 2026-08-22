@@ -34,8 +34,8 @@ describe('Toma Física responsive y no bloqueante', () => {
         expect(items).toContain('Esperado');
         expect(items).toContain('Diferencia');
         expect(items).toContain('htmlFor={inputId}');
-        expect(items).toContain('inputMode="numeric"');
-        expect(items).toContain('pattern="[0-9]*"');
+        expect(items).toContain('inputMode="decimal"');
+        expect(items).toContain('pattern="[0-9]*([.][0-9]{0,4})?"');
         expect(items).toContain('min-h-11');
         expect(items).toContain('Guardando...');
     });
@@ -56,12 +56,13 @@ describe('Toma Física responsive y no bloqueante', () => {
         expect(component).toContain('Pedile a un administrador que active una bodega.');
     });
 
-    it('conserva conteos enteros y teclado numérico en el contrato operativo', () => {
-        expect(component).toContain("if (!/^\\d*$/.test(value)) return null;");
-        expect(component).toContain('Number.isSafeInteger(parsed)');
+    it('conserva hasta cuatro decimales sin aceptar valores negativos o no finitos', () => {
+        expect(component).toContain("if (!/^\\d*(?:\\.\\d{0,4})?$/.test(value)) return null;");
+        expect(component).toContain("if (!/^\\d+(?:\\.\\d{1,4})?$/.test(value)) return null;");
+        expect(component).toContain('Number.isFinite(parsed) && parsed >= 0');
         expect(component).toContain('parseCountInput(rawValue)');
         expect(component).not.toContain('sanitizeDecimalInput');
-        expect(component).not.toContain('inputMode="decimal"');
+        expect(component).not.toContain('inputMode="numeric"');
     });
 
     it('reemplaza diálogos nativos bloqueantes con toast y confirmaciones accesibles', () => {

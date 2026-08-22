@@ -6,6 +6,14 @@ import {
     ShoppingCart, Wallet, Printer, Eye, Stamp
 } from 'lucide-react';
 import { formatMoney } from '../utils/money';
+import Decimal from 'decimal.js';
+import { formatQuantityValue } from '../utils/quantity';
+import {
+    purchaseQuantityInputStep,
+    resolvePurchaseLine,
+    type PurchaseUnit,
+} from '../utils/purchasePackaging';
+import { authenticatedDownload } from '../utils/authenticatedDownload';
 import { ToastViewport, useToast } from './ui/Toast';
 
 // ==========================================
@@ -27,6 +35,11 @@ interface Product {
     cost: number;
     stock: number;
     unit: string;
+    saleMode?: 'COUNTED' | 'MEASURED' | null;
+    quantityStep?: number | string | null;
+    productFamily?: string | null;
+    packUnit?: string | null;
+    packSize?: number | string | null;
     ivaExento?: boolean;
     requiresBatchTracking?: boolean;
 }
@@ -39,6 +52,12 @@ interface CartItem {
     unitCost: number;
     totalCost: number;
     currentStock: number;
+    unit: string;
+    saleMode?: 'COUNTED' | 'MEASURED' | null;
+    quantityStep?: number | string | null;
+    purchaseUnit: PurchaseUnit;
+    packUnit?: string | null;
+    packSize?: number | string | null;
     ivaExento?: boolean;
     requiresBatchTracking?: boolean;
     batchNumber?: string;
@@ -51,6 +70,8 @@ interface PurchaseOrderItemLite {
     productName: string;
     quantityOrdered: number | string;
     quantityReceived: number | string;
+    quantityOrderedExact?: number | string | null;
+    quantityReceivedExact?: number | string | null;
     unitCost: number | string;
 }
 
@@ -60,7 +81,13 @@ interface PurchaseOrderLite {
     orderNumber: string;
     status: string;
     items: PurchaseOrderItemLite[];
-    receipts?: { items: { productId: string; quantity: number | string }[] }[];
+    receipts?: {
+        items: {
+            productId: string;
+            quantity: number | string;
+            quantityExact?: number | string | null;
+        }[];
+    }[];
 }
 
 interface Purchase {
@@ -76,16 +103,33 @@ interface Purchase {
     status: string;
     paymentMethod: string;
     notes?: string;
-    items: { id: string; productName: string; quantity: number; unitCost: number; totalCost: number }[];
+    items: {
+        id: string;
+        productId: string;
+        productName: string;
+        quantity: number;
+        quantityExact?: number | string | null;
+        unit?: string;
+        unitCost: number;
+        totalCost: number;
+    }[];
     createdAt: string;
 }
 
 interface PurchaseFormErrors {
     supplierId?: string;
+    warehouseId?: string;
     invoiceNumber?: string;
     dueDate?: string;
     notes?: string;
     items?: string;
+}
+
+interface WarehouseOption {
+    id: string;
+    name: string;
+    isDefault: boolean;
+    isActive: boolean;
 }
 
 // ==========================================
@@ -93,6 +137,22 @@ interface PurchaseFormErrors {
 // ==========================================
 
 const formatCurrency = (n: number) => formatMoney(n);
+const hasPackConfiguration = (
+    product: Pick<Product, 'packUnit' | 'packSize'>,
+): boolean => Boolean(
+    product.packUnit?.trim()
+    && product.packSize !== null
+    && product.packSize !== undefined
+    && Number.isFinite(Number(product.packSize))
+    && Number(product.packSize) > 0,
+);
+const resolveCartLine = (item: CartItem) => resolvePurchaseLine({
+    quantity: item.quantity,
+    unitCost: item.unitCost,
+    purchaseUnit: item.purchaseUnit,
+}, item);
+const exactPurchaseQuantity = (item: Pick<Purchase['items'][number], 'quantity' | 'quantityExact'>) =>
+    item.quantityExact ?? item.quantity;
 const escapeHtml = (value: unknown) => String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -124,25 +184,28 @@ const firstValidationMessage = (data: any): string | undefined => {
 };
 
 const availablePurchaseOrderItems = (purchaseOrder: PurchaseOrderLite) => {
-    const billedByProduct = new Map<string, number>();
+    const billedByProduct = new Map<string, Decimal>();
     for (const receipt of purchaseOrder.receipts ?? []) {
         for (const item of receipt.items) {
             billedByProduct.set(
                 item.productId,
-                (billedByProduct.get(item.productId) ?? 0) + Number(item.quantity),
+                (billedByProduct.get(item.productId) ?? new Decimal(0)).plus(
+                    item.quantityExact ?? item.quantity,
+                ),
             );
         }
     }
 
-    const receivedByProduct = new Map<string, PurchaseOrderItemLite & { availableQuantity: number }>();
+    const receivedByProduct = new Map<string, PurchaseOrderItemLite & { availableQuantity: Decimal }>();
     for (const item of purchaseOrder.items) {
+        const received = new Decimal(item.quantityReceivedExact ?? item.quantityReceived);
         const current = receivedByProduct.get(item.productId);
         if (current) {
-            current.availableQuantity += Number(item.quantityReceived);
+            current.availableQuantity = current.availableQuantity.plus(received);
         } else {
             receivedByProduct.set(item.productId, {
                 ...item,
-                availableQuantity: Number(item.quantityReceived),
+                availableQuantity: received,
             });
         }
     }
@@ -150,12 +213,12 @@ const availablePurchaseOrderItems = (purchaseOrder: PurchaseOrderLite) => {
     return [...receivedByProduct.values()]
         .map(item => ({
             ...item,
-            availableQuantity: Math.max(
+            availableQuantity: Decimal.max(
                 0,
-                item.availableQuantity - (billedByProduct.get(item.productId) ?? 0),
-            ),
+                item.availableQuantity.minus(billedByProduct.get(item.productId) ?? 0),
+            ).toString(),
         }))
-        .filter(item => item.availableQuantity > 0);
+        .filter(item => new Decimal(item.availableQuantity).greaterThan(0));
 };
 
 // ==========================================
@@ -174,6 +237,8 @@ export default function Purchases() {
 
     // New Purchase form
     const [selectedSupplier, setSelectedSupplier] = useState('');
+    const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
+    const [selectedWarehouseId, setSelectedWarehouseId] = useState('');
     const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderLite[]>([]);
     const [selectedPO, setSelectedPO] = useState('');
     const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -208,11 +273,12 @@ export default function Purchases() {
         const controller = new AbortController();
         const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
         try {
-            const [suppRes, prodRes, purchRes, poRes] = await Promise.all([
+            const [suppRes, prodRes, purchRes, poRes, warehouseRes] = await Promise.all([
                 fetch('/api/suppliers', { headers, signal: controller.signal }),
                 fetch('/api/products', { headers, signal: controller.signal }),
                 fetch('/api/purchases', { headers, signal: controller.signal }),
                 fetch('/api/purchase-orders', { headers, signal: controller.signal }),
+                fetch('/api/warehouses', { headers, signal: controller.signal }),
             ]);
 
             if (suppRes.ok) setSuppliers(await suppRes.json());
@@ -223,6 +289,9 @@ export default function Purchases() {
                     price: Number(product.price),
                     cost: Number(product.cost),
                     stock: Number(product.stock),
+                    packSize: product.packSize === null || product.packSize === undefined
+                        ? null
+                        : Number(product.packSize),
                 })) : []);
             }
             if (purchRes.ok) setPurchases(await purchRes.json());
@@ -230,11 +299,23 @@ export default function Purchases() {
                 const poData = await poRes.json();
                 setPurchaseOrders(Array.isArray(poData?.data) ? poData.data : []);
             }
+            if (warehouseRes.ok) {
+                const warehouseData = await warehouseRes.json();
+                const activeWarehouses = Array.isArray(warehouseData?.data)
+                    ? warehouseData.data.filter((warehouse: WarehouseOption) => warehouse.isActive)
+                    : [];
+                setWarehouses(activeWarehouses);
+                setSelectedWarehouseId(current => {
+                    if (current && activeWarehouses.some((warehouse: WarehouseOption) => warehouse.id === current)) return current;
+                    return activeWarehouses.length === 1 ? activeWarehouses[0].id : '';
+                });
+            }
             const failed = [
                 [suppRes, 'proveedores'],
                 [prodRes, 'productos'],
                 [purchRes, 'historial'],
                 [poRes, 'órdenes de compra'],
+                [warehouseRes, 'bodegas'],
             ].filter(([response]) => !(response as Response).ok)
                 .map(([, label]) => label as string);
             if (failed.length > 0) {
@@ -281,19 +362,36 @@ export default function Purchases() {
             if (existing) {
                 return currentCart.map(c =>
                     c.productId === product.id
-                        ? { ...c, quantity: c.quantity + 1, totalCost: (c.quantity + 1) * c.unitCost }
+                        ? (() => {
+                            const increment = c.purchaseUnit === 'PACK'
+                                ? new Decimal(1)
+                                : new Decimal(product.quantityStep || 1);
+                            const quantity = new Decimal(c.quantity).plus(increment).toNumber();
+                            return {
+                                ...c,
+                                quantity,
+                                totalCost: new Decimal(quantity).mul(c.unitCost).toDecimalPlaces(2).toNumber(),
+                            };
+                        })()
                         : c
                 );
             }
 
+            const initialQuantity = new Decimal(product.quantityStep || 1).toNumber();
             return [...currentCart, {
                 productId: product.id,
                 productName: product.name,
                 sku: product.sku,
-                quantity: 1,
+                quantity: initialQuantity,
                 unitCost: product.cost,
-                totalCost: product.cost,
+                totalCost: new Decimal(initialQuantity).mul(product.cost).toDecimalPlaces(2).toNumber(),
                 currentStock: product.stock,
+                unit: product.unit || 'unidad',
+                saleMode: product.saleMode,
+                quantityStep: product.quantityStep,
+                purchaseUnit: 'BASE',
+                packUnit: product.packUnit,
+                packSize: product.packSize,
                 ivaExento: product.ivaExento,
                 requiresBatchTracking: product.requiresBatchTracking,
                 batchNumber: '',
@@ -308,8 +406,37 @@ export default function Purchases() {
         setCart(currentCart => currentCart.map(c => {
             if (c.productId !== productId) return c;
             const updated = { ...c, [field]: value };
-            updated.totalCost = updated.quantity * updated.unitCost;
+            updated.totalCost = new Decimal(updated.quantity || 0)
+                .mul(updated.unitCost || 0)
+                .toDecimalPlaces(2)
+                .toNumber();
             return updated;
+        }));
+        setFormErrors(current => ({ ...current, items: undefined }));
+    };
+
+    const updatePurchaseUnit = (productId: string, purchaseUnit: PurchaseUnit) => {
+        setCart(currentCart => currentCart.map(item => {
+            if (item.productId !== productId || item.purchaseUnit === purchaseUnit) return item;
+            if (!hasPackConfiguration(item)) return item;
+
+            const factor = new Decimal(item.packSize!);
+            // El costo visible cambia de "por unidad base" a "por empaque" (o
+            // viceversa). La cantidad visible se conserva: 2 lb pasa a 2 sacos
+            // porque la persona cambió deliberadamente la unidad del input.
+            const nextUnitCost = purchaseUnit === 'PACK'
+                ? new Decimal(item.unitCost).mul(factor)
+                : new Decimal(item.unitCost).div(factor);
+            const unitCost = nextUnitCost.toDecimalPlaces(4).toNumber();
+            return {
+                ...item,
+                purchaseUnit,
+                unitCost,
+                totalCost: new Decimal(item.quantity || 0)
+                    .mul(unitCost)
+                    .toDecimalPlaces(2)
+                    .toNumber(),
+            };
         }));
         setFormErrors(current => ({ ...current, items: undefined }));
     };
@@ -351,7 +478,7 @@ export default function Purchases() {
         setSelectedPO(poId);
         setCart(receivedItems.map(item => {
             const product = products.find(candidate => candidate.id === item.productId);
-            const quantity = item.availableQuantity;
+            const quantity = new Decimal(item.availableQuantity).toNumber();
             const unitCost = Number(item.unitCost);
             return {
                 productId: item.productId,
@@ -359,8 +486,14 @@ export default function Purchases() {
                 sku: product?.sku ?? '',
                 quantity,
                 unitCost,
-                totalCost: quantity * unitCost,
+                totalCost: new Decimal(quantity).mul(unitCost).toDecimalPlaces(2).toNumber(),
                 currentStock: product?.stock ?? 0,
+                unit: product?.unit || 'unidad',
+                saleMode: product?.saleMode,
+                quantityStep: product?.quantityStep,
+                purchaseUnit: 'BASE',
+                packUnit: product?.packUnit,
+                packSize: product?.packSize,
                 ivaExento: product?.ivaExento,
                 // Los datos de lote se capturan al recibir la OC; exigirlos otra
                 // vez en la factura induciría a duplicar la recepción.
@@ -382,11 +515,18 @@ export default function Purchases() {
     };
 
     const cartTotals = useMemo(() => {
-        const subtotal = cart.reduce((sum, c) => sum + c.totalCost, 0);
-        const taxableSubtotal = cart.reduce((sum, c) => c.ivaExento ? sum : sum + c.totalCost, 0);
-        const tax = taxableSubtotal * 0.15;
-        const total = subtotal + tax;
-        return { subtotal, taxableSubtotal, tax, total };
+        const subtotal = cart.reduce((sum, item) => sum.plus(item.totalCost), new Decimal(0));
+        const taxableSubtotal = cart.reduce(
+            (sum, item) => item.ivaExento ? sum : sum.plus(item.totalCost),
+            new Decimal(0),
+        );
+        const tax = taxableSubtotal.mul('0.15').toDecimalPlaces(2);
+        return {
+            subtotal: subtotal.toNumber(),
+            taxableSubtotal: taxableSubtotal.toNumber(),
+            tax: tax.toNumber(),
+            total: subtotal.plus(tax).toNumber(),
+        };
     }, [cart]);
 
     // ==========================================
@@ -398,15 +538,20 @@ export default function Purchases() {
 
         const errors: PurchaseFormErrors = {};
         if (!selectedSupplier) errors.supplierId = 'Seleccioná un proveedor.';
+        if (!selectedPO && !selectedWarehouseId) errors.warehouseId = 'Seleccioná la bodega donde entra la mercadería.';
         if (!invoiceNumber.trim()) errors.invoiceNumber = 'Ingresá el número de factura del proveedor.';
         if (cart.length === 0) errors.items = 'Agregá al menos un producto.';
         if (paymentMethod === 'CREDIT' && !dueDate) errors.dueDate = 'Ingresá la fecha de vencimiento.';
         if (notes.trim().length > 500) errors.notes = 'Las notas no pueden superar 500 caracteres.';
 
-        const invalidItem = cart.find(item =>
-            !Number.isInteger(item.quantity) || item.quantity <= 0 ||
-            !Number.isFinite(item.unitCost) || item.unitCost <= 0
-        );
+        const invalidItem = cart.find(item => {
+            try {
+                resolveCartLine(item);
+                return false;
+            } catch {
+                return true;
+            }
+        });
         if (invalidItem) {
             errors.items = `Revisá cantidad y costo de ${invalidItem.productName}.`;
         }
@@ -442,6 +587,7 @@ export default function Purchases() {
                 signal: controller.signal,
                 body: JSON.stringify({
                     supplierId: selectedSupplier,
+                    warehouseId: selectedPO ? undefined : selectedWarehouseId || undefined,
                     invoiceNumber: invoiceNumber.trim(),
                     purchaseOrderId: selectedPO || undefined,
                     paymentMethod,
@@ -454,6 +600,7 @@ export default function Purchases() {
                             productId: c.productId,
                             quantity: c.quantity,
                             unitCost: c.unitCost,
+                            purchaseUnit: c.purchaseUnit,
                             batchNumber: c.batchNumber?.trim() || undefined,
                             expiryDate: c.expiryDate || undefined
                         };
@@ -471,6 +618,7 @@ export default function Purchases() {
                 });
                 // Reset form
                 setSelectedSupplier('');
+                setSelectedWarehouseId(warehouses.length === 1 ? warehouses[0].id : '');
                 setSelectedPO('');
                 setInvoiceNumber('');
                 setPaymentMethod('CASH');
@@ -483,6 +631,7 @@ export default function Purchases() {
                 const details = data?.details && typeof data.details === 'object' ? data.details : {};
                 setFormErrors({
                     supplierId: Array.isArray(details.supplierId) ? String(details.supplierId[0]) : undefined,
+                    warehouseId: Array.isArray(details.warehouseId) ? String(details.warehouseId[0]) : undefined,
                     invoiceNumber: Array.isArray(details.invoiceNumber) ? String(details.invoiceNumber[0]) : undefined,
                     dueDate: Array.isArray(details.dueDate) ? String(details.dueDate[0]) : undefined,
                     notes: Array.isArray(details.notes) ? String(details.notes[0]) : undefined,
@@ -581,7 +730,7 @@ export default function Purchases() {
         const itemsHTML = p.items.map(item => `
             <tr>
                 <td style="padding:4px 8px;border-bottom:1px solid #ddd;font-size:${format === 'ticket' ? '11px' : '13px'}">${escapeHtml(item.productName)}</td>
-                <td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:center;font-size:${format === 'ticket' ? '11px' : '13px'}">${item.quantity}</td>
+                <td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:center;font-size:${format === 'ticket' ? '11px' : '13px'}">${escapeHtml(formatQuantityValue(exactPurchaseQuantity(item)))} ${escapeHtml(item.unit || 'unidad')}</td>
                 <td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:right;font-size:${format === 'ticket' ? '11px' : '13px'}">${formatMoney(parseFloat(item.unitCost as any))}</td>
                 <td style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:right;font-weight:bold;font-size:${format === 'ticket' ? '11px' : '13px'}">${formatMoney(parseFloat(item.totalCost as any))}</td>
             </tr>
@@ -662,6 +811,21 @@ export default function Purchases() {
                 tone: 'warning',
                 title: 'El navegador bloqueó la impresión',
                 message: 'Permití las ventanas emergentes para imprimir esta factura.',
+            });
+        }
+    };
+
+    const openRetentionCertificate = async (purchaseId: string) => {
+        try {
+            await authenticatedDownload(`/api/fiscal/constancia-retencion/${purchaseId}`, {
+                token,
+                openInNewTab: true,
+            });
+        } catch (error: any) {
+            showToast({
+                tone: 'error',
+                title: 'No se pudo generar la constancia',
+                message: error?.message || 'Revisá tu sesión e intentá de nuevo.',
             });
         }
     };
@@ -760,7 +924,7 @@ export default function Purchases() {
                                     <FileText size={18} className="text-orange-400" />
                                     Datos de la Compra
                                 </h3>
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div>
                                         <label className="block text-sm text-slate-300 mb-1.5">Proveedor *</label>
                                         <select
@@ -769,13 +933,49 @@ export default function Purchases() {
                                             aria-invalid={Boolean(formErrors.supplierId)}
                                             className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white focus:ring-1 ${formErrors.supplierId ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
                                         >
-                                            <option value="">Seleccionar proveedor...</option>
+                                            <option value="">{suppliers.length === 0 ? 'Todavía no hay proveedores' : 'Seleccionar proveedor…'}</option>
                                             {suppliers.map(s => (
                                                 <option key={s.id} value={s.id}>{s.name}</option>
                                             ))}
                                         </select>
                                         {formErrors.supplierId && <p className="mt-1 text-xs text-red-300">{formErrors.supplierId}</p>}
+                                        {suppliers.length === 0 && (
+                                            <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-amber-800/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-100">
+                                                <span>Primero agregá a quien te vende.</span>
+                                                <a href="/app/suppliers" className="shrink-0 font-bold text-amber-300 underline decoration-amber-500/60 underline-offset-2 hover:text-amber-200">
+                                                    Crear proveedor
+                                                </a>
+                                            </div>
+                                        )}
                                     </div>
+                                    {!selectedPO && (
+                                        <div>
+                                            <label htmlFor="purchase-warehouse" className="block text-sm text-slate-300 mb-1.5">Bodega donde entrará la mercadería *</label>
+                                            <select
+                                                id="purchase-warehouse"
+                                                value={selectedWarehouseId}
+                                                onChange={(e) => {
+                                                    setSelectedWarehouseId(e.target.value);
+                                                    setFormErrors(current => ({ ...current, warehouseId: undefined }));
+                                                }}
+                                                aria-invalid={Boolean(formErrors.warehouseId)}
+                                                required
+                                                className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white focus:ring-1 ${formErrors.warehouseId ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
+                                            >
+                                                <option value="">Seleccionar bodega destino…</option>
+                                                {warehouses.map(warehouse => (
+                                                    <option key={warehouse.id} value={warehouse.id}>
+                                                        {warehouse.name}{warehouse.isDefault ? ' · Principal' : ''}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <p className="mt-1 text-xs text-slate-500">El stock se sumará solo en esta ubicación.</p>
+                                            {formErrors.warehouseId && <p className="mt-1 text-xs text-red-300">{formErrors.warehouseId}</p>}
+                                            {warehouses.length === 0 && (
+                                                <p role="alert" className="mt-1 text-xs text-red-300">No hay una bodega activa disponible. Reintentá la carga antes de procesar el ingreso.</p>
+                                            )}
+                                        </div>
+                                    )}
                                     {purchaseOrdersForSupplier.length > 0 && (
                                         <div>
                                             <label className="block text-sm text-slate-300 mb-1.5">Orden de compra (opcional)</label>
@@ -816,7 +1016,7 @@ export default function Purchases() {
                                         </div>
                                     )}
                                     <div>
-                                        <label className="block text-sm text-slate-300 mb-1.5">Metodo de Pago *</label>
+                                        <label className="block text-sm text-slate-300 mb-1.5">Método de pago *</label>
                                         <div className="flex gap-2">
                                             <button
                                                 type="button"
@@ -905,7 +1105,7 @@ export default function Purchases() {
                                                     </div>
                                                     <div className="text-right">
                                                         <span className="text-slate-400 text-sm">Costo: {formatCurrency(p.cost)}</span>
-                                                        <span className="text-xs text-slate-500 ml-2">Stock: {p.stock}</span>
+                                                        <span className="text-xs text-slate-500 ml-2">Stock: {formatQuantityValue(p.stock)} {p.unit}</span>
                                                     </div>
                                                 </button>
                                             ))}
@@ -920,34 +1120,63 @@ export default function Purchases() {
                                             <thead>
                                                 <tr className="text-xs text-slate-400 uppercase border-b border-slate-700">
                                                     <th className="text-left py-2 px-2">Producto</th>
-                                                    <th className="text-center py-2 px-2 w-24">Cantidad</th>
-                                                    <th className="text-center py-2 px-2 w-32">Costo Unit.</th>
+                                                    <th className="text-center py-2 px-2 w-36">Cantidad recibida</th>
+                                                    <th className="text-center py-2 px-2 w-40">Costo informado</th>
                                                     <th className="text-right py-2 px-2 w-28">Total</th>
                                                     <th className="w-10"></th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {cart.map(item => (
+                                                {cart.map(item => {
+                                                    let preview: ReturnType<typeof resolvePurchaseLine> | null = null;
+                                                    try {
+                                                        preview = resolveCartLine(item);
+                                                    } catch {
+                                                        // Mientras se edita un input puede estar temporalmente
+                                                        // vacío/inválido; la validación visible lo reporta al enviar.
+                                                    }
+                                                    const inputStep = purchaseQuantityInputStep(item, item.purchaseUnit);
+                                                    return (
                                                     <React.Fragment key={item.productId}>
                                                         <tr className="border-b border-slate-700/50">
                                                             <td className="py-3 px-2">
                                                                 <div>
                                                                     <span className="text-white font-medium text-sm">{item.productName}</span>
-                                                                    <div className="flex items-center gap-2 mt-0.5">
+                                                                    <div className="flex flex-wrap items-center gap-2 mt-0.5">
                                                                         <span className="text-xs text-slate-500 font-mono">{item.sku}</span>
-                                                                        <span className="text-xs text-slate-600">Stock actual: {item.currentStock}</span>
+                                                                        <span className="text-xs text-slate-600">Stock actual: {formatQuantityValue(item.currentStock)} {item.unit}</span>
                                                                     </div>
+                                                                    {hasPackConfiguration(item) && (
+                                                                        <select
+                                                                            value={item.purchaseUnit}
+                                                                            onChange={(event) => updatePurchaseUnit(item.productId, event.target.value as PurchaseUnit)}
+                                                                            disabled={Boolean(selectedPO)}
+                                                                            aria-label={`Unidad de compra de ${item.productName}`}
+                                                                            className="mt-2 max-w-full rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs font-semibold text-slate-200 focus:border-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                        >
+                                                                            <option value="BASE">Base · {item.unit}</option>
+                                                                            <option value="PACK">Empaque · {item.packUnit} ({formatQuantityValue(item.packSize!)} {item.unit})</option>
+                                                                        </select>
+                                                                    )}
                                                                 </div>
                                                             </td>
                                                             <td className="py-3 px-2">
                                                                 <input
                                                                     type="number"
-                                                                    min="1"
+                                                                    min={inputStep}
+                                                                    step={inputStep}
                                                                     value={item.quantity}
-                                                                    onChange={(e) => updateCartItem(item.productId, 'quantity', parseInt(e.target.value) || 1)}
+                                                                    onChange={(e) => updateCartItem(item.productId, 'quantity', Number(e.target.value))}
                                                                     aria-invalid={Boolean(formErrors.items)}
                                                                     className="w-full text-center bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-sm focus:border-orange-500"
                                                                 />
+                                                                <p className="mt-1 text-center text-[11px] text-slate-500">
+                                                                    {item.purchaseUnit === 'PACK'
+                                                                        ? preview
+                                                                            ? `${formatQuantityValue(item.quantity)} ${item.packUnit} = ${formatQuantityValue(preview.baseQuantity)} ${item.unit}`
+                                                                            : `${item.packUnit} de ${formatQuantityValue(item.packSize!)} ${item.unit}`
+                                                                        : `en ${item.unit}`}
+                                                                </p>
                                                             </td>
                                                             <td className="py-3 px-2">
                                                                 <input
@@ -955,10 +1184,17 @@ export default function Purchases() {
                                                                     min="0.01"
                                                                     step="0.01"
                                                                     value={item.unitCost}
-                                                                    onChange={(e) => updateCartItem(item.productId, 'unitCost', parseFloat(e.target.value) || 0)}
+                                                                    onChange={(e) => updateCartItem(item.productId, 'unitCost', Number(e.target.value))}
                                                                     aria-invalid={Boolean(formErrors.items)}
                                                                     className="w-full text-center bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-sm focus:border-orange-500"
                                                                 />
+                                                                <p className="mt-1 text-center text-[11px] text-slate-500">
+                                                                    {item.purchaseUnit === 'PACK'
+                                                                        ? preview
+                                                                            ? `por ${item.packUnit} · ${formatCurrency(preview.baseUnitCost.toNumber())}/${item.unit}`
+                                                                            : `costo por ${item.packUnit}`
+                                                                        : `por ${item.unit}`}
+                                                                </p>
                                                             </td>
                                                             <td className="py-3 px-2 text-right">
                                                                 <span className="text-emerald-400 font-bold text-sm">{formatCurrency(item.totalCost)}</span>
@@ -1001,7 +1237,8 @@ export default function Purchases() {
                                                             </tr>
                                                         )}
                                                     </React.Fragment>
-                                                ))}
+                                                    );
+                                                })}
                                             </tbody>
                                         </table>
                                     </div>
@@ -1033,7 +1270,7 @@ export default function Purchases() {
                                 <div className="space-y-3">
                                     <div className="flex justify-between text-sm">
                                         <span className="text-slate-400">Productos</span>
-                                        <span className="text-white font-medium">{cart.length} items ({cart.reduce((s, c) => s + c.quantity, 0)} uds)</span>
+                                        <span className="text-white font-medium">{cart.length} línea{cart.length === 1 ? '' : 's'}</span>
                                     </div>
                                     <div className="flex justify-between text-sm">
                                         <span className="text-slate-400">Subtotal</span>
@@ -1081,7 +1318,7 @@ export default function Purchases() {
 
                                 <button
                                     onClick={handleSubmit}
-                                    disabled={submitting || cart.length === 0}
+                                    disabled={submitting || cart.length === 0 || !selectedSupplier || !invoiceNumber.trim() || (!selectedPO && !selectedWarehouseId) || (paymentMethod === 'CREDIT' && !dueDate)}
                                     aria-busy={submitting}
                                     className="w-full mt-5 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-700 disabled:text-slate-500 py-3.5 rounded-lg text-white font-bold text-lg transition-all flex items-center justify-center gap-2"
                                 >
@@ -1147,15 +1384,14 @@ export default function Purchases() {
                                                 >
                                                     <Eye size={15} /> Factura
                                                 </button>
-                                                <a
-                                                    href={`/api/fiscal/constancia-retencion/${p.id}`}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
+                                                <button
+                                                    type="button"
+                                                    onClick={() => void openRetentionCertificate(p.id)}
                                                     className="flex items-center gap-1.5 bg-violet-900/40 hover:bg-violet-800/60 border border-violet-700 px-3 py-2 rounded-lg text-violet-300 text-sm transition-colors"
                                                     title="Constancia de Retención"
                                                 >
                                                     <Stamp size={15} /> Retención
-                                                </a>
+                                                </button>
                                                 <button
                                                     onClick={() => handlePay(p.id, p.invoiceNumber)}
                                                     className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-lg text-white font-semibold text-sm transition-colors"
@@ -1230,15 +1466,14 @@ export default function Purchases() {
                                                             >
                                                                 <Eye size={17} />
                                                             </button>
-                                                            <a
-                                                                href={`/api/fiscal/constancia-retencion/${p.id}`}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void openRetentionCertificate(p.id)}
                                                                 className="p-2 hover:bg-violet-500/20 rounded-lg text-violet-400 transition-colors inline-flex"
                                                                 title="Constancia de Retención"
                                                             >
                                                                 <Stamp size={17} />
-                                                            </a>
+                                                            </button>
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -1405,7 +1640,9 @@ export default function Purchases() {
                                     {selectedPurchase.items.map((item, idx) => (
                                         <tr key={idx} className="border-b border-slate-700/50">
                                             <td className="py-3 px-3 text-white">{item.productName}</td>
-                                            <td className="py-3 px-3 text-center text-slate-300">{item.quantity}</td>
+                                            <td className="py-3 px-3 text-center text-slate-300">
+                                                {formatQuantityValue(exactPurchaseQuantity(item))} {item.unit || 'unidad'}
+                                            </td>
                                             <td className="py-3 px-3 text-right text-slate-400">{formatCurrency(parseFloat(item.unitCost as any))}</td>
                                             <td className="py-3 px-3 text-right text-white font-bold">{formatCurrency(parseFloat(item.totalCost as any))}</td>
                                         </tr>
@@ -1453,14 +1690,13 @@ export default function Purchases() {
                                 >
                                     <Printer size={16} /> Factura A4
                                 </button>
-                                <a
-                                    href={`/api/fiscal/constancia-retencion/${selectedPurchase.id}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
+                                <button
+                                    type="button"
+                                    onClick={() => void openRetentionCertificate(selectedPurchase.id)}
                                     className="flex items-center gap-2 px-4 py-2.5 bg-violet-700 hover:bg-violet-600 rounded-lg text-white font-bold text-sm transition-colors"
                                 >
                                     <Stamp size={16} /> Constancia DGI
-                                </a>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1469,3 +1705,4 @@ export default function Purchases() {
         </div>
     );
 }
+

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Zap, Check, AlertCircle, History, Volume2, VolumeX } from 'lucide-react';
 import ImageUploader from './ImageUploader';
 import { formatMoney } from '../utils/money';
+import { trackEvent } from '../utils/analytics';
+import { productFamilyPreset, type ProductFamily } from '../utils/productFamilyPresets';
 
 interface Product {
     id: string;
@@ -11,6 +13,10 @@ interface Product {
     price: number;
     cost: number;
     stock: number;
+    unit?: string;
+    saleMode?: 'COUNTED' | 'MEASURED';
+    quantityStep?: string;
+    productFamily?: string;
 }
 
 interface QuickAddProductProps {
@@ -29,6 +35,10 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
         cost: '',
         stock: '',
         imageUrl: '',
+        unit: 'unidad',
+        saleMode: 'COUNTED' as 'COUNTED' | 'MEASURED',
+        quantityStep: '1',
+        productFamily: 'GENERAL',
     });
 
     // UI state
@@ -100,9 +110,14 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                     price: parseFloat(formData.price),
                     // Costo opcional: si el dueño no lo sabe, va 0 (se corrige con la compra).
                     cost: formData.cost ? parseFloat(formData.cost) : 0,
-                    stock: parseInt(formData.stock) || 0,
+                    // La frontera HTTP conserva el texto para que el servidor
+                    // pueda rechazar precisión excesiva antes de tocar Float.
+                    stock: formData.stock === '' ? '0' : formData.stock,
                     minStock: 5,
-                    unit: 'unidad',
+                    unit: formData.unit,
+                    saleMode: formData.saleMode,
+                    quantityStep: formData.quantityStep,
+                    productFamily: formData.productFamily,
                     imageUrl: formData.imageUrl || undefined,
                 })
             });
@@ -112,6 +127,13 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
             if (res.ok) {
                 // Success!
                 playSound('success');
+                if (formData.saleMode === 'MEASURED') {
+                    trackEvent('measured_product_created', {
+                        unit: formData.unit,
+                        family: formData.productFamily,
+                        source: 'quick_add',
+                    });
+                }
 
                 // Add to session history
                 const newProduct: Product = {
@@ -121,7 +143,11 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                     category: formData.category,
                     price: parseFloat(formData.price),
                     cost: formData.cost ? parseFloat(formData.cost) : 0,
-                    stock: parseInt(formData.stock) || 0
+                    stock: formData.stock === '' ? 0 : Number(formData.stock),
+                    unit: formData.unit,
+                    saleMode: formData.saleMode,
+                    quantityStep: formData.quantityStep,
+                    productFamily: formData.productFamily,
                 };
                 setSessionHistory(prev => [newProduct, ...prev].slice(0, 5));
 
@@ -143,6 +169,10 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                         cost: '',
                         stock: '',
                         imageUrl: '',
+                        unit: formData.unit,
+                        saleMode: formData.saleMode,
+                        quantityStep: formData.quantityStep,
+                        productFamily: formData.productFamily,
                     });
                     // Refocus SKU
                     setTimeout(() => skuInputRef.current?.focus(), 100);
@@ -277,6 +307,58 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                                 />
                             </div>
 
+                            <div className="grid grid-cols-3 gap-3">
+                                <div>
+                                    <label className="block text-sm text-surface-300 mb-1.5 font-medium">Venta</label>
+                                    <select
+                                        value={formData.saleMode}
+                                        onChange={(e) => {
+                                            const saleMode = e.target.value as 'COUNTED' | 'MEASURED';
+                                            setFormData({ ...formData, saleMode, quantityStep: saleMode === 'COUNTED' ? '1' : '0.001' });
+                                        }}
+                                        className="w-full px-3 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white"
+                                    >
+                                        <option value="COUNTED">Unidades</option>
+                                        <option value="MEASURED">Peso/medida</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-surface-300 mb-1.5 font-medium">Unidad</label>
+                                    <select value={formData.unit} onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+                                        className="w-full px-3 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white">
+                                        {['unidad', 'g', 'kg', 'oz', 'lb', 'ml', 'litro', 'metro', 'saco', 'caja', 'frasco', 'bolsa'].map(unit => <option key={unit}>{unit}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-surface-300 mb-1.5 font-medium">Paso</label>
+                                    <input required type="number" min="0.0001" step="0.0001" value={formData.quantityStep}
+                                        onChange={(e) => setFormData({ ...formData, quantityStep: e.target.value })}
+                                        className="w-full px-3 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white" />
+                                </div>
+                                <div className="col-span-3">
+                                    <label className="block text-sm text-surface-300 mb-1.5 font-medium">Familia</label>
+                                    <select value={formData.productFamily} onChange={(e) => {
+                                        const productFamily = e.target.value as ProductFamily;
+                                        const preset = productFamilyPreset(productFamily);
+                                        setFormData({
+                                            ...formData,
+                                            productFamily,
+                                            unit: preset.unit,
+                                            saleMode: preset.saleMode,
+                                            quantityStep: preset.quantityStep,
+                                        });
+                                    }}
+                                        className="w-full px-3 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white">
+                                        <option value="GENERAL">General</option>
+                                        <option value="MEAT">Carnes</option>
+                                        <option value="POULTRY">Pollos y aves</option>
+                                        <option value="ANIMAL_FEED">Alimento animal</option>
+                                        <option value="AGRO_INPUT">Agroinsumos</option>
+                                        <option value="VETERINARY">Veterinaria</option>
+                                    </select>
+                                </div>
+                            </div>
+
                             {/* Price & Cost */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
@@ -318,6 +400,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                                 <input
                                     type="number"
                                     min="0"
+                                    step={formData.quantityStep || (formData.saleMode === 'COUNTED' ? '1' : '0.0001')}
                                     value={formData.stock}
                                     onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
                                     className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white text-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 transition-all"

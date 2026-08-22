@@ -223,6 +223,14 @@ section { padding: clamp(72px, 10vw, 144px) 0; }
 .btn-primary { background: var(--cobalt); color: #fff; font-weight: 600; }
 .btn-primary:hover { background: var(--warm); opacity: 1; }
 
+.btn-secondary {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--hair-2);
+  font-weight: 600;
+}
+.btn-secondary:hover { background: var(--paper); border-color: var(--ink-4); opacity: 1; }
+
 .btn-whatsapp {
   background: var(--whatsapp);
   color: #fff;

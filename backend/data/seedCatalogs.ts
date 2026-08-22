@@ -19,7 +19,34 @@ export interface SeedProduct {
     cost: number;  // C$ costo (editable)
     stock: number;
     unit?: string;
+    saleMode?: 'COUNTED' | 'MEASURED';
+    quantityStep?: string;
+    productFamily?: 'GENERAL' | 'MEAT' | 'POULTRY' | 'ANIMAL_FEED' | 'AGRO_INPUT' | 'VETERINARY';
+    packUnit?: string;
+    packSize?: number;
+    packPrice?: number;
+    requiresBatchTracking?: boolean;
 }
+
+export const SEED_CAPABILITY_MODULES: Record<string, SeedProduct[]> = {
+    CARNES_AVES: [
+        { name: 'Pollo entero por libra', category: 'Pollo', price: 55, cost: 43, stock: 50, unit: 'lb', saleMode: 'MEASURED', quantityStep: '0.01', productFamily: 'POULTRY', requiresBatchTracking: true },
+        { name: 'Pechuga de pollo por libra', category: 'Pollo', price: 78, cost: 62, stock: 35, unit: 'lb', saleMode: 'MEASURED', quantityStep: '0.01', productFamily: 'POULTRY', requiresBatchTracking: true },
+        { name: 'Carne de res por libra', category: 'Carnes', price: 120, cost: 98, stock: 30, unit: 'lb', saleMode: 'MEASURED', quantityStep: '0.01', productFamily: 'MEAT', requiresBatchTracking: true },
+    ],
+    ALIMENTO_ANIMAL: [
+        { name: 'Concentrado para pollo por libra', category: 'Alimento animal', price: 18, cost: 14, stock: 200, unit: 'lb', saleMode: 'MEASURED', quantityStep: '0.01', productFamily: 'ANIMAL_FEED', packUnit: 'saco', packSize: 100, packPrice: 1650 },
+        { name: 'Concentrado para cerdo por libra', category: 'Alimento animal', price: 20, cost: 16, stock: 200, unit: 'lb', saleMode: 'MEASURED', quantityStep: '0.01', productFamily: 'ANIMAL_FEED', packUnit: 'saco', packSize: 100, packPrice: 1850 },
+        { name: 'Alimento para perro', category: 'Alimento animal', price: 38, cost: 30, stock: 100, unit: 'lb', saleMode: 'MEASURED', quantityStep: '0.01', productFamily: 'ANIMAL_FEED' },
+    ],
+    AGROINSUMOS: [
+        { name: 'Fertilizante completo', category: 'Fertilizantes', price: 1450, cost: 1230, stock: 12, unit: 'saco', saleMode: 'COUNTED', quantityStep: '1', productFamily: 'AGRO_INPUT' },
+        { name: 'Semilla de maíz', category: 'Semillas', price: 180, cost: 140, stock: 30, unit: 'bolsa', saleMode: 'COUNTED', quantityStep: '1', productFamily: 'AGRO_INPUT' },
+        { name: 'Vitaminas para aves', category: 'Veterinaria', price: 95, cost: 72, stock: 25, unit: 'frasco', saleMode: 'COUNTED', quantityStep: '1', productFamily: 'VETERINARY', requiresBatchTracking: true },
+    ],
+    PERECEDEROS: [],
+    MAYOREO: [],
+};
 
 const PULPERIA: SeedProduct[] = [
     { name: 'Arroz (libra)', category: 'Granos básicos', price: 18, cost: 14, stock: 100 },
@@ -130,4 +157,31 @@ export const SEED_CATALOGS: Record<string, SeedProduct[]> = {
 export function seedCatalogFor(type: string | null | undefined): SeedProduct[] | null {
     if (!type) return null;
     return SEED_CATALOGS[type] ?? null;
+}
+
+/**
+ * Compone el giro principal con módulos opt-in. La fiscalidad nunca se infiere
+ * de estas sugerencias; cada producto conserva `ivaExento=false` hasta que el
+ * dueño o contador lo clasifique explícitamente.
+ */
+export function composeSeedCatalog(
+    type: string | null | undefined,
+    capabilities: readonly string[],
+): SeedProduct[] | null {
+    const base = seedCatalogFor(type) ?? (
+        type === 'CARNICERIA_POLLERIA' || type === 'AGROPECUARIA' ? [] : null
+    );
+    if (base === null) return null;
+
+    const combined = [
+        ...base,
+        ...capabilities.flatMap((code) => SEED_CAPABILITY_MODULES[code] ?? []),
+    ];
+    const seenNames = new Set<string>();
+    return combined.filter((product) => {
+        const key = product.name.trim().toLocaleLowerCase('es');
+        if (seenNames.has(key)) return false;
+        seenNames.add(key);
+        return true;
+    });
 }

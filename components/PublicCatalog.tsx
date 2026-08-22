@@ -1,28 +1,141 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import Decimal from 'decimal.js';
 import { ShoppingCart, Plus, Minus, X, Send, Phone, User, Store, Search, Share2, Package, Loader2, CheckCircle } from 'lucide-react';
 import { formatMoney } from '../utils/money';
+import { formatQuantityValue, validateQuantity } from '../utils/quantity';
+
+type PublicPresentation = 'BASE' | 'PACK';
 
 interface CatalogProduct {
     id: string;
     name: string;
-    price: number;
+    price: number | string;
     description?: string;
     imageUrl?: string;
     category?: string;
     unit?: string;
+    saleMode?: 'COUNTED' | 'MEASURED' | null;
+    quantityStep?: number | string | null;
+    packUnit?: string | null;
+    packSize?: number | string | null;
+    packPrice?: number | string | null;
 }
 
 interface CartItem extends CatalogProduct {
-    quantity: number;
+    /** Cantidad de la presentación elegida; el servidor deriva unidades base. */
+    quantity: string;
+    presentation: PublicPresentation;
 }
 
 interface BusinessInfo {
-    id: string;
     name: string;
     slug: string;
     phone?: string;
 }
+
+const productRules = (product: CatalogProduct, presentation: PublicPresentation) => ({
+    saleMode: presentation === 'PACK'
+        ? 'COUNTED' as const
+        : product.saleMode === 'COUNTED'
+            ? 'COUNTED' as const
+            : 'MEASURED' as const,
+    quantityStep: presentation === 'PACK'
+        ? '1'
+        : String(product.quantityStep ?? (product.saleMode === 'COUNTED' ? '1' : '0.0001')),
+});
+
+const hasPackPresentation = (product: CatalogProduct): boolean => {
+    try {
+        const packPrice = new Decimal(product.packPrice ?? 0);
+        const packSize = new Decimal(product.packSize ?? 0);
+        return Boolean(
+            product.packUnit?.trim()
+            && product.packPrice !== null
+            && product.packPrice !== undefined
+            && product.packSize !== null
+            && product.packSize !== undefined
+            && packPrice.isFinite()
+            && packPrice.greaterThan(0)
+            && packSize.isFinite()
+            && packSize.greaterThan(0),
+        );
+    } catch {
+        return false;
+    }
+};
+
+const defaultQuantity = (product: CatalogProduct, presentation: PublicPresentation): string => {
+    const rules = productRules(product, presentation);
+    try {
+        return formatQuantityValue(validateQuantity('1', rules));
+    } catch {
+        return formatQuantityValue(validateQuantity(rules.quantityStep, rules));
+    }
+};
+
+const normalizedCartQuantity = (
+    product: CatalogProduct,
+    presentation: PublicPresentation,
+    value: unknown,
+): string => formatQuantityValue(validateQuantity(String(value), productRules(product, presentation)));
+
+const cartQuantityOrDefault = (
+    product: CatalogProduct,
+    presentation: PublicPresentation,
+    value: unknown,
+): Decimal => {
+    try {
+        return new Decimal(normalizedCartQuantity(product, presentation, value));
+    } catch {
+        return new Decimal(defaultQuantity(product, presentation));
+    }
+};
+
+export const reconcilePublicCatalogCart = (
+    cachedItems: unknown,
+    publicProducts: CatalogProduct[],
+): CartItem[] => {
+    if (!Array.isArray(cachedItems)) return [];
+    return cachedItems.flatMap((cached: unknown) => {
+        if (!cached || typeof cached !== 'object') return [];
+        const record = cached as Record<string, unknown>;
+        const product = publicProducts.find(candidate => candidate.id === record.id);
+        if (!product) return [];
+        const requestedPresentation: PublicPresentation = record.presentation === 'PACK'
+            ? 'PACK'
+            : 'BASE';
+        // Un PACK retirado no se convierte silenciosamente en unidades BASE:
+        // el número representa empaques y cambiar su significado alteraría el
+        // pedido. Se descarta la línea para que el cliente la elija de nuevo.
+        if (requestedPresentation === 'PACK' && !hasPackPresentation(product)) return [];
+        try {
+            return [{
+                ...product,
+                presentation: requestedPresentation,
+                quantity: normalizedCartQuantity(product, requestedPresentation, record.quantity),
+            }];
+        } catch {
+            return [];
+        }
+    });
+};
+
+const presentationUnit = (item: CatalogProduct, presentation: PublicPresentation): string => (
+    presentation === 'PACK' ? item.packUnit?.trim() || 'empaque' : item.unit?.trim() || 'unidad'
+);
+
+const presentationPrice = (item: CatalogProduct, presentation: PublicPresentation): Decimal => (
+    new Decimal(presentation === 'PACK' ? item.packPrice ?? 0 : item.price)
+);
+
+const cartLineTotal = (item: CartItem): Decimal => {
+    try {
+        return presentationPrice(item, item.presentation).mul(new Decimal(item.quantity));
+    } catch {
+        return new Decimal(0);
+    }
+};
 
 const PublicCatalog: React.FC = () => {
     const { slug } = useParams<{ slug: string }>();
@@ -100,7 +213,11 @@ const PublicCatalog: React.FC = () => {
             setBusiness(data.business || null);
             // 🛡️ BLINDAJE: Si products viene null/undefined, forzamos un array vacío [] 
             // Esto evita que .map() o .filter() crasheen la app más abajo.
-            setProducts(Array.isArray(data.products) ? data.products : []);
+            const publicProducts: CatalogProduct[] = Array.isArray(data.products) ? data.products : [];
+            setProducts(publicProducts);
+            // LocalStorage es solo cache de UX: rehidratar siempre con el
+            // catalogo publicado actual y descartar cantidades ya invalidas.
+            setCart(previous => reconcilePublicCatalogCart(previous, publicProducts));
             
         } catch (err) {
             setError('Error al cargar el catálogo');
@@ -109,34 +226,65 @@ const PublicCatalog: React.FC = () => {
         }
     };
 
-    const addToCart = (product: CatalogProduct) => {
+    const addToCart = (product: CatalogProduct, presentation: PublicPresentation = 'BASE') => {
         setCart(prev => {
-            const existing = prev.find(item => item.id === product.id);
+            const existing = prev.find(item => item.id === product.id && item.presentation === presentation);
             if (existing) {
                 return prev.map(item =>
-                    item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+                    item.id === product.id && item.presentation === presentation
+                        ? {
+                            ...item,
+                            quantity: formatQuantityValue(
+                                cartQuantityOrDefault(item, presentation, item.quantity)
+                                    .plus(productRules(item, presentation).quantityStep),
+                            ),
+                        }
+                        : item
                 );
             }
-            return [...prev, { ...product, quantity: 1 }];
+            return [...prev, { ...product, presentation, quantity: defaultQuantity(product, presentation) }];
         });
     };
 
-    const updateQuantity = (id: string, delta: number) => {
+    const updateQuantity = (id: string, presentation: PublicPresentation, direction: -1 | 1) => {
         setCart(prev =>
-            prev.map(item => {
-                if (item.id !== id) return item;
-                const newQty = item.quantity + delta;
-                return newQty <= 0 ? item : { ...item, quantity: newQty };
-            }).filter(item => item.quantity > 0)
+            prev.flatMap(item => {
+                if (item.id !== id || item.presentation !== presentation) return [item];
+                const next = cartQuantityOrDefault(item, presentation, item.quantity).plus(
+                    new Decimal(productRules(item, presentation).quantityStep).mul(direction),
+                );
+                if (!next.greaterThan(0)) return [];
+                return [{ ...item, quantity: formatQuantityValue(next) }];
+            }),
         );
     };
 
-    const removeFromCart = (id: string) => {
-        setCart(prev => prev.filter(item => item.id !== id));
+    const updateQuantityInput = (id: string, presentation: PublicPresentation, value: string) => {
+        if (!/^\d*(?:\.\d{0,4})?$/.test(value)) return;
+        setCart(prev => prev.map(item => (
+            item.id === id && item.presentation === presentation
+                ? { ...item, quantity: value }
+                : item
+        )));
     };
 
-    const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+    const commitQuantityInput = (id: string, presentation: PublicPresentation) => {
+        setCart(prev => prev.map(item => {
+            if (item.id !== id || item.presentation !== presentation) return item;
+            try {
+                return { ...item, quantity: normalizedCartQuantity(item, presentation, item.quantity) };
+            } catch {
+                return { ...item, quantity: defaultQuantity(item, presentation) };
+            }
+        }));
+    };
+
+    const removeFromCart = (id: string, presentation: PublicPresentation) => {
+        setCart(prev => prev.filter(item => item.id !== id || item.presentation !== presentation));
+    };
+
+    const cartTotal = cart.reduce((sum, item) => sum.plus(cartLineTotal(item)), new Decimal(0));
+    const cartCount = cart.length;
 
     const generateWhatsAppLink = (
         cartItems: CartItem[],
@@ -147,7 +295,7 @@ const PublicCatalog: React.FC = () => {
     ): string => {
         const orderNum = orderId.slice(-8).toUpperCase();
         const itemLines = cartItems
-            .map(item => `- ${item.quantity}x ${item.name} (${formatMoney((item.price * item.quantity))})`)
+            .map(item => `- ${item.quantity} ${presentationUnit(item, item.presentation)} de ${item.name} (${formatMoney(cartLineTotal(item).toNumber())})`)
             .join('\n');
         const message =
             `Hola ${businessInfo.name}, quiero hacer el pedido #${orderNum} por un total de ${formatMoney(total)}.\n\n` +
@@ -176,11 +324,21 @@ const PublicCatalog: React.FC = () => {
         if (!customerPhone.trim()) return alert('Ingresa tu teléfono');
         if (orderMode === 'DELIVERY' && !direccionEntrega.trim()) return alert('Ingresa tu dirección de entrega');
         if (!validatePhone(customerPhone)) return;
+        let cartSnapshot: CartItem[];
+        try {
+            cartSnapshot = cart.map(item => ({
+                ...item,
+                quantity: normalizedCartQuantity(item, item.presentation, item.quantity),
+            }));
+        } catch (quantityError) {
+            alert(quantityError instanceof Error ? quantityError.message : 'Revisa las cantidades del pedido');
+            return;
+        }
         setSubmitting(true);
-
-        // Snapshot cart + total before clearing
-        const cartSnapshot = [...cart];
-        const totalSnapshot = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+        const totalSnapshot = cartSnapshot.reduce(
+            (sum, item) => sum.plus(cartLineTotal(item)),
+            new Decimal(0),
+        ).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
 
         try {
             if (orderMode === 'DELIVERY') {
@@ -197,7 +355,11 @@ const PublicCatalog: React.FC = () => {
                         direccionEntrega: direccionEntrega.trim(),
                         referenciaDireccion: referenciaDireccion.trim() || undefined,
                         notas: notas.trim() || undefined,
-                        items: cartSnapshot.map(item => ({ productoId: item.id, cantidad: item.quantity })),
+                        items: cartSnapshot.map(item => ({
+                            productoId: item.id,
+                            cantidad: item.quantity,
+                            presentation: item.presentation,
+                        })),
                     }),
                 });
                 const data = await res.json();
@@ -207,7 +369,12 @@ const PublicCatalog: React.FC = () => {
                 }
 
                 const pedidoId: string = data.pedidoId || '';
-                const trackingPath: string = data.trackingPath || (pedidoId ? `/track/${pedidoId}` : '');
+                // Sin capacidad firmada no construimos un enlace legacy por UUID:
+                // el endpoint público falla cerrado y evita exponer el pedido.
+                const trackingPath: string = typeof data.trackingPath === 'string'
+                    && data.trackingPath.startsWith(`/track/${pedidoId}#token=`)
+                    ? data.trackingPath
+                    : '';
                 const trackingUrl = trackingPath ? `${window.location.origin}${trackingPath}` : '';
                 setLastOrderId(pedidoId);
                 setLastTrackingPath(trackingPath);
@@ -229,9 +396,8 @@ const PublicCatalog: React.FC = () => {
                         customerPhone: customerPhone.trim(),
                         items: cartSnapshot.map(item => ({
                             productId: item.id,
-                            name: item.name,
                             quantity: item.quantity,
-                            price: item.price,
+                            presentation: item.presentation,
                         })),
                     }),
                 });
@@ -247,7 +413,12 @@ const PublicCatalog: React.FC = () => {
 
                 // 🚀 Abrir WhatsApp automáticamente con resumen del pedido
                 if (business?.phone && orderId) {
-                    const waUrl = generateWhatsAppLink(cartSnapshot, business, orderId, totalSnapshot);
+                    const waUrl = generateWhatsAppLink(
+                        cartSnapshot,
+                        business,
+                        orderId,
+                        Number(data.total ?? totalSnapshot),
+                    );
                     setLastWhatsappUrl(waUrl);
                     window.open(waUrl, '_blank');
                 }
@@ -441,7 +612,8 @@ const PublicCatalog: React.FC = () => {
                 ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
                         {filteredProducts.map(product => {
-                            const inCart = cart.find(c => c.id === product.id);
+                            const baseInCart = cart.find(c => c.id === product.id && c.presentation === 'BASE');
+                            const packInCart = cart.find(c => c.id === product.id && c.presentation === 'PACK');
                             return (
                                 <div
                                     key={product.id}
@@ -478,23 +650,31 @@ const PublicCatalog: React.FC = () => {
                                         <div className="flex items-center justify-between mt-2">
                                             <div>
                                                 <span className="text-lg font-bold text-slate-900">
-                                                    {formatMoney(product.price)}
+                                                    {formatMoney(Number(product.price))}
                                                 </span>
-                                                {product.unit && product.unit !== 'unidad' && (
-                                                    <span className="text-xs text-slate-400 ml-1">/{product.unit}</span>
-                                                )}
+                                                <span className="text-xs text-slate-400 ml-1">/{product.unit || 'unidad'}</span>
                                             </div>
-                                            {inCart ? (
+                                            {baseInCart ? (
                                                 <div className="flex items-center gap-1.5 bg-blue-50 rounded-xl px-1">
                                                     <button
-                                                        onClick={() => updateQuantity(product.id, -1)}
+                                                        onClick={() => updateQuantity(product.id, 'BASE', -1)}
                                                         className="p-1 rounded-lg hover:bg-blue-100 text-blue-600"
                                                     >
                                                         <Minus size={14} />
                                                     </button>
-                                                    <span className="text-sm font-bold text-blue-700 min-w-[20px] text-center">{inCart.quantity}</span>
+                                                    <input
+                                                        type="number"
+                                                        inputMode="decimal"
+                                                        min={productRules(product, 'BASE').quantityStep}
+                                                        step={productRules(product, 'BASE').quantityStep}
+                                                        value={baseInCart.quantity}
+                                                        onChange={event => updateQuantityInput(product.id, 'BASE', event.target.value)}
+                                                        onBlur={() => commitQuantityInput(product.id, 'BASE')}
+                                                        aria-label={`Cantidad en ${product.unit || 'unidad'} de ${product.name}`}
+                                                        className="w-14 bg-transparent text-sm font-bold text-blue-700 text-center focus:outline-none"
+                                                    />
                                                     <button
-                                                        onClick={() => updateQuantity(product.id, 1)}
+                                                        onClick={() => updateQuantity(product.id, 'BASE', 1)}
                                                         className="p-1 rounded-lg hover:bg-blue-100 text-blue-600"
                                                     >
                                                         <Plus size={14} />
@@ -502,13 +682,57 @@ const PublicCatalog: React.FC = () => {
                                                 </div>
                                             ) : (
                                                 <button
-                                                    onClick={() => addToCart(product)}
+                                                    onClick={() => addToCart(product, 'BASE')}
                                                     className="p-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-200 hover:shadow-lg transition-all active:scale-95"
+                                                    aria-label={`Agregar ${product.name} por ${product.unit || 'unidad'}`}
                                                 >
                                                     <Plus size={16} />
                                                 </button>
                                             )}
                                         </div>
+                                        {hasPackPresentation(product) && (
+                                            <div className="mt-2 flex items-center justify-between gap-2 rounded-xl bg-amber-50 px-2 py-1.5 text-xs">
+                                                <span className="min-w-0 text-amber-800">
+                                                    {product.packUnit} × {String(product.packSize)} · {formatMoney(Number(product.packPrice))}
+                                                </span>
+                                                {packInCart ? (
+                                                    <div className="flex items-center gap-1 rounded-lg bg-white px-1">
+                                                        <button
+                                                            onClick={() => updateQuantity(product.id, 'PACK', -1)}
+                                                            className="p-1 text-amber-700"
+                                                            aria-label="Quitar empaque"
+                                                        >
+                                                            <Minus size={12} />
+                                                        </button>
+                                                        <input
+                                                            type="number"
+                                                            inputMode="numeric"
+                                                            min="1"
+                                                            step="1"
+                                                            value={packInCart.quantity}
+                                                            onChange={event => updateQuantityInput(product.id, 'PACK', event.target.value)}
+                                                            onBlur={() => commitQuantityInput(product.id, 'PACK')}
+                                                            aria-label={`Cantidad de ${product.packUnit} de ${product.name}`}
+                                                            className="w-10 bg-transparent text-center font-bold text-amber-800 focus:outline-none"
+                                                        />
+                                                        <button
+                                                            onClick={() => updateQuantity(product.id, 'PACK', 1)}
+                                                            className="p-1 text-amber-700"
+                                                            aria-label="Agregar otro empaque"
+                                                        >
+                                                            <Plus size={12} />
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => addToCart(product, 'PACK')}
+                                                        className="rounded-lg bg-amber-600 px-2 py-1 font-bold text-white hover:bg-amber-700"
+                                                    >
+                                                        Agregar
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             );
@@ -528,7 +752,7 @@ const PublicCatalog: React.FC = () => {
                             <ShoppingCart size={20} />
                             <span className="font-bold">{cartCount} {cartCount === 1 ? 'item' : 'items'}</span>
                         </div>
-                        <span className="font-bold text-lg">{formatMoney(cartTotal)}</span>
+                        <span className="font-bold text-lg">{formatMoney(cartTotal.toNumber())}</span>
                     </button>
                 </div>
             )}
@@ -560,7 +784,7 @@ const PublicCatalog: React.FC = () => {
                                         </div>
                                     ) : (
                                         cart.map(item => (
-                                            <div key={item.id} className="flex items-center gap-3 bg-slate-50 rounded-xl p-3">
+                                            <div key={`${item.id}:${item.presentation}`} className="flex items-center gap-3 bg-slate-50 rounded-xl p-3">
                                                 <div className="w-12 h-12 rounded-lg bg-white border border-slate-200 flex items-center justify-center flex-shrink-0 overflow-hidden">
                                                     {item.imageUrl ? (
                                                         <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
@@ -570,17 +794,30 @@ const PublicCatalog: React.FC = () => {
                                                 </div>
                                                 <div className="flex-1 min-w-0">
                                                     <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
-                                                    <p className="text-xs text-slate-400">{formatMoney(item.price)} × {item.quantity}</p>
+                                                    <p className="text-xs text-slate-400">
+                                                        {formatMoney(presentationPrice(item, item.presentation).toNumber())} / {presentationUnit(item, item.presentation)}
+                                                    </p>
                                                 </div>
                                                 <div className="flex items-center gap-1">
-                                                    <button onClick={() => updateQuantity(item.id, -1)} className="p-1 rounded-lg bg-white border border-slate-200 text-slate-500 hover:border-red-300 hover:text-red-500">
+                                                    <button onClick={() => updateQuantity(item.id, item.presentation, -1)} className="p-1 rounded-lg bg-white border border-slate-200 text-slate-500 hover:border-red-300 hover:text-red-500">
                                                         <Minus size={12} />
                                                     </button>
-                                                    <span className="text-sm font-bold text-slate-800 w-6 text-center">{item.quantity}</span>
-                                                    <button onClick={() => updateQuantity(item.id, 1)} className="p-1 rounded-lg bg-white border border-slate-200 text-slate-500 hover:border-blue-300 hover:text-blue-600">
+                                                    <input
+                                                        type="number"
+                                                        inputMode={item.presentation === 'PACK' || item.saleMode === 'COUNTED' ? 'numeric' : 'decimal'}
+                                                        min={productRules(item, item.presentation).quantityStep}
+                                                        step={productRules(item, item.presentation).quantityStep}
+                                                        value={item.quantity}
+                                                        onChange={event => updateQuantityInput(item.id, item.presentation, event.target.value)}
+                                                        onBlur={() => commitQuantityInput(item.id, item.presentation)}
+                                                        aria-label={`Cantidad en ${presentationUnit(item, item.presentation)} de ${item.name}`}
+                                                        className="w-16 rounded-lg border border-slate-200 bg-white px-1 py-0.5 text-center text-sm font-bold text-slate-800"
+                                                    />
+                                                    <span className="max-w-14 truncate text-[10px] text-slate-500">{presentationUnit(item, item.presentation)}</span>
+                                                    <button onClick={() => updateQuantity(item.id, item.presentation, 1)} className="p-1 rounded-lg bg-white border border-slate-200 text-slate-500 hover:border-blue-300 hover:text-blue-600">
                                                         <Plus size={12} />
                                                     </button>
-                                                    <button onClick={() => removeFromCart(item.id)} className="p-1 rounded-lg text-slate-300 hover:text-red-500 ml-1">
+                                                    <button onClick={() => removeFromCart(item.id, item.presentation)} className="p-1 rounded-lg text-slate-300 hover:text-red-500 ml-1">
                                                         <X size={14} />
                                                     </button>
                                                 </div>
@@ -594,7 +831,7 @@ const PublicCatalog: React.FC = () => {
                                     <div className="p-5 border-t border-slate-100 space-y-3">
                                         <div className="flex justify-between items-center">
                                             <span className="text-slate-500 font-medium">Total</span>
-                                            <span className="text-2xl font-bold text-slate-900">{formatMoney(cartTotal)}</span>
+                                            <span className="text-2xl font-bold text-slate-900">{formatMoney(cartTotal.toNumber())}</span>
                                         </div>
                                         <button
                                             onClick={() => setShowCheckout(true)}
@@ -711,14 +948,16 @@ const PublicCatalog: React.FC = () => {
                                 {/* Order Summary */}
                                 <div className="bg-slate-50 rounded-xl p-4 space-y-1.5">
                                     {cart.map(item => (
-                                        <div key={item.id} className="flex justify-between text-sm">
-                                            <span className="text-slate-600">{item.quantity}× {item.name}</span>
-                                            <span className="font-medium text-slate-800">{formatMoney((item.price * item.quantity))}</span>
+                                        <div key={`${item.id}:${item.presentation}`} className="flex justify-between gap-3 text-sm">
+                                            <span className="text-slate-600">
+                                                {item.quantity} {presentationUnit(item, item.presentation)} · {item.name}
+                                            </span>
+                                            <span className="font-medium text-slate-800">{formatMoney(cartLineTotal(item).toNumber())}</span>
                                         </div>
                                     ))}
                                     <div className="flex justify-between text-base font-bold pt-2 border-t border-slate-200 mt-2">
                                         <span className="text-slate-700">Total</span>
-                                        <span className="text-slate-900">{formatMoney(cartTotal)}</span>
+                                        <span className="text-slate-900">{formatMoney(cartTotal.toNumber())}</span>
                                     </div>
                                 </div>
 

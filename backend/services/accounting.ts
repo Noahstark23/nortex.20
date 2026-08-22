@@ -8,14 +8,12 @@
  * Precisión numérica: Decimal.js — NIIF exige mínimo 4 d.p. internos, 2 al persistir.
  */
 
-import { PrismaClient } from '@prisma/client';
 import Decimal from 'decimal.js';
 import { generateMonthlyReport, desglosarVentaConExoneracion } from './nicaTax';
+import prisma from '../lib/prisma';
 
 // Configuración global: 20 dígitos significativos, redondeo HALF_UP (DGI)
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
-
-const prisma = new PrismaClient();
 
 // ==========================================
 // CATÁLOGO DE CUENTAS ESTÁNDAR (NIIF PyMES Nicaragua)
@@ -271,6 +269,24 @@ export function buildSaleJournalLines(
     ];
 }
 
+/** Contrato puro usado por recordSale; mantiene fecha economica online/offline. */
+export function buildSaleJournalRequest(
+    saleId: string,
+    saleTotal: number,
+    costTotal: number,
+    paymentMethod: string,
+    exemptTotal?: number | null,
+    opts?: { date?: Date },
+) {
+    return {
+        description: paymentMethod === 'CREDIT'
+            ? `Venta a crédito #${saleId.slice(0, 8)}`
+            : `Venta de contado #${saleId.slice(0, 8)}`,
+        lines: buildSaleJournalLines(saleTotal, costTotal, paymentMethod, exemptTotal),
+        entryOptions: opts?.date ? { date: opts.date } : undefined,
+    };
+}
+
 /**
  * VENTA EN EFECTIVO:
  *   Debe: Caja (1.1.1) + Costo de Ventas (5.1.1)
@@ -287,19 +303,26 @@ export async function recordSale(
     // T2 — porción EXONERADA del total (canasta básica, medicamentos…). Opcional:
     // si no viene (o es null), la venta se trata como 100% GRAVADA, que es el
     // comportamiento histórico. Así las llamadas viejas siguen funcionando igual.
-    exemptTotal?: number | null
+    exemptTotal?: number | null,
+    opts?: { date?: Date },
 ) {
     // IVA Nicaragua 15% SOLO sobre la parte gravada (misma función pura que usa
     // la declaración mensual → el mayor y el VET no pueden discrepar). Antes se
     // dividía el total ENTERO, así que una pulpería que vende canasta básica
     // acreditaba IVA por Pagar (2.1.2) que jamás le cobró al cliente.
-    const description = paymentMethod === 'CREDIT'
-        ? `Venta a crédito #${saleId.slice(0, 8)}`
-        : `Venta de contado #${saleId.slice(0, 8)}`;
+    const journal = buildSaleJournalRequest(
+        saleId,
+        saleTotal,
+        costTotal,
+        paymentMethod,
+        exemptTotal,
+        opts,
+    );
 
     await createJournalEntry(
-        tx, tenantId, description, saleId, 'SALE', userId,
-        buildSaleJournalLines(saleTotal, costTotal, paymentMethod, exemptTotal)
+        tx, tenantId, journal.description, saleId, 'SALE', userId,
+        journal.lines,
+        journal.entryOptions,
     );
 }
 
@@ -590,10 +613,76 @@ export async function recordAgentCommissionSettlement(
     ]);
 }
 
+export interface ReturnJournalInput {
+    total: Decimal.Value;
+    costTotal: Decimal.Value;
+    /** Porción del reembolso correspondiente a líneas exoneradas de IVA. */
+    exemptTotal?: Decimal.Value | null;
+    /** Saldo pendiente que se cancela contra Cuentas por Cobrar. */
+    creditReduction: Decimal.Value;
+    /** Importe ya cobrado que se devuelve por el canal de liquidación. */
+    settledRefund: Decimal.Value;
+    refundMethod: 'CASH' | 'CARD' | 'QR' | 'TRANSFER';
+}
+
+export interface ReturnJournalLine {
+    accountCode: string;
+    debit: number;
+    credit: number;
+}
+
+const returnMoney = (value: Decimal.Value, field: string): Decimal => {
+    let parsed: Decimal;
+    try {
+        parsed = new Decimal(value);
+    } catch {
+        throw new Error(`${field} no es un monto decimal válido`);
+    }
+    if (!parsed.isFinite() || parsed.isNegative()) {
+        throw new Error(`${field} debe ser finito y no negativo`);
+    }
+    return parsed;
+};
+
+/**
+ * Líneas puras de una devolución. La contrapartida conserva cómo está
+ * económicamente la venta AL DEVOLVER: primero cancela el saldo todavía en CxC
+ * y solo el importe ya cobrado acredita Caja. El desglose fiscal usa la foto
+ * exonerada de las líneas devueltas, igual que recordSale.
+ */
+export function buildReturnJournalLines(input: ReturnJournalInput): ReturnJournalLine[] {
+    const total = returnMoney(input.total, 'total');
+    const costTotal = returnMoney(input.costTotal, 'costTotal');
+    const exemptTotal = returnMoney(input.exemptTotal ?? 0, 'exemptTotal');
+    const creditReduction = returnMoney(input.creditReduction, 'creditReduction');
+    const settledRefund = returnMoney(input.settledRefund, 'settledRefund');
+
+    if (exemptTotal.greaterThan(total)) {
+        throw new Error('exemptTotal no puede superar el total de la devolución');
+    }
+    if (!creditReduction.plus(settledRefund).equals(total)) {
+        throw new Error('creditReduction + settledRefund debe reconstruir exactamente el total de la devolución');
+    }
+
+    const desglose = desglosarVentaConExoneracion(total, exemptTotal);
+    const settlementAccount = input.refundMethod === 'CASH' ? '1.1.1' : '1.1.2';
+    return [
+        { accountCode: '4.1.2', debit: desglose.ingresoNeto.toNumber(), credit: 0 },
+        { accountCode: '2.1.2', debit: desglose.iva.toNumber(), credit: 0 },
+        { accountCode: '1.1.4', debit: costTotal.toNumber(), credit: 0 },
+        { accountCode: '1.1.3', debit: 0, credit: creditReduction.toNumber() },
+        { accountCode: settlementAccount, debit: 0, credit: settledRefund.toNumber() },
+        { accountCode: '5.1.1', debit: 0, credit: costTotal.toNumber() },
+    ];
+}
+
 /**
  * DEVOLUCIÓN:
- *   Debe: Devoluciones sobre Ventas (4.1.2) + Inventario (1.1.4)
- *   Haber: Caja (1.1.1) + Costo de Ventas (5.1.1)
+ *   Debe: Devoluciones sobre Ventas (4.1.2) + IVA por Pagar (2.1.2) + Inventario (1.1.4)
+ *   Haber: CxC (1.1.3) y/o Caja (1.1.1) + Costo de Ventas (5.1.1)
+ *
+ * `options` es opcional para mantener compatibles los callers históricos: sin
+ * split explícito se interpreta como una devolución totalmente en efectivo.
  */
 export async function recordReturn(
     tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
@@ -601,19 +690,40 @@ export async function recordReturn(
     userId: string,
     returnId: string,
     total: number,
-    costTotal: number
+    costTotal: number,
+    options: {
+        exemptTotal?: Decimal.Value | null;
+        creditReduction?: Decimal.Value;
+        settledRefund?: Decimal.Value;
+        refundMethod?: 'CASH' | 'CARD' | 'QR' | 'TRANSFER';
+        /** @deprecated alias legacy: solo representa CASH. */
+        cashRefund?: Decimal.Value;
+    } = {},
 ) {
-    const dTotal = new Decimal(total);
-    const salesNeto = dTotal.dividedBy('1.15').toDecimalPlaces(4);
-    const ivaAmount = dTotal.minus(salesNeto).toDecimalPlaces(4);
+    const dTotal = returnMoney(total, 'total');
+    const creditReduction = options.creditReduction ?? 0;
+    const settledRefund = options.settledRefund
+        ?? options.cashRefund
+        ?? dTotal.minus(new Decimal(creditReduction));
+    const refundMethod = options.refundMethod ?? 'CASH';
+    const lines = buildReturnJournalLines({
+        total: dTotal,
+        costTotal,
+        exemptTotal: options.exemptTotal,
+        creditReduction,
+        settledRefund,
+        refundMethod,
+    });
 
-    await createJournalEntry(tx, tenantId, `Devolución #${returnId.slice(0, 8)}`, returnId, 'RETURN', userId, [
-        { accountCode: '4.1.2', debit: salesNeto.toNumber(), credit: 0 },
-        { accountCode: '2.1.2', debit: ivaAmount.toNumber(), credit: 0 },
-        { accountCode: '1.1.4', debit: costTotal, credit: 0 },
-        { accountCode: '1.1.1', debit: 0, credit: total },
-        { accountCode: '5.1.1', debit: 0, credit: costTotal },
-    ]);
+    await createJournalEntry(
+        tx,
+        tenantId,
+        `Devolución #${returnId.slice(0, 8)}`,
+        returnId,
+        'RETURN',
+        userId,
+        lines,
+    );
 }
 
 /**

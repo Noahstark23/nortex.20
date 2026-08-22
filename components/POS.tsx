@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef, useDeferredValue } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
-import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown, ChevronUp, MoreHorizontal, PlayCircle } from 'lucide-react';
 import { formatMoney, formatUSD } from '../utils/money';
 import { EmptyState } from './ui/EmptyState';
 import { IconButton } from './ui/IconButton';
@@ -16,30 +16,70 @@ import { indexarProductos, buscarProductos } from '../utils/posSearch';
 import {
     claveCarrito, claveAparcados, leerCarritoGuardado, serializarCarrito,
     decidirRestauracion, resumenGuardado, leerAparcados, serializarAparcados,
+    claveCarritoLegacy, claveAparcadosLegacy, claveLineaCarrito,
     CarritoGuardado, LineaGuardada, AparcadoGuardado,
 } from '../utils/cartPersistence';
 import { useReportarVenta } from './VentaEnCursoContext';
 import { ReceiptTicket } from './ReceiptTicket';
 import { thermalPrinter } from '../utils/thermalPrinter';
+import { buildPostSalePrintOptions } from '../utils/postSalePrintOptions';
 // xlsx (~430 KB) se importa dinámicamente en handleFileUpload — fuera del bundle inicial.
-import { db, generateOfflineId, saveSaleOffline, getPendingSales, markSalesSynced } from '../lib/db';
+import {
+    generateOfflineId, saveSaleOffline, getPendingSales, markSalesSynced, recordOfflineSyncResults,
+    getScaleContext, saveScaleContext,
+    normalizeActiveScaleContext,
+    OfflineScaleContext,
+} from '../lib/db';
+import { convertQuantity, formatQuantity, formatQuantityValue, QuantityValidationError, validateNonNegativeQuantity, validateQuantity } from '../utils/quantity';
+import { isPlaceholderTaxId } from '../utils/tenantTaxId';
+import { routeScaleLabel, ScaleLabelError } from '../utils/scaleLabels';
+import {
+    acceptedScaleLabelUnitPrice,
+    canApproveExceptionalScaleLabel,
+    decideScalePreviewAcceptance,
+} from '../utils/scaleLabelAcceptance';
 import Decimal from 'decimal.js';
 
 // ── Utilidades financieras del POS (string controlado + Decimal.js) ──────────
-// CartItem no modela discount/unit; se anotan en runtime → tipo local (sin `any`).
+// `discount` y `basePrice` son estado comercial de la línea, no del producto.
 // basePrice preserva el precio de DETALLE original de la línea: item.price es el
 // precio cobrado (puede pasar a mayoreo y volver al bajar la cantidad).
-type CartLine = CartItem & { discount?: number; unit?: string; basePrice?: number };
+type CartLine = CartItem & { discount?: number; basePrice?: number };
+
+const effectiveSaleMode = (product: Pick<Product, 'saleMode'>): 'COUNTED' | 'MEASURED' =>
+    product.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED';
+
+const effectiveQuantityStep = (product: Pick<Product, 'saleMode' | 'quantityStep'>): number => {
+    if (Number.isFinite(product.quantityStep) && Number(product.quantityStep) > 0) {
+        return Number(product.quantityStep);
+    }
+    // Compatibilidad D6: los productos legacy ya admitían fracciones. Solo un
+    // COUNTED explícito puede imponer enteros; null/undefined conserva 4 decimales.
+    return product.saleMode === 'COUNTED' ? 1 : 0.0001;
+};
+
+const lineKey = (item: CartItem): string => claveLineaCarrito(item as unknown as LineaGuardada);
+
+const isQuotationCartLine = (item: Pick<CartItem, 'quotationItemId'>): boolean =>
+    typeof item.quotationItemId === 'string' && item.quotationItemId.trim() !== '';
+
+const isPackCartLine = (item: Pick<CartItem, 'presentation' | 'packUnit'>): boolean => {
+    const presentationUnit = item.presentation?.unit?.trim().toLowerCase();
+    const packUnit = item.packUnit?.trim().toLowerCase();
+    return Boolean(presentationUnit && packUnit && presentationUnit === packUnit);
+};
 
 // ── Venta por mayor: la regla de precios vive en utils/pricing.ts (pura,
 // testeada en tests/pricing.test.ts e importable por cualquier canal). ─────────
 // Etiqueta del nivel activo de una línea (para el badge del carrito).
 const lineTierBadge = (item: CartLine, wholesaleCustomer: boolean): string | null => {
     const base = item.basePrice ?? item.price;
+    const presentation = isPackCartLine(item) ? 'PACK' : 'BASE';
     const { kind } = effectiveTier(
         { basePrice: base, wholesalePrice: item.wholesalePrice, wholesaleMinQty: item.wholesaleMinQty, packSize: item.packSize, packPrice: item.packPrice },
         item.quantity,
-        wholesaleCustomer
+        wholesaleCustomer,
+        presentation,
     );
     if (kind === 'MAYOREO') return 'MAYOREO';
     if (kind === 'EMPAQUE') return (item.packUnit || 'EMPAQUE').toUpperCase();
@@ -143,7 +183,7 @@ const TarjetaProducto = React.memo<{
             <h3 className="font-semibold text-sm text-slate-100 leading-tight line-clamp-2 min-w-0">{product.name}</h3>
         </div>
         <div className="flex justify-between items-end gap-1">
-            <span className="text-[17px] font-bold text-brand nx-num">{formatMoney(product.price)}</span>
+            <span className="text-[15px] sm:text-[17px] font-bold text-brand nx-num whitespace-nowrap">{formatMoney(product.price)}</span>
             {/* El stock negativo se muestra tal cual (−3), no disfrazado de
                 AGOTADO: es la señal de que el inventario ya se descuadró.
                 A 12px y no 11px — a 11px fallaba el contraste AA (P2-1). */}
@@ -219,7 +259,9 @@ const NumberDraftInput: React.FC<{
     placeholder?: string;
     ariaLabel?: string;
     allowZero?: boolean;
-}> = ({ value, onCommit, className, placeholder, ariaLabel, allowZero }) => {
+    ariaInvalid?: boolean;
+    describedBy?: string;
+}> = ({ value, onCommit, className, placeholder, ariaLabel, allowZero, ariaInvalid, describedBy }) => {
     const [draft, setDraft] = useState<string>(value ? String(value) : '');
     const lastCommitted = useRef<number>(value);
 
@@ -238,6 +280,8 @@ const NumberDraftInput: React.FC<{
             inputMode="decimal"
             placeholder={placeholder}
             aria-label={ariaLabel}
+            aria-invalid={ariaInvalid || undefined}
+            aria-describedby={describedBy}
             className={className}
             value={draft}
             onChange={(e) => {
@@ -271,7 +315,14 @@ interface HeldCart {
     /** Persistencia (P0-1): el cliente se guarda por id y se re-resuelve contra
      *  la lista viva; `shiftId` dice a qué turno pertenece el aparcado. */
     clienteId?: string | null;
+    globalDiscount?: string;
     shiftId?: string;
+}
+
+interface ParkingNotice {
+    tone: 'success' | 'warning';
+    message: string;
+    heldId?: string;
 }
 
 // Post-sale state
@@ -294,6 +345,109 @@ interface CompletedSale {
     cashReceived?: string;
     usdReceived?: string;
 }
+
+interface ScalePreviewResponse {
+    classification: 'SCALE_LABEL';
+    profileVersionId: string;
+    profileVersion?: number;
+    product: {
+        id: string;
+        name: string;
+        unit: string;
+        price: string | number;
+        saleMode?: 'COUNTED' | 'MEASURED' | null;
+        quantityStep?: string | number | null;
+        [extra: string]: unknown;
+    };
+    plu: string;
+    sourceValue: string;
+    sourceUnit: string;
+    baseQuantity: string;
+    encodedPrice?: string;
+    pricingPolicy: 'RECALCULATE' | 'REQUIRE_MATCH' | 'ACCEPT_LABEL_TOTAL';
+}
+
+interface PendingDuplicateScaleLabel {
+    rawCode: string;
+    preview: ScalePreviewResponse;
+    requiresManagerOverride: boolean;
+}
+
+interface ReturnSaleLine {
+    saleItemId: string;
+    productId: string;
+    productNameAtSale: string;
+    unitAtSale: string;
+    saleModeAtSale: 'COUNTED' | 'MEASURED';
+    presentationAtSale: 'BASE' | 'PACK';
+    presentationQuantityAtSale: string;
+    quantity: string;
+    returnedQuantity: string;
+    returnableQuantity: string;
+    quantityStep: string;
+    priceAtSale: string;
+    refundUnitPrice: string;
+    measurement?: { source: string; sourceValue: string; sourceUnit: string } | null;
+}
+
+interface ReturnSaleData {
+    id: string;
+    total: string | number;
+    paymentMethod: string;
+    balance: string;
+    allowedRefundMethods: ReturnRefundMethod[];
+    items: ReturnSaleLine[];
+}
+
+type ReturnRefundMethod = 'CASH' | 'CARD' | 'QR' | 'TRANSFER';
+
+const RETURN_REFUND_METHOD_LABELS: Record<ReturnRefundMethod, string> = {
+    CASH: 'Efectivo',
+    CARD: 'Tarjeta',
+    QR: 'QR',
+    TRANSFER: 'Transferencia',
+};
+
+interface ReturnItemSelection extends ReturnSaleLine {
+    quantityDraft: string;
+}
+
+interface PendingScaleLabelOverride {
+    rawCode: string;
+    preview: ScalePreviewResponse;
+}
+
+class ScalePreviewRequestError extends Error {
+    constructor(readonly code: string | undefined, message: string) {
+        super(message);
+        this.name = 'ScalePreviewRequestError';
+    }
+}
+
+const DUPLICATE_SCALE_SCAN_WINDOW_MS = 4_000;
+
+const trackQuantityStepFailure = (
+    error: unknown,
+    source: 'manual' | 'scale_label' | 'pack' | 'cart',
+): void => {
+    if (
+        error instanceof QuantityValidationError
+        && ['INVALID_STEP', 'STEP_MISMATCH', 'COUNTED_REQUIRES_INTEGER'].includes(error.code)
+    ) {
+        // No enviar cantidad, SKU ni código de etiqueta: solo señal operativa.
+        trackEvent('quantity_step_error', { source, error_code: error.code });
+    }
+};
+
+const currentOperatorRole = (): string => {
+    try {
+        const encoded = (localStorage.getItem('nortex_token') || '').split('.')[1];
+        if (!encoded) return '';
+        return JSON.parse(atob(encoded)).role || '';
+    } catch {
+        return '';
+    }
+};
 
 // ==========================================
 // BEEP SOUND (Base64 tiny beep)
@@ -331,7 +485,12 @@ const playErrorBeep = () => {
 };
 
 const POS: React.FC = () => {
+    const location = useLocation();
     const navigate = useNavigate();
+    const firstSaleMode = useMemo(
+        () => new URLSearchParams(location.search).get('first_sale') === '1',
+        [location.search],
+    );
     // Inicia VACÍO (no MOCK_PRODUCTS): los mocks de demo ("Cemento Sol", precios
     // que no son del tenant) online desaparecían tras fetchProducts, pero OFFLINE
     // persistían y se podían agregar al carrito → venta encolada con IDs mock
@@ -351,9 +510,12 @@ const POS: React.FC = () => {
     // La cura de fondo es que el carrito sea durable: si vuelve intacto, el bug
     // deja de existir sin tocar el router. Ver utils/cartPersistence.ts.
     const [identidad] = useState(identidadLocal);
-    const [rescate] = useState<CarritoGuardado | null>(() =>
-        identidad ? leerCarritoGuardado(localStorage.getItem(claveCarrito(identidad.tenantId, identidad.userId))) : null
-    );
+    const [rescate] = useState<CarritoGuardado | null>(() => {
+        if (!identidad) return null;
+        const actual = localStorage.getItem(claveCarrito(identidad.tenantId, identidad.userId));
+        const legacy = localStorage.getItem(claveCarritoLegacy(identidad.tenantId, identidad.userId));
+        return leerCarritoGuardado(actual ?? legacy);
+    });
     // Hidratación OPTIMISTA: el carrito se pinta en el primer render, sin
     // esperar a que resuelva /shifts/current. En el caso común (salir y volver
     // dentro del mismo turno) no hay parpadeo de "Carrito vacío". Si al llegar
@@ -379,11 +541,7 @@ const POS: React.FC = () => {
     const [lineaConDescuento, setLineaConDescuento] = useState<string | null>(null);
     // Línea que acaba de recibir un producto (P1-4): destella 400ms para que el
     // cajero vea QUÉ entró sin despegar la vista del producto que tiene en la mano.
-    //
-    // Lleva un contador y no solo el id A PROPÓSITO: al escanear DOS VECES el
-    // mismo producto —que es justo el caso donde la confirmación importa— setear
-    // el mismo id no cambia el estado, React se ahorra el render y el destello no
-    // se repetiría. El contador garantiza que cada lectura sea un valor nuevo.
+    // El contador fuerza un render incluso al agregar dos veces el mismo SKU.
     const [lineaResaltada, setLineaResaltada] = useState<{ id: string; n: number } | null>(null);
     const contadorResaltado = useRef(0);
 
@@ -393,34 +551,44 @@ const POS: React.FC = () => {
     const [heldCarts, setHeldCarts] = useState<HeldCart[]>(() => {
         const id = identidad;
         if (!id) return [];
-        return leerAparcados(localStorage.getItem(claveAparcados(id.tenantId, id.userId))).map(a => ({
+        const actual = localStorage.getItem(claveAparcados(id.tenantId, id.userId));
+        const legacy = localStorage.getItem(claveAparcadosLegacy(id.tenantId, id.userId));
+        return leerAparcados(actual ?? legacy).map(a => ({
             id: a.id,
             label: a.label,
             items: a.lineas as unknown as CartItem[],
             customer: null,
             clienteId: a.clienteId,
+            globalDiscount: a.descuentoGlobal,
             heldAt: new Date(a.heldAt),
             shiftId: a.shiftId,
         }));
     });
     const [showHeldCarts, setShowHeldCarts] = useState(false);
+    const [parkingNotice, setParkingNotice] = useState<ParkingNotice | null>(null);
+    const [heldCartToDiscard, setHeldCartToDiscard] = useState<string | null>(null);
+    // Evita que un doble toque aparque dos copias antes de que React pinte el
+    // carrito vacío. En un mostrador, 200 ms bastan para que esto ocurra.
+    const parkingLockRef = useRef(false);
 
     // ── Modo simple (Fase C-2 UX): esconde acciones avanzadas del POS ──
-    // Desacoplado del menú (utils/navigation.ts): el default simple del POS es
-    // solo pulpería — ferretería/farmacia conservan tiquetera/parqueo/devoluciones
-    // aunque su menú arranque simple. Se lee una vez al montar.
+    // Desacoplado del menú (utils/navigation.ts), pero alineado con su intención:
+    // todo comercio retail empieza con producto → venta → cobro. Las herramientas
+    // avanzadas siguen disponibles al elegir explícitamente el modo completo.
     const [simpleMode] = useState<boolean>(() => {
         try {
-            const type = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.tenant?.type || '';
-            return resolvePosSimple(type, localStorage.getItem(UI_MODE_KEY));
-        } catch { return false; }
+            const user = JSON.parse(localStorage.getItem('nortex_user') || '{}');
+            const tenant = JSON.parse(localStorage.getItem('nortex_tenant_data') || '{}');
+            const type = tenant?.type || user?.tenant?.type || '';
+            return firstSaleMode || resolvePosSimple(type, localStorage.getItem(UI_MODE_KEY));
+        } catch { return firstSaleMode; }
     });
+    const guidedSimpleMode = simpleMode || firstSaleMode;
+    const [operatorRole] = useState<string>(() => currentOperatorRole());
+    const canApproveScaleLabelTotal = canApproveExceptionalScaleLabel(operatorRole);
     // Solo Dueño/Admin ven el hint del PIN inicial en la apertura de caja.
     const [isOwnerAdmin] = useState<boolean>(() => {
-        try {
-            const role = JSON.parse(atob((localStorage.getItem('nortex_token') || '').split('.')[1])).role || '';
-            return ['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(role);
-        } catch { return false; }
+        return ['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(operatorRole);
     });
 
     // 🔴 FIADO INTELIGENTE STATE
@@ -479,14 +647,26 @@ const POS: React.FC = () => {
 
     // UI State
     const [showMobileCart, setShowMobileCart] = useState(false);
+    const [showPaymentOptions, setShowPaymentOptions] = useState(false);
+    const [resumePaymentAfterShift, setResumePaymentAfterShift] = useState(false);
+    const [showCustomerPicker, setShowCustomerPicker] = useState(false);
+    const [showSaleDetails, setShowSaleDetails] = useState(false);
+    const [showQuickDetails, setShowQuickDetails] = useState(false);
 
     // 🔄 RETURNS STATE
     const [showReturnModal, setShowReturnModal] = useState(false);
     const [returnSaleSearch, setReturnSaleSearch] = useState('');
-    const [returnSaleData, setReturnSaleData] = useState<any>(null);
-    const [returnItems, setReturnItems] = useState<{ productId: string, name: string, quantity: number, price: number, maxQty: number }[]>([]);
+    const [returnSaleData, setReturnSaleData] = useState<ReturnSaleData | null>(null);
+    const [returnItems, setReturnItems] = useState<ReturnItemSelection[]>([]);
     const [returnReason, setReturnReason] = useState('');
     const [returnProcessing, setReturnProcessing] = useState(false);
+    const [returnSearching, setReturnSearching] = useState(false);
+    const [returnErrors, setReturnErrors] = useState<Record<string, string>>({});
+    const [returnGeneralError, setReturnGeneralError] = useState('');
+    const [returnRefundMethod, setReturnRefundMethod] = useState<ReturnRefundMethod | ''>('');
+    // Se conserva entre reintentos (incluido "respuesta perdida") y solo se
+    // reemplaza cuando cambia la intención material o la devolución confirma.
+    const returnRequestRef = useRef<{ signature: string; clientEventId: string } | null>(null);
 
     // POST-SALE MODAL STATE
     const [completedSale, setCompletedSale] = useState<CompletedSale | null>(null);
@@ -499,9 +679,29 @@ const POS: React.FC = () => {
     const [scannerActive, setScannerActive] = useState(true);
     const [lastScanFeedback, setLastScanFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
     const scanBufferRef = useRef('');
-    const scanTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const searchRef = useRef<HTMLInputElement>(null);
+    const [scaleContext, setScaleContext] = useState<OfflineScaleContext | null>(null);
+    const [scaleContextReady, setScaleContextReady] = useState(false);
+    const lastScaleScanRef = useRef<{ rawCode: string; scannedAt: number } | null>(null);
+    const [pendingDuplicateScaleLabel, setPendingDuplicateScaleLabel] = useState<PendingDuplicateScaleLabel | null>(null);
+    const [pendingScaleLabelOverride, setPendingScaleLabelOverride] = useState<PendingScaleLabelOverride | null>(null);
+
+    // Captura manual para productos medidos (incluye legacy D6). El form se
+    // confirma con Enter y valida paso/4 decimales con la misma utilidad pura
+    // que usa el servidor.
+    const [manualMeasuredProduct, setManualMeasuredProduct] = useState<Product | null>(null);
+    const [manualQuantityDraft, setManualQuantityDraft] = useState('');
+    const [manualQuantityError, setManualQuantityError] = useState('');
+    const [quantityErrors, setQuantityErrors] = useState<Record<string, string>>({});
+
+    useEffect(() => {
+        const activeKeys = new Set(cart.map(lineKey));
+        setQuantityErrors(previous => {
+            const next = Object.fromEntries(Object.entries(previous).filter(([key]) => activeKeys.has(key)));
+            return Object.keys(next).length === Object.keys(previous).length ? previous : next;
+        });
+    }, [cart]);
 
     // QUICK CREATE MODAL STATE
     const [showQuickCreate, setShowQuickCreate] = useState(false);
@@ -532,14 +732,15 @@ const POS: React.FC = () => {
     const [newAgreementKind, setNewAgreementKind] = useState('BANCO');
     const [cashBalance, setCashBalance] = useState<number | null>(null);
 
-    // ── Pulso del día (gamificación honesta): cuánto llevás hoy, tu racha de
-    // días vendiendo, tu meta (tu propio promedio) y si hoy es récord. Se
-    // refresca tras CADA venta — es el número que hace que la próxima venta
-    // tenga gancho. Sin ganancia ni costos: apto para cajeros.
+    // Pulso del día: progreso operativo sin exponer costos ni ganancia al cajero.
     interface PulsoDia {
-        totalHoy: string; ventasHoy: number;
-        racha: number; rachaIncluyeHoy: boolean;
-        metaDiaria: string | null; record: string | null; esRecordHoy: boolean;
+        totalHoy: string;
+        ventasHoy: number;
+        racha: number;
+        rachaIncluyeHoy: boolean;
+        metaDiaria: string | null;
+        record: string | null;
+        esRecordHoy: boolean;
     }
     const [pulso, setPulso] = useState<PulsoDia | null>(null);
     const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
@@ -554,6 +755,7 @@ const POS: React.FC = () => {
     // ==========================================
     const [isOnline, setIsOnline] = useState(navigator.onLine);
     const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
+    const [reconciliationOfflineCount, setReconciliationOfflineCount] = useState(0);
     const [syncingOffline, setSyncingOffline] = useState(false);
 
     const token = localStorage.getItem('nortex_token');
@@ -589,6 +791,9 @@ const POS: React.FC = () => {
                     packUnit: p.packUnit ?? null,
                     packSize: p.packSize ?? null,
                     packPrice: p.packPrice ?? null,
+                    saleMode: p.saleMode ?? null,
+                    quantityStep: p.quantityStep == null ? null : Number(p.quantityStep),
+                    productFamily: p.productFamily ?? null,
                 }));
                 setProducts(mapped);
                 setProductsError(false);
@@ -603,33 +808,12 @@ const POS: React.FC = () => {
         }
     }, [headers]);
 
-    // Catálogo de EJEMPLO por giro (P1 retención): mata la app vacía del día 1.
-    const [seeding, setSeeding] = useState(false);
-    const [seedError, setSeedError] = useState('');
-    const seedCatalog = useCallback(async () => {
-        setSeeding(true); setSeedError('');
-        try {
-            const res = await fetch('/api/onboarding/seed-catalog', { method: 'POST', headers });
-            if (res.ok) {
-                await fetchProducts(); // el empty-state desaparece al llegar los productos
-                trackEvent('seed_catalog_used', { source: 'pos' });
-                window.dispatchEvent(new CustomEvent('nortex:data-changed'));
-            } else {
-                const d = await res.json().catch(() => ({}));
-                setSeedError(d.error || 'No se pudo cargar el catálogo de ejemplo.');
-            }
-        } catch {
-            setSeedError('No se pudo cargar el catálogo. Revisá tu conexión.');
-        } finally {
-            setSeeding(false);
-        }
-    }, [headers, fetchProducts]);
-
     // ==========================================
     // OFFLINE SYNC ENGINE
     // ==========================================
     const syncOfflineSales = useCallback(async () => {
-        const pending = await getPendingSales();
+        if (!identidad) return;
+        const pending = await getPendingSales(identidad);
         if (pending.length === 0) return;
         setSyncingOffline(true);
         try {
@@ -641,24 +825,78 @@ const POS: React.FC = () => {
             });
             if (res.ok) {
                 const result = await res.json();
+                await recordOfflineSyncResults(result.results ?? []);
                 const syncedIds = result.results
                     .filter((r: any) => r.status === 'created' || r.status === 'skipped')
                     .map((r: any) => r.offlineId);
+                const reconciliationCount = result.results
+                    .filter((r: any) => r.status === 'reconciliation_required' || r.code === 'RECONCILIATION_REQUIRED')
+                    .length;
                 await markSalesSynced(syncedIds);
-                setPendingOfflineCount(0);
-                fetchProducts();
+                const remaining = await getPendingSales(identidad);
+                setPendingOfflineCount(remaining.length);
+                setReconciliationOfflineCount(
+                    remaining.filter((sale) => sale.syncState === 'RECONCILIATION_REQUIRED').length,
+                );
+                if (reconciliationCount > 0) {
+                    setLastScanFeedback({
+                        message: `${reconciliationCount} venta${reconciliationCount === 1 ? '' : 's'} offline requiere${reconciliationCount === 1 ? '' : 'n'} revisión; no se reinterpretó la etiqueta`,
+                        type: 'error',
+                    });
+                    window.setTimeout(() => setLastScanFeedback(null), 8000);
+                }
+                await fetchProducts();
             }
         } catch (e) {
             // Se intentará de nuevo cuando vuelva internet
         } finally {
             setSyncingOffline(false);
         }
-    }, []);
+    }, [fetchProducts, identidad]);
 
     const refreshOfflineCount = useCallback(async () => {
-        const pending = await getPendingSales();
+        const pending = identidad ? await getPendingSales(identidad) : [];
         setPendingOfflineCount(pending.length);
-    }, []);
+        setReconciliationOfflineCount(
+            pending.filter((sale) => sale.syncState === 'RECONCILIATION_REQUIRED').length,
+        );
+    }, [identidad]);
+
+    const refreshScaleContext = useCallback(async () => {
+        const tenantId = identidad?.tenantId;
+        if (!tenantId) {
+            setScaleContext(null);
+            setScaleContextReady(true);
+            return;
+        }
+
+        // La caché se pinta primero: al caer la red en el mostrador el router de
+        // etiquetas sigue usando exactamente la versión publicada que descargó.
+        const cached = await getScaleContext(tenantId).catch(() => null);
+        if (cached) setScaleContext(cached);
+
+        if (!navigator.onLine || !token) {
+            setScaleContextReady(true);
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/scale-labels/active-context', { headers });
+            if (!response.ok) throw new Error('No se pudo actualizar el contexto de etiquetas');
+            const normalized = normalizeActiveScaleContext(await response.json(), tenantId);
+            await saveScaleContext(normalized);
+            setScaleContext(normalized);
+        } catch {
+            // La caché anterior sigue siendo reproducible y tenant-scoped. Si no
+            // hay ninguna, el scanner continúa funcionando para SKU comunes.
+        } finally {
+            setScaleContextReady(true);
+        }
+    }, [headers, identidad?.tenantId, token]);
+
+    useEffect(() => {
+        void refreshScaleContext();
+    }, [refreshScaleContext]);
 
     // B6 — cargar el tipo de cambio vigente del tenant (BCN/manual).
     useEffect(() => {
@@ -703,7 +941,8 @@ const POS: React.FC = () => {
             // no cambia nada.
             setShowMobileCart(true);
         } else if (decision === 'RESTAURAR' && rescate) {
-            setGlobalDiscount(rescate.descuentoGlobal);
+            const quoted = rescate.lineas.some((line) => isQuotationCartLine(line as unknown as CartItem));
+            setGlobalDiscount(quoted ? '' : rescate.descuentoGlobal);
             setClienteARestaurar(rescate.clienteId);
         }
         // DESCARTAR: el carrito ya arrancó vacío. Nada que hacer.
@@ -726,12 +965,14 @@ const POS: React.FC = () => {
     useEffect(() => {
         if (!persistenciaLista || !identidad) return;
         const clave = claveCarrito(identidad.tenantId, identidad.userId);
+        const claveLegacy = claveCarritoLegacy(identidad.tenantId, identidad.userId);
 
         // Venta YA COBRADA: se borra sin esperar el debounce. Si no, navegar
         // entre el "¡Venta completada!" y "Nueva venta" dejaría guardado un
         // carrito de mercadería ya vendida — y al volver se cobraría dos veces.
         if (completedSale) {
             localStorage.removeItem(clave);
+            localStorage.removeItem(claveLegacy);
             return;
         }
 
@@ -745,8 +986,13 @@ const POS: React.FC = () => {
             });
             // Sin payload (carrito vacío o sin turno) se BORRA la clave: nunca
             // se deja un `[]` guardado que después haya que interpretar.
-            if (payload) localStorage.setItem(clave, payload);
-            else localStorage.removeItem(clave);
+            if (payload) {
+                localStorage.setItem(clave, payload);
+                localStorage.removeItem(claveLegacy);
+            } else {
+                localStorage.removeItem(clave);
+                localStorage.removeItem(claveLegacy);
+            }
         }, 300);
         return () => clearTimeout(t);
     }, [cart, selectedCustomer?.id, globalDiscount, currentShift?.id, completedSale, persistenciaLista, identidad]);
@@ -755,6 +1001,7 @@ const POS: React.FC = () => {
     useEffect(() => {
         if (!persistenciaLista || !identidad) return;
         const clave = claveAparcados(identidad.tenantId, identidad.userId);
+        const claveLegacy = claveAparcadosLegacy(identidad.tenantId, identidad.userId);
         const payload = serializarAparcados(heldCarts.map((h): AparcadoGuardado => ({
             id: h.id,
             label: h.label,
@@ -762,9 +1009,15 @@ const POS: React.FC = () => {
             heldAt: h.heldAt instanceof Date ? h.heldAt.getTime() : Date.now(),
             lineas: h.items.map(aLineaGuardada),
             clienteId: h.customer?.id ?? h.clienteId ?? null,
+            descuentoGlobal: h.globalDiscount ?? '',
         })));
-        if (payload) localStorage.setItem(clave, payload);
-        else localStorage.removeItem(clave);
+        if (payload) {
+            localStorage.setItem(clave, payload);
+            localStorage.removeItem(claveLegacy);
+        } else {
+            localStorage.removeItem(clave);
+            localStorage.removeItem(claveLegacy);
+        }
     }, [heldCarts, currentShift?.id, persistenciaLista, identidad]);
 
     // Cerrar la pestaña con una venta a medias: el navegador pregunta. El texto
@@ -795,14 +1048,15 @@ const POS: React.FC = () => {
     // (auditoría C6). Si el modal está abierto, el ?tour queda en la URL y el
     // tour arranca solo al abrir el turno (este efecto re-corre al cambiar).
     useEffect(() => {
-        if (!shiftLoading && !showOpenShift) maybeAutostartTour();
-    }, [shiftLoading, showOpenShift]);
+        if (!firstSaleMode && !shiftLoading && !showOpenShift) maybeAutostartTour();
+    }, [firstSaleMode, shiftLoading, showOpenShift]);
 
     useEffect(() => {
         refreshOfflineCount();
         const handleOnline = () => {
             setIsOnline(true);
-            syncOfflineSales();
+            void refreshScaleContext();
+            void syncOfflineSales();
         };
         const handleOffline = () => setIsOnline(false);
         window.addEventListener('online', handleOnline);
@@ -811,7 +1065,7 @@ const POS: React.FC = () => {
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
         };
-    }, [syncOfflineSales, refreshOfflineCount]);
+    }, [syncOfflineSales, refreshOfflineCount, refreshScaleContext]);
 
     // ==========================================
     // INIT POS
@@ -833,12 +1087,14 @@ const POS: React.FC = () => {
                     hasOpenShift = true;
                 } else {
                     setCurrentShift(null);
-                    setShowOpenShift(true);
+                    // La caja se abre al cobrar, no al entrar. El usuario puede
+                    // buscar, escanear y armar la venta antes de ese único gate.
+                    setShowOpenShift(false);
                 }
             } catch (e) {
                 console.error("Failed to check shift", e);
                 setCurrentShift(null);
-                setShowOpenShift(true);
+                setShowOpenShift(false);
             } finally {
                 setShiftLoading(false);
             }
@@ -878,8 +1134,13 @@ const POS: React.FC = () => {
                         }]);
                     }
                     setCart(lineasTraspaso);
+                    if (Array.isArray(lineasTraspaso) && lineasTraspaso.some(isQuotationCartLine)) {
+                        // Una cotización es un snapshot autoritativo: no hereda
+                        // descuentos de la venta que acabamos de aparcar.
+                        setGlobalDiscount('');
+                    }
                     localStorage.removeItem('nortex_pending_cart');
-                    if (!hasOpenShift) alert("¡Bienvenido! Abrí tu caja para completar la venta de la demo o cotización.");
+                    if (!hasOpenShift) setResumePaymentAfterShift(false);
                 }
             } catch (e) {
                 console.error("Failed to parse ghost cart", e);
@@ -1186,69 +1447,6 @@ const POS: React.FC = () => {
         }
     };
 
-    // ==========================================
-    // BARCODE SCANNER (Global keydown listener)
-    // ==========================================
-    useEffect(() => {
-        if (!scannerActive) return;
-
-        const handleKeyDown = (e: KeyboardEvent) => {
-            // Ignore if typing in an input/textarea (except for Enter to submit scan)
-            const target = e.target as HTMLElement;
-            const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
-
-            // Scanners send characters rapidly then Enter
-            if (e.key === 'Enter') {
-                const code = scanBufferRef.current.trim();
-                if (code.length >= 3) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleBarcodeScan(code);
-                }
-                scanBufferRef.current = '';
-                if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
-                return;
-            }
-
-            // Don't capture if user is focused on a form input
-            if (isInput) return;
-
-            // Accumulate characters - scanners type very fast
-            if (e.key.length === 1) {
-                scanBufferRef.current += e.key;
-
-                // Reset buffer after 100ms of no input (human typing is slower)
-                if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
-                scanTimerRef.current = setTimeout(() => {
-                    scanBufferRef.current = '';
-                }, 100);
-            }
-        };
-
-        window.addEventListener('keydown', handleKeyDown, true);
-        return () => {
-            window.removeEventListener('keydown', handleKeyDown, true);
-            if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
-        };
-    }, [scannerActive, products, cart]);
-
-    const handleBarcodeScan = useCallback((code: string) => {
-        const upperCode = code.toUpperCase();
-        const found = products.find(p => p.sku.toUpperCase() === upperCode);
-
-        if (found) {
-            addToCart(found);
-            playBeep();
-            setLastScanFeedback({ message: `+ ${found.name}`, type: 'success' });
-        } else {
-            playErrorBeep();
-            setLastScanFeedback({ message: `SKU "${code}" no encontrado`, type: 'error' });
-        }
-
-        // Clear feedback after 2 seconds
-        setTimeout(() => setLastScanFeedback(null), 2000);
-    }, [products]);
-
     // --- SHIFT LOGIC (API) ---
     const handleOpenShift = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -1280,6 +1478,10 @@ const POS: React.FC = () => {
             // y hay que reabrir, el dueño no vuelve a transcribir su PIN.
             setEmployeePin(isOwnerAdmin ? PIN_DUENO_POR_DEFECTO : '');
             setErrorApertura({});
+            if (resumePaymentAfterShift) {
+                setResumePaymentAfterShift(false);
+                setShowPaymentOptions(true);
+            }
         } catch (error: any) {
             setErrorApertura({ general: error?.message || 'No pudimos abrir la caja. Reintentá.' });
         }
@@ -1321,99 +1523,486 @@ const POS: React.FC = () => {
     };
     // -------------------
 
-    const addToCart = useCallback((product: Product) => {
-        if (!currentShift) { setShowOpenShift(true); return; }
-        // P1-4 · El cajero mira el PRODUCTO, no la pantalla. Escanear dos veces el
-        // mismo artículo es el error más caro de un POS, así que la confirmación
-        // llega por tres sentidos a la vez: el beep (que ya existía), el destello
-        // de la línea que entró, y la vibración en táctil. `vibrate` no existe en
-        // escritorio ni en iOS: la llamada es opcional y su ausencia no rompe nada.
+    const signalCartAddition = useCallback((productId: string) => {
         contadorResaltado.current += 1;
-        setLineaResaltada({ id: product.id, n: contadorResaltado.current });
+        setLineaResaltada({ id: productId, n: contadorResaltado.current });
         try { navigator.vibrate?.(30); } catch { /* el navegador no lo soporta */ }
+    }, []);
+
+    const appendMeasuredLine = useCallback((params: {
+        product: Product;
+        baseQuantity: string;
+        presentationQuantity: string;
+        presentationUnit: string;
+        measurement: CartItem['measurement'];
+        overrideUnitPrice?: string;
+    }) => {
+        const mode = effectiveSaleMode(params.product);
+        const step = effectiveQuantityStep(params.product);
+        const validated = validateQuantity(params.baseQuantity, { saleMode: mode, quantityStep: step });
+        const quantity = validated.toNumber();
+        const base = params.product.price;
+        const price = params.overrideUnitPrice
+            ? Number(params.overrideUnitPrice)
+            : effectiveUnitPrice(
+                {
+                    basePrice: base,
+                    wholesalePrice: params.product.wholesalePrice,
+                    wholesaleMinQty: params.product.wholesaleMinQty,
+                    packSize: params.product.packSize,
+                    packPrice: params.product.packPrice,
+                },
+                quantity,
+                Boolean(selectedCustomer?.isWholesale),
+                'BASE',
+            );
+        const cartLineId = params.measurement?.clientEventId ?? generateOfflineId();
+        setCart(prev => [...prev, {
+            ...params.product,
+            quantity,
+            price,
+            basePrice: params.overrideUnitPrice ? price : base,
+            cartLineId,
+            presentation: {
+                quantity: params.presentationQuantity,
+                unit: params.presentationUnit,
+            },
+            measurement: params.measurement,
+        }]);
+        signalCartAddition(params.product.id);
+    }, [selectedCustomer?.isWholesale, signalCartAddition]);
+
+    const addToCart = useCallback((product: Product) => {
+        // Solo MEASURED explícito abre captura. Legacy null/undefined conserva
+        // el flujo histórico de +1/fusión, pero su editor admite fracciones D6.
+        if (product.saleMode === 'MEASURED') {
+            setManualMeasuredProduct(product);
+            setManualQuantityDraft('');
+            setManualQuantityError('');
+            return;
+        }
+
+        signalCartAddition(product.id);
         const wholesaleCustomer = Boolean(selectedCustomer?.isWholesale);
         setCart(prev => {
-            const existing = prev.find(item => item.id === product.id) as CartLine | undefined;
+            const existing = prev.find(item => (
+                item.id === product.id
+                && item.saleMode !== 'MEASURED'
+                && !item.measurement
+                && !isQuotationCartLine(item)
+                && !isPackCartLine(item)
+            )) as CartLine | undefined;
             if (existing) {
                 return prev.map(item => {
-                    if (item.id !== product.id) return item;
+                    if (lineKey(item) !== lineKey(existing)) return item;
                     const line = item as CartLine;
-                    const newQty = item.quantity + 1;
+                    const newQty = new Decimal(item.quantity).plus(1).toNumber();
                     const base = line.basePrice ?? item.price;
-                    return { ...item, quantity: newQty, basePrice: base, price: effectiveUnitPrice({ basePrice: base, wholesalePrice: line.wholesalePrice, wholesaleMinQty: line.wholesaleMinQty, packSize: line.packSize, packPrice: line.packPrice }, newQty, wholesaleCustomer) };
+                    return {
+                        ...item,
+                        quantity: newQty,
+                        basePrice: base,
+                        price: effectiveUnitPrice({ basePrice: base, wholesalePrice: line.wholesalePrice, wholesaleMinQty: line.wholesaleMinQty, packSize: line.packSize, packPrice: line.packPrice }, newQty, wholesaleCustomer, 'BASE'),
+                    };
                 });
             }
-            const price = effectiveUnitPrice({ basePrice: product.price, wholesalePrice: product.wholesalePrice, wholesaleMinQty: product.wholesaleMinQty, packSize: product.packSize, packPrice: product.packPrice }, 1, wholesaleCustomer);
-            return [...prev, { ...product, quantity: 1, basePrice: product.price, price }];
+            const price = effectiveUnitPrice({ basePrice: product.price, wholesalePrice: product.wholesalePrice, wholesaleMinQty: product.wholesaleMinQty, packSize: product.packSize, packPrice: product.packPrice }, 1, wholesaleCustomer, 'BASE');
+            return [...prev, { ...product, quantity: 1, cartLineId: product.id, basePrice: product.price, price }];
         });
-    }, [currentShift, selectedCustomer]);
+    }, [selectedCustomer?.isWholesale, signalCartAddition]);
 
-    // GLOBAL SCANNER LISTENER (Independent of focus)
-    // Moved here to strictly follow React ordering (addToCart must be defined)
-    useEffect(() => {
-        if (!scannerActive) return;
+    const addPackToCart = useCallback((product: Product) => {
+        const packUnit = product.packUnit?.trim();
+        const packSize = Number(product.packSize);
+        const configuredBasePrice = (product as CartLine).basePrice ?? product.price;
+        if (!packUnit || !Number.isFinite(packSize) || packSize <= 0) {
+            setLastScanFeedback({ message: `${product.name} no tiene un empaque válido`, type: 'error' });
+            playErrorBeep();
+            return;
+        }
+        try {
+            // El factor completo debe ser vendible bajo el step histórico del
+            // producto (p. ej. COUNTED no admite cajas de 12.5 unidades).
+            validateQuantity(packSize, {
+                saleMode: effectiveSaleMode(product),
+                quantityStep: effectiveQuantityStep(product),
+            });
+        } catch (error) {
+            trackQuantityStepFailure(error, 'pack');
+            setLastScanFeedback({
+                message: error instanceof Error ? error.message : 'El empaque no coincide con el paso del producto',
+                type: 'error',
+            });
+            playErrorBeep();
+            return;
+        }
 
-        const handleKv = (e: KeyboardEvent) => {
-            // Ignore if user is typing in a real input field except the search bar itself
-            const target = e.target as HTMLElement;
-            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') {
+        const wholesaleCustomer = Boolean(selectedCustomer?.isWholesale);
+        const packUnitPrice = effectiveUnitPrice({
+            basePrice: configuredBasePrice,
+            wholesalePrice: product.wholesalePrice,
+            wholesaleMinQty: product.wholesaleMinQty,
+            packSize: product.packSize,
+            packPrice: product.packPrice,
+        }, packSize, wholesaleCustomer, 'PACK');
+
+        setCart(previous => {
+            const existing = previous.find(item => (
+                item.id === product.id
+                && isPackCartLine(item)
+                && !item.measurement
+                && !isQuotationCartLine(item)
+            ));
+            if (!existing) {
+                return [...previous, {
+                    ...product,
+                    quantity: packSize,
+                    price: packUnitPrice,
+                    basePrice: configuredBasePrice,
+                    cartLineId: `pack:${product.id}`,
+                    presentation: { quantity: '1', unit: packUnit },
+                }];
+            }
+            const existingKey = lineKey(existing);
+            return previous.map(item => {
+                if (lineKey(item) !== existingKey) return item;
+                const nextBaseQuantity = new Decimal(item.quantity).plus(packSize);
+                const nextPackCount = nextBaseQuantity.dividedBy(packSize);
+                return {
+                    ...item,
+                    quantity: nextBaseQuantity.toNumber(),
+                    price: packUnitPrice,
+                    basePrice: configuredBasePrice,
+                    presentation: {
+                        quantity: formatQuantityValue(nextPackCount),
+                        unit: packUnit,
+                    },
+                };
+            });
+        });
+        signalCartAddition(product.id);
+        playBeep();
+    }, [selectedCustomer?.isWholesale, signalCartAddition]);
+
+    const confirmManualMeasured = useCallback((event: React.FormEvent) => {
+        event.preventDefault();
+        if (!manualMeasuredProduct) return;
+        try {
+            const mode = effectiveSaleMode(manualMeasuredProduct);
+            const step = effectiveQuantityStep(manualMeasuredProduct);
+            const quantity = validateQuantity(manualQuantityDraft, { saleMode: mode, quantityStep: step });
+            const clientEventId = generateOfflineId();
+            appendMeasuredLine({
+                product: manualMeasuredProduct,
+                baseQuantity: quantity.toString(),
+                presentationQuantity: formatQuantityValue(quantity),
+                presentationUnit: manualMeasuredProduct.unit || 'unidad',
+                measurement: {
+                    source: 'MANUAL',
+                    clientEventId,
+                    capturedAt: new Date().toISOString(),
+                },
+            });
+            setManualMeasuredProduct(null);
+            setManualQuantityDraft('');
+            setManualQuantityError('');
+            playBeep();
+        } catch (error) {
+            trackQuantityStepFailure(error, 'manual');
+            setManualQuantityError(error instanceof Error ? error.message : 'La cantidad no es válida');
+            playErrorBeep();
+        }
+    }, [appendMeasuredLine, manualMeasuredProduct, manualQuantityDraft]);
+
+    const previewProduct = useCallback((preview: ScalePreviewResponse): Product => {
+        const catalog = products.find(product => product.id === preview.product.id);
+        const price = Number(preview.product.price);
+        if (!Number.isFinite(price) || price < 0) throw new Error('El producto de la etiqueta no tiene un precio válido');
+        const step = preview.product.quantityStep == null ? null : Number(preview.product.quantityStep);
+        return {
+            ...(catalog ?? {
+                id: preview.product.id,
+                name: preview.product.name,
+                sku: preview.plu,
+                category: 'General',
+                stock: Number.NaN,
+                costPrice: 0,
+            }),
+            id: preview.product.id,
+            name: preview.product.name,
+            unit: preview.product.unit,
+            price,
+            saleMode: preview.product.saleMode ?? null,
+            quantityStep: Number.isFinite(step) && Number(step) > 0 ? step : null,
+        };
+    }, [products]);
+
+    const appendScalePreview = useCallback((rawCode: string, preview: ScalePreviewResponse, managerOverride = false) => {
+        const product = previewProduct(preview);
+        const baseQuantity = validateQuantity(preview.baseQuantity, {
+            saleMode: effectiveSaleMode(product),
+            quantityStep: effectiveQuantityStep(product),
+        });
+        const clientEventId = generateOfflineId();
+        const overrideUnitPrice = managerOverride && preview.pricingPolicy === 'ACCEPT_LABEL_TOTAL'
+            ? acceptedScaleLabelUnitPrice(
+                preview.encodedPrice ?? (() => { throw new Error('La etiqueta no trae total codificado'); })(),
+                baseQuantity.toString(),
+            )
+            : undefined;
+        appendMeasuredLine({
+            product,
+            baseQuantity: baseQuantity.toString(),
+            presentationQuantity: preview.sourceValue,
+            presentationUnit: preview.sourceUnit,
+            overrideUnitPrice,
+            measurement: {
+                source: 'SCALE_LABEL',
+                rawCode,
+                profileVersionId: preview.profileVersionId,
+                clientEventId,
+                capturedAt: new Date().toISOString(),
+                previewBaseQuantity: formatQuantityValue(baseQuantity),
+                sourceValue: preview.sourceValue,
+                sourceUnit: preview.sourceUnit,
+                encodedPrice: preview.encodedPrice,
+                pricingPolicy: preview.pricingPolicy,
+                managerOverride,
+            },
+        });
+        lastScaleScanRef.current = { rawCode, scannedAt: Date.now() };
+        setLastScanFeedback({
+            message: `${product.name}: ${formatQuantityValue(baseQuantity)} ${product.unit || 'unidad'}`,
+            type: 'success',
+        });
+        playBeep();
+    }, [appendMeasuredLine, previewProduct]);
+
+    const acceptScalePreview = useCallback((rawCode: string, preview: ScalePreviewResponse) => {
+        const decision = decideScalePreviewAcceptance({
+            rawCode,
+            pricingPolicy: preview.pricingPolicy,
+            lastScan: lastScaleScanRef.current,
+            nowMs: Date.now(),
+            duplicateWindowMs: DUPLICATE_SCALE_SCAN_WINDOW_MS,
+            canApproveExceptionalPrice: canApproveScaleLabelTotal,
+        });
+
+        if (decision.kind === 'block_manager_session') {
+            setLastScanFeedback({
+                message: 'Esta etiqueta requiere iniciar sesión con un gerente o administrador para aceptar su total impreso',
+                type: 'error',
+            });
+            playErrorBeep();
+            return;
+        }
+        if (decision.kind === 'prompt_duplicate') {
+            setPendingDuplicateScaleLabel({
+                rawCode,
+                preview,
+                requiresManagerOverride: decision.requiresManagerOverride,
+            });
+            setLastScanFeedback({ message: 'Etiqueta repetida: confirmá si es otro paquete físico', type: 'error' });
+            playErrorBeep();
+            return;
+        }
+        if (decision.kind === 'prompt_manager_override') {
+            setPendingScaleLabelOverride({ rawCode, preview });
+            return;
+        }
+        appendScalePreview(rawCode, preview, decision.managerOverride);
+    }, [appendScalePreview, canApproveScaleLabelTotal]);
+
+    const previewFromOfflineContext = useCallback((rawCode: string, profileVersionId: string): ScalePreviewResponse => {
+        const profile = scaleContext?.profiles.find(candidate => candidate.profileVersionId === profileVersionId);
+        if (!profile) throw new Error('La versión de esta etiqueta no está disponible sin conexión');
+        const route = routeScaleLabel(rawCode, [profile]);
+        if (route.kind !== 'SCALE_LABEL') throw new Error('La etiqueta no coincide con la versión fijada');
+        if (route.label.valueKind === 'TOTAL_PRICE') {
+            throw new Error('Esta etiqueta solo trae precio total y requiere conexión para revalidarla');
+        }
+        const mapping = scaleContext?.mappings.find(candidate =>
+            candidate.profileVersionId === profileVersionId && candidate.plu === route.label.plu
+        );
+        if (!mapping) throw new Error(`PLU ${route.label.plu} no está vinculado en la versión offline`);
+        const product = products.find(candidate => candidate.id === mapping.productId) ?? mapping.product;
+        if (!product) throw new Error('El producto de esta etiqueta no está disponible sin conexión');
+        const baseQuantity = convertQuantity(route.label.value, mapping.sourceUnit, product.unit || mapping.sourceUnit);
+        return {
+            classification: 'SCALE_LABEL',
+            profileVersionId,
+            profileVersion: profile.profileVersion,
+            product: {
+                id: product.id,
+                name: product.name,
+                unit: product.unit || mapping.sourceUnit,
+                price: product.price,
+                saleMode: product.saleMode ?? null,
+                quantityStep: product.quantityStep ?? null,
+            },
+            plu: route.label.plu,
+            sourceValue: route.label.value,
+            sourceUnit: mapping.sourceUnit,
+            baseQuantity: formatQuantityValue(baseQuantity),
+            pricingPolicy: profile.pricingPolicy,
+        };
+    }, [products, scaleContext]);
+
+    const requestScalePreview = useCallback(async (rawCode: string, profileVersionId?: string): Promise<ScalePreviewResponse> => {
+        const response = await fetch('/api/scale-labels/preview', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ rawCode, ...(profileVersionId ? { profileVersionId } : {}) }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const nested = body?.error && typeof body.error === 'object' ? body.error : null;
+            const message = nested?.message || body?.message || (typeof body?.error === 'string' ? body.error : null) || 'No se pudo interpretar la etiqueta';
+            throw new ScalePreviewRequestError(nested?.code || body?.code, message);
+        }
+        const preview = (body?.data ?? body) as ScalePreviewResponse;
+        if ((preview as unknown as { classification?: string }).classification === 'SKU') {
+            throw new ScalePreviewRequestError('SCALE_PROFILE_NOT_FOUND', 'El código no coincide con una etiqueta configurada');
+        }
+        if (preview.classification !== 'SCALE_LABEL' || !preview.profileVersionId) {
+            throw new Error('El servidor no devolvió una vista previa de etiqueta válida');
+        }
+        return preview;
+    }, [headers]);
+
+    const handleBarcodeScan = useCallback(async (rawCode: string) => {
+        const code = rawCode.trim();
+        try {
+            let routed: ReturnType<typeof routeScaleLabel> | null = null;
+            if (scaleContext?.profiles.length) routed = routeScaleLabel(code, scaleContext.profiles);
+
+            if (routed?.kind === 'SCALE_LABEL') {
+                const preview = navigator.onLine
+                    ? await requestScalePreview(code, routed.label.profileId)
+                    : previewFromOfflineContext(code, routed.label.profileId);
+                acceptScalePreview(code, preview);
                 return;
             }
 
-            // Global auto-focus on the search bar for friction-less typing/scanning
-            if (searchRef.current && document.activeElement !== searchRef.current) {
-                // Don't focus on Control keys, Shift, etc.
-                if (e.key.length === 1) {
-                    searchRef.current.focus();
+            // Si el contexto local quedó un instante atrás, el servidor tiene
+            // la última palabra antes de permitir SKU. Solo NOT_FOUND habilita
+            // el fallback; checksum/PLU/rango inválidos jamás se vuelven +1.
+            if (navigator.onLine && /^\d{13}$/.test(code)) {
+                try {
+                    const preview = await requestScalePreview(code);
+                    acceptScalePreview(code, preview);
+                    void refreshScaleContext();
+                    return;
+                } catch (error) {
+                    if (!(error instanceof ScalePreviewRequestError) || error.code !== 'SCALE_PROFILE_NOT_FOUND') throw error;
                 }
             }
 
-            const char = e.key;
-            // Scanner sends 'Enter' at the end
-            if (char === 'Enter') {
-                const code = scanBufferRef.current.trim(); // Trim whitespace
-                if (code.length >= 2) { // Allow shorter codes if needed, but usually >2
-                    // Try to find product (case insensitive)
-                    const found = products.find(p => p.sku.toUpperCase() === code.toUpperCase());
-
-                    if (found) {
-                        // El escáner SÍ agrega aunque no haya existencia: el cajero
-                        // tiene el producto en la mano, o sea que el equivocado es
-                        // el conteo, no la realidad. Lo que no puede pasar es que
-                        // entre en silencio — suena distinto y lo dice, y el aviso
-                        // de la línea del carrito queda ahí para resolverlo.
-                        const sinExistencia = Number.isFinite(found.stock) && found.stock <= 0;
-                        addToCart(found);
-                        if (sinExistencia) {
-                            playErrorBeep();
-                            setLastScanFeedback({ message: `${found.name}: sin existencia en el sistema`, type: 'error' });
-                        } else {
-                            playBeep();
-                            setLastScanFeedback({ message: `Escaneado: ${found.name}`, type: 'success' });
-                        }
-                    } else {
-                        playErrorBeep();
-                        setLastScanFeedback({ message: `NO ENCONTRADO: ${code}`, type: 'error' });
-                    }
-                    setTimeout(() => setLastScanFeedback(null), 3000);
+            // El router siempre intenta perfiles antes que SKU. Solo si ninguno
+            // reconoce el código se permite el match exacto de catálogo.
+            const found = products.find(product => product.sku.toUpperCase() === code.toUpperCase());
+            if (found) {
+                addToCart(found);
+                if (found.saleMode === 'MEASURED') {
+                    setLastScanFeedback({ message: `${found.name}: ingresá la cantidad`, type: 'success' });
+                } else if (Number.isFinite(found.stock) && found.stock <= 0) {
+                    playErrorBeep();
+                    setLastScanFeedback({ message: `${found.name}: sin existencia en el sistema`, type: 'error' });
+                } else {
+                    playBeep();
+                    setLastScanFeedback({ message: `Escaneado: ${found.name}`, type: 'success' });
                 }
+                return;
+            }
+
+            if (!scaleContextReady && /^\d{13}$/.test(code)) {
+                throw new Error('Los formatos de etiqueta todavía se están cargando; intentá de nuevo');
+            }
+            throw new Error(`SKU "${code}" no encontrado`);
+        } catch (error) {
+            trackQuantityStepFailure(error, 'scale_label');
+            const message = error instanceof ScaleLabelError
+                ? error.message
+                : error instanceof Error ? error.message : 'No se pudo leer el código';
+            playErrorBeep();
+            setLastScanFeedback({ message, type: 'error' });
+        } finally {
+            window.setTimeout(() => setLastScanFeedback(null), 3500);
+        }
+    }, [acceptScalePreview, addToCart, previewFromOfflineContext, products, refreshScaleContext, requestScalePreview, scaleContext, scaleContextReady]);
+
+    const confirmDuplicateScaleLabel = useCallback(() => {
+        if (!pendingDuplicateScaleLabel) return;
+        try {
+            const decision = decideScalePreviewAcceptance({
+                rawCode: pendingDuplicateScaleLabel.rawCode,
+                pricingPolicy: pendingDuplicateScaleLabel.preview.pricingPolicy,
+                lastScan: lastScaleScanRef.current,
+                nowMs: Date.now(),
+                duplicateWindowMs: DUPLICATE_SCALE_SCAN_WINDOW_MS,
+                canApproveExceptionalPrice: canApproveScaleLabelTotal,
+                skipDuplicateCheck: true,
+            });
+            if (decision.kind === 'prompt_manager_override') {
+                setPendingScaleLabelOverride({
+                    rawCode: pendingDuplicateScaleLabel.rawCode,
+                    preview: pendingDuplicateScaleLabel.preview,
+                });
+                setPendingDuplicateScaleLabel(null);
+                return;
+            }
+            appendScalePreview(
+                pendingDuplicateScaleLabel.rawCode,
+                pendingDuplicateScaleLabel.preview,
+                decision.kind === 'append' ? decision.managerOverride : pendingDuplicateScaleLabel.requiresManagerOverride,
+            );
+            setPendingDuplicateScaleLabel(null);
+        } catch (error) {
+            setLastScanFeedback({ message: error instanceof Error ? error.message : 'No se pudo agregar el paquete', type: 'error' });
+        }
+    }, [appendScalePreview, canApproveScaleLabelTotal, pendingDuplicateScaleLabel]);
+
+    const confirmScaleLabelOverride = useCallback(() => {
+        if (!pendingScaleLabelOverride) return;
+        try {
+            appendScalePreview(pendingScaleLabelOverride.rawCode, pendingScaleLabelOverride.preview, true);
+            setPendingScaleLabelOverride(null);
+        } catch (error) {
+            setLastScanFeedback({ message: error instanceof Error ? error.message : 'No se pudo aprobar la etiqueta', type: 'error' });
+            playErrorBeep();
+        }
+    }, [appendScalePreview, pendingScaleLabelOverride]);
+
+    // ÚNICO listener global del lector wedge. Los inputs quedan fuera para que
+    // Enter siga confirmando formularios y no venda accidentalmente lo escrito.
+    useEffect(() => {
+        if (!scannerActive) return;
+        const handleScannerKey = (event: KeyboardEvent) => {
+            const target = event.target as HTMLElement;
+            const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable;
+            if (isInput) return;
+
+            if (event.key === 'Enter') {
+                const code = scanBufferRef.current.trim();
                 scanBufferRef.current = '';
-            } else if (char.length === 1) {
-                // Buffer char
-                scanBufferRef.current += char;
-                // Clear buffer if typing too slow (human typing vs scanner machinegun)
-                if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
-                scanTimeoutRef.current = setTimeout(() => {
-                    scanBufferRef.current = '';
-                }, 100); // 100ms tolerance
+                if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+                if (code.length >= 2) {
+                    event.preventDefault();
+                    void handleBarcodeScan(code);
+                }
+                return;
             }
+            if (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey) return;
+            scanBufferRef.current += event.key;
+            if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+            scanTimerRef.current = setTimeout(() => { scanBufferRef.current = ''; }, 120);
         };
-
-        window.addEventListener('keydown', handleKv);
-        return () => window.removeEventListener('keydown', handleKv);
-    }, [products, addToCart, scannerActive]);
-
-    const removeFromCart = (id: string) => setCart(prev => prev.filter(item => item.id !== id));
+        window.addEventListener('keydown', handleScannerKey, true);
+        return () => {
+            window.removeEventListener('keydown', handleScannerKey, true);
+            if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+        };
+    }, [handleBarcodeScan, scannerActive]);
 
     // ── Quitar con deshacer (P0-4) ─────────────────────────────────────────
     // Borrar una línea no pedía confirmación ni ofrecía vuelta atrás, y el
@@ -1421,19 +2010,24 @@ const POS: React.FC = () => {
     // igual se toca de más, hay 5 segundos para recuperarla. Confirmar cada
     // borrado sería peor: en un mostrador, un diálogo por línea se convierte en
     // ruido que se acepta sin leer.
-    const quitarLinea = useCallback((id: string) => {
-        const posicion = cart.findIndex(i => i.id === id);
+    const quitarLinea = useCallback((key: string) => {
+        const posicion = cart.findIndex(i => lineKey(i) === key);
         if (posicion === -1) return;
         setQuitadoReciente({ item: cart[posicion], posicion });
-        setCart(prev => prev.filter(i => i.id !== id));
+        setCart(prev => prev.filter(i => lineKey(i) !== key));
+        setQuantityErrors(prev => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+        });
     }, [cart]);
 
     const deshacerQuitado = useCallback(() => {
         if (!quitadoReciente) return;
         setCart(prev => {
-            // Si el producto volvió al carrito por otro camino (escáner, grilla)
-            // NO se duplica la línea: deshacer no puede inventar mercadería.
-            if (prev.some(i => i.id === quitadoReciente.item.id)) return prev;
+            // Solo se compara la identidad de LÍNEA. Dos paquetes medidos del
+            // mismo producto son mercadería distinta y deben coexistir.
+            if (prev.some(i => lineKey(i) === lineKey(quitadoReciente.item))) return prev;
             const copia = [...prev];
             copia.splice(Math.min(quitadoReciente.posicion, copia.length), 0, quitadoReciente.item);
             return copia;
@@ -1444,8 +2038,8 @@ const POS: React.FC = () => {
     // El destello de la línea recién agregada se apaga solo (P1-4).
     useEffect(() => {
         if (!lineaResaltada) return;
-        const t = setTimeout(() => setLineaResaltada(null), 400);
-        return () => clearTimeout(t);
+        const timeout = setTimeout(() => setLineaResaltada(null), 400);
+        return () => clearTimeout(timeout);
     }, [lineaResaltada]);
 
     // La ventana de deshacer se cierra sola.
@@ -1455,56 +2049,124 @@ const POS: React.FC = () => {
         return () => clearTimeout(t);
     }, [quitadoReciente]);
 
+    // Confirmación no bloqueante del parqueo/restauración. Se queda lo
+    // suficiente para leerla y actuar, pero no tapa el siguiente cobro.
+    useEffect(() => {
+        if (!parkingNotice) return;
+        const t = setTimeout(() => setParkingNotice(null), 6000);
+        return () => clearTimeout(t);
+    }, [parkingNotice]);
+
     // Reprecia una línea al cambiar su cantidad (mayoreo entra/sale según el umbral).
     const repricedLine = (item: CartItem, newQty: number): CartItem => {
+        if (isQuotationCartLine(item)) return item;
         const line = item as CartLine;
         const base = line.basePrice ?? item.price;
+        const presentationKind = isPackCartLine(item) ? 'PACK' : 'BASE';
         const price = effectiveUnitPrice(
             { basePrice: base, wholesalePrice: line.wholesalePrice, wholesaleMinQty: line.wholesaleMinQty, packSize: line.packSize, packPrice: line.packPrice },
             newQty,
-            Boolean(selectedCustomer?.isWholesale)
+            Boolean(selectedCustomer?.isWholesale),
+            presentationKind,
         );
-        return { ...item, quantity: newQty, basePrice: base, price } as CartItem;
+        const presentation = presentationKind === 'PACK' && item.packSize
+            ? { quantity: formatQuantityValue(new Decimal(newQty).div(item.packSize)), unit: item.packUnit || 'empaque' }
+            : effectiveSaleMode(item) === 'MEASURED' && item.measurement?.source !== 'SCALE_LABEL'
+                ? { quantity: formatQuantityValue(newQty), unit: item.unit || 'unidad' }
+                : item.presentation;
+        return { ...item, quantity: newQty, basePrice: base, price, presentation } as CartItem;
     };
 
-    const updateQuantity = (id: string, delta: number) => {
-        setCart(prev => prev.map(item => {
-            if (item.id === id) {
-                const newQty = Math.max(0.01, Math.round((item.quantity + delta) * 100) / 100);
-                return repricedLine(item, newQty);
-            }
-            return item;
-        }));
+    const setQuantityError = (key: string, message: string | null) => {
+        setQuantityErrors(prev => {
+            if (!message && !prev[key]) return prev;
+            const next = { ...prev };
+            if (message) next[key] = message;
+            else delete next[key];
+            return next;
+        });
     };
 
-    const setQuantity = (id: string, qty: number) => {
-        setCart(prev => prev.map(item => {
-            if (item.id === id) {
-                return repricedLine(item, Math.max(0.01, qty));
+    const validateCartLineQuantity = (item: CartItem, value: Decimal.Value): Decimal => {
+        const validated = validateQuantity(value, {
+            saleMode: effectiveSaleMode(item),
+            quantityStep: effectiveQuantityStep(item),
+        });
+        if (isPackCartLine(item)) {
+            const packSize = new Decimal(item.packSize ?? 0);
+            if (!packSize.isFinite() || !packSize.greaterThan(0) || !validated.modulo(packSize).isZero()) {
+                throw new Error(`La línea de ${item.packUnit || 'empaque'} debe contener empaques completos de ${formatQuantityValue(packSize)} ${item.unit || 'unidad'}`);
             }
-            return item;
-        }));
+        }
+        return validated;
+    };
+
+    const updateQuantity = (key: string, delta: number) => {
+        const current = cart.find(item => lineKey(item) === key);
+        if (!current) return;
+        if (isQuotationCartLine(current)) {
+            setQuantityError(key, 'La cantidad está fijada por la cotización original.');
+            return;
+        }
+        if (current.measurement?.source === 'SCALE_LABEL') {
+            setQuantityError(key, 'La cantidad viene de la etiqueta; escaneá otra si cambió.');
+            return;
+        }
+        try {
+            const candidate = new Decimal(current.quantity).plus(delta);
+            const validated = validateCartLineQuantity(current, candidate);
+            setQuantityError(key, null);
+            setCart(prev => prev.map(item => lineKey(item) === key ? repricedLine(item, validated.toNumber()) : item));
+        } catch (error) {
+            trackQuantityStepFailure(error, 'cart');
+            setQuantityError(key, error instanceof Error ? error.message : 'La cantidad no es válida');
+        }
+    };
+
+    const setQuantity = (key: string, qty: number) => {
+        const current = cart.find(item => lineKey(item) === key);
+        if (!current) return;
+        if (isQuotationCartLine(current)) {
+            setQuantityError(key, 'La cantidad está fijada por la cotización original.');
+            return;
+        }
+        if (current.measurement?.source === 'SCALE_LABEL') {
+            setQuantityError(key, 'La cantidad viene de la etiqueta; no se puede sobrescribir.');
+            return;
+        }
+        try {
+            const validated = validateCartLineQuantity(current, qty);
+            setQuantityError(key, null);
+            setCart(prev => prev.map(item => lineKey(item) === key ? repricedLine(item, validated.toNumber()) : item));
+        } catch (error) {
+            trackQuantityStepFailure(error, 'cart');
+            setQuantityError(key, error instanceof Error ? error.message : 'La cantidad no es válida');
+        }
     };
 
     // Al cambiar el cliente (mayorista ↔ detalle), repreciar TODO el carrito.
     useEffect(() => {
         const wholesaleCustomer = Boolean(selectedCustomer?.isWholesale);
         setCart(prev => prev.map(item => {
+            if (isQuotationCartLine(item)) return item;
             const line = item as CartLine;
             const base = line.basePrice ?? item.price;
+            const presentationKind = isPackCartLine(item) ? 'PACK' : 'BASE';
             const price = effectiveUnitPrice(
                 { basePrice: base, wholesalePrice: line.wholesalePrice, wholesaleMinQty: line.wholesaleMinQty, packSize: line.packSize, packPrice: line.packPrice },
                 item.quantity,
-                wholesaleCustomer
+                wholesaleCustomer,
+                presentationKind,
             );
             return price === item.price ? item : ({ ...item, basePrice: base, price } as CartItem);
         }));
     }, [selectedCustomer?.id, selectedCustomer?.isWholesale]);
 
     // Per-item discount
-    const setItemDiscount = (id: string, discount: number) => {
+    const setItemDiscount = (key: string, discount: number) => {
         setCart(prev => prev.map(item => {
-            if (item.id === id) {
+            if (lineKey(item) === key) {
+                if (isQuotationCartLine(item)) return item;
                 return { ...item, discount: Math.min(100, Math.max(0, discount)) };
             }
             return item;
@@ -1515,17 +2177,31 @@ const POS: React.FC = () => {
     // 🅿️ PARQUEO DE VENTAS (Hold Cart)
     // ==========================================
     const handleHoldCart = useCallback(() => {
-        if (cart.length === 0) return;
-        if (heldCarts.length >= 5) {
-            alert('Máximo 5 carritos aparcados. Restaura uno primero.');
+        if (cart.length === 0 || parkingLockRef.current) return;
+        if (!currentShift) {
+            setParkingNotice({ tone: 'warning', message: 'Abrí la caja para aparcar esta venta.' });
+            setErrorApertura({});
+            setResumePaymentAfterShift(false);
+            setShowOpenShift(true);
             return;
         }
+        if (heldCarts.length >= 5) {
+            setParkingNotice({ tone: 'warning', message: 'Ya hay 5 ventas aparcadas. Continuá o descartá una para liberar espacio.' });
+            setShowMobileCart(false);
+            setShowHeldCarts(true);
+            return;
+        }
+        parkingLockRef.current = true;
+        const heldId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const held: HeldCart = {
-            id: Date.now().toString(),
-            label: selectedCustomer?.name || `Carrito ${heldCarts.length + 1}`,
+            id: heldId,
+            label: selectedCustomer?.name || `Venta ${heldCarts.length + 1}`,
             items: [...cart],
             customer: selectedCustomer,
             clienteId: selectedCustomer?.id ?? null,
+            globalDiscount,
             shiftId: currentShift?.id,
             heldAt: new Date(),
         };
@@ -1536,23 +2212,38 @@ const POS: React.FC = () => {
         setGlobalDiscount('');
         setCreditOverrideAuthorized(false);
         setCreditOverridePin('');
-    }, [cart, heldCarts, selectedCustomer, currentShift?.id]);
+        setShowMobileCart(false);
+        setShowHeldCarts(false);
+        setParkingNotice({
+            tone: 'success',
+            message: `Venta aparcada · ${cart.length} ${cart.length === 1 ? 'producto' : 'productos'}`,
+            heldId,
+        });
+        trackEvent('sale_parked', {
+            cart_items: cart.length,
+            has_customer: Boolean(selectedCustomer),
+            parked_count: heldCarts.length + 1,
+        });
+        window.setTimeout(() => { parkingLockRef.current = false; }, 0);
+    }, [cart, heldCarts, selectedCustomer, currentShift?.id, globalDiscount]);
 
     const handleRestoreCart = useCallback((heldId: string) => {
         const toRestore = heldCarts.find(h => h.id === heldId);
         if (!toRestore) return;
-        // If current cart has items, park it first
+        const swappedCurrentCart = cart.length > 0;
+        // Si ya había una venta en curso, se intercambian atómicamente: sale
+        // una aparcada y entra la actual. Incluso con 5 aparcadas el cupo no
+        // crece, por lo que bloquear el cambio era una fricción artificial.
         if (cart.length > 0) {
-            if (heldCarts.length >= 5) {
-                alert('Máximo 5 carritos. Limpia el carrito actual primero.');
-                return;
-            }
             const currentHeld: HeldCart = {
-                id: Date.now().toString(),
-                label: selectedCustomer?.name || `Carrito ${heldCarts.length + 1}`,
+                id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+                    ? crypto.randomUUID()
+                    : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                label: selectedCustomer?.name || `Venta ${heldCarts.length}`,
                 items: [...cart],
                 customer: selectedCustomer,
                 clienteId: selectedCustomer?.id ?? null,
+                globalDiscount,
                 shiftId: currentShift?.id,
                 heldAt: new Date(),
             };
@@ -1568,25 +2259,54 @@ const POS: React.FC = () => {
         setSelectedCustomer(cliente);
         setCustomerSearch(cliente?.name || '');
         setShowHeldCarts(false);
-        setGlobalDiscount('');
-    }, [cart, heldCarts, selectedCustomer, currentShift?.id, customerList]);
+        setHeldCartToDiscard(null);
+        setGlobalDiscount(toRestore.items.some(isQuotationCartLine) ? '' : (toRestore.globalDiscount ?? ''));
+        setShowMobileCart(true);
+        setParkingNotice({
+            tone: 'success',
+            message: swappedCurrentCart
+                ? 'Venta recuperada · la venta actual quedó aparcada'
+                : `Venta recuperada · ${toRestore.items.length} ${toRestore.items.length === 1 ? 'producto' : 'productos'}`,
+        });
+        trackEvent('parked_sale_restored', {
+            cart_items: toRestore.items.length,
+            swapped_current_cart: swappedCurrentCart,
+            parked_count: swappedCurrentCart ? heldCarts.length : heldCarts.length - 1,
+        });
+    }, [cart, heldCarts, selectedCustomer, currentShift?.id, customerList, globalDiscount]);
 
     // ── P0-1 · Venta a medias de otro turno ────────────────────────────────
     const recuperarVentaPendiente = useCallback(() => {
         if (!ventaPendiente) return;
-        setCart(ventaPendiente.lineas as unknown as CartItem[]);
-        setGlobalDiscount(ventaPendiente.descuentoGlobal);
+        const restoredLines = ventaPendiente.lineas as unknown as CartItem[];
+        setCart(restoredLines);
+        setGlobalDiscount(restoredLines.some(isQuotationCartLine) ? '' : ventaPendiente.descuentoGlobal);
         setClienteARestaurar(ventaPendiente.clienteId);
         setVentaPendiente(null);
     }, [ventaPendiente]);
 
     const descartarVentaPendiente = useCallback(() => {
         setVentaPendiente(null);
-        if (identidad) localStorage.removeItem(claveCarrito(identidad.tenantId, identidad.userId));
+        if (identidad) {
+            localStorage.removeItem(claveCarrito(identidad.tenantId, identidad.userId));
+            localStorage.removeItem(claveCarritoLegacy(identidad.tenantId, identidad.userId));
+        }
     }, [identidad]);
 
     const handleRemoveHeldCart = useCallback((heldId: string) => {
         setHeldCarts(prev => prev.filter(h => h.id !== heldId));
+        setHeldCartToDiscard(null);
+        if (heldCarts.length <= 1) setShowHeldCarts(false);
+        setParkingNotice({ tone: 'success', message: 'Venta aparcada descartada.' });
+        trackEvent('parked_sale_discarded', { parked_count: Math.max(0, heldCarts.length - 1) });
+    }, [heldCarts.length]);
+
+    const openHeldCarts = useCallback(() => {
+        // El ticket móvil ocupa su propia capa. Cerrarlo antes de mostrar este
+        // selector evita dos superficies interactivas superpuestas.
+        setShowMobileCart(false);
+        setHeldCartToDiscard(null);
+        setShowHeldCarts(true);
     }, []);
 
     // ==========================================
@@ -1594,26 +2314,16 @@ const POS: React.FC = () => {
     // ==========================================
     useEffect(() => {
         const handleHotkey = (e: KeyboardEvent) => {
-            // ── Alternativas sin Fn (P1-8) ───────────────────────────────
-            // En la mayoría de las laptops las teclas F exigen mantener Fn, así
-            // que los atajos documentados quedaban fuera del alcance real del
-            // cajero. Las F se conservan (en un teclado de mostrador con F
-            // dedicadas son más rápidas); esto las acompaña, no las reemplaza.
-            //
-            // NO se toma Ctrl+P para aparcar, aunque la auditoría lo proponía:
-            // Ctrl+P es imprimir, y un POS imprime tickets todo el día.
-            // Secuestrarlo rompería algo más importante de lo que arregla.
+            // Alternativas sin Fn para laptops; Ctrl/Cmd+P queda libre para imprimir.
             if (e.ctrlKey || e.metaKey) {
-                const tecla = e.key.toLowerCase();
-                if (tecla === 'k') {
+                const key = e.key.toLowerCase();
+                if (key === 'k') {
                     e.preventDefault();
                     searchRef.current?.focus();
                     return;
                 }
                 if (e.key === 'Enter') {
                     e.preventDefault();
-                    // Mismas guardas que F9: sin ellas, mantener la combinación
-                    // apretada dispararía N cobros y N descargos de stock.
                     if (e.repeat || processing || completedSale || showCashPreModal) return;
                     if (currentShift && cart.length > 0) handleCheckout('CASH');
                     return;
@@ -1653,8 +2363,10 @@ const POS: React.FC = () => {
                     e.preventDefault();
                     // Close any open modal
                     if (completedSale) { handleNewSale(); return; }
+                    if (showPaymentOptions) { setShowPaymentOptions(false); return; }
                     if (showCashModal) { setShowCashModal(null); return; }
                     if (showCreditPanel) { setShowCreditPanel(false); return; }
+                    if (pendingScaleLabelOverride) { setPendingScaleLabelOverride(null); return; }
                     if (showHeldCarts) { setShowHeldCarts(false); return; }
                     if (showQuickCreate) { setShowQuickCreate(false); return; }
                     if (showAddModal) { setShowAddModal(false); return; }
@@ -1671,7 +2383,7 @@ const POS: React.FC = () => {
         };
         window.addEventListener('keydown', handleHotkey);
         return () => window.removeEventListener('keydown', handleHotkey);
-    }, [handleHoldCart, currentShift, cart, completedSale, processing, showCashPreModal, showCashModal, showCreditPanel, showHeldCarts, showQuickCreate, showAddModal, showImportModal, showCloseShift, showMovementsList, showOpenShift]);
+    }, [handleHoldCart, currentShift, cart, completedSale, processing, showPaymentOptions, showCashPreModal, showCashModal, showCreditPanel, pendingScaleLabelOverride, showHeldCarts, showQuickCreate, showAddModal, showImportModal, showCloseShift, showMovementsList, showOpenShift]);
 
     // ==========================================
     // 🔴 FIADO INTELIGENTE (Credit Override)
@@ -1708,6 +2420,12 @@ const POS: React.FC = () => {
         setQuickSaving(true);
 
         try {
+            // Alta rápida crea un producto legacy (saleMode null): conserva
+            // fracciones de hasta 4dp. Solo COUNTED explícito impondría enteros.
+            const stock = validateNonNegativeQuantity(quickProduct.stock, {
+                saleMode: 'MEASURED',
+                quantityStep: '0.0001',
+            });
             const res = await fetch('/api/products', {
                 method: 'POST',
                 headers,
@@ -1716,10 +2434,12 @@ const POS: React.FC = () => {
                     sku: quickProduct.sku.toUpperCase() || `SKU-${Date.now().toString(36).toUpperCase()}`,
                     price: parseFloat(quickProduct.price),
                     cost: parseFloat(quickProduct.cost) || parseFloat(quickProduct.price) * 0.7,
-                    stock: parseInt(quickProduct.stock) || 1,
+                    stock: stock.toString(),
                     minStock: 5,
                     category: 'General',
-                    unit: 'unidad'
+                    unit: 'unidad',
+                    saleMode: null,
+                    quantityStep: null,
                 })
             });
 
@@ -1740,6 +2460,9 @@ const POS: React.FC = () => {
                 packUnit: data.packUnit ?? null,
                 packSize: data.packSize ?? null,
                 packPrice: data.packPrice ?? null,
+                unit: data.unit ?? 'unidad',
+                saleMode: data.saleMode ?? null,
+                quantityStep: data.quantityStep ?? null,
             };
 
             setProducts(prev => [newProd, ...prev]);
@@ -1747,6 +2470,7 @@ const POS: React.FC = () => {
             playBeep();
 
             setShowQuickCreate(false);
+            setShowQuickDetails(false);
             setQuickProduct({ name: '', sku: '', price: '', cost: '', stock: '1' });
         } catch (error: any) {
             alert(`Error: ${error.message}`);
@@ -1853,10 +2577,13 @@ const POS: React.FC = () => {
     const handleCreateProduct = async (e: React.FormEvent) => {
         e.preventDefault();
         const price = parseFloat(newProduct.price);
-        const stock = parseInt(newProduct.stock);
-        if (isNaN(price) || isNaN(stock)) return;
+        if (isNaN(price)) return;
 
         try {
+            const stock = validateNonNegativeQuantity(newProduct.stock, {
+                saleMode: 'MEASURED',
+                quantityStep: '0.0001',
+            });
             const res = await fetch('/api/products', {
                 method: 'POST',
                 headers,
@@ -1865,10 +2592,12 @@ const POS: React.FC = () => {
                     sku: newProduct.sku || `SKU-${Date.now().toString(36).toUpperCase()}`,
                     price: price,
                     cost: parseFloat(newProduct.costPrice) || price * 0.7,
-                    stock: stock,
+                    stock: stock.toString(),
                     minStock: 5,
                     category: newProduct.category,
-                    unit: 'unidad'
+                    unit: 'unidad',
+                    saleMode: null,
+                    quantityStep: null,
                 })
             });
 
@@ -1888,6 +2617,9 @@ const POS: React.FC = () => {
                 packUnit: data.packUnit ?? null,
                 packSize: data.packSize ?? null,
                 packPrice: data.packPrice ?? null,
+                unit: data.unit ?? 'unidad',
+                saleMode: data.saleMode ?? null,
+                quantityStep: data.quantityStep ?? null,
             };
             setProducts(prev => [productToAdd, ...prev]);
             setShowAddModal(false);
@@ -1899,11 +2631,20 @@ const POS: React.FC = () => {
 
     // 💰 Totales 100% en Decimal.js (sin float). El descuento global es string
     // controlado; se clampa 0–100 y se parsea aquí. El IVA también en Decimal.
-    const globalDiscountD = Decimal.min(100, Decimal.max(0, toDecimal(globalDiscount)));
+    const quotationLineCount = cart.filter(isQuotationCartLine).length;
+    const hasQuotationLines = quotationLineCount > 0;
+    const globalDiscountD = hasQuotationLines
+        ? new Decimal(0)
+        : Decimal.min(100, Decimal.max(0, toDecimal(globalDiscount)));
     const totalD = cart.reduce((acc, item) => {
-        const lineDiscount = toDecimal((item as CartLine).discount ?? 0);
+        const lineDiscount = isQuotationCartLine(item)
+            ? new Decimal(0)
+            : toDecimal((item as CartLine).discount ?? 0);
         const factor = new Decimal(1).minus(lineDiscount.div(100));
-        return acc.plus(toDecimal(item.price).mul(item.quantity).mul(factor));
+        const quantity = isQuotationCartLine(item) && item.quantityExact
+            ? toDecimal(item.quantityExact)
+            : toDecimal(item.quantity);
+        return acc.plus(toDecimal(item.price).mul(quantity).mul(factor));
     }, new Decimal(0));
     const discountedTotalD = totalD.mul(new Decimal(1).minus(globalDiscountD.div(100)));
     // IVA 15% Nicaragua — DESGLOSE, no recargo. El precio de mostrador ya
@@ -1922,21 +2663,18 @@ const POS: React.FC = () => {
     const tax = taxD.toDecimalPlaces(2).toNumber();
     const grandTotal = grandTotalD.toDecimalPlaces(2).toNumber();
     const globalDiscountNum = globalDiscountD.toNumber();
-
     // ¿El chip de denominación es el que está cargado? Se compara por VALOR con
     // Decimal, no por string: '500' y '500.00' son el mismo billete, y comparar
     // texto dejaría el chip apagado según cómo se haya escrito el monto.
     const chipActivo = (monto: Decimal): boolean =>
         cashReceived !== '' && toDecimal(cashReceived).equals(monto);
 
-    // Teclado en pantalla del modal de efectivo (P1-3). Se apoya en el mismo
-    // `sanitizeDecimalInput` que el input de texto, así que ambos caminos
-    // producen exactamente la misma cadena — no hay dos reglas de captura.
+    // Teclado táctil del modal de efectivo, con la misma sanitización del input.
     const teclaEfectivo = (tecla: string) => {
-        setCashReceived(prev => {
+        setCashReceived(previous => {
             if (tecla === 'LIMPIAR') return '';
-            if (tecla === 'BORRAR') return prev.slice(0, -1);
-            return sanitizeDecimalInput(prev + tecla);
+            if (tecla === 'BORRAR') return previous.slice(0, -1);
+            return sanitizeDecimalInput(previous + tecla);
         });
     };
 
@@ -1973,13 +2711,55 @@ const POS: React.FC = () => {
         return { limit, currentDebt, debtPct, projectedDebt, projectedPct, color, projectedColor, available: Math.max(0, limit - currentDebt) };
     }, [selectedCustomer, grandTotal]);
 
-    const handleCheckout = async (method: 'CASH' | 'CARD' | 'QR' | 'CREDIT') => {
-        if (!currentShift) { setShowOpenShift(true); return; }
+    const handleCheckout = async (method: 'CASH' | 'CARD' | 'QR' | 'TRANSFER' | 'CREDIT') => {
+        if (!currentShift) {
+            trackEvent('pos_shift_required', { source: firstSaleMode ? 'first_sale' : 'pos', cart_items: cart.length });
+            setShowMobileCart(false);
+            setResumePaymentAfterShift(true);
+            setShowPaymentOptions(false);
+            setShowOpenShift(true);
+            return;
+        }
         // La caja está abierta pero a nombre de otro: cobrar acá dejaría el
         // faltante del arqueo a nombre de quien no estaba en el mostrador.
         // Se toma la caja primero (queda en AuditLog) y recién ahí se cobra.
         if (turnoAjeno) { await tomarTurno(); return; }
         if (cart.length === 0) return;
+        if (hasQuotationLines && quotationLineCount !== cart.length) {
+            setLastScanFeedback({ message: 'La cotización debe cobrarse sola; aparcá o quitá las otras líneas.', type: 'error' });
+            playErrorBeep();
+            setShowMobileCart(true);
+            return;
+        }
+        const checkoutQuantityErrors: Record<string, string> = {};
+        for (const item of cart) {
+            try {
+                validateQuantity(item.quantity, {
+                    saleMode: effectiveSaleMode(item),
+                    quantityStep: effectiveQuantityStep(item),
+                });
+            } catch (error) {
+                checkoutQuantityErrors[lineKey(item)] = error instanceof Error ? error.message : 'La cantidad no es válida';
+            }
+        }
+        if (Object.keys(checkoutQuantityErrors).length > 0) {
+            setQuantityErrors(previous => ({ ...previous, ...checkoutQuantityErrors }));
+        }
+        if (Object.keys(quantityErrors).length > 0) {
+            setLastScanFeedback({ message: 'Corregí las cantidades marcadas antes de cobrar', type: 'error' });
+            playErrorBeep();
+            setShowMobileCart(true);
+            return;
+        }
+        if (Object.keys(checkoutQuantityErrors).length > 0) {
+            setLastScanFeedback({ message: 'Corregí las cantidades marcadas antes de cobrar', type: 'error' });
+            playErrorBeep();
+            setShowMobileCart(true);
+            return;
+        }
+        setShowMobileCart(false);
+        setShowPaymentOptions(false);
+        trackEvent('sale_checkout_started', { payment_method: method, cart_items: cart.length });
 
         // Front-end Block (skip if override authorized)
         if (method === 'CREDIT' && isCreditBlocked && !creditOverrideAuthorized) {
@@ -1988,11 +2768,28 @@ const POS: React.FC = () => {
         }
 
         setProcessing(true);
+        const measuredLines = cart.filter(item => item.saleMode === 'MEASURED' || Boolean(item.measurement)).length;
         // Una sola clave de idempotencia por intento de cobro: viaja también
         // en el POST online (el backend ya deduplica por offlineId), así que
         // si la respuesta se pierde en lie-fi y la venta se re-encola, el
         // sync posterior la marca 'skipped' en vez de duplicarla.
         const offlineId = generateOfflineId();
+        const saleItems = cart.map(c => ({
+            id: c.id,
+            name: c.name,
+            ...(isQuotationCartLine(c) ? { quotationItemId: c.quotationItemId } : {}),
+            quantity: isQuotationCartLine(c) && c.quantityExact
+                ? c.quantityExact
+                : formatQuantityValue(c.quantity),
+            price: c.price,
+            costPrice: c.costPrice,
+            discount: isQuotationCartLine(c) ? 0 : ((c as CartLine).discount || 0),
+            presentation: c.presentation ?? {
+                quantity: formatQuantityValue(c.quantity),
+                unit: c.unit || 'unidad',
+            },
+            ...(c.measurement ? { measurement: c.measurement } : {}),
+        }));
 
         // Encolar la venta en IndexedDB (camino offline Y rescate de fallos
         // de red del camino online — antes un "Failed to fetch" tiraba la
@@ -2014,29 +2811,21 @@ const POS: React.FC = () => {
                 paymentMethod: method,
                 total: grandTotal,
                 globalDiscount: globalDiscountNum,
-                items: cart.map(c => ({
-                    id: c.id,
-                    name: c.name,
-                    quantity: c.quantity,
-                    price: c.price,
-                    costPrice: c.costPrice,
-                    discount: (c as any).discount || 0,
-                })),
+                items: saleItems,
                 createdAt: new Date().toISOString(),
             });
             setPendingOfflineCount(p => p + 1);
 
-            // Sin red no hay endpoint, pero el loop no se apaga: el pulso se
-            // avanza localmente con la venta recién encolada (el fetch de la
-            // próxima venta online lo vuelve autoritativo).
-            setPulso(prev => prev && {
-                ...prev,
-                totalHoy: toDecimal(prev.totalHoy).plus(grandTotal).toFixed(2),
-                ventasHoy: prev.ventasHoy + 1,
+            // Sin red, el pulso avanza localmente; el próximo fetch online
+            // vuelve a establecer la cifra autoritativa.
+            setPulso(previous => previous && {
+                ...previous,
+                totalHoy: toDecimal(previous.totalHoy).plus(grandTotal).toFixed(2),
+                ventasHoy: previous.ventasHoy + 1,
                 rachaIncluyeHoy: true,
-                racha: prev.rachaIncluyeHoy ? prev.racha : prev.racha + 1,
-                esRecordHoy: prev.record !== null &&
-                    toDecimal(prev.totalHoy).plus(grandTotal).greaterThan(toDecimal(prev.record)),
+                racha: previous.rachaIncluyeHoy ? previous.racha : previous.racha + 1,
+                esRecordHoy: previous.record !== null
+                    && toDecimal(previous.totalHoy).plus(grandTotal).greaterThan(toDecimal(previous.record)),
             });
 
             setCompletedSale({
@@ -2056,6 +2845,10 @@ const POS: React.FC = () => {
                 usdReceived: method === 'CASH' && payingInUSD ? usdAmount : undefined,
             });
             setCashReceived('');
+            trackEvent('sale_completed', { payment_method: method, offline: true, cart_items: cart.length });
+            if (measuredLines > 0) {
+                trackEvent('measured_sale_completed', { offline: true, measured_lines: measuredLines });
+            }
         };
 
         try {
@@ -2077,7 +2870,7 @@ const POS: React.FC = () => {
                 signal: AbortSignal.timeout(8000),
                 body: JSON.stringify({
                     offlineId,
-                    items: cart.map(c => ({ id: c.id, quantity: c.quantity, price: c.price, costPrice: c.costPrice, discount: (c as any).discount || 0 })),
+                    items: saleItems.map(({ name: _name, ...item }) => item),
                     paymentMethod: method,
                     customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
                     customerId: selectedCustomer?.id,
@@ -2113,6 +2906,10 @@ const POS: React.FC = () => {
                 usdReceived: method === 'CASH' && payingInUSD ? usdAmount : undefined,
             });
             setCashReceived('');
+            trackEvent('sale_completed', { payment_method: method, offline: false, cart_items: cart.length });
+            if (measuredLines > 0) {
+                trackEvent('measured_sale_completed', { offline: false, measured_lines: measuredLines });
+            }
 
             // NX-03: la píldora de efectivo del header y el desplegable de
             // movimientos se quedaban en C$0.00 / "Sin movimientos" después de
@@ -2136,6 +2933,7 @@ const POS: React.FC = () => {
                     return;
                 } catch { /* IndexedDB también falló: cae al alert */ }
             }
+            trackEvent('sale_failed', { payment_method: method, reason: error?.message || 'unknown' });
             alert(error.message);
         } finally {
             setProcessing(false);
@@ -2173,18 +2971,31 @@ const POS: React.FC = () => {
     }, [completedSale, efectivoRecibidoDeLaVenta, exchangeRate]);
 
     // POST-SALE ACTIONS
-    const getTenantName = () => {
+    const getTenantPrintDetails = () => {
         try {
             const td = localStorage.getItem('nortex_tenant_data');
-            if (td) return JSON.parse(td).businessName || 'Nortex';
+            if (td) {
+                const tenant = JSON.parse(td);
+                const taxId = String(tenant.taxId || '').trim();
+                return {
+                    tenantName: tenant.businessName || tenant.name || 'Nortex',
+                    // El registro crea TAX-<uuid> (antes TAX-<timestamp>) como marcador interno;
+                    // jamás debe salir impreso como si fuera un RUC fiscal.
+                    ruc: taxId && !isPlaceholderTaxId(taxId) ? taxId : undefined,
+                    address: tenant.address || undefined,
+                    phone: tenant.phone || undefined,
+                    dgiAuthCode: tenant.dgiAuthCode || undefined,
+                };
+            }
         } catch { }
-        return 'Nortex';
+        return { tenantName: 'Nortex' };
     };
 
     const buildInvoiceData = useCallback((): InvoiceData | null => {
         if (!completedSale) return null;
+        const tenant = getTenantPrintDetails();
         return {
-            tenantName: getTenantName(),
+            ...tenant,
             customerName: completedSale.customerName,
             customerPhone: completedSale.customerPhone,
             items: completedSale.items.map(i => ({
@@ -2192,6 +3003,9 @@ const POS: React.FC = () => {
                 quantity: i.quantity,
                 price: i.price,
                 lineTotal: i.price * i.quantity,
+                unit: i.unit,
+                saleMode: effectiveSaleMode(i),
+                presentation: i.presentation,
             })),
             subtotal: completedSale.subtotal,
             discount: completedSale.discount,
@@ -2200,8 +3014,15 @@ const POS: React.FC = () => {
             paymentMethod: completedSale.paymentMethod,
             date: completedSale.date,
             saleId: completedSale.saleId,
+            invoiceNumber: completedSale.invoiceNumber,
+            invoiceSeries: completedSale.invoiceSeries,
+            cashReceived: vueltoDeLaVenta ? Number(vueltoDeLaVenta.recibido.toFixed(2)) : undefined,
+            change: vueltoDeLaVenta ? Number(vueltoDeLaVenta.vuelto.toFixed(2)) : undefined,
+            user: currentShift?.employee
+                ? `${currentShift.employee.firstName} ${currentShift.employee.lastName}`
+                : 'Cajero',
         };
-    }, [completedSale]);
+    }, [completedSale, currentShift?.employee, vueltoDeLaVenta]);
 
     const handleWhatsApp = () => {
         const inv = buildInvoiceData();
@@ -2209,19 +3030,22 @@ const POS: React.FC = () => {
         sendToWhatsApp(inv, completedSale?.customerPhone);
     };
 
-    const handlePrintTicket = async () => {
-        if (thermalPrinter.isConnected()) {
-            const inv = buildInvoiceData();
-            if (inv) {
-                const success = await thermalPrinter.printReceipt(inv);
-                if (!success) {
-                    alert('Error comunicándose con la tiquetera. Verifica conexión de web serial.');
-                }
-            }
-        } else {
-            // Use the in-DOM ReceiptTicket + @media print CSS
-            // Wait 150ms to ensure React has rendered the receipt data
-            setTimeout(() => window.print(), 150);
+    const handlePrintTicket = () => {
+        const inv = buildInvoiceData();
+        if (!inv) return;
+        // El ticket oculto ya está montado en el DOM; imprimir desde la misma
+        // pestaña evita que el WebView/PWA bloquee el popup del ticket 80 mm.
+        if (!printTicket(inv)) {
+            alert('No se pudo abrir la impresión. Cerrá y volvé a abrir Nortex, luego intentá de nuevo.');
+        }
+    };
+
+    const handleDirectThermalPrint = async () => {
+        const inv = buildInvoiceData();
+        if (!inv) return;
+        const success = await thermalPrinter.printReceipt(inv);
+        if (!success) {
+            alert('La tiquetera no respondió. Usá “Ticket 80 mm” para imprimir desde el navegador.');
         }
     };
 
@@ -2232,6 +3056,7 @@ const POS: React.FC = () => {
     };
 
     const handleNewSale = () => {
+        if (firstSaleMode) navigate('/app/pos', { replace: true });
         setCompletedSale(null);
         setCashReceived('');
         setCart([]);
@@ -2241,9 +3066,16 @@ const POS: React.FC = () => {
         setCreditOverrideAuthorized(false);
         setCreditOverridePin('');
         setShowCreditPanel(false);
+        setShowPaymentOptions(false);
+        setShowCustomerPicker(false);
+        setShowSaleDetails(false);
+        setShowMobileCart(false);
         setPayingInUSD(false);
         setUsdAmount('');
     };
+
+    const postSalePrintOptions = buildPostSalePrintOptions(thermalConnected);
+    const tenantPrintDetails = getTenantPrintDetails();
 
     // ── Aviso de existencias del carrito (utils/stockAlert.ts) ──────────────
     // La existencia se toma del catálogo VIVO (`products`), no de la foto que
@@ -2257,21 +3089,42 @@ const POS: React.FC = () => {
         return m;
     }, [products]);
 
-    const resumenStock = useMemo(() => evaluarCarrito(
-        cart.map(item => ({
-            id: item.id,
-            name: item.name,
-            quantity: item.quantity,
-            stock: stockPorProducto.get(item.id) ?? item.stock,
-            unit: (item as CartLine).unit,
-        }))
-    ), [cart, stockPorProducto]);
+    const resumenStock = useMemo(() => {
+        // Las etiquetas crean líneas independientes. Para existencias se suman
+        // por producto: dos paquetes de 0.75 kg consumen 1.50 kg aunque tengan
+        // clientEventId distintos.
+        const aggregated = new Map<string, { id: string; name: string; quantity: Decimal; stock: number; unit?: string | null }>();
+        for (const item of cart) {
+            const current = aggregated.get(item.id);
+            if (current) {
+                current.quantity = current.quantity.plus(item.quantity);
+            } else {
+                aggregated.set(item.id, {
+                    id: item.id,
+                    name: item.name,
+                    quantity: new Decimal(item.quantity),
+                    stock: stockPorProducto.get(item.id) ?? item.stock,
+                    unit: item.unit,
+                });
+            }
+        }
+        return evaluarCarrito([...aggregated.values()].map(item => ({
+            ...item,
+            quantity: item.quantity.toNumber(),
+        })));
+    }, [cart, stockPorProducto]);
 
     const avisoPorLinea = useMemo(() => {
         const m = new Map<string, AvisoStock>();
         for (const a of resumenStock.avisos) m.set(a.id, a);
         return m;
     }, [resumenStock]);
+
+    const lineasPorProducto = useMemo(() => {
+        const counts = new Map<string, number>();
+        for (const item of cart) counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
+        return counts;
+    }, [cart]);
 
     const resumenStockTexto = textoResumen(resumenStock, permiteStockNegativo);
 
@@ -2315,13 +3168,205 @@ const POS: React.FC = () => {
     // Handle search input Enter to add exact SKU match to cart
     const handleSearchKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && searchTerm.trim()) {
-            const term = searchTerm.trim().toUpperCase();
-            const match = products.find(p => p.sku.toUpperCase() === term);
-            if (match) {
-                addToCart(match);
-                playBeep();
-                setSearchTerm('');
+            e.preventDefault();
+            void handleBarcodeScan(searchTerm.trim());
+            setSearchTerm('');
+        }
+    };
+
+    const resetReturnFlow = () => {
+        returnRequestRef.current = null;
+        setShowReturnModal(false);
+        setReturnSaleData(null);
+        setReturnItems([]);
+        setReturnSaleSearch('');
+        setReturnReason('');
+        setReturnRefundMethod('');
+        setReturnErrors({});
+        setReturnGeneralError('');
+    };
+
+    const normalizeReturnSale = (raw: any): ReturnSaleData => {
+        if (!raw || typeof raw.id !== 'string' || !Array.isArray(raw.items)) {
+            throw new Error('La venta no devolvió líneas válidas');
+        }
+        const items = raw.items.map((item: any): ReturnSaleLine => {
+            const saleItemId = String(item.saleItemId ?? item.id ?? '').trim();
+            if (!saleItemId) throw new Error('Una línea vendida no tiene identidad para devolverla con seguridad');
+            const saleModeAtSale = item.saleModeAtSale === 'COUNTED' ? 'COUNTED' : 'MEASURED';
+            const unitAtSale = String(item.unitAtSale || 'unidad');
+            return {
+                saleItemId,
+                productId: String(item.productId ?? ''),
+                productNameAtSale: String(item.productNameAtSale || item.name || item.productId || 'Producto'),
+                unitAtSale,
+                saleModeAtSale,
+                presentationAtSale: item.presentationAtSale === 'PACK' ? 'PACK' : 'BASE',
+                presentationQuantityAtSale: String(item.presentationQuantityAtSale ?? item.quantity ?? '0'),
+                quantity: String(item.quantity ?? '0'),
+                returnedQuantity: String(item.returnedQuantity ?? '0'),
+                returnableQuantity: String(item.returnableQuantity ?? item.quantity ?? '0'),
+                quantityStep: String(item.quantityStep ?? (saleModeAtSale === 'COUNTED' ? '1' : '0.0001')),
+                priceAtSale: String(item.priceAtSale ?? '0'),
+                refundUnitPrice: String(item.refundUnitPrice ?? item.priceAtSale ?? '0'),
+                measurement: item.measurement ?? null,
+            };
+        });
+        const supportedRefundMethods = new Set<ReturnRefundMethod>(['CASH', 'CARD', 'QR', 'TRANSFER']);
+        const allowedRefundMethods = Array.isArray(raw.allowedRefundMethods)
+            ? raw.allowedRefundMethods.filter((method: unknown): method is ReturnRefundMethod => (
+                typeof method === 'string' && supportedRefundMethods.has(method as ReturnRefundMethod)
+            ))
+            : [];
+        return {
+            id: raw.id,
+            total: raw.total,
+            paymentMethod: String(raw.paymentMethod ?? ''),
+            balance: String(raw.balance ?? '0'),
+            allowedRefundMethods,
+            items,
+        };
+    };
+
+    const searchReturnSale = async () => {
+        if (!returnSaleSearch.trim() || returnSearching) return;
+        setReturnSearching(true);
+        setReturnGeneralError('');
+        setReturnErrors({});
+        try {
+            const token = localStorage.getItem('nortex_token');
+            const response = await fetch(`/api/sales/search?q=${encodeURIComponent(returnSaleSearch.trim())}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body.error || 'No pudimos buscar la venta');
+            const sale = normalizeReturnSale(body);
+            setReturnSaleData(sale);
+            setReturnItems(sale.items.map((item) => ({ ...item, quantityDraft: '0' })));
+            setReturnRefundMethod(sale.allowedRefundMethods.length === 1 ? sale.allowedRefundMethods[0] : '');
+        } catch (error) {
+            setReturnSaleData(null);
+            setReturnItems([]);
+            setReturnRefundMethod('');
+            setReturnGeneralError(error instanceof Error ? error.message : 'No pudimos buscar la venta');
+        } finally {
+            setReturnSearching(false);
+        }
+    };
+
+    const validateReturnDraft = (item: ReturnItemSelection): { quantity: Decimal | null; error: string | null } => {
+        let parsed: Decimal;
+        try {
+            parsed = new Decimal(item.quantityDraft.trim() || '0');
+        } catch {
+            return { quantity: null, error: 'Ingresá una cantidad decimal válida' };
+        }
+        if (!parsed.isFinite() || parsed.isNegative()) return { quantity: null, error: 'La cantidad no puede ser negativa' };
+        if (parsed.isZero()) return { quantity: parsed, error: null };
+        try {
+            const validated = validateQuantity(parsed.toString(), {
+                saleMode: item.saleModeAtSale,
+                quantityStep: item.quantityStep,
+            });
+            const maximum = new Decimal(item.returnableQuantity);
+            if (validated.greaterThan(maximum)) {
+                return { quantity: null, error: `Máximo disponible: ${formatQuantityValue(maximum)} ${item.unitAtSale}` };
             }
+            return { quantity: validated, error: null };
+        } catch (error) {
+            return { quantity: null, error: error instanceof Error ? error.message : 'Cantidad inválida' };
+        }
+    };
+
+    const setReturnQuantity = (saleItemId: string, raw: string) => {
+        const quantityDraft = sanitizeDecimalInput(raw);
+        setReturnItems(previous => previous.map(item => item.saleItemId === saleItemId ? { ...item, quantityDraft } : item));
+        setReturnGeneralError('');
+        setReturnErrors(previous => {
+            if (!previous[saleItemId]) return previous;
+            const next = { ...previous };
+            delete next[saleItemId];
+            return next;
+        });
+    };
+
+    const stepReturnQuantity = (item: ReturnItemSelection, direction: -1 | 1) => {
+        const current = (() => {
+            try { return new Decimal(item.quantityDraft || 0); }
+            catch { return new Decimal(0); }
+        })();
+        const step = new Decimal(item.quantityStep);
+        const maximum = new Decimal(item.returnableQuantity);
+        const next = Decimal.max(0, Decimal.min(maximum, current.plus(step.mul(direction))));
+        setReturnQuantity(item.saleItemId, formatQuantityValue(next));
+    };
+
+    const returnEstimate = returnItems.reduce((total, item) => {
+        const validation = validateReturnDraft(item);
+        return validation.quantity?.greaterThan(0)
+            ? total.plus(validation.quantity.mul(item.refundUnitPrice))
+            : total;
+    }, new Decimal(0)).toDecimalPlaces(2);
+    const returnCreditReduction = returnSaleData?.paymentMethod === 'CREDIT'
+        ? Decimal.min(returnEstimate, Decimal.max(toDecimal(returnSaleData.balance), 0)).toDecimalPlaces(2)
+        : new Decimal(0);
+    const returnSettledRefund = returnEstimate.minus(returnCreditReduction).toDecimalPlaces(2);
+    const returnRequiresRefundMethod = returnSaleData?.paymentMethod === 'CREDIT'
+        && returnSettledRefund.greaterThan(0);
+
+    const submitReturn = async () => {
+        if (!returnSaleData || returnProcessing) return;
+        const errors: Record<string, string> = {};
+        const selected: Array<{ saleItemId: string; quantity: string }> = [];
+        for (const item of returnItems) {
+            const validation = validateReturnDraft(item);
+            if (validation.error) errors[item.saleItemId] = validation.error;
+            else if (validation.quantity?.greaterThan(0)) {
+                selected.push({ saleItemId: item.saleItemId, quantity: validation.quantity.toString() });
+            }
+        }
+        if (selected.length === 0) setReturnGeneralError('Seleccioná al menos una cantidad para devolver');
+        else if (returnReason.trim().length < 3) setReturnGeneralError('Escribí un motivo de al menos 3 caracteres');
+        else if (returnRequiresRefundMethod && !returnRefundMethod) setReturnGeneralError('Elegí cómo reembolsar el importe ya cobrado');
+        else setReturnGeneralError('');
+        setReturnErrors(errors);
+        if (
+            Object.keys(errors).length > 0
+            || selected.length === 0
+            || returnReason.trim().length < 3
+            || (returnRequiresRefundMethod && !returnRefundMethod)
+        ) return;
+
+        setReturnProcessing(true);
+        try {
+            const token = localStorage.getItem('nortex_token');
+            const materialPayload = {
+                saleId: returnSaleData.id,
+                items: [...selected].sort((left, right) => left.saleItemId.localeCompare(right.saleItemId)),
+                reason: returnReason.trim(),
+                ...(returnRequiresRefundMethod ? { refundMethod: returnRefundMethod } : {}),
+            };
+            const signature = JSON.stringify(materialPayload);
+            if (!returnRequestRef.current || returnRequestRef.current.signature !== signature) {
+                returnRequestRef.current = { signature, clientEventId: generateOfflineId() };
+            }
+            const response = await fetch('/api/returns', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({
+                    ...materialPayload,
+                    clientEventId: returnRequestRef.current.clientEventId,
+                }),
+            });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body.error || 'No pudimos procesar la devolución');
+            alert(`Devolución procesada por ${formatMoney(Number(body.total ?? returnEstimate.toString()))}. Stock restaurado.`);
+            resetReturnFlow();
+            await fetchProducts();
+        } catch (error) {
+            setReturnGeneralError(error instanceof Error ? error.message : 'No pudimos procesar la devolución');
+        } finally {
+            setReturnProcessing(false);
         }
     };
 
@@ -2330,25 +3375,139 @@ const POS: React.FC = () => {
     return (
         <div className="flex h-full bg-surface-950 relative">
 
+            {manualMeasuredProduct && (
+                <div className="fixed inset-0 z-modal bg-black/70 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="manual-measure-title">
+                    <form onSubmit={confirmManualMeasured} className="w-full max-w-sm rounded-card border border-white/[0.08] bg-surface-900 p-5 shadow-premium text-slate-100">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <h2 id="manual-measure-title" className="font-bold text-lg">Cantidad de {manualMeasuredProduct.name}</h2>
+                                <p className="mt-1 text-sm text-slate-400">
+                                    Unidad base: {manualMeasuredProduct.unit || 'unidad'} · paso {formatQuantityValue(effectiveQuantityStep(manualMeasuredProduct))}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => { setManualMeasuredProduct(null); setManualQuantityError(''); }}
+                                className="w-11 h-11 rounded-control flex items-center justify-center text-slate-400 hover:bg-white/[0.06] hover:text-white"
+                                aria-label="Cancelar captura de cantidad"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <label htmlFor="manual-measured-quantity" className="block mt-5 text-sm font-semibold">Peso o cantidad</label>
+                        <div className="mt-2 flex items-center gap-2">
+                            <input
+                                id="manual-measured-quantity"
+                                autoFocus
+                                type="text"
+                                inputMode="decimal"
+                                value={manualQuantityDraft}
+                                onChange={event => {
+                                    setManualQuantityDraft(sanitizeDecimalInput(event.target.value));
+                                    setManualQuantityError('');
+                                }}
+                                aria-invalid={Boolean(manualQuantityError)}
+                                aria-describedby={manualQuantityError ? 'manual-measured-error' : undefined}
+                                className="h-12 min-w-0 flex-1 rounded-control border border-white/[0.1] bg-surface-950 px-3 text-xl font-mono tabular-nums outline-none focus:border-brand"
+                                placeholder={formatQuantityValue(effectiveQuantityStep(manualMeasuredProduct))}
+                            />
+                            <span className="font-semibold text-slate-300">{manualMeasuredProduct.unit || 'unidad'}</span>
+                        </div>
+                        {manualQuantityError && <p id="manual-measured-error" role="alert" className="mt-2 text-sm text-danger">{manualQuantityError}</p>}
+                        <button type="submit" className="mt-5 h-12 w-full rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover">
+                            Agregar al ticket
+                        </button>
+                        <p className="mt-2 text-center text-xs text-slate-500">Presioná Enter para confirmar.</p>
+                    </form>
+                </div>
+            )}
+
+            {pendingDuplicateScaleLabel && (
+                <div className="fixed inset-0 z-modal bg-black/70 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="duplicate-label-title">
+                    <div className="w-full max-w-sm rounded-card border border-amber-500/25 bg-surface-900 p-5 shadow-premium text-slate-100">
+                        <AlertTriangle className="text-amber-400" size={26} />
+                        <h2 id="duplicate-label-title" className="mt-3 text-lg font-bold">¿Es otro paquete igual?</h2>
+                        <p className="mt-2 text-sm text-slate-300">
+                            Esta misma etiqueta se leyó hace pocos segundos. Confirmá solo si tenés un segundo paquete físico con el mismo peso.
+                        </p>
+                        <div className="mt-5 grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setPendingDuplicateScaleLabel(null)}
+                                className="h-11 rounded-control border border-white/[0.1] font-semibold text-slate-200 hover:bg-white/[0.06]"
+                            >
+                                No, cancelar
+                            </button>
+                            <button
+                                type="button"
+                                autoFocus
+                                onClick={confirmDuplicateScaleLabel}
+                                className="h-11 rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover"
+                            >
+                                Sí, agregar otro
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {pendingScaleLabelOverride && (
+                <div className="fixed inset-0 z-modal bg-black/70 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="scale-override-title">
+                    <div className="w-full max-w-sm rounded-card border border-red-500/25 bg-surface-900 p-5 shadow-premium text-slate-100">
+                        <ShieldAlert className="text-red-400" size={26} />
+                        <h2 id="scale-override-title" className="mt-3 text-lg font-bold">Confirmar total impreso</h2>
+                        <p className="mt-2 text-sm text-slate-300">
+                            Esta etiqueta fue emitida con política excepcional. Nortex cobrará el total impreso y dejará la aprobación auditada a tu usuario.
+                        </p>
+                        <div className="mt-4 rounded-xl border border-white/[0.08] bg-surface-950/70 p-3 text-sm">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="text-slate-400">Producto</span>
+                                <span className="text-right font-semibold text-slate-100">{pendingScaleLabelOverride.preview.product.name}</span>
+                            </div>
+                            <div className="mt-2 flex items-center justify-between gap-3">
+                                <span className="text-slate-400">Cantidad</span>
+                                <span className="font-mono text-slate-100">{formatQuantity(pendingScaleLabelOverride.preview.baseQuantity, pendingScaleLabelOverride.preview.product.unit)}</span>
+                            </div>
+                            <div className="mt-2 flex items-center justify-between gap-3">
+                                <span className="text-slate-400">Total etiqueta</span>
+                                <span className="font-mono text-red-200">{formatMoney(pendingScaleLabelOverride.preview.encodedPrice ?? '0')}</span>
+                            </div>
+                        </div>
+                        <div className="mt-5 grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setPendingScaleLabelOverride(null)}
+                                className="h-11 rounded-control border border-white/[0.1] font-semibold text-slate-200 hover:bg-white/[0.06]"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="button"
+                                autoFocus
+                                onClick={confirmScaleLabelOverride}
+                                className="h-11 rounded-control bg-red-600 text-white font-bold hover:bg-red-500"
+                            >
+                                Aceptar y auditar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* HEADER BAR */}
             <div className="absolute top-0 right-0 left-0 h-14 bg-surface-900 border-b border-white/[0.06] px-6 flex justify-between items-center gap-4 z-10 text-slate-100">
                 <div className="font-bold text-slate-100 flex items-center gap-2 shrink-0">
-                    {/* En móvil el bottom-nav ya dice "Vender": el título solo
-                        empujaba a las píldoras a montarse unas sobre otras. */}
-                    <span className="hidden md:inline">PUNTO DE VENTA</span>
+                    {firstSaleMode ? 'Tu primera venta' : 'Vender'}
                     {currentShift && (
                         <span className="text-xs bg-green-500/15 text-green-400 px-2 py-0.5 rounded-full border border-green-500/20 flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-                            {currentShift.employee
+                            {guidedSimpleMode ? 'Caja abierta' : currentShift.employee
                                 ? `${currentShift.employee.firstName} ${currentShift.employee.lastName}`
                                 : 'CAJA ABIERTA'}
                         </span>
                     )}
                 </div>
 
-                {/* overflow-x-auto: en pantallas angostas las píldoras se
-                    desplazan en horizontal — antes se IMPRIMÍAN una encima de
-                    otra (auditoría de uso real en 390px: header ilegible). */}
                 <div className="flex items-center gap-2 min-w-0 md:justify-end whitespace-nowrap pl-4 overflow-x-auto">
                     {/* Estado de conexión: informativo, no es una acción. Ámbar = requiere atención. */}
                     {!isOnline && (
@@ -2371,10 +3530,20 @@ const POS: React.FC = () => {
                             <span className="hidden lg:inline">{syncingOffline ? 'Sincronizando...' : `Sync (${pendingOfflineCount})`}</span>
                         </button>
                     )}
+                    {reconciliationOfflineCount > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => alert(
+                                `${reconciliationOfflineCount} venta${reconciliationOfflineCount === 1 ? '' : 's'} permanece${reconciliationOfflineCount === 1 ? '' : 'n'} protegida${reconciliationOfflineCount === 1 ? '' : 's'} en este dispositivo. Un administrador debe conciliarla manualmente con soporte; Nortex no reinterpretará la etiqueta ni borrará la evidencia automáticamente.`,
+                            )}
+                            className="flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-red-500/10 text-red-300 border border-red-500/20 hover:bg-red-500/15"
+                            title="Ventas offline que requieren conciliación"
+                        >
+                            <AlertTriangle size={14} />
+                            <span className="hidden lg:inline">Revisión ({reconciliationOfflineCount})</span>
+                        </button>
+                    )}
 
-                    {/* Pulso del día: lo vendido HOY siempre a la vista, con racha y
-                        avance de meta. El número que crece con cada cobro — esa es
-                        la gamificación, no medallas. */}
                     {pulso && pulso.ventasHoy > 0 && (
                         <div
                             className="flex items-center gap-2 text-xs px-3 h-8 rounded-control bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
@@ -2396,7 +3565,7 @@ const POS: React.FC = () => {
                     )}
 
                     {/* Saldo en caja: dato, en neutro. Abre el detalle de movimientos. */}
-                    {currentShift && cashBalance !== null && (
+                    {currentShift && !guidedSimpleMode && cashBalance !== null && (
                         <button
                             onClick={() => setShowMovementsList(!showMovementsList)}
                             className="flex items-center gap-1.5 text-xs px-3 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
@@ -2408,15 +3577,21 @@ const POS: React.FC = () => {
                     )}
 
                     {/* Carritos aparcados: badge de estado, solo si hay alguno esperando. */}
-                    {currentShift && !simpleMode && heldCarts.length > 0 && (
+                    {heldCarts.length > 0 && (
                         <button
-                            onClick={() => setShowHeldCarts(!showHeldCarts)}
-                            className="relative flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
-                            title="Carritos aparcados (F4 para aparcar)"
+                            onClick={() => showHeldCarts ? setShowHeldCarts(false) : openHeldCarts()}
+                            aria-label={`${heldCarts.length} ${heldCarts.length === 1 ? 'venta aparcada' : 'ventas aparcadas'}`}
+                            aria-expanded={showHeldCarts}
+                            className={`relative flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control border transition-colors ${
+                                guidedSimpleMode
+                                    ? 'bg-sky-500/10 text-sky-300 border-sky-500/20 hover:bg-sky-500/15'
+                                    : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'
+                            }`}
+                            title="Ventas aparcadas listas para retomar"
                         >
                             <ParkingCircle size={14} />
                             <span className="text-[10px] font-black">{heldCarts.length}</span>
-                            <span className="hidden lg:inline">Aparcados</span>
+                            <span className="hidden lg:inline">{guidedSimpleMode ? 'Aparcadas' : 'Aparcados'}</span>
                         </button>
                     )}
 
@@ -2425,15 +3600,15 @@ const POS: React.FC = () => {
                         peleando por atención con el cobro. Ahora: un solo botón
                         neutro que despliega lo operativo. El color vuelve a
                         significar algo porque casi no se usa. */}
-                    {currentShift && (
+                    {currentShift && !firstSaleMode && (
                         <div className="relative">
                             <button
                                 onClick={() => setShowCashActions(v => !v)}
                                 className="flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
                                 title="Acciones de caja"
                             >
-                                <SlidersHorizontal size={14} />
-                                <span className="hidden lg:inline">Acciones de caja</span>
+                                {guidedSimpleMode ? <MoreHorizontal size={15} /> : <SlidersHorizontal size={14} />}
+                                <span className="hidden sm:inline">{guidedSimpleMode ? 'Más' : 'Acciones de caja'}</span>
                                 <ChevronDown size={14} className={`transition-transform ${showCashActions ? 'rotate-180' : ''}`} />
                             </button>
 
@@ -2466,7 +3641,17 @@ const POS: React.FC = () => {
                                             <Landmark size={16} className="text-slate-400 shrink-0" />
                                             <span>Agente bancario</span>
                                         </button>
-                                        {!simpleMode && (
+                                        {guidedSimpleMode && cart.length > 0 && (
+                                            <button
+                                                onClick={() => { handleHoldCart(); setShowCashActions(false); }}
+                                                className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                            >
+                                                <ParkingCircle size={16} className="text-sky-300 shrink-0" />
+                                                <span>Aparcar venta</span>
+                                                <span className="ml-auto text-[10px] text-slate-500 font-mono">F4</span>
+                                            </button>
+                                        )}
+                                        {!guidedSimpleMode && (
                                             <button
                                                 onClick={() => { setShowReturnModal(true); setShowCashActions(false); }}
                                                 className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
@@ -2475,18 +3660,18 @@ const POS: React.FC = () => {
                                                 <span>Devolución de producto</span>
                                             </button>
                                         )}
-                                        {!simpleMode && (
-                                            <button
-                                                onClick={() => { setShowHeldCarts(true); setShowCashActions(false); }}
-                                                className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
-                                            >
-                                                <ParkingCircle size={16} className="text-slate-400 shrink-0" />
-                                                <span>Carritos aparcados</span>
-                                                <span className="ml-auto text-[10px] text-slate-500 font-mono">F4</span>
-                                            </button>
-                                        )}
+                                        <button
+                                            onClick={() => { openHeldCarts(); setShowCashActions(false); }}
+                                            className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                        >
+                                            <ParkingCircle size={16} className="text-slate-400 shrink-0" />
+                                            <span>Ventas aparcadas</span>
+                                            <span className="ml-auto text-[10px] text-slate-500 font-mono">
+                                                {heldCarts.length > 0 ? heldCarts.length : 'F4'}
+                                            </span>
+                                        </button>
 
-                                        {!simpleMode && (
+                                        {!guidedSimpleMode && (
                                             <div className="border-t border-white/[0.06]">
                                                 <button
                                                     onClick={() => setScannerActive(!scannerActive)}
@@ -2518,6 +3703,21 @@ const POS: React.FC = () => {
                                                 </button>
                                             </div>
                                         )}
+                                        {guidedSimpleMode && (
+                                            <div className="border-t border-white/[0.06]">
+                                                <button
+                                                    onClick={() => {
+                                                        setShowCashActions(false);
+                                                        if (cart.length > 0) setBloqueoCierre(true);
+                                                        else setShowCloseShift(true);
+                                                    }}
+                                                    className="w-full flex items-center gap-3 px-4 h-touch text-sm text-danger hover:bg-danger-soft transition-colors text-left"
+                                                >
+                                                    <Lock size={16} className="shrink-0" />
+                                                    <span>Cerrar caja</span>
+                                                </button>
+                                            </div>
+                                        )}
                                     </div>
                                 </>
                             )}
@@ -2525,22 +3725,22 @@ const POS: React.FC = () => {
                     )}
 
                     {/* Cerrar caja: lo único irreversible del header → único uso del rojo. */}
-                    {currentShift ? (
+                    {currentShift && !guidedSimpleMode ? (
                         <button onClick={() => { if (cart.length > 0) { setBloqueoCierre(true); return; } setShowCloseShift(true); }} className="text-xs font-semibold text-danger hover:bg-danger-soft px-3 h-8 rounded-control transition-colors flex items-center gap-1.5">
                             <Lock size={14} /> Cerrar caja
                         </button>
-                    ) : (
+                    ) : !currentShift ? (
                         // Vuelta a la apertura: como el modal ahora se puede cerrar
                         // ("solo quiero mirar"), este indicador tiene que ser la
                         // puerta de regreso, no un cartel muerto.
                         <button
                             onClick={() => { setErrorApertura({}); setShowOpenShift(true); }}
-                            className="flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-control bg-danger-soft text-danger border border-danger/20 hover:bg-danger/15 transition-colors"
+                            className="flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-control bg-white/[0.04] text-slate-300 border border-white/[0.07] hover:bg-white/[0.07] transition-colors"
                             title="Abrir la caja para poder cobrar"
                         >
-                            <AlertTriangle size={14} /> Caja cerrada — abrir
+                            <Lock size={14} /> Caja cerrada
                         </button>
-                    )}
+                    ) : null}
                 </div>
             </div>
 
@@ -2885,180 +4085,228 @@ const POS: React.FC = () => {
                 </div>
             )}
 
-            {/* --- 🅿️ HELD CARTS DROPDOWN --- */}
-            {showHeldCarts && currentShift && (
-                <div className="absolute top-14 right-4 z-40 w-96 bg-surface-900 rounded-xl shadow-2xl border border-white/[0.06] max-h-[420px] overflow-y-auto animate-in slide-in-from-top duration-200">
-                    <div className="p-3 border-b border-white/[0.04] flex justify-between items-center sticky top-0 bg-surface-900 z-10">
-                        <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                            <ParkingCircle size={16} className="text-blue-500" /> Carritos Aparcados ({heldCarts.length}/5)
-                        </h3>
-                        <button onClick={() => setShowHeldCarts(false)} className="text-slate-400 hover:text-slate-300"><X size={16} /></button>
+            {parkingNotice && (
+                <div
+                    role="status"
+                    aria-live="polite"
+                    className={`fixed left-3 right-3 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 ${showMobileCart ? 'top-20 bottom-auto' : 'bottom-20'} sm:top-auto sm:bottom-4 z-toast sm:min-w-[360px] max-w-md px-3 py-3 rounded-card border shadow-premium flex items-center gap-3 ${
+                        parkingNotice.tone === 'warning'
+                            ? 'bg-surface-800 border-amber-500/30 text-amber-300'
+                            : 'bg-surface-800 border-white/[0.10] text-slate-100'
+                    }`}
+                >
+                    <div className={`w-8 h-8 rounded-pill flex items-center justify-center shrink-0 ${parkingNotice.tone === 'warning' ? 'bg-warning-soft' : 'bg-brand-soft text-brand'}`}>
+                        {parkingNotice.tone === 'warning' ? <AlertTriangle size={16} /> : <Check size={16} />}
+                    </div>
+                    <span className="text-sm font-semibold flex-1 min-w-0">{parkingNotice.message}</span>
+                    {parkingNotice.heldId && (
+                        <button
+                            type="button"
+                            onClick={() => handleRestoreCart(parkingNotice.heldId as string)}
+                            className="h-9 px-3 rounded-control text-sm font-bold text-brand hover:bg-brand-soft transition-colors shrink-0"
+                        >
+                            Recuperar
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => setParkingNotice(null)}
+                        aria-label="Cerrar aviso"
+                        className="w-9 h-9 rounded-control text-slate-400 hover:text-slate-100 hover:bg-white/[0.06] flex items-center justify-center shrink-0"
+                    >
+                        <X size={16} />
+                    </button>
+                </div>
+            )}
+
+            {/* --- 🅿️ VENTAS APARCADAS --- */}
+            {showHeldCarts && (
+                <div
+                    className="fixed inset-0 z-modal bg-black/65 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+                    onClick={() => { setShowHeldCarts(false); setHeldCartToDiscard(null); }}
+                >
+                    <section
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="held-carts-title"
+                        className="w-full sm:max-w-md max-h-[calc(100dvh-3rem)] sm:max-h-[min(680px,calc(100dvh-2rem))] bg-surface-900 rounded-t-card sm:rounded-card shadow-premium border border-white/[0.08] overflow-hidden flex flex-col animate-in slide-in-from-bottom sm:fade-in duration-200"
+                        onClick={e => e.stopPropagation()}
+                    >
+                    <div className="px-5 py-4 border-b border-white/[0.06] flex justify-between items-start gap-3 bg-surface-900">
+                        <div className="min-w-0">
+                            <h2 id="held-carts-title" className="text-base font-bold text-slate-100 flex items-center gap-2">
+                                <ParkingCircle size={18} className="text-sky-300" /> Ventas aparcadas
+                                <span className="text-xs text-slate-400 font-semibold">{heldCarts.length}/5</span>
+                            </h2>
+                            <p className="text-xs text-slate-400 mt-1">Retomá una venta exactamente donde la dejaste.</p>
+                        </div>
+                        <IconButton
+                            icon={<X size={17} />}
+                            label="Cerrar ventas aparcadas"
+                            onClick={() => { setShowHeldCarts(false); setHeldCartToDiscard(null); }}
+                        />
                     </div>
                     {heldCarts.length === 0 ? (
-                        <div className="p-8 text-center">
-                            <ParkingCircle size={32} className="text-slate-300 mx-auto mb-2" />
-                            <p className="text-sm text-slate-400">Sin carritos aparcados</p>
-                            <p className="text-[10px] text-slate-300 mt-1">Usa F4 o el botón 🅿para aparcar el carrito actual</p>
+                        <div className="p-10 text-center">
+                            <div className="w-12 h-12 rounded-pill bg-sky-500/10 text-sky-300 mx-auto mb-3 flex items-center justify-center">
+                                <ParkingCircle size={23} />
+                            </div>
+                            <p className="text-sm font-semibold text-slate-200">No hay ventas esperando</p>
+                            <p className="text-xs text-slate-400 mt-1.5 max-w-[260px] mx-auto">Aparcá una venta para atender a otra persona sin perder el carrito.</p>
                         </div>
                     ) : (
-                        <div className="divide-y divide-white/[0.04]">
+                        <div className="divide-y divide-white/[0.06] overflow-y-auto custom-scrollbar">
                             {heldCarts.map(held => {
-                                const heldTotal = held.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+                                const heldSubtotal = held.items.reduce((sum, item) => {
+                                    const descuentoLinea = toDecimal((item as CartLine).discount ?? 0);
+                                    return sum.plus(toDecimal(item.price).mul(item.quantity).mul(new Decimal(1).minus(descuentoLinea.div(100))));
+                                }, new Decimal(0));
+                                const descuentoGlobal = Decimal.min(100, Decimal.max(0, toDecimal(held.globalDiscount ?? '')));
+                                const heldTotal = heldSubtotal.mul(new Decimal(1).minus(descuentoGlobal.div(100)));
                                 const minutesAgo = Math.round((Date.now() - new Date(held.heldAt).getTime()) / 60000);
                                 return (
-                                    <div key={held.id} className="p-3 hover:bg-surface-800/40 transition-colors">
-                                        <div className="flex items-start justify-between mb-2">
+                                    <div key={held.id} className="p-4 hover:bg-surface-800/30 transition-colors">
+                                        <div className="flex items-start justify-between gap-3">
                                             <div className="flex-1 min-w-0">
                                                 <p className="text-sm font-bold text-slate-100 truncate">{held.label}</p>
-                                                <p className="text-[11px] text-slate-500">
-                                                    {held.items.length} {held.items.length === 1 ? 'item' : 'items'} · {formatMoney(heldTotal)} · Hace {minutesAgo < 1 ? '<1' : minutesAgo} min
+                                                <p className="text-xs text-slate-400 mt-0.5">
+                                                    {held.items.length} {held.items.length === 1 ? 'producto' : 'productos'} · <span className="nx-num text-slate-200 font-semibold">{formatMoney(heldTotal)}</span> · {minutesAgo < 1 ? 'Recién' : `Hace ${minutesAgo} min`}
                                                 </p>
                                             </div>
-                                            <div className="flex items-center gap-1.5 ml-2">
+                                            <div className="flex items-center gap-1 shrink-0">
                                                 <button
                                                     onClick={() => handleRestoreCart(held.id)}
-                                                    className="text-xs font-bold px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-1"
+                                                    className="h-touch px-3 text-sm font-bold bg-brand text-brand-on rounded-control hover:bg-brand-hover transition-colors flex items-center gap-2"
                                                 >
-                                                    <RotateCcw size={12} /> Restaurar
+                                                    <RotateCcw size={15} /> Continuar
                                                 </button>
                                                 <button
-                                                    onClick={() => handleRemoveHeldCart(held.id)}
-                                                    className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-500/10 rounded transition-colors"
-                                                    title="Descartar carrito"
+                                                    onClick={() => setHeldCartToDiscard(heldCartToDiscard === held.id ? null : held.id)}
+                                                    aria-label={`Descartar ${held.label}`}
+                                                    aria-expanded={heldCartToDiscard === held.id}
+                                                    className="w-touch h-touch flex items-center justify-center text-slate-400 hover:text-danger hover:bg-danger-soft rounded-control transition-colors"
                                                 >
-                                                    <Trash2 size={14} />
+                                                    <Trash2 size={17} />
                                                 </button>
                                             </div>
                                         </div>
                                         {/* Mini preview of items */}
-                                        <div className="flex flex-wrap gap-1">
+                                        <div className="flex flex-wrap gap-1 mt-2.5">
                                             {held.items.slice(0, 3).map((item, i) => (
-                                                <span key={i} className="text-[10px] bg-white/[0.04] text-slate-300 px-1.5 py-0.5 rounded">
+                                                <span key={i} className="text-[11px] bg-white/[0.04] text-slate-300 px-2 py-1 rounded-control">
                                                     {item.quantity}x {item.name.length > 15 ? item.name.slice(0, 15) + '…' : item.name}
                                                 </span>
                                             ))}
                                             {held.items.length > 3 && (
-                                                <span className="text-[10px] text-slate-400">+{held.items.length - 3} más</span>
+                                                <span className="text-[11px] text-slate-400 px-1 py-1">+{held.items.length - 3} más</span>
                                             )}
                                         </div>
+                                        {heldCartToDiscard === held.id && (
+                                            <div role="alert" className="mt-3 p-3 rounded-control bg-danger-soft border border-danger/20 flex flex-col sm:flex-row sm:items-center gap-2">
+                                                <p className="text-xs text-slate-200 flex-1">Esta venta se eliminará del dispositivo.</p>
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => setHeldCartToDiscard(null)} className="h-9 px-3 rounded-control text-xs font-semibold text-slate-200 hover:bg-white/[0.06]">Cancelar</button>
+                                                    <button onClick={() => handleRemoveHeldCart(held.id)} className="h-9 px-3 rounded-control bg-danger text-white text-xs font-bold hover:opacity-90">Descartar</button>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}
                         </div>
                     )}
                     {heldCarts.length > 0 && cart.length > 0 && (
-                        <div className="p-2 border-t border-white/[0.04] bg-surface-800/40">
-                            <p className="text-[10px] text-slate-400 text-center">Al restaurar, el carrito actual se aparcará automáticamente</p>
+                        <div className="px-4 py-3 border-t border-white/[0.06] bg-surface-800/40">
+                            <p className="text-xs text-slate-400 text-center">Al continuar, la venta actual quedará aparcada automáticamente.</p>
                         </div>
                     )}
+                    </section>
                 </div>
             )}
 
             {/* --- OPEN SHIFT MODAL --- */}
             {showOpenShift && (
-                // Clic en el fondo = cerrar (además de la X y de Escape).
-                <div className="absolute inset-0 z-50 bg-slate-900/90 backdrop-blur flex items-center justify-center p-4" onClick={() => setShowOpenShift(false)}>
-                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-sm p-8 text-center animate-in zoom-in duration-200 relative" onClick={e => e.stopPropagation()}>
-                        {/* Salida del modal (antes no había ninguna: ni X, ni Escape,
-                            ni "después"). Abrir turno es un requisito de OPERACIÓN;
-                            no puede bloquear la VISTA del POS a quien viene a mirar. */}
-                        <div className="absolute top-2 right-2">
+                <div className="fixed inset-0 z-modal bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => { setShowOpenShift(false); setResumePaymentAfterShift(false); }}>
+                    <div role="dialog" aria-modal="true" aria-labelledby="open-shift-title" className="bg-surface-900 border border-white/[0.08] rounded-card shadow-premium w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="px-5 pt-5 pb-4 flex items-start gap-3 border-b border-white/[0.06]">
+                            <div className="w-10 h-10 rounded-pill bg-brand-soft text-brand flex items-center justify-center shrink-0">
+                                <Lock size={19} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                                <h2 id="open-shift-title" className="text-lg font-bold text-slate-100">Abrí caja para continuar</h2>
+                                <p className="text-sm text-slate-400 mt-1">
+                                    {resumePaymentAfterShift ? `Tu venta de ${formatMoney(grandTotal)} ya está lista.` : 'Esto mantiene el efectivo del día ordenado.'}
+                                </p>
+                            </div>
                             <IconButton
                                 icon={<X size={16} />}
                                 label="Cerrar"
-                                onClick={() => setShowOpenShift(false)}
+                                onClick={() => { setShowOpenShift(false); setResumePaymentAfterShift(false); }}
                             />
                         </div>
-                        <div className="w-16 h-16 bg-blue-500/15 text-blue-400 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <Lock size={32} />
-                        </div>
-                        <h2 className="text-2xl font-bold text-slate-100 mb-2">Apertura de Caja</h2>
-                        <p className="text-slate-500 text-sm mb-6">Ingresá tu PIN de empleado y el fondo inicial.</p>
-                        {isOwnerAdmin && (
-                            <p className="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-lg px-3 py-2 mb-4">
-                                ¿Primera vez? Tu PIN inicial de dueño es <strong>{PIN_DUENO_POR_DEFECTO}</strong> (ya te lo dejamos puesto) — cambialo después en <strong>Mi Personal</strong>.
-                            </p>
-                        )}
-                        <form onSubmit={handleOpenShift} noValidate className="space-y-5">
-                            {/* PIN Input */}
-                            <div>
-                                <label className="text-xs font-mono font-bold text-slate-400 uppercase tracking-wider">PIN de Empleado</label>
-                                <div className="flex justify-center gap-2 mt-2">
-                                    {[0, 1, 2, 3].map(i => (
-                                        <input
-                                            key={i}
-                                            type="password"
-                                            inputMode="numeric"
-                                            maxLength={1}
-                                            className="w-14 h-14 text-center text-2xl font-bold border-2 border-white/10 rounded-xl focus:border-nortex-500 outline-none text-slate-100 bg-surface-800/40"
-                                            value={employeePin[i] || ''}
-                                            autoFocus={i === 0}
-                                            aria-label={`Dígito ${i + 1} del PIN`}
-                                            // Seleccionar al enfocar: con el PIN
-                                            // precargado, `maxLength=1` impediría
-                                            // teclear encima sin borrar antes.
-                                            onFocus={e => e.currentTarget.select()}
-                                            onChange={(e) => {
-                                                const val = e.target.value.replace(/\D/g, '');
-                                                if (val.length <= 1) {
-                                                    const newPin = employeePin.split('');
-                                                    newPin[i] = val;
-                                                    setEmployeePin(newPin.join(''));
-                                                    setErrorApertura(prev => ({ ...prev, pin: undefined }));
-                                                    // Auto-focus next input
-                                                    if (val && i < 3) {
-                                                        const next = e.target.parentElement?.children[i + 1] as HTMLInputElement;
-                                                        next?.focus();
-                                                    }
-                                                }
-                                            }}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Backspace' && !employeePin[i] && i > 0) {
-                                                    const prev = (e.target as HTMLElement).parentElement?.children[i - 1] as HTMLInputElement;
-                                                    prev?.focus();
-                                                }
-                                            }}
-                                        />
-                                    ))}
+
+                        <form onSubmit={handleOpenShift} noValidate className="p-5 space-y-4">
+                            {isOwnerAdmin && employeePin === PIN_DUENO_POR_DEFECTO && (
+                                <div className="flex items-center gap-2 px-3 py-2.5 rounded-control bg-brand-soft border border-brand/20 text-sm text-brand">
+                                    <Check size={16} className="shrink-0" />
+                                    <span>Tu PIN inicial ya está listo.</span>
                                 </div>
-                                {errorApertura.pin && <p className="text-xs text-danger mt-2">{errorApertura.pin}</p>}
+                            )}
+
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-400 mb-1.5">PIN de caja</label>
+                                <input
+                                    type="password"
+                                    inputMode="numeric"
+                                    maxLength={4}
+                                    autoFocus={!isOwnerAdmin}
+                                    aria-label="PIN de caja"
+                                    className="w-full h-touch px-4 tracking-[0.45em] text-center text-xl font-bold border border-white/10 rounded-control focus:border-brand focus:ring-2 focus:ring-brand/30 outline-none text-slate-100 bg-surface-800/40"
+                                    value={employeePin}
+                                    onFocus={e => e.currentTarget.select()}
+                                    onChange={e => {
+                                        setEmployeePin(e.target.value.replace(/\D/g, '').slice(0, 4));
+                                        setErrorApertura(prev => ({ ...prev, pin: undefined }));
+                                    }}
+                                />
+                                {errorApertura.pin && <p className="text-xs text-danger mt-1.5">{errorApertura.pin}</p>}
                             </div>
 
-                            {/* Cash Input */}
                             <div>
-                                <label className="text-xs font-mono font-bold text-slate-400 uppercase tracking-wider">Fondo Inicial (Efectivo)</label>
-                                <input
-                                    type="text"
-                                    inputMode="decimal"
-                                    aria-label="Fondo inicial en efectivo"
-                                    className="w-full text-center text-3xl font-bold border-b-2 border-white/10 focus:border-nortex-500 outline-none pb-2 mt-2 text-slate-100 font-mono tabular-nums"
-                                    value={initialCash}
-                                    onChange={e => { setInitialCash(sanitizeDecimalInput(e.target.value)); setErrorApertura(prev => ({ ...prev, fondo: undefined })); }}
-                                />
+                                <label className="block text-xs font-semibold text-slate-400 mb-1.5">Efectivo con el que empezás</label>
+                                <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">C$</span>
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        aria-label="Fondo inicial en efectivo"
+                                        className="w-full h-touch pl-10 pr-4 text-lg font-bold border border-white/10 rounded-control focus:border-brand focus:ring-2 focus:ring-brand/30 outline-none text-slate-100 bg-surface-800/40 tabular-nums"
+                                        value={initialCash}
+                                        onChange={e => { setInitialCash(sanitizeDecimalInput(e.target.value)); setErrorApertura(prev => ({ ...prev, fondo: undefined })); }}
+                                    />
+                                </div>
                                 {errorApertura.fondo
-                                    ? <p className="text-xs text-danger mt-2">{errorApertura.fondo}</p>
-                                    : <p className="text-[11px] text-slate-500 mt-2">Con cuánto efectivo arrancás el turno. Si no tenés cambio todavía, dejalo en 0.</p>}
+                                    ? <p className="text-xs text-danger mt-1.5">{errorApertura.fondo}</p>
+                                    : <p className="text-xs text-slate-500 mt-1.5">Si todavía no tenés cambio, dejalo en 0.</p>}
                             </div>
 
                             {errorApertura.general && (
                                 <p className="text-xs text-danger bg-danger-soft border border-danger/20 rounded-control px-3 py-2">{errorApertura.general}</p>
                             )}
 
-                            <button type="submit" disabled={shiftLoading || employeePin.length !== 4} className="btn-primary w-full py-3 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100">
-                                {shiftLoading ? 'VERIFICANDO PIN...' : 'ABRIR TURNO'}
+                            <button type="submit" disabled={shiftLoading || employeePin.length !== 4} className="w-full h-pay rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                                {shiftLoading && <Loader2 size={18} className="animate-spin" />}
+                                {shiftLoading ? 'Abriendo caja…' : resumePaymentAfterShift ? 'Abrir caja y cobrar' : 'Abrir caja'}
+                                {!shiftLoading && <ArrowRight size={18} />}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setShowOpenShift(false); setResumePaymentAfterShift(false); }}
+                                className="w-full h-touch rounded-control text-sm font-semibold text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]"
+                            >
+                                Cancelar
                             </button>
                         </form>
-
-                        {/* Salida secundaria: mirar el POS sin abrir turno. La venta
-                            va a seguir pidiendo turno abierto al cobrar (correcto);
-                            lo que ya no hace es tapar la pantalla desde el minuto 0. */}
-                        <button
-                            type="button"
-                            onClick={() => setShowOpenShift(false)}
-                            className="mt-4 text-xs text-slate-400 hover:text-slate-200 underline underline-offset-4 transition-colors"
-                        >
-                            Solo quiero mirar el POS
-                        </button>
                     </div>
                 </div>
             )}
@@ -3248,41 +4496,38 @@ const POS: React.FC = () => {
           QUICK CREATE MODAL (Minimal - Speed focused)
          ========================================== */}
             {showQuickCreate && (
-                <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-white/[0.06]">
-                        <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-5 py-3 flex items-center justify-between">
-                            <h3 className="font-bold text-white flex items-center gap-2">
-                                <Zap size={18} /> Producto rápido
-                            </h3>
-                            <button onClick={() => setShowQuickCreate(false)} className="text-white/80 hover:text-white">
+                <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowQuickCreate(false)}>
+                    <div className="bg-surface-900 rounded-card shadow-premium w-full max-w-sm overflow-hidden border border-white/[0.08]" onClick={e => e.stopPropagation()}>
+                        <div className="px-5 py-4 flex items-center justify-between border-b border-white/[0.06]">
+                            <div>
+                                <h3 className="font-bold text-slate-100 flex items-center gap-2">
+                                    <PackagePlus size={19} className="text-brand" /> Agregar producto
+                                </h3>
+                                {simpleMode && <p className="text-xs text-slate-500 mt-1">Nombre y precio. Eso es suficiente para vender.</p>}
+                            </div>
+                            <button onClick={() => setShowQuickCreate(false)} className="w-10 h-10 rounded-control text-slate-400 hover:text-white hover:bg-white/[0.05] flex items-center justify-center" aria-label="Cerrar">
                                 <X size={20} />
                             </button>
                         </div>
 
-                        <form onSubmit={handleQuickCreate} className="p-5 space-y-3">
+                        <form onSubmit={handleQuickCreate} className="p-5 space-y-4">
                             <div>
+                                <label className="block text-xs font-semibold text-slate-400 mb-1.5">Nombre</label>
                                 <input
                                     required autoFocus
                                     {...validacionEs('Escribí el nombre del producto.')}
                                     type="text"
-                                    placeholder="Nombre del producto *"
+                                    placeholder="Ej. Martillo"
                                     value={quickProduct.name}
                                     onChange={e => setQuickProduct({ ...quickProduct, name: e.target.value })}
-                                    className="w-full px-3 py-2.5 border border-white/10 rounded-lg text-slate-100 font-semibold focus:ring-2 focus:ring-amber-500 outline-none"
+                                    className="w-full h-touch px-3 border border-white/10 rounded-control bg-surface-800/40 text-slate-100 font-semibold focus:ring-2 focus:ring-brand/40 focus:border-brand outline-none"
                                 />
                             </div>
+
                             <div>
-                                <input
-                                    type="text"
-                                    placeholder="SKU / Código de barras (escaneá aquí)"
-                                    value={quickProduct.sku}
-                                    onChange={e => setQuickProduct({ ...quickProduct, sku: e.target.value.toUpperCase() })}
-                                    className="w-full px-3 py-2.5 border border-white/10 rounded-lg text-slate-100 font-mono focus:ring-2 focus:ring-amber-500 outline-none bg-amber-500/10"
-                                />
-                            </div>
-                            <div className="grid grid-cols-3 gap-2">
-                                <div>
-                                    <label className="text-[10px] text-slate-500 font-bold">PRECIO *</label>
+                                <label className="block text-xs font-semibold text-slate-400 mb-1.5">Precio de venta</label>
+                                <div className="relative">
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">C$</span>
                                     <input
                                         required type="text" inputMode="decimal"
                                         {...validacionEs('Ingresá el precio de venta.')}
@@ -3290,36 +4535,65 @@ const POS: React.FC = () => {
                                         placeholder="0.00"
                                         value={quickProduct.price}
                                         onChange={e => setQuickProduct({ ...quickProduct, price: sanitizeDecimalInput(e.target.value) })}
-                                        className="w-full px-2 py-2 border border-white/10 rounded-lg text-slate-100 font-bold text-lg focus:ring-2 focus:ring-amber-500 outline-none font-mono tabular-nums"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="text-[10px] text-slate-500 font-bold">COSTO</label>
-                                    <input
-                                        type="text" inputMode="decimal"
-                                        placeholder="0.00"
-                                        value={quickProduct.cost}
-                                        onChange={e => setQuickProduct({ ...quickProduct, cost: sanitizeDecimalInput(e.target.value) })}
-                                        className="w-full px-2 py-2 border border-white/10 rounded-lg text-slate-100 focus:ring-2 focus:ring-amber-500 outline-none font-mono tabular-nums"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="text-[10px] text-slate-500 font-bold">STOCK</label>
-                                    <input
-                                        type="text" inputMode="decimal"
-                                        value={quickProduct.stock}
-                                        onChange={e => setQuickProduct({ ...quickProduct, stock: sanitizeDecimalInput(e.target.value) })}
-                                        className="w-full px-2 py-2 border border-white/10 rounded-lg text-slate-100 focus:ring-2 focus:ring-amber-500 outline-none font-mono tabular-nums"
+                                        className="w-full h-pay pl-10 pr-3 border border-white/10 rounded-control bg-surface-800/40 text-slate-100 font-bold text-xl focus:ring-2 focus:ring-brand/40 focus:border-brand outline-none tabular-nums"
                                     />
                                 </div>
                             </div>
+
+                            {simpleMode && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowQuickDetails(v => !v)}
+                                    className="w-full h-touch px-1 flex items-center justify-between text-sm font-semibold text-slate-400 hover:text-slate-200"
+                                    aria-expanded={showQuickDetails}
+                                >
+                                    Más datos (opcionales)
+                                    {showQuickDetails ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+                                </button>
+                            )}
+
+                            {(!simpleMode || showQuickDetails) && (
+                                <div className="space-y-3 pt-1">
+                                    <div>
+                                        <label className="block text-xs font-semibold text-slate-400 mb-1.5">Código o SKU</label>
+                                        <input
+                                            type="text"
+                                            placeholder="Podés escanearlo"
+                                            value={quickProduct.sku}
+                                            onChange={e => setQuickProduct({ ...quickProduct, sku: e.target.value.toUpperCase() })}
+                                            className="w-full h-touch px-3 border border-white/10 rounded-control bg-surface-800/40 text-slate-100 focus:ring-2 focus:ring-brand/40 focus:border-brand outline-none"
+                                        />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="block text-xs font-semibold text-slate-400 mb-1.5">Costo</label>
+                                            <input
+                                                type="text" inputMode="decimal" placeholder="Opcional"
+                                                value={quickProduct.cost}
+                                                onChange={e => setQuickProduct({ ...quickProduct, cost: sanitizeDecimalInput(e.target.value) })}
+                                                className="w-full h-touch px-3 border border-white/10 rounded-control bg-surface-800/40 text-slate-100 focus:ring-2 focus:ring-brand/40 outline-none tabular-nums"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-semibold text-slate-400 mb-1.5">Existencia</label>
+                                            <input
+                                                type="text" inputMode="decimal"
+                                                value={quickProduct.stock}
+                                                onChange={e => setQuickProduct({ ...quickProduct, stock: sanitizeDecimalInput(e.target.value) })}
+                                                className="w-full h-touch px-3 border border-white/10 rounded-control bg-surface-800/40 text-slate-100 focus:ring-2 focus:ring-brand/40 outline-none tabular-nums"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             <button
                                 type="submit"
                                 disabled={quickSaving}
-                                className="w-full py-3 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold hover:from-amber-600 hover:to-orange-600 shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                className="w-full h-pay rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                             >
-                                {quickSaving ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} />}
-                                {quickSaving ? 'Guardando...' : 'Crear y Agregar al Carrito'}
+                                {quickSaving ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+                                {quickSaving ? 'Guardando…' : 'Guardar y agregar'}
                             </button>
                         </form>
                     </div>
@@ -3463,6 +4737,24 @@ const POS: React.FC = () => {
 
             {/* LEFT: PRODUCTS */}
             <div className="w-full flex-1 flex flex-col p-4 lg:p-6 mt-14 overflow-hidden mb-16 lg:mb-0">
+                {firstSaleMode && (
+                    <div className="mb-4 px-4 py-3 rounded-card border border-brand/25 bg-brand-soft flex flex-col sm:flex-row sm:items-center gap-3">
+                        <div className="w-9 h-9 rounded-pill bg-brand/15 text-brand flex items-center justify-center shrink-0">
+                            <ShoppingCart size={19} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <p className="text-sm font-bold text-slate-100">Esta venta es real</p>
+                            <p className="text-xs text-slate-400 mt-0.5">Al cobrar se actualizan tu caja y tu inventario.</p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => navigate('/demo?source=first_sale')}
+                            className="h-touch px-4 rounded-control border border-white/[0.08] text-sm font-semibold text-slate-200 hover:bg-white/[0.05] inline-flex items-center justify-center gap-2 shrink-0"
+                        >
+                            <PlayCircle size={17} /> Practicar sin guardar
+                        </button>
+                    </div>
+                )}
                 <div className="mb-4 flex gap-2">
                     <div className="relative flex-1">
                         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
@@ -3473,7 +4765,7 @@ const POS: React.FC = () => {
                             ref={searchRef}
                             type="text"
                             autoFocus
-                            placeholder="Buscar producto o escanear código..."
+                            placeholder="Buscar o escanear"
                             className="w-full h-pay pl-11 pr-4 rounded-control bg-surface-900 border border-white/[0.06] focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/50 text-slate-100 font-medium transition-colors"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
@@ -3483,13 +4775,16 @@ const POS: React.FC = () => {
                     {/* Quick Create */}
                     <button
                         onClick={() => setShowQuickCreate(true)}
-                        className="bg-gradient-to-r from-amber-500 to-orange-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-amber-600 hover:to-orange-600 shadow-md transition-all"
+                        className={guidedSimpleMode
+                            ? 'h-pay px-3 sm:px-4 rounded-control border border-white/[0.08] text-slate-200 flex items-center gap-2 font-semibold text-sm hover:bg-white/[0.05] transition-colors'
+                            : 'bg-gradient-to-r from-amber-500 to-orange-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-amber-600 hover:to-orange-600 shadow-md transition-all'}
                         title="Producto Rápido"
                     >
-                        <Zap size={18} /> {simpleMode ? 'Agregar' : 'Rápido'}
+                        {guidedSimpleMode ? <Plus size={18} /> : <Zap size={18} />}
+                        <span className={guidedSimpleMode ? 'hidden sm:inline' : ''}>{guidedSimpleMode ? 'Producto' : 'Rápido'}</span>
                     </button>
                     {/* Full Create */}
-                    {!simpleMode && <button
+                    {!guidedSimpleMode && <button
                         onClick={() => setShowAddModal(true)}
                         className="bg-nortex-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-medium text-sm hover:bg-nortex-600 transition-all"
                         title="Crear producto completo"
@@ -3497,7 +4792,7 @@ const POS: React.FC = () => {
                         <Plus size={18} /> Nuevo
                     </button>}
                     {/* Import */}
-                    {!simpleMode && <button
+                    {!guidedSimpleMode && <button
                         onClick={() => setShowImportModal(true)}
                         className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-blue-700 hover:to-indigo-700 shadow-md transition-all"
                         title="Importar desde Excel"
@@ -3512,10 +4807,10 @@ const POS: React.FC = () => {
                     más-vendidos y no se inventa uno. Por eso el rótulo se calcula
                     con `rotuloProductosRapidos`, que solo dice "Más vendidos"
                     cuando hay un ranking real con suficientes ventas detrás. */}
-                {searchTerm === '' && (
+                {!guidedSimpleMode && searchTerm === '' && (
                     <div className="mb-4">
                         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                            <Zap size={14} className="text-amber-500" /> {rotuloProductosRapidos(rankingDisponible, ventasRegistradas)}
+                            <Zap size={14} className="text-amber-500" /> {firstSaleMode ? 'Empezá por uno de estos' : rotuloProductosRapidos(rankingDisponible, ventasRegistradas)}
                         </h3>
                         <div className="grid grid-cols-3 lg:grid-cols-5 gap-2">
                             {filteredProducts.slice(0, 5).map(product => (
@@ -3552,11 +4847,10 @@ const POS: React.FC = () => {
                         ) : (
                             <EmptyState
                                 icon={<Package size={32} />}
-                                title="Todavía no tenés productos"
-                                description="Importá tu lista desde Excel y Nortex arma el catálogo solo. También podés cargar el primero a mano."
-                                action={{ label: 'Agregá tu primer producto', icon: <PackagePlus size={18} />, onClick: () => navigate('/app/inventory') }}
-                                linkAction={{ label: 'O cargá un catálogo de ejemplo de tu giro para probar', onClick: seedCatalog, loading: seeding, loadingLabel: 'Cargando catálogo…' }}
-                                errorText={seedError}
+                                title="Agregá el primer producto"
+                                description="Solo necesitamos un nombre y un precio. Después podés completar el resto."
+                                action={{ label: 'Agregar producto', icon: <PackagePlus size={18} />, onClick: () => setShowQuickCreate(true) }}
+                                linkAction={{ label: 'Prefiero practicar sin guardar datos', onClick: () => navigate('/demo?source=empty_catalog') }}
                             />
                         )}
                     </div>
@@ -3589,40 +4883,40 @@ const POS: React.FC = () => {
                 )}
 
                 {/* ⌨️ HOTKEY CHEAT SHEET */}
-                <div className="hidden md:flex items-center gap-3 mt-2 px-2 py-1.5 text-[11px] text-slate-500 select-none flex-shrink-0">
-                    <Keyboard size={13} className="text-slate-500" />
-                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F2</span>
-                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Ctrl+K</span> Buscar
-                    <span className="text-slate-300">·</span>
-                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F4</span> Aparcar
-                    <span className="text-slate-300">·</span>
-                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F7</span> Salida
-                    <span className="text-slate-300">·</span>
-                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F8</span> Entrada
-                    <span className="text-slate-300">·</span>
-                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F9</span>
-                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Ctrl+Enter</span> Cobrar
-                    <span className="text-slate-300">·</span>
-                    <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Esc</span> Cerrar
-                </div>
+                {!guidedSimpleMode && !firstSaleMode && (
+                    <div className="hidden md:flex items-center gap-3 mt-2 px-2 py-1.5 text-[11px] text-slate-500 select-none flex-shrink-0">
+                        <Keyboard size={13} className="text-slate-500" />
+                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F2</span>
+                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Ctrl+K</span> Buscar
+                        <span className="text-slate-300">·</span>
+                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F4</span> Aparcar
+                        <span className="text-slate-300">·</span>
+                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F7</span> Salida
+                        <span className="text-slate-300">·</span>
+                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F8</span> Entrada
+                        <span className="text-slate-300">·</span>
+                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F9</span>
+                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Ctrl+Enter</span> Cobrar
+                        <span className="text-slate-300">·</span>
+                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Esc</span> Cerrar
+                    </div>
+                )}
             </div>
 
             {/* RIGHT: CART DRAWER (Responsive) */}
             {/* Mobile Toggle Button */}
-            <div className="lg:hidden fixed bottom-20 left-4 right-4 z-40">
+            {cart.length > 0 && <div className="lg:hidden fixed bottom-20 left-4 right-4 z-40">
                 <button
                     onClick={() => setShowMobileCart(true)}
-                    className="w-full bg-nortex-900 text-white py-4 rounded-xl shadow-2xl flex items-center justify-between px-6 font-bold text-lg animate-in slide-in-from-bottom duration-300"
+                    className="w-full h-pay bg-brand text-brand-on rounded-card shadow-premium flex items-center justify-between px-5 font-bold text-base animate-in slide-in-from-bottom duration-300"
                 >
                     <div className="flex items-center gap-2">
-                        <div className="bg-white/20 p-2 rounded-lg">
-                            <ShoppingCart size={24} />
-                        </div>
-                        <span>Ver Carrito ({cart.reduce((a, b) => a + b.quantity, 0)})</span>
+                        <ShoppingCart size={21} />
+                        <span>Revisar venta · {cart.reduce((a, b) => a + b.quantity, 0)}</span>
                     </div>
                     <span>{formatMoney(grandTotal)}</span>
                 </button>
-            </div>
+            </div>}
 
             {/* Cart Container - Drawer on Mobile, Sidebar on Desktop */}
             <div className={`
@@ -3630,15 +4924,53 @@ const POS: React.FC = () => {
           ${showMobileCart ? 'translate-y-0 opacity-100' : 'translate-y-full lg:translate-y-0 opacity-0 pointer-events-none lg:opacity-100 lg:pointer-events-auto'}
       `}>
                 <div className="p-5 border-b border-white/[0.04] bg-surface-800/40 text-slate-100 flex items-center justify-between">
-                    <h2 className="font-bold text-slate-100 flex items-center gap-2"><ShoppingCart size={20} /> Ticket</h2>
+                    <h2 className="font-bold text-slate-100 flex items-center gap-2"><ShoppingCart size={20} /> {guidedSimpleMode ? 'Venta actual' : 'Ticket'}</h2>
                     {/* Mobile Close Button */}
-                    <button onClick={() => setShowMobileCart(false)} className="lg:hidden p-2 bg-white/[0.06] rounded-full text-slate-300">
+                    <button onClick={() => setShowMobileCart(false)} className="lg:hidden p-2 bg-white/[0.06] rounded-full text-slate-300" aria-label="Cerrar resumen de venta">
                         <ArrowDownCircle size={24} />
                     </button>
                 </div>
 
+                {currentShift && !guidedSimpleMode && (cart.length > 0 || heldCarts.length > 0) && (
+                    <div className="px-4 pt-3 flex flex-wrap gap-2">
+                        {cart.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={handleHoldCart}
+                                className={`h-9 px-3 rounded-control border text-sm font-semibold transition-colors ${
+                                    guidedSimpleMode
+                                        ? 'bg-amber-500/10 text-amber-300 border-amber-500/20 hover:bg-amber-500/15'
+                                        : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'
+                                }`}
+                            >
+                                <span className="inline-flex items-center gap-2">
+                                    <ParkingCircle size={15} />
+                                    Aparcar
+                                    {!guidedSimpleMode && <span className="text-[10px] font-mono text-slate-500">F4</span>}
+                                </span>
+                            </button>
+                        )}
+                        {heldCarts.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={openHeldCarts}
+                                className={`h-9 px-3 rounded-control border text-sm font-semibold transition-colors ${
+                                    guidedSimpleMode
+                                        ? 'bg-sky-500/10 text-sky-300 border-sky-500/20 hover:bg-sky-500/15'
+                                        : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'
+                                }`}
+                            >
+                                <span className="inline-flex items-center gap-2">
+                                    <RotateCcw size={15} />
+                                    Aparcadas ({heldCarts.length})
+                                </span>
+                            </button>
+                        )}
+                    </div>
+                )}
+
                 {/* EMPLOYEE AUTO-ASSIGNED (from PIN on shift open) */}
-                {currentShift?.employee && (
+                {currentShift?.employee && !guidedSimpleMode && (
                     <div className="px-4 pt-3">
                         <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2 flex items-center gap-2">
                             <div className="w-7 h-7 bg-emerald-200 rounded-full flex items-center justify-center text-emerald-400 font-bold text-xs">
@@ -3653,9 +4985,20 @@ const POS: React.FC = () => {
                 )}
 
                 {/* 👑 SMART CUSTOMER SEARCH - GOD-TIER SELECTOR */}
+                {guidedSimpleMode && !showCustomerPicker && !selectedCustomer ? (
+                    <div className="px-4 pt-3">
+                        <button
+                            type="button"
+                            onClick={() => setShowCustomerPicker(true)}
+                            className="w-full h-touch px-3 rounded-control text-sm font-semibold text-slate-400 hover:text-slate-200 hover:bg-white/[0.04] border border-transparent hover:border-white/[0.06] flex items-center gap-2 transition-colors"
+                        >
+                            <User size={17} /> Agregar cliente <span className="font-normal text-slate-500">(opcional)</span>
+                        </button>
+                    </div>
+                ) : (
                 <div className="px-4 pt-4 relative">
                     <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
-                        <User size={12} /> {simpleMode ? 'CLIENTE (OPCIONAL)' : 'CLIENTE PARA SCORING'}
+                        <User size={12} /> {guidedSimpleMode ? 'CLIENTE' : 'CLIENTE PARA SCORING'}
                     </label>
                     <div className="relative">
                         <div className="absolute left-4 top-1/2 -translate-y-1/2 w-9 h-9 bg-indigo-500/15 rounded-full flex items-center justify-center">
@@ -3663,8 +5006,10 @@ const POS: React.FC = () => {
                         </div>
                         <input
                             type="text"
-                            placeholder="Buscar o seleccionar cliente..."
-                            className="w-full pl-16 pr-10 py-4 text-base font-bold border-2 border-brand rounded-xl outline-none focus:border-brand-hover focus:ring-4 focus:ring-brand/20 bg-brand/5 text-slate-100 placeholder:text-slate-500 placeholder:font-medium transition-all shadow-sm"
+                            placeholder="Buscar cliente"
+                            className={guidedSimpleMode
+                                ? 'w-full h-touch pl-16 pr-10 text-sm font-semibold border border-white/[0.08] rounded-control outline-none focus:border-brand focus:ring-2 focus:ring-brand/30 bg-surface-800/40 text-slate-100 placeholder:text-slate-500 transition-colors'
+                                : 'w-full pl-16 pr-10 py-4 text-base font-bold border-2 border-brand rounded-xl outline-none focus:border-brand-hover focus:ring-4 focus:ring-brand/20 bg-brand/5 text-slate-100 placeholder:text-slate-500 placeholder:font-medium transition-all shadow-sm'}
                             value={selectedCustomer ? selectedCustomer.name : customerSearch}
                             onChange={(e) => {
                                 setCustomerSearch(e.target.value);
@@ -3674,7 +5019,7 @@ const POS: React.FC = () => {
                             onFocus={() => setShowCustomerDropdown(true)}
                         />
                         {selectedCustomer && (
-                            <button onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); }} className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 bg-red-500/15 rounded-full text-red-500 hover:bg-red-200 hover:text-red-400 transition-colors">
+                            <button onClick={() => { setSelectedCustomer(null); setCustomerSearch(''); setShowCustomerPicker(false); }} className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 bg-red-500/15 rounded-full text-red-500 hover:bg-red-200 hover:text-red-400 transition-colors">
                                 <X size={16} />
                             </button>
                         )}
@@ -3718,6 +5063,7 @@ const POS: React.FC = () => {
                         </div>
                     )}
                 </div>
+                )}
 
                 {/* ⚠️ Venta a medias que NO pertenece a este turno (o quedó vieja).
                     No se restaura sola: meter mercadería de otro turno en la caja
@@ -3772,20 +5118,44 @@ const POS: React.FC = () => {
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
                     {cart.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
-                            <ShoppingCart size={32} /> <p className="text-sm">Carrito vacío</p>
-                            <p className="text-xs text-slate-300">Escaneá un código o tocá un producto para empezar.</p>
+                            <div className="w-14 h-14 rounded-pill bg-white/[0.04] flex items-center justify-center"><ShoppingCart size={26} /></div>
+                            <p className="text-sm font-semibold text-slate-300">Tu venta está vacía</p>
+                            <p className="text-xs text-slate-500 text-center max-w-[220px]">Seleccioná un producto o escaneá su código para empezar.</p>
+                            {currentShift && heldCarts.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={openHeldCarts}
+                                    className="h-touch px-4 rounded-control border border-sky-500/20 bg-sky-500/10 text-sky-200 font-semibold text-sm hover:bg-sky-500/15 transition-colors"
+                                >
+                                    <span className="inline-flex items-center gap-2">
+                                        <RotateCcw size={16} />
+                                        Continuar venta aparcada ({heldCarts.length})
+                                    </span>
+                                </button>
+                            )}
                         </div>
                     ) : (
                         cart.map(item => {
-                            const lineDiscount = (item as CartLine).discount ?? 0;
+                            const key = lineKey(item);
+                            const isScaleLabel = item.measurement?.source === 'SCALE_LABEL';
+                            const isQuotationLine = isQuotationCartLine(item);
+                            const unit = item.unit || 'unidad';
+                            const lineDiscount = isQuotationLine ? 0 : ((item as CartLine).discount ?? 0);
                             const lineDiscountD = toDecimal(lineDiscount);
-                            const lineTotalD = toDecimal(item.price).mul(item.quantity).mul(new Decimal(1).minus(lineDiscountD.div(100)));
+                            const displayedQuantity = isQuotationLine && item.quantityExact
+                                ? item.quantityExact
+                                : item.quantity;
+                            const lineTotalD = toDecimal(item.price).mul(displayedQuantity).mul(new Decimal(1).minus(lineDiscountD.div(100)));
                             const tierBadge = lineTierBadge(item as CartLine, Boolean(selectedCustomer?.isWholesale));
                             const packSize = (item as CartLine).packSize;
                             const packLabel = ((item as CartLine).packUnit || 'caja').toLowerCase();
+                            const packLine = isPackCartLine(item);
+                            const quantityStep = packLine && packSize != null && packSize > 0
+                                ? packSize
+                                : effectiveQuantityStep(item);
                             return (
                                 <div
-                                    key={item.id}
+                                    key={key}
                                     className={`bg-surface-800/40 p-3 rounded-lg border text-slate-100 transition-colors duration-300 ${lineaResaltada?.id === item.id ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-white/[0.04]'}`}
                                 >
                                     {/* FILA 1 · El nombre, a ancho completo (P0-3).
@@ -3807,13 +5177,23 @@ const POS: React.FC = () => {
                                     <div className="flex items-center gap-2 mt-2">
                                         <div className="flex-1 min-w-0">
                                             <div className="text-xs text-slate-400 font-mono tabular-nums flex items-center gap-1.5 flex-wrap">
-                                                <span>{formatMoney(item.price)} / {(item as CartLine).unit || 'und'}</span>
+                                                <span>
+                                                    {packLine
+                                                        ? `${formatQuantityValue(item.presentation?.quantity ?? 0)} ${packLabel} (${formatQuantityValue(displayedQuantity)} ${unit}) × ${formatMoney(item.price)} / ${unit}`
+                                                        : `${formatQuantityValue(displayedQuantity)} ${unit} × ${formatMoney(item.price)} / ${unit}`}
+                                                </span>
+                                                {isScaleLabel && (
+                                                    <span className="px-1.5 py-0.5 bg-cyan-500/15 text-cyan-300 rounded text-[9px] font-bold tracking-wide">ETIQUETA</span>
+                                                )}
+                                                {isQuotationLine && (
+                                                    <span className="px-1.5 py-0.5 bg-violet-500/15 text-violet-300 rounded text-[9px] font-bold tracking-wide">COTIZACIÓN</span>
+                                                )}
                                                 {tierBadge && (
                                                     <span className="px-1.5 py-0.5 bg-indigo-500/15 text-indigo-400 rounded text-[9px] font-bold tracking-wide">{tierBadge}</span>
                                                 )}
-                                                {packSize != null && packSize > 0 && (
+                                                {!isScaleLabel && !isQuotationLine && packSize != null && packSize > 0 && item.packUnit && (
                                                     <button
-                                                        onClick={() => updateQuantity(item.id, packSize)}
+                                                        onClick={() => addPackToCart(item)}
                                                         className="px-1.5 py-0.5 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-200 rounded text-[9px] font-bold tracking-wide transition-colors"
                                                         title={`Agregar 1 ${packLabel} (${packSize} ${(item as CartLine).unit || 'und'})`}
                                                         aria-label={`Agregar un ${packLabel} de ${item.name}, ${packSize} unidades`}
@@ -3829,87 +5209,96 @@ const POS: React.FC = () => {
                                             22px y basurero de 14px, los tres SIN nombre
                                             accesible — anónimos para un lector de pantalla
                                             y para cualquier prueba automatizada. */}
-                                        <div className="flex items-center gap-0.5 bg-surface-900 rounded-control border border-white/[0.06] p-0.5 text-slate-100 shrink-0">
-                                            <button
-                                                onClick={() => updateQuantity(item.id, -0.5)}
-                                                aria-label={`Quitar media unidad de ${item.name}`}
-                                                className="w-11 h-11 flex items-center justify-center hover:bg-white/[0.06] rounded-control text-slate-300 transition-colors"
+                                        {isScaleLabel || isQuotationLine ? (
+                                            <div
+                                                className={`min-h-11 px-3 flex flex-col justify-center rounded-control shrink-0 ${isQuotationLine ? 'border border-violet-500/20 bg-violet-500/10 text-violet-100' : 'border border-cyan-500/20 bg-cyan-500/10 text-cyan-100'}`}
+                                                title={isQuotationLine
+                                                    ? 'Cantidad y precio fijados por la cotización original'
+                                                    : 'El servidor vuelve a derivar esta cantidad desde la etiqueta'}
                                             >
-                                                <Minus size={18} />
-                                            </button>
-                                            <NumberDraftInput
-                                                value={item.quantity}
-                                                onCommit={(n) => { if (n > 0) setQuantity(item.id, n); }}
-                                                ariaLabel={`Cantidad de ${item.name}`}
-                                                className="w-12 h-11 text-center text-base font-mono tabular-nums font-bold border-0 outline-none bg-transparent text-slate-100"
-                                            />
-                                            <button
-                                                onClick={() => updateQuantity(item.id, 0.5)}
-                                                aria-label={`Agregar media unidad de ${item.name}`}
-                                                className="w-11 h-11 flex items-center justify-center hover:bg-white/[0.06] rounded-control text-slate-300 transition-colors"
-                                            >
-                                                <Plus size={18} />
-                                            </button>
-                                        </div>
+                                                <span className="font-mono text-sm font-bold tabular-nums">{formatQuantityValue(displayedQuantity)} {unit}</span>
+                                                <span className="text-[9px] uppercase tracking-wide">{isQuotationLine ? 'fijado por cotización' : 'fijado por etiqueta'}</span>
+                                            </div>
+                                        ) : (
+                                            <div className="flex items-center gap-0.5 bg-surface-900 rounded-control border border-white/[0.06] p-0.5 text-slate-100 shrink-0">
+                                                <button
+                                                    onClick={() => updateQuantity(key, -quantityStep)}
+                                                    aria-label={`Restar ${formatQuantityValue(quantityStep)} ${unit} de ${item.name}`}
+                                                    className="w-11 h-11 flex items-center justify-center hover:bg-white/[0.06] rounded-control text-slate-300 transition-colors"
+                                                >
+                                                    <Minus size={18} />
+                                                </button>
+                                                <NumberDraftInput
+                                                    value={item.quantity}
+                                                    onCommit={(n) => setQuantity(key, n)}
+                                                    ariaLabel={`Cantidad de ${item.name} en ${unit}`}
+                                                    ariaInvalid={Boolean(quantityErrors[key])}
+                                                    describedBy={quantityErrors[key] ? `quantity-error-${key}` : undefined}
+                                                    className="w-16 h-11 text-center text-base font-mono tabular-nums font-bold border-0 outline-none bg-transparent text-slate-100"
+                                                />
+                                                <button
+                                                    onClick={() => updateQuantity(key, quantityStep)}
+                                                    aria-label={`Agregar ${formatQuantityValue(quantityStep)} ${unit} de ${item.name}`}
+                                                    className="w-11 h-11 flex items-center justify-center hover:bg-white/[0.06] rounded-control text-slate-300 transition-colors"
+                                                >
+                                                    <Plus size={18} />
+                                                </button>
+                                            </div>
+                                        )}
 
                                         <button
-                                            onClick={() => quitarLinea(item.id)}
+                                            onClick={() => quitarLinea(key)}
                                             aria-label={`Quitar ${item.name} del ticket`}
                                             className="w-11 h-11 flex items-center justify-center rounded-control text-slate-400 hover:text-danger hover:bg-danger-soft transition-colors shrink-0"
                                         >
                                             <Trash2 size={18} />
                                         </button>
                                     </div>
-                                    {/* Descuento por línea (P1-1) — ANTES estaba abierto y
-                                        permanente en CADA renglón: ocupaba una fila entera
-                                        por producto, ensuciaba el ticket, y en un negocio
-                                        con empleados dejaba un descuento arbitrario a un
-                                        toque de distancia en cada línea.
-                                        Ahora: si hay descuento se muestra como resultado
-                                        (chip + lo que se rebaja); si no, es un enlace
-                                        discreto que abre el campo. Y al abrirse el campo va
-                                        a 44px — el criterio de P0-4 que no se podía cumplir
-                                        mientras esto sumaba alto a todas las líneas. */}
-                                    {lineDiscountD.greaterThan(0) ? (
-                                        <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-white/[0.04]">
-                                            <span className="px-1.5 py-0.5 rounded bg-danger-soft text-danger text-[10px] font-bold">−{lineDiscount}%</span>
-                                            <span className="text-[11px] text-slate-400">
-                                                rebaja {formatMoney(toDecimal(item.price).mul(item.quantity).mul(lineDiscountD).div(100))}
-                                            </span>
-                                            <button
-                                                onClick={() => setLineaConDescuento(prev => prev === item.id ? null : item.id)}
-                                                className="ml-auto text-[11px] text-slate-400 hover:text-slate-200 underline underline-offset-2"
-                                            >
-                                                {lineaConDescuento === item.id ? 'Listo' : 'Cambiar'}
-                                            </button>
-                                        </div>
-                                    ) : lineaConDescuento !== item.id ? (
-                                        <button
-                                            onClick={() => setLineaConDescuento(item.id)}
-                                            className="mt-1.5 pt-1.5 border-t border-white/[0.04] w-full text-left text-[11px] text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1.5"
-                                        >
-                                            <Percent size={11} /> Aplicar descuento
-                                        </button>
-                                    ) : null}
+                                    {quantityErrors[key] && <p id={`quantity-error-${key}`} role="alert" className="mt-1.5 text-[11px] text-danger">{quantityErrors[key]}</p>}
+                                    {!guidedSimpleMode && !isQuotationLine && (
+                                        <>
+                                            {lineDiscountD.greaterThan(0) ? (
+                                                <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-white/[0.04]">
+                                                    <span className="px-1.5 py-0.5 rounded bg-danger-soft text-danger text-[10px] font-bold">−{lineDiscount}%</span>
+                                                    <span className="text-[11px] text-slate-400">
+                                                        rebaja {formatMoney(toDecimal(item.price).mul(item.quantity).mul(lineDiscountD).div(100))}
+                                                    </span>
+                                                    <button
+                                                        onClick={() => setLineaConDescuento(previous => previous === key ? null : key)}
+                                                        className="ml-auto text-[11px] text-slate-400 hover:text-slate-200 underline underline-offset-2"
+                                                    >
+                                                        {lineaConDescuento === key ? 'Listo' : 'Cambiar'}
+                                                    </button>
+                                                </div>
+                                            ) : lineaConDescuento !== key ? (
+                                                <button
+                                                    onClick={() => setLineaConDescuento(key)}
+                                                    className="mt-1.5 pt-1.5 border-t border-white/[0.04] w-full text-left text-[11px] text-slate-500 hover:text-slate-300 transition-colors flex items-center gap-1.5"
+                                                >
+                                                    <Percent size={11} /> Aplicar descuento
+                                                </button>
+                                            ) : null}
 
-                                    {lineaConDescuento === item.id && (
-                                        <div className="flex items-center gap-2 mt-1.5">
-                                            <NumberDraftInput
-                                                value={lineDiscount}
-                                                onCommit={(n) => setItemDiscount(item.id, n)}
-                                                allowZero
-                                                placeholder="0"
-                                                ariaLabel={`Descuento de ${item.name} en porcentaje`}
-                                                className="w-16 h-11 text-center text-base border border-white/[0.10] rounded-control outline-none focus:border-brand text-slate-100 font-mono tabular-nums bg-surface-900"
-                                            />
-                                            <span className="text-xs text-slate-400">% de descuento</span>
-                                            <button
-                                                onClick={() => setLineaConDescuento(null)}
-                                                className="ml-auto h-11 px-3 rounded-control bg-white/[0.06] hover:bg-white/[0.12] text-slate-100 text-xs font-bold transition-colors"
-                                            >
-                                                Listo
-                                            </button>
-                                        </div>
+                                            {lineaConDescuento === key && (
+                                                <div className="flex items-center gap-2 mt-1.5">
+                                                    <NumberDraftInput
+                                                        value={lineDiscount}
+                                                        onCommit={(value) => setItemDiscount(key, value)}
+                                                        allowZero
+                                                        placeholder="0"
+                                                        ariaLabel={`Descuento de ${item.name} en porcentaje`}
+                                                        className="w-16 h-11 text-center text-base border border-white/[0.10] rounded-control outline-none focus:border-brand text-slate-100 font-mono tabular-nums bg-surface-900"
+                                                    />
+                                                    <span className="text-xs text-slate-400">% de descuento</span>
+                                                    <button
+                                                        onClick={() => setLineaConDescuento(null)}
+                                                        className="ml-auto h-11 px-3 rounded-control bg-white/[0.06] hover:bg-white/[0.12] text-slate-100 text-xs font-bold transition-colors"
+                                                    >
+                                                        Listo
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </>
                                     )}
                                     {/* ⚠️ Aviso de existencias — la línea vende más de lo que
                                         hay en el sistema (o el producto ya está en negativo).
@@ -3929,16 +5318,16 @@ const POS: React.FC = () => {
                                             >
                                                 <AlertTriangle size={13} className="shrink-0 mt-px" />
                                                 <span className="flex-1 min-w-0">{texto}</span>
-                                                {aviso.ajustarA !== null ? (
+                                                {aviso.ajustarA !== null && !isScaleLabel && !isQuotationLine && (lineasPorProducto.get(item.id) ?? 0) === 1 ? (
                                                     <button
-                                                        onClick={() => setQuantity(item.id, aviso.ajustarA as number)}
+                                                        onClick={() => setQuantity(key, aviso.ajustarA as number)}
                                                         className="shrink-0 px-1.5 py-0.5 rounded bg-white/[0.06] hover:bg-white/[0.12] font-bold text-slate-200 transition-colors"
                                                     >
                                                         Ajustar a {aviso.ajustarA}
                                                     </button>
                                                 ) : (
                                                     <button
-                                                        onClick={() => quitarLinea(item.id)}
+                                                        onClick={() => quitarLinea(key)}
                                                         aria-label={`Quitar ${item.name} del ticket`}
                                                         className="shrink-0 px-1.5 py-0.5 rounded bg-white/[0.06] hover:bg-white/[0.12] font-bold text-slate-200 transition-colors"
                                                     >
@@ -3974,7 +5363,7 @@ const POS: React.FC = () => {
                     z-checkout. Ningún flotante puede vivir por encima de esto. */}
                 <div className="sticky bottom-0 z-checkout p-5 border-t border-white/[0.06] bg-surface-800 text-slate-100">
                     {/* 💸 Global Discount (oculto en modo simple para no invitar al error) */}
-                    {!simpleMode && <div className="flex items-center gap-2 mb-2">
+                    {!guidedSimpleMode && <div className="flex items-center gap-2 mb-2">
                         <Percent size={14} className="text-slate-400" />
                         <span className="text-xs text-slate-500 font-bold">Descuento Global</span>
                         <input
@@ -3983,10 +5372,15 @@ const POS: React.FC = () => {
                             placeholder="0"
                             aria-label="Descuento global en porcentaje"
                             className="w-14 text-xs text-center border border-white/[0.06] rounded px-1 py-1 outline-none focus:border-brand text-slate-200 font-mono tabular-nums"
-                            value={globalDiscount}
+                            value={hasQuotationLines ? '' : globalDiscount}
                             onChange={e => setGlobalDiscount(sanitizeDecimalInput(e.target.value))}
+                            disabled={hasQuotationLines}
+                            title={hasQuotationLines ? 'La cotización conserva su descuento y precio originales' : undefined}
                         />
                         <span className="text-xs text-slate-400">%</span>
+                        {hasQuotationLines && (
+                            <span className="text-[10px] text-violet-300 ml-auto">Fijado por cotización</span>
+                        )}
                         {globalDiscountD.greaterThan(0) && (
                             <span className="text-xs text-red-500 font-bold ml-auto">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span>
                         )}
@@ -4001,14 +5395,26 @@ const POS: React.FC = () => {
                         entre sí y con la declaración.
                         Subtotal y Descuento solo aparecen cuando hubo descuento;
                         sin él eran una cifra repetida. */}
-                    {globalDiscountD.greaterThan(0) && (
-                        <>
-                            <div className="flex justify-between text-sm text-slate-400 mb-1"><span>Subtotal</span><span className="nx-num">{formatMoney(total)}</span></div>
-                            <div className="flex justify-between text-sm text-danger mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="nx-num">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span></div>
-                        </>
+                    {(!guidedSimpleMode || showSaleDetails) ? (
+                        <div className="mb-2">
+                            {globalDiscountD.greaterThan(0) && (
+                                <>
+                                    <div className="flex justify-between text-sm text-slate-400 mb-1"><span>Subtotal</span><span className="nx-num">{formatMoney(total)}</span></div>
+                                    <div className="flex justify-between text-sm text-danger mb-1"><span>Descuento ({globalDiscountNum}%)</span><span className="nx-num">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span></div>
+                                </>
+                            )}
+                            <div className="flex justify-between text-sm text-slate-400 mb-1"><span>Base imponible</span><span className="nx-num">{formatMoney(grandTotalD.minus(taxD))}</span></div>
+                            <div className="flex justify-between text-sm text-slate-400"><span>IVA incluido (15%)</span><span className="nx-num">{formatMoney(tax)}</span></div>
+                        </div>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={() => setShowSaleDetails(true)}
+                            className="w-full flex items-center justify-between text-xs text-slate-500 hover:text-slate-300 mb-2 py-1"
+                        >
+                            <span>Impuestos incluidos</span><ChevronDown size={15} />
+                        </button>
                     )}
-                    <div className="flex justify-between text-sm text-slate-400 mb-1"><span>Base imponible</span><span className="nx-num">{formatMoney(grandTotalD.minus(taxD))}</span></div>
-                    <div className="flex justify-between text-sm text-slate-400 mb-2"><span>IVA (15%)</span><span className="nx-num">{formatMoney(tax)}</span></div>
                     {/* El TOTAL es la cifra que decide la operación: tamaño display,
                         en color de texto principal (no coloreado). */}
                     <div className="flex justify-between items-baseline mb-4 pt-3 border-t border-white/[0.06]">
@@ -4031,8 +5437,61 @@ const POS: React.FC = () => {
                         </div>
                     )}
 
-                    {/* Botones de cobro a 56px (--nx-h-pay): objetivo táctil de mostrador. */}
-                    <div className="grid grid-cols-2 gap-3 mb-3">
+                    {/* Una sola decisión dominante en modo guiado. Los métodos se
+                        eligen después, como en Square/Shopify/Lightspeed. */}
+                    {guidedSimpleMode ? (
+                        <div className="space-y-2">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (!currentShift) {
+                                        trackEvent('pos_shift_required', { source: firstSaleMode ? 'first_sale' : 'pos', cart_items: cart.length });
+                                        setErrorApertura({});
+                                        setShowMobileCart(false);
+                                        setResumePaymentAfterShift(true);
+                                        setShowOpenShift(true);
+                                        return;
+                                    }
+                                    setShowMobileCart(false);
+                                    setShowPaymentOptions(true);
+                                }}
+                                disabled={processing || cart.length === 0 || turnoAjeno}
+                                className="w-full h-pay px-5 bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover text-[17px] flex items-center justify-between active:scale-[0.99] transition-colors disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/40"
+                            >
+                                <span>Cobrar</span>
+                                <span className="flex items-center gap-2 nx-num">{formatMoney(grandTotal)} <ArrowRight size={20} /></span>
+                            </button>
+                            {currentShift && !turnoAjeno && (cart.length > 0 || heldCarts.length > 0) && (
+                                <div className={`grid gap-2 ${cart.length > 0 && heldCarts.length > 0 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                                    {cart.length > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={handleHoldCart}
+                                        disabled={processing}
+                                        className="h-touch px-4 rounded-control border border-white/[0.08] text-slate-200 font-semibold text-sm hover:bg-white/[0.05] transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
+                                    >
+                                        <span className="inline-flex items-center gap-2">
+                                            <ParkingCircle size={16} className="text-sky-300" />
+                                            Aparcar venta
+                                        </span>
+                                    </button>
+                                    )}
+                                    {heldCarts.length > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={openHeldCarts}
+                                        className="h-touch px-4 rounded-control border border-sky-500/20 bg-sky-500/10 text-sky-200 font-semibold text-sm hover:bg-sky-500/15 transition-colors"
+                                    >
+                                        <span className="inline-flex items-center gap-2">
+                                            <RotateCcw size={16} />
+                                            Aparcadas ({heldCarts.length})
+                                        </span>
+                                    </button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    ) : <div className="grid grid-cols-2 gap-3 mb-3">
                         <button
                             // Sin turno abierto el botón NO queda muerto: manda a la
                             // apertura de caja (que ahora se puede cerrar). Bloquear
@@ -4072,18 +5531,16 @@ const POS: React.FC = () => {
                                 {cart.length > 0 && !isCreditBlocked && (
                                     <span className="text-[13px] font-mono tabular-nums opacity-90">{formatMoney(grandTotal)}</span>
                                 )}
-                                {/* Un botón deshabilitado tiene que decir POR QUÉ; que el
-                                    cajero lo descubra tocando es la peor forma de saberlo. */}
                                 {isCreditBlocked && !selectedCustomer && (
                                     <span className="text-[11px] font-normal opacity-80">Elegí un cliente</span>
                                 )}
                             </span>
                         </button>
-                    </div>
-                    {isCreditBlocked && selectedCustomer && (
+                    </div>}
+                    {!guidedSimpleMode && isCreditBlocked && selectedCustomer && (
                         <p className="text-xs text-center text-red-500 font-bold mb-1">Crédito no disponible: límite excedido o cliente bloqueado.</p>
                     )}
-                    {!currentShift && (
+                    {!guidedSimpleMode && !currentShift && (
                         <p className="text-xs text-center text-slate-400 mt-2">Podés mirar y armar el carrito; para cobrar hay que abrir la caja.</p>
                     )}
                     {turnoAjeno && (
@@ -4108,17 +5565,25 @@ const POS: React.FC = () => {
             {/* 🔄 RETURNS MODAL                */}
             {/* =============================== */}
             {showReturnModal && (
-                <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+                <div
+                    className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="return-modal-title"
+                >
                     <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/[0.06] max-h-[90vh] flex flex-col">
                         <div className="bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-4 flex items-center justify-between">
-                            <h3 className="text-lg font-bold text-white flex items-center gap-2"><RefreshCw size={20} /> Devolución de Producto</h3>
-                            <button onClick={() => { setShowReturnModal(false); setReturnSaleData(null); setReturnItems([]); setReturnSaleSearch(''); setReturnReason(''); }} className="text-white/80 hover:text-white"><X size={20} /></button>
+                            <h3 id="return-modal-title" className="text-lg font-bold text-white flex items-center gap-2"><RefreshCw size={20} /> Devolución de Producto</h3>
+                            <button onClick={resetReturnFlow} className="text-white/80 hover:text-white" aria-label="Cerrar devolución"><X size={20} /></button>
                         </div>
                         <div className="p-5 flex-1 overflow-y-auto space-y-4">
                             {/* Sale Search */}
                             <div>
                                 <label className="text-xs font-bold text-slate-300 mb-1 block">Buscar Venta por ID</label>
-                                <div className="flex gap-2">
+                                <form
+                                    className="flex gap-2"
+                                    onSubmit={(event) => { event.preventDefault(); void searchReturnSale(); }}
+                                >
                                     <input
                                         type="text"
                                         placeholder="Ej: clp8..."
@@ -4127,28 +5592,15 @@ const POS: React.FC = () => {
                                         onChange={e => setReturnSaleSearch(e.target.value)}
                                     />
                                     <button
-                                        onClick={async () => {
-                                            if (!returnSaleSearch.trim()) return;
-                                            try {
-                                                const token = localStorage.getItem('nortex_token');
-                                                const res = await fetch(`/api/sales/search?q=${returnSaleSearch}`, { headers: { 'Authorization': `Bearer ${token}` } });
-                                                const data = await res.json();
-                                                if (!res.ok) throw new Error(data.error);
-                                                setReturnSaleData(data);
-                                                setReturnItems(data.items.map((item: any) => ({
-                                                    productId: item.productId,
-                                                    name: item.productId, // Will be populated
-                                                    quantity: 0,
-                                                    price: Number(item.priceAtSale),
-                                                    maxQty: Number(item.quantity)
-                                                })));
-                                            } catch (err: any) { alert(err.message); }
-                                        }}
-                                        className="px-4 py-2 bg-amber-500 text-white font-bold rounded-lg hover:bg-amber-600 text-sm"
+                                        type="submit"
+                                        disabled={returnSearching || !returnSaleSearch.trim()}
+                                        className="px-4 py-2 bg-amber-500 text-white font-bold rounded-lg hover:bg-amber-600 text-sm disabled:opacity-50"
+                                        aria-label="Buscar venta"
                                     >
-                                        <Search size={16} />
+                                        {returnSearching ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
                                     </button>
-                                </div>
+                                </form>
+                                {returnGeneralError && !returnSaleData && <p role="alert" className="mt-2 text-xs text-danger">{returnGeneralError}</p>}
                             </div>
 
                             {/* Sale Found */}
@@ -4173,25 +5625,84 @@ const POS: React.FC = () => {
                                     <div>
                                         <label className="text-xs font-bold text-slate-300 mb-2 block">Seleccionar Items a Devolver</label>
                                         <div className="space-y-2">
-                                            {returnItems.map((item, idx) => (
-                                                <div key={idx} className="flex items-center gap-3 bg-surface-800/40 p-2 rounded-lg border border-white/[0.04]">
-                                                    <div className="flex-1 min-w-0">
-                                                        <p className="text-xs font-medium text-slate-200 truncate">{returnSaleData.items[idx]?.productId?.slice(0, 8) || item.productId.slice(0, 8)}...</p>
-                                                        <p className="text-[10px] text-slate-400">{formatMoney(item.price)} · Max: {item.maxQty}</p>
+                                            {returnItems.map((item) => {
+                                                const errorId = `return-error-${item.saleItemId}`;
+                                                const exhausted = new Decimal(item.returnableQuantity).lessThanOrEqualTo(0);
+                                                const currentQuantity = toDecimal(item.quantityDraft);
+                                                return (
+                                                    <div key={item.saleItemId} className="bg-surface-800/40 p-3 rounded-lg border border-white/[0.04]">
+                                                        <div className="flex items-start justify-between gap-3">
+                                                            <div className="flex-1 min-w-0">
+                                                                <p className="text-sm font-semibold text-slate-100 truncate">{item.productNameAtSale}</p>
+                                                                <p className="mt-0.5 text-[11px] text-slate-400">
+                                                                    {item.presentationAtSale === 'PACK'
+                                                                        ? `${formatQuantityValue(item.presentationQuantityAtSale)} empaque(s) · ${formatQuantityValue(item.quantity)} ${item.unitAtSale}`
+                                                                        : `${formatQuantityValue(item.quantity)} ${item.unitAtSale}`}
+                                                                </p>
+                                                                {item.measurement && (
+                                                                    <p className="mt-0.5 text-[11px] text-sky-300">
+                                                                        Medición: {formatQuantityValue(item.measurement.sourceValue)} {item.measurement.sourceUnit}
+                                                                    </p>
+                                                                )}
+                                                                <p className="mt-1 text-[11px] text-slate-400">
+                                                                    {formatMoney(Number(item.refundUnitPrice))} / {item.unitAtSale} · Devuelto {formatQuantityValue(item.returnedQuantity)} · Disponible {formatQuantityValue(item.returnableQuantity)}
+                                                                </p>
+                                                            </div>
+                                                            <span className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-bold ${item.presentationAtSale === 'PACK' ? 'bg-violet-500/15 text-violet-300' : 'bg-slate-500/15 text-slate-300'}`}>
+                                                                {item.presentationAtSale === 'PACK' ? 'EMPAQUE' : 'BASE'}
+                                                            </span>
+                                                        </div>
+
+                                                        {exhausted ? (
+                                                            <p className="mt-2 text-xs font-medium text-slate-500">Ya fue devuelto por completo.</p>
+                                                        ) : (
+                                                            <div className="mt-3">
+                                                                <div className="flex items-center gap-2">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => stepReturnQuantity(item, -1)}
+                                                                        disabled={currentQuantity.lessThanOrEqualTo(0)}
+                                                                        className="w-9 h-9 flex items-center justify-center hover:bg-white/[0.06] rounded-lg text-slate-300 disabled:opacity-30"
+                                                                        aria-label={`Restar ${formatQuantityValue(item.quantityStep)} ${item.unitAtSale} de ${item.productNameAtSale}`}
+                                                                    ><Minus size={14} /></button>
+                                                                    <div className="flex-1">
+                                                                        <input
+                                                                            type="text"
+                                                                            inputMode="decimal"
+                                                                            value={item.quantityDraft}
+                                                                            onChange={(event) => setReturnQuantity(item.saleItemId, event.target.value)}
+                                                                            onBlur={() => {
+                                                                                const validation = validateReturnDraft(item);
+                                                                                setReturnErrors(previous => {
+                                                                                    const next = { ...previous };
+                                                                                    if (validation.error) next[item.saleItemId] = validation.error;
+                                                                                    else delete next[item.saleItemId];
+                                                                                    return next;
+                                                                                });
+                                                                            }}
+                                                                            className="w-full h-9 px-2 rounded-lg border border-white/10 bg-surface-950 text-center text-sm font-bold text-slate-100 outline-none focus:border-amber-500"
+                                                                            aria-label={`Cantidad a devolver de ${item.productNameAtSale} en ${item.unitAtSale}`}
+                                                                            aria-invalid={!!returnErrors[item.saleItemId] || undefined}
+                                                                            aria-describedby={returnErrors[item.saleItemId] ? errorId : undefined}
+                                                                        />
+                                                                        <p className="mt-1 text-center text-[10px] text-slate-500">Paso {formatQuantityValue(item.quantityStep)} {item.unitAtSale}</p>
+                                                                    </div>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => stepReturnQuantity(item, 1)}
+                                                                        disabled={currentQuantity.greaterThanOrEqualTo(new Decimal(item.returnableQuantity))}
+                                                                        className="w-9 h-9 flex items-center justify-center hover:bg-white/[0.06] rounded-lg text-slate-300 disabled:opacity-30"
+                                                                        aria-label={`Sumar ${formatQuantityValue(item.quantityStep)} ${item.unitAtSale} a ${item.productNameAtSale}`}
+                                                                    ><Plus size={14} /></button>
+                                                                </div>
+                                                                {returnErrors[item.saleItemId] && (
+                                                                    <p id={errorId} role="alert" className="mt-1 text-xs text-danger">{returnErrors[item.saleItemId]}</p>
+                                                                )}
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                    <div className="flex items-center gap-1">
-                                                        <button
-                                                            onClick={() => { const n = [...returnItems]; n[idx].quantity = Math.max(0, n[idx].quantity - 1); setReturnItems(n); }}
-                                                            className="p-1 hover:bg-white/[0.06] rounded text-slate-500"
-                                                        ><Minus size={12} /></button>
-                                                        <span className="w-8 text-center text-sm font-bold text-slate-100">{item.quantity}</span>
-                                                        <button
-                                                            onClick={() => { const n = [...returnItems]; n[idx].quantity = Math.min(n[idx].maxQty, n[idx].quantity + 1); setReturnItems(n); }}
-                                                            className="p-1 hover:bg-white/[0.06] rounded text-slate-500"
-                                                        ><Plus size={12} /></button>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
                                     </div>
 
@@ -4203,53 +5714,62 @@ const POS: React.FC = () => {
                                             placeholder="Ej: Producto defectuoso"
                                             className="w-full px-3 py-2 border border-white/10 rounded-lg text-sm outline-none focus:border-amber-500 text-slate-100"
                                             value={returnReason}
-                                            onChange={e => setReturnReason(e.target.value)}
+                                            onChange={e => { setReturnReason(e.target.value); setReturnGeneralError(''); }}
+                                            onKeyDown={event => {
+                                                if (event.key === 'Enter') {
+                                                    event.preventDefault();
+                                                    void submitReturn();
+                                                }
+                                            }}
+                                            aria-label="Motivo de la devolución"
                                         />
                                     </div>
 
-                                    {/* Confirm */}
-                                    {returnItems.some(i => i.quantity > 0) && (
-                                        <div>
-                                            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-3">
-                                                <div className="flex justify-between font-bold">
-                                                    <span className="text-amber-300">Total Devolución:</span>
-                                                    <span className="text-amber-400">{formatMoney(returnItems.reduce((sum, i) => sum + i.price * i.quantity, 0))}</span>
-                                                </div>
-                                            </div>
-                                            <button
-                                                onClick={async () => {
-                                                    setReturnProcessing(true);
-                                                    try {
-                                                        const token = localStorage.getItem('nortex_token');
-                                                        const itemsToReturn = returnItems.filter(i => i.quantity > 0);
-                                                        const res = await fetch('/api/returns', {
-                                                            method: 'POST',
-                                                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                                                            body: JSON.stringify({
-                                                                saleId: returnSaleData.id,
-                                                                items: itemsToReturn,
-                                                                reason: returnReason
-                                                            })
-                                                        });
-                                                        const data = await res.json();
-                                                        if (!res.ok) throw new Error(data.error);
-                                                        alert('Devolución procesada. Stock restaurado.');
-                                                        setShowReturnModal(false);
-                                                        setReturnSaleData(null);
-                                                        setReturnItems([]);
-                                                        setReturnSaleSearch('');
-                                                        setReturnReason('');
-                                                        fetchProducts();
-                                                    } catch (err: any) { alert(err.message); } finally { setReturnProcessing(false); }
+                                    {returnRequiresRefundMethod && (
+                                        <div className="rounded-lg border border-sky-500/20 bg-sky-500/10 p-3">
+                                            <label htmlFor="return-refund-method" className="text-xs font-bold text-sky-200 mb-1 block">
+                                                Canal del reembolso cobrado
+                                            </label>
+                                            <p className="mb-2 text-[11px] text-slate-400">
+                                                Esta devolución reduce {formatMoney(returnCreditReduction.toNumber())} de la cuenta por cobrar y devuelve {formatMoney(returnSettledRefund.toNumber())} por el canal seleccionado.
+                                            </p>
+                                            <select
+                                                id="return-refund-method"
+                                                value={returnRefundMethod}
+                                                onChange={(event) => {
+                                                    setReturnRefundMethod(event.target.value as ReturnRefundMethod | '');
+                                                    setReturnGeneralError('');
                                                 }}
-                                                disabled={returnProcessing}
-                                                className="w-full py-3 bg-amber-500 text-white font-bold rounded-lg hover:bg-amber-600 disabled:opacity-50 flex items-center justify-center gap-2"
+                                                className="w-full rounded-lg border border-white/10 bg-surface-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500"
+                                                aria-required="true"
                                             >
-                                                {returnProcessing ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
-                                                Confirmar Devolución
-                                            </button>
+                                                <option value="">Seleccioná cómo devolver</option>
+                                                {returnSaleData.allowedRefundMethods.map((method) => (
+                                                    <option key={method} value={method}>{RETURN_REFUND_METHOD_LABELS[method]}</option>
+                                                ))}
+                                            </select>
                                         </div>
                                     )}
+
+                                    {/* Confirm */}
+                                    <div>
+                                        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-3">
+                                            <div className="flex justify-between font-bold">
+                                                <span className="text-amber-300">Total estimado:</span>
+                                                <span className="text-amber-400">{formatMoney(returnEstimate.toNumber())}</span>
+                                            </div>
+                                        </div>
+                                        {returnGeneralError && <p role="alert" className="mb-2 text-xs text-danger">{returnGeneralError}</p>}
+                                        <button
+                                            type="button"
+                                            onClick={() => void submitReturn()}
+                                            disabled={returnProcessing}
+                                            className="w-full py-3 bg-amber-500 text-white font-bold rounded-lg hover:bg-amber-600 disabled:opacity-50 flex items-center justify-center gap-2"
+                                        >
+                                            {returnProcessing ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
+                                            Confirmar Devolución
+                                        </button>
+                                    </div>
                                 </>
                             )}
                         </div>
@@ -4368,21 +5888,86 @@ const POS: React.FC = () => {
             {/* =============================== */}
             {/* POST-SALE SUCCESS MODAL         */}
             {/* =============================== */}
+            {showPaymentOptions && (
+                <div className="fixed inset-0 z-modal bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setShowPaymentOptions(false)}>
+                    <div role="dialog" aria-modal="true" aria-labelledby="payment-title" className="bg-surface-900 border border-white/[0.08] rounded-t-card sm:rounded-card shadow-premium w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="px-5 py-4 border-b border-white/[0.06] flex items-start justify-between gap-3">
+                            <div>
+                                <p className="text-xs font-semibold text-slate-500">Total a cobrar</p>
+                                <h2 id="payment-title" className="text-3xl font-extrabold text-slate-100 mt-1 nx-num">{formatMoney(grandTotal)}</h2>
+                            </div>
+                            <IconButton icon={<X size={16} />} label="Cerrar" onClick={() => setShowPaymentOptions(false)} />
+                        </div>
+                        <div className="p-4 space-y-2">
+                            <p className="text-sm font-semibold text-slate-300 px-1 pb-1">¿Cómo pagó?</p>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowPaymentOptions(false);
+                                    setCashReceived('');
+                                    setPayingInUSD(false);
+                                    setUsdAmount('');
+                                    setShowCashPreModal(true);
+                                }}
+                                className="w-full h-pay px-4 rounded-control bg-brand text-brand-on font-bold flex items-center gap-3 hover:bg-brand-hover transition-colors"
+                            >
+                                <Banknote size={22} /> Efectivo <ArrowRight size={19} className="ml-auto" />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleCheckout('TRANSFER')}
+                                disabled={processing}
+                                className="w-full h-pay px-4 rounded-control border border-white/[0.08] text-slate-100 font-bold flex items-center gap-3 hover:bg-white/[0.05] transition-colors disabled:opacity-50"
+                            >
+                                <QrCode size={21} /> Transferencia <ArrowRight size={19} className="ml-auto text-slate-500" />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleCheckout('CARD')}
+                                disabled={processing}
+                                className="w-full h-pay px-4 rounded-control border border-white/[0.08] text-slate-100 font-bold flex items-center gap-3 hover:bg-white/[0.05] transition-colors disabled:opacity-50"
+                            >
+                                <CreditCard size={21} /> Tarjeta <ArrowRight size={19} className="ml-auto text-slate-500" />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (!selectedCustomer) {
+                                        setShowPaymentOptions(false);
+                                        setShowCustomerPicker(true);
+                                        setShowMobileCart(true);
+                                        return;
+                                    }
+                                    handleCheckout('CREDIT');
+                                }}
+                                disabled={processing || Boolean(selectedCustomer && isCreditBlocked)}
+                                className="w-full h-touch px-4 rounded-control text-slate-300 font-semibold flex items-center gap-3 hover:bg-white/[0.04] transition-colors disabled:opacity-45"
+                            >
+                                <Wallet size={19} /> {selectedCustomer ? 'Fiado' : 'Fiado · elegir cliente'}
+                            </button>
+                            <p className="text-xs text-slate-500 text-center pt-2">Al elegir un método se registra la venta.</p>
+                        </div>
+                    </div>
+                </div>
+            )}
             {/* =============================== */}
             {/* 💵 PRE-SALE CASH MODAL          */}
             {/* =============================== */}
             {showCashPreModal && (
-                <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-                    <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-white/[0.06]">
-                        <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-5 text-center">
-                            <Banknote size={32} className="text-white mx-auto mb-2" />
-                            <h2 className="text-lg font-bold text-white">Cobro en Efectivo</h2>
-                            <p className="text-emerald-100 text-2xl font-black mt-1">{formatMoney(grandTotal)}</p>
+                <div className="fixed inset-0 z-modal bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={() => setShowCashPreModal(false)}>
+                    <div className="bg-surface-900 rounded-t-card sm:rounded-card shadow-premium w-full max-w-sm overflow-hidden border border-white/[0.08]" onClick={e => e.stopPropagation()}>
+                        <div className="p-5 border-b border-white/[0.06] flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-pill bg-brand-soft text-brand flex items-center justify-center"><Banknote size={20} /></div>
+                            <div>
+                                <h2 className="text-base font-bold text-slate-100">Efectivo</h2>
+                                <p className="text-2xl font-extrabold text-slate-100 mt-0.5 nx-num">{formatMoney(grandTotal)}</p>
+                            </div>
+                            <IconButton icon={<X size={16} />} label="Cerrar" onClick={() => setShowCashPreModal(false)} className="ml-auto" />
                         </div>
                         <div className="p-5 space-y-4">
                             {/* USD toggle */}
                             <div className="flex items-center justify-between">
-                                <label className="text-xs font-mono text-slate-500 font-bold">EFECTIVO RECIBIDO</label>
+                                <label className="text-xs text-slate-500 font-semibold">Efectivo recibido</label>
                                 <button
                                     onClick={() => { setPayingInUSD(!payingInUSD); setUsdAmount(''); setCashReceived(''); }}
                                     className={`text-[10px] font-bold px-2 py-1 rounded-full border transition-all ${payingInUSD ? 'bg-blue-500 text-white border-blue-500' : 'bg-white/[0.04] text-slate-500 border-white/[0.06] hover:border-blue-300'}`}
@@ -4474,19 +6059,15 @@ const POS: React.FC = () => {
                                             onChange={e => setCashReceived(sanitizeDecimalInput(e.target.value))}
                                         />
                                     </div>
-                                    {/* Teclado en pantalla (P1-3): un POS de mostrador es
-                                        táctil y hasta acá el único modo de cargar el
-                                        efectivo era un input de texto. Teclas de 56px,
-                                        que es lo que se acierta con el pulgar sin mirar. */}
                                     <div className="grid grid-cols-3 gap-1.5">
-                                        {['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '00'].map(t => (
+                                        {['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '00'].map(key => (
                                             <button
-                                                key={t}
+                                                key={key}
                                                 type="button"
-                                                onClick={() => teclaEfectivo(t)}
+                                                onClick={() => teclaEfectivo(key)}
                                                 className="h-14 rounded-control bg-white/[0.04] hover:bg-white/[0.10] text-slate-100 text-xl font-bold font-mono tabular-nums transition-colors active:scale-[0.97]"
                                             >
-                                                {t}
+                                                {key}
                                             </button>
                                         ))}
                                         <button
@@ -4505,12 +6086,6 @@ const POS: React.FC = () => {
                                             Limpiar
                                         </button>
                                     </div>
-
-                                    {/* EL VUELTO MANDA (P1-3). Al momento de cobrar, el
-                                        total ya no importa: importa cuánto devolver. Antes
-                                        se renderizaba a 24px, más chico que el total del
-                                        encabezado — justo el número que el cajero tiene que
-                                        ejecutar contando billetes sin mirar la pantalla. */}
                                     {cashReceived !== '' && toDecimal(cashReceived).greaterThanOrEqualTo(grandTotal) && (
                                         <div className="bg-emerald-500/10 px-4 py-3 rounded-control border border-emerald-500/20 text-center">
                                             <p className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Vuelto</p>
@@ -4537,12 +6112,10 @@ const POS: React.FC = () => {
                                 >
                                     Cancelar
                                 </button>
-                                {/* Un botón dice QUÉ hace y POR CUÁNTO (P1-3). "Confirmar"
-                                    no dice ninguna de las dos cosas. */}
                                 <button
                                     onClick={() => { setShowCashPreModal(false); handleCheckout('CASH'); }}
                                     disabled={processing}
-                                    className="flex-1 py-3 rounded-xl bg-gradient-to-b from-green-500 to-green-700 text-white font-black hover:from-green-600 hover:to-green-800 transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
+                                    className="flex-1 h-touch rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                                 >
                                     {processing ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
                                     Cobrar {formatMoney(grandTotal)}
@@ -4554,17 +6127,16 @@ const POS: React.FC = () => {
             )}
 
             {completedSale && (
-                <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-                    <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-white/[0.06]">
+                <div className="fixed inset-0 z-modal bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-surface-900 rounded-card shadow-premium w-full max-w-md overflow-hidden border border-white/[0.08]">
 
                         {/* Header - Success */}
-                        <div className="bg-gradient-to-r from-emerald-500 to-green-600 p-6 text-center relative overflow-hidden">
-                            <div className="absolute -right-6 -top-6 w-24 h-24 bg-white/10 rounded-full blur-xl" />
-                            <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3 relative z-10">
-                                <Check size={36} className="text-white" />
+                        <div className="p-6 text-center border-b border-white/[0.06]">
+                            <div className="w-14 h-14 bg-brand-soft border border-brand/20 rounded-pill flex items-center justify-center mx-auto mb-3">
+                                <Check size={30} className="text-brand" />
                             </div>
-                            <h2 className="text-xl font-bold text-white relative z-10">Venta Registrada con Éxito</h2>
-                            <p className="text-emerald-100 text-sm mt-1 relative z-10">{completedSale.date}</p>
+                            <h2 className="text-xl font-bold text-slate-100">Venta lista</h2>
+                            <p className="text-slate-500 text-sm mt-1">{completedSale.date}</p>
                         </div>
 
                         {/* Sale Summary */}
@@ -4600,13 +6172,14 @@ const POS: React.FC = () => {
                                     <span className="font-medium text-slate-200">
                                         {completedSale.paymentMethod === 'CASH' ? 'Efectivo' :
                                             completedSale.paymentMethod === 'CREDIT' ? 'Crédito' :
-                                                completedSale.paymentMethod === 'CARD' ? 'Tarjeta' : completedSale.paymentMethod}
+                                                completedSale.paymentMethod === 'CARD' ? 'Tarjeta' :
+                                                    completedSale.paymentMethod === 'TRANSFER' ? 'Transferencia' : completedSale.paymentMethod}
                                     </span>
                                 </div>
                                 <div className="border-t border-white/[0.06] pt-2 mt-2">
                                     <div className="flex justify-between items-center">
                                         <span className="text-lg font-bold text-slate-100">Total Cobrado</span>
-                                        <span className="text-2xl font-bold text-emerald-400">{formatMoney(completedSale.grandTotal)}</span>
+                                        <span className="text-2xl font-bold text-slate-100 nx-num">{formatMoney(completedSale.grandTotal)}</span>
                                     </div>
                                 </div>
 
@@ -4620,10 +6193,6 @@ const POS: React.FC = () => {
                                 )}
                             </div>
 
-                            {/* ── Pulso del día: la venta recién cobrada, sumada a TU día.
-                                El gancho para la siguiente venta es ver crecer este
-                                número — y las celebraciones solo aparecen cuando son
-                                verdad (meta cumplida, récord del mes, racha viva). */}
                             {pulso && (
                                 <div className={`rounded-xl p-4 mb-4 border ${pulso.esRecordHoy ? 'bg-amber-500/10 border-amber-500/25' : 'bg-surface-800/40 border-white/[0.04]'}`}>
                                     <div className="flex items-baseline justify-between">
@@ -4632,20 +6201,20 @@ const POS: React.FC = () => {
                                     </div>
                                     <p className="text-3xl font-black text-slate-100 nx-num mt-1">{formatMoney(pulso.totalHoy)}</p>
                                     {pulso.metaDiaria && (() => {
-                                        const pct = Math.min(100, toDecimal(pulso.totalHoy).div(toDecimal(pulso.metaDiaria)).mul(100).toNumber());
-                                        const cumplida = pct >= 100;
+                                        const progress = Math.min(100, toDecimal(pulso.totalHoy).div(toDecimal(pulso.metaDiaria)).mul(100).toNumber());
+                                        const complete = progress >= 100;
                                         return (
                                             <div className="mt-2">
                                                 <div className="h-2 rounded-full bg-white/10 overflow-hidden">
                                                     <div
-                                                        className={`h-full transition-all duration-700 ${cumplida ? 'bg-amber-400' : 'bg-emerald-500'}`}
-                                                        style={{ width: `${pct}%` }}
+                                                        className={`h-full transition-all duration-700 ${complete ? 'bg-amber-400' : 'bg-emerald-500'}`}
+                                                        style={{ width: `${progress}%` }}
                                                     />
                                                 </div>
                                                 <p className="text-[11px] text-slate-400 mt-1">
-                                                    {cumplida
+                                                    {complete
                                                         ? <>🎯 ¡Meta del día cumplida! ({formatMoney(pulso.metaDiaria)})</>
-                                                        : <>Meta del día: {formatMoney(pulso.metaDiaria)} · vas al {Math.round(pct)}%</>}
+                                                        : <>Meta del día: {formatMoney(pulso.metaDiaria)} · vas al {Math.round(progress)}%</>}
                                                 </p>
                                             </div>
                                         );
@@ -4659,39 +6228,40 @@ const POS: React.FC = () => {
                                 </div>
                             )}
 
-                            {/* Action Buttons */}
-                            <div className="grid grid-cols-2 gap-3 mb-3">
-                                {/* WhatsApp */}
+                            <button
+                                onClick={handleNewSale}
+                                className="w-full h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover transition-colors flex items-center justify-center gap-2"
+                            >
+                                <RotateCcw size={18} /> Hacer otra venta
+                            </button>
+
+                            <div className={`grid gap-2 mt-3 ${postSalePrintOptions.length > 2 ? 'grid-cols-1' : 'grid-cols-2'}`}>
                                 <button
                                     onClick={handleWhatsApp}
-                                    className="flex items-center justify-center gap-2 py-3 bg-green-500 hover:bg-green-600 text-white font-bold rounded-xl transition-colors shadow-lg shadow-green-500/20 text-sm"
+                                    className="h-touch flex items-center justify-center gap-2 border border-white/[0.08] text-slate-200 font-semibold rounded-control hover:bg-white/[0.05] transition-colors text-sm"
                                 >
                                     <MessageCircle size={18} /> WhatsApp
                                 </button>
-
-                                {/* Ticket 80mm */}
                                 <button
                                     onClick={handlePrintTicket}
-                                    className="flex items-center justify-center gap-2 py-3 bg-slate-700 hover:bg-slate-800 text-white font-bold rounded-xl transition-colors shadow-lg shadow-slate-700/20 text-sm"
+                                    className="h-touch flex items-center justify-center gap-2 border border-white/[0.08] text-slate-200 font-semibold rounded-control hover:bg-white/[0.05] transition-colors text-sm"
                                 >
-                                    <Printer size={18} /> Ticket 80mm
+                                    <Printer size={18} /> {postSalePrintOptions[0]?.label ?? 'Ticket 80 mm'}
                                 </button>
-
-                                {/* Factura A4 */}
-                                <button
-                                    onClick={handlePrintA4}
-                                    className="flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors shadow-lg shadow-blue-600/20 text-sm col-span-2"
-                                >
-                                    <FileText size={18} /> Factura A4
-                                </button>
+                                {postSalePrintOptions.some(option => option.id === 'thermal') && (
+                                    <button
+                                        onClick={handleDirectThermalPrint}
+                                        className="h-touch flex items-center justify-center gap-2 border border-brand/20 bg-brand/10 text-brand font-semibold rounded-control hover:bg-brand/15 transition-colors text-sm col-span-full"
+                                    >
+                                        <Printer size={18} /> Enviar a tiquetera
+                                    </button>
+                                )}
                             </div>
-
-                            {/* New Sale */}
                             <button
-                                onClick={handleNewSale}
-                                className="w-full py-3.5 bg-nortex-900 hover:bg-nortex-800 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 shadow-lg"
+                                onClick={handlePrintA4}
+                                className="w-full h-touch mt-1 text-sm text-slate-400 font-semibold hover:text-slate-200 flex items-center justify-center gap-2"
                             >
-                                <RotateCcw size={18} /> Nueva Venta
+                                <FileText size={17} /> Ver factura A4
                             </button>
                         </div>
                     </div>
@@ -4699,11 +6269,11 @@ const POS: React.FC = () => {
             )}
             {/* HIDDEN RECEIPT COMPONENT FOR PRINTING */}
             <ReceiptTicket data={completedSale ? {
-                tenantName: getTenantName(),
-                ruc: (() => { try { const t = localStorage.getItem('nortex_tenant'); return t ? JSON.parse(t).taxId : undefined; } catch { return undefined; } })(),
-                address: (() => { try { const t = localStorage.getItem('nortex_tenant'); return t ? JSON.parse(t).address : undefined; } catch { return undefined; } })(),
-                phone: (() => { try { const t = localStorage.getItem('nortex_tenant'); return t ? JSON.parse(t).phone : undefined; } catch { return undefined; } })(),
-                dgiAuthCode: (() => { try { const t = localStorage.getItem('nortex_tenant'); return t ? JSON.parse(t).dgiAuthCode : undefined; } catch { return undefined; } })(),
+                tenantName: tenantPrintDetails.tenantName,
+                ruc: tenantPrintDetails.ruc,
+                address: tenantPrintDetails.address,
+                phone: tenantPrintDetails.phone,
+                dgiAuthCode: tenantPrintDetails.dgiAuthCode,
                 date: completedSale.date,
                 saleId: completedSale.saleId,
                 invoiceNumber: completedSale.invoiceNumber,

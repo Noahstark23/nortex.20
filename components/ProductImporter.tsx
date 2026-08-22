@@ -18,6 +18,10 @@ const FIELD_LABELS: Record<CanonicalField, string> = {
     sku: 'Código', nombre: 'Nombre', precio: 'Precio', costo: 'Costo',
     stock: 'Existencia', minStock: 'Mínimo', categoria: 'Categoría',
     unidad: 'Unidad', descripcion: 'Descripción',
+    modoVenta: 'Forma de venta', pasoCantidad: 'Paso', familiaProducto: 'Familia operativa',
+    unidadEmpaque: 'Unidad de empaque', tamanoEmpaque: 'Tamaño de empaque',
+    precioEmpaque: 'Precio de empaque', requiereLote: 'Control por lote',
+    ivaExento: 'IVA exento',
 };
 
 interface ImportSummary {
@@ -95,7 +99,15 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                 stock: 40,
                 minStock: 10,
                 unidad: 'saco',
-                descripcion: 'Cemento gris uso general'
+                descripcion: 'Cemento gris uso general',
+                modoVenta: 'COUNTED',
+                pasoCantidad: 1,
+                familiaProducto: 'AGRO_INPUT',
+                unidadEmpaque: '',
+                tamanoEmpaque: '',
+                precioEmpaque: '',
+                requiereLote: 'NO',
+                ivaExento: 'NO',
             },
             {
                 sku: 'COCA600',
@@ -106,7 +118,15 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                 stock: 120,
                 minStock: 24,
                 unidad: 'unidad',
-                descripcion: ''
+                descripcion: '',
+                modoVenta: 'COUNTED',
+                pasoCantidad: 1,
+                familiaProducto: 'GENERAL',
+                unidadEmpaque: 'caja',
+                tamanoEmpaque: 24,
+                precioEmpaque: 540,
+                requiereLote: 'NO',
+                ivaExento: 'NO',
             },
             {
                 sku: 'ACE500',
@@ -117,7 +137,53 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                 stock: 500,
                 minStock: 50,
                 unidad: 'unidad',
-                descripcion: 'Analgésico / antipirético'
+                descripcion: 'Analgésico / antipirético',
+                modoVenta: 'COUNTED',
+                pasoCantidad: 1,
+                familiaProducto: 'VETERINARY',
+                unidadEmpaque: 'caja',
+                tamanoEmpaque: 100,
+                precioEmpaque: 300,
+                requiereLote: 'SÍ',
+                ivaExento: 'SÍ',
+            },
+            {
+                sku: 'RESKG',
+                nombre: 'Posta de res',
+                categoria: 'Carnes',
+                precio: 145,
+                costo: 112,
+                stock: 37.5,
+                minStock: 5,
+                unidad: 'kg',
+                descripcion: 'Venta por peso',
+                modoVenta: 'MEASURED',
+                pasoCantidad: 0.001,
+                familiaProducto: 'MEAT',
+                unidadEmpaque: '',
+                tamanoEmpaque: '',
+                precioEmpaque: '',
+                requiereLote: 'SÍ',
+                ivaExento: 'NO',
+            },
+            {
+                sku: 'CERDO-SACO',
+                nombre: 'Concentrado para cerdo',
+                categoria: 'Alimento animal',
+                precio: 16,
+                costo: 12.5,
+                stock: 200,
+                minStock: 50,
+                unidad: 'lb',
+                descripcion: 'Compra y venta por libra o saco',
+                modoVenta: 'MEASURED',
+                pasoCantidad: 0.25,
+                familiaProducto: 'ANIMAL_FEED',
+                unidadEmpaque: 'saco',
+                tamanoEmpaque: 100,
+                precioEmpaque: 1500,
+                requiereLote: 'SÍ',
+                ivaExento: 'NO',
             }
         ];
 
@@ -158,6 +224,14 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                             minStock: r.data.minStock,
                             unit: r.data.unidad,
                             description: r.data.descripcion,
+                            saleMode: r.data.modoVenta,
+                            quantityStep: r.data.pasoCantidad,
+                            productFamily: r.data.familiaProducto,
+                            ...(resolution?.mapping.unidadEmpaque ? { packUnit: r.data.unidadEmpaque } : {}),
+                            ...(resolution?.mapping.tamanoEmpaque ? { packSize: r.data.tamanoEmpaque } : {}),
+                            ...(resolution?.mapping.precioEmpaque ? { packPrice: r.data.precioEmpaque } : {}),
+                            ...(resolution?.mapping.requiereLote ? { requiresBatchTracking: r.data.requiereLote } : {}),
+                            ...(resolution?.mapping.ivaExento ? { ivaExento: r.data.ivaExento } : {}),
                             excelRow: r.excelRow,
                         }))
                     })
@@ -450,7 +524,21 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                                         {r.valid ? `${formatMoney(r.data.precio)}` : '—'}
                                                     </td>
                                                     <td className="px-3 py-2 text-right text-surface-400">{formatMoney(r.data.costo)}</td>
-                                                    <td className="px-3 py-2 text-right text-white font-bold">{r.data.stock}</td>
+                                                    <td className="px-3 py-2 text-right text-white font-bold">
+                                                        {r.data.stock} {r.data.unidad}
+                                                        <span className="block text-[10px] text-surface-500">
+                                                            {r.data.modoVenta === 'MEASURED' ? 'Medido' : 'Contado'} · paso {r.data.pasoCantidad}
+                                                        </span>
+                                                        {(r.data.unidadEmpaque || r.data.requiereLote || r.data.ivaExento) && (
+                                                            <span className="block text-[10px] text-surface-500">
+                                                                {r.data.unidadEmpaque
+                                                                    ? `${r.data.unidadEmpaque} × ${r.data.tamanoEmpaque} ${r.data.unidad}`
+                                                                    : 'Sin empaque'}
+                                                                {r.data.requiereLote ? ' · lote' : ''}
+                                                                {r.data.ivaExento ? ' · IVA exento' : ''}
+                                                            </span>
+                                                        )}
+                                                    </td>
                                                 </tr>
                                             ))}
                                         </tbody>

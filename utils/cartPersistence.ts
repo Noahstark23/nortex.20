@@ -33,9 +33,13 @@ import Decimal from 'decimal.js';
  * convertir una cotización pisara el carrito restaurado.
  */
 
-/** Versión del esquema guardado. Si cambia la forma de la línea, se sube este
- *  número y lo viejo se descarta en vez de hidratar con campos que ya no son. */
-export const VERSION_CARRITO = 1;
+/**
+ * v2 incorpora identidad de línea, presentación y evidencia de medición.
+ * v1 todavía se LEE y se migra en memoria: descartar una venta a medias por
+ * desplegar soporte de peso sería una pérdida real para el cajero.
+ */
+export const VERSION_CARRITO = 2;
+export const VERSION_CARRITO_LEGACY = 1;
 
 /** Ventana dentro de la cual un carrito se considera "de ahora mismo".
  *  Se construye dentro de una función (no como constante de módulo) para que
@@ -55,6 +59,25 @@ export interface LineaGuardada {
     unit?: string;
     [extra: string]: unknown;
 }
+
+/** Identidad visual/operativa de la línea. Dos paquetes del mismo producto no
+ * colisionan; una línea contada v1 conserva el fallback histórico al productId. */
+export const claveLineaCarrito = (linea: Pick<LineaGuardada, 'id'> & { cartLineId?: unknown }): string =>
+    esTextoUtil(linea.cartLineId) ? linea.cartLineId : linea.id;
+
+/** Solo pide confirmación dentro de una ventana corta. No es anti-replay
+ * permanente: dos paquetes físicos pueden tener exactamente el mismo EAN. */
+export const esReescaneoRapido = (params: {
+    rawCode: string;
+    ultimo: { rawCode: string; scannedAt: number } | null;
+    ahoraMs: number;
+    ventanaMs: number;
+}): boolean => {
+    if (!params.ultimo || params.rawCode !== params.ultimo.rawCode) return false;
+    if (!esNumero(params.ahoraMs) || !esNumero(params.ultimo.scannedAt) || !esNumero(params.ventanaMs)) return false;
+    const elapsed = params.ahoraMs - params.ultimo.scannedAt;
+    return params.ventanaMs > 0 && elapsed >= 0 && elapsed <= params.ventanaMs;
+};
 
 export interface CarritoGuardado {
     v: number;
@@ -81,6 +104,12 @@ export const claveCarrito = (tenantId: string, userId: string): string =>
 
 export const claveAparcados = (tenantId: string, userId: string): string =>
     `nortex_held_v${VERSION_CARRITO}:${tenantId}:${userId}`;
+
+export const claveCarritoLegacy = (tenantId: string, userId: string): string =>
+    `nortex_cart_v${VERSION_CARRITO_LEGACY}:${tenantId}:${userId}`;
+
+export const claveAparcadosLegacy = (tenantId: string, userId: string): string =>
+    `nortex_held_v${VERSION_CARRITO_LEGACY}:${tenantId}:${userId}`;
 
 const esTextoUtil = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 // `Number.isFinite` no coacciona: false para strings, null, undefined y NaN.
@@ -115,7 +144,7 @@ export function leerCarritoGuardado(crudo: string | null): CarritoGuardado | nul
     if (dato === null) return null;
 
     const o = dato as Record<string, unknown>;
-    if (o.v !== VERSION_CARRITO) return null;
+    if (o.v !== VERSION_CARRITO && o.v !== VERSION_CARRITO_LEGACY) return null;
     if (!esTextoUtil(o.shiftId)) return null;
     if (!esNumero(o.guardadoEn)) return null;
     if (!Array.isArray(o.lineas)) return null;
@@ -199,6 +228,7 @@ export interface AparcadoGuardado {
     heldAt: number;
     lineas: LineaGuardada[];
     clienteId: string | null;
+    descuentoGlobal: string;
 }
 
 const aparcadoValido = (a: unknown): a is AparcadoGuardado => {
@@ -217,7 +247,11 @@ export function leerAparcados(crudo: string | null): AparcadoGuardado[] {
     }
     if (dato === null) return [];
     const o = dato as Record<string, unknown>;
-    if (o.v !== VERSION_CARRITO || !Array.isArray(o.aparcados)) return [];
+    if (
+        o.v !== VERSION_CARRITO
+        && o.v !== VERSION_CARRITO_LEGACY
+    ) return [];
+    if (!Array.isArray(o.aparcados)) return [];
 
     return o.aparcados.filter(aparcadoValido).map(a => ({
         id: a.id,
@@ -226,6 +260,7 @@ export function leerAparcados(crudo: string | null): AparcadoGuardado[] {
         heldAt: a.heldAt,
         lineas: a.lineas.filter(lineaValida),
         clienteId: esTextoUtil(a.clienteId) ? a.clienteId : null,
+        descuentoGlobal: esTextoUtil(a.descuentoGlobal) ? a.descuentoGlobal : '',
     }));
 }
 

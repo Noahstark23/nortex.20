@@ -1,6 +1,11 @@
 -- Toma física por bodega (aditivo y compatible con datos históricos).
--- Los conteos históricos quedan sin ubicación salvo que el tenant tuviera una
--- única bodega, único caso en que agregado y ubicación son equivalentes.
+--
+-- `warehouseId` permanece nullable deliberadamente: los conteos anteriores a
+-- multi-bodega no contienen evidencia suficiente para atribuirlos a una
+-- ubicación. Solo se completa automáticamente un historial ya finalizado cuando
+-- el tenant tiene exactamente una bodega, caso en el que agregado == ubicación.
+-- Los OPEN históricos se dejan sin ubicación para que la aplicación los trate
+-- como solo lectura y pida cancelar/reiniciar, sin reinterpretar su snapshot.
 
 ALTER TABLE `StockCount`
   ADD COLUMN `warehouseId` VARCHAR(191) NULL,

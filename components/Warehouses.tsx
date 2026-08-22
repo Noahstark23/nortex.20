@@ -1,6 +1,8 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Warehouse as WarehouseIcon, Plus, ArrowRightLeft, Star, RefreshCw, X, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { Warehouse as WarehouseIcon, Plus, ArrowRightLeft, Star, RefreshCw, X, Search, ChevronLeft, ChevronRight, Loader2, AlertTriangle } from 'lucide-react';
+import { ToastViewport, useToast } from './ui/Toast';
 import { InventoryTabs } from './ui/InventoryTabs';
+import { validateStockTransferQuantity } from '../utils/stockTransferQuantity';
 import { currentSessionRole, roleCapabilitiesFor } from '../utils/roleCapabilities';
 
 /** Multi-bodega: lista, stock por bodega y transferencias (Fase 3). */
@@ -11,7 +13,32 @@ interface Warehouse {
     seller?: { id: string; name: string; status?: string } | null;
 }
 interface MiembroEquipo { id: string; name: string; status: string; }
-interface StockItem { productId: string; name: string; sku: string; unit: string; stock: number; implicit: boolean; }
+interface StockItem {
+    productId: string;
+    name: string;
+    sku: string;
+    unit: string;
+    stock: number;
+    implicit: boolean;
+    saleMode?: 'COUNTED' | 'MEASURED' | null;
+    quantityStep?: string | number | null;
+}
+interface TransferDraft {
+    toId: string;
+    productId: string;
+    productName: string;
+    unit: string;
+    available: number;
+    qty: string;
+    saleMode: 'COUNTED' | 'MEASURED';
+    quantityStep: string;
+}
+type StockLoadState = {
+    warehouseId: string | null;
+    status: 'idle' | 'loading' | 'success' | 'error';
+    items: StockItem[];
+    error: string;
+};
 
 const authHeaders = (): Record<string, string> => ({
     'Content-Type': 'application/json',
@@ -24,15 +51,59 @@ const sinTildes = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, 
 /** Igual que en Mis Productos, para que las dos vistas se paginen parejo. */
 const POR_PAGINA = 50;
 
+const parseCantidadTransferencia = (
+    raw: string,
+    saleMode: 'COUNTED' | 'MEASURED',
+    quantityStep: string,
+): number | null => {
+    try {
+        return validateStockTransferQuantity(raw.replace(',', '.'), { saleMode, quantityStep }).toNumber();
+    } catch {
+        return null;
+    }
+};
+
 const Warehouses: React.FC = () => {
     const { isBodeguero, canManageWarehouseTopology, canTransferStock } = roleCapabilitiesFor(currentSessionRole());
     const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
     const [selected, setSelected] = useState<Warehouse | null>(null);
-    const [stock, setStock] = useState<StockItem[]>([]);
-    const [loading, setLoading] = useState(false);
+    const [warehousesLoading, setWarehousesLoading] = useState(true);
+    const [warehousesError, setWarehousesError] = useState('');
+    const [stockLoad, setStockLoad] = useState<StockLoadState>({
+        warehouseId: null,
+        status: 'idle',
+        items: [],
+        error: '',
+    });
+    const stockRequestId = useRef(0);
+    const stockAbortController = useRef<AbortController | null>(null);
     const [newName, setNewName] = useState('');
-    const [transfer, setTransfer] = useState<{ toId: string; productId: string; qty: string } | null>(null);
-    const [msg, setMsg] = useState('');
+    const [creating, setCreating] = useState(false);
+    const [transfer, setTransfer] = useState<TransferDraft | null>(null);
+    const [transferError, setTransferError] = useState('');
+    const [transferring, setTransferring] = useState(false);
+    const transferringRef = useRef(false);
+    const transferDialogRef = useRef<HTMLDivElement | null>(null);
+    const transferQuantityRef = useRef<HTMLInputElement | null>(null);
+    const transferReturnFocusRef = useRef<HTMLElement | null>(null);
+    const stockHeadingRef = useRef<HTMLSpanElement | null>(null);
+    const { toast, showToast, dismissToast } = useToast();
+
+    // El stock solo es visible cuando la respuesta pertenece a la bodega que
+    // encabeza el panel. Este vínculo evita mezclar datos durante cambios rápidos.
+    const stockBelongsToSelection = Boolean(selected && stockLoad.warehouseId === selected.id);
+    const stock = stockBelongsToSelection && stockLoad.status === 'success' ? stockLoad.items : [];
+    const loading = Boolean(selected) && (!stockBelongsToSelection || stockLoad.status === 'loading');
+    const stockError = stockBelongsToSelection && stockLoad.status === 'error' ? stockLoad.error : '';
+    // Mientras la topología se verifica o está en error, la última lista queda
+    // visible como referencia pero ninguna acción puede operar sobre ella.
+    const topologyLocked = warehousesLoading || Boolean(warehousesError);
+    const validTransferQuantity = transfer
+        ? parseCantidadTransferencia(transfer.qty, transfer.saleMode, transfer.quantityStep)
+        : null;
+    const hasTransferDestination = Boolean(
+        selected && warehouses.some(warehouse => warehouse.id !== selected.id && warehouse.isActive),
+    );
 
     // P0-1 — El panel renderizaba TODAS las existencias de la bodega (1.003 filas
     // en un tenant real) dentro de un contenedor sin scroll: el 98% del inventario
@@ -63,19 +134,60 @@ const Warehouses: React.FC = () => {
     useEffect(() => { setPagina(1); }, [busqueda, orden, selected?.id]);
 
     const load = useCallback(async () => {
-        const res = await fetch('/api/warehouses', { headers: authHeaders() });
-        if (res.ok) {
-            const d = await res.json();
-            setWarehouses(d.data);
-            if (!selected && d.data.length) setSelected(d.data.find((w: Warehouse) => w.isDefault) ?? d.data[0]);
+        setWarehousesLoading(true);
+        setWarehousesError('');
+        try {
+            const res = await fetch('/api/warehouses', { headers: authHeaders() });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No se pudieron cargar las bodegas.');
+
+            const items: Warehouse[] = Array.isArray(d.data) ? d.data : [];
+            setWarehouses(items);
+            setSelected(current => {
+                if (items.length === 0) return null;
+                const refreshedSelection = current && items.find(w => w.id === current.id);
+                return refreshedSelection ?? items.find(w => w.isDefault) ?? items[0];
+            });
+        } catch (error) {
+            setWarehousesError(error instanceof Error ? error.message : 'No se pudieron cargar las bodegas.');
+        } finally {
+            setWarehousesLoading(false);
         }
-    }, [selected]);
+    }, []);
 
     const loadStock = useCallback(async (wh: Warehouse) => {
-        setLoading(true);
-        const res = await fetch(`/api/warehouses/${wh.id}/stock`, { headers: authHeaders() });
-        if (res.ok) { const d = await res.json(); setStock(d.data.items); }
-        setLoading(false);
+        stockAbortController.current?.abort();
+        const controller = new AbortController();
+        stockAbortController.current = controller;
+        const requestId = ++stockRequestId.current;
+
+        // Limpiamos antes de solicitar: ni un frame debe enseñar existencias de
+        // la bodega anterior debajo del nombre recién seleccionado.
+        setStockLoad({ warehouseId: wh.id, status: 'loading', items: [], error: '' });
+        try {
+            const res = await fetch(`/api/warehouses/${wh.id}/stock`, {
+                headers: authHeaders(),
+                signal: controller.signal,
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No se pudieron cargar las existencias.');
+            if (requestId !== stockRequestId.current) return;
+
+            setStockLoad({
+                warehouseId: wh.id,
+                status: 'success',
+                items: Array.isArray(d.data?.items) ? d.data.items : [],
+                error: '',
+            });
+        } catch (error) {
+            if (requestId !== stockRequestId.current || (error instanceof DOMException && error.name === 'AbortError')) return;
+            setStockLoad({
+                warehouseId: wh.id,
+                status: 'error',
+                items: [],
+                error: error instanceof Error ? error.message : 'No se pudieron cargar las existencias.',
+            });
+        }
     }, []);
 
     useEffect(() => { load(); }, [load]);
@@ -95,35 +207,182 @@ const Warehouses: React.FC = () => {
     // Asignar / quitar la carga de un vendedor a la bodega seleccionada. El
     // backend re-valida (mismo tenant, activo, no-default, único por vendedor).
     const asignarCarga = async (wh: Warehouse, sellerId: string) => {
-        const res = await fetch(`/api/warehouses/${wh.id}`, {
-            method: 'PUT', headers: authHeaders(),
-            body: JSON.stringify({ sellerId: sellerId || null }),
-        });
-        const d = await res.json().catch(() => ({}));
-        if (!res.ok) { setMsg(d.error || 'No se pudo asignar'); return; }
-        setMsg(sellerId ? 'Carga asignada' : 'Carga liberada');
-        load();
+        if (!canManageWarehouseTopology || topologyLocked) return;
+        try {
+            const res = await fetch(`/api/warehouses/${wh.id}`, {
+                method: 'PUT', headers: authHeaders(),
+                body: JSON.stringify({ sellerId: sellerId || null }),
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No se pudo actualizar la asignación.');
+            showToast({ tone: 'success', title: sellerId ? 'Carga asignada' : 'Carga liberada' });
+            await load();
+        } catch (error) {
+            showToast({
+                tone: 'error',
+                title: 'No pudimos actualizar la carga',
+                message: error instanceof Error ? error.message : 'Revisá tu conexión e intentá de nuevo.',
+            });
+        }
     };
     useEffect(() => { if (selected) loadStock(selected); }, [selected, loadStock]);
 
+    useEffect(() => () => {
+        stockRequestId.current += 1;
+        stockAbortController.current?.abort();
+    }, []);
+
     const createWarehouse = async () => {
-        if (!newName.trim()) return;
-        const res = await fetch('/api/warehouses', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ name: newName.trim() }) });
-        const d = await res.json();
-        if (res.ok) { setNewName(''); load(); } else alert(d.error);
+        const name = newName.trim();
+        if (!canManageWarehouseTopology || !name || creating || topologyLocked) return;
+        setCreating(true);
+        try {
+            const res = await fetch('/api/warehouses', {
+                method: 'POST',
+                headers: authHeaders(),
+                body: JSON.stringify({ name }),
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No se pudo crear la bodega.');
+            setNewName('');
+            showToast({ tone: 'success', title: `Bodega “${name}” creada` });
+            await load();
+        } catch (error) {
+            showToast({
+                tone: 'error',
+                title: 'No pudimos crear la bodega',
+                message: error instanceof Error ? error.message : 'Revisá tu conexión e intentá de nuevo.',
+            });
+        } finally {
+            setCreating(false);
+        }
     };
 
     const doTransfer = async () => {
         if (!transfer || !selected) return;
-        const qty = parseFloat(transfer.qty);
-        if (!(qty > 0)) { alert('Cantidad inválida'); return; }
-        const res = await fetch('/api/stock-transfers', {
-            method: 'POST', headers: authHeaders(),
-            body: JSON.stringify({ fromWarehouseId: selected.id, toWarehouseId: transfer.toId, items: [{ productId: transfer.productId, quantity: qty }] }),
+        if (!canTransferStock) {
+            setTransferError('Tu rol no permite transferir existencias.');
+            return;
+        }
+        if (topologyLocked) {
+            setTransferError('Reintentá cargar las bodegas antes de transferir.');
+            return;
+        }
+        let qty: number;
+        try {
+            qty = validateStockTransferQuantity(transfer.qty.replace(',', '.'), {
+                saleMode: transfer.saleMode,
+                quantityStep: transfer.quantityStep,
+            }).toNumber();
+        } catch (error) {
+            setTransferError(error instanceof Error ? error.message : 'Ingresá una cantidad válida.');
+            return;
+        }
+        if (qty > transfer.available) {
+            setTransferError(`Solo hay ${transfer.available} ${transfer.unit} disponibles en ${selected.name}.`);
+            return;
+        }
+
+        setTransferError('');
+        transferringRef.current = true;
+        setTransferring(true);
+        try {
+            const res = await fetch('/api/stock-transfers', {
+                method: 'POST', headers: authHeaders(),
+                body: JSON.stringify({ fromWarehouseId: selected.id, toWarehouseId: transfer.toId, items: [{ productId: transfer.productId, quantity: qty }] }),
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No se pudo completar la transferencia.');
+
+            setTransfer(null);
+            showToast({
+                tone: 'success',
+                title: 'Transferencia realizada',
+                message: `${qty} ${transfer.unit} de ${transfer.productName}.`,
+            });
+            await loadStock(selected);
+        } catch (error) {
+            setTransferError(error instanceof Error ? error.message : 'Revisá tu conexión e intentá de nuevo.');
+        } finally {
+            transferringRef.current = false;
+            setTransferring(false);
+        }
+    };
+
+    const closeTransfer = useCallback(() => {
+        if (transferringRef.current) return;
+        setTransfer(null);
+        setTransferError('');
+    }, []);
+
+    useEffect(() => {
+        if (!transfer) return;
+
+        const dialog = transferDialogRef.current;
+        const returnFocus = transferReturnFocusRef.current
+            ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+        const focusFrame = window.requestAnimationFrame(() => transferQuantityRef.current?.focus());
+
+        const keepFocusInside = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                closeTransfer();
+                return;
+            }
+            if (event.key !== 'Tab' || !dialog) return;
+
+            const focusable = (Array.from(dialog.querySelectorAll(
+                'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+            )) as HTMLElement[]).filter(element => element.getAttribute('aria-hidden') !== 'true');
+
+            if (focusable.length === 0) {
+                event.preventDefault();
+                dialog.focus();
+                return;
+            }
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const active = document.activeElement;
+            if (event.shiftKey && (active === first || !dialog.contains(active))) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+        document.addEventListener('keydown', keepFocusInside);
+        return () => {
+            window.cancelAnimationFrame(focusFrame);
+            document.removeEventListener('keydown', keepFocusInside);
+            const canRestoreTrigger = Boolean(returnFocus?.isConnected && !returnFocus.hasAttribute('disabled'));
+            const focusTarget = canRestoreTrigger ? returnFocus : stockHeadingRef.current;
+            focusTarget?.focus();
+            transferReturnFocusRef.current = null;
+        };
+    }, [Boolean(transfer), closeTransfer]);
+
+    const openTransfer = (item: StockItem, trigger: HTMLButtonElement) => {
+        if (!canTransferStock || !selected || topologyLocked) return;
+        const destination = warehouses.find(w => w.id !== selected.id && w.isActive);
+        if (!destination) {
+            showToast({ tone: 'warning', title: 'No hay otra bodega activa', message: 'Creá o activá una bodega destino para transferir.' });
+            return;
+        }
+        setTransferError('');
+        transferReturnFocusRef.current = trigger;
+        setTransfer({
+            toId: destination.id,
+            productId: item.productId,
+            productName: item.name,
+            unit: item.unit,
+            available: item.stock,
+            qty: '',
+            saleMode: item.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED',
+            quantityStep: item.quantityStep?.toString()
+                || (item.saleMode === 'COUNTED' ? '1' : '0.0001'),
         });
-        const d = await res.json();
-        if (res.ok) { setMsg('Transferencia realizada'); setTransfer(null); loadStock(selected); setTimeout(() => setMsg(''), 3000); }
-        else alert(d.error);
     };
 
     return (
@@ -132,28 +391,75 @@ const Warehouses: React.FC = () => {
         // el suyo (Mis Productos, Compras y Series ya lo hacen). Sin él, el contenido
         // se recortaba en la altura del viewport y no había forma de bajar.
         <div className="h-full overflow-y-auto p-6 max-w-6xl mx-auto text-slate-100">
-            {/* Pestañas compartidas: sin ellas, entrar acá era un callejón sin
-                salida — no había forma de volver a Mis Productos ni de saltar a
-                Series salvo con el botón atrás del navegador. */}
+            <ToastViewport toast={toast} onDismiss={dismissToast} />
             <InventoryTabs className="mb-4" />
-
             <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
                 <div>
                     <h1 className="text-2xl font-bold flex items-center gap-2"><WarehouseIcon className="text-brand" /> Bodegas y existencias</h1>
                     {isBodeguero && <p className="mt-1 text-sm text-slate-400">Consultá el stock y mové mercadería entre bodegas.</p>}
                 </div>
-                {msg && <span className="text-emerald-400 font-bold text-sm">{msg}</span>}
-                <button onClick={() => selected && loadStock(selected)} className="p-2 hover:bg-white/[0.06] rounded-lg" aria-label="Actualizar existencias"><RefreshCw size={16} /></button>
+                <button
+                    type="button"
+                    onClick={() => selected && loadStock(selected)}
+                    disabled={!selected || loading || topologyLocked}
+                    aria-label={selected ? `Actualizar existencias de ${selected.name}` : 'Actualizar existencias'}
+                    title={topologyLocked ? 'Primero verificá la lista de bodegas' : 'Actualizar existencias'}
+                    className="min-h-tap min-w-tap inline-flex items-center justify-center rounded-control text-slate-300 hover:bg-white/[0.06] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                    <RefreshCw size={16} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
+                </button>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 {/* Lista + crear */}
-                <div className="space-y-2">
+                <div className="space-y-2" aria-busy={warehousesLoading}>
+                    {warehousesLoading && warehouses.length === 0 && (
+                        <div role="status" className="flex items-center gap-2 rounded-lg border border-white/[0.06] p-3 text-sm text-slate-400">
+                            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                            Cargando bodegas…
+                        </div>
+                    )}
+                    {warehousesLoading && warehouses.length > 0 && (
+                        <div role="status" className="flex items-center gap-2 rounded-lg border border-white/[0.06] p-3 text-sm text-slate-400">
+                            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                            Verificando la lista de bodegas… Las acciones están pausadas.
+                        </div>
+                    )}
+                    {warehousesError && (
+                        <div id="warehouse-topology-error" role="alert" className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm">
+                            <div className="flex items-start gap-2 text-red-300">
+                                <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                                <div>
+                                    <p>{warehousesError}</p>
+                                    {warehouses.length > 0 && (
+                                        <p className="mt-1 text-xs leading-5 text-slate-300">
+                                            Conservamos la última vista como referencia, pero pausamos cambios y transferencias hasta verificar la lista.
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                            <button type="button" onClick={load} className="mt-2 text-brand font-semibold hover:underline">
+                                Reintentar
+                            </button>
+                        </div>
+                    )}
+                    {!warehousesLoading && !warehousesError && warehouses.length === 0 && (
+                        <div className="rounded-lg border border-dashed border-white/10 p-4 text-sm text-slate-400">
+                            Todavía no hay bodegas. Creá la primera para empezar.
+                        </div>
+                    )}
                     {warehouses.map(w => (
                         /* El select vive FUERA del <button> (interactivo dentro de
                            interactivo = HTML inválido — trampa conocida del repo). */
                         <div key={w.id} className={`rounded-lg border transition-colors ${selected?.id === w.id ? 'border-brand bg-brand/5' : 'border-white/[0.06] hover:border-white/10'}`}>
-                            <button onClick={() => setSelected(w)} className="w-full text-left p-3">
+                            <button
+                                type="button"
+                                onClick={() => setSelected(w)}
+                                disabled={topologyLocked}
+                                aria-pressed={selected?.id === w.id}
+                                aria-describedby={warehousesError ? 'warehouse-topology-error' : undefined}
+                                className="w-full text-left p-3 disabled:cursor-not-allowed disabled:opacity-70"
+                            >
                                 <div className="font-bold text-sm flex items-center gap-1.5">{w.name}{w.isDefault && <Star size={12} className="text-amber-500 fill-amber-500" />}</div>
                                 {!w.isActive && <span className="text-[10px] text-red-500">INACTIVA</span>}
                                 {w.seller && (
@@ -167,7 +473,10 @@ const Warehouses: React.FC = () => {
                                     <select
                                         value={w.sellerId || ''}
                                         onChange={e => asignarCarga(w, e.target.value)}
-                                        className="w-full bg-surface-800/60 border border-white/[0.06] rounded text-[11px] text-slate-300 px-1.5 py-1"
+                                        disabled={topologyLocked}
+                                        aria-label={`Asignación de ${w.name}`}
+                                        aria-describedby={warehousesError ? 'warehouse-topology-error' : undefined}
+                                        className="w-full bg-surface-800/60 border border-white/[0.06] rounded text-[11px] text-slate-300 px-1.5 py-1 disabled:cursor-not-allowed disabled:opacity-70"
                                     >
                                         <option value="">Bodega común (sin vendedor)</option>
                                         {equipo.map(u => <option key={u.id} value={u.id}>Carga de {u.name}</option>)}
@@ -177,11 +486,33 @@ const Warehouses: React.FC = () => {
                         </div>
                     ))}
                     {canManageWarehouseTopology && (
-                        <div className="flex gap-2 pt-2">
-                            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nueva bodega"
-                                className="flex-1 px-3 py-2 border border-white/10 rounded-lg text-sm" />
-                            <button onClick={createWarehouse} className="p-2 bg-brand text-white rounded-lg" aria-label="Crear bodega"><Plus size={16} /></button>
-                        </div>
+                        <form
+                            className="flex gap-2 pt-2"
+                            onSubmit={event => { event.preventDefault(); createWarehouse(); }}
+                        >
+                            <label htmlFor="nombre-nueva-bodega" className="sr-only">Nombre de la nueva bodega</label>
+                            <input
+                                id="nombre-nueva-bodega"
+                                value={newName}
+                                onChange={e => setNewName(e.target.value)}
+                                placeholder="Nueva bodega"
+                                disabled={creating || topologyLocked}
+                                aria-describedby={warehousesError ? 'warehouse-topology-error' : undefined}
+                                className="min-w-0 flex-1 px-3 py-2 border border-white/10 rounded-lg text-sm disabled:opacity-60"
+                            />
+                            <button
+                                type="submit"
+                                disabled={!newName.trim() || creating || topologyLocked}
+                                aria-label="Crear bodega"
+                                aria-describedby={warehousesError ? 'warehouse-topology-error' : undefined}
+                                title="Crear bodega"
+                                className="min-h-tap min-w-tap inline-flex items-center justify-center bg-brand text-white rounded-control disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                {creating
+                                    ? <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                                    : <Plus size={16} aria-hidden="true" />}
+                            </button>
+                        </form>
                     )}
                 </div>
 
@@ -189,8 +520,9 @@ const Warehouses: React.FC = () => {
                 <div className="lg:col-span-3 bg-surface-900 border border-white/[0.06] rounded-xl overflow-hidden">
                     <div className="px-4 py-3 border-b border-white/[0.04] space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="font-bold text-sm">
-                                Existencias en {selected?.name ?? '—'} {loading && '…'}
+                            <span ref={stockHeadingRef} tabIndex={-1} className="font-bold text-sm outline-none" aria-live="polite">
+                                Existencias en {selected?.name ?? '—'}
+                                {loading && <span className="ml-2 text-slate-400 font-normal">Cargando…</span>}
                             </span>
                             {/* Contador: sin esto no se sabe si la tabla muestra todo
                                 el inventario de la bodega o apenas el primer tramo. */}
@@ -202,69 +534,193 @@ const Warehouses: React.FC = () => {
                             )}
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2">
-                            <div className="relative flex-1 min-w-[12rem]">
-                                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                                <input
-                                    id="buscar-existencias"
-                                    value={busqueda}
-                                    onChange={e => setBusqueda(e.target.value)}
-                                    placeholder="Buscar por nombre o SKU…"
-                                    className="w-full h-touch pl-9 pr-9 bg-slate-800 border border-slate-700 rounded-control text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-brand"
-                                />
-                                {busqueda && (
-                                    <button
-                                        type="button"
-                                        onClick={() => setBusqueda('')}
-                                        aria-label="Limpiar búsqueda"
-                                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-slate-200 rounded-control"
-                                    >
-                                        <X size={14} />
-                                    </button>
-                                )}
+                        {stockBelongsToSelection && stockLoad.status === 'success' && stock.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-2">
+                                <div className="relative flex-1 min-w-[12rem]">
+                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" aria-hidden="true" />
+                                    <label htmlFor="buscar-existencias" className="sr-only">Buscar existencias por nombre o SKU</label>
+                                    <input
+                                        id="buscar-existencias"
+                                        value={busqueda}
+                                        onChange={e => setBusqueda(e.target.value)}
+                                        placeholder="Buscar por nombre o SKU…"
+                                        className="w-full h-touch pl-9 pr-9 bg-slate-800 border border-slate-700 rounded-control text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-brand"
+                                    />
+                                    {busqueda && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setBusqueda('')}
+                                            aria-label="Limpiar búsqueda"
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-slate-200 rounded-control"
+                                        >
+                                            <X size={14} aria-hidden="true" />
+                                        </button>
+                                    )}
+                                </div>
+                                <label htmlFor="orden-existencias" className="text-xs text-slate-400">Ordenar</label>
+                                <select
+                                    id="orden-existencias"
+                                    value={orden}
+                                    onChange={e => setOrden(e.target.value as 'nombre' | 'stock')}
+                                    className="h-touch px-3 bg-slate-800 border border-slate-700 rounded-control text-sm text-slate-100 focus:outline-none focus:border-brand"
+                                >
+                                    <option value="nombre">Nombre (A-Z)</option>
+                                    <option value="stock">Stock (mayor primero)</option>
+                                </select>
                             </div>
-                            <label htmlFor="orden-existencias" className="text-xs text-slate-400">Ordenar</label>
-                            <select
-                                id="orden-existencias"
-                                value={orden}
-                                onChange={e => setOrden(e.target.value as 'nombre' | 'stock')}
-                                className="h-touch px-3 bg-slate-800 border border-slate-700 rounded-control text-sm text-slate-100 focus:outline-none focus:border-brand"
-                            >
-                                <option value="nombre">Nombre (A-Z)</option>
-                                <option value="stock">Stock (mayor primero)</option>
-                            </select>
-                        </div>
+                        )}
                     </div>
-                    <table className="w-full text-sm">
-                        <thead className="bg-surface-800/40 text-slate-500 text-xs uppercase">
-                            <tr><th className="p-3 text-left">Producto</th><th className="p-3 text-left">SKU</th><th className="p-3 text-right">Stock</th><th className="p-3"></th></tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/[0.04]">
-                            {/* Solo la página actual: antes se montaban las 1.003 filas de una. */}
-                            {visibles.map(it => (
-                                <tr key={it.productId}>
-                                    <td className="p-3">{it.name}{it.implicit && <span className="ml-2 text-[9px] text-slate-400" title="Stock legado aún no movido en esta bodega">IMPLÍCITO</span>}</td>
-                                    <td className="p-3 text-slate-500 font-mono text-xs">{it.sku}</td>
-                                    <td className="p-3 text-right font-mono font-bold">{it.stock} {it.unit}</td>
-                                    <td className="p-3 text-right">
-                                        {canTransferStock && warehouses.filter(w => w.isActive).length > 1 && it.stock > 0 && (
-                                            <button onClick={() => setTransfer({ toId: warehouses.find(w => w.id !== selected?.id && w.isActive)!.id, productId: it.productId, qty: '' })}
-                                                className="text-brand hover:bg-brand/10 p-1.5 rounded" title="Transferir a otra bodega">
-                                                <ArrowRightLeft size={14} />
+                    {/* En móvil cada existencia es una tarjeta: nombre, SKU, stock y
+                        acción permanecen visibles sin depender de scroll horizontal. */}
+                    <div className="sm:hidden" aria-busy={loading}>
+                        {visibles.length > 0 && (
+                            <ul className="divide-y divide-white/[0.06]" aria-label={`Existencias en ${selected?.name ?? 'la bodega seleccionada'}`}>
+                                {visibles.map(it => {
+                                    const transferDisabled = !canTransferStock || topologyLocked || !hasTransferDestination || !(it.stock > 0);
+                                    const transferTitle = !canTransferStock
+                                        ? 'Tu rol no permite transferir existencias'
+                                        : topologyLocked
+                                        ? 'Primero verificá la lista de bodegas'
+                                        : !hasTransferDestination
+                                            ? 'No hay otra bodega activa para recibir el producto'
+                                            : !(it.stock > 0)
+                                                ? 'Sin stock disponible para transferir'
+                                                : `Transferir ${it.name}`;
+
+                                    return (
+                                        <li key={it.productId} className="p-4">
+                                            <div className="min-w-0">
+                                                <p className="break-words text-sm font-semibold text-slate-100">
+                                                    {it.name}
+                                                    {it.implicit && (
+                                                        <span className="ml-2 text-[9px] font-normal text-slate-400" title="Stock legado aún no movido en esta bodega">
+                                                            IMPLÍCITO
+                                                        </span>
+                                                    )}
+                                                </p>
+                                            </div>
+
+                                            <dl className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-4">
+                                                <div className="min-w-0">
+                                                    <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">SKU</dt>
+                                                    <dd className="mt-1 break-all font-mono text-xs text-slate-300">{it.sku || 'Sin SKU'}</dd>
+                                                </div>
+                                                <div className="text-right">
+                                                    <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Stock</dt>
+                                                    <dd className="mt-1 whitespace-nowrap font-mono text-base font-bold text-slate-100">
+                                                        {it.stock} {it.unit}
+                                                    </dd>
+                                                </div>
+                                            </dl>
+
+                                            <button
+                                                type="button"
+                                                onClick={(event) => openTransfer(it, event.currentTarget)}
+                                                disabled={transferDisabled}
+                                                aria-label={transferDisabled
+                                                    ? `Transferir ${it.name} no disponible: ${transferTitle}`
+                                                    : `Transferir ${it.name} a otra bodega`}
+                                                aria-describedby={warehousesError ? 'warehouse-topology-error' : undefined}
+                                                title={transferTitle}
+                                                className="mt-4 min-h-tap w-full inline-flex items-center justify-center gap-2 rounded-control border border-brand/30 bg-brand/10 px-4 text-sm font-semibold text-brand transition-colors hover:bg-brand/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-not-allowed disabled:border-white/[0.06] disabled:bg-white/[0.02] disabled:text-slate-500"
+                                            >
+                                                <ArrowRightLeft size={16} aria-hidden="true" />
+                                                Transferir
                                             </button>
-                                        )}
-                                    </td>
-                                </tr>
-                            ))}
-                            {stock.length === 0 && !loading && <tr><td colSpan={4} className="p-8 text-center text-slate-400">Sin existencias en esta bodega</td></tr>}
-                            {stock.length > 0 && filtrados.length === 0 && (
-                                <tr><td colSpan={4} className="p-8 text-center text-slate-400">
-                                    Ningún producto de esta bodega coincide con “{busqueda}”.
-                                    <button onClick={() => setBusqueda('')} className="ml-2 text-brand hover:underline">Limpiar búsqueda</button>
-                                </td></tr>
-                            )}
-                        </tbody>
-                    </table>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        )}
+
+                        {loading && (
+                            <div className="p-8 text-center text-slate-400" role="status">
+                                <span className="inline-flex items-center gap-2"><Loader2 size={16} className="animate-spin" aria-hidden="true" /> Cargando existencias…</span>
+                            </div>
+                        )}
+                        {!selected && !warehousesLoading && (
+                            <div className="p-8 text-center text-sm text-slate-400">Seleccioná o creá una bodega para consultar sus existencias.</div>
+                        )}
+                        {stockError && selected && (
+                            <div className="p-8 text-center">
+                                <div role="alert" className="inline-flex max-w-md flex-col items-center gap-2 text-sm text-red-300">
+                                    <span className="inline-flex items-center gap-2"><AlertTriangle size={16} aria-hidden="true" /> {stockError}</span>
+                                    <button type="button" onClick={() => loadStock(selected)} className="min-h-tap px-3 text-brand font-semibold hover:underline">Reintentar</button>
+                                </div>
+                            </div>
+                        )}
+                        {stockBelongsToSelection && stockLoad.status === 'success' && stock.length === 0 && (
+                            <div className="p-8 text-center text-sm text-slate-400">Sin existencias en esta bodega.</div>
+                        )}
+                        {stock.length > 0 && filtrados.length === 0 && (
+                            <div className="p-8 text-center text-sm text-slate-400">
+                                Ningún producto de esta bodega coincide con “{busqueda}”.
+                                <button type="button" onClick={() => setBusqueda('')} className="ml-2 min-h-tap px-1 text-brand hover:underline">Limpiar búsqueda</button>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="hidden overflow-x-auto sm:block">
+                        <table className="w-full min-w-[36rem] text-sm">
+                            <thead className="bg-surface-800/40 text-slate-500 text-xs uppercase">
+                                <tr><th className="p-3 text-left">Producto</th><th className="p-3 text-left">SKU</th><th className="p-3 text-right">Stock</th><th className="p-3"><span className="sr-only">Acciones</span></th></tr>
+                            </thead>
+                            <tbody className="divide-y divide-white/[0.04]">
+                                {/* Solo la página actual: antes se montaban las 1.003 filas de una. */}
+                                {visibles.map(it => (
+                                    <tr key={it.productId}>
+                                        <td className="p-3">{it.name}{it.implicit && <span className="ml-2 text-[9px] text-slate-400" title="Stock legado aún no movido en esta bodega">IMPLÍCITO</span>}</td>
+                                        <td className="p-3 text-slate-500 font-mono text-xs">{it.sku}</td>
+                                        <td className="p-3 text-right font-mono font-bold">{it.stock} {it.unit}</td>
+                                        <td className="p-3 text-right">
+                                            {canTransferStock && warehouses.filter(w => w.isActive).length > 1 && it.stock > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={(event) => openTransfer(it, event.currentTarget)}
+                                                    disabled={topologyLocked}
+                                                    aria-label={`Transferir ${it.name} a otra bodega`}
+                                                    aria-describedby={warehousesError ? 'warehouse-topology-error' : undefined}
+                                                    className="min-h-tap min-w-tap inline-flex items-center justify-center text-brand hover:bg-brand/10 rounded-control disabled:cursor-not-allowed disabled:opacity-40"
+                                                    title={topologyLocked ? 'Primero verificá la lista de bodegas' : `Transferir ${it.name}`}
+                                                >
+                                                    <ArrowRightLeft size={14} aria-hidden="true" />
+                                                </button>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                                {loading && (
+                                    <tr>
+                                        <td colSpan={4} className="p-8 text-center text-slate-400" role="status">
+                                            <span className="inline-flex items-center gap-2"><Loader2 size={16} className="animate-spin" aria-hidden="true" /> Cargando existencias…</span>
+                                        </td>
+                                    </tr>
+                                )}
+                                {!selected && !warehousesLoading && (
+                                    <tr><td colSpan={4} className="p-8 text-center text-slate-400">Seleccioná o creá una bodega para consultar sus existencias.</td></tr>
+                                )}
+                                {stockError && selected && (
+                                    <tr>
+                                        <td colSpan={4} className="p-8 text-center">
+                                            <div role="alert" className="inline-flex max-w-md flex-col items-center gap-2 text-red-300">
+                                                <span className="inline-flex items-center gap-2"><AlertTriangle size={16} aria-hidden="true" /> {stockError}</span>
+                                                <button type="button" onClick={() => loadStock(selected)} className="text-brand font-semibold hover:underline">Reintentar</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                )}
+                                {stockBelongsToSelection && stockLoad.status === 'success' && stock.length === 0 && (
+                                    <tr><td colSpan={4} className="p-8 text-center text-slate-400">Sin existencias en esta bodega.</td></tr>
+                                )}
+                                {stock.length > 0 && filtrados.length === 0 && (
+                                    <tr><td colSpan={4} className="p-8 text-center text-slate-400">
+                                        Ningún producto de esta bodega coincide con “{busqueda}”.
+                                        <button type="button" onClick={() => setBusqueda('')} className="ml-2 text-brand hover:underline">Limpiar búsqueda</button>
+                                    </td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
 
                     {filtrados.length > POR_PAGINA && (
                         <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.04] text-xs text-slate-400">
@@ -297,25 +753,96 @@ const Warehouses: React.FC = () => {
 
             {/* Modal de transferencia */}
             {transfer && selected && (
-                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-xl w-full max-w-sm p-5 space-y-4">
+                <div
+                    className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+                    onMouseDown={event => { if (event.target === event.currentTarget) closeTransfer(); }}
+                >
+                    <div
+                        ref={transferDialogRef}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="transfer-title"
+                        aria-describedby="transfer-product-summary"
+                        tabIndex={-1}
+                        className="bg-surface-900 border border-white/10 rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-4"
+                    >
                         <div className="flex justify-between items-center">
-                            <h3 className="font-bold flex items-center gap-2"><ArrowRightLeft size={18} className="text-brand" /> Transferir desde {selected.name}</h3>
-                            <button onClick={() => setTransfer(null)}><X size={18} /></button>
+                            <h3 id="transfer-title" className="font-bold flex items-center gap-2">
+                                <ArrowRightLeft size={18} className="text-brand" aria-hidden="true" />
+                                Transferir producto
+                            </h3>
+                            <button
+                                type="button"
+                                onClick={closeTransfer}
+                                disabled={transferring}
+                                aria-label="Cerrar transferencia"
+                                title="Cerrar"
+                                className="min-h-tap min-w-tap inline-flex items-center justify-center rounded-control text-slate-400 hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
+                            >
+                                <X size={18} aria-hidden="true" />
+                            </button>
+                        </div>
+
+                        <div id="transfer-product-summary" className="rounded-lg border border-white/[0.06] bg-white/[0.03] p-3">
+                            <p className="font-semibold text-sm text-slate-100">{transfer.productName}</p>
+                            <p className="mt-1 text-xs text-slate-400">
+                                Disponible en {selected.name}: <strong className="text-slate-200">{transfer.available} {transfer.unit}</strong>
+                            </p>
                         </div>
                         <div>
-                            <label className="text-xs font-bold text-slate-500">Bodega destino</label>
-                            <select value={transfer.toId} onChange={e => setTransfer({ ...transfer, toId: e.target.value })}
+                            <label htmlFor="transfer-destination" className="text-xs font-bold text-slate-400">Bodega destino</label>
+                            <select
+                                id="transfer-destination"
+                                value={transfer.toId}
+                                onChange={e => { setTransfer({ ...transfer, toId: e.target.value }); setTransferError(''); }}
+                                disabled={transferring}
                                 className="w-full mt-1 px-3 py-2 border border-white/10 rounded-lg text-sm">
                                 {warehouses.filter(w => w.id !== selected.id && w.isActive).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                             </select>
                         </div>
                         <div>
-                            <label className="text-xs font-bold text-slate-500">Cantidad</label>
-                            <input value={transfer.qty} onChange={e => setTransfer({ ...transfer, qty: e.target.value.replace(/[^\d.]/g, '') })}
-                                inputMode="decimal" className="w-full mt-1 px-3 py-2 border border-white/10 rounded-lg text-sm font-mono" autoFocus />
+                            <label htmlFor="transfer-quantity" className="text-xs font-bold text-slate-400">Cantidad</label>
+                            <input
+                                ref={transferQuantityRef}
+                                id="transfer-quantity"
+                                value={transfer.qty}
+                                onChange={e => {
+                                    setTransfer({ ...transfer, qty: e.target.value });
+                                    setTransferError('');
+                                }}
+                                onBlur={() => {
+                                    if (!transfer.qty) return;
+                                    try {
+                                        validateStockTransferQuantity(transfer.qty.replace(',', '.'), {
+                                            saleMode: transfer.saleMode,
+                                            quantityStep: transfer.quantityStep,
+                                        });
+                                    } catch (error) {
+                                        setTransferError(error instanceof Error ? error.message : 'Ingresá una cantidad válida.');
+                                    }
+                                }}
+                                inputMode="decimal"
+                                disabled={transferring}
+                                aria-invalid={Boolean(transferError)}
+                                aria-describedby={transferError ? 'transfer-error' : 'transfer-product-summary'}
+                                className="w-full mt-1 px-3 py-2 border border-white/10 rounded-lg text-sm font-mono disabled:opacity-60"
+                            />
                         </div>
-                        <button onClick={doTransfer} className="w-full py-2.5 bg-brand text-white rounded-lg font-bold text-sm">Transferir</button>
+                        {transferError && (
+                            <p id="transfer-error" role="alert" className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-300">
+                                <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                                {transferError}
+                            </p>
+                        )}
+                        <button
+                            type="button"
+                            onClick={doTransfer}
+                            disabled={transferring || topologyLocked || !transfer.toId || validTransferQuantity === null || !(validTransferQuantity > 0)}
+                            className="w-full min-h-tap inline-flex items-center justify-center gap-2 bg-brand text-white rounded-control font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            {transferring && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}
+                            {transferring ? 'Transfiriendo…' : 'Transferir'}
+                        </button>
                     </div>
                 </div>
             )}

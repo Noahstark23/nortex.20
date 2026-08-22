@@ -2,6 +2,9 @@
 // Motor de Hardware ESC/POS usando Web Serial API
 // Dependencia cero, latencia cero.
 
+import Decimal from 'decimal.js';
+import { formatQuantityValue } from './quantity';
+
 class ESCPOS {
     private buffer: number[] = [];
 
@@ -24,9 +27,14 @@ class ESCPOS {
     text(str: string) {
         // Normalizamos los caracteres para evitar enviar unicode/UTF-8 extraño a la térmica
         // Strip diacritics para ser compatibles con página de códigos base.
-        const normalized = str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        for (let i = 0; i < normalized.length; i++) {
-            this.buffer.push(normalized.charCodeAt(i));
+        // También se eliminan controles: un nombre de producto nunca debe
+        // inyectar ESC/POS, saltos de línea o un corte de papel.
+        const printable = str.normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+            .replace(/[^\u0020-\u00ff]/g, '?');
+        for (let i = 0; i < printable.length; i++) {
+            this.buffer.push(printable.charCodeAt(i));
         }
         return this;
     }
@@ -53,6 +61,184 @@ class ESCPOS {
     build(): Uint8Array {
         return new Uint8Array(this.buffer);
     }
+}
+
+/**
+ * Contrato único para el ticket térmico. El POS y las plantillas de impresión
+ * usan `grandTotal`; mantener ese mismo nombre aquí evita que la ruta Web
+ * Serial se desincronice de la venta recién cobrada.
+ */
+export interface ThermalReceiptData {
+    tenantName: string;
+    ruc?: string;
+    address?: string;
+    phone?: string;
+    dgiAuthCode?: string;
+    date: string;
+    saleId?: string;
+    invoiceNumber?: number;
+    invoiceSeries?: string;
+    customerName: string;
+    items: Array<{
+        name: string;
+        quantity: Decimal.Value;
+        price: Decimal.Value;
+        unit?: string | null;
+        saleMode?: 'COUNTED' | 'MEASURED' | string | null;
+        presentation?: string | { quantity: Decimal.Value; unit: string } | null;
+        presentationQuantity?: Decimal.Value | null;
+        presentationUnit?: string | null;
+        packUnit?: string | null;
+    }>;
+    subtotal: number;
+    discount?: number;
+    tax: number;
+    grandTotal: number;
+    paymentMethod: string;
+    cashReceived?: number;
+    change?: number;
+    user?: string;
+}
+
+// 80 mm suele ofrecer 576 dots imprimibles: 48 columnas con la fuente A
+// ESC/POS. Antes se maquetaba a 32 columnas, que corresponde a papel de 58 mm.
+export const TICKET_80MM_COLUMNS = 48;
+
+const finiteDecimal = (value: Decimal.Value, field: string): Decimal => {
+    let parsed: Decimal;
+    try {
+        parsed = new Decimal(value);
+    } catch {
+        throw new Error(`Monto invalido en ${field}`);
+    }
+    if (!parsed.isFinite()) throw new Error(`Monto invalido en ${field}`);
+    return parsed;
+};
+
+const money = (value: Decimal.Value, field: string): string =>
+    finiteDecimal(value, field).toDecimalPlaces(2).toFixed(2);
+
+type ThermalItem = ThermalReceiptData['items'][number];
+
+const thermalLine = (item: ThermalItem, index: number) => {
+    const baseQuantity = finiteDecimal(item.quantity, `items[${index}].quantity`);
+    const baseUnitPrice = finiteDecimal(item.price, `items[${index}].price`);
+    const total = baseQuantity.times(baseUnitPrice);
+    const presentationObject = item.presentation && typeof item.presentation === 'object'
+        ? item.presentation
+        : null;
+    const presentationCode = typeof item.presentation === 'string'
+        ? item.presentation.trim()
+        : '';
+    const isPack = presentationCode.toUpperCase() === 'PACK';
+    const namedPresentation = presentationCode !== ''
+        && presentationCode.toUpperCase() !== 'BASE'
+        && !isPack;
+    const hasPresentation = Boolean(
+        presentationObject
+        || isPack
+        || item.presentationQuantity !== undefined && item.presentationQuantity !== null,
+    );
+    const visibleQuantity = presentationObject
+        ? finiteDecimal(presentationObject.quantity, `items[${index}].presentation.quantity`)
+        : item.presentationQuantity !== undefined && item.presentationQuantity !== null
+            ? finiteDecimal(item.presentationQuantity, `items[${index}].presentationQuantity`)
+            : baseQuantity;
+    if (!visibleQuantity.greaterThan(0)) throw new Error(`Linea de ticket invalida en items[${index}]`);
+
+    const unit = String(
+        presentationObject?.unit
+        || item.presentationUnit
+        || isPack && item.packUnit
+        || namedPresentation && presentationCode
+        || item.unit
+        || '',
+    ).trim();
+    const quantity = formatQuantityValue(visibleQuantity);
+    const visibleUnitPrice = hasPresentation ? total.dividedBy(visibleQuantity) : baseUnitPrice;
+    const quantityLabel = unit ? `${quantity} ${unit}` : `${quantity}x`;
+    const equation = unit
+        ? `${quantityLabel} × C$${money(visibleUnitPrice, `items[${index}].unitPrice`)}/${unit}`
+        : `${quantityLabel} C$${money(visibleUnitPrice, `items[${index}].unitPrice`)}`;
+
+    return {
+        name: String(item.name || 'Articulo'),
+        equation,
+        total: `C$${money(total, `items[${index}].total`)}`,
+    };
+};
+
+/** Genera bytes ESC/POS puros; se exporta para poder probar el ticket sin USB. */
+export function build80mmReceiptPayload(data: ThermalReceiptData): Uint8Array {
+    const cmd = new ESCPOS();
+    const divider = '-'.repeat(TICKET_80MM_COLUMNS);
+    const totalWidth = 14;
+    const detailWidth = TICKET_80MM_COLUMNS - totalWidth;
+
+    cmd.init();
+
+    // --- HEADER ---
+    cmd.align('C').bold(true).textLine(data.tenantName || 'Nortex');
+    cmd.bold(false);
+    if (data.ruc) cmd.textLine(`RUC: ${data.ruc}`);
+    if (data.address) cmd.textLine(data.address);
+    if (data.phone) cmd.textLine(`Tel: ${data.phone}`);
+    if (data.dgiAuthCode) cmd.textLine(`Aut. DGI: ${data.dgiAuthCode}`);
+    cmd.textLine(divider);
+
+    // --- TRANSACCION ---
+    cmd.align('L');
+    if (data.invoiceNumber) {
+        const series = data.invoiceSeries ? `${data.invoiceSeries}-` : '';
+        cmd.bold(true).textLine(`FACTURA ${series}${String(data.invoiceNumber).padStart(6, '0')}`).bold(false);
+    }
+    cmd.textLine(`Fecha:   ${data.date}`);
+    if (data.saleId) cmd.textLine(`Ticket:  ${data.saleId.slice(-6)}`);
+    cmd.textLine(`Cajero:  ${data.user || 'Cajero'}`);
+    cmd.textLine(`Cliente: ${data.customerName || 'Cliente General'}`);
+    cmd.textLine(divider);
+
+    // --- ARTICULOS ---
+    cmd.bold(true).textLine(
+        'ARTICULO / CANT. / P. UNIT.'.padEnd(detailWidth) +
+        'TOTAL'.padStart(totalWidth),
+    ).bold(false);
+
+    data.items.forEach((item, index) => {
+        const line = thermalLine(item, index);
+        cmd.bold(true).textLine(line.name.slice(0, TICKET_80MM_COLUMNS)).bold(false);
+        cmd.textLine(
+            line.equation.slice(0, detailWidth).padEnd(detailWidth)
+            + line.total.slice(-totalWidth).padStart(totalWidth),
+        );
+    });
+
+    cmd.textLine(divider);
+
+    // --- TOTALES ---
+    cmd.align('R');
+    cmd.textLine(`Subtotal: C$ ${money(data.subtotal, 'subtotal')}`);
+    if (data.discount && data.discount > 0) {
+        cmd.textLine(`Descuento: -C$ ${money(data.discount, 'discount')}`);
+    }
+    cmd.textLine(`IVA incl. 15%: C$ ${money(data.tax, 'tax')}`);
+    cmd.bold(true).textLine(`TOTAL: C$ ${money(data.grandTotal, 'grandTotal')}`).bold(false);
+    if (typeof data.cashReceived === 'number') {
+        cmd.textLine(`Recibido: C$ ${money(data.cashReceived, 'cashReceived')}`);
+    }
+    if (typeof data.change === 'number') {
+        cmd.textLine(`Vuelto: C$ ${money(data.change, 'change')}`);
+    }
+
+    cmd.align('C');
+    cmd.textLine(divider);
+    cmd.textLine(`Metodo de Pago: ${data.paymentMethod}`);
+    cmd.feed(1);
+    cmd.textLine('Gracias por su compra');
+    cmd.feed(4);
+    cmd.cut();
+
+    return cmd.build();
 }
 
 export class ThermalPrinterService {
@@ -106,86 +292,26 @@ export class ThermalPrinterService {
         return this.port !== null;
     }
 
-    pad(texto: string, length = 6, num = false) {
-        return num ? texto.padStart(length, '0') : texto.padEnd(length, ' ');
-    }
-
-    // Traducir el InvoiceData al buffer de ESC/POS
-    async printReceipt(data: any): Promise<boolean> {
+    // Traducir la venta al buffer de ESC/POS y enviarlo a la tiquetera.
+    async printReceipt(data: ThermalReceiptData): Promise<boolean> {
         if (!this.port) return false;
-
-        const cmd = new ESCPOS();
-        cmd.init();
-        
-        // --- HEADER ---
-        cmd.align('C').bold(true).textLine(data.tenantName);
-        cmd.bold(false);
-        if (data.ruc) cmd.textLine(`RUC: ${data.ruc}`);
-        if (data.address) cmd.textLine(data.address);
-        if (data.phone) cmd.textLine(`Tel: ${data.phone}`);
-        if (data.dgiAuthCode) cmd.textLine(`Aut. DGI: ${data.dgiAuthCode}`);
-        
-        cmd.textLine("--------------------------------"); // 32 chars genérico 58mm
-        
-        // --- TRANSACCIÓN ---
-        cmd.align('L');
-        if (data.invoiceNumber) {
-            cmd.bold(true).textLine(`FACTURA No. ${this.pad(String(data.invoiceNumber), 6, true)}`).bold(false);
-        }
-        cmd.textLine(`Fecha:  ${data.date}`);
-        if (data.saleId) cmd.textLine(`Ticket: ${data.saleId.slice(-6)}`);
-        cmd.textLine(`Cajero: ${data.user}`);
-        cmd.textLine(`Cliente: ${data.customerName}`);
-        
-        cmd.textLine("--------------------------------");
-        
-        // --- ARTÍCULOS ---
-        // Cant(4) | Desc(18) | Total(8) = 30 + spaces
-        cmd.bold(true).textLine("CANT ARTICULO            TOTAL").bold(false);
-        
-        data.items.forEach((item: any) => {
-            const qty = String(item.quantity).padEnd(4, ' ');
-            const name = item.name.substring(0, 18).padEnd(19, ' ');
-            const total = (item.quantity * item.price).toFixed(2).padStart(8, ' ');
-            cmd.textLine(`${qty}${name} ${total}`);
-        });
-
-        cmd.textLine("--------------------------------");
-        
-        // --- TOTALES ---
-        cmd.align('R');
-        cmd.textLine(`Subtotal: C$ ${data.subtotal.toFixed(2)}`);
-        if (data.discount && data.discount > 0) {
-            cmd.textLine(`Descuento: -C$ ${data.discount.toFixed(2)}`);
-        }
-        cmd.textLine(`IVA incl. 15%: C$ ${data.tax.toFixed(2)}`);
-        cmd.bold(true).textLine(`TOTAL: C$ ${data.total.toFixed(2)}`).bold(false);
-        
-        cmd.align('C');
-        cmd.textLine("--------------------------------");
-        cmd.textLine(`Metodo de Pago: ${data.paymentMethod}`);
-        cmd.feed(1);
-        cmd.textLine("¡Gracias por su compra!");
-        cmd.feed(4); // Dar espacio para el corte
-        cmd.cut();
-
-        const payload = cmd.build();
-
-        // Enviar al puerto
+        let writer: any = null;
         try {
+            // Construir también queda dentro del try: un dato corrupto nunca
+            // debe dejar el botón en una Promise rechazada sin feedback.
+            const payload = build80mmReceiptPayload(data);
             await this.port.open({ baudRate: 9600 }); // Impresoras térmicas típicas operan a 9600 o 115200
-            
-            const writer = this.port.writable.getWriter();
+
+            writer = this.port.writable.getWriter();
             await writer.write(payload);
-            writer.releaseLock();
-            
-            await this.port.close();
             return true;
         } catch (e) {
             console.error("Error transmitiendo a la tiquetera:", e);
-            // Asegurar que cerremos el puerto si falló a mitad del write
-            try { await this.port.close(); } catch (_) { }
             return false;
+        } finally {
+            try { writer?.releaseLock(); } catch (_) { }
+            // Asegurar cierre tanto en éxito como si falló a mitad del write.
+            try { await this.port.close(); } catch (_) { }
         }
     }
 }

@@ -38,4 +38,24 @@ describe('calculatePurchaseOrderInvoiceAvailability', () => {
         expect(result.get('p1')?.remaining.toString()).toBe('0');
         expect(result.get('p2')?.remaining.toString()).toBe('3');
     });
+
+    it('usa los decimales exactos como autoridad aunque las sombras Float difieran', () => {
+        const result = calculatePurchaseOrderInvoiceAvailability(
+            [{
+                productId: 'carne',
+                productName: 'Carne molida',
+                quantityReceived: 37.49,
+                quantityReceivedExact: '37.5000',
+            }],
+            [{
+                items: [{
+                    productId: 'carne',
+                    quantity: 12.34,
+                    quantityExact: '12.3456',
+                }],
+            }],
+        );
+
+        expect(result.get('carne')?.remaining.toFixed(4)).toBe('25.1544');
+    });
 });
