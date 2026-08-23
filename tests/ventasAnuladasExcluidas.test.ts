@@ -60,6 +60,36 @@ describe('las ventas anuladas no cuentan en los números', () => {
         expect(sinFiltro).toEqual([]);
     });
 
+    it('no se puede DEVOLVER sobre una factura anulada', () => {
+        // El otro lado de la moneda de `puedeAnularse`, que rechaza anular una
+        // venta con devoluciones. Sin esta guarda, la anulación abre un hueco que
+        // antes no existía: al anular, la mercadería YA volvió al inventario y el
+        // documento ya dejó de contar; una nota de crédito encima sumaría el
+        // stock por segunda vez y le acreditaría al cliente un dinero ya devuelto.
+        const fuente = leer('backend/server.ts');
+        const desde = fuente.indexOf(`app.post('/api/returns'`);
+        const hasta = fuente.indexOf(`app.post('/api/payments'`, desde);
+        expect(desde).toBeGreaterThan(-1);
+        expect(hasta).toBeGreaterThan(desde);
+        const rutaDevoluciones = fuente.slice(desde, hasta);
+
+        // La guarda vive ANTES de que se mueva un solo gramo de inventario. Si
+        // quedara después, el rechazo llegaría tarde y el stock ya habría vuelto
+        // por segunda vez.
+        const guarda = rutaDevoluciones.indexOf('ESTADO_ANULADA');
+        const primerMovimiento = rutaDevoluciones.indexOf('applyStockDelta');
+        expect(guarda).toBeGreaterThan(-1);
+        expect(primerMovimiento).toBeGreaterThan(-1);
+        expect(guarda).toBeLessThan(primerMovimiento);
+
+        // Y DESPUÉS del `FOR UPDATE` sobre Sale: afuera de la transacción sería
+        // una lectura sin lock, y una anulación concurrente podría colarse entre
+        // el chequeo y el movimiento de stock.
+        const lock = rutaDevoluciones.indexOf('FOR UPDATE');
+        expect(lock).toBeGreaterThan(-1);
+        expect(guarda).toBeGreaterThan(lock);
+    });
+
     it('nadie dejó el literal suelto en vez de la constante', () => {
         // Dos nombres para el mismo estado es como no tener ninguno: un rename
         // arreglaría la mitad de los filtros y dejaría la otra mitad muda.

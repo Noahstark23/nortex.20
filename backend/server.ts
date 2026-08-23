@@ -2281,6 +2281,209 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
 // ==========================================
 
 // Search sale for return flow
+app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CancelSaleSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const saleId = String(req.params.id);
+    const motivo = textoUtil(req.body.motivo);
+
+    try {
+        const sale = await prisma.sale.findFirst({
+            where: { id: saleId, tenantId: authReq.tenantId! },
+            include: {
+                items: { select: { productId: true, quantity: true, costAtSale: true } },
+                _count: { select: { productReturns: true, payments: true } },
+            },
+        });
+        if (!sale) return res.status(404).json({ error: 'Factura no encontrada' });
+
+        // ¿El período contable de la venta está cerrado? Se pregunta con la
+        // MISMA función que usa el motor contable, para no tener dos criterios
+        // de "período cerrado" que puedan discrepar.
+        let periodoCerrado = false;
+        try {
+            await assertPeriodOpen(prisma as any, authReq.tenantId!, sale.createdAt);
+        } catch (err) {
+            if (err instanceof PeriodLockedError) periodoCerrado = true;
+            else throw err;
+        }
+
+        const veredicto = puedeAnularse({
+            status: sale.status,
+            cancelledAt: sale.cancelledAt,
+            devoluciones: sale._count.productReturns,
+            pagos: sale._count.payments,
+            periodoCerrado,
+        }, motivo);
+
+        if (!veredicto.ok) {
+            return res.status(409).json({ error: veredicto.mensaje, codigo: veredicto.codigo });
+        }
+
+        const plan = planDeReversion({
+            total: sale.total.toString(),
+            paymentMethod: sale.paymentMethod,
+            items: sale.items.map(i => ({
+                productId: i.productId,
+                quantity: i.quantity.toString(),
+                costAtSale: i.costAtSale.toString(),
+            })),
+        });
+
+        const resultado = await prisma.$transaction(async (tx: any) => {
+            // 1 · MARCAR PRIMERO, con la guarda en el WHERE. Dos anulaciones
+            //     simultáneas (doble clic, dos pestañas) revertirían el stock
+            //     DOS VECES si esto se hiciera al final: acá la primera gana y
+            //     la segunda ve count === 0 y aborta la transacción entera.
+            const marcada = await tx.sale.updateMany({
+                where: {
+                    id: saleId,
+                    tenantId: authReq.tenantId!,
+                    status: { not: ESTADO_ANULADA },
+                    cancelledAt: null,
+                },
+                data: {
+                    status: ESTADO_ANULADA,
+                    cancelledAt: new Date(),
+                    cancelledById: authReq.userId!,
+                    cancelReason: motivo,
+                    // Una factura anulada no tiene saldo por cobrar.
+                    balance: 0,
+                },
+            });
+            if (marcada.count === 0) {
+                throw new Error('La factura ya fue anulada por otra operación.');
+            }
+
+            // 2 · Devolver la mercadería al inventario. `enforceSufficient:false`
+            //     porque es una ENTRADA: nunca puede fallar por insuficiencia.
+            for (const linea of plan.lineas) {
+                const cantidad = linea.cantidad.toNumber();
+                let stockResult;
+                try {
+                    stockResult = await applyStockDelta(tx, {
+                        tenantId: authReq.tenantId!,
+                        productId: linea.productId,
+                        delta: cantidad,
+                        enforceSufficient: false,
+                    });
+                } catch (err) {
+                    // Producto borrado del catálogo: la venta se anula igual, no
+                    // se puede rehacer inventario de algo que ya no existe.
+                    if (err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') continue;
+                    throw err;
+                }
+
+                await tx.kardexMovement.create({
+                    data: {
+                        tenantId: authReq.tenantId!,
+                        productId: linea.productId,
+                        type: 'RETURN',
+                        quantity: cantidad,
+                        stockBefore: stockResult.stockBefore,
+                        stockAfter: stockResult.stockAfter,
+                        referenceId: saleId,
+                        referenceType: 'SALE_VOIDED',
+                        reason: `Anulación de factura: ${motivo}`,
+                        userId: authReq.userId!,
+                    },
+                });
+            }
+
+            // 3 · Bajar la deuda del cliente si era venta a crédito.
+            let deudaAntes: string | null = null;
+            let deudaDespues: string | null = null;
+            if (sale.customerId && plan.deudaAReversar.greaterThan(0)) {
+                const previo = await tx.customer.findFirst({
+                    where: { id: sale.customerId, tenantId: authReq.tenantId! },
+                    select: { currentDebt: true },
+                });
+                if (previo) {
+                    deudaAntes = String(previo.currentDebt);
+                    // Piso en 0: si el contador venía desfasado, la anulación no
+                    // puede dejar al cliente con deuda NEGATIVA (saldo a favor
+                    // fantasma que después alguien cobra).
+                    const nueva = Decimal.max(
+                        new Decimal(previo.currentDebt.toString()).minus(plan.deudaAReversar),
+                        new Decimal(0)
+                    ).toDecimalPlaces(2);
+                    const act = await tx.customer.update({
+                        where: { id: sale.customerId, tenantId: authReq.tenantId! },
+                        data: { currentDebt: nueva.toNumber() },
+                    });
+                    deudaDespues = String(act.currentDebt);
+                }
+            }
+
+            // 4 · Asiento de REVERSIÓN: los mismos renglones de la venta con
+            //     débito y crédito INVERTIDOS. Cuadra por construcción (el
+            //     original cuadraba) y deja el rastro contable visible, en vez
+            //     de borrar el asiento original — que sería falsear el libro.
+            try {
+                const lineasVenta = buildSaleJournalLines(
+                    Number(sale.total),
+                    plan.costoTotal.toNumber(),
+                    sale.paymentMethod,
+                    sale.exemptTotal == null ? null : Number(sale.exemptTotal),
+                );
+                await createJournalEntry(
+                    tx, authReq.tenantId!,
+                    `Anulación de venta #${saleId.slice(0, 8)}`,
+                    saleId, 'SALE_CANCELLED', authReq.userId!,
+                    lineasVenta.map(l => ({ accountCode: l.accountCode, debit: l.credit, credit: l.debit })),
+                );
+            } catch (accErr) {
+                // Mismo criterio que el resto del sistema: el gancho contable no
+                // tumba la operación de negocio, pero queda en el log.
+                console.warn('⚠️ Asiento de anulación falló (la anulación continúa):', accErr);
+            }
+
+            // 5 · AUDITORÍA INMUTABLE, en la MISMA transacción (Capa 3).
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'SALE_VOIDED',
+                    details: JSON.stringify({
+                        saleId,
+                        invoiceSeries: sale.invoiceSeries,
+                        invoiceNumber: sale.invoiceNumber,
+                        motivo,
+                        before: { status: sale.status, balance: String(sale.balance), cancelledAt: null },
+                        after: { status: ESTADO_ANULADA, balance: '0' },
+                        total: String(sale.total),
+                        costoRevertido: plan.costoTotal.toString(),
+                        // El efectivo NO se compensa con un movimiento de caja: el
+                        // arqueo del turno suma las ventas en efectivo desde las
+                        // filas de Sale, así que excluir las anuladas YA lo
+                        // revierte. Crear además un movimiento contaría doble.
+                        efectivoQueDejaDeContar: plan.efectivoAReversar.toString(),
+                        deudaAntes,
+                        deudaDespues,
+                        items: plan.lineas.map(l => ({
+                            productId: l.productId,
+                            cantidad: l.cantidad.toString(),
+                        })),
+                    }),
+                },
+            });
+
+            return { id: saleId, status: ESTADO_ANULADA, motivo };
+        });
+
+        res.json({ success: true, ...resultado });
+    } catch (error: any) {
+        console.error('Error anulando factura:', error);
+        res.status(500).json({ error: error?.message || 'No se pudo anular la factura' });
+    }
+});
+
+// ==========================================
+// 💸 PAGOS
+// ==========================================
+
+// ⚠️ DEPRECADA: ningún componente del SPA llama esta ruta — los abonos a crédito
+// entran por /api/credits/payment. Se mantiene funcional por compatibilidad de API,
+// pero NO construir consumidores nuevos sobre ella: unificar sobre /api/credits/payment.
 app.get('/api/sales/search', authenticate, checkRole(RETURN_SEARCH_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const q = String(req.query.q ?? '').trim();
@@ -2459,6 +2662,25 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                 },
             });
             if (!sale) throw new ReturnResolutionError('SALE_NOT_FOUND', 404, 'Venta no encontrada');
+
+            // ESPEJO de la guarda de anulación (DGI-5). La regla pura ya rechaza
+            // ANULAR una venta que tiene devoluciones; este es el otro lado de la
+            // misma moneda y sin él la anulación abriría un hueco que antes no
+            // existía: al anular, la mercadería YA volvió al inventario y el
+            // documento ya dejó de contar. Una nota de crédito encima sumaría el
+            // stock por SEGUNDA vez y le acreditaría al cliente un dinero que ya
+            // se le había revertido.
+            //
+            // Va DENTRO de la transacción y DESPUÉS del `FOR UPDATE` sobre Sale:
+            // afuera sería una lectura sin lock y una anulación concurrente
+            // podría colarse entre el chequeo y el movimiento de stock.
+            if (sale.status === ESTADO_ANULADA || sale.cancelledAt !== null) {
+                throw new ReturnResolutionError(
+                    'SALE_VOIDED',
+                    400,
+                    'Esta factura está anulada: la mercadería ya volvió al inventario y la venta ya no cuenta. No se devuelve sobre una factura anulada.'
+                );
+            }
 
             const productIds = [...new Set(sale.items.map((item: any) => item.productId as string))];
             const pedidoReferenceIds = sale.pedidos.map((pedido: { id: string }) => pedido.id);
@@ -2915,209 +3137,6 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
 // El comprobante anulado NO se borra: queda visible, marcado, con motivo y
 // autor. Su número NO se reutiliza — un correlativo con huecos o repetidos es
 // justo lo que la Disposición Técnica 09-2007 prohíbe.
-app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CancelSaleSchema), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const saleId = String(req.params.id);
-    const motivo = textoUtil(req.body.motivo);
-
-    try {
-        const sale = await prisma.sale.findFirst({
-            where: { id: saleId, tenantId: authReq.tenantId! },
-            include: {
-                items: { select: { productId: true, quantity: true, costAtSale: true } },
-                _count: { select: { productReturns: true, payments: true } },
-            },
-        });
-        if (!sale) return res.status(404).json({ error: 'Factura no encontrada' });
-
-        // ¿El período contable de la venta está cerrado? Se pregunta con la
-        // MISMA función que usa el motor contable, para no tener dos criterios
-        // de "período cerrado" que puedan discrepar.
-        let periodoCerrado = false;
-        try {
-            await assertPeriodOpen(prisma as any, authReq.tenantId!, sale.createdAt);
-        } catch (err) {
-            if (err instanceof PeriodLockedError) periodoCerrado = true;
-            else throw err;
-        }
-
-        const veredicto = puedeAnularse({
-            status: sale.status,
-            cancelledAt: sale.cancelledAt,
-            devoluciones: sale._count.productReturns,
-            pagos: sale._count.payments,
-            periodoCerrado,
-        }, motivo);
-
-        if (!veredicto.ok) {
-            return res.status(409).json({ error: veredicto.mensaje, codigo: veredicto.codigo });
-        }
-
-        const plan = planDeReversion({
-            total: sale.total.toString(),
-            paymentMethod: sale.paymentMethod,
-            items: sale.items.map(i => ({
-                productId: i.productId,
-                quantity: i.quantity.toString(),
-                costAtSale: i.costAtSale.toString(),
-            })),
-        });
-
-        const resultado = await prisma.$transaction(async (tx: any) => {
-            // 1 · MARCAR PRIMERO, con la guarda en el WHERE. Dos anulaciones
-            //     simultáneas (doble clic, dos pestañas) revertirían el stock
-            //     DOS VECES si esto se hiciera al final: acá la primera gana y
-            //     la segunda ve count === 0 y aborta la transacción entera.
-            const marcada = await tx.sale.updateMany({
-                where: {
-                    id: saleId,
-                    tenantId: authReq.tenantId!,
-                    status: { not: ESTADO_ANULADA },
-                    cancelledAt: null,
-                },
-                data: {
-                    status: ESTADO_ANULADA,
-                    cancelledAt: new Date(),
-                    cancelledById: authReq.userId!,
-                    cancelReason: motivo,
-                    // Una factura anulada no tiene saldo por cobrar.
-                    balance: 0,
-                },
-            });
-            if (marcada.count === 0) {
-                throw new Error('La factura ya fue anulada por otra operación.');
-            }
-
-            // 2 · Devolver la mercadería al inventario. `enforceSufficient:false`
-            //     porque es una ENTRADA: nunca puede fallar por insuficiencia.
-            for (const linea of plan.lineas) {
-                const cantidad = linea.cantidad.toNumber();
-                let stockResult;
-                try {
-                    stockResult = await applyStockDelta(tx, {
-                        tenantId: authReq.tenantId!,
-                        productId: linea.productId,
-                        delta: cantidad,
-                        enforceSufficient: false,
-                    });
-                } catch (err) {
-                    // Producto borrado del catálogo: la venta se anula igual, no
-                    // se puede rehacer inventario de algo que ya no existe.
-                    if (err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') continue;
-                    throw err;
-                }
-
-                await tx.kardexMovement.create({
-                    data: {
-                        tenantId: authReq.tenantId!,
-                        productId: linea.productId,
-                        type: 'RETURN',
-                        quantity: cantidad,
-                        stockBefore: stockResult.stockBefore,
-                        stockAfter: stockResult.stockAfter,
-                        referenceId: saleId,
-                        referenceType: 'SALE_VOIDED',
-                        reason: `Anulación de factura: ${motivo}`,
-                        userId: authReq.userId!,
-                    },
-                });
-            }
-
-            // 3 · Bajar la deuda del cliente si era venta a crédito.
-            let deudaAntes: string | null = null;
-            let deudaDespues: string | null = null;
-            if (sale.customerId && plan.deudaAReversar.greaterThan(0)) {
-                const previo = await tx.customer.findFirst({
-                    where: { id: sale.customerId, tenantId: authReq.tenantId! },
-                    select: { currentDebt: true },
-                });
-                if (previo) {
-                    deudaAntes = String(previo.currentDebt);
-                    // Piso en 0: si el contador venía desfasado, la anulación no
-                    // puede dejar al cliente con deuda NEGATIVA (saldo a favor
-                    // fantasma que después alguien cobra).
-                    const nueva = Decimal.max(
-                        new Decimal(previo.currentDebt.toString()).minus(plan.deudaAReversar),
-                        new Decimal(0)
-                    ).toDecimalPlaces(2);
-                    const act = await tx.customer.update({
-                        where: { id: sale.customerId, tenantId: authReq.tenantId! },
-                        data: { currentDebt: nueva.toNumber() },
-                    });
-                    deudaDespues = String(act.currentDebt);
-                }
-            }
-
-            // 4 · Asiento de REVERSIÓN: los mismos renglones de la venta con
-            //     débito y crédito INVERTIDOS. Cuadra por construcción (el
-            //     original cuadraba) y deja el rastro contable visible, en vez
-            //     de borrar el asiento original — que sería falsear el libro.
-            try {
-                const lineasVenta = buildSaleJournalLines(
-                    Number(sale.total),
-                    plan.costoTotal.toNumber(),
-                    sale.paymentMethod,
-                    sale.exemptTotal == null ? null : Number(sale.exemptTotal),
-                );
-                await createJournalEntry(
-                    tx, authReq.tenantId!,
-                    `Anulación de venta #${saleId.slice(0, 8)}`,
-                    saleId, 'SALE_CANCELLED', authReq.userId!,
-                    lineasVenta.map(l => ({ accountCode: l.accountCode, debit: l.credit, credit: l.debit })),
-                );
-            } catch (accErr) {
-                // Mismo criterio que el resto del sistema: el gancho contable no
-                // tumba la operación de negocio, pero queda en el log.
-                console.warn('⚠️ Asiento de anulación falló (la anulación continúa):', accErr);
-            }
-
-            // 5 · AUDITORÍA INMUTABLE, en la MISMA transacción (Capa 3).
-            await tx.auditLog.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    userId: authReq.userId!,
-                    action: 'SALE_VOIDED',
-                    details: JSON.stringify({
-                        saleId,
-                        invoiceSeries: sale.invoiceSeries,
-                        invoiceNumber: sale.invoiceNumber,
-                        motivo,
-                        before: { status: sale.status, balance: String(sale.balance), cancelledAt: null },
-                        after: { status: ESTADO_ANULADA, balance: '0' },
-                        total: String(sale.total),
-                        costoRevertido: plan.costoTotal.toString(),
-                        // El efectivo NO se compensa con un movimiento de caja: el
-                        // arqueo del turno suma las ventas en efectivo desde las
-                        // filas de Sale, así que excluir las anuladas YA lo
-                        // revierte. Crear además un movimiento contaría doble.
-                        efectivoQueDejaDeContar: plan.efectivoAReversar.toString(),
-                        deudaAntes,
-                        deudaDespues,
-                        items: plan.lineas.map(l => ({
-                            productId: l.productId,
-                            cantidad: l.cantidad.toString(),
-                        })),
-                    }),
-                },
-            });
-
-            return { id: saleId, status: ESTADO_ANULADA, motivo };
-        });
-
-        res.json({ success: true, ...resultado });
-    } catch (error: any) {
-        console.error('Error anulando factura:', error);
-        res.status(500).json({ error: error?.message || 'No se pudo anular la factura' });
-    }
-});
-
-// ==========================================
-// 💸 PAGOS
-// ==========================================
-
-// ⚠️ DEPRECADA: ningún componente del SPA llama esta ruta — los abonos a crédito
-// entran por /api/credits/payment. Se mantiene funcional por compatibilidad de API,
-// pero NO construir consumidores nuevos sobre ella: unificar sobre /api/credits/payment.
 app.post('/api/payments', authenticate, validate(CreatePaymentSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { saleId, amount, method } = req.body;

@@ -397,6 +397,16 @@ interface ReturnSaleData {
     balance: string;
     allowedRefundMethods: ReturnRefundMethod[];
     items: ReturnSaleLine[];
+    /**
+     * Fecha de anulación (DGI-5), o null si la factura está vigente.
+     *
+     * Se mira ESTE campo y no `status`: un `cancelledAt` no nulo es
+     * inequívoco y evita traer al frontend el literal del estado, que vive
+     * en el backend (`saleCancellation.ts`) y es la única fuente. La decisión
+     * autoritativa igual la toma el servidor; acá solo se evita mostrarle al
+     * cajero un formulario que va a ser rechazado.
+     */
+    cancelledAt: string | null;
 }
 
 type ReturnRefundMethod = 'CASH' | 'CARD' | 'QR' | 'TRANSFER';
@@ -543,6 +553,14 @@ const POS: React.FC = () => {
     // cajero vea QUÉ entró sin despegar la vista del producto que tiene en la mano.
     // El contador fuerza un render incluso al agregar dos veces el mismo SKU.
     const [lineaResaltada, setLineaResaltada] = useState<{ id: string; n: number } | null>(null);
+    // Anulación de comprobantes (DGI-5). Vive junto a la búsqueda de la factura
+    // en el modal de devoluciones porque es donde el cajero YA llega con la
+    // factura en la mano — no tiene sentido una segunda pantalla para buscar lo
+    // mismo. El motivo es obligatorio: termina en el expediente fiscal.
+    const [mostrarAnular, setMostrarAnular] = useState(false);
+    const [motivoAnulacion, setMotivoAnulacion] = useState('');
+    const [anulando, setAnulando] = useState(false);
+    const [errorAnulacion, setErrorAnulacion] = useState('');
     const contadorResaltado = useRef(0);
 
     // 🅿️ PARQUEO DE VENTAS STATE
@@ -2293,6 +2311,46 @@ const POS: React.FC = () => {
         }
     }, [identidad]);
 
+    // Reset del panel de anulación. Se llama al cerrar el modal Y al buscar otra
+    // factura: sin esto, el cajero abre el panel para la factura A, escribe el
+    // motivo, busca la B (el buscador queda activo arriba) y el botón de anular
+    // sigue armado — con el motivo de A y apuntando a la B.
+    const limpiarAnulacion = useCallback(() => {
+        setMostrarAnular(false);
+        setMotivoAnulacion('');
+        setErrorAnulacion('');
+    }, []);
+
+    const anularFactura = useCallback(async () => {
+        if (!returnSaleData?.id) return;
+        setAnulando(true);
+        setErrorAnulacion('');
+        try {
+            const token = localStorage.getItem('nortex_token');
+            const res = await fetch(`/api/sales/${returnSaleData.id}/cancel`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ motivo: motivoAnulacion }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'No se pudo anular la factura');
+
+            // El stock volvió y la caja cambió: se refresca lo que el cajero
+            // tiene a la vista, en vez de dejarlo con números viejos.
+            await Promise.all([fetchProducts(), fetchCashBalance()]);
+            limpiarAnulacion();
+            setReturnSaleData(null);
+            setShowReturnModal(false);
+            setReturnItems([]);
+            setReturnSaleSearch('');
+            alert('Factura anulada. La mercadería volvió al inventario y la venta dejó de contar en los reportes.');
+        } catch (err: any) {
+            setErrorAnulacion(err?.message || 'No se pudo anular la factura');
+        } finally {
+            setAnulando(false);
+        }
+    }, [returnSaleData, motivoAnulacion, limpiarAnulacion, fetchProducts, fetchCashBalance]);
+
     const handleRemoveHeldCart = useCallback((heldId: string) => {
         setHeldCarts(prev => prev.filter(h => h.id !== heldId));
         setHeldCartToDiscard(null);
@@ -3176,6 +3234,10 @@ const POS: React.FC = () => {
 
     const resetReturnFlow = () => {
         returnRequestRef.current = null;
+        // El panel de anulación se limpia acá, con todo lo demás: si quedara
+        // armado, el cajero podría reabrir el modal, buscar OTRA factura y
+        // encontrarse el botón de anular listo con el motivo de la anterior.
+        limpiarAnulacion();
         setShowReturnModal(false);
         setReturnSaleData(null);
         setReturnItems([]);
@@ -3225,6 +3287,10 @@ const POS: React.FC = () => {
             balance: String(raw.balance ?? '0'),
             allowedRefundMethods,
             items,
+            // `?? null` y no `String(...)`: si la factura está vigente el campo
+            // viene null/undefined, y convertirlo a texto daría "null", que es
+            // truthy — la pantalla diría que TODA factura está anulada.
+            cancelledAt: raw.cancelledAt ?? null,
         };
     };
 
@@ -3233,6 +3299,9 @@ const POS: React.FC = () => {
         setReturnSearching(true);
         setReturnGeneralError('');
         setReturnErrors({});
+        // Se busca OTRA factura: el panel de anulación vuelve a cero. Si no, el
+        // motivo escrito para la factura anterior quedaría apuntando a esta.
+        limpiarAnulacion();
         try {
             const token = localStorage.getItem('nortex_token');
             const response = await fetch(`/api/sales/search?q=${encodeURIComponent(returnSaleSearch.trim())}`, {
@@ -5621,6 +5690,81 @@ const POS: React.FC = () => {
                                         </div>
                                     </div>
 
+                                    {/* Una factura YA anulada no ofrece ninguno de los dos
+                                        caminos. Devolver sobre ella sumaría el stock por
+                                        segunda vez (la anulación ya lo devolvió) — el
+                                        backend lo rechaza, pero mostrar el formulario y
+                                        recién ahí decir que no es una pérdida de tiempo
+                                        con un cliente esperando. */}
+                                    {returnSaleData.cancelledAt ? (
+                                        <div className="rounded-control border border-danger/30 bg-danger-soft p-3 flex gap-2.5">
+                                            <Ban size={16} className="text-danger shrink-0 mt-0.5" />
+                                            <div>
+                                                <p className="text-[12px] font-bold text-danger">Esta factura está anulada</p>
+                                                <p className="text-[11px] text-slate-300 leading-snug mt-1">
+                                                    La mercadería ya volvió al inventario y la venta ya no cuenta en los
+                                                    reportes. No hay nada que devolver.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                    <>
+
+                                    {/* ── ANULAR LA FACTURA (DGI-5) ─────────────────────
+                                        Distinto de devolver: devolver es mercadería que
+                                        vuelve de una venta que SÍ ocurrió; anular es
+                                        decir que la factura no debió emitirse. Se ofrece
+                                        acá porque el cajero ya buscó la factura, pero
+                                        separado y en rojo — no es la acción de todos los
+                                        días y no debe confundirse con la devolución. */}
+                                    {!mostrarAnular ? (
+                                        <button
+                                            onClick={() => { setMostrarAnular(true); setErrorAnulacion(''); }}
+                                            className="w-full text-[12px] text-danger hover:bg-danger-soft rounded-control py-2 transition-colors flex items-center justify-center gap-1.5"
+                                        >
+                                            <Ban size={14} /> Esta factura no debió emitirse — anularla
+                                        </button>
+                                    ) : (
+                                        <div className="rounded-control border border-danger/30 bg-danger-soft p-3 space-y-2">
+                                            <p className="text-[12px] font-bold text-danger flex items-center gap-1.5">
+                                                <AlertTriangle size={14} /> Anular la factura completa
+                                            </p>
+                                            <p className="text-[11px] text-slate-300 leading-snug">
+                                                La mercadería vuelve al inventario y la venta deja de contar en los
+                                                reportes y en la declaración. El comprobante NO se borra: queda
+                                                marcado como anulado y su número no se reutiliza.
+                                            </p>
+                                            <textarea
+                                                value={motivoAnulacion}
+                                                onChange={e => setMotivoAnulacion(e.target.value)}
+                                                rows={2}
+                                                maxLength={500}
+                                                placeholder="¿Por qué se anula? (ej: cobro duplicado al mismo cliente)"
+                                                aria-label="Motivo de la anulación"
+                                                className="w-full text-[12px] bg-surface-900 border border-white/10 rounded-control px-2 py-1.5 text-slate-100 outline-none focus:border-danger placeholder:text-slate-500"
+                                            />
+                                            {errorAnulacion && (
+                                                <p role="alert" className="text-[11px] text-danger font-medium">{errorAnulacion}</p>
+                                            )}
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={() => { setMostrarAnular(false); setMotivoAnulacion(''); setErrorAnulacion(''); }}
+                                                    className="flex-1 h-touch rounded-control bg-white/[0.06] text-slate-200 text-[12px] font-bold hover:bg-white/[0.12] transition-colors"
+                                                >
+                                                    Mejor no
+                                                </button>
+                                                <button
+                                                    onClick={anularFactura}
+                                                    disabled={anulando || motivoAnulacion.trim().length < 10}
+                                                    className="flex-1 h-touch rounded-control bg-danger text-white text-[12px] font-bold hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                                                >
+                                                    {anulando ? <Loader2 size={14} className="animate-spin" /> : <Ban size={14} />}
+                                                    Anular factura
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {/* Items Selection */}
                                     <div>
                                         <label className="text-xs font-bold text-slate-300 mb-2 block">Seleccionar Items a Devolver</label>
@@ -5770,6 +5914,8 @@ const POS: React.FC = () => {
                                             Confirmar Devolución
                                         </button>
                                     </div>
+                                    </>
+                                    )}
                                 </>
                             )}
                         </div>
