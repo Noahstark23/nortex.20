@@ -4,6 +4,7 @@ import ImageUploader from './ImageUploader';
 import { formatMoney } from '../utils/money';
 import { trackEvent } from '../utils/analytics';
 import { productFamilyPreset, type ProductFamily } from '../utils/productFamilyPresets';
+import { productValidationMessage } from '../utils/productForm';
 
 interface Product {
     id: string;
@@ -107,9 +108,12 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                     sku: formData.sku.trim().toUpperCase(),
                     name: formData.name.trim(),
                     category: formData.category.trim() || undefined,
-                    price: parseFloat(formData.price),
+                    // Texto decimal, no parseFloat: con F2 el submit salta la
+                    // validación HTML y un precio vacío llegaba como NaN → null,
+                    // que el schema reporta como "Invalid input" sin nombrar nada.
+                    price: formData.price.trim(),
                     // Costo opcional: si el dueño no lo sabe, va 0 (se corrige con la compra).
-                    cost: formData.cost ? parseFloat(formData.cost) : 0,
+                    cost: formData.cost.trim() || '0',
                     // La frontera HTTP conserva el texto para que el servidor
                     // pueda rechazar precisión excesiva antes de tocar Float.
                     stock: formData.stock === '' ? '0' : formData.stock,
@@ -181,7 +185,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                     onClose();
                 }
             } else {
-                setError(data.error || 'Error al crear producto');
+                setError(productValidationMessage(data, 'Error al crear producto'));
                 playSound('error');
             }
         } catch (err) {
