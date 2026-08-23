@@ -7,6 +7,7 @@ import { sanitizeDecimalInput, formatMoney } from '../utils/money';
 import { formatQuantityValue, validateQuantity } from '../utils/quantity';
 import { trackEvent } from '../utils/analytics';
 import { productFamilyPreset, type ProductFamily } from '../utils/productFamilyPresets';
+import { buildCreateProductPayload, productValidationMessage } from '../utils/productForm';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
     RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
@@ -301,7 +302,7 @@ export default function Inventory() {
         name: '', sku: '', description: '', category: '',
         price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, ivaExento: false, reorderPoint: '', maxStock: '',
         wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '',
-        saleMode: 'COUNTED' as 'COUNTED' | 'MEASURED', quantityStep: '1', productFamily: 'GENERAL'
+        saleMode: 'COUNTED' as 'COUNTED' | 'MEASURED', quantityStep: '1', productFamily: 'GENERAL' as ProductFamily
     });
 
     const token = localStorage.getItem('nortex_token');
@@ -884,8 +885,8 @@ export default function Inventory() {
                 setShowEditModal(false);
                 reload();
             } else {
-                const err = await res.json();
-                alert(`Error: ${err.error}`);
+                const err = await res.json().catch(() => ({}));
+                alert(`Error: ${productValidationMessage(err, 'No pudimos actualizar el producto.')}`);
             }
         } catch {
             alert('Error actualizando producto');
@@ -975,16 +976,10 @@ export default function Inventory() {
             const res = await fetch('/api/products', {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({
-                    ...formData,
-                    price: parseFloat(formData.price),
-                    cost: parseFloat(formData.cost),
-                    // Conservar texto decimal hasta la validación autoritativa.
-                    stock: formData.stock === '' ? '0' : formData.stock,
-                    minStock: formData.minStock === '' ? '5' : formData.minStock,
-                    requiresBatchTracking: formData.requiresBatchTracking,
-                    ivaExento: formData.ivaExento
-                })
+                // Los opcionales en blanco se OMITEN y el dinero viaja como texto
+                // decimal: el spread del estado mandaba '' y NaN, y el alta moría
+                // con "Datos de entrada inválidos". Ver utils/productForm.ts.
+                body: JSON.stringify(buildCreateProductPayload(formData))
             });
 
             if (res.ok) {
@@ -1000,8 +995,8 @@ export default function Inventory() {
                 reload();
                 alert('Producto creado exitosamente');
             } else {
-                const error = await res.json();
-                alert(`Error: ${error.error}`);
+                const error = await res.json().catch(() => ({}));
+                alert(`Error: ${productValidationMessage(error, 'No pudimos crear el producto.')}`);
             }
         } catch (e) {
             alert('Error creando producto');

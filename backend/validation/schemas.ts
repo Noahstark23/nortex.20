@@ -22,16 +22,35 @@ import { MAX_QUANTITY, QUANTITY_DECIMAL_PLACES, validateQuantity } from '../../u
 /** Cantidad monetaria: string o number → Decimal-safe string.
  *  Exige FINITO: `parseFloat('Infinity')`/`'1e400'` pasaban el chequeo `>= 0`
  *  y llegaban a columnas Decimal como valores no-finitos (500/rollback, o peor
- *  si algún cálculo los propaga). `Number.isFinite` los rechaza en la frontera. */
+ *  si algún cálculo los propaga).
+ *
+ *  Se valida con Decimal y NO con `parseFloat`, que acepta prefijos: '1,500.00'
+ *  entraba como 1 (pérdida silenciosa de C$1,499 — el peor error posible en
+ *  dinero) y '12abc' cruzaba la frontera para reventar con 500 en el
+ *  `new Decimal(...)` del handler. La misma regla que ya usan las cantidades. */
 const moneyAmount = z
     .union([z.string(), z.number()])
-    .transform((v) => String(v))
-    .refine((v) => Number.isFinite(parseFloat(v)) && parseFloat(v) >= 0, {
-        message: 'El monto debe ser un número positivo',
+    .transform((v) => typeof v === 'string' ? v.trim() : String(v))
+    .superRefine((value, ctx) => {
+        let parsed: Decimal;
+        try {
+            parsed = new Decimal(value);
+        } catch {
+            ctx.addIssue({ code: 'custom', message: 'El monto debe ser un número válido' });
+            return;
+        }
+        // Decimal.js SÍ representa '1e400', pero la columna (y el `.toNumber()`
+        // del handler) no: ahí se vuelve Infinity. El tope sigue siendo el del
+        // chequeo anterior con `Number.isFinite`.
+        if (!parsed.isFinite() || !Number.isFinite(parsed.toNumber())) {
+            ctx.addIssue({ code: 'custom', message: 'El monto debe ser un número finito' });
+        } else if (parsed.isNegative()) {
+            ctx.addIssue({ code: 'custom', message: 'El monto debe ser un número positivo' });
+        }
     });
 
 /** Cantidad monetaria estrictamente mayor que cero */
-const moneyAmountPositive = moneyAmount.refine((v) => parseFloat(v) > 0, {
+const moneyAmountPositive = moneyAmount.refine((v) => decimalPredicate(v, (decimal) => decimal.greaterThan(0)), {
     message: 'El monto debe ser mayor que cero',
 });
 
@@ -303,7 +322,29 @@ export const ProductFamilySchema = z.enum([
 
 const nullablePositiveMoney = z.union([moneyAmountPositive, z.literal(''), z.null()]).optional();
 const nullablePositiveQuantity = z.union([positiveQuantity, z.literal(''), z.null()]).optional();
-const optionalNonNegativeQuantity = nonNegativeQuantity.optional();
+
+/**
+ * Cantidad opcional del formulario de productos.
+ *
+ * Un campo numérico que el dueño deja EN BLANCO llega como `''` (input de texto)
+ * o como `null` (un `parseFloat('')` que JSON.stringify serializa así). Eso
+ * significa "sin valor", no "cantidad inválida": el alta rechazaba con el
+ * genérico "Datos de entrada inválidos" un producto perfectamente válido solo
+ * por dejar vacíos Punto de Reorden y Stock Objetivo. Se normaliza a `undefined`
+ * para que el handler aplique su propio default (`reorderPoint ?? '0'` en el
+ * alta, "no cambiar" en la edición). Un valor presente pero inválido (-1,
+ * '1.00001', 'Infinity') sigue fallando con su mensaje específico.
+ */
+const optionalNonNegativeQuantity = z
+    .union([nonNegativeQuantity, z.literal(''), z.null()])
+    .optional()
+    .transform((value) => (value === '' || value === null ? undefined : value));
+
+/** Igual que la anterior, pero el blanco cae en el default del contrato de alta. */
+const nonNegativeQuantityWithDefault = (fallback: string) => z
+    .union([nonNegativeQuantity, z.literal(''), z.null()])
+    .optional()
+    .transform((value) => (value === undefined || value === null || value === '' ? fallback : value));
 
 const ProductFieldsSchema = z.object({
     name:                  z.string().trim().min(1, 'Nombre requerido').max(200),
@@ -412,8 +453,8 @@ export const CreateProductSchema = ProductFieldsSchema
         quantityStep: nullablePositiveQuantity,
         productFamily: ProductFamilySchema.optional().nullable(),
         unit:          z.string().trim().min(1).max(40).default('unidad'),
-        stock:         nonNegativeQuantity.default('0'),
-        minStock:      nonNegativeQuantity.default('5'),
+        stock:         nonNegativeQuantityWithDefault('0'),
+        minStock:      nonNegativeQuantityWithDefault('5'),
     })
     .superRefine(addQuantityConfigurationIssues);
 
