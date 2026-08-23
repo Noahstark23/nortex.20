@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 # NORTEX — instala el cron del backup diario (Capa 6 del Security Loop).
+#
+# ⚠️  SOLO para un despliegue SIN Docker. En el despliegue real (Coolify +
+#     docker-compose) el backup lo corre el servicio `backup` del compose y este
+#     script NO hace falta: la base no publica puertos y el nombre `db` solo
+#     resuelve dentro de la red de compose, así que un cron del HOST no puede
+#     alcanzarla para hacer el dump.
+#
 # Correr UNA VEZ en el servidor de producción (como root):
 #   bash scripts/setup-backup-cron.sh
 # Requiere: scripts/backup-db.sh configurado (destino SEPARADO del Droplet).

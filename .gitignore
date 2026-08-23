@@ -38,3 +38,6 @@ design-qa.md
 # El pipeline canónico usa npm + package-lock.json
 pnpm-lock.yaml
 pnpm-workspace.yaml
+
+# Dumps locales del smoke de backup (CI y pruebas a mano)
+tmp-backups/
