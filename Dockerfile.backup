@@ -7,7 +7,15 @@
 
 # El `aws` v2 oficial es un bundle autocontenido (trae su propio Python), así que
 # se copia tal cual en vez de instalar un awscli 1.x viejo desde los repos.
-FROM amazon/aws-cli:2 AS awscli
+#
+# OJO CON EL ORIGEN: la imagen oficial NO está en Docker Hub — `amazon/aws-cli`
+# ahí no existe y el build falla con "not found". Vive en ECR Public, que además
+# no publica un tag `2` (solo `latest` y versiones exactas), así que se pinea la
+# versión como el resto del proyecto. Para actualizar: ver las tags en
+# https://gallery.ecr.aws/aws-cli/aws-cli y cambiar el número acá.
+# Si algún día el host no pudiera alcanzar public.ecr.aws, la alternativa es el
+# instalador oficial (awscli-exe-linux-<arch>.zip) dentro de la imagen base.
+FROM public.ecr.aws/aws-cli/aws-cli:2.36.29 AS awscli
 
 # Base mysql:8.0 a propósito: el `mysqldump` DEBE ser de la misma familia que el
 # servidor. El cliente de MariaDB que traen las imágenes Debian produce dumps que

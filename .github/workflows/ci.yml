@@ -194,10 +194,13 @@ jobs:
       - name: La imagen del servicio de backup construye
         run: docker build -f Dockerfile.backup -t nortex-backup:ci .
 
-      - name: Herramientas presentes en la imagen
+      # Se EJECUTAN, no solo se busca el binario: un `COPY --from` con la ruta
+      # equivocada deja un symlink colgante que `command -v` no distingue de uno
+      # bueno, y el backup fallaría recién en producción al querer subir el dump.
+      - name: Las herramientas de la imagen realmente funcionan
         run: |
           docker run --rm --entrypoint bash nortex-backup:ci -lc \
-            'command -v mysqldump && command -v aws && command -v gzip && command -v find'
+            'set -e; mysqldump --version; aws --version; command -v gzip; command -v find'
 
   # ── Despliegue con COMPUERTA: solo corre en main, cuando la variable
   # NORTEX_DEPLOY_ENABLED vale "true", y después de verify + schema smoke.
