@@ -539,7 +539,16 @@ export const OpenShiftSchema = z.object({
     initialCash: moneyAmount,
     // Fase D (gaveta multi-moneda): fondo inicial en dólares, opcional.
     initialCashUsd: moneyAmount.optional(),
-    employeePin: z.string().regex(/^\d{4}$/, 'El PIN debe ser exactamente 4 dígitos numéricos'),
+    // El PIN dejó de ser OBLIGATORIO: cuando no viene, el backend resuelve al
+    // cajero desde el usuario del JWT (ver services/shiftIdentity.ts). Pedirlo
+    // siempre era fricción a medio cobro y, para el dueño, puro trámite — la
+    // pantalla imprimía el PIN inicial y además lo precargaba.
+    //
+    // Si VIENE, se valida igual de estricto que antes: un PIN mal formado tiene
+    // que fallar como PIN incorrecto, NUNCA colarse como "no vino" y abrir la
+    // caja a nombre de otro. Por eso el `.optional()` va sobre el regex y no se
+    // afloja el regex.
+    employeePin: z.string().regex(/^\d{4}$/, 'El PIN debe ser exactamente 4 dígitos numéricos').optional(),
 });
 
 // POST /api/shifts/close

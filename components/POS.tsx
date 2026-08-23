@@ -195,10 +195,12 @@ const TarjetaProducto = React.memo<{
 ));
 TarjetaProducto.displayName = 'TarjetaProducto';
 
-// PIN que el backend siembra para el dueño al registrar el negocio. Ya se
-// imprime dentro del modal de apertura, así que además se precarga: escribirlo a
-// mano no es una medida de seguridad, es un peaje para el que viene a probar.
-const PIN_DUENO_POR_DEFECTO = '1234';
+// Acá vivía PIN_DUENO_POR_DEFECTO = '1234', el PIN que el backend siembra al
+// registrar el negocio: el modal lo IMPRIMÍA en pantalla y además lo precargaba.
+// Un secreto que la propia pantalla revela y rellena no es un control de acceso,
+// es un trámite — y encima caía a medio cobro, con el cliente enfrente. Ahora la
+// apertura no pide PIN salvo que el negocio lo exija (`requireCashierPin`), y el
+// servidor resuelve al cajero desde el JWT (backend/services/shiftIdentity.ts).
 
 /**
  * Identidad del cliente para namespacear el carrito guardado. Mismo par de
@@ -652,9 +654,14 @@ const POS: React.FC = () => {
     // Fondo inicial: valor REAL '0', no un placeholder "0.00" que parece cargado
     // y en realidad deja el campo vacío contra un input `required`.
     const [initialCash, setInitialCash] = useState('0');
-    // El PIN inicial del dueño ya está impreso en el propio modal: precargarlo
-    // evita que quien viene a EVALUAR el POS tenga que transcribirlo.
-    const [employeePin, setEmployeePin] = useState(() => (isOwnerAdmin ? PIN_DUENO_POR_DEFECTO : ''));
+    const [employeePin, setEmployeePin] = useState('');
+    // ¿Este negocio exige PIN para abrir la caja? Arranca en `false` —el default
+    // del backend— para que el camino sin fricción sea también el que se pinta
+    // primero. Si la lectura falla, se queda en false y la apertura va sin PIN:
+    // el servidor decide igual, y en el peor caso responde PIN_REQUERIDO y el
+    // modal lo muestra recién ahí. Al revés (asumir que se exige) le pondría un
+    // campo de más a todos los negocios cuando la red falla.
+    const [exigePin, setExigePin] = useState(false);
     // Errores propios de la apertura (en español, debajo del campo).
     const [errorApertura, setErrorApertura] = useState<{ pin?: string; fondo?: string; general?: string }>({});
     const [declaredCash, setDeclaredCash] = useState('');
@@ -936,6 +943,18 @@ const POS: React.FC = () => {
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (d && typeof d.allowNegativeStock === 'boolean') setPermiteStockNegativo(d.allowNegativeStock); })
             .catch(() => { /* sin dato: el aviso sale sin consecuencia */ });
+    }, []);
+
+    // ¿La caja pide PIN? Se consulta al montar, no al abrir el modal: cuando el
+    // cajero aprieta "Cobrar" la respuesta ya tiene que estar, si no la pantalla
+    // parpadearía entre las dos versiones del formulario.
+    useEffect(() => {
+        const t = localStorage.getItem('nortex_token');
+        if (!t) return;
+        fetch('/api/tenant/cashier-settings', { headers: { Authorization: `Bearer ${t}` } })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d && typeof d.requireCashierPin === 'boolean') setExigePin(d.requireCashierPin); })
+            .catch(() => { /* sin dato: se abre sin PIN y decide el servidor */ });
     }, []);
 
     // ── P0-1 · Validar el carrito rescatado contra el turno real ───────────
@@ -1472,7 +1491,9 @@ const POS: React.FC = () => {
         // Validación propia en español (el form va `noValidate`: el globo nativo
         // del navegador está en inglés y no tiene arreglo por CSS).
         const errores: typeof errorApertura = {};
-        if (!/^\d{4}$/.test(employeePin)) errores.pin = 'El PIN son 4 dígitos.';
+        // El PIN solo se valida si el negocio lo exige. Cuando no, ni siquiera
+        // se muestra el campo: el servidor resuelve al cajero desde el JWT.
+        if (exigePin && !/^\d{4}$/.test(employeePin)) errores.pin = 'El PIN son 4 dígitos.';
         if (initialCash.trim() === '') errores.fondo = 'Ingresá el fondo inicial. Si arrancás sin efectivo, poné 0.';
         else if (toDecimal(initialCash).isNegative()) errores.fondo = 'El fondo inicial no puede ser negativo.';
         setErrorApertura(errores);
@@ -1486,15 +1507,19 @@ const POS: React.FC = () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 // El fondo viaja por Decimal (nunca parseFloat sobre dinero).
-                body: JSON.stringify({ initialCash: Number(toDecimal(initialCash).toFixed(2)), employeePin })
+                // El PIN solo se manda si el negocio lo exige: mandarlo igual
+                // gastaría cupo del rate-limit y volvería a atar la apertura a
+                // un dato que el servidor ya sabe resolver solo.
+                body: JSON.stringify({
+                    initialCash: Number(toDecimal(initialCash).toFixed(2)),
+                    ...(exigePin ? { employeePin } : {}),
+                })
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
             setCurrentShift(data);
             setShowOpenShift(false);
-            // Se restituye el default (igual que al montar): si el turno se cierra
-            // y hay que reabrir, el dueño no vuelve a transcribir su PIN.
-            setEmployeePin(isOwnerAdmin ? PIN_DUENO_POR_DEFECTO : '');
+            setEmployeePin('');
             setErrorApertura({});
             if (resumePaymentAfterShift) {
                 setResumePaymentAfterShift(false);
@@ -2449,24 +2474,29 @@ const POS: React.FC = () => {
     const handleCreditOverride = useCallback(async () => {
         if (creditOverridePin.length !== 4) return;
         try {
-            // Fetch employees to find OWNER with matching PIN
-            const res = await fetch('/api/employees', { headers });
-            if (!res.ok) return;
-            const employees = await res.json();
-            const owner = employees.find((e: any) =>
-                (e.role === 'MANAGER' || e.role === 'OWNER') && e.pin === creditOverridePin
-            );
-            if (owner) {
+            // La verificación es del SERVIDOR. Antes se hacía acá: se pedía
+            // GET /api/employees y se comparaba `empleado.pin === tecleado` —
+            // pero ese endpoint borra el PIN de la respuesta, así que la
+            // comparación era `undefined === '1234'` y esta autorización NUNCA
+            // funcionó: le decía "PIN incorrecto" al dueño con su propio PIN.
+            const res = await fetch('/api/employees/verify-pin', {
+                method: 'POST',
+                headers: { ...headers, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pin: creditOverridePin }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data?.autorizado === true) {
                 setCreditOverrideAuthorized(true);
                 setShowCreditPanel(false);
                 playBeep();
             } else {
                 playErrorBeep();
-                alert('PIN incorrecto o no tiene permisos de Dueño/Gerente.');
+                alert(data?.error || 'PIN incorrecto o no tiene permisos de Dueño/Gerente.');
                 setCreditOverridePin('');
             }
         } catch {
-            alert('Error verificando PIN');
+            playErrorBeep();
+            alert('No pudimos verificar el PIN. Revisá la conexión.');
         }
     }, [creditOverridePin, headers]);
 
@@ -4315,20 +4345,24 @@ const POS: React.FC = () => {
                         </div>
 
                         <form onSubmit={handleOpenShift} noValidate className="p-5 space-y-4">
-                            {isOwnerAdmin && employeePin === PIN_DUENO_POR_DEFECTO && (
-                                <div className="flex items-center gap-2 px-3 py-2.5 rounded-control bg-brand-soft border border-brand/20 text-sm text-brand">
-                                    <Check size={16} className="shrink-0" />
-                                    <span>Tu PIN inicial ya está listo.</span>
-                                </div>
-                            )}
+                            {/* El PIN solo aparece si el negocio lo exige (varios
+                                cajeros sobre una misma cuenta). Apagado —el
+                                default—, el servidor resuelve al cajero desde el
+                                JWT y esta pantalla queda en un número y un botón.
 
+                                Acá vivía además un cartel "Tu PIN inicial ya está
+                                listo", que se cayó con el PIN precargado: la
+                                pantalla imprimía y rellenaba el 1234 sembrado. Un
+                                secreto que la propia pantalla revela no es un
+                                control de acceso. */}
+                            {exigePin && (
                             <div>
                                 <label className="block text-xs font-semibold text-slate-400 mb-1.5">PIN de caja</label>
                                 <input
                                     type="password"
                                     inputMode="numeric"
                                     maxLength={4}
-                                    autoFocus={!isOwnerAdmin}
+                                    autoFocus
                                     aria-label="PIN de caja"
                                     className="w-full h-touch px-4 tracking-[0.45em] text-center text-xl font-bold border border-white/10 rounded-control focus:border-brand focus:ring-2 focus:ring-brand/30 outline-none text-slate-100 bg-surface-800/40"
                                     value={employeePin}
@@ -4340,6 +4374,7 @@ const POS: React.FC = () => {
                                 />
                                 {errorApertura.pin && <p className="text-xs text-danger mt-1.5">{errorApertura.pin}</p>}
                             </div>
+                            )}
 
                             <div>
                                 <label className="block text-xs font-semibold text-slate-400 mb-1.5">Efectivo con el que empezás</label>
@@ -4350,6 +4385,10 @@ const POS: React.FC = () => {
                                         inputMode="decimal"
                                         aria-label="Fondo inicial en efectivo"
                                         className="w-full h-touch pl-10 pr-4 text-lg font-bold border border-white/10 rounded-control focus:border-brand focus:ring-2 focus:ring-brand/30 outline-none text-slate-100 bg-surface-800/40 tabular-nums"
+                                        // Sin PIN este es el primer (y único)
+                                        // campo: el foco tiene que caer acá.
+                                        autoFocus={!exigePin}
+                                        onFocus={e => e.currentTarget.select()}
                                         value={initialCash}
                                         onChange={e => { setInitialCash(sanitizeDecimalInput(e.target.value)); setErrorApertura(prev => ({ ...prev, fondo: undefined })); }}
                                     />
@@ -4363,7 +4402,7 @@ const POS: React.FC = () => {
                                 <p className="text-xs text-danger bg-danger-soft border border-danger/20 rounded-control px-3 py-2">{errorApertura.general}</p>
                             )}
 
-                            <button type="submit" disabled={shiftLoading || employeePin.length !== 4} className="w-full h-pay rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                            <button type="submit" disabled={shiftLoading || (exigePin && employeePin.length !== 4)} className="w-full h-pay rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                                 {shiftLoading && <Loader2 size={18} className="animate-spin" />}
                                 {shiftLoading ? 'Abriendo caja…' : resumePaymentAfterShift ? 'Abrir caja y cobrar' : 'Abrir caja'}
                                 {!shiftLoading && <ArrowRight size={18} />}

@@ -44,6 +44,12 @@ model Tenant {
   // Inventario: si true, las ventas/salidas pueden dejar el stock en negativo
   // (negocios que venden sin contar; el Kardex refleja la realidad). Default false.
   allowNegativeStock   Boolean   @default(false)
+  // Caja: si true, abrir la caja exige el PIN del empleado. APAGADO por defecto
+  // —el PIN era puro trámite para el dueño de una pulpería, y el muro caía a
+  // medio cobro—. Se prende en el negocio donde VARIOS CAJEROS COMPARTEN UNA
+  // MISMA CUENTA: ahí el PIN es lo único que le pone nombre a un faltante del
+  // arqueo. Si cada quien entra con su usuario, `Shift.userId` ya lo resuelve.
+  requireCashierPin    Boolean   @default(false)
   // Campos Fiscales DGI
   address              String? // Dirección fiscal
   phone                String? // Teléfono del negocio

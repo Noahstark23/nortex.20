@@ -23,6 +23,7 @@ import { checkRole } from './middleware/checkRole';
 import { BODEGUERO_ROLE, redactBodegueroProduct } from './security/bodegueroPolicy';
 import { calculateTenantScore } from './services/scoring';
 import { ESTADO_ANULADA, puedeAnularse, planDeReversion, textoUtil } from './services/saleCancellation';
+import { decidirIdentidadCajero, pinNormalizado, explicarModo } from './services/shiftIdentity';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { composeSeedCatalog } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
@@ -2210,6 +2211,70 @@ app.post('/api/employees', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTAN
     } catch (error) { res.status(500).json({ error: 'Error creando empleado' }); }
 });
 
+/**
+ * POST /api/employees/verify-pin — ¿este PIN es de alguien que puede autorizar?
+ *
+ * QUÉ ARREGLA: el "fiado inteligente" del POS (autorizar crédito por encima del
+ * límite del cliente) verificaba el PIN **en el navegador**: pedía
+ * `GET /api/employees` y comparaba `empleado.pin === pinTecleado`. Pero ese
+ * endpoint BORRA el PIN de la respuesta —y hace bien—, así que `empleado.pin`
+ * era siempre `undefined`, la comparación siempre falsa y la autorización
+ * **nunca funcionó**: respondía "PIN incorrecto" al dueño tecleando su propio
+ * PIN. Estaba muerta desde que se blindó la respuesta.
+ *
+ * Y si el PIN sí hubiera viajado, habría sido peor: cualquiera con la consola
+ * abierta leía los PINes de todo el personal.
+ *
+ * La verificación va donde tiene que ir. El PIN entra, el veredicto sale; el PIN
+ * nunca sale. Solo confirma si quien lo tecleó tiene rango para autorizar —no
+ * devuelve el nombre ni el id—: para decidir si se fía no hace falta más, y
+ * menos superficie es menos que filtrar.
+ */
+const verifyPinLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 15,
+    message: { error: '🔒 Demasiados intentos de autorización. Esperá 15 minutos.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+    // Por usuario del JWT, no por IP: una tienda entera comparte el router.
+    keyGenerator: (req: any) => {
+        const userId = (req as AuthRequest).userId;
+        return userId ? `u:${userId}` : `ip:${req.ip}`;
+    },
+});
+app.post('/api/employees/verify-pin', authenticate, verifyPinLimiter as any, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const pin = pinNormalizado(req.body?.pin);
+    if (pin === null || !/^\d{4}$/.test(pin)) {
+        return res.status(400).json({ error: 'El PIN debe ser exactamente 4 dígitos numéricos.' });
+    }
+    try {
+        // Capa 1: el tenant sale del JWT. Un PIN de otro negocio no autoriza acá.
+        const empleado = await prisma.employee.findFirst({
+            where: { tenantId: authReq.tenantId!, pin, status: 'ACTIVE' },
+            select: { role: true },
+        });
+        const autoriza = !!empleado && ['OWNER', 'MANAGER', 'ADMIN'].includes(empleado.role);
+        // Mismo cuerpo para "no existe" y "existe pero no tiene rango": si la
+        // respuesta los distinguiera, este endpoint serviría para enumerar los
+        // PINes del personal a razón de un intento por consulta.
+        if (!autoriza) {
+            return res.status(403).json({ autorizado: false, error: 'PIN incorrecto o sin permisos de Dueño/Gerente.' });
+        }
+        await prisma.auditLog.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                action: 'CREDIT_OVERRIDE_AUTHORIZED',
+                details: JSON.stringify({ rolAutorizante: empleado!.role }),
+            },
+        });
+        res.json({ autorizado: true });
+    } catch (error: any) {
+        res.status(500).json({ error: 'Error verificando el PIN.' });
+    }
+});
+
 // PATCH /api/employees/:id/pin — Cambiar PIN de empleado
 app.patch('/api/employees/:id/pin', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
@@ -3374,29 +3439,109 @@ app.post('/api/shifts/:id/tomar', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
         res.status(500).json({ error: 'No pudimos tomar la caja. Intentá de nuevo.' });
     }
 });
-// Rate limit estricto para apertura de caja: el PIN de 4 dígitos se coteja contra la
-// BD, así que sin límite dedicado se puede enumerar el PIN de un compañero bajo el
-// globalLimiter. 10 intentos/hora por IP corta la fuerza bruta (mismo patrón loginLimiter).
+// Rate limit para apertura de caja: el PIN de 4 dígitos se coteja contra la BD,
+// así que sin límite dedicado se puede enumerar el PIN de un compañero bajo el
+// globalLimiter.
+//
+// DOS CORRECCIONES sobre la versión anterior, que era 10/hora por IP a secas:
+//
+// 1. `skip`: una apertura SIN PIN no adivina nada —la identidad la resuelve el
+//    servidor desde el JWT—, así que no tiene por qué gastar cupo. Antes, con
+//    el PIN obligatorio, todo intento consumía; ahora el cupo se reserva para
+//    lo único que es adivinable.
+// 2. `keyGenerator` por usuario del JWT y no por IP. Una tienda entera comparte
+//    el router, y las telefónicas de Nicaragua ponen a miles de clientes detrás
+//    del mismo NAT: con la llave por IP, un cajero que tecleaba mal su PIN diez
+//    veces dejaba sin abrir caja a todo el local —y potencialmente a otros
+//    negocios— durante una hora. El que fuerza un PIN necesita un JWT válido
+//    igual, así que la llave por usuario acota mejor sin abrir la puerta.
+//    Fallback a IP para las peticiones sin token (que igual mueren en
+//    `authenticate`).
 const shiftOpenLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
     max: 10,
-    message: { error: '🔒 Demasiados intentos de apertura de caja. Espera 1 hora.' },
+    message: { error: '🔒 Demasiados intentos con PIN incorrecto. Esperá 1 hora o abrí la caja sin PIN.' },
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req: any) => pinNormalizado(req.body?.employeePin) === null,
+    keyGenerator: (req: any) => {
+        const userId = (req as AuthRequest).userId;
+        return userId ? `u:${userId}` : `ip:${req.ip}`;
+    },
 });
-app.post('/api/shifts/open', shiftOpenLimiter as any, authenticate, validate(OpenShiftSchema), async (req: any, res: any) => {
+// OJO con el ORDEN: `authenticate` va ANTES del limiter porque `keyGenerator`
+// necesita `req.userId`, que lo pone ese middleware. Al revés, la llave caía
+// siempre al fallback por IP y el cambio no servía de nada. Las peticiones sin
+// token igual mueren en `authenticate` y están cubiertas por el globalLimiter.
+app.post('/api/shifts/open', authenticate, shiftOpenLimiter as any, validate(OpenShiftSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { initialCash, initialCashUsd, employeePin } = req.body;
 
     try {
-        // PIN ya validado por Zod (regex \d{4})
-        const employee = await prisma.employee.findFirst({
-            where: { tenantId: authReq.tenantId, pin: String(employeePin) }
+        // ── Quién abre esta caja ───────────────────────────────────────────
+        // El PIN dejó de ser obligatorio. La decisión vive en la función PURA
+        // `decidirIdentidadCajero` (services/shiftIdentity.ts) y acá solo se
+        // juntan los datos que necesita. Regla dura: cuando no se puede saber
+        // quién es el cajero, NO se inventa — `employeeId` queda en null (el
+        // schema lo permite) y la auditoría dice por qué. Adivinar pondría el
+        // faltante del arqueo a nombre de quien quizá ni estaba en el local.
+        const pinDado = pinNormalizado(employeePin);
+
+        const tenantCfg = await prisma.tenant.findUnique({
+            where: { id: authReq.tenantId! },
+            select: { requireCashierPin: true },
         });
 
-        if (!employee) {
-            return res.status(401).json({ error: 'PIN incorrecto. No se encontró ningún empleado con ese PIN.' });
+        // El PIN solo se consulta si vino: sin PIN no hay nada que cotejar.
+        const empleadoDelPin = pinDado
+            ? await prisma.employee.findFirst({
+                where: { tenantId: authReq.tenantId, pin: pinDado },
+                select: { id: true, firstName: true, lastName: true },
+            })
+            : null;
+
+        // Empleado enlazado al usuario del JWT. `Employee.userId` es @unique, y
+        // el registro del negocio ya lo enlaza: por acá entra el dueño y nunca
+        // ve un PIN.
+        const empleadoDelUsuario = (!pinDado && authReq.userId)
+            ? await prisma.employee.findFirst({
+                where: { tenantId: authReq.tenantId, userId: authReq.userId },
+                select: { id: true, firstName: true, lastName: true },
+            })
+            : null;
+
+        // `take: 2` a propósito: solo interesa distinguir "exactamente uno" de
+        // "más de uno". Traer la lista entera sería un findMany sin límite
+        // sobre una tabla que crece con el negocio (guardrail 2 de escalado).
+        const empleadosActivos = (!pinDado && !empleadoDelUsuario)
+            ? await prisma.employee.findMany({
+                where: { tenantId: authReq.tenantId, status: 'ACTIVE' },
+                select: { id: true, firstName: true, lastName: true },
+                take: 2,
+            })
+            : [];
+
+        const identidad = decidirIdentidadCajero({
+            requierePin: tenantCfg?.requireCashierPin ?? false,
+            pinDado,
+            empleadoDelPin: empleadoDelPin?.id ?? null,
+            empleadoDelUsuario: empleadoDelUsuario?.id ?? null,
+            empleadosActivos: empleadosActivos.map(e => e.id),
+        });
+
+        if (!identidad.ok) {
+            // 401 para el PIN equivocado (credencial), 400 para el PIN que
+            // falta (petición incompleta): son problemas distintos y el POS
+            // reacciona distinto a cada uno.
+            const codigoHttp = identidad.codigo === 'PIN_INCORRECTO' ? 401 : 400;
+            return res.status(codigoHttp).json({ error: identidad.mensaje, codigo: identidad.codigo });
         }
+
+        // Nombre del cajero para la auditoría, si se pudo determinar.
+        const employee =
+            identidad.employeeId === null ? null :
+            [empleadoDelPin, empleadoDelUsuario, ...empleadosActivos]
+                .find(e => e?.id === identidad.employeeId) ?? null;
 
         // Verificar que no haya ya una caja abierta
         const existingShift = await prisma.shift.findFirst({
@@ -3416,7 +3561,7 @@ app.post('/api/shifts/open', shiftOpenLimiter as any, authenticate, validate(Ope
                 data: {
                     tenantId: authReq.tenantId,
                     userId: authReq.userId,
-                    employeeId: employee.id,
+                    employeeId: identidad.employeeId,
                     initialCash,
                     initialCashUsd: initialCashUsd !== undefined ? initialCashUsd : 0,
                     status: 'OPEN'
@@ -3438,8 +3583,17 @@ app.post('/api/shifts/open', shiftOpenLimiter as any, authenticate, validate(Ope
                         after: {
                             shiftId: created.id,
                             initialCash: String(created.initialCash),
-                            employeeId: employee.id,
-                            cajero: `${employee.firstName} ${employee.lastName}`,
+                            employeeId: identidad.employeeId,
+                            // `null` cuando no se pudo determinar el cajero. NO
+                            // se rellena con el nombre del usuario: quien lea
+                            // esto en seis meses tiene que poder distinguir
+                            // "no se supo quién" de "fue el dueño".
+                            cajero: employee ? `${employee.firstName} ${employee.lastName}` : null,
+                            // Cómo se determinó. Es el dato que permite auditar
+                            // un faltante: un turno abierto en modo PIN tiene
+                            // prueba de presencia; uno en SIN_IDENTIDAD, no.
+                            modoIdentidad: identidad.modo,
+                            comoSeSupo: explicarModo(identidad.modo),
                         },
                     }),
                 },
@@ -9634,6 +9788,60 @@ app.get('/api/tenant/inventory-settings', authenticate, async (req: any, res: an
     } catch (error: any) {
         console.error('Error al leer configuración de inventario:', error);
         res.status(500).json({ error: 'Error al leer configuración de inventario' });
+    }
+});
+
+// GET /api/tenant/cashier-settings — ¿este negocio exige PIN para abrir caja?
+//
+// Sin `checkRole`, mismo criterio que inventory-settings: el CAJERO es quien
+// necesita el dato, porque de él depende si la pantalla de apertura le pide un
+// PIN o no. Si el POS tuviera que adivinarlo, o mostraría un campo que no hace
+// falta (la fricción que este cambio saca) o lo escondería en el negocio que sí
+// lo exige, y el backend rechazaría la apertura sin que el cajero entienda por
+// qué. Solo lectura, tenant del JWT.
+app.get('/api/tenant/cashier-settings', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: authReq.tenantId! },
+            select: { requireCashierPin: true },
+        });
+        if (!tenant) return res.status(404).json({ error: 'Negocio no encontrado' });
+        res.json({ requireCashierPin: tenant.requireCashierPin });
+    } catch (error: any) {
+        console.error('Error al leer configuración de caja:', error);
+        res.status(500).json({ error: 'Error al leer configuración de caja' });
+    }
+});
+
+// PUT /api/tenant/cashier-settings — prender/apagar el PIN obligatorio.
+// Solo OWNER/ADMIN: es una política del negocio, no una preferencia del cajero
+// (si el cajero pudiera apagarla, la protección no protegería de nada).
+app.put('/api/tenant/cashier-settings', authenticate, checkRole(['ADMIN', 'OWNER']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { requireCashierPin } = req.body;
+    if (typeof requireCashierPin !== 'boolean') {
+        return res.status(400).json({ error: 'requireCashierPin debe ser booleano (true/false)' });
+    }
+    try {
+        const tenant = await prisma.tenant.update({
+            where: { id: authReq.tenantId! },
+            data: { requireCashierPin },
+            select: { id: true, requireCashierPin: true },
+        });
+        // Queda en auditoría: apagar el PIN afloja quién responde por un
+        // faltante del arqueo, así que tiene que saberse quién lo apagó y cuándo.
+        await prisma.auditLog.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                action: 'CASHIER_SETTINGS_UPDATED',
+                details: JSON.stringify({ requireCashierPin }),
+            },
+        });
+        res.json({ success: true, data: tenant });
+    } catch (error: any) {
+        res.status(500).json({ error: 'Error al actualizar configuración de caja', details: error.message });
     }
 });
 

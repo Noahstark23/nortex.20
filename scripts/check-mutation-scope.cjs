@@ -113,6 +113,16 @@ const PISO_MUTANTES = {
     // al importar); se mató aseverando el LITERAL 'VOIDED' en el test, no la
     // constante importada — comparar la constante consigo misma no mata nada.
     'backend/services/saleCancellation.ts': 73,
+    // shiftIdentity.ts: quién queda como CAJERO al abrir la caja, ahora que el
+    // PIN dejó de ser obligatorio. 68 mutantes, score medido 100.00%. No es
+    // dinero, pero decide a nombre de quién queda un faltante del arqueo — y
+    // eso es una acusación. Lo que protege: que el PIN, cuando VIENE, gane
+    // siempre (un PIN equivocado no puede caer al modo automático y abrir la
+    // caja a nombre de otro), y que con dos empleados posibles NO se adivine:
+    // se abre sin identidad antes que ponerle el turno a quien quizá ni estaba.
+    // Sus dos sobrevivientes iniciales eran el campo `modo` en los caminos de
+    // rechazo — los tests miraban `codigo` y `employeeId` pero no `modo`.
+    'backend/services/shiftIdentity.ts': 68,
     'backend/services/loanMath.ts': 12,
     // DTO público mínimo de tracking: 5/5; descarta notas, GPS y teléfonos.
     'backend/services/pedidoTrackingService.ts': 5,

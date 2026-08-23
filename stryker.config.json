@@ -32,6 +32,7 @@
     "utils/cartPersistence.ts",
     "utils/posSearch.ts",
     "backend/services/saleCancellation.ts",
+    "backend/services/shiftIdentity.ts",
     "utils/productFamilyPresets.ts",
     "utils/quantity.ts",
     "utils/stockTransferQuantity.ts",
