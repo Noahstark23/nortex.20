@@ -63,9 +63,10 @@
   "final_threshold_comment": "Los presets operativos por familia agregaron 45/45 mutantes. Alcance final: 1752/1760 = 99.5454545%; umbral truncado a 99.54, 0 NoCoverage y sin nuevos ignores.",
   "security_threshold_comment": "La idempotencia offline, el DTO público de tracking y la idempotencia de devoluciones agregaron 98/98 mutantes detectados. Gate definitivo: 1878 instrumentados, 1858 puntuables, 1846 killed + 4 timeout = 1850 detectados, 8 sobrevivientes equivalentes históricos, 0 NoCoverage y 20 ignored preexistentes de IR_TABLE. Score exacto 1850/1858 = 99.56942949407966%; piso truncado a 99.56 sobre 26 módulos protegidos.",
   "html_security_threshold_comment": "El escape HTML y la CSP de vistas fiscales agregaron 27/27 mutantes detectados. Gate definitivo: 1905 instrumentados, 1885 puntuables, 1873 killed + 4 timeout = 1877 detectados, 8 sobrevivientes equivalentes históricos, 0 NoCoverage y 20 ignored preexistentes de IR_TABLE. Score exacto 1877/1885 = 99.57559681697613%; piso truncado a 99.57 sobre 27 módulos protegidos.",
+  "pin_cajero_threshold_comment": "Los dos módulos fiscales/de caja de este cambio entraron al 100%: saleCancellation.ts (73/73 — reglas de ANULACIÓN de comprobantes, DGI-5) y shiftIdentity.ts (68/68 — quién queda como cajero al abrir la caja, ahora que el PIN dejó de ser obligatorio; decide a nombre de QUIÉN queda un faltante del arqueo, que es una acusación). Gate definitivo: 2046 instrumentados, 2026 puntuables, 2014 killed + 4 timeout = 2018 detectados, 8 sobrevivientes equivalentes históricos, 0 NoCoverage y los 20 ignored preexistentes de IR_TABLE. Score exacto 2018/2026 = 99.60513326752222%; piso TRUNCADO a 99.60 — nunca se copia el número impreso del reporte, que viene redondeado y ya costó un CI rojo. Sus dos sobrevivientes iniciales fueron el campo `modo` de shiftIdentity en los caminos de RECHAZO: los tests miraban `codigo` y `employeeId` pero no `modo`, así que borrarlo no rompía nada; se mataron aseverándolo, no bajando el umbral.",
   "thresholds": {
-    "high": 99.57,
-    "low": 99.57,
-    "break": 99.57
+    "high": 99.60,
+    "low": 99.60,
+    "break": 99.60
   }
 }
