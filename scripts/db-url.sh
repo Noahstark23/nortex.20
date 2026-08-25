@@ -45,3 +45,30 @@ parsear_url_mysql() {
   printf -v "${prefijo}_PORT" '%s' "$port"
   printf -v "${prefijo}_NAME" '%s' "${dbname%%\?*}"
 }
+
+escribir_cnf() {
+  # Escribe un option file [client] para mysql/mysqldump. NO es un printf
+  # directo, y esa es toda la gracia:
+  #
+  #   El parser de option files de MySQL corta el valor en `#` (lo trata como
+  #   comienzo de comentario). Una contraseña que contenga `#` llega TRUNCADA y
+  #   el dump muere con "Access denied" — todas las noches, y solo en el
+  #   servidor donde esa contraseña exista, que es la peor forma de fallar.
+  #
+  #   Sin comillas MySQL además RECORTA los espacios del valor, así que una
+  #   contraseña que empiece o termine con espacio también llegaba mal.
+  #
+  #   Entre comillas el `#` es literal, pero ahí sí se interpretan escapes: un
+  #   `\` de la contraseña se comería el carácter siguiente. Por eso se duplica
+  #   `\` y se escapa `"` antes de citar.
+  #
+  # Uso:  escribir_cnf "$CNF" "$DB_USER" "$DB_PASS" "$DB_HOST" "$DB_PORT"
+  local destino="$1" usuario="$2" clave="$3" host="$4" puerto="$5"
+  local u="${usuario//\\/\\\\}"; u="${u//\"/\\\"}"
+  local p="${clave//\\/\\\\}";   p="${p//\"/\\\"}"
+  # umask antes de crear: el archivo nunca existe con permisos amplios, ni por
+  # un instante. La contraseña va en el archivo, nunca en argv (`ps` la vería).
+  ( umask 077; : > "$destino" )
+  printf '[client]\nuser="%s"\npassword="%s"\nhost=%s\nport=%s\n' \
+    "$u" "$p" "$host" "$puerto" > "$destino"
+}

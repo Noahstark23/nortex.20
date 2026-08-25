@@ -120,8 +120,21 @@ jobs:
           --health-timeout=5s
           --health-retries=20
     env:
-      SOURCE_DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_backup_test
-      RESTORE_DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_backup_restore_test
+      # La contraseña es HOSTIL a propósito: `p#a"ss w@rd` (percent-encoded en la
+      # URL, como exige Prisma). Con `root:root` este job pasaba aunque el option
+      # file [client] estuviera mal armado, porque ninguna de esas ocho letras
+      # toca un caso límite del parser de MySQL. Cada carácter de acá cubre un
+      # bug que YA ocurrió o que estaba latente:
+      #   `#`  → MySQL lo trata como comienzo de comentario: sin comillas, la
+      #          contraseña llegaba TRUNCADA y el backup moría todas las noches.
+      #   `"`  → hay que escaparlo dentro del valor citado. Es el único caso que
+      #          no se podía verificar sin un MySQL de verdad; ahora el CI lo
+      #          prueba en cada corrida.
+      #   ` `  → sin comillas MySQL RECORTA los espacios del borde.
+      #   `@`  → el parseo de la URL cortaba por el PRIMER `@` y dejaba el host
+      #          en basura.
+      SOURCE_DATABASE_URL: mysql://respaldo:p%23a%22ss%20w%40rd@127.0.0.1:3306/nortex_backup_test
+      RESTORE_DATABASE_URL: mysql://respaldo:p%23a%22ss%20w%40rd@127.0.0.1:3306/nortex_backup_restore_test
       BACKUP_DIR: ${{ github.workspace }}/tmp-backups
     steps:
       - uses: actions/checkout@v4
@@ -133,6 +146,19 @@ jobs:
 
       - name: Cliente MySQL (mysqldump + mysql)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mysql-client
+
+      # El usuario con el que corre el respaldo. Se crea acá y no en el servicio
+      # porque la contraseña hostil rompería el `health-cmd` del contenedor, que
+      # es una sola línea sin forma cómoda de citarla. El heredoc va con `'SQL'`
+      # entre comillas: así bash NO expande nada y el `#`, el `"` y el espacio
+      # llegan literales a MySQL.
+      - name: Usuario de respaldo con contraseña hostil
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot <<'SQL'
+          CREATE USER 'respaldo'@'%' IDENTIFIED BY 'p#a"ss w@rd';
+          GRANT ALL PRIVILEGES ON *.* TO 'respaldo'@'%' WITH GRANT OPTION;
+          FLUSH PRIVILEGES;
+          SQL
 
       - name: Crear el schema real en la BD de origen
         run: |

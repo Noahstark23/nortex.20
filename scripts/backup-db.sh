@@ -31,7 +31,12 @@
 #   BD no publica puertos y solo se alcanza desde adentro de la red de compose.
 #   A mano (dentro de la red): docker compose run --rm backup bash scripts/backup-db.sh
 #
-set -euo pipefail
+# `-E` (además de `euo pipefail`): sin él, el `trap ... ERR` de abajo NO se
+# hereda dentro de las funciones. Como las credenciales ahora se escriben desde
+# `escribir_cnf`, un fallo ahí adentro mataría el backup SIN disparar la alerta
+# — el peor resultado: falla en silencio y nadie se entera hasta que hace falta
+# restaurar.
+set -Eeuo pipefail
 
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/nortex}"
 BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-7}"
@@ -51,14 +56,20 @@ fail() {
 trap 'fail "línea $LINENO"' ERR
 
 # ── Resolver credenciales de la BD ─────────────────────────────────────────────
+# El `source` va ANTES del `if`, no adentro. Adentro estaba mal: `db-url.sh`
+# aporta DOS cosas —`parsear_url_mysql`, que solo hace falta con DATABASE_URL, y
+# `escribir_cnf`, que hace falta SIEMPRE—. Sourceándolo solo en la rama de
+# DATABASE_URL, un despliegue con MYSQL_USER/MYSQL_PASSWORD moría más abajo con
+# `escribir_cnf: command not found`: otra vez un fallo nocturno, solo en ciertos
+# servidores, con una alerta que dice "línea N" y no explica nada.
+# shellcheck source=scripts/db-url.sh
+source "$(dirname "$0")/db-url.sh"
+
 # Preferimos DATABASE_URL (mysql://user:pass@host:port/db); si no, MYSQL_*.
 if [[ -n "${DATABASE_URL:-}" ]]; then
-  # El parseo vive en scripts/db-url.sh (compartido con la verificación de
-  # restauración): acá cortaba por el PRIMER `@`, así que una contraseña con `@`
-  # dejaba el host en basura y el backup fallaba todas las noches contra un host
+  # El parseo cortaba por el PRIMER `@`, así que una contraseña con `@` dejaba
+  # el host en basura y el backup fallaba todas las noches contra un host
   # inexistente. Tampoco decodificaba el percent-encoding que Prisma exige.
-  # shellcheck source=scripts/db-url.sh
-  source "$(dirname "$0")/db-url.sh"
   parsear_url_mysql "$DATABASE_URL" DB
 else
   DB_HOST="${MYSQL_HOST:-127.0.0.1}"
@@ -81,8 +92,7 @@ mkdir -p "$BACKUP_DIR"
 # Password vía archivo temporal 0600 (NUNCA en argv → no se ve en `ps`).
 CNF="$(mktemp)"; chmod 600 "$CNF"
 trap 'rm -f "$CNF"; trap - ERR' EXIT
-printf '[client]\nuser=%s\npassword=%s\nhost=%s\nport=%s\n' \
-  "$DB_USER" "$DB_PASS" "$DB_HOST" "$DB_PORT" > "$CNF"
+escribir_cnf "$CNF" "$DB_USER" "$DB_PASS" "$DB_HOST" "$DB_PORT"
 
 DUMP_FILE="${BACKUP_DIR}/nortex-${DB_NAME}-${TIMESTAMP}.sql.gz"
 
