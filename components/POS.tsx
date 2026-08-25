@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef, useDeferredValue } from 'react';
+import React, { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef, useDeferredValue } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
@@ -774,6 +774,49 @@ const POS: React.FC = () => {
     // distintos compitiendo con el cobro. Lo operativo se agrupa acá y el rojo
     // queda reservado para lo irreversible (cerrar caja).
     const [showCashActions, setShowCashActions] = useState(false);
+
+    // ── Por qué este menú se posiciona con JS y no con CSS ──────────────────
+    // EL BUG: el menú era `absolute top-full` dentro del botón, y el botón vive
+    // en un contenedor con `overflow-x-auto` (el header scrollea en horizontal
+    // cuando no entran los botones). Por especificación CSS, si un eje del
+    // overflow deja de ser `visible`, el OTRO eje se computa a `auto`: o sea
+    // que `overflow-x-auto` también recorta en vertical. Como el header mide
+    // 56px y el menú cae DEBAJO del botón, quedaba recortado entero. El estado
+    // cambiaba y el chevron giraba, pero no aparecía nada — desde el mostrador
+    // se ve como un botón muerto.
+    //
+    // LA SALIDA: `position: fixed`, que no lo recorta ningún ancestro con
+    // overflow. Pero `fixed` se posiciona contra el viewport, así que hay que
+    // medir dónde quedó el botón. No se ancla al borde derecho del header
+    // porque el botón NO es el último: después viene "Cerrar caja".
+    const botonAccionesCaja = useRef<HTMLButtonElement>(null);
+    const [posicionMenuCaja, setPosicionMenuCaja] = useState<{ top: number; right: number } | null>(null);
+
+    const medirMenuCaja = useCallback(() => {
+        const r = botonAccionesCaja.current?.getBoundingClientRect();
+        if (!r) return;
+        setPosicionMenuCaja({
+            top: r.bottom + 8,
+            // Se alinea el borde DERECHO del menú con el del botón. El mínimo de
+            // 8px evita que en una pantalla angosta se salga fuera de la vista.
+            right: Math.max(8, window.innerWidth - r.right),
+        });
+    }, []);
+
+    useLayoutEffect(() => {
+        if (!showCashActions) { setPosicionMenuCaja(null); return; }
+        medirMenuCaja();
+        // El header scrollea en horizontal y la ventana puede cambiar de tamaño
+        // (girar el teléfono). Sin re-medir, el menú queda flotando lejos del
+        // botón que lo abrió. `true` = fase de captura, para enterarse también
+        // del scroll del contenedor interno, que no burbujea.
+        window.addEventListener('resize', medirMenuCaja);
+        window.addEventListener('scroll', medirMenuCaja, true);
+        return () => {
+            window.removeEventListener('resize', medirMenuCaja);
+            window.removeEventListener('scroll', medirMenuCaja, true);
+        };
+    }, [showCashActions, medirMenuCaja]);
 
     // ==========================================
     // OFFLINE / PWA STATE
@@ -2445,6 +2488,11 @@ const POS: React.FC = () => {
                 case 'Escape':
                     e.preventDefault();
                     // Close any open modal
+                    // El menú de acciones va PRIMERO: es lo más superficial de
+                    // la pila y lo único que se abre sin tapar la pantalla, así
+                    // que Escape tiene que cerrarlo a él y no a lo que haya
+                    // debajo.
+                    if (showCashActions) { setShowCashActions(false); return; }
                     if (completedSale) { handleNewSale(); return; }
                     if (showPaymentOptions) { setShowPaymentOptions(false); return; }
                     if (showCashModal) { setShowCashModal(null); return; }
@@ -2466,7 +2514,7 @@ const POS: React.FC = () => {
         };
         window.addEventListener('keydown', handleHotkey);
         return () => window.removeEventListener('keydown', handleHotkey);
-    }, [handleHoldCart, currentShift, cart, completedSale, processing, showPaymentOptions, showCashPreModal, showCashModal, showCreditPanel, pendingScaleLabelOverride, showHeldCarts, showQuickCreate, showAddModal, showImportModal, showCloseShift, showMovementsList, showOpenShift]);
+    }, [handleHoldCart, currentShift, cart, completedSale, processing, showPaymentOptions, showCashPreModal, showCashModal, showCreditPanel, pendingScaleLabelOverride, showHeldCarts, showQuickCreate, showAddModal, showImportModal, showCloseShift, showMovementsList, showOpenShift, showCashActions]);
 
     // ==========================================
     // 🔴 FIADO INTELIGENTE (Credit Override)
@@ -3702,7 +3750,10 @@ const POS: React.FC = () => {
                     {currentShift && !firstSaleMode && (
                         <div className="relative">
                             <button
+                                ref={botonAccionesCaja}
                                 onClick={() => setShowCashActions(v => !v)}
+                                aria-haspopup="menu"
+                                aria-expanded={showCashActions}
                                 className="flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
                                 title="Acciones de caja"
                             >
@@ -3711,12 +3762,22 @@ const POS: React.FC = () => {
                                 <ChevronDown size={14} className={`transition-transform ${showCashActions ? 'rotate-180' : ''}`} />
                             </button>
 
-                            {showCashActions && (
+                            {showCashActions && posicionMenuCaja && (
                                 <>
                                     {/* Capa de cierre: click afuera cierra el menú. Por debajo
                                         del menú pero por encima del contenido. */}
                                     <div className="fixed inset-0 z-sticky" onClick={() => setShowCashActions(false)} />
-                                    <div className="absolute right-0 top-full mt-2 w-64 bg-surface-800 border border-white/[0.08] rounded-card shadow-premium overflow-hidden z-checkout animate-fade-in-up">
+                                    <div
+                                        role="menu"
+                                        aria-label="Acciones de caja"
+                                        style={{ top: posicionMenuCaja.top, right: posicionMenuCaja.right }}
+                                        // `fixed` y no `absolute`: el contenedor del header tiene
+                                        // overflow y recortaba el menú entero (ver el comentario
+                                        // largo junto a `medirMenuCaja`). El alto máximo es para
+                                        // que en un teléfono acostado el menú no se salga por
+                                        // abajo sin poder alcanzarse.
+                                        className="fixed w-64 max-h-[calc(100vh-5rem)] overflow-y-auto bg-surface-800 border border-white/[0.08] rounded-card shadow-premium z-checkout animate-fade-in-up"
+                                    >
                                         <button
                                             onClick={() => { setShowCashModal('IN'); setCashCategory(''); setShowCashActions(false); }}
                                             className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
