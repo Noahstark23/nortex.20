@@ -22,7 +22,9 @@ import crypto from 'crypto';
 import { checkRole } from './middleware/checkRole';
 import { BODEGUERO_ROLE, redactBodegueroProduct } from './security/bodegueroPolicy';
 import { calculateTenantScore } from './services/scoring';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, assertPeriodOpen, PeriodLockedError } from './services/accounting';
+import { ESTADO_ANULADA, puedeAnularse, planDeReversion, textoUtil } from './services/saleCancellation';
+import { decidirIdentidadCajero, pinNormalizado, explicarModo } from './services/shiftIdentity';
+import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { composeSeedCatalog } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent, PLAN_PRICE_USD, requiereConfirmacionDePagoCorto, calcularNuevoVencimiento } from './services/stripe';
@@ -100,6 +102,7 @@ import { fiscalMonthRange } from './services/nicaTax';
 import {
     validate,
     CreateReturnSchema,
+    CancelSaleSchema,
     CreatePaymentSchema,
     CreateCashMovementSchema,
     CreatePurchaseSchema,
@@ -1406,7 +1409,7 @@ app.get('/api/pos/pulso', authenticate, async (req: any, res: any) => {
 
         const [agg, rows] = await Promise.all([
             prisma.sale.aggregate({
-                where: { tenantId: authReq.tenantId!, createdAt: { gte: hoy0 }, status: { not: 'VOIDED' } },
+                where: { tenantId: authReq.tenantId!, createdAt: { gte: hoy0 }, status: { not: ESTADO_ANULADA } },
                 _count: { _all: true },
                 _sum: { total: true },
             }),
@@ -1417,7 +1420,7 @@ app.get('/api/pos/pulso', authenticate, async (req: any, res: any) => {
                        SUM(total) AS total,
                        COUNT(*) AS ventas
                 FROM \`Sale\`
-                WHERE \`tenantId\` = ${authReq.tenantId} AND createdAt >= ${hace45} AND status <> 'VOIDED'
+                WHERE \`tenantId\` = ${authReq.tenantId} AND createdAt >= ${hace45} AND status <> ${ESTADO_ANULADA}
                 GROUP BY dia
                 ORDER BY dia DESC
                 LIMIT 45` as Promise<Array<{ dia: string; total: any; ventas: any }>>,
@@ -1457,7 +1460,8 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
         const recentSales = await prisma.sale.findMany({
             where: {
                 tenantId: tenantId,
-                createdAt: { gte: sevenDaysAgo }
+                createdAt: { gte: sevenDaysAgo },
+                status: { not: ESTADO_ANULADA },
             },
             select: {
                 createdAt: true,
@@ -1516,7 +1520,7 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             where: {
                 tenantId: tenantId,
                 createdAt: { gte: todayStart },
-                status: { not: 'VOIDED' },
+                status: { not: ESTADO_ANULADA },
             },
             select: {
                 total: true,
@@ -2123,6 +2127,7 @@ app.get('/api/employees', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', 
             by: ['employeeId'],
             where: {
                 tenantId: authReq.tenantId,
+                status: { not: ESTADO_ANULADA },
                 createdAt: { gte: startOfMonth },
                 employeeId: { not: null }
             },
@@ -2206,6 +2211,70 @@ app.post('/api/employees', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTAN
     } catch (error) { res.status(500).json({ error: 'Error creando empleado' }); }
 });
 
+/**
+ * POST /api/employees/verify-pin — ¿este PIN es de alguien que puede autorizar?
+ *
+ * QUÉ ARREGLA: el "fiado inteligente" del POS (autorizar crédito por encima del
+ * límite del cliente) verificaba el PIN **en el navegador**: pedía
+ * `GET /api/employees` y comparaba `empleado.pin === pinTecleado`. Pero ese
+ * endpoint BORRA el PIN de la respuesta —y hace bien—, así que `empleado.pin`
+ * era siempre `undefined`, la comparación siempre falsa y la autorización
+ * **nunca funcionó**: respondía "PIN incorrecto" al dueño tecleando su propio
+ * PIN. Estaba muerta desde que se blindó la respuesta.
+ *
+ * Y si el PIN sí hubiera viajado, habría sido peor: cualquiera con la consola
+ * abierta leía los PINes de todo el personal.
+ *
+ * La verificación va donde tiene que ir. El PIN entra, el veredicto sale; el PIN
+ * nunca sale. Solo confirma si quien lo tecleó tiene rango para autorizar —no
+ * devuelve el nombre ni el id—: para decidir si se fía no hace falta más, y
+ * menos superficie es menos que filtrar.
+ */
+const verifyPinLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 15,
+    message: { error: '🔒 Demasiados intentos de autorización. Esperá 15 minutos.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+    // Por usuario del JWT, no por IP: una tienda entera comparte el router.
+    keyGenerator: (req: any) => {
+        const userId = (req as AuthRequest).userId;
+        return userId ? `u:${userId}` : `ip:${req.ip}`;
+    },
+});
+app.post('/api/employees/verify-pin', authenticate, verifyPinLimiter as any, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const pin = pinNormalizado(req.body?.pin);
+    if (pin === null || !/^\d{4}$/.test(pin)) {
+        return res.status(400).json({ error: 'El PIN debe ser exactamente 4 dígitos numéricos.' });
+    }
+    try {
+        // Capa 1: el tenant sale del JWT. Un PIN de otro negocio no autoriza acá.
+        const empleado = await prisma.employee.findFirst({
+            where: { tenantId: authReq.tenantId!, pin, status: 'ACTIVE' },
+            select: { role: true },
+        });
+        const autoriza = !!empleado && ['OWNER', 'MANAGER', 'ADMIN'].includes(empleado.role);
+        // Mismo cuerpo para "no existe" y "existe pero no tiene rango": si la
+        // respuesta los distinguiera, este endpoint serviría para enumerar los
+        // PINes del personal a razón de un intento por consulta.
+        if (!autoriza) {
+            return res.status(403).json({ autorizado: false, error: 'PIN incorrecto o sin permisos de Dueño/Gerente.' });
+        }
+        await prisma.auditLog.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                action: 'CREDIT_OVERRIDE_AUTHORIZED',
+                details: JSON.stringify({ rolAutorizante: empleado!.role }),
+            },
+        });
+        res.json({ autorizado: true });
+    } catch (error: any) {
+        res.status(500).json({ error: 'Error verificando el PIN.' });
+    }
+});
+
 // PATCH /api/employees/:id/pin — Cambiar PIN de empleado
 app.patch('/api/employees/:id/pin', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
@@ -2277,6 +2346,209 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
 // ==========================================
 
 // Search sale for return flow
+app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CancelSaleSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const saleId = String(req.params.id);
+    const motivo = textoUtil(req.body.motivo);
+
+    try {
+        const sale = await prisma.sale.findFirst({
+            where: { id: saleId, tenantId: authReq.tenantId! },
+            include: {
+                items: { select: { productId: true, quantity: true, costAtSale: true } },
+                _count: { select: { productReturns: true, payments: true } },
+            },
+        });
+        if (!sale) return res.status(404).json({ error: 'Factura no encontrada' });
+
+        // ¿El período contable de la venta está cerrado? Se pregunta con la
+        // MISMA función que usa el motor contable, para no tener dos criterios
+        // de "período cerrado" que puedan discrepar.
+        let periodoCerrado = false;
+        try {
+            await assertPeriodOpen(prisma as any, authReq.tenantId!, sale.createdAt);
+        } catch (err) {
+            if (err instanceof PeriodLockedError) periodoCerrado = true;
+            else throw err;
+        }
+
+        const veredicto = puedeAnularse({
+            status: sale.status,
+            cancelledAt: sale.cancelledAt,
+            devoluciones: sale._count.productReturns,
+            pagos: sale._count.payments,
+            periodoCerrado,
+        }, motivo);
+
+        if (!veredicto.ok) {
+            return res.status(409).json({ error: veredicto.mensaje, codigo: veredicto.codigo });
+        }
+
+        const plan = planDeReversion({
+            total: sale.total.toString(),
+            paymentMethod: sale.paymentMethod,
+            items: sale.items.map(i => ({
+                productId: i.productId,
+                quantity: i.quantity.toString(),
+                costAtSale: i.costAtSale.toString(),
+            })),
+        });
+
+        const resultado = await prisma.$transaction(async (tx: any) => {
+            // 1 · MARCAR PRIMERO, con la guarda en el WHERE. Dos anulaciones
+            //     simultáneas (doble clic, dos pestañas) revertirían el stock
+            //     DOS VECES si esto se hiciera al final: acá la primera gana y
+            //     la segunda ve count === 0 y aborta la transacción entera.
+            const marcada = await tx.sale.updateMany({
+                where: {
+                    id: saleId,
+                    tenantId: authReq.tenantId!,
+                    status: { not: ESTADO_ANULADA },
+                    cancelledAt: null,
+                },
+                data: {
+                    status: ESTADO_ANULADA,
+                    cancelledAt: new Date(),
+                    cancelledById: authReq.userId!,
+                    cancelReason: motivo,
+                    // Una factura anulada no tiene saldo por cobrar.
+                    balance: 0,
+                },
+            });
+            if (marcada.count === 0) {
+                throw new Error('La factura ya fue anulada por otra operación.');
+            }
+
+            // 2 · Devolver la mercadería al inventario. `enforceSufficient:false`
+            //     porque es una ENTRADA: nunca puede fallar por insuficiencia.
+            for (const linea of plan.lineas) {
+                const cantidad = linea.cantidad.toNumber();
+                let stockResult;
+                try {
+                    stockResult = await applyStockDelta(tx, {
+                        tenantId: authReq.tenantId!,
+                        productId: linea.productId,
+                        delta: cantidad,
+                        enforceSufficient: false,
+                    });
+                } catch (err) {
+                    // Producto borrado del catálogo: la venta se anula igual, no
+                    // se puede rehacer inventario de algo que ya no existe.
+                    if (err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') continue;
+                    throw err;
+                }
+
+                await tx.kardexMovement.create({
+                    data: {
+                        tenantId: authReq.tenantId!,
+                        productId: linea.productId,
+                        type: 'RETURN',
+                        quantity: cantidad,
+                        stockBefore: stockResult.stockBefore,
+                        stockAfter: stockResult.stockAfter,
+                        referenceId: saleId,
+                        referenceType: 'SALE_VOIDED',
+                        reason: `Anulación de factura: ${motivo}`,
+                        userId: authReq.userId!,
+                    },
+                });
+            }
+
+            // 3 · Bajar la deuda del cliente si era venta a crédito.
+            let deudaAntes: string | null = null;
+            let deudaDespues: string | null = null;
+            if (sale.customerId && plan.deudaAReversar.greaterThan(0)) {
+                const previo = await tx.customer.findFirst({
+                    where: { id: sale.customerId, tenantId: authReq.tenantId! },
+                    select: { currentDebt: true },
+                });
+                if (previo) {
+                    deudaAntes = String(previo.currentDebt);
+                    // Piso en 0: si el contador venía desfasado, la anulación no
+                    // puede dejar al cliente con deuda NEGATIVA (saldo a favor
+                    // fantasma que después alguien cobra).
+                    const nueva = Decimal.max(
+                        new Decimal(previo.currentDebt.toString()).minus(plan.deudaAReversar),
+                        new Decimal(0)
+                    ).toDecimalPlaces(2);
+                    const act = await tx.customer.update({
+                        where: { id: sale.customerId, tenantId: authReq.tenantId! },
+                        data: { currentDebt: nueva.toNumber() },
+                    });
+                    deudaDespues = String(act.currentDebt);
+                }
+            }
+
+            // 4 · Asiento de REVERSIÓN: los mismos renglones de la venta con
+            //     débito y crédito INVERTIDOS. Cuadra por construcción (el
+            //     original cuadraba) y deja el rastro contable visible, en vez
+            //     de borrar el asiento original — que sería falsear el libro.
+            try {
+                const lineasVenta = buildSaleJournalLines(
+                    Number(sale.total),
+                    plan.costoTotal.toNumber(),
+                    sale.paymentMethod,
+                    sale.exemptTotal == null ? null : Number(sale.exemptTotal),
+                );
+                await createJournalEntry(
+                    tx, authReq.tenantId!,
+                    `Anulación de venta #${saleId.slice(0, 8)}`,
+                    saleId, 'SALE_CANCELLED', authReq.userId!,
+                    lineasVenta.map(l => ({ accountCode: l.accountCode, debit: l.credit, credit: l.debit })),
+                );
+            } catch (accErr) {
+                // Mismo criterio que el resto del sistema: el gancho contable no
+                // tumba la operación de negocio, pero queda en el log.
+                console.warn('⚠️ Asiento de anulación falló (la anulación continúa):', accErr);
+            }
+
+            // 5 · AUDITORÍA INMUTABLE, en la MISMA transacción (Capa 3).
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'SALE_VOIDED',
+                    details: JSON.stringify({
+                        saleId,
+                        invoiceSeries: sale.invoiceSeries,
+                        invoiceNumber: sale.invoiceNumber,
+                        motivo,
+                        before: { status: sale.status, balance: String(sale.balance), cancelledAt: null },
+                        after: { status: ESTADO_ANULADA, balance: '0' },
+                        total: String(sale.total),
+                        costoRevertido: plan.costoTotal.toString(),
+                        // El efectivo NO se compensa con un movimiento de caja: el
+                        // arqueo del turno suma las ventas en efectivo desde las
+                        // filas de Sale, así que excluir las anuladas YA lo
+                        // revierte. Crear además un movimiento contaría doble.
+                        efectivoQueDejaDeContar: plan.efectivoAReversar.toString(),
+                        deudaAntes,
+                        deudaDespues,
+                        items: plan.lineas.map(l => ({
+                            productId: l.productId,
+                            cantidad: l.cantidad.toString(),
+                        })),
+                    }),
+                },
+            });
+
+            return { id: saleId, status: ESTADO_ANULADA, motivo };
+        });
+
+        res.json({ success: true, ...resultado });
+    } catch (error: any) {
+        console.error('Error anulando factura:', error);
+        res.status(500).json({ error: error?.message || 'No se pudo anular la factura' });
+    }
+});
+
+// ==========================================
+// 💸 PAGOS
+// ==========================================
+
+// ⚠️ DEPRECADA: ningún componente del SPA llama esta ruta — los abonos a crédito
+// entran por /api/credits/payment. Se mantiene funcional por compatibilidad de API,
+// pero NO construir consumidores nuevos sobre ella: unificar sobre /api/credits/payment.
 app.get('/api/sales/search', authenticate, checkRole(RETURN_SEARCH_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const q = String(req.query.q ?? '').trim();
@@ -2455,6 +2727,25 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                 },
             });
             if (!sale) throw new ReturnResolutionError('SALE_NOT_FOUND', 404, 'Venta no encontrada');
+
+            // ESPEJO de la guarda de anulación (DGI-5). La regla pura ya rechaza
+            // ANULAR una venta que tiene devoluciones; este es el otro lado de la
+            // misma moneda y sin él la anulación abriría un hueco que antes no
+            // existía: al anular, la mercadería YA volvió al inventario y el
+            // documento ya dejó de contar. Una nota de crédito encima sumaría el
+            // stock por SEGUNDA vez y le acreditaría al cliente un dinero que ya
+            // se le había revertido.
+            //
+            // Va DENTRO de la transacción y DESPUÉS del `FOR UPDATE` sobre Sale:
+            // afuera sería una lectura sin lock y una anulación concurrente
+            // podría colarse entre el chequeo y el movimiento de stock.
+            if (sale.status === ESTADO_ANULADA || sale.cancelledAt !== null) {
+                throw new ReturnResolutionError(
+                    'SALE_VOIDED',
+                    400,
+                    'Esta factura está anulada: la mercadería ya volvió al inventario y la venta ya no cuenta. No se devuelve sobre una factura anulada.'
+                );
+            }
 
             const productIds = [...new Set(sale.items.map((item: any) => item.productId as string))];
             const pedidoReferenceIds = sale.pedidos.map((pedido: { id: string }) => pedido.id);
@@ -2898,12 +3189,19 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
 });
 
 // ==========================================
-// 💸 PAGOS
+// 🚫 ANULACIÓN DE COMPROBANTES (DGI-5)
 // ==========================================
-
-// ⚠️ DEPRECADA: ningún componente del SPA llama esta ruta — los abonos a crédito
-// entran por /api/credits/payment. Se mantiene funcional por compatibilidad de API,
-// pero NO construir consumidores nuevos sobre ella: unificar sobre /api/credits/payment.
+//
+// Anular NO es devolver. Devolver mercadería es una operación nueva sobre una
+// venta que SÍ ocurrió; anular es declarar que el documento no debió emitirse
+// (error de digitación, cobro duplicado, cliente equivocado). Sin este camino,
+// ante una factura mal emitida al operario solo le quedaban dos salidas peores:
+// dejarla como venta real —y declarar de más— o improvisar una devolución que
+// descuadra el inventario con mercadería que nunca se movió.
+//
+// El comprobante anulado NO se borra: queda visible, marcado, con motivo y
+// autor. Su número NO se reutiliza — un correlativo con huecos o repetidos es
+// justo lo que la Disposición Técnica 09-2007 prohíbe.
 app.post('/api/payments', authenticate, validate(CreatePaymentSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { saleId, amount, method } = req.body;
@@ -3085,7 +3383,7 @@ app.post('/api/shifts/:id/tomar', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
         }
 
         const ventasEfectivo = await prisma.sale.aggregate({
-            where: { tenantId: authReq.tenantId!, shiftId: turno.id, paymentMethod: 'CASH' },
+            where: { tenantId: authReq.tenantId!, shiftId: turno.id, paymentMethod: 'CASH', status: { not: ESTADO_ANULADA } },
             _sum: { total: true },
         });
         const efectivo = calcularEfectivoTurno({
@@ -3141,29 +3439,109 @@ app.post('/api/shifts/:id/tomar', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
         res.status(500).json({ error: 'No pudimos tomar la caja. Intentá de nuevo.' });
     }
 });
-// Rate limit estricto para apertura de caja: el PIN de 4 dígitos se coteja contra la
-// BD, así que sin límite dedicado se puede enumerar el PIN de un compañero bajo el
-// globalLimiter. 10 intentos/hora por IP corta la fuerza bruta (mismo patrón loginLimiter).
+// Rate limit para apertura de caja: el PIN de 4 dígitos se coteja contra la BD,
+// así que sin límite dedicado se puede enumerar el PIN de un compañero bajo el
+// globalLimiter.
+//
+// DOS CORRECCIONES sobre la versión anterior, que era 10/hora por IP a secas:
+//
+// 1. `skip`: una apertura SIN PIN no adivina nada —la identidad la resuelve el
+//    servidor desde el JWT—, así que no tiene por qué gastar cupo. Antes, con
+//    el PIN obligatorio, todo intento consumía; ahora el cupo se reserva para
+//    lo único que es adivinable.
+// 2. `keyGenerator` por usuario del JWT y no por IP. Una tienda entera comparte
+//    el router, y las telefónicas de Nicaragua ponen a miles de clientes detrás
+//    del mismo NAT: con la llave por IP, un cajero que tecleaba mal su PIN diez
+//    veces dejaba sin abrir caja a todo el local —y potencialmente a otros
+//    negocios— durante una hora. El que fuerza un PIN necesita un JWT válido
+//    igual, así que la llave por usuario acota mejor sin abrir la puerta.
+//    Fallback a IP para las peticiones sin token (que igual mueren en
+//    `authenticate`).
 const shiftOpenLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
     max: 10,
-    message: { error: '🔒 Demasiados intentos de apertura de caja. Espera 1 hora.' },
+    message: { error: '🔒 Demasiados intentos con PIN incorrecto. Esperá 1 hora o abrí la caja sin PIN.' },
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req: any) => pinNormalizado(req.body?.employeePin) === null,
+    keyGenerator: (req: any) => {
+        const userId = (req as AuthRequest).userId;
+        return userId ? `u:${userId}` : `ip:${req.ip}`;
+    },
 });
-app.post('/api/shifts/open', shiftOpenLimiter as any, authenticate, validate(OpenShiftSchema), async (req: any, res: any) => {
+// OJO con el ORDEN: `authenticate` va ANTES del limiter porque `keyGenerator`
+// necesita `req.userId`, que lo pone ese middleware. Al revés, la llave caía
+// siempre al fallback por IP y el cambio no servía de nada. Las peticiones sin
+// token igual mueren en `authenticate` y están cubiertas por el globalLimiter.
+app.post('/api/shifts/open', authenticate, shiftOpenLimiter as any, validate(OpenShiftSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { initialCash, initialCashUsd, employeePin } = req.body;
 
     try {
-        // PIN ya validado por Zod (regex \d{4})
-        const employee = await prisma.employee.findFirst({
-            where: { tenantId: authReq.tenantId, pin: String(employeePin) }
+        // ── Quién abre esta caja ───────────────────────────────────────────
+        // El PIN dejó de ser obligatorio. La decisión vive en la función PURA
+        // `decidirIdentidadCajero` (services/shiftIdentity.ts) y acá solo se
+        // juntan los datos que necesita. Regla dura: cuando no se puede saber
+        // quién es el cajero, NO se inventa — `employeeId` queda en null (el
+        // schema lo permite) y la auditoría dice por qué. Adivinar pondría el
+        // faltante del arqueo a nombre de quien quizá ni estaba en el local.
+        const pinDado = pinNormalizado(employeePin);
+
+        const tenantCfg = await prisma.tenant.findUnique({
+            where: { id: authReq.tenantId! },
+            select: { requireCashierPin: true },
         });
 
-        if (!employee) {
-            return res.status(401).json({ error: 'PIN incorrecto. No se encontró ningún empleado con ese PIN.' });
+        // El PIN solo se consulta si vino: sin PIN no hay nada que cotejar.
+        const empleadoDelPin = pinDado
+            ? await prisma.employee.findFirst({
+                where: { tenantId: authReq.tenantId, pin: pinDado },
+                select: { id: true, firstName: true, lastName: true },
+            })
+            : null;
+
+        // Empleado enlazado al usuario del JWT. `Employee.userId` es @unique, y
+        // el registro del negocio ya lo enlaza: por acá entra el dueño y nunca
+        // ve un PIN.
+        const empleadoDelUsuario = (!pinDado && authReq.userId)
+            ? await prisma.employee.findFirst({
+                where: { tenantId: authReq.tenantId, userId: authReq.userId },
+                select: { id: true, firstName: true, lastName: true },
+            })
+            : null;
+
+        // `take: 2` a propósito: solo interesa distinguir "exactamente uno" de
+        // "más de uno". Traer la lista entera sería un findMany sin límite
+        // sobre una tabla que crece con el negocio (guardrail 2 de escalado).
+        const empleadosActivos = (!pinDado && !empleadoDelUsuario)
+            ? await prisma.employee.findMany({
+                where: { tenantId: authReq.tenantId, status: 'ACTIVE' },
+                select: { id: true, firstName: true, lastName: true },
+                take: 2,
+            })
+            : [];
+
+        const identidad = decidirIdentidadCajero({
+            requierePin: tenantCfg?.requireCashierPin ?? false,
+            pinDado,
+            empleadoDelPin: empleadoDelPin?.id ?? null,
+            empleadoDelUsuario: empleadoDelUsuario?.id ?? null,
+            empleadosActivos: empleadosActivos.map(e => e.id),
+        });
+
+        if (!identidad.ok) {
+            // 401 para el PIN equivocado (credencial), 400 para el PIN que
+            // falta (petición incompleta): son problemas distintos y el POS
+            // reacciona distinto a cada uno.
+            const codigoHttp = identidad.codigo === 'PIN_INCORRECTO' ? 401 : 400;
+            return res.status(codigoHttp).json({ error: identidad.mensaje, codigo: identidad.codigo });
         }
+
+        // Nombre del cajero para la auditoría, si se pudo determinar.
+        const employee =
+            identidad.employeeId === null ? null :
+            [empleadoDelPin, empleadoDelUsuario, ...empleadosActivos]
+                .find(e => e?.id === identidad.employeeId) ?? null;
 
         // Verificar que no haya ya una caja abierta
         const existingShift = await prisma.shift.findFirst({
@@ -3183,7 +3561,7 @@ app.post('/api/shifts/open', shiftOpenLimiter as any, authenticate, validate(Ope
                 data: {
                     tenantId: authReq.tenantId,
                     userId: authReq.userId,
-                    employeeId: employee.id,
+                    employeeId: identidad.employeeId,
                     initialCash,
                     initialCashUsd: initialCashUsd !== undefined ? initialCashUsd : 0,
                     status: 'OPEN'
@@ -3205,8 +3583,17 @@ app.post('/api/shifts/open', shiftOpenLimiter as any, authenticate, validate(Ope
                         after: {
                             shiftId: created.id,
                             initialCash: String(created.initialCash),
-                            employeeId: employee.id,
-                            cajero: `${employee.firstName} ${employee.lastName}`,
+                            employeeId: identidad.employeeId,
+                            // `null` cuando no se pudo determinar el cajero. NO
+                            // se rellena con el nombre del usuario: quien lea
+                            // esto en seis meses tiene que poder distinguir
+                            // "no se supo quién" de "fue el dueño".
+                            cajero: employee ? `${employee.firstName} ${employee.lastName}` : null,
+                            // Cómo se determinó. Es el dato que permite auditar
+                            // un faltante: un turno abierto en modo PIN tiene
+                            // prueba de presencia; uno en SIN_IDENTIDAD, no.
+                            modoIdentidad: identidad.modo,
+                            comoSeSupo: explicarModo(identidad.modo),
                         },
                     }),
                 },
@@ -3392,7 +3779,7 @@ app.get('/api/shifts/history', authenticate, async (req: any, res: any) => {
             include: {
                 employee: { select: { id: true, firstName: true, lastName: true, role: true } },
                 user: { select: { id: true, name: true, email: true } },
-                sales: { select: { id: true, total: true, paymentMethod: true } }
+                sales: { where: { status: { not: ESTADO_ANULADA } }, select: { id: true, total: true, paymentMethod: true } }
             }
         });
 
@@ -3442,7 +3829,7 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
             include: {
                 employee: { select: { id: true, firstName: true, lastName: true, role: true } },
                 user: { select: { id: true, name: true, email: true } },
-                sales: { select: { id: true, total: true, paymentMethod: true, createdAt: true } },
+                sales: { where: { status: { not: ESTADO_ANULADA } }, select: { id: true, total: true, paymentMethod: true, createdAt: true } },
                 cashMovements: { where: { isVoided: false }, select: { id: true, type: true, amount: true, currency: true, category: true, description: true, createdAt: true } }
             },
             orderBy: { startTime: 'asc' }
@@ -3543,7 +3930,7 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
             include: {
                 employee: { select: { id: true, firstName: true, lastName: true, role: true } },
                 user: { select: { id: true, name: true } },
-                sales: { select: { total: true, paymentMethod: true } }
+                sales: { where: { status: { not: ESTADO_ANULADA } }, select: { total: true, paymentMethod: true } }
             }
         });
 
@@ -3622,7 +4009,7 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
             ? await prisma.shift.findFirst({
                 where: { id: turnoAbierto.id, tenantId: authReq.tenantId },
                 include: {
-                    sales: { select: { total: true, paymentMethod: true } },
+                    sales: { where: { status: { not: ESTADO_ANULADA } }, select: { total: true, paymentMethod: true } },
                     cashMovements: { where: { isVoided: false } }
                 }
             })
@@ -3686,7 +4073,7 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
                 const movCurrency = currency || 'NIO';
                 const freshSales: Array<{ total: any }> = movCurrency === 'NIO'
                     ? await tx.sale.findMany({
-                        where: { shiftId: currentShift.id, paymentMethod: 'CASH' },
+                        where: { shiftId: currentShift.id, paymentMethod: 'CASH', status: { not: ESTADO_ANULADA } },
                         select: { total: true },
                     })
                     : [];
@@ -3867,7 +4254,7 @@ app.get('/api/cash-movements', authenticate, async (req: any, res: any) => {
                 }
             }),
             prisma.sale.findMany({
-                where: { tenantId: authReq.tenantId, shiftId: turnoId, paymentMethod: 'CASH' },
+                where: { tenantId: authReq.tenantId, shiftId: turnoId, paymentMethod: 'CASH', status: { not: ESTADO_ANULADA } },
                 orderBy: { createdAt: 'desc' },
                 take: 200,
                 select: { id: true, total: true, invoiceNumber: true, createdAt: true },
@@ -3936,7 +4323,7 @@ app.get('/api/cash-movements/balance', authenticate, async (req: any, res: any) 
         // que pueda truncar la gaveta (truncar acá sería mostrar plata que no es).
         const [ventasEfectivo, gruposMovimientos] = await Promise.all([
             prisma.sale.aggregate({
-                where: { tenantId: authReq.tenantId, shiftId: shift.id, paymentMethod: 'CASH' },
+                where: { tenantId: authReq.tenantId, shiftId: shift.id, paymentMethod: 'CASH', status: { not: ESTADO_ANULADA } },
                 _sum: { total: true },
             }),
             prisma.cashMovement.groupBy({
@@ -6296,7 +6683,8 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
         const sales = await prisma.sale.findMany({
             where: {
                 tenantId: authReq.tenantId,
-                createdAt: { gte: start, lte: end }
+                createdAt: { gte: start, lte: end },
+                status: { not: ESTADO_ANULADA },
             },
             include: { items: true },
             orderBy: { createdAt: 'asc' }
@@ -6407,7 +6795,7 @@ app.get('/api/reports/sellers', authenticate, async (req: any, res: any) => {
         const whereVentas: any = {
             tenantId: authReq.tenantId,
             createdAt: { gte: start, lte: end },
-            status: { not: 'VOIDED' },
+            status: { not: ESTADO_ANULADA },
         };
         if (propio) whereVentas.soldById = authReq.userId;
 
@@ -7236,6 +7624,7 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
             by: ['employeeId'],
             where: {
                 tenantId: authReq.tenantId,
+                status: { not: ESTADO_ANULADA },
                 createdAt: { gte: startOfMonth, lte: endOfMonth },
                 employeeId: { not: null },
             },
@@ -9399,6 +9788,60 @@ app.get('/api/tenant/inventory-settings', authenticate, async (req: any, res: an
     } catch (error: any) {
         console.error('Error al leer configuración de inventario:', error);
         res.status(500).json({ error: 'Error al leer configuración de inventario' });
+    }
+});
+
+// GET /api/tenant/cashier-settings — ¿este negocio exige PIN para abrir caja?
+//
+// Sin `checkRole`, mismo criterio que inventory-settings: el CAJERO es quien
+// necesita el dato, porque de él depende si la pantalla de apertura le pide un
+// PIN o no. Si el POS tuviera que adivinarlo, o mostraría un campo que no hace
+// falta (la fricción que este cambio saca) o lo escondería en el negocio que sí
+// lo exige, y el backend rechazaría la apertura sin que el cajero entienda por
+// qué. Solo lectura, tenant del JWT.
+app.get('/api/tenant/cashier-settings', authenticate, async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: authReq.tenantId! },
+            select: { requireCashierPin: true },
+        });
+        if (!tenant) return res.status(404).json({ error: 'Negocio no encontrado' });
+        res.json({ requireCashierPin: tenant.requireCashierPin });
+    } catch (error: any) {
+        console.error('Error al leer configuración de caja:', error);
+        res.status(500).json({ error: 'Error al leer configuración de caja' });
+    }
+});
+
+// PUT /api/tenant/cashier-settings — prender/apagar el PIN obligatorio.
+// Solo OWNER/ADMIN: es una política del negocio, no una preferencia del cajero
+// (si el cajero pudiera apagarla, la protección no protegería de nada).
+app.put('/api/tenant/cashier-settings', authenticate, checkRole(['ADMIN', 'OWNER']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { requireCashierPin } = req.body;
+    if (typeof requireCashierPin !== 'boolean') {
+        return res.status(400).json({ error: 'requireCashierPin debe ser booleano (true/false)' });
+    }
+    try {
+        const tenant = await prisma.tenant.update({
+            where: { id: authReq.tenantId! },
+            data: { requireCashierPin },
+            select: { id: true, requireCashierPin: true },
+        });
+        // Queda en auditoría: apagar el PIN afloja quién responde por un
+        // faltante del arqueo, así que tiene que saberse quién lo apagó y cuándo.
+        await prisma.auditLog.create({
+            data: {
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                action: 'CASHIER_SETTINGS_UPDATED',
+                details: JSON.stringify({ requireCashierPin }),
+            },
+        });
+        res.json({ success: true, data: tenant });
+    } catch (error: any) {
+        res.status(500).json({ error: 'Error al actualizar configuración de caja', details: error.message });
     }
 });
 
@@ -12011,7 +12454,7 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(FISCAL_
         const XLSX = await import('xlsx');
 
         const sales = await prisma.sale.findMany({
-            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: 'VOIDED' } },
+            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: ESTADO_ANULADA } },
             include: { customer: true },
             orderBy: { createdAt: 'asc' },
         });
@@ -12172,7 +12615,7 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(FISCAL_RE
 
         // Ventas
         const sales = await prisma.sale.findMany({
-            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: 'VOIDED' } },
+            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: ESTADO_ANULADA } },
             include: { customer: true },
             orderBy: { createdAt: 'asc' },
         });

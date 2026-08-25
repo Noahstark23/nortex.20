@@ -56,7 +56,11 @@ case "$cmd" in
   # package-lock.json podado (739 líneas menos, @capacitor/cli entre ellas), el
   # `npm ci` del CI instaló desde ese lockfile y tsc falló en TODOS los PRs
   # abiertos hasta que se restauró. Los archivos se agregan por nombre.
-  "git add -A"*|"git add ."*|"git add --all"*)
+  # OJO con el patrón: `"git add ."*` matcheaba `git add .claude/hooks/x.sh`,
+  # que es JUSTO lo que esta regla quiere (un archivo por nombre, que además
+  # empieza con punto). El `.` tiene que ser un argumento COMPLETO — solo o
+  # seguido de espacio—, no el primer carácter de una ruta.
+  "git add -A"|"git add -A "*|"git add ."|"git add . "*|"git add --all"|"git add --all "*)
     bloquear "git add -A/. commiteó una vez un lockfile podado y rompió el CI de main. Agregá los archivos por nombre." ;;
 
   # main es la rama compartida; reescribirle la historia rompe a todos.

@@ -261,6 +261,45 @@ const HRM: React.FC = () => {
         finally { setLoading(false); }
     };
 
+    // ── ¿La caja pide PIN? (política del negocio) ──────────────────────────
+    // Vive acá, en Mi Personal, porque es donde el dueño administra los PINes.
+    // `null` = todavía no se sabe: el interruptor no se pinta hasta tener el
+    // valor real, para no mostrarlo apagado un instante y que parezca que
+    // alguien lo apagó.
+    const [exigePin, setExigePin] = useState<boolean | null>(null);
+    const [guardandoExigePin, setGuardandoExigePin] = useState(false);
+
+    useEffect(() => {
+        fetch('/api/tenant/cashier-settings', { headers })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d && typeof d.requireCashierPin === 'boolean') setExigePin(d.requireCashierPin); })
+            .catch(() => { /* sin dato: no se pinta el interruptor */ });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const cambiarExigePin = async (valor: boolean) => {
+        setGuardandoExigePin(true);
+        // Optimista: el interruptor responde al toque. Si el servidor rechaza,
+        // vuelve solo — un interruptor que tarda medio segundo se toca dos veces.
+        const anterior = exigePin;
+        setExigePin(valor);
+        try {
+            const res = await fetch('/api/tenant/cashier-settings', {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify({ requireCashierPin: valor }),
+            });
+            if (!res.ok) {
+                const d = await res.json().catch(() => ({}));
+                setExigePin(anterior);
+                alert(d.error || 'No pudimos guardar el cambio.');
+            }
+        } catch {
+            setExigePin(anterior);
+            alert('No pudimos guardar el cambio. Revisá la conexión.');
+        } finally { setGuardandoExigePin(false); }
+    };
+
     const handleChangePin = async () => {
         if (!pinModal) return;
         if (!/^\d{4}$/.test(newPin)) { setPinError('PIN debe ser exactamente 4 dígitos.'); return; }
@@ -1024,6 +1063,41 @@ const HRM: React.FC = () => {
                                 <UserPlus size={18} /> Nuevo Colaborador
                             </button>
                         </div>
+
+                        {/* ── ¿La caja pide PIN? ─────────────────────────────
+                            Apagado por defecto. Antes el PIN se pedía SIEMPRE y
+                            el muro caía a medio cobro, con el cliente enfrente.
+                            Prenderlo solo tiene sentido en el negocio donde
+                            varios cajeros comparten UNA misma cuenta: ahí el PIN
+                            es lo único que le pone nombre a un faltante. */}
+                        {exigePin !== null && (
+                            <div className="mb-6 bg-surface-900 border border-white/[0.06] rounded-xl p-4 flex items-start justify-between gap-4">
+                                <div className="min-w-0">
+                                    <p className="font-bold text-slate-100 flex items-center gap-2">
+                                        <KeyRound size={16} className="text-indigo-400" /> Pedir PIN para abrir la caja
+                                    </p>
+                                    <p className="text-sm text-slate-400 mt-1 leading-snug">
+                                        {exigePin
+                                            ? 'El cajero teclea su PIN cada vez que abre la caja. Prendelo si varios cajeros comparten la misma cuenta: es lo único que dice de quién era la gaveta cuando el arqueo no cuadra.'
+                                            : 'La caja se abre sin PIN — el sistema sabe quién sos por tu usuario. Si varios cajeros comparten una misma cuenta, prendelo: sin PIN, un faltante del arqueo queda sin dueño.'}
+                                    </p>
+                                    <p className="text-xs text-slate-500 mt-2">
+                                        El PIN se sigue usando para marcar entrada y salida, prendas esto o no.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={exigePin}
+                                    aria-label="Pedir PIN para abrir la caja"
+                                    disabled={guardandoExigePin}
+                                    onClick={() => cambiarExigePin(!exigePin)}
+                                    className={`shrink-0 w-14 h-8 rounded-full transition-colors relative disabled:opacity-50 ${exigePin ? 'bg-indigo-500' : 'bg-white/[0.12]'}`}
+                                >
+                                    <span className={`absolute top-1 w-6 h-6 bg-white rounded-full transition-all ${exigePin ? 'left-7' : 'left-1'}`} />
+                                </button>
+                            </div>
+                        )}
 
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                             {employees.map(emp => (

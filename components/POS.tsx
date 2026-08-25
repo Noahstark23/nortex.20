@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef, useDeferredValue } from 'react';
+import React, { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef, useDeferredValue } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
@@ -195,10 +195,12 @@ const TarjetaProducto = React.memo<{
 ));
 TarjetaProducto.displayName = 'TarjetaProducto';
 
-// PIN que el backend siembra para el dueño al registrar el negocio. Ya se
-// imprime dentro del modal de apertura, así que además se precarga: escribirlo a
-// mano no es una medida de seguridad, es un peaje para el que viene a probar.
-const PIN_DUENO_POR_DEFECTO = '1234';
+// Acá vivía PIN_DUENO_POR_DEFECTO = '1234', el PIN que el backend siembra al
+// registrar el negocio: el modal lo IMPRIMÍA en pantalla y además lo precargaba.
+// Un secreto que la propia pantalla revela y rellena no es un control de acceso,
+// es un trámite — y encima caía a medio cobro, con el cliente enfrente. Ahora la
+// apertura no pide PIN salvo que el negocio lo exija (`requireCashierPin`), y el
+// servidor resuelve al cajero desde el JWT (backend/services/shiftIdentity.ts).
 
 /**
  * Identidad del cliente para namespacear el carrito guardado. Mismo par de
@@ -397,6 +399,16 @@ interface ReturnSaleData {
     balance: string;
     allowedRefundMethods: ReturnRefundMethod[];
     items: ReturnSaleLine[];
+    /**
+     * Fecha de anulación (DGI-5), o null si la factura está vigente.
+     *
+     * Se mira ESTE campo y no `status`: un `cancelledAt` no nulo es
+     * inequívoco y evita traer al frontend el literal del estado, que vive
+     * en el backend (`saleCancellation.ts`) y es la única fuente. La decisión
+     * autoritativa igual la toma el servidor; acá solo se evita mostrarle al
+     * cajero un formulario que va a ser rechazado.
+     */
+    cancelledAt: string | null;
 }
 
 type ReturnRefundMethod = 'CASH' | 'CARD' | 'QR' | 'TRANSFER';
@@ -543,6 +555,14 @@ const POS: React.FC = () => {
     // cajero vea QUÉ entró sin despegar la vista del producto que tiene en la mano.
     // El contador fuerza un render incluso al agregar dos veces el mismo SKU.
     const [lineaResaltada, setLineaResaltada] = useState<{ id: string; n: number } | null>(null);
+    // Anulación de comprobantes (DGI-5). Vive junto a la búsqueda de la factura
+    // en el modal de devoluciones porque es donde el cajero YA llega con la
+    // factura en la mano — no tiene sentido una segunda pantalla para buscar lo
+    // mismo. El motivo es obligatorio: termina en el expediente fiscal.
+    const [mostrarAnular, setMostrarAnular] = useState(false);
+    const [motivoAnulacion, setMotivoAnulacion] = useState('');
+    const [anulando, setAnulando] = useState(false);
+    const [errorAnulacion, setErrorAnulacion] = useState('');
     const contadorResaltado = useRef(0);
 
     // 🅿️ PARQUEO DE VENTAS STATE
@@ -634,9 +654,14 @@ const POS: React.FC = () => {
     // Fondo inicial: valor REAL '0', no un placeholder "0.00" que parece cargado
     // y en realidad deja el campo vacío contra un input `required`.
     const [initialCash, setInitialCash] = useState('0');
-    // El PIN inicial del dueño ya está impreso en el propio modal: precargarlo
-    // evita que quien viene a EVALUAR el POS tenga que transcribirlo.
-    const [employeePin, setEmployeePin] = useState(() => (isOwnerAdmin ? PIN_DUENO_POR_DEFECTO : ''));
+    const [employeePin, setEmployeePin] = useState('');
+    // ¿Este negocio exige PIN para abrir la caja? Arranca en `false` —el default
+    // del backend— para que el camino sin fricción sea también el que se pinta
+    // primero. Si la lectura falla, se queda en false y la apertura va sin PIN:
+    // el servidor decide igual, y en el peor caso responde PIN_REQUERIDO y el
+    // modal lo muestra recién ahí. Al revés (asumir que se exige) le pondría un
+    // campo de más a todos los negocios cuando la red falla.
+    const [exigePin, setExigePin] = useState(false);
     // Errores propios de la apertura (en español, debajo del campo).
     const [errorApertura, setErrorApertura] = useState<{ pin?: string; fondo?: string; general?: string }>({});
     const [declaredCash, setDeclaredCash] = useState('');
@@ -749,6 +774,49 @@ const POS: React.FC = () => {
     // distintos compitiendo con el cobro. Lo operativo se agrupa acá y el rojo
     // queda reservado para lo irreversible (cerrar caja).
     const [showCashActions, setShowCashActions] = useState(false);
+
+    // ── Por qué este menú se posiciona con JS y no con CSS ──────────────────
+    // EL BUG: el menú era `absolute top-full` dentro del botón, y el botón vive
+    // en un contenedor con `overflow-x-auto` (el header scrollea en horizontal
+    // cuando no entran los botones). Por especificación CSS, si un eje del
+    // overflow deja de ser `visible`, el OTRO eje se computa a `auto`: o sea
+    // que `overflow-x-auto` también recorta en vertical. Como el header mide
+    // 56px y el menú cae DEBAJO del botón, quedaba recortado entero. El estado
+    // cambiaba y el chevron giraba, pero no aparecía nada — desde el mostrador
+    // se ve como un botón muerto.
+    //
+    // LA SALIDA: `position: fixed`, que no lo recorta ningún ancestro con
+    // overflow. Pero `fixed` se posiciona contra el viewport, así que hay que
+    // medir dónde quedó el botón. No se ancla al borde derecho del header
+    // porque el botón NO es el último: después viene "Cerrar caja".
+    const botonAccionesCaja = useRef<HTMLButtonElement>(null);
+    const [posicionMenuCaja, setPosicionMenuCaja] = useState<{ top: number; right: number } | null>(null);
+
+    const medirMenuCaja = useCallback(() => {
+        const r = botonAccionesCaja.current?.getBoundingClientRect();
+        if (!r) return;
+        setPosicionMenuCaja({
+            top: r.bottom + 8,
+            // Se alinea el borde DERECHO del menú con el del botón. El mínimo de
+            // 8px evita que en una pantalla angosta se salga fuera de la vista.
+            right: Math.max(8, window.innerWidth - r.right),
+        });
+    }, []);
+
+    useLayoutEffect(() => {
+        if (!showCashActions) { setPosicionMenuCaja(null); return; }
+        medirMenuCaja();
+        // El header scrollea en horizontal y la ventana puede cambiar de tamaño
+        // (girar el teléfono). Sin re-medir, el menú queda flotando lejos del
+        // botón que lo abrió. `true` = fase de captura, para enterarse también
+        // del scroll del contenedor interno, que no burbujea.
+        window.addEventListener('resize', medirMenuCaja);
+        window.addEventListener('scroll', medirMenuCaja, true);
+        return () => {
+            window.removeEventListener('resize', medirMenuCaja);
+            window.removeEventListener('scroll', medirMenuCaja, true);
+        };
+    }, [showCashActions, medirMenuCaja]);
 
     // ==========================================
     // OFFLINE / PWA STATE
@@ -918,6 +986,18 @@ const POS: React.FC = () => {
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (d && typeof d.allowNegativeStock === 'boolean') setPermiteStockNegativo(d.allowNegativeStock); })
             .catch(() => { /* sin dato: el aviso sale sin consecuencia */ });
+    }, []);
+
+    // ¿La caja pide PIN? Se consulta al montar, no al abrir el modal: cuando el
+    // cajero aprieta "Cobrar" la respuesta ya tiene que estar, si no la pantalla
+    // parpadearía entre las dos versiones del formulario.
+    useEffect(() => {
+        const t = localStorage.getItem('nortex_token');
+        if (!t) return;
+        fetch('/api/tenant/cashier-settings', { headers: { Authorization: `Bearer ${t}` } })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d && typeof d.requireCashierPin === 'boolean') setExigePin(d.requireCashierPin); })
+            .catch(() => { /* sin dato: se abre sin PIN y decide el servidor */ });
     }, []);
 
     // ── P0-1 · Validar el carrito rescatado contra el turno real ───────────
@@ -1454,7 +1534,9 @@ const POS: React.FC = () => {
         // Validación propia en español (el form va `noValidate`: el globo nativo
         // del navegador está en inglés y no tiene arreglo por CSS).
         const errores: typeof errorApertura = {};
-        if (!/^\d{4}$/.test(employeePin)) errores.pin = 'El PIN son 4 dígitos.';
+        // El PIN solo se valida si el negocio lo exige. Cuando no, ni siquiera
+        // se muestra el campo: el servidor resuelve al cajero desde el JWT.
+        if (exigePin && !/^\d{4}$/.test(employeePin)) errores.pin = 'El PIN son 4 dígitos.';
         if (initialCash.trim() === '') errores.fondo = 'Ingresá el fondo inicial. Si arrancás sin efectivo, poné 0.';
         else if (toDecimal(initialCash).isNegative()) errores.fondo = 'El fondo inicial no puede ser negativo.';
         setErrorApertura(errores);
@@ -1468,15 +1550,19 @@ const POS: React.FC = () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 // El fondo viaja por Decimal (nunca parseFloat sobre dinero).
-                body: JSON.stringify({ initialCash: Number(toDecimal(initialCash).toFixed(2)), employeePin })
+                // El PIN solo se manda si el negocio lo exige: mandarlo igual
+                // gastaría cupo del rate-limit y volvería a atar la apertura a
+                // un dato que el servidor ya sabe resolver solo.
+                body: JSON.stringify({
+                    initialCash: Number(toDecimal(initialCash).toFixed(2)),
+                    ...(exigePin ? { employeePin } : {}),
+                })
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
             setCurrentShift(data);
             setShowOpenShift(false);
-            // Se restituye el default (igual que al montar): si el turno se cierra
-            // y hay que reabrir, el dueño no vuelve a transcribir su PIN.
-            setEmployeePin(isOwnerAdmin ? PIN_DUENO_POR_DEFECTO : '');
+            setEmployeePin('');
             setErrorApertura({});
             if (resumePaymentAfterShift) {
                 setResumePaymentAfterShift(false);
@@ -2293,6 +2379,46 @@ const POS: React.FC = () => {
         }
     }, [identidad]);
 
+    // Reset del panel de anulación. Se llama al cerrar el modal Y al buscar otra
+    // factura: sin esto, el cajero abre el panel para la factura A, escribe el
+    // motivo, busca la B (el buscador queda activo arriba) y el botón de anular
+    // sigue armado — con el motivo de A y apuntando a la B.
+    const limpiarAnulacion = useCallback(() => {
+        setMostrarAnular(false);
+        setMotivoAnulacion('');
+        setErrorAnulacion('');
+    }, []);
+
+    const anularFactura = useCallback(async () => {
+        if (!returnSaleData?.id) return;
+        setAnulando(true);
+        setErrorAnulacion('');
+        try {
+            const token = localStorage.getItem('nortex_token');
+            const res = await fetch(`/api/sales/${returnSaleData.id}/cancel`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ motivo: motivoAnulacion }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'No se pudo anular la factura');
+
+            // El stock volvió y la caja cambió: se refresca lo que el cajero
+            // tiene a la vista, en vez de dejarlo con números viejos.
+            await Promise.all([fetchProducts(), fetchCashBalance()]);
+            limpiarAnulacion();
+            setReturnSaleData(null);
+            setShowReturnModal(false);
+            setReturnItems([]);
+            setReturnSaleSearch('');
+            alert('Factura anulada. La mercadería volvió al inventario y la venta dejó de contar en los reportes.');
+        } catch (err: any) {
+            setErrorAnulacion(err?.message || 'No se pudo anular la factura');
+        } finally {
+            setAnulando(false);
+        }
+    }, [returnSaleData, motivoAnulacion, limpiarAnulacion, fetchProducts, fetchCashBalance]);
+
     const handleRemoveHeldCart = useCallback((heldId: string) => {
         setHeldCarts(prev => prev.filter(h => h.id !== heldId));
         setHeldCartToDiscard(null);
@@ -2362,6 +2488,11 @@ const POS: React.FC = () => {
                 case 'Escape':
                     e.preventDefault();
                     // Close any open modal
+                    // El menú de acciones va PRIMERO: es lo más superficial de
+                    // la pila y lo único que se abre sin tapar la pantalla, así
+                    // que Escape tiene que cerrarlo a él y no a lo que haya
+                    // debajo.
+                    if (showCashActions) { setShowCashActions(false); return; }
                     if (completedSale) { handleNewSale(); return; }
                     if (showPaymentOptions) { setShowPaymentOptions(false); return; }
                     if (showCashModal) { setShowCashModal(null); return; }
@@ -2383,7 +2514,7 @@ const POS: React.FC = () => {
         };
         window.addEventListener('keydown', handleHotkey);
         return () => window.removeEventListener('keydown', handleHotkey);
-    }, [handleHoldCart, currentShift, cart, completedSale, processing, showPaymentOptions, showCashPreModal, showCashModal, showCreditPanel, pendingScaleLabelOverride, showHeldCarts, showQuickCreate, showAddModal, showImportModal, showCloseShift, showMovementsList, showOpenShift]);
+    }, [handleHoldCart, currentShift, cart, completedSale, processing, showPaymentOptions, showCashPreModal, showCashModal, showCreditPanel, pendingScaleLabelOverride, showHeldCarts, showQuickCreate, showAddModal, showImportModal, showCloseShift, showMovementsList, showOpenShift, showCashActions]);
 
     // ==========================================
     // 🔴 FIADO INTELIGENTE (Credit Override)
@@ -2391,24 +2522,29 @@ const POS: React.FC = () => {
     const handleCreditOverride = useCallback(async () => {
         if (creditOverridePin.length !== 4) return;
         try {
-            // Fetch employees to find OWNER with matching PIN
-            const res = await fetch('/api/employees', { headers });
-            if (!res.ok) return;
-            const employees = await res.json();
-            const owner = employees.find((e: any) =>
-                (e.role === 'MANAGER' || e.role === 'OWNER') && e.pin === creditOverridePin
-            );
-            if (owner) {
+            // La verificación es del SERVIDOR. Antes se hacía acá: se pedía
+            // GET /api/employees y se comparaba `empleado.pin === tecleado` —
+            // pero ese endpoint borra el PIN de la respuesta, así que la
+            // comparación era `undefined === '1234'` y esta autorización NUNCA
+            // funcionó: le decía "PIN incorrecto" al dueño con su propio PIN.
+            const res = await fetch('/api/employees/verify-pin', {
+                method: 'POST',
+                headers: { ...headers, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pin: creditOverridePin }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data?.autorizado === true) {
                 setCreditOverrideAuthorized(true);
                 setShowCreditPanel(false);
                 playBeep();
             } else {
                 playErrorBeep();
-                alert('PIN incorrecto o no tiene permisos de Dueño/Gerente.');
+                alert(data?.error || 'PIN incorrecto o no tiene permisos de Dueño/Gerente.');
                 setCreditOverridePin('');
             }
         } catch {
-            alert('Error verificando PIN');
+            playErrorBeep();
+            alert('No pudimos verificar el PIN. Revisá la conexión.');
         }
     }, [creditOverridePin, headers]);
 
@@ -3176,6 +3312,10 @@ const POS: React.FC = () => {
 
     const resetReturnFlow = () => {
         returnRequestRef.current = null;
+        // El panel de anulación se limpia acá, con todo lo demás: si quedara
+        // armado, el cajero podría reabrir el modal, buscar OTRA factura y
+        // encontrarse el botón de anular listo con el motivo de la anterior.
+        limpiarAnulacion();
         setShowReturnModal(false);
         setReturnSaleData(null);
         setReturnItems([]);
@@ -3225,6 +3365,10 @@ const POS: React.FC = () => {
             balance: String(raw.balance ?? '0'),
             allowedRefundMethods,
             items,
+            // `?? null` y no `String(...)`: si la factura está vigente el campo
+            // viene null/undefined, y convertirlo a texto daría "null", que es
+            // truthy — la pantalla diría que TODA factura está anulada.
+            cancelledAt: raw.cancelledAt ?? null,
         };
     };
 
@@ -3233,6 +3377,9 @@ const POS: React.FC = () => {
         setReturnSearching(true);
         setReturnGeneralError('');
         setReturnErrors({});
+        // Se busca OTRA factura: el panel de anulación vuelve a cero. Si no, el
+        // motivo escrito para la factura anterior quedaría apuntando a esta.
+        limpiarAnulacion();
         try {
             const token = localStorage.getItem('nortex_token');
             const response = await fetch(`/api/sales/search?q=${encodeURIComponent(returnSaleSearch.trim())}`, {
@@ -3603,7 +3750,10 @@ const POS: React.FC = () => {
                     {currentShift && !firstSaleMode && (
                         <div className="relative">
                             <button
+                                ref={botonAccionesCaja}
                                 onClick={() => setShowCashActions(v => !v)}
+                                aria-haspopup="menu"
+                                aria-expanded={showCashActions}
                                 className="flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
                                 title="Acciones de caja"
                             >
@@ -3612,12 +3762,22 @@ const POS: React.FC = () => {
                                 <ChevronDown size={14} className={`transition-transform ${showCashActions ? 'rotate-180' : ''}`} />
                             </button>
 
-                            {showCashActions && (
+                            {showCashActions && posicionMenuCaja && (
                                 <>
                                     {/* Capa de cierre: click afuera cierra el menú. Por debajo
                                         del menú pero por encima del contenido. */}
                                     <div className="fixed inset-0 z-sticky" onClick={() => setShowCashActions(false)} />
-                                    <div className="absolute right-0 top-full mt-2 w-64 bg-surface-800 border border-white/[0.08] rounded-card shadow-premium overflow-hidden z-checkout animate-fade-in-up">
+                                    <div
+                                        role="menu"
+                                        aria-label="Acciones de caja"
+                                        style={{ top: posicionMenuCaja.top, right: posicionMenuCaja.right }}
+                                        // `fixed` y no `absolute`: el contenedor del header tiene
+                                        // overflow y recortaba el menú entero (ver el comentario
+                                        // largo junto a `medirMenuCaja`). El alto máximo es para
+                                        // que en un teléfono acostado el menú no se salga por
+                                        // abajo sin poder alcanzarse.
+                                        className="fixed w-64 max-h-[calc(100vh-5rem)] overflow-y-auto bg-surface-800 border border-white/[0.08] rounded-card shadow-premium z-checkout animate-fade-in-up"
+                                    >
                                         <button
                                             onClick={() => { setShowCashModal('IN'); setCashCategory(''); setShowCashActions(false); }}
                                             className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
@@ -4246,20 +4406,24 @@ const POS: React.FC = () => {
                         </div>
 
                         <form onSubmit={handleOpenShift} noValidate className="p-5 space-y-4">
-                            {isOwnerAdmin && employeePin === PIN_DUENO_POR_DEFECTO && (
-                                <div className="flex items-center gap-2 px-3 py-2.5 rounded-control bg-brand-soft border border-brand/20 text-sm text-brand">
-                                    <Check size={16} className="shrink-0" />
-                                    <span>Tu PIN inicial ya está listo.</span>
-                                </div>
-                            )}
+                            {/* El PIN solo aparece si el negocio lo exige (varios
+                                cajeros sobre una misma cuenta). Apagado —el
+                                default—, el servidor resuelve al cajero desde el
+                                JWT y esta pantalla queda en un número y un botón.
 
+                                Acá vivía además un cartel "Tu PIN inicial ya está
+                                listo", que se cayó con el PIN precargado: la
+                                pantalla imprimía y rellenaba el 1234 sembrado. Un
+                                secreto que la propia pantalla revela no es un
+                                control de acceso. */}
+                            {exigePin && (
                             <div>
                                 <label className="block text-xs font-semibold text-slate-400 mb-1.5">PIN de caja</label>
                                 <input
                                     type="password"
                                     inputMode="numeric"
                                     maxLength={4}
-                                    autoFocus={!isOwnerAdmin}
+                                    autoFocus
                                     aria-label="PIN de caja"
                                     className="w-full h-touch px-4 tracking-[0.45em] text-center text-xl font-bold border border-white/10 rounded-control focus:border-brand focus:ring-2 focus:ring-brand/30 outline-none text-slate-100 bg-surface-800/40"
                                     value={employeePin}
@@ -4271,6 +4435,7 @@ const POS: React.FC = () => {
                                 />
                                 {errorApertura.pin && <p className="text-xs text-danger mt-1.5">{errorApertura.pin}</p>}
                             </div>
+                            )}
 
                             <div>
                                 <label className="block text-xs font-semibold text-slate-400 mb-1.5">Efectivo con el que empezás</label>
@@ -4281,6 +4446,10 @@ const POS: React.FC = () => {
                                         inputMode="decimal"
                                         aria-label="Fondo inicial en efectivo"
                                         className="w-full h-touch pl-10 pr-4 text-lg font-bold border border-white/10 rounded-control focus:border-brand focus:ring-2 focus:ring-brand/30 outline-none text-slate-100 bg-surface-800/40 tabular-nums"
+                                        // Sin PIN este es el primer (y único)
+                                        // campo: el foco tiene que caer acá.
+                                        autoFocus={!exigePin}
+                                        onFocus={e => e.currentTarget.select()}
                                         value={initialCash}
                                         onChange={e => { setInitialCash(sanitizeDecimalInput(e.target.value)); setErrorApertura(prev => ({ ...prev, fondo: undefined })); }}
                                     />
@@ -4294,7 +4463,7 @@ const POS: React.FC = () => {
                                 <p className="text-xs text-danger bg-danger-soft border border-danger/20 rounded-control px-3 py-2">{errorApertura.general}</p>
                             )}
 
-                            <button type="submit" disabled={shiftLoading || employeePin.length !== 4} className="w-full h-pay rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                            <button type="submit" disabled={shiftLoading || (exigePin && employeePin.length !== 4)} className="w-full h-pay rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                                 {shiftLoading && <Loader2 size={18} className="animate-spin" />}
                                 {shiftLoading ? 'Abriendo caja…' : resumePaymentAfterShift ? 'Abrir caja y cobrar' : 'Abrir caja'}
                                 {!shiftLoading && <ArrowRight size={18} />}
@@ -5621,6 +5790,81 @@ const POS: React.FC = () => {
                                         </div>
                                     </div>
 
+                                    {/* Una factura YA anulada no ofrece ninguno de los dos
+                                        caminos. Devolver sobre ella sumaría el stock por
+                                        segunda vez (la anulación ya lo devolvió) — el
+                                        backend lo rechaza, pero mostrar el formulario y
+                                        recién ahí decir que no es una pérdida de tiempo
+                                        con un cliente esperando. */}
+                                    {returnSaleData.cancelledAt ? (
+                                        <div className="rounded-control border border-danger/30 bg-danger-soft p-3 flex gap-2.5">
+                                            <Ban size={16} className="text-danger shrink-0 mt-0.5" />
+                                            <div>
+                                                <p className="text-[12px] font-bold text-danger">Esta factura está anulada</p>
+                                                <p className="text-[11px] text-slate-300 leading-snug mt-1">
+                                                    La mercadería ya volvió al inventario y la venta ya no cuenta en los
+                                                    reportes. No hay nada que devolver.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                    <>
+
+                                    {/* ── ANULAR LA FACTURA (DGI-5) ─────────────────────
+                                        Distinto de devolver: devolver es mercadería que
+                                        vuelve de una venta que SÍ ocurrió; anular es
+                                        decir que la factura no debió emitirse. Se ofrece
+                                        acá porque el cajero ya buscó la factura, pero
+                                        separado y en rojo — no es la acción de todos los
+                                        días y no debe confundirse con la devolución. */}
+                                    {!mostrarAnular ? (
+                                        <button
+                                            onClick={() => { setMostrarAnular(true); setErrorAnulacion(''); }}
+                                            className="w-full text-[12px] text-danger hover:bg-danger-soft rounded-control py-2 transition-colors flex items-center justify-center gap-1.5"
+                                        >
+                                            <Ban size={14} /> Esta factura no debió emitirse — anularla
+                                        </button>
+                                    ) : (
+                                        <div className="rounded-control border border-danger/30 bg-danger-soft p-3 space-y-2">
+                                            <p className="text-[12px] font-bold text-danger flex items-center gap-1.5">
+                                                <AlertTriangle size={14} /> Anular la factura completa
+                                            </p>
+                                            <p className="text-[11px] text-slate-300 leading-snug">
+                                                La mercadería vuelve al inventario y la venta deja de contar en los
+                                                reportes y en la declaración. El comprobante NO se borra: queda
+                                                marcado como anulado y su número no se reutiliza.
+                                            </p>
+                                            <textarea
+                                                value={motivoAnulacion}
+                                                onChange={e => setMotivoAnulacion(e.target.value)}
+                                                rows={2}
+                                                maxLength={500}
+                                                placeholder="¿Por qué se anula? (ej: cobro duplicado al mismo cliente)"
+                                                aria-label="Motivo de la anulación"
+                                                className="w-full text-[12px] bg-surface-900 border border-white/10 rounded-control px-2 py-1.5 text-slate-100 outline-none focus:border-danger placeholder:text-slate-500"
+                                            />
+                                            {errorAnulacion && (
+                                                <p role="alert" className="text-[11px] text-danger font-medium">{errorAnulacion}</p>
+                                            )}
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={() => { setMostrarAnular(false); setMotivoAnulacion(''); setErrorAnulacion(''); }}
+                                                    className="flex-1 h-touch rounded-control bg-white/[0.06] text-slate-200 text-[12px] font-bold hover:bg-white/[0.12] transition-colors"
+                                                >
+                                                    Mejor no
+                                                </button>
+                                                <button
+                                                    onClick={anularFactura}
+                                                    disabled={anulando || motivoAnulacion.trim().length < 10}
+                                                    className="flex-1 h-touch rounded-control bg-danger text-white text-[12px] font-bold hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                                                >
+                                                    {anulando ? <Loader2 size={14} className="animate-spin" /> : <Ban size={14} />}
+                                                    Anular factura
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {/* Items Selection */}
                                     <div>
                                         <label className="text-xs font-bold text-slate-300 mb-2 block">Seleccionar Items a Devolver</label>
@@ -5770,6 +6014,8 @@ const POS: React.FC = () => {
                                             Confirmar Devolución
                                         </button>
                                     </div>
+                                    </>
+                                    )}
                                 </>
                             )}
                         </div>

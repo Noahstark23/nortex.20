@@ -44,6 +44,12 @@ model Tenant {
   // Inventario: si true, las ventas/salidas pueden dejar el stock en negativo
   // (negocios que venden sin contar; el Kardex refleja la realidad). Default false.
   allowNegativeStock   Boolean   @default(false)
+  // Caja: si true, abrir la caja exige el PIN del empleado. APAGADO por defecto
+  // —el PIN era puro trámite para el dueño de una pulpería, y el muro caía a
+  // medio cobro—. Se prende en el negocio donde VARIOS CAJEROS COMPARTEN UNA
+  // MISMA CUENTA: ahí el PIN es lo único que le pone nombre a un faltante del
+  // arqueo. Si cada quien entra con su usuario, `Shift.userId` ya lo resuelve.
+  requireCashierPin    Boolean   @default(false)
   // Campos Fiscales DGI
   address              String? // Dirección fiscal
   phone                String? // Teléfono del negocio
@@ -122,6 +128,8 @@ model User {
   shifts          Shift[]
   payments        Payment[]
   salesSold         Sale[]     @relation("SaleSeller")
+  // Ventas que este usuario ANULÓ (DGI-5): la anulación siempre tiene autor.
+  salesCancelled    Sale[]     @relation("SaleCanceller")
   customersAssigned Customer[] @relation("CustomerSeller")
   loadWarehouses    Warehouse[]     @relation("SellerLoadWarehouse")
   catalogAssigned   SellerProduct[] @relation("SellerCatalog")
@@ -580,11 +588,26 @@ model Sale {
   // permite distinguir un replay real de la reutilización conflictiva del ID.
   offlinePayloadHash String? @db.VarChar(64)
 
+  // ── ANULACIÓN FISCAL (DGI-5, Disposición Técnica 09-2007) ──────────────────
+  // Una factura mal emitida NO se borra ni se edita: se ANULA, y el comprobante
+  // anulado sigue existiendo, visible y marcado como tal. Su número NO se
+  // reutiliza — un correlativo con huecos o repetidos es justo lo que la norma
+  // prohíbe. Todos nullable: aditivo para `db push`, y `null` = venta vigente,
+  // que es el comportamiento histórico de las filas existentes.
+  //
+  // Distinto de una DEVOLUCIÓN (ProductReturn): devolver mercadería es una
+  // operación nueva sobre una venta que SÍ ocurrió; anular es declarar que el
+  // documento no debió emitirse.
+  cancelledAt    DateTime?
+  cancelledById  String?
+  cancelReason   String?   @db.Text
+
   tenant         Tenant          @relation(fields: [tenantId], references: [id])
   customer       Customer?       @relation(fields: [customerId], references: [id])
   employee       Employee?       @relation(fields: [employeeId], references: [id])
   shift          Shift?          @relation(fields: [shiftId], references: [id])
   soldBy         User?           @relation("SaleSeller", fields: [soldById], references: [id])
+  cancelledBy    User?           @relation("SaleCanceller", fields: [cancelledById], references: [id])
   items          SaleItem[]
   payments       Payment[]
   productReturns ProductReturn[]
@@ -599,6 +622,11 @@ model Sale {
   // Reporte "cuánto vende cada vendedor": groupBy(soldById) filtrado por
   // tenant y rango de fechas. Índice compuesto en el MISMO cambio que la query.
   @@index([tenantId, soldById, createdAt])
+  // Anulación (DGI-5): TODOS los reportes de dinero ahora filtran por
+  // `status != 'VOIDED'` junto al tenant. Sin este índice esa exclusión obliga
+  // a recorrer la tabla de ventas entera — el guardrail 3 pide el índice en el
+  // MISMO cambio que la query.
+  @@index([tenantId, status])
 }
 
 model SaleItem {

@@ -105,6 +105,24 @@ const PISO_MUTANTES = {
     'backend/lib/offlineSaleReplay.ts': 54,
     // Escape de HTML + CSP con nonce acotado para vistas fiscales: 27/27.
     'backend/lib/htmlSecurity.ts': 27,
+    // saleCancellation.ts: las reglas de ANULACIÓN de comprobantes (DGI-5).
+    // 73 mutantes, score medido 100.00%. Lo que protege: que anular no cuente
+    // dos veces la misma mercadería ni el mismo dinero, y que la reversión use
+    // los importes CONGELADOS de la venta y no los de hoy. El único mutante que
+    // sobrevivía era el de la constante ESTADO_ANULADA (nivel módulo, se evalúa
+    // al importar); se mató aseverando el LITERAL 'VOIDED' en el test, no la
+    // constante importada — comparar la constante consigo misma no mata nada.
+    'backend/services/saleCancellation.ts': 73,
+    // shiftIdentity.ts: quién queda como CAJERO al abrir la caja, ahora que el
+    // PIN dejó de ser obligatorio. 68 mutantes, score medido 100.00%. No es
+    // dinero, pero decide a nombre de quién queda un faltante del arqueo — y
+    // eso es una acusación. Lo que protege: que el PIN, cuando VIENE, gane
+    // siempre (un PIN equivocado no puede caer al modo automático y abrir la
+    // caja a nombre de otro), y que con dos empleados posibles NO se adivine:
+    // se abre sin identidad antes que ponerle el turno a quien quizá ni estaba.
+    // Sus dos sobrevivientes iniciales eran el campo `modo` en los caminos de
+    // rechazo — los tests miraban `codigo` y `employeeId` pero no `modo`.
+    'backend/services/shiftIdentity.ts': 68,
     'backend/services/loanMath.ts': 12,
     // DTO público mínimo de tracking: 5/5; descarta notas, GPS y teléfonos.
     'backend/services/pedidoTrackingService.ts': 5,
