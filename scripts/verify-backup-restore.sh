@@ -58,8 +58,7 @@ command -v mysql >/dev/null || { echo "❌ El cliente mysql no está instalado."
 CNF_DEST="$(mktemp)"; chmod 600 "$CNF_DEST"
 limpiar() { rm -f "$CNF_DEST" "${CNF_ORIG:-}"; }
 trap limpiar EXIT
-printf '[client]\nuser=%s\npassword=%s\nhost=%s\nport=%s\n' \
-  "$DEST_USER" "$DEST_PASS" "$DEST_HOST" "$DEST_PORT" > "$CNF_DEST"
+escribir_cnf "$CNF_DEST" "$DEST_USER" "$DEST_PASS" "$DEST_HOST" "$DEST_PORT"
 
 mysql_dest() { mysql --defaults-extra-file="$CNF_DEST" "$@"; }
 
@@ -93,8 +92,7 @@ echo "✓ Restaurado: ${TABLAS_DEST} tablas, ${FILAS_DEST} filas."
 # ── 4 · Comparación contra el origen (la prueba de verdad) ─────────────────────
 if [[ -n "${SOURCE_DATABASE_URL:-}" ]]; then
   CNF_ORIG="$(mktemp)"; chmod 600 "$CNF_ORIG"
-  printf '[client]\nuser=%s\npassword=%s\nhost=%s\nport=%s\n' \
-    "$ORIG_USER" "$ORIG_PASS" "$ORIG_HOST" "$ORIG_PORT" > "$CNF_ORIG"
+  escribir_cnf "$CNF_ORIG" "$ORIG_USER" "$ORIG_PASS" "$ORIG_HOST" "$ORIG_PORT"
   CONTEOS_ORIG="$(conteos "$CNF_ORIG" "$ORIG_NAME")"
 
   if ! DIFERENCIAS="$(diff <(echo "$CONTEOS_ORIG") <(echo "$CONTEOS_DEST"))"; then
