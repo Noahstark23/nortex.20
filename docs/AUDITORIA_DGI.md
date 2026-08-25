@@ -22,12 +22,15 @@ detalle técnico.
 | DGI-2 | Un comprobante emitido no se edita ni se borra | ⚠️ Cumple de hecho, sin guard |
 | DGI-3 | Control de acceso con usuarios y claves cifradas | ✅ Cumple |
 | DGI-4 | Respaldo de la información | ⚠️ Resuelto en código; falta configurar prod |
-| DGI-5 | Anulación de comprobantes con rastro | ❌ **No existe** |
-| DGI-6 | Manual Técnico y de Usuario en español | ❌ No existe |
+| DGI-5 | Anulación de comprobantes con rastro | ✅ Resuelto en código |
+| DGI-6 | Manual Técnico y de Usuario en español | ⚠️ Redactado; faltan los datos legales |
 | DGI-7 | Reportes contables formateados | ✅ Cumple (alcance limitado) |
 
-Dos hallazgos bloquean el registro (**DGI-4** y **DGI-6**) y uno bloquea la operación
-legal del día a día (**DGI-5**).
+Ninguno de los siete sigue sin resolver en el código. Lo que queda es **de
+configuración y de trámite**, no de programación: poner las variables del respaldo
+en producción (DGI-4) y completar los datos legales del manual antes de presentarlo
+a la VET (DGI-6). Hasta que eso pase, **DGI-4 y DGI-6 siguen incumplidos de hecho**
+por más que el código esté listo.
 
 ---
 
@@ -131,29 +134,56 @@ Además del requisito fiscal, el riesgo operativo es el peor del sistema: hoy un
 falla del volumen de MySQL se lleva el inventario y la cartera de todos los clientes,
 sin vuelta atrás.
 
-## DGI-5 · Anulación de comprobantes — ❌ No existe
+## DGI-5 · Anulación de comprobantes — ✅ Resuelto en código
 
-`Sale.status` no contempla `CANCELLED` ni `VOID` (`schema.prisma:537`). Existe
-`POST /api/returns` (`server.ts:2100`), pero **una devolución no es una anulación**:
+La distinción que el sistema no sabía hacer:
 
 - **Devolución** = el cliente trae mercadería de vuelta. La venta ocurrió y sigue
   siendo válida; se emite un movimiento nuevo en sentido contrario.
 - **Anulación** = la factura no debió emitirse (error de digitación, cobro duplicado,
-  cliente equivocado). El comprobante debe quedar **anulado y visible**, no borrado,
-  y su número **no se reutiliza**.
+  cliente equivocado). El comprobante queda **anulado y visible**, no borrado, y su
+  número **no se reutiliza**.
 
-Hoy, ante una factura mal emitida, el operario no tiene camino legal. Los caminos que
-le quedan son peores: dejarla como venta real (declara de más) o improvisar una
-devolución que descuadra el inventario con mercadería que nunca se movió.
+Antes, ante una factura mal emitida, el operario no tenía camino legal: o la dejaba
+como venta real (declarando de más) o improvisaba una devolución que descuadraba el
+inventario con mercadería que nunca se movió.
 
-## DGI-6 · Manual Técnico y de Usuario — ❌ No existe
+**Qué se construyó**
+
+- `backend/services/saleCancellation.ts` — reglas puras: cuándo se puede anular
+  (no dos veces, no sobre una venta con devoluciones o abonos, no en período
+  cerrado) y qué hay que revertir, usando los importes **congelados** de la venta
+  (`costAtSale`) y no los de hoy.
+- `POST /api/sales/:id/cancel` — reversión completa (stock, COGS, deuda, caja,
+  asiento contable espejo) en una sola transacción, con guarda atómica: un
+  `updateMany` condicionado a que la venta no esté ya anulada, así dos clics
+  simultáneos no revierten el inventario dos veces.
+- Interfaz para el cajero dentro del modal de devoluciones, donde ya buscó la
+  factura, con motivo obligatorio (mínimo real, no un campo de trámite).
+
+**El estado es `'VOIDED'`, no `'CANCELLED'`.** Es deliberado y contradice lo que
+recomendaba la versión anterior de este documento: el repo **ya filtraba**
+`status: { not: 'VOIDED' }` en ocho lugares —entre ellos la declaración mensual de
+IVA y el Libro de Ventas— mientras **nada escribía nunca ese valor**. Introducir un
+nombre nuevo habría dejado esas ocho exclusiones sin efecto y las ventas anuladas
+contando como ingreso ante la DGI: el peor resultado posible.
+
+**Hallazgo del otro lado.** `POST /api/returns` no tenía guarda contra facturas
+anuladas. Como al anular la mercadería ya vuelve al inventario, una nota de crédito
+encima la sumaba por segunda vez. El hueco no era alcanzable antes de que existiera
+la anulación; esta misma función lo habría abierto. La guarda quedó dentro de la
+transacción y después del `FOR UPDATE` sobre `Sale`.
+
+## DGI-6 · Manual Técnico y de Usuario — ⚠️ Redactado; faltan los datos legales
 
 La DT 09-2007 exige presentar en la VET un **Manual Técnico y de Usuario en español**,
-junto con el lenguaje de programación y los datos del proveedor. No hay tal documento
-en el repositorio.
+junto con el lenguaje de programación y los datos del proveedor.
 
-Es la siguiente entrega, y se puede generar del código real (correlativos, series,
-controles de acceso, respaldos, reportes) en vez de escribirlo a mano.
+El documento existe: `docs/MANUAL_TECNICO_DGI.md`, generado del código real
+(correlativos, series, controles de acceso, respaldos, reportes) en vez de escrito a
+mano. **No se puede presentar todavía**: lleva marcadores `[[...]]` para los datos
+legales del contribuyente, que no están en el repositorio y los tiene que completar
+el dueño. Presentarlo con los marcadores puestos sería peor que no presentarlo.
 
 ## DGI-7 · Reportes contables — ✅ Cumple, con alcance limitado
 
@@ -170,15 +200,26 @@ lo declaro cumplido más allá de eso.
 
 ## Qué hacer, en orden
 
-1. **Agendar el backup** (DGI-4). Es el de mayor riesgo y el más barato: un cron en el
-   host o un contenedor sidecar que corra `scripts/backup-db.sh`, más una verificación
-   de que el archivo llega al bucket. Sin esto no hay expediente ni tranquilidad.
-2. **Anulación de comprobantes** (DGI-5). Estado `CANCELLED` en `Sale`, motivo
-   obligatorio, `AuditLog` con `before`/`after` en la misma transacción, reversión del
-   stock por `applyStockDelta`, el número **no se reutiliza**, y el comprobante anulado
-   sigue apareciendo en los libros marcado como tal.
-3. **Manual Técnico para la VET** (DGI-6), generado del código.
-4. **Guard de inmutabilidad fiscal** (DGI-2), como test que falle en CI.
+Lo que queda **no es programación**. El código de los siete requisitos está escrito;
+lo pendiente es configuración y trámite, y no lo puede cerrar un agente:
+
+1. **Poner las variables del respaldo en producción** (DGI-4). El agendador, la
+   verificación del volcado y la prueba de restauración ya están en el repo y corren
+   en CI, pero sin `BACKUP_S3_BUCKET`, `AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY`
+   configuradas en Coolify **no se respalda nada**. Es el de mayor riesgo: mientras
+   no esté, un disco perdido se lleva el negocio entero.
+2. **Completar los datos legales del manual** (DGI-6). `docs/MANUAL_TECNICO_DGI.md`
+   tiene marcadores `[[...]]` con los datos del contribuyente y del proveedor, que no
+   viven en el código. Sin eso no se presenta a la VET.
+3. **Guard de inmutabilidad fiscal** (DGI-2), como test que falle en CI. Es lo único
+   que sigue siendo trabajo de programación, y es un endurecimiento: hoy se cumple de
+   hecho —ningún endpoint edita una venta emitida— pero nada impide que un cambio
+   futuro abra esa puerta sin que nadie se entere.
+
+> Nota sobre la versión anterior de esta lista: recomendaba el estado `CANCELLED`
+> para la anulación. Se implementó con `'VOIDED'` a propósito, y el porqué está en la
+> sección DGI-5. Seguir aquella recomendación habría dejado las ventas anuladas
+> contando en la declaración de IVA.
 
 ---
 
