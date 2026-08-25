@@ -14,7 +14,7 @@ Ventanilla Electrónica Tributaria (VET).
 >
 > | | Requisito | Estado |
 > |---|---|---|
-> | **DGI-4** | Respaldo de la información | El script existe pero **nadie lo ejecuta**: sin cron, ausente del Dockerfile y del compose |
+> | **DGI-4** | Respaldo de la información | Resuelto en código (servicio `backup` del compose, con verificación y prueba de restauración). **Falta cargar las credenciales del bucket en producción y confirmar el primer respaldo** |
 > | **DGI-5** | Anulación de comprobantes | **No existe** en el sistema |
 >
 > Detalle y evidencia en [`AUDITORIA_DGI.md`](./AUDITORIA_DGI.md). Una vez cerrados,
@@ -250,15 +250,21 @@ antes y después, leídas de la propia base bajo bloqueo — no calculadas por s
 
 ## 7 · Respaldo de la información
 
-> **Pendiente declarado (DGI-4).** Existe un procedimiento de respaldo
-> (`scripts/backup-db.sh`) que genera un volcado completo de la base, lo comprime y lo
-> transfiere a almacenamiento externo, **separado del servidor de aplicación**.
->
-> **A la fecha de este documento ese procedimiento no está agendado**: no hay tarea
-> programada que lo ejecute. Debe quedar en ejecución automática diaria, con
-> verificación de que el archivo llega a su destino, **antes** de presentar el
-> expediente. Esta sección debe reescribirse entonces indicando frecuencia, destino y
-> período de retención.
+El sistema ejecuta un respaldo **automático diario** de la base de datos completa:
+
+| | |
+|---|---|
+| **Frecuencia** | Diaria, 03:15 hora de Nicaragua (fuera del horario de facturación) |
+| **Alcance** | Volcado completo (estructura, datos, rutinas, disparadores) en `utf8mb4` |
+| **Destino** | Almacenamiento externo S3-compatible, **separado del servidor de aplicación**, organizado por año/mes |
+| **Verificación** | Cada respaldo se valida antes de transferirse (integridad del archivo, cierre completo del volcado y presencia de las tablas fiscales). Un volcado incompleto se rechaza y genera alerta |
+| **Prueba de restauración** | El procedimiento de restauración se ejecuta y verifica automáticamente en cada cambio del sistema, comparando tablas y número de registros contra el origen |
+| **Evidencia** | Cada respaldo exitoso registra fecha, tamaño, huella `sha256` y destino en `last-backup.json` |
+| **Retención** | `[[AÑOS DE RETENCIÓN]]` en el almacenamiento externo; 7 días en el servidor |
+
+> **Antes de presentar:** confirmar que el servicio de respaldo está desplegado con sus
+> credenciales cargadas y que existe al menos un registro de respaldo exitoso. El
+> detalle técnico y su estado están en [`AUDITORIA_DGI.md`](./AUDITORIA_DGI.md) (DGI-4).
 
 Período de retención a declarar: `[[AÑOS DE RETENCIÓN]]` (mínimo el exigido por el
 Código Tributario).

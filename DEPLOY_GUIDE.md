@@ -206,6 +206,27 @@ RESEND_API_KEY=<tu-api-key-de-resend>
 # 🌐 FRONTEND
 # ==========================================
 FRONTEND_URL=https://nortex.com
+
+# ==========================================
+# 💾 BACKUP DIARIO OFF-SITE (DGI-4 · OBLIGATORIO)
+# ==========================================
+# Sin estas variables el servicio `backup` del compose NO arranca y queda visible
+# como caído en Coolify. La app sigue funcionando, pero NO hay respaldo: si muere
+# el volumen de MySQL se pierde el inventario y la cartera de todos los clientes.
+#
+# El bucket debe estar en OTRO proveedor/región que el Droplet — un backup en el
+# mismo servidor se pierde junto con el servidor.
+BACKUP_S3_BUCKET=s3://nortex-backups/produccion
+BACKUP_S3_ENDPOINT=https://nyc3.digitaloceanspaces.com   # vacío si es AWS S3
+AWS_ACCESS_KEY_ID=<clave-del-bucket>
+AWS_SECRET_ACCESS_KEY=<secreto-del-bucket>
+AWS_DEFAULT_REGION=us-east-1
+
+# Opcionales
+BACKUP_HOUR=03            # hora local del backup (default 03:15)
+BACKUP_MINUTE=15
+BACKUP_KEEP_DAYS=7        # retención LOCAL; la del bucket se maneja con su lifecycle
+BACKUP_ALERT_WEBHOOK=     # Slack/Discord: avisa si un backup FALLA
 ```
 
 ### 🔑 Generación de claves seguras
@@ -238,6 +259,7 @@ Tu `docker-compose.yml` actual es para desarrollo. Para producción en Coolify, 
 - [ ] Webhook de Stripe configurado para `https://nortex.com/api/billing/webhook`
 - [ ] DNS del dominio apuntando al VPS
 - [ ] phpMyAdmin deshabilitado o protegido con autenticación adicional
+- [ ] Credenciales del bucket de backup cargadas (`BACKUP_S3_BUCKET`, `AWS_*`)
 
 ---
 
@@ -310,6 +332,26 @@ docker exec -it $(docker ps --filter "name=nortex" -q --last 1) npx tsx backend/
 - [ ] ✅ Emails se envían correctamente (verificar en Resend dashboard)
 - [ ] ✅ Base de datos persistente entre reinicios
 - [ ] ✅ Super Admin puede acceder a `/admin`
+- [ ] ✅ El servicio `backup` está arriba (`docker compose -p nortex ps`) y su log dice
+      `🗓 Planificador activo`
+- [ ] ✅ **Primer respaldo verificado a mano** (no esperar a las 03:15):
+
+```bash
+# 1 · Corre un backup ahora mismo y mirá que termine en "✓ Backup off-site OK."
+docker compose -p nortex exec backup bash /app/scripts/backup-db.sh
+
+# 2 · Evidencia del último respaldo bueno (fecha, tamaño, sha256, destino)
+docker compose -p nortex exec backup cat /var/backups/nortex/last-backup.json
+
+# 3 · LA PRUEBA QUE IMPORTA: restaurar ese dump en una base desechable.
+#     Un backup no probado no existe. No toca la base de producción: crea y
+#     borra `nortex_restore_test`, y el script se niega a correr contra un
+#     nombre de base que no parezca desechable.
+docker compose -p nortex exec backup bash -lc '
+  RESTORE_DATABASE_URL="${DATABASE_URL%/*}/nortex_restore_test" \
+  SOURCE_DATABASE_URL="$DATABASE_URL" \
+  bash /app/scripts/verify-backup-restore.sh "$(ls -t /var/backups/nortex/*.sql.gz | head -1)"'
+```
 
 ---
 

@@ -71,5 +71,43 @@ services:
       db:
         condition: service_healthy
 
+  # ── Backup diario off-site (DGI-4 · Capa 6 del Security & Integrity Loop) ────
+  # Vive ACÁ y no en un cron del host por dos razones concretas:
+  #   1. `db` no publica puertos y el nombre `db` solo resuelve dentro de esta
+  #      red — un cron del host NO puede alcanzar la base para hacer el dump.
+  #   2. Un cron del host hay que instalarlo a mano en cada servidor; esto se
+  #      despliega con la app y no se puede olvidar.
+  # Si faltan las credenciales del bucket, ESTE servicio se cae ruidosamente
+  # (visible en Coolify) pero la app sigue vendiendo: un respaldo mal configurado
+  # no puede tumbar el punto de venta del cliente.
+  backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.backup
+    restart: on-failure:3
+    environment:
+      - DATABASE_URL=mysql://root:${DB_ROOT_PASSWORD:?Define DB_ROOT_PASSWORD (sin default inseguro)}@db:3306/nortex_db
+      - TZ=${TZ:-America/Managua}
+      - BACKUP_HOUR=${BACKUP_HOUR:-03}
+      - BACKUP_MINUTE=${BACKUP_MINUTE:-15}
+      # Destino SEPARADO del Droplet. Sin esto no hay respaldo real: un dump que
+      # queda en el mismo disco que la base se pierde con la base.
+      - BACKUP_S3_BUCKET=${BACKUP_S3_BUCKET:-}
+      - BACKUP_S3_ENDPOINT=${BACKUP_S3_ENDPOINT:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      # Aviso inmediato si un backup falla (Slack/Discord/webhook genérico).
+      - BACKUP_ALERT_WEBHOOK=${BACKUP_ALERT_WEBHOOK:-}
+      - BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS:-7}
+    volumes:
+      - 'backup_data:/var/backups/nortex'
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   mysql_data:
+  # Dumps locales + el latido `last-backup.json` (evidencia del último respaldo
+  # bueno). La copia que importa es la del bucket; esta es la de mano.
+  backup_data:

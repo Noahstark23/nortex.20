@@ -21,7 +21,7 @@ detalle técnico.
 | DGI-1 | Numeración correlativa ininterrumpida y series | ✅ Cumple |
 | DGI-2 | Un comprobante emitido no se edita ni se borra | ⚠️ Cumple de hecho, sin guard |
 | DGI-3 | Control de acceso con usuarios y claves cifradas | ✅ Cumple |
-| DGI-4 | Respaldo de la información | ❌ **No cumple** |
+| DGI-4 | Respaldo de la información | ⚠️ Resuelto en código; falta configurar prod |
 | DGI-5 | Anulación de comprobantes con rastro | ❌ **No existe** |
 | DGI-6 | Manual Técnico y de Usuario en español | ❌ No existe |
 | DGI-7 | Reportes contables formateados | ✅ Cumple (alcance limitado) |
@@ -84,7 +84,37 @@ JWT por **keyring rotable** (`backend/services/secrets.ts`), y todos los endpoin
 sensibles detrás de `authenticate` + `checkRole`. El tenant sale **siempre** del JWT
 (`req.tenantId`), nunca del body — 445 usos de `tenantId` en `server.ts`.
 
-## DGI-4 · Respaldo de la información — ❌ No cumple
+## DGI-4 · Respaldo de la información — ⚠️ Resuelto en código; falta configurar prod
+
+> **Actualización.** El hallazgo original (abajo) se corrigió: el respaldo dejó de
+> depender de que alguien instale un cron a mano. Lo que falta ya no es código, son
+> **tres variables de entorno en Coolify**.
+
+**El diagnóstico original se quedaba corto.** No era solo que nadie hubiera agendado
+el script: es que el cron del host **no podía funcionar**. El servicio `db` del
+`docker-compose.yml` no publica puertos (a propósito, fue una brecha cerrada) y el
+nombre `db` solo resuelve dentro de la red de compose. Un `mysqldump` lanzado desde
+el crontab del Droplet nunca habría alcanzado la base. Por eso el respaldo se movió
+adentro del despliegue:
+
+| Pieza | Qué hace |
+|---|---|
+| `docker-compose.yml` → servicio `backup` | Se despliega con la app en cada release. Sin paso manual por SSH, y con acceso real a `db` por la red interna |
+| `Dockerfile.backup` | Imagen mínima con el `mysqldump` de MySQL 8 (el cliente de MariaDB produce dumps que MySQL 8 puede rechazar al restaurar) + `aws` v2 |
+| `scripts/backup-scheduler.sh` | Corre el backup diario a las 03:15 (America/Managua). Loop propio y no `cron`: dentro de un contenedor, `cron` **no hereda las variables de entorno** y las credenciales llegarían vacías. Si la config está incompleta, el servicio **muere ruidosamente** en vez de fingir que respalda |
+| `scripts/verify-dump-file.sh` | Rechaza un dump truncado, vacío o sin las tablas fiscales **antes** de subirlo. Un `mysqldump` que muere a mitad deja un archivo que existe y descomprime: subirlo borraba la única señal del problema |
+| `scripts/verify-backup-restore.sh` | Restaura el dump en una base desechable y exige que tablas y conteos coincidan con el origen. *Un backup no probado no existe* |
+| Latido `last-backup.json` | Evidencia del último respaldo bueno (fecha, tamaño, sha256, destino, tablas). Es lo que se le muestra a la DGI y lo que responde "¿corrió el backup de anoche?" |
+| CI `backup-restore-smoke` | Cada PR genera un dump real contra MySQL 8, lo restaura, compara conteos y acentos, y **verifica que un dump truncado sea rechazado** (sin ese caso negativo, la verificación podría estar pasando por vacía) |
+
+**Lo que falta para declarar cumplido:** definir en Coolify `BACKUP_S3_BUCKET`,
+`AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY` (y `BACKUP_S3_ENDPOINT` si es Spaces),
+desplegar, y confirmar el primer latido. Sin esas variables el servicio `backup` se
+cae y queda visible en Coolify — la app sigue vendiendo, porque un respaldo mal
+configurado no puede tumbar el punto de venta del cliente. **Mientras esas variables
+no estén puestas, DGI-4 sigue INCUMPLIDO en producción.**
+
+### Hallazgo original (2026-07)
 
 `scripts/backup-db.sh` **existe y está bien escrito**: hace `mysqldump`, comprime y
 sube a almacenamiento S3-compatible (DigitalOcean Spaces), separado del Droplet.

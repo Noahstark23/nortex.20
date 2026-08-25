@@ -99,6 +99,109 @@ jobs:
           LEGACY_SCHEMA_PATH: ${{ runner.temp }}/schema-before-pr158.prisma
           NORTEX_ALLOW_DESTRUCTIVE_SCHEMA_SMOKE: issue-159-ci-only
 
+  # ── DGI-4 · El backup se PRUEBA, no se supone ────────────────────────────────
+  # "Un backup no probado no existe": este job genera un dump real contra MySQL 8,
+  # lo restaura en una base desechable y exige que tablas, conteos y acentos
+  # coincidan con el origen. Incluye el caso NEGATIVO (un dump truncado debe ser
+  # rechazado): sin él, la verificación podría estar pasando por vacía.
+  backup-restore-smoke:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: nortex_backup_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      SOURCE_DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_backup_test
+      RESTORE_DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_backup_restore_test
+      BACKUP_DIR: ${{ github.workspace }}/tmp-backups
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Cliente MySQL (mysqldump + mysql)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mysql-client
+
+      - name: Crear el schema real en la BD de origen
+        run: |
+          npx prisma generate --schema=backend/prisma/schema.prisma
+          npx prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+        env:
+          DATABASE_URL: ${{ env.SOURCE_DATABASE_URL }}
+
+      # Tabla de control: prueba que viajan los DATOS (no solo el DDL) y que el
+      # utf8mb4 sobrevive. Un dump con charset mal puesto restaura conteos
+      # idénticos pero con los acentos rotos — y eso no se nota hasta que un
+      # cliente ve su razón social destrozada.
+      - name: Sembrar filas de control
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot nortex_backup_test -e "
+            CREATE TABLE _backup_smoke (id INT PRIMARY KEY, nota VARCHAR(64)) DEFAULT CHARSET=utf8mb4;
+            INSERT INTO _backup_smoke VALUES (1,'fila uno'),(2,'fila dos'),(3,'acentos: ñandú áéíóú');"
+
+      - name: Generar el backup (modo local, sin subir)
+        run: bash scripts/backup-db.sh
+        env:
+          DATABASE_URL: ${{ env.SOURCE_DATABASE_URL }}
+          BACKUP_LOCAL_ONLY: '1'
+
+      - name: El latido de evidencia quedó escrito
+        run: |
+          test -f "$BACKUP_DIR/last-backup.json" || { echo "::error::No se escribió last-backup.json"; exit 1; }
+          cat "$BACKUP_DIR/last-backup.json"
+          node -e "const h=require('$BACKUP_DIR/last-backup.json'); if(!h.verificado||h.tablas<10||h.bytes<1024) throw new Error('latido inconsistente: '+JSON.stringify(h));"
+
+      - name: Restaurar y comparar contra el origen
+        run: bash scripts/verify-backup-restore.sh "$(ls -t "$BACKUP_DIR"/nortex-*.sql.gz | head -1)"
+
+      - name: Los acentos sobrevivieron al viaje
+        run: |
+          OBTENIDO="$(mysql -h 127.0.0.1 -P 3306 -uroot -proot -N -B \
+            -e "SELECT nota FROM nortex_backup_restore_test._backup_smoke WHERE id=3;")"
+          ESPERADO='acentos: ñandú áéíóú'
+          test "$OBTENIDO" = "$ESPERADO" || { echo "::error::utf8 corrupto tras restaurar: '$OBTENIDO' != '$ESPERADO'"; exit 1; }
+          echo "✓ $OBTENIDO"
+
+      # Caso NEGATIVO: la verificación tiene que RECHAZAR un dump cortado. Si
+      # este paso "pasara", el chequeo de integridad no estaría chequeando nada.
+      - name: Un dump truncado debe ser rechazado
+        run: |
+          BUENO="$(ls -t "$BACKUP_DIR"/nortex-*.sql.gz | head -1)"
+          gzip -cd "$BUENO" | head -c 20000 | gzip > "$RUNNER_TEMP/truncado.sql.gz"
+          if bash scripts/verify-dump-file.sh "$RUNNER_TEMP/truncado.sql.gz"; then
+            echo "::error::La verificación aceptó un dump truncado"; exit 1
+          fi
+          : > "$RUNNER_TEMP/vacio.sql.gz"
+          if bash scripts/verify-dump-file.sh "$RUNNER_TEMP/vacio.sql.gz"; then
+            echo "::error::La verificación aceptó un dump vacío"; exit 1
+          fi
+          echo "✓ Dumps truncado y vacío rechazados."
+
+      # El servicio `backup` del compose tiene que CONSTRUIR. Un Dockerfile roto
+      # se descubriría en el deploy, con la app ya desplegada y sin respaldo.
+      - name: La imagen del servicio de backup construye
+        run: docker build -f Dockerfile.backup -t nortex-backup:ci .
+
+      # Se EJECUTAN, no solo se busca el binario: un `COPY --from` con la ruta
+      # equivocada deja un symlink colgante que `command -v` no distingue de uno
+      # bueno, y el backup fallaría recién en producción al querer subir el dump.
+      - name: Las herramientas de la imagen realmente funcionan
+        run: |
+          docker run --rm --entrypoint bash nortex-backup:ci -lc \
+            'set -e; mysqldump --version; aws --version; command -v gzip; command -v find'
+
   # ── Despliegue con COMPUERTA: solo corre en main, cuando la variable
   # NORTEX_DEPLOY_ENABLED vale "true", y después de verify + schema smoke.
   # Sin esa variable el job aparece SKIPPED (no como un falso deploy verde).
@@ -110,7 +213,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       vars.NORTEX_DEPLOY_ENABLED == 'true'
-    needs: [verify, deploy-schema-smoke]
+    needs: [verify, deploy-schema-smoke, backup-restore-smoke]
     runs-on: ubuntu-latest
     environment:
       name: staging

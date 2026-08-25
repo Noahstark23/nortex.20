@@ -1,0 +1,43 @@
+# NORTEX — Imagen del servicio de BACKUP (DGI-4 · Capa 6 del Security Loop).
+#
+# Corre junto a la app en el mismo docker-compose, así el respaldo se despliega
+# con cada release en vez de depender de que alguien entre por SSH a instalar un
+# cron. Es una imagen aparte y mínima: el contenedor de la app no necesita
+# mysqldump ni credenciales del bucket, y este no necesita Node ni el código.
+
+# El `aws` v2 oficial es un bundle autocontenido (trae su propio Python), así que
+# se copia tal cual en vez de instalar un awscli 1.x viejo desde los repos.
+#
+# OJO CON EL ORIGEN: la imagen oficial NO está en Docker Hub — `amazon/aws-cli`
+# ahí no existe y el build falla con "not found". Vive en ECR Public, que además
+# no publica un tag `2` (solo `latest` y versiones exactas), así que se pinea la
+# versión como el resto del proyecto. Para actualizar: ver las tags en
+# https://gallery.ecr.aws/aws-cli/aws-cli y cambiar el número acá.
+# Si algún día el host no pudiera alcanzar public.ecr.aws, la alternativa es el
+# instalador oficial (awscli-exe-linux-<arch>.zip) dentro de la imagen base.
+FROM public.ecr.aws/aws-cli/aws-cli:2.36.29 AS awscli
+
+# Base mysql:8.0 a propósito: el `mysqldump` DEBE ser de la misma familia que el
+# servidor. El cliente de MariaDB que traen las imágenes Debian produce dumps que
+# MySQL 8 puede rechazar al restaurar — justo el día en que no se puede fallar.
+FROM mysql:8.0
+
+COPY --from=awscli /usr/local/aws-cli/ /usr/local/aws-cli/
+RUN ln -s /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin/aws
+
+# gzip: comprime el dump · findutils: retención local (`find -mtime`).
+RUN microdnf install -y gzip findutils && microdnf clean all
+
+WORKDIR /app
+COPY scripts/db-url.sh scripts/backup-db.sh scripts/backup-scheduler.sh \
+     scripts/verify-dump-file.sh scripts/verify-backup-restore.sh /app/scripts/
+RUN chmod +x /app/scripts/*.sh
+
+ENV TZ=America/Managua \
+    BACKUP_DIR=/var/backups/nortex
+
+# La imagen base arranca mysqld con su propio ENTRYPOINT; acá no queremos un
+# servidor, queremos el planificador. Sin este reset, el contenedor intentaría
+# levantar una base de datos vacía.
+ENTRYPOINT []
+CMD ["bash", "/app/scripts/backup-scheduler.sh"]
