@@ -187,6 +187,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   // en backend y tampoco mostramos un control que el servidor va a rechazar.
   const canUseAttendanceClock = userRole !== 'BODEGUERO';
   const isMoreActive = moreItems.some(it => location.pathname.startsWith(it.path));
+  // La caja es una superficie operativa dedicada, no otra pantalla del ERP.
+  // Mientras se vende, el sidebar y la navegación inferior solo agregan blancos
+  // accidentales y roban ancho al ticket. La salida sigue disponible desde el
+  // menú contextual del propio POS, y el carrito continúa protegido por
+  // VentaEnCursoContext + su persistencia local.
+  const isPosSurface = location.pathname === '/app/pos';
 
   // ── Navegación en 5 secciones (rediseño Fase 2) ───────────────────────────
   const { sections: sectionGroups, loose: looseItems } = groupBySection(navItems);
@@ -230,7 +236,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     // w-full (no w-screen): w-screen provoca overflow horizontal.
     <div className="flex h-dvh w-full bg-surface-950 overflow-hidden [color-scheme:dark]">
       {/* DESKTOP SIDEBAR */}
-      <aside className="hidden lg:flex w-64 bg-nortex-900 border-r border-white/[0.06] flex-col justify-between transition-all duration-300">
+      <aside className={`${isPosSurface ? 'hidden' : 'hidden lg:flex'} w-64 bg-nortex-900 border-r border-white/[0.06] flex-col justify-between transition-all duration-300`}>
         <div>
           <div className="h-16 flex items-center justify-start px-6 border-b border-white/[0.06]">
             <div className="w-8 h-8 bg-nortex-accent rounded-lg flex items-center justify-center mr-3 shadow-glow shadow-emerald-500/40">
@@ -360,7 +366,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       </aside>
 
       {/* MOBILE BOTTOM NAV */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-surface-950/90 backdrop-blur-md border-t border-white/[0.06] flex items-center justify-around z-40 px-1 pb-safe">
+      <nav className={`${isPosSurface ? 'hidden' : 'flex lg:hidden'} fixed bottom-0 left-0 right-0 h-16 bg-surface-950/90 backdrop-blur-md border-t border-white/[0.06] items-center justify-around z-40 px-1 pb-safe`}>
         {navItems.slice(0, 4).map((item) => {
           const Icon = item.icon;
           return (
@@ -392,7 +398,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       </nav>
 
       {/* FULL MOBILE MENU OVERLAY (El cajón secreto) */}
-      {showMobileMenu && (
+      {showMobileMenu && !isPosSurface && (
         <div className="lg:hidden fixed inset-0 bg-slate-900 z-50 flex flex-col animate-in slide-in-from-bottom-full duration-200">
           <div className="flex justify-between items-center p-6 border-b border-slate-800 bg-slate-900">
             <div className="flex items-center gap-3">
@@ -487,7 +493,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div>
       )}
 
-      <main className="flex-1 overflow-hidden relative mb-16 lg:mb-0">
+      <main className={`flex-1 overflow-hidden relative ${isPosSurface ? 'mb-0' : 'mb-16 lg:mb-0'}`}>
         {children}
       </main>
 
@@ -557,10 +563,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
       {/* 🚀 Onboarding guiado: el flujo crea catálogo y configura el negocio,
           por eso ni siquiera se monta en la sesión operativa de bodega. */}
-      {userRole !== 'BODEGUERO' && <OnboardingHub />}
+      {userRole !== 'BODEGUERO' && !isPosSurface && <OnboardingHub />}
 
       {/* 📲 Aviso de instalación de la PWA (solo si el navegador la ofrece) */}
-      <InstallPrompt />
+      {!isPosSurface && <InstallPrompt />}
     </div>
   );
 };

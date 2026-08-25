@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Navigate, Link, useSearchParams } from 'react-router-dom';
-import { Mail, Lock, LogIn, Loader2, ArrowRight, Clock } from 'lucide-react';
+import { Mail, Lock, LogIn, Loader2, ArrowRight, Clock, Eye, EyeOff } from 'lucide-react';
 import { homePathFor, resolveUiMode, UI_MODE_KEY } from '../utils/navigation';
 
 const Login: React.FC = () => {
@@ -11,6 +11,7 @@ const Login: React.FC = () => {
   const sessionExpired = searchParams.get('error') === 'session_expired';
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
     email: '',
     password: ''
@@ -48,10 +49,13 @@ const Login: React.FC = () => {
         body: JSON.stringify(formData)
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        throw new Error(data.error || 'Credenciales incorrectas');
+        throw new Error(data?.error || 'No pudimos iniciar sesión. Revisá tus datos.');
+      }
+      if (!data?.token || !data?.user || !data?.tenant?.id) {
+        throw new Error('El servidor respondió de forma incompleta. Intentá de nuevo.');
       }
 
       // SECURE STORAGE
@@ -73,8 +77,8 @@ const Login: React.FC = () => {
         navigate(homePathFor(data.user.role, uiMode), { replace: true });
       }
 
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'No pudimos conectar con el servidor. Intentá de nuevo.');
     } finally {
       setLoading(false);
     }
@@ -93,29 +97,32 @@ const Login: React.FC = () => {
           <div className="w-10 h-10 bg-nortex-accent rounded flex items-center justify-center mx-auto mb-4 shadow-[0_0_15px_rgba(16,185,129,0.4)]">
             <span className="font-bold text-nortex-900 text-lg">N</span>
           </div>
-          <h2 className="text-2xl font-bold text-white tracking-tight">Bienvenido a Nortex</h2>
-          <p className="text-slate-400 text-xs mt-2 uppercase tracking-widest">Sistema Operativo Financiero</p>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Bienvenido a Nortex</h1>
+          <p className="mt-2 text-sm text-slate-400">Entrá y seguí donde quedaste.</p>
         </div>
 
         {sessionExpired && !error && (
-          <div className="mb-6 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-400 text-sm text-center flex items-center justify-center gap-2">
+          <div role="status" className="mb-6 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-300 text-sm text-center flex items-center justify-center gap-2">
             <Clock size={14} /> Tu sesión venció. Volvé a entrar y seguís donde quedaste.
           </div>
         )}
 
         {error && (
-          <div className="mb-6 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm text-center flex items-center justify-center gap-2">
+          <div role="alert" aria-live="assertive" className="mb-6 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-300 text-sm text-center flex items-center justify-center gap-2">
             <Lock size={14} /> {error}
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label className="block text-xs font-mono text-slate-400 mb-1.5 ml-1">CORREO ELECTRÓNICO</label>
+            <label htmlFor="login-email" className="mb-1.5 ml-1 block text-sm font-medium text-slate-300">Correo electrónico</label>
             <div className="relative group">
               <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-nortex-accent transition-colors" size={18} />
               <input
+                id="login-email"
                 type="email"
+                name="email"
+                autoComplete="email"
                 required
                 className="w-full bg-white/[0.03] border border-white/[0.08] text-white pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40 transition-all placeholder:text-slate-600"
                 placeholder="usuario@empresa.com"
@@ -126,17 +133,29 @@ const Login: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-xs font-mono text-slate-400 mb-1.5 ml-1">CONTRASEÑA</label>
+            <label htmlFor="login-password" className="mb-1.5 ml-1 block text-sm font-medium text-slate-300">Contraseña</label>
             <div className="relative group">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-nortex-accent transition-colors" size={18} />
               <input
-                type="password"
+                id="login-password"
+                type={showPassword ? 'text' : 'password'}
+                name="password"
+                autoComplete="current-password"
                 required
-                className="w-full bg-white/[0.03] border border-white/[0.08] text-white pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40 transition-all placeholder:text-slate-600"
+                className="w-full bg-white/[0.03] border border-white/[0.08] text-white pl-10 pr-12 py-3 rounded-xl focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40 transition-all placeholder:text-slate-600"
                 placeholder="••••••••"
                 value={formData.password}
                 onChange={e => setFormData({ ...formData, password: e.target.value })}
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(current => !current)}
+                className="absolute right-1 top-1/2 flex h-touch w-touch -translate-y-1/2 items-center justify-center rounded-control text-slate-400 hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                aria-pressed={showPassword}
+              >
+                {showPassword ? <EyeOff aria-hidden="true" size={18} /> : <Eye aria-hidden="true" size={18} />}
+              </button>
             </div>
           </div>
 

@@ -3,26 +3,24 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   ArrowRight,
   Banknote,
-  Boxes,
   Check,
   CheckCircle2,
-  ChevronDown,
-  CircleHelp,
   LogOut,
   Minus,
-  MoreHorizontal,
   Package,
   Plus,
   Search,
-  Settings,
   ShoppingCart,
   Store,
   Trash2,
-  UserRound,
   X,
 } from 'lucide-react';
 import { formatMoney } from '../utils/money';
 import { trackEvent } from '../utils/analytics';
+import {
+  buildPublicRegistrationPath,
+  normalizePublicAcquisitionSource,
+} from '../utils/publicActivation';
 
 interface MockProduct {
   id: string;
@@ -36,11 +34,6 @@ interface MockProduct {
 interface CartItem {
   product: MockProduct;
   quantity: number;
-}
-
-interface GuestPOSProps {
-  /** Existing landing-page hooks can still receive the demo cart on checkout. */
-  onHook?: (cart: any[]) => void;
 }
 
 const MOCK_ITEMS: MockProduct[] = [
@@ -94,32 +87,39 @@ const MOCK_ITEMS: MockProduct[] = [
   },
 ];
 
-const NAV_ITEMS = [
-  { label: 'Vender', icon: Banknote, active: true },
-  { label: 'Productos', icon: Boxes, active: false },
-  { label: 'Fiado', icon: UserRound, active: false },
-  { label: 'Más', icon: MoreHorizontal, active: false },
-];
-
-const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
+const GuestPOS: React.FC = () => {
   const location = useLocation();
   const searchRef = useRef<HTMLInputElement>(null);
   const cartRef = useRef<HTMLElement>(null);
   const trackedStartRef = useRef(false);
   const trackedFirstProductRef = useRef(false);
+  const practiceStartedAtRef = useRef(Date.now());
   const [cart, setCart] = useState<CartItem[]>([]);
   const [query, setQuery] = useState('');
   const [guideVisible, setGuideVisible] = useState(true);
+  const [choosingPayment, setChoosingPayment] = useState(false);
+  const [confirmingCash, setConfirmingCash] = useState(false);
+  const [practiceCashReceived, setPracticeCashReceived] = useState('');
   const [missingImages, setMissingImages] = useState<Record<string, boolean>>({});
   const [completedSale, setCompletedSale] = useState<{
     total: number;
     itemCount: number;
+    paymentType: 'CASH' | 'CARD' | 'TRANSFER';
+    change?: number;
   } | null>(null);
 
-  const demoSource = useMemo(
-    () => new URLSearchParams(location.search).get('source') || 'direct',
-    [location.search],
-  );
+  const demoSource = useMemo(() => {
+    return normalizePublicAcquisitionSource(
+      new URLSearchParams(location.search).get('source'),
+    );
+  }, [location.search]);
+  const isAuthenticated = useMemo(() => Boolean(localStorage.getItem('nortex_token')), []);
+  const ownProductsPath = isAuthenticated
+    ? '/app/pos?first_sale=1'
+    : buildPublicRegistrationPath(demoSource, 'own_products');
+  const completedCtaPath = isAuthenticated
+    ? '/app/pos?first_sale=1'
+    : buildPublicRegistrationPath(demoSource, 'completed_sale');
 
   useEffect(() => {
     const previousTitle = document.title;
@@ -128,7 +128,7 @@ const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
       trackedStartRef.current = true;
       trackEvent('demo_started', {
         source: demoSource,
-        demo_version: 'sale_first_v1',
+        onboarding_step: 'practice',
       });
     }
     return () => {
@@ -136,10 +136,14 @@ const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
     };
   }, [demoSource]);
 
-  const trackFirstProduct = (origin: 'product_card' | 'starter_button') => {
+  const trackFirstProduct = () => {
     if (trackedFirstProductRef.current) return;
     trackedFirstProductRef.current = true;
-    trackEvent('demo_product_added', { source: demoSource, origin });
+    trackEvent('demo_product_added', {
+      source: demoSource,
+      onboarding_step: 'product',
+      has_products: true,
+    });
   };
 
   const filteredProducts = useMemo(() => {
@@ -162,8 +166,11 @@ const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
   const cartQuantity = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   const addToCart = (product: MockProduct) => {
-    trackFirstProduct('product_card');
+    trackFirstProduct();
     setCompletedSale(null);
+    setChoosingPayment(false);
+    setConfirmingCash(false);
+    setPracticeCashReceived('');
     setCart((previous) => {
       const existing = previous.find((item) => item.product.id === product.id);
       if (existing) {
@@ -196,35 +203,62 @@ const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
   const clearCart = () => {
     setCart([]);
     setCompletedSale(null);
+    setChoosingPayment(false);
+    setConfirmingCash(false);
+    setPracticeCashReceived('');
   };
 
   const startTrialSale = () => {
-    trackFirstProduct('starter_button');
+    trackFirstProduct();
     setCompletedSale(null);
+    setChoosingPayment(false);
+    setConfirmingCash(false);
+    setPracticeCashReceived('');
     setCart([{ product: MOCK_ITEMS[0], quantity: 1 }]);
   };
 
   const checkout = () => {
     if (cart.length === 0) return;
+    setChoosingPayment(true);
+    setConfirmingCash(false);
+    setPracticeCashReceived('');
+  };
 
-    const cartSnapshot = cart.map((item) => ({
-      ...item,
-      product: { ...item.product },
-    }));
-    setCompletedSale({ total, itemCount: cartQuantity });
+  const completePracticeSale = (paymentType: 'CASH' | 'CARD' | 'TRANSFER') => {
+    if (cart.length === 0) return;
+    const cashReceived = Number(practiceCashReceived);
+    if (paymentType === 'CASH' && (!Number.isFinite(cashReceived) || cashReceived < total)) return;
+
+    setCompletedSale({
+      total,
+      itemCount: cartQuantity,
+      paymentType,
+      ...(paymentType === 'CASH' ? { change: cashReceived - total } : {}),
+    });
+    setChoosingPayment(false);
+    setConfirmingCash(false);
     trackEvent('demo_checkout_completed', {
       source: demoSource,
-      items_count: cartQuantity,
-      cart_total: total,
-      payment_method: 'cash_demo',
+      onboarding_step: 'completed',
+      payment_type: paymentType,
     });
-    onHook?.(cartSnapshot);
+    trackEvent('practice_sale_completed', {
+      source: demoSource,
+      onboarding_step: 'completed',
+      has_products: true,
+      payment_type: paymentType,
+      elapsed_seconds: Math.max(0, Math.round((Date.now() - practiceStartedAtRef.current) / 1000)),
+    });
   };
 
   const startAnotherSale = () => {
     setCart([]);
     setQuery('');
     setCompletedSale(null);
+    setChoosingPayment(false);
+    setConfirmingCash(false);
+    setPracticeCashReceived('');
+    practiceStartedAtRef.current = Date.now();
     searchRef.current?.focus();
   };
 
@@ -237,45 +271,23 @@ const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
           </div>
 
           <nav aria-label="Navegación del demo" className="space-y-2">
-            {NAV_ITEMS.map(({ label, icon: Icon, active }) => (
-              <button
-                key={label}
-                type="button"
-                className={`flex min-h-tap w-full items-center gap-3 rounded-control px-3 text-left text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${
-                  active
-                    ? 'bg-brand/10 text-brand shadow-nav-active'
-                    : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-100'
-                }`}
-              >
-                <Icon aria-hidden="true" size={22} strokeWidth={1.8} />
-                {label}
-              </button>
-            ))}
+            <div
+              aria-current="page"
+              className="flex min-h-tap w-full items-center gap-3 rounded-control bg-brand/10 px-3 text-sm font-medium text-brand shadow-nav-active"
+            >
+              <Banknote aria-hidden="true" size={22} strokeWidth={1.8} />
+              Vender
+            </div>
           </nav>
 
-          <div className="mt-auto space-y-2">
-            <button
-              type="button"
-              className="flex min-h-tap w-full items-center gap-3 rounded-control px-3 text-sm font-medium text-slate-400 transition-colors hover:bg-white/[0.04] hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
-            >
-              <CircleHelp aria-hidden="true" size={21} />
-              Ayuda
-            </button>
-            <button
-              type="button"
-              className="flex min-h-tap w-full items-center gap-3 rounded-control px-3 text-sm font-medium text-slate-400 transition-colors hover:bg-white/[0.04] hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
-            >
-              <Settings aria-hidden="true" size={21} />
-              Ajustes
-            </button>
-            <div className="my-3 border-t border-white/[0.08]" />
-            <a
-              href="/"
+          <div className="mt-auto border-t border-white/[0.08] pt-3">
+            <Link
+              to={isAuthenticated ? '/app/inicio' : '/'}
               className="flex min-h-tap w-full items-center gap-3 rounded-control px-3 text-sm font-medium text-slate-400 transition-colors hover:bg-white/[0.04] hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
             >
               <LogOut aria-hidden="true" size={21} />
-              Salir del demo
-            </a>
+              {isAuthenticated ? 'Volver a mi negocio' : 'Salir del demo'}
+            </Link>
           </div>
         </aside>
 
@@ -288,17 +300,12 @@ const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
               <Store aria-hidden="true" size={18} />
               Demo de punto de venta
             </div>
-            <button
-              type="button"
-              className="flex min-h-tap items-center gap-2 rounded-control px-2 text-sm font-semibold text-slate-100 transition-colors hover:bg-white/[0.04] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
-              aria-label="Cambiar negocio de prueba"
-            >
+            <div className="flex min-h-tap items-center gap-2 rounded-control px-2 text-sm font-semibold text-slate-100">
               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-brand font-bold text-surface-950">
-                N
+                P
               </span>
-              <span className="hidden sm:inline">Ferretería Los Andes</span>
-              <ChevronDown aria-hidden="true" size={17} className="text-slate-400" />
-            </button>
+              <span className="hidden sm:inline">Práctica · datos de ejemplo</span>
+            </div>
           </header>
 
           <main className="p-3 pb-24 sm:p-4 sm:pb-24 lg:pb-4">
@@ -328,11 +335,13 @@ const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
                       Iniciar venta de prueba
                     </button>
                     <Link
-                      to="/register?source=demo&intent=own_products"
-                      onClick={() => trackEvent('register_cta_click', { location: 'demo_banner', source: 'demo_route' })}
+                      to={ownProductsPath}
+                      onClick={() => {
+                        if (!isAuthenticated) trackEvent('register_cta_click', { source: demoSource, onboarding_step: 'practice' });
+                      }}
                       className="inline-flex min-h-tap items-center justify-center rounded-control border border-brand/60 px-5 text-sm font-semibold text-slate-100 transition-colors hover:bg-brand/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
                     >
-                      Usar mis propios productos
+                      {isAuthenticated ? 'Vender con mis productos' : 'Usar mis propios productos'}
                     </Link>
                   </div>
                 </div>
@@ -479,18 +488,28 @@ const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
                     <p className="mt-2 text-[32px] font-bold tracking-tight text-slate-50 nx-num">
                       {formatMoney(completedSale.total)}
                     </p>
+                    <p className="mt-2 text-sm text-slate-400">
+                      {completedSale.paymentType === 'CASH' ? 'Efectivo' : completedSale.paymentType === 'CARD' ? 'Tarjeta' : 'Transferencia'}
+                      {completedSale.paymentType === 'CASH' && completedSale.change !== undefined
+                        ? ` · Vuelto ${formatMoney(completedSale.change)}`
+                        : ''}
+                    </p>
                     <div className="mt-8 w-full rounded-card border border-brand/20 bg-brand/10 p-4 text-left">
                       <p className="flex items-start gap-2 text-sm text-slate-200">
                         <Check aria-hidden="true" size={18} className="mt-0.5 shrink-0 text-brand" />
-                        Así de fácil queda guardada una venta en Nortex.
+                        {isAuthenticated
+                          ? 'Esta práctica no cambió tu caja ni tu inventario. Ahora podés repetirla con tus productos.'
+                          : 'Esta práctica no guardó datos reales. En tu cuenta, Nortex actualizará caja e inventario.'}
                       </p>
                     </div>
                     <Link
-                      to="/register?source=demo&intent=completed_sale"
-                      onClick={() => trackEvent('register_cta_click', { location: 'demo_success', source: 'demo_route' })}
+                      to={completedCtaPath}
+                      onClick={() => {
+                        if (!isAuthenticated) trackEvent('register_cta_click', { source: demoSource, onboarding_step: 'completed' });
+                      }}
                       className="mt-6 flex h-pay w-full items-center justify-center gap-2 rounded-control bg-brand px-5 text-base font-bold text-surface-950 transition-colors hover:bg-brand-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
                     >
-                      Crear mi negocio gratis
+                      {isAuthenticated ? 'Hacer una venta real' : 'Crear mi negocio gratis'}
                       <ArrowRight aria-hidden="true" size={20} />
                     </Link>
                     <button
@@ -602,15 +621,103 @@ const GuestPOS: React.FC<GuestPOSProps> = ({ onHook }) => {
                           {formatMoney(total)}
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={checkout}
-                        disabled={cart.length === 0}
-                        className="mt-5 flex h-pay w-full items-center justify-center gap-2 rounded-control bg-brand px-5 text-base font-bold text-surface-950 transition-colors hover:bg-brand-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
-                      >
-                        Cobrar
-                        <ArrowRight aria-hidden="true" size={21} />
-                      </button>
+                      {choosingPayment && confirmingCash ? (
+                        <div className="mt-5 space-y-3" aria-labelledby="practice-cash-title">
+                          <div>
+                            <p id="practice-cash-title" className="text-sm font-semibold text-slate-100">Efectivo recibido</p>
+                            <p className="mt-0.5 text-xs text-slate-400">Total {formatMoney(total)}</p>
+                          </div>
+                          <div className="relative">
+                            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">C$</span>
+                            <input
+                              autoFocus
+                              type="text"
+                              inputMode="decimal"
+                              value={practiceCashReceived}
+                              onChange={(event) => {
+                                const next = event.target.value.replace(',', '.');
+                                if (/^\d*(?:\.\d{0,2})?$/.test(next)) setPracticeCashReceived(next);
+                              }}
+                              aria-label="Efectivo recibido en la práctica"
+                              className="h-pay w-full rounded-control border border-white/[0.10] bg-surface-900 pl-10 pr-3 text-xl font-bold text-slate-100 outline-none focus:border-brand focus:ring-2 focus:ring-brand/30 nx-num"
+                              placeholder="0.00"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setPracticeCashReceived(total.toFixed(2))}
+                            className="min-h-tap w-full rounded-control border border-white/[0.10] text-sm font-semibold text-slate-200 transition-colors hover:bg-white/[0.05] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                          >
+                            Monto exacto · {formatMoney(total)}
+                          </button>
+                          {Number(practiceCashReceived) >= total && practiceCashReceived !== '' && (
+                            <div className="rounded-control border border-brand/20 bg-brand/10 px-3 py-2 text-center" aria-live="polite">
+                              <p className="text-xs font-semibold text-slate-400">Vuelto</p>
+                              <p className="mt-0.5 text-2xl font-bold text-brand nx-num">{formatMoney(Number(practiceCashReceived) - total)}</p>
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => completePracticeSale('CASH')}
+                            disabled={!Number.isFinite(Number(practiceCashReceived)) || Number(practiceCashReceived) < total}
+                            className="flex h-pay w-full items-center justify-center gap-2 rounded-control bg-brand px-4 text-base font-bold text-surface-950 transition-colors hover:bg-brand-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+                          >
+                            Confirmar cobro <ArrowRight aria-hidden="true" size={19} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setConfirmingCash(false); setPracticeCashReceived(''); }}
+                            className="min-h-tap w-full rounded-control text-sm font-semibold text-slate-400 transition-colors hover:bg-white/[0.04] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                          >
+                            Volver a métodos
+                          </button>
+                        </div>
+                      ) : choosingPayment ? (
+                        <div className="mt-5 space-y-2" role="group" aria-labelledby="practice-payment-title">
+                          <p id="practice-payment-title" className="pb-1 text-sm font-semibold text-slate-200">¿Cómo pagó?</p>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmingCash(true)}
+                            className="flex h-pay w-full items-center gap-3 rounded-control bg-brand px-4 text-base font-bold text-surface-950 transition-colors hover:bg-brand-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                          >
+                            <Banknote aria-hidden="true" size={21} /> Efectivo
+                            <ArrowRight aria-hidden="true" size={19} className="ml-auto" />
+                          </button>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => completePracticeSale('TRANSFER')}
+                              className="min-h-tap rounded-control border border-white/[0.10] px-3 text-sm font-semibold text-slate-200 transition-colors hover:bg-white/[0.05] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                            >
+                              Transferencia
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => completePracticeSale('CARD')}
+                              className="min-h-tap rounded-control border border-white/[0.10] px-3 text-sm font-semibold text-slate-200 transition-colors hover:bg-white/[0.05] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                            >
+                              Tarjeta
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => { setChoosingPayment(false); setConfirmingCash(false); }}
+                            className="min-h-tap w-full rounded-control text-sm font-semibold text-slate-400 transition-colors hover:bg-white/[0.04] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                          >
+                            Volver al carrito
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={checkout}
+                          disabled={cart.length === 0}
+                          className="mt-5 flex h-pay w-full items-center justify-center gap-2 rounded-control bg-brand px-5 text-base font-bold text-surface-950 transition-colors hover:bg-brand-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+                        >
+                          Cobrar
+                          <ArrowRight aria-hidden="true" size={21} />
+                        </button>
+                      )}
                     </div>
                   </>
                 )}

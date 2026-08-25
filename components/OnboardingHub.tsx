@@ -2,6 +2,7 @@ import React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CheckCircle2, Circle, X, Sparkles, PartyPopper, RefreshCw } from 'lucide-react';
 import { trackEvent } from '../utils/analytics';
+import { fetchOnboardingStatus, type OnboardingStatus, type OnboardingStepStatus } from '../utils/onboardingStatus';
 
 /**
  * OnboardingHub — onboarding guiado de activación.
@@ -15,22 +16,6 @@ import { trackEvent } from '../utils/analytics';
  * localStorage, igual que el resto del estado de la app. Sin migraciones de BD.
  * Solo lo ven el Dueño/Admin (las tareas de configuración son de ese nivel).
  */
-
-interface OnbStep {
-  key: string;
-  label: string;
-  done: boolean;
-  href: string;
-  cta: string;
-}
-interface OnbData {
-  type: string;
-  businessName: string;
-  steps: OnbStep[];
-  completed: number;
-  total: number;
-  allDone: boolean;
-}
 
 const WELCOME_KEY = 'nortex_onb_welcome';
 const DISMISS_KEY = 'nortex_onb_dismissed';
@@ -52,7 +37,7 @@ const OnboardingHub: React.FC = () => {
   const role = React.useMemo(readRole, []);
   const isEligible = role === 'OWNER' || role === 'ADMIN';
 
-  const [data, setData] = React.useState<OnbData | null>(null);
+  const [data, setData] = React.useState<OnboardingStatus | null>(null);
   const [fetchFailed, setFetchFailed] = React.useState(false);
   const [open, setOpen] = React.useState(false);
   // 🎉 Cierre del loop "aha": cuando la primera venta se detecta en vivo.
@@ -63,14 +48,11 @@ const OnboardingHub: React.FC = () => {
   // Estado anterior, para detectar transiciones (pasos que se completan en vivo).
   const prevStepsRef = React.useRef<Map<string, boolean> | null>(null);
 
-  const fetchStatus = React.useCallback(async () => {
+  const fetchStatus = React.useCallback(async (force = false) => {
     try {
       const token = localStorage.getItem('nortex_token');
-      const res = await fetch('/api/onboarding', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) { setFetchFailed(true); return; }
-      const json: OnbData = await res.json();
+      if (!token) { setFetchFailed(true); return; }
+      const json = await fetchOnboardingStatus(token, { force });
       setFetchFailed(false);
 
       // Transiciones: pasos que ACABAN de completarse (vs el fetch anterior).
@@ -78,7 +60,7 @@ const OnboardingHub: React.FC = () => {
       if (prev) {
         for (const s of json.steps) {
           if (s.done && prev.get(s.key) === false) {
-            trackEvent('onboarding_step_done', { step: s.key });
+            trackEvent('onboarding_step_done', { onboarding_step: s.key });
             if (s.key === 'sale') {
               // La primera venta es EL momento del producto: se celebra en vivo.
               setCelebration('🎉 ¡Tu primera venta quedó registrada! El ticket, la caja y el inventario ya se movieron solos.');
@@ -108,14 +90,14 @@ const OnboardingHub: React.FC = () => {
   }, []);
 
   React.useEffect(() => {
-    if (isEligible) fetchStatus();
+    if (isEligible) void fetchStatus();
   }, [isEligible, fetchStatus]);
 
   // El POS (y cualquier pantalla) avisa "cambió la data" tras una venta/alta →
   // el checklist se refresca EN VIVO, sin esperar un remount del Layout.
   React.useEffect(() => {
     if (!isEligible) return;
-    const onChange = () => fetchStatus();
+    const onChange = () => { void fetchStatus(true); };
     window.addEventListener('nortex:data-changed', onChange);
     return () => window.removeEventListener('nortex:data-changed', onChange);
   }, [isEligible, fetchStatus]);
@@ -135,7 +117,7 @@ const OnboardingHub: React.FC = () => {
     return (
       <div className="fixed top-[4.5rem] right-4 lg:right-6 z-sticky print:hidden">
         <button
-          onClick={fetchStatus}
+          onClick={() => void fetchStatus(true)}
           className="flex items-center gap-2 px-4 py-3 bg-surface-900 border border-white/[0.08] text-slate-300 font-bold rounded-full shadow-xl hover:text-white transition-colors"
           title="No pudimos cargar tus primeros pasos"
         >
@@ -185,13 +167,13 @@ const OnboardingHub: React.FC = () => {
           real en 390px). En md+ vuelve a su lugar bajo el header. */}
       {!isPos && <div className="fixed top-[8.5rem] md:top-[4.5rem] right-4 lg:right-6 z-sticky print:hidden flex flex-col items-end">
         {open && (
-          <div className="order-2 mt-3 w-[22rem] max-w-[calc(100vw-2.5rem)] bg-surface-900 rounded-card shadow-2xl border border-white/[0.06] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+          <div id="onboarding-steps-panel" className="order-2 mt-3 w-[22rem] max-w-[calc(100vw-2.5rem)] bg-surface-900 rounded-card shadow-2xl border border-white/[0.06] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
             <div className="bg-nortex-900 px-5 py-4 flex items-center justify-between">
               <div className="flex items-center gap-2 text-white">
                 <Sparkles size={18} className="text-nortex-accent" />
                 <span className="font-bold">Primeros pasos</span>
               </div>
-              <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-white transition-colors">
+              <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-white transition-colors" aria-label="Cerrar primeros pasos">
                 <X size={18} />
               </button>
             </div>
@@ -226,7 +208,7 @@ const OnboardingHub: React.FC = () => {
             ) : (
               <>
                 <ul className="p-3 space-y-1 max-h-[22rem] overflow-y-auto">
-                  {data.steps.map((s) => (
+                  {data.steps.map((s: OnboardingStepStatus) => (
                     <li
                       key={s.key}
                       className={`flex items-center gap-3 p-2.5 rounded-xl ${
@@ -253,7 +235,7 @@ const OnboardingHub: React.FC = () => {
                   ))}
                 </ul>
                 <div className="px-3 pb-3 flex items-center justify-between">
-                  <button onClick={fetchStatus} className="text-xs text-slate-400 hover:text-slate-300 font-medium px-2 py-1">
+                  <button onClick={() => void fetchStatus(true)} className="text-xs text-slate-400 hover:text-slate-300 font-medium px-2 py-1">
                     Actualizar
                   </button>
                   <button onClick={dismissChecklist} className="text-xs text-slate-400 hover:text-slate-300 font-medium px-2 py-1">
@@ -269,8 +251,10 @@ const OnboardingHub: React.FC = () => {
           onClick={() => {
             const next = !open;
             setOpen(next);
-            if (next) fetchStatus();
+            if (next) void fetchStatus(true);
           }}
+          aria-expanded={open}
+          aria-controls="onboarding-steps-panel"
           className="order-1 flex items-center gap-2 pl-4 pr-5 h-touch bg-surface-800 hover:bg-surface-700 text-white font-semibold rounded-pill shadow-premium border border-white/[0.08] transition-colors"
         >
           <Sparkles size={18} className="text-nortex-accent" />

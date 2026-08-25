@@ -17,7 +17,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/landing.css" />
-<script src="/image-slot.js" defer></script>
 
 <script type="application/ld+json">
 {
@@ -75,7 +74,7 @@
     {
       "@type": "FAQPage",
       "mainEntity": [
-        { "@type": "Question", "name": "¿Mi negocio es muy pequeño para Nortex?", "acceptedAnswer": { "@type": "Answer", "text": "No existe negocio 'muy pequeño' para Nortex. Lo usan desde pulperías de una persona hasta ferreterías con 4 sucursales. Si vendés más de 5 productos al día, Nortex te paga solo en tiempo ahorrado." } },
+        { "@type": "Question", "name": "¿Mi negocio es muy pequeño para Nortex?", "acceptedAnswer": { "@type": "Answer", "text": "Nortex está pensado para empezar con un solo mostrador y acompañarte si después abrís más sucursales. Podés probar una venta antes de registrarte y decidir con el flujo real." } },
         { "@type": "Question", "name": "¿La facturación DGI ya está aprobada o me toca tramitarla?", "acceptedAnswer": { "@type": "Answer", "text": "Nortex emite facturación computarizada. Vos tramitás tu propia resolución DGI (te ayudamos a hacerlo si querés) y nosotros la metemos al pie de cada ticket. Una vez configurado, no volvés a tocarlo." } },
         { "@type": "Question", "name": "¿Funciona si se me cae el internet?", "acceptedAnswer": { "@type": "Answer", "text": "Sí. El POS guarda las ventas localmente y las sincroniza cuando vuelve el internet. Podés seguir cobrando, facturando e imprimiendo tickets sin conexión." } },
         { "@type": "Question", "name": "¿Tengo que comprar computadora o impresora especial?", "acceptedAnswer": { "@type": "Answer", "text": "No. Funciona en cualquier laptop, tablet o celular con un navegador. Soporta impresoras térmicas de 80mm comunes y también A4 si imprimís en papel oficio." } },
@@ -219,16 +218,16 @@
 <section class="trust" data-screen-label="02 Trust" style="padding-top: 28px; padding-bottom: 28px;">
   <div class="trust-inner">
     <div class="trust-item">
-      <div class="trust-num">+15</div>
-      <div class="trust-label">Negocios facturando<br/>desde Managua, León, Granada y Estelí</div>
+      <div class="trust-num">30 días</div>
+      <div class="trust-label">Prueba completa<br/>sin tarjeta</div>
     </div>
     <div class="trust-item">
-      <div class="trust-num">C$ 2.3M</div>
-      <div class="trust-label">Procesados en el<br/>primer trimestre 2026</div>
+      <div class="trust-num">POS</div>
+      <div class="trust-label">Venta, caja e inventario<br/>en un solo flujo</div>
     </div>
     <div class="trust-item">
-      <div class="trust-num"><span class="star">★</span> 4.8</div>
-      <div class="trust-label">Promedio de los primeros<br/>15 socios fundadores</div>
+      <div class="trust-num">Offline</div>
+      <div class="trust-label">La venta queda en cola<br/>si falla internet</div>
     </div>
     <!-- "Compatible con", no "autorizada por": la resolución DGI la tramita cada
          negocio (la propia FAQ lo dice) — el claim anterior era contradictorio y
@@ -284,21 +283,6 @@
   </div>
 </section>
 
-<!-- ===================== PULL QUOTE ===================== -->
-<section class="quote" data-screen-label="04 Pull quote">
-  <div class="quote-inner">
-    <div class="quote-mark">“</div>
-    <p class="quote-text">Antes apuntaba todo en una libreta. Hoy la libreta sigue ahí, pero ya no la abro.</p>
-    <div class="quote-attr">
-      <image-slot id="quote-marta" shape="circle" placeholder="Foto cliente"></image-slot>
-      <div class="quote-attr-text">
-        <strong>Doña Marta Hernández</strong>
-        Pulpería La Esperanza · Masaya
-      </div>
-    </div>
-  </div>
-</section>
-
 <!-- ===================== VERTICALES ===================== -->
 <section class="verticales" id="para" data-screen-label="05 Verticales">
   <div class="wrap">
@@ -309,7 +293,6 @@
 
     <div class="v-grid">
       <article class="v-card v-big">
-        <image-slot id="v-ferreteria" shape="rounded" radius="12" placeholder="Foto de una ferretería real"></image-slot>
         <div class="v-text">
           <div class="v-num">№ 01 · FERRETERÍA</div>
           <h3 class="v-name">Cemento, varillas y miles de SKUs sin perder el control.</h3>
@@ -318,7 +301,6 @@
       </article>
 
       <article class="v-card v-tall">
-        <image-slot id="v-farmacia" shape="rounded" radius="12" placeholder="Foto de una farmacia real"></image-slot>
         <div class="v-text">
           <div class="v-num">№ 02 · FARMACIA</div>
           <h3 class="v-name">Lotes, vencimientos y cédula del cliente.</h3>
@@ -327,7 +309,6 @@
       </article>
 
       <article class="v-card v-med-a">
-        <image-slot id="v-pulperia" shape="rounded" radius="12" placeholder="Foto de pulpería"></image-slot>
         <div class="v-text">
           <div class="v-num">№ 03 · PULPERÍA</div>
           <h3 class="v-name">Cobrá rápido. Cerrá mejor.</h3>
@@ -336,7 +317,6 @@
       </article>
 
       <article class="v-card v-med-b">
-        <image-slot id="v-boutique" shape="rounded" radius="12" placeholder="Foto de boutique"></image-slot>
         <div class="v-text">
           <div class="v-num">№ 04 · BOUTIQUE</div>
           <h3 class="v-name">Variantes, tallas y catálogo en WhatsApp.</h3>
@@ -345,7 +325,6 @@
       </article>
 
       <article class="v-card v-med-c">
-        <image-slot id="v-financiera" shape="rounded" radius="12" placeholder="Foto cobrador en ruta"></image-slot>
         <div class="v-text">
           <div class="v-num">№ 05 · FINANCIERA</div>
           <h3 class="v-name">Cartera, scoring y cobradores en ruta.</h3>
@@ -686,50 +665,6 @@
   </div>
 </section>
 
-<!-- ===================== TESTIMONIALS ===================== -->
-<section class="testimonials" data-screen-label="09 Testimonials">
-  <div class="wrap">
-    <div class="testimonials-head">
-      <h2 class="display h-section">No nos creas a nosotros.</h2>
-      <p class="subhead">Tres negocios entre Managua, Granada y Estelí. Tres historias distintas. El mismo cierre de caja al fin del día.</p>
-    </div>
-    <div class="t-grid">
-      <article class="t-card">
-        <p class="t-quote">“Mi contador me llamó el primer mes para preguntarme cómo le hice. Le dije: ‘ya no te necesito tanto’.”</p>
-        <div class="t-attr">
-          <image-slot id="t-carlos" shape="circle" placeholder="Foto cliente"></image-slot>
-          <div class="t-attr-text">
-            <strong>Carlos Salinas</strong>
-            Ferretería El Tornillo · Granada
-          </div>
-        </div>
-      </article>
-      <article class="t-card">
-        <p class="t-quote">“Mi caja cuadraba o no cuadraba. Hoy cuadra. Eso vale los $20 por sí solo.”</p>
-        <div class="t-attr">
-          <image-slot id="t-rosa" shape="circle" placeholder="Foto cliente"></image-slot>
-          <div class="t-attr-text">
-            <strong>Rosa Mendoza</strong>
-            Farmacia La Salud · Managua
-          </div>
-        </div>
-      </article>
-      <article class="t-card">
-        <!-- La cita anterior hablaba de un desembolso de Nortex Capital, que en la
-             misma página figura como "Próximamente". Se cambió por una del producto real. -->
-        <p class="t-quote">“Antes pedía a ojo y me quedaba sin cemento en plena semana. Ahora el sistema me avisa qué se está acabando antes de que pase.”</p>
-        <div class="t-attr">
-          <image-slot id="t-jorge" shape="circle" placeholder="Foto cliente"></image-slot>
-          <div class="t-attr-text">
-            <strong>Jorge Pineda</strong>
-            Materiales del Norte · Estelí
-          </div>
-        </div>
-      </article>
-    </div>
-  </div>
-</section>
-
 <!-- ===================== COMPLIANCE ===================== -->
 <section class="compliance" data-screen-label="10 Compliance">
   <div class="wrap">
@@ -861,7 +796,7 @@
       <div class="faq-list">
         <details class="faq-item" open>
           <summary class="faq-q">¿Mi negocio es muy pequeño para Nortex?</summary>
-          <div class="faq-a">No existe negocio "muy pequeño" para Nortex. Lo usan desde pulperías de una persona hasta ferreterías con 4 sucursales. Si vendés más de 5 productos al día, Nortex te paga solo en tiempo ahorrado.</div>
+          <div class="faq-a">Nortex está pensado para empezar con un solo mostrador y acompañarte si después abrís más sucursales. Podés probar una venta antes de registrarte y decidir con el flujo real.</div>
         </details>
         <details class="faq-item">
           <summary class="faq-q">¿La facturación DGI ya está aprobada o me toca tramitarla?</summary>
@@ -899,7 +834,6 @@
 <!-- ===================== FOUNDER NOTE ===================== -->
 <section class="founder" data-screen-label="13 Founder note">
   <div class="founder-inner">
-    <image-slot id="founder-photo" shape="rounded" radius="12" placeholder="Foto del fundador"></image-slot>
     <div class="founder-letter">
       <div class="eyebrow">Una nota del fundador</div>
       <h3>Crecí entre las pulperías y ferreterías de mi familia. <em>Sé cómo se siente</em> cerrar caja a las nueve de la noche con un cuaderno y una calculadora.</h3>

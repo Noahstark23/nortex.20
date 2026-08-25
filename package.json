@@ -6,6 +6,9 @@
   "scripts": {
     "start": "tsx backend/server.ts",
     "db:preflight": "tsx scripts/run-deploy-schema-preflight.ts",
+    "deploy:health": "node scripts/verify-deployed-release.mjs",
+    "deploy:schema-smoke": "sh scripts/test-deploy-schema-upgrade.sh",
+    "release:preflight": "sh scripts/run-release-preflight.sh",
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",

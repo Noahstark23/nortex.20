@@ -7,6 +7,7 @@ import { chartColors, gridProps, axisProps, tooltipProps } from '../utils/chartT
 import { useNavigate } from 'react-router-dom';
 import LenderDashboard from './LenderMode/LenderDashboard';
 import MotorizadosPanel from './LenderMode/MotorizadosPanel';
+import { fetchOnboardingStatus } from '../utils/onboardingStatus';
 
 /** Lee el tipo de tenant del usuario guardado (LENDER = prestamista). */
 function getTenantType(): string {
@@ -96,8 +97,7 @@ const RetailDashboard: React.FC = () => {
   useEffect(() => {
     const token = localStorage.getItem('nortex_token');
     if (!token) return;
-    fetch('/api/onboarding', { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => (r.ok ? r.json() : null))
+    fetchOnboardingStatus(token)
       .then(d => {
         if (!d?.steps) return;
         const product = d.steps.find((s: any) => s.key === 'product');
