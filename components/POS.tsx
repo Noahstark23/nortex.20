@@ -3650,15 +3650,29 @@ const POS: React.FC = () => {
         return ['Todos', ...categories.slice(0, 4)];
     }, [products]);
 
-    const cajaProducts = useMemo(() => {
+    // Devuelve lo que se ve Y cuántos hay detrás, porque el catálogo tiene que
+    // poder declarar el recorte. El tope sin búsqueda era 12 —a un negocio con
+    // 1,003 productos la pantalla le afirmaba que tenía doce— y ahora es el
+    // mismo TOPE_SIN_BUSQUEDA que usa el otro catálogo: un solo número que
+    // razonar, y con la tarjeta compacta entran todos sin scrollear.
+    // Subirlo no cuesta red: /api/products ya trae el catálogo completo a
+    // memoria, así que esto es solo cuántos nodos se pintan.
+    const cajaResultado = useMemo(() => {
         const searching = searchTerm.trim() !== '';
         const base = searching ? filteredProducts : products;
         const activeCategory = cajaCategories.includes(cajaCategory) ? cajaCategory : 'Todos';
         const byCategory = !searching && activeCategory !== 'Todos'
             ? base.filter(product => product.category?.trim() === activeCategory)
             : base;
-        return byCategory.slice(0, searching ? TOPE_BUSCANDO : 12);
-    }, [cajaCategories, cajaCategory, filteredProducts, products, searchTerm]);
+        return {
+            visibles: byCategory.slice(0, searching ? TOPE_BUSCANDO : TOPE_SIN_BUSQUEDA),
+            // Buscando, `filteredProducts` YA viene topado, así que su largo no
+            // es el total de coincidencias: ese dato lo tiene resultadoBusqueda.
+            total: searching ? resultadoBusqueda.total : byCategory.length,
+        };
+    }, [cajaCategories, cajaCategory, filteredProducts, products, searchTerm, resultadoBusqueda.total, TOPE_BUSCANDO, TOPE_SIN_BUSQUEDA]);
+
+    const cajaProducts = cajaResultado.visibles;
 
     const cajaBlockedProductIds = useMemo(() => new Set(
         permiteStockNegativo === true
@@ -5560,6 +5574,7 @@ const POS: React.FC = () => {
                         <div className="flex-1 min-h-0 overflow-y-auto pb-4 custom-scrollbar">
                             <CajaNicaCatalog
                                 products={cajaProducts}
+                                total={cajaResultado.total}
                                 categories={searchTerm.trim() ? [] : cajaCategories}
                                 selectedCategory={cajaCategories.includes(cajaCategory) ? cajaCategory : 'Todos'}
                                 searchTerm={searchTerm}
