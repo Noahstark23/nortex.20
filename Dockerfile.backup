@@ -25,8 +25,12 @@ FROM mysql:8.0
 COPY --from=awscli /usr/local/aws-cli/ /usr/local/aws-cli/
 RUN ln -s /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin/aws
 
-# gzip: comprime el dump · findutils: retención local (`find -mtime`).
-RUN microdnf install -y gzip findutils && microdnf clean all
+# `mysql:8.0` ya incluye gzip y findutils. Consultar los repositorios con
+# microdnf para reinstalarlos tardaba hasta 11 minutos y terminaba en
+# "Nothing to do". Verificamos los binarios localmente para fallar rápido si una
+# futura imagen base cambia, sin convertir la red de paquetes en requisito del
+# despliegue.
+RUN command -v gzip >/dev/null && command -v find >/dev/null
 
 WORKDIR /app
 COPY scripts/db-url.sh scripts/backup-db.sh scripts/backup-scheduler.sh \
