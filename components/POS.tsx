@@ -208,6 +208,7 @@ const DESCRIPCION_POR_CATEGORIA: Record<string, string> = {
     INYECCION_CAPITAL: 'Inyección de capital',
     GASTO_OPERATIVO: 'Gasto operativo',
     PAGO_PROVEEDOR: 'Pago a proveedor',
+    COMPRA_CONTADO: 'Compra de contado',
     RETIRO_PERSONAL: 'Retiro personal',
     CAMBIO: 'Cambio de billete',
     AJUSTE: 'Ajuste de caja',
