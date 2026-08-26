@@ -5571,7 +5571,10 @@ const POS: React.FC = () => {
                             )}
                         </div>
                     ) : (
-                        <div className="flex-1 min-h-0 overflow-y-auto pb-4 custom-scrollbar">
+                        /* pb-24 debajo de `lg`: la barra de la venta es fija y ahora
+                           está siempre, así que sin colchón taparía la última fila
+                           de productos y la línea que declara el recorte. */
+                        <div className="flex-1 min-h-0 overflow-y-auto pb-24 lg:pb-4 custom-scrollbar">
                             <CajaNicaCatalog
                                 products={cajaProducts}
                                 total={cajaResultado.total}
@@ -5616,7 +5619,7 @@ const POS: React.FC = () => {
                    de vacío y solo ~6 productos visibles. A 96px de alto y hasta 5
                    columnas entran ~20 sin scrollear, que es lo que hace rápido al
                    mostrador. */
-                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 overflow-y-auto pb-4 custom-scrollbar flex-1 min-h-0 content-start">
+                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 overflow-y-auto pb-24 lg:pb-4 custom-scrollbar flex-1 min-h-0 content-start">
                     {filteredProducts.map(product => (
                         <TarjetaProducto
                             key={product.id}
@@ -5660,19 +5663,44 @@ const POS: React.FC = () => {
             </div>
 
             {/* RIGHT: CART DRAWER (Responsive) */}
-            {/* Mobile Toggle Button */}
-            {cart.length > 0 && <div className="lg:hidden fixed bottom-4 left-4 right-4 z-40">
+            {/* Barra de la venta — SIEMPRE visible debajo de `lg`.
+
+                Antes se renderizaba solo con `cart.length > 0`. Medido en el
+                navegador con el carrito vacío: a 768px y a 390px no había NADA en
+                pantalla que hablara de la venta — ni total, ni carrito, ni cobrar;
+                el botón de cobro existía en el DOM pero fuera de la pantalla. Todo
+                lo visible era la grilla de productos. En la tablet del mostrador,
+                que es el aparato más probable en una ferretería, el cajero no tenía
+                cómo saber dónde vive la venta hasta que agregaba algo a ciegas.
+
+                Ahora la barra está siempre: apagada y neutra mientras no hay nada
+                —el total en cero no merece el verde de la acción principal— y en
+                verde con el conteo apenas hay algo que cobrar. En las dos formas
+                abre el panel de la venta, así que el camino existe desde el
+                primer segundo. */}
+            <div className="lg:hidden fixed bottom-4 left-4 right-4 z-40">
                 <button
                     onClick={() => setShowMobileCart(true)}
-                    className="w-full h-pay bg-brand text-brand-on rounded-card shadow-premium flex items-center justify-between px-5 font-bold text-base animate-in slide-in-from-bottom duration-300"
+                    aria-label={cart.length > 0
+                        ? `Revisar venta, ${cart.reduce((a, b) => a + b.quantity, 0)} productos, total ${formatMoney(grandTotal)}`
+                        : 'Abrir la venta actual, todavía sin productos'}
+                    className={`w-full h-pay rounded-card flex items-center justify-between px-5 font-bold text-base transition-colors ${cart.length > 0
+                        ? 'bg-brand text-brand-on shadow-premium animate-in slide-in-from-bottom duration-300'
+                        : 'bg-surface-900/95 backdrop-blur-sm border border-white/[0.08] text-slate-400'}`}
                 >
-                    <div className="flex items-center gap-2">
-                        <ShoppingCart size={21} />
-                        <span>Revisar venta · {cart.reduce((a, b) => a + b.quantity, 0)}</span>
+                    <div className="flex items-center gap-2 min-w-0">
+                        <ShoppingCart size={21} className="shrink-0" />
+                        <span className="truncate">
+                            {cart.length > 0
+                                ? `Revisar venta · ${cart.reduce((a, b) => a + b.quantity, 0)}`
+                                : 'Tu venta está vacía'}
+                        </span>
                     </div>
-                    <span>{formatMoney(grandTotal)}</span>
+                    <span className={cart.length > 0 ? '' : 'nx-num font-semibold text-slate-500'}>
+                        {formatMoney(grandTotal)}
+                    </span>
                 </button>
-            </div>}
+            </div>
 
             {/* Cart Container - Drawer on Mobile, Sidebar on Desktop */}
             <div className={`
@@ -6308,10 +6336,19 @@ const POS: React.FC = () => {
                         </button>
                     )}
                     {/* El TOTAL es la cifra que decide la operación: tamaño display,
-                        en color de texto principal (no coloreado). */}
+                        en color de texto principal (no coloreado).
+
+                        Salvo cuando vale CERO. Con el carrito vacío, "C$ 0.00" a 40px
+                        era el elemento más grande de todo el POS — medido: 40px contra
+                        17px del precio de producto más grande. La pantalla gritaba una
+                        cifra que no decide nada y le robaba jerarquía al buscador, que
+                        es por donde empieza la venta. En cero baja a tamaño de cuerpo y
+                        color apagado; apenas hay algo que cobrar, recupera el display. */}
                     <div className="flex justify-between items-baseline mb-4 pt-3 border-t border-white/[0.06]">
                         <span className="nx-label">Total</span>
-                        <span className="nx-total">{formatMoney(grandTotal)}</span>
+                        <span className={cart.length === 0 ? 'nx-num text-lg font-semibold text-slate-500' : 'nx-total'}>
+                            {formatMoney(grandTotal)}
+                        </span>
                     </div>
 
                     {/* Resumen de existencias: va PEGADO a los botones de cobro
