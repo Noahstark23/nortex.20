@@ -1,3 +1,9 @@
+/* Tipografía auto-hospedada. Va antes que nada: Vite la INLINEA en el bundle
+   de CSS, así que no agrega ni una petición y la declaración existe desde el
+   primer byte de estilos. El porqué (y por qué ya no la pedimos a Google) está
+   en el propio archivo. */
+@import './public/fonts/fuentes.css';
+
 /* Tokens de diseño — fuente única de color/radio/espaciado/altura.
    Va PRIMERO: define las :root vars que consumen tanto las clases nx-*
    como el mapeo de Tailwind (tailwind.config.js lee los canales -rgb). */
