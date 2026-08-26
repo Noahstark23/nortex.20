@@ -159,6 +159,19 @@ const PISO_MUTANTES = {
     'backend/services/stripe.ts': 13,
     'backend/services/stockService.ts': 5,
     'backend/services/accounting.ts': 18,
+    // supplierPayment.ts entra por sus DOS funciones puras (93-138): si la caja
+    // del turno alcanza para pagarle al proveedor, y cuánto efectivo hay de
+    // verdad en la gaveta. 19 mutantes, score medido 100.00%. Lo que protege es
+    // el bug que originó el módulo: pagar una factura debitaba la billetera
+    // fintech (walletBalance) en vez de la caja, y el caso "no hay caja
+    // abierta" salía disfrazado de "recarga tu billetera" — por eso el
+    // veredicto SIN_CAJA_ABIERTA es un código propio y no un saldo en cero, y
+    // el test asevera el LITERAL del mensaje, no la constante importada.
+    // `efectivoDisponibleDelTurno` NO recibe el fondo en dólares: solo alimenta
+    // `efectivoUSD`, que acá se descarta, así que cualquier mutante suyo sería
+    // equivalente por construcción. El resto del archivo (transacción, Prisma,
+    // libro firmado) queda FUERA del rango a propósito.
+    'backend/services/supplierPayment.ts': 19,
 };
 
 if (!fs.existsSync(REPORT)) {

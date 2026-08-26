@@ -23,6 +23,12 @@ import { checkRole } from './middleware/checkRole';
 import { BODEGUERO_ROLE, redactBodegueroProduct } from './security/bodegueroPolicy';
 import { calculateTenantScore } from './services/scoring';
 import { ESTADO_ANULADA, puedeAnularse, planDeReversion, textoUtil } from './services/saleCancellation';
+import {
+    pagarFacturaProveedorEnCaja,
+    registrarSalidaDeCajaPorCompra,
+    SupplierPaymentError,
+    MENSAJE_SIN_CAJA_ABIERTA,
+} from './services/supplierPayment';
 import { decidirIdentidadCajero, pinNormalizado, explicarModo } from './services/shiftIdentity';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { composeSeedCatalog } from './data/seedCatalogs';
@@ -7018,11 +7024,40 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
         if (!anchorPurchase) await seedChartOfAccounts(authReq.tenantId!);
         if (!purchaseOrderId) await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
 
+        // Compra de CONTADO: el efectivo sale de la gaveta, así que exige una
+        // caja abierta. Se resuelve ANTES de la tx (el turno es el mismo que ve
+        // la píldora del POS) y el error DICE que falta abrir caja — antes se
+        // debitaba la billetera fintech y respondía "recarga tu billetera".
+        const { shift: turnoDeContado } = paymentMethod === 'CASH'
+            ? await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!)
+            : { shift: null };
+        if (paymentMethod === 'CASH' && !turnoDeContado) {
+            const sinCaja = new SupplierPaymentError(
+                'SIN_CAJA_ABIERTA',
+                'No hay caja abierta. Abrí una caja para registrar una compra de contado, o registrala a crédito.'
+            );
+            return res.status(sinCaja.httpStatus).json({ error: sinCaja.message, code: sinCaja.code });
+        }
+        // Snapshot de la gaveta para la auditoría (se llena dentro de la tx).
+        let efectivoAntesCompra: Decimal | null = null;
+        let efectivoDespuesCompra: Decimal | null = null;
+
         const result = await prisma.$transaction(async (tx: any) => {
             // Serializar las compras del proveedor antes de cualquier lectura consistente
             // de la transacción. Así, un doble envío concurrente no puede pasar dos veces
             // el chequeo de factura duplicada.
             await tx.$queryRaw`SELECT id FROM \`Supplier\` WHERE id = ${supplierId} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
+
+            // ORDEN DE BLOQUEO: el turno se toma ACÁ, ANTES de los locks de
+            // Product del punto 3. La devolución en efectivo bloquea Shift y
+            // recién después toca el stock (Shift → Product); si la compra de
+            // contado tomara el turno al final (Product → Shift) las dos se
+            // deadlockearían sobre el mismo producto y la misma caja. El lock es
+            // reentrante: `registrarSalidaDeCajaPorCompra` lo vuelve a pedir y
+            // ya lo tiene. A crédito no hay salida de efectivo → no se bloquea.
+            if (turnoDeContado) {
+                await tx.$queryRaw`SELECT id FROM \`Shift\` WHERE id = ${turnoDeContado.id} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
+            }
 
             // Verificar propiedad del proveedor: nunca confiar en supplierId del body sin
             // scoping por tenant. Sin esto, el include: { supplier: true } filtraría PII
@@ -7110,13 +7145,6 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 )
                 : null;
             const requestedFromLinkedPO = new Map<string, Decimal>();
-
-            // Snapshot del saldo de billetera para el asiento de auditoría (before/after).
-            const tenantBefore = await tx.tenant.findUnique({
-                where: { id: authReq.tenantId! },
-                select: { walletBalance: true }
-            });
-            const walletBefore = new Decimal(tenantBefore?.walletBalance?.toString() ?? '0');
 
             // 1. Calcular totales. T2 Fase 2 — el crédito fiscal (IVA de compras)
             //    se genera SOLO por los ítems GRAVADOS. Antes se aplicaba 15% a
@@ -7350,33 +7378,26 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 });
             }
 
-            // 4. Registro financiero
+            // 4. Registro financiero — LA PLATA SALE DE LA GAVETA, no de la
+            //    billetera fintech (`Tenant.walletBalance`, que se fondea con
+            //    /api/loans/request y solo se gasta en el marketplace B2B).
+            //    Antes se debitaba esa billetera y, como ninguna PyME la tiene
+            //    fondeada, TODA compra de contado moría con "SALDO_INSUFICIENTE …
+            //    recarga tu billetera" aunque hubiera efectivo real en la caja.
+            //    El asiento de `recordPurchase` ya acreditaba Caja (1.1.1): la
+            //    billetera nunca fue la contrapartida correcta.
             if (paymentMethod === 'CASH') {
-                // Débito ATÓMICO: decrementa solo si hay saldo suficiente. El guard de
-                // suficiencia y la escritura son el MISMO UPDATE condicional (toma el
-                // row-lock), así dos compras de contado concurrentes no pueden ambas
-                // pasar el chequeo y dejar la billetera en negativo (TOCTOU).
-                const debited = await tx.tenant.updateMany({
-                    where: { id: authReq.tenantId, walletBalance: { gte: totalAmount.toNumber() } },
-                    data: { walletBalance: { decrement: totalAmount.toNumber() } }
+                // `turnoDeContado` se resolvió y validó ANTES de abrir la tx.
+                const salida = await registrarSalidaDeCajaPorCompra(tx, {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    shiftId: turnoDeContado!.id,
+                    invoiceNumber,
+                    supplierName: purchase.supplier.name,
+                    total: totalAmount,
                 });
-                if (debited.count === 0) {
-                    const t = await tx.tenant.findUnique({
-                        where: { id: authReq.tenantId },
-                        select: { walletBalance: true }
-                    });
-                    throw new Error(`SALDO_INSUFICIENTE: disponible C$ ${new Decimal(t?.walletBalance?.toString() ?? 0).toFixed(2)}, requerido C$ ${totalAmount.toFixed(2)}. Usa crédito o recarga tu billetera.`);
-                }
-
-                // Crear gasto
-                await tx.expense.create({
-                    data: {
-                        tenantId: authReq.tenantId!,
-                        amount: totalAmount.toNumber(),
-                        description: `Compra Factura #${invoiceNumber} - ${purchase.supplier.name}`,
-                        category: 'COMPRA_MERCADERIA'
-                    }
-                });
+                efectivoAntesCompra = salida.efectivoAntes;
+                efectivoDespuesCompra = salida.efectivoDespues;
             }
             // Si es CREDIT, no se descuenta dinero - queda como cuenta por pagar
 
@@ -7400,8 +7421,8 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
 
             // Asiento inmutable de auditoría (Capa 3): toda compra mueve su efecto
             // financiero; solo una compra directa mueve además inventario valorizado.
-            // Registrar before/after de billetera y los cambios de stock/costo aplicados.
-            const walletAfter = paymentMethod === 'CASH' ? walletBefore.minus(totalAmount) : walletBefore;
+            // Registrar el before/after de la GAVETA (null si fue a crédito: ahí no
+            // sale efectivo) y los cambios de stock/costo aplicados.
             await tx.auditLog.create({
                 data: {
                     tenantId: authReq.tenantId!,
@@ -7417,8 +7438,9 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                         subtotal: subtotalAmount.toString(),
                         tax: taxAmount.toString(),
                         total: totalAmount.toString(),
-                        walletBefore: walletBefore.toNumber(),
-                        walletAfter: walletAfter.toNumber(),
+                        shiftId: turnoDeContado?.id ?? null,
+                        efectivoAntes: efectivoAntesCompra?.toNumber() ?? null,
+                        efectivoDespues: efectivoDespuesCompra?.toNumber() ?? null,
                         productChanges: costChanges,
                         timestamp: new Date().toISOString()
                     })
@@ -7474,13 +7496,29 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             const status = error.message.split(':')[1];
             return res.status(400).json({ error: status === 'APPROVED' ? 'Recibí la mercadería antes de facturar una orden de compra aprobada' : `No se puede facturar una orden de compra en estado ${status}` });
         }
-        const insufficient = error?.message?.includes('SALDO_INSUFICIENTE');
+        // Caja: sin turno abierto (409) o efectivo insuficiente en la gaveta (400).
+        // El status sale del código tipado, no de un substring del mensaje.
+        if (error instanceof SupplierPaymentError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
         const notFound = error?.message?.includes('no encontrado');
-        res.status(insufficient ? 400 : notFound ? 404 : 500).json({ error: error.message || 'Error al procesar la compra' });
+        res.status(notFound ? 404 : 500).json({ error: error.message || 'Error al procesar la compra' });
     }
 });
 
-// POST /api/purchases/:id/pay - Pagar cuenta pendiente
+// POST /api/purchases/:id/pay - Pagar cuenta pendiente CONTRA LA CAJA DEL TURNO
+//
+// Antes debitaba `Tenant.walletBalance` (la billetera FINTECH que se fondea con
+// /api/loans/request y se gasta en el marketplace B2B): ninguna ferretería la
+// tiene fondeada, así que el pago SIEMPRE moría con "SALDO_INSUFICIENTE:
+// disponible C$ 0.00 … Recarga tu billetera" mientras el modal prometía "se
+// descontará de tu caja" y había plata real en la gaveta. Además no posteaba
+// asiento: la CxP (2.1.1) que abrió la compra a crédito quedaba viva para
+// siempre en el mayor.
+//
+// Ahora: salida de caja firmada + factura COMPLETED + asiento (Debe 2.1.1 /
+// Haber 1.1.1) en UNA sola transacción. La billetera no interviene.
+// Ver backend/services/supplierPayment.ts.
 app.post('/api/purchases/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
@@ -7499,66 +7537,34 @@ app.post('/api/purchases/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'M
             return res.status(400).json({ error: 'Esta compra ya fue pagada' });
         }
 
+        // Caja donde está parado quien paga — MISMO turno que ve la píldora del
+        // POS (`resolverTurnoAbierto`, NX-03). Sin caja abierta el error lo DICE:
+        // no manda a recargar una billetera que no participa del pago.
+        const { shift: turnoAbierto } = await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!);
+        if (!turnoAbierto) {
+            const sinCaja = new SupplierPaymentError('SIN_CAJA_ABIERTA', MENSAJE_SIN_CAJA_ABIERTA);
+            return res.status(sinCaja.httpStatus).json({ error: sinCaja.message, code: sinCaja.code });
+        }
+
+        // A1/A5: catálogo sembrado ANTES de la tx (mismo motivo que en
+        // /api/purchases y /api/cash-movements): el auto-seed de getAccount
+        // ocurre fuera de la transacción y sus filas no serían visibles adentro
+        // bajo REPEATABLE READ.
+        const anchorCxP = await prisma.account.findUnique({
+            where: { tenantId_code: { tenantId: authReq.tenantId!, code: '2.1.1' } },
+            select: { id: true },
+        });
+        if (!anchorCxP) await seedChartOfAccounts(authReq.tenantId!);
+
         await prisma.$transaction(async (tx: any) => {
-            // Guard atómico de estado + idempotencia: solo transiciona si la compra
-            // sigue en PENDING_PAYMENT. Dos pagos concurrentes / doble-click: únicamente
-            // uno marca COMPLETED (count===1); el otro aborta y NO vuelve a debitar la
-            // billetera (evita el doble débito por TOCTOU).
-            const marked = await tx.purchase.updateMany({
-                where: { id, tenantId: authReq.tenantId, status: 'PENDING_PAYMENT' },
-                data: { status: 'COMPLETED' }
-            });
-            if (marked.count === 0) {
-                throw new Error('PAGO_NO_APLICABLE: la compra ya fue pagada o no está pendiente de pago.');
-            }
-
-            // Snapshot del saldo de billetera para el asiento de auditoría (before/after).
-            const tenantBefore = await tx.tenant.findUnique({
-                where: { id: authReq.tenantId! },
-                select: { walletBalance: true }
-            });
-            const walletBefore = new Decimal(tenantBefore?.walletBalance?.toString() ?? '0');
-
-            // Débito ATÓMICO: decrementa solo si hay saldo suficiente. El guard de
-            // suficiencia y la escritura son el MISMO UPDATE condicional (row-lock),
-            // de modo que el pago no puede dejar la billetera en negativo (TOCTOU).
-            const debited = await tx.tenant.updateMany({
-                where: { id: authReq.tenantId, walletBalance: { gte: purchase.total } },
-                data: { walletBalance: { decrement: purchase.total } }
-            });
-            if (debited.count === 0) {
-                throw new Error(`SALDO_INSUFICIENTE: disponible C$ ${walletBefore.toFixed(2)}, requerido C$ ${new Decimal(purchase.total.toString()).toFixed(2)}. Recarga tu billetera.`);
-            }
-
-            // Crear gasto
-            await tx.expense.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    amount: purchase.total,
-                    description: `Pago Factura #${purchase.invoiceNumber} - ${purchase.supplier.name}`,
-                    category: 'PAGO_PROVEEDOR'
-                }
-            });
-
-            // Asiento inmutable de auditoría (Capa 3): el pago mueve dinero (billetera +
-            // gasto). Registrar quién autorizó y el before/after de saldo y estado.
-            const walletAfter = walletBefore.minus(new Decimal(purchase.total.toString()));
-            await tx.auditLog.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    userId: authReq.userId!,
-                    action: 'PURCHASE_PAID',
-                    details: JSON.stringify({
-                        purchaseId: purchase.id,
-                        invoiceNumber: purchase.invoiceNumber,
-                        total: new Decimal(purchase.total.toString()).toNumber(),
-                        statusBefore: 'PENDING_PAYMENT',
-                        statusAfter: 'COMPLETED',
-                        walletBefore: walletBefore.toNumber(),
-                        walletAfter: walletAfter.toNumber(),
-                        timestamp: new Date().toISOString()
-                    })
-                }
+            await pagarFacturaProveedorEnCaja(tx, {
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                purchaseId: purchase.id,
+                shiftId: turnoAbierto.id,
+                invoiceNumber: purchase.invoiceNumber,
+                supplierName: purchase.supplier.name,
+                total: purchase.total.toString(),
             });
         });
 
@@ -7566,9 +7572,15 @@ app.post('/api/purchases/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'M
 
     } catch (error: any) {
         console.error('Error pagando compra:', error);
-        const insufficient = error?.message?.includes('SALDO_INSUFICIENTE');
-        const notApplicable = error?.message?.includes('PAGO_NO_APLICABLE');
-        res.status(insufficient ? 400 : notApplicable ? 409 : 500).json({ error: error.message || 'Error al procesar el pago' });
+        // Período cerrado: el pago ahora exige asiento → 423 en vez de sacar
+        // plata de la gaveta sin contrapartida contable.
+        if (error instanceof PeriodLockedError) {
+            return res.status(423).json({ error: error.message });
+        }
+        if (error instanceof SupplierPaymentError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
+        res.status(500).json({ error: error.message || 'Error al procesar el pago' });
     }
 });
 
