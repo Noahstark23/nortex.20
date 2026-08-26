@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ShoppingCart, Wallet, PackagePlus, LayoutGrid, ArrowRight, PlayCircle } from 'lucide-react';
 import { formatMoney } from '../utils/money';
 import { trackEvent } from '../utils/analytics';
+import { fetchOnboardingStatus } from '../utils/onboardingStatus';
 
 /**
  * Mi Negocio — pantalla de inicio del modo simple (Fase B del plan UX Simple).
@@ -121,9 +122,7 @@ const MiNegocio: React.FC = () => {
 
         (async () => {
             try {
-                const res = await fetch('/api/onboarding', { headers });
-                if (!res.ok) return;
-                const data = await res.json();
+                const data = await fetchOnboardingStatus(token);
                 if (!Array.isArray(data?.steps)) return;
 
                 const product = data.steps.find((step: { key?: string }) => step.key === 'product');
@@ -136,7 +135,8 @@ const MiNegocio: React.FC = () => {
                     if (!next.hasSale) {
                         trackEvent('activation_first_sale_viewed', {
                             source: 'mi_negocio',
-                            has_product: next.hasProduct,
+                            has_products: next.hasProduct,
+                            onboarding_step: next.hasProduct ? 'checkout' : 'product',
                         });
                     }
                 }
@@ -149,7 +149,8 @@ const MiNegocio: React.FC = () => {
 
         trackEvent('activation_first_sale_started', {
             source: 'mi_negocio',
-            has_product: activation.hasProduct,
+            has_products: activation.hasProduct,
+            onboarding_step: activation.hasProduct ? 'checkout' : 'product',
         });
         // La primera venta es REAL. Nunca sembramos productos ficticios dentro
         // del inventario del negocio: si falta catálogo, el POS permite crear un

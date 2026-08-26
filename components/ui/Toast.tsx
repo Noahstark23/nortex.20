@@ -8,6 +8,10 @@ export interface ToastMessage {
     tone: ToastTone;
     title: string;
     message?: string;
+    action?: {
+        label: string;
+        onClick: () => void;
+    };
 }
 
 interface ShowToastOptions {
@@ -15,6 +19,7 @@ interface ShowToastOptions {
     title: string;
     message?: string;
     durationMs?: number;
+    action?: ToastMessage['action'];
 }
 
 const toneStyles: Record<ToastTone, { panel: string; icon: string; Icon: typeof Info }> = {
@@ -62,10 +67,11 @@ export function useToast() {
         title,
         message,
         durationMs,
+        action,
     }: ShowToastOptions) => {
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
-        setToast({ id: nextToastId++, tone, title, message });
+        setToast({ id: nextToastId++, tone, title, message, action });
         const visibleFor = durationMs ?? (tone === 'error' ? 9_000 : 5_500);
         if (visibleFor > 0) {
             timeoutRef.current = setTimeout(() => {
@@ -107,6 +113,18 @@ export function ToastViewport({
                     <p className="font-semibold text-white leading-5">{toast.title}</p>
                     {toast.message && (
                         <p className="mt-1 text-sm leading-5 text-slate-200">{toast.message}</p>
+                    )}
+                    {toast.action && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                toast.action?.onClick();
+                                onDismiss();
+                            }}
+                            className="mt-2 rounded-lg border border-white/15 px-3 py-1.5 text-sm font-semibold text-white hover:bg-white/10 transition-colors"
+                        >
+                            {toast.action.label}
+                        </button>
                     )}
                 </div>
                 <button

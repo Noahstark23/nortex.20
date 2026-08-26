@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const saleFindFirst = vi.hoisted(() => vi.fn());
+const transaction = vi.hoisted(() => vi.fn());
 
 vi.mock('../backend/lib/prisma.js', () => {
     const mockedPrisma = {
         sale: { findFirst: saleFindFirst },
+        $transaction: transaction,
     };
     return { default: mockedPrisma, prisma: mockedPrisma };
 });
@@ -48,7 +50,10 @@ const fingerprint = (raw: ReturnType<typeof rawSale>): string => {
 };
 
 describe('idempotencia fuerte de ventas offline', () => {
-    beforeEach(() => saleFindFirst.mockReset());
+    beforeEach(() => {
+        saleFindFirst.mockReset();
+        transaction.mockReset();
+    });
 
     it('misma tenant, offlineId y payload devuelve la venta como replay omitido', async () => {
         const payload = rawSale();
@@ -72,6 +77,22 @@ describe('idempotencia fuerte de ventas offline', () => {
         expect(saleFindFirst).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ tenantId: 'tenant-a' }),
         }));
+    });
+
+    it('el camino online también deduplica antes de tocar stock, caja o contabilidad', async () => {
+        const payload = rawSale({ source: 'POS' });
+        const existing = {
+            id: 'sale-online-existing',
+            tenantId: 'tenant-a',
+            offlineId: 'event:opaque',
+            offlinePayloadHash: fingerprint(payload),
+        };
+        saleFindFirst.mockResolvedValue(existing);
+
+        const result = await executeSaleWithResult('tenant-a', 'user-a', 'shift-a', payload);
+
+        expect(result).toEqual({ sale: existing, idempotentReplay: true });
+        expect(transaction).not.toHaveBeenCalled();
     });
 
     it('misma offlineId con cantidad divergente falla 409 y nunca se omite', async () => {

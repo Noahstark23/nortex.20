@@ -1,33 +1,21 @@
 import React from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
-import { Building2, Mail, Lock, ArrowRight, Loader2, Check, AlertCircle, Phone } from 'lucide-react';
+import { Building2, Mail, Lock, ArrowRight, Loader2, Check, AlertCircle, Phone, Eye, EyeOff } from 'lucide-react';
 import { trackEvent } from '../utils/analytics';
 import { UI_MODE_KEY } from '../utils/navigation';
+import { postRegistrationDestination, uiModeForNewTenant } from '../utils/releaseRouting';
+import {
+  firstPublicRegistrationError,
+  normalizePublicAcquisitionSource,
+  normalizeRegistrationIntent,
+  validatePublicRegistration,
+  type PublicRegistrationErrors,
+  type PublicRegistrationField,
+} from '../utils/publicActivation';
 import {
   suggestedCapabilitiesForBusinessType,
   type TenantCapabilityCode,
 } from '../utils/tenantCapabilities';
-
-interface RegisterTenantProps {
-  isModal?: boolean;
-  initialCart?: any[];
-}
-
-// Move PageWrapper OUTSIDE to prevent re-creation
-const PageWrapper: React.FC<{ isModal: boolean; children: React.ReactNode }> = React.memo(({ isModal, children }) => {
-  if (isModal) return <>{children}</>;
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-nortex-900 p-4 relative">
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -top-20 -left-20 w-96 h-96 bg-nortex-500 rounded-full blur-[100px] opacity-10"></div>
-        <div className="absolute -bottom-20 -right-20 w-96 h-96 bg-nortex-accent rounded-full blur-[100px] opacity-10"></div>
-      </div>
-      {children}
-    </div>
-  );
-});
-
-PageWrapper.displayName = 'PageWrapper';
 
 // El backend exige mínimo 8 caracteres (RegisterSchema en backend/validation/schemas.ts).
 const PASSWORD_MIN = 8;
@@ -80,7 +68,7 @@ const normalizeBusinessType = (value: string | null): string => {
   return BUSINESS_TYPE_ALIASES[normalized] || '';
 };
 
-const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initialCart = [] }) => {
+const RegisterTenant: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const registrationContext = React.useMemo(() => {
@@ -92,19 +80,18 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
     return {
       email: params.get('email')?.trim() || '',
       type,
+      source: normalizePublicAcquisitionSource(params.get('source')),
+      intent: normalizeRegistrationIntent(params.get('intent')),
     };
   }, [location.search]);
-  const registrationSource = React.useMemo(() => {
-    if (isModal) return 'demo_modal';
-    return new URLSearchParams(location.search).get('source') || 'direct';
-  }, [isModal, location.search]);
   const startedAtRef = React.useRef(Date.now());
   const trackedStartRef = React.useRef(false);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
+  const [showPassword, setShowPassword] = React.useState(false);
   // Errores por campo, mapeados desde `details` (validate() los devuelve como
   // { campo: [mensajes] }). Sin esto el usuario solo veía el genérico y quedaba mudo.
-  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
+  const [fieldErrors, setFieldErrors] = React.useState<PublicRegistrationErrors>({});
   const [formData, setFormData] = React.useState({
     companyName: '',
     email: registrationContext.email,
@@ -121,12 +108,12 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
     if (trackedStartRef.current) return;
     trackedStartRef.current = true;
     trackEvent('register_started', {
-      source: registrationSource,
-      has_demo_cart: initialCart.length > 0,
+      source: registrationContext.source,
+      from_demo: Boolean(registrationContext.intent),
     });
-  }, [initialCart.length, registrationSource]);
+  }, [registrationContext.intent, registrationContext.source]);
 
-  const updateField = React.useCallback((field: string, value: string) => {
+  const updateField = React.useCallback((field: PublicRegistrationField, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     // Al editar un campo con error, limpiamos su marca (feedback en vivo).
     setFieldErrors(prev => {
@@ -170,31 +157,33 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
     setError('');
     setFieldErrors({});
 
-    // Cortamos antes de ir al server si falta contexto o la contraseña no cumple:
-    // evita el ida-y-vuelta y muestra todos los ajustes en un solo intento.
-    const clientErrors: Record<string, string> = {};
-    if (formData.password.length < PASSWORD_MIN) {
-      clientErrors.password = `La contraseña debe tener al menos ${PASSWORD_MIN} caracteres`;
-    }
-    if (!formData.type) {
-      clientErrors.type = 'Seleccioná el tipo de negocio para continuar';
-    }
+    const clientErrors = validatePublicRegistration(formData);
     if (Object.keys(clientErrors).length > 0) {
       setFieldErrors(clientErrors);
-      setError('Revisá los campos marcados en rojo.');
+      setError('Revisá los campos indicados para continuar.');
+      const firstInvalidField = firstPublicRegistrationError(clientErrors);
+      if (firstInvalidField) {
+        requestAnimationFrame(() => document.getElementById(`register-${firstInvalidField}`)?.focus());
+      }
       return;
     }
 
     setLoading(true);
 
     try {
+      const payload = {
+        ...formData,
+        companyName: formData.companyName.trim(),
+        email: formData.email.trim(),
+        phone: formData.phone.trim(),
+      };
       const response = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
 
       if (!response.ok) {
         // El middleware validate() responde { error, details: { campo: [msgs] } }.
@@ -202,16 +191,27 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
         // solo el genérico "Datos de entrada inválidos".
         const details = data?.details;
         if (details && typeof details === 'object') {
-          const fe: Record<string, string> = {};
+          const fe: PublicRegistrationErrors = {};
           for (const [k, v] of Object.entries(details)) {
-            if (Array.isArray(v) && v.length) fe[k] = String(v[0]);
+            if (Array.isArray(v) && v.length && ['companyName', 'email', 'password', 'phone', 'type'].includes(k)) {
+              fe[k as PublicRegistrationField] = String(v[0]);
+            }
           }
           setFieldErrors(fe);
           const firstDetail = Object.values(fe)[0];
-          setError(firstDetail || data.error || 'Revisá los datos e intentá de nuevo.');
+          setError(firstDetail || data?.error || 'Revisá los datos e intentá de nuevo.');
+          const firstInvalidField = firstPublicRegistrationError(fe);
+          if (firstInvalidField) {
+            requestAnimationFrame(() => document.getElementById(`register-${firstInvalidField}`)?.focus());
+          }
         } else {
-          setError(data.error || 'Error en el registro');
+          setError(data?.error || 'No pudimos completar el registro. Intentá de nuevo.');
         }
+        return;
+      }
+
+      if (!data?.token || !data?.user || !data?.tenant?.id) {
+        setError('La cuenta se creó, pero no pudimos iniciar tu sesión. Entrá con tu correo para continuar.');
         return;
       }
 
@@ -224,7 +224,8 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
       // heredar el modo completo de otra cuenta usada antes en el mismo equipo.
       // Cada alta empieza en la experiencia calmada; el prestamista conserva su
       // panel dedicado, que ya es reducido.
-      localStorage.setItem(UI_MODE_KEY, formData.type === 'LENDER' ? 'full' : 'simple');
+      const uiMode = uiModeForNewTenant(formData.type);
+      localStorage.setItem(UI_MODE_KEY, uiMode);
 
       // Conversiones GA4: el registro exitoso ES el alta (sign_up) y a la vez el
       // inicio de la prueba gratis (el tenant nace en TRIAL). Se disparan acá, en
@@ -232,234 +233,223 @@ const RegisterTenant: React.FC<RegisterTenantProps> = ({ isModal = false, initia
       trackEvent('sign_up', {
         method: 'email',
         business_type: formData.type,
-        source: registrationSource,
+        source: registrationContext.source,
         seconds_to_signup: Math.max(0, Math.round((Date.now() - startedAtRef.current) / 1000)),
       });
-      trackEvent('begin_trial', { business_type: formData.type, source: registrationSource });
+      trackEvent('begin_trial', { business_type: formData.type, source: registrationContext.source });
 
       // Navegación DIRECTA al valor (retención R1): el modal-peaje del PIN
       // interrumpía el momento de máximo impulso con un concepto ("apertura de
       // caja") que el usuario nuevo aún no tiene, y si no tocaba "Continuar"
       // perdía la bienvenida para siempre. El PIN 1234 ahora viaja en el email
       // de bienvenida y el POS ya lo muestra como hint al abrir caja.
-      if (initialCart && initialCart.length > 0) {
-        const persistentCart = initialCart.map(i => ({
-          ...i.product,
-          quantity: i.quantity,
-          costPrice: i.product.price * 0.7,
-          stock: 100,
-          sku: 'MOCK-SKU'
-        }));
-        localStorage.setItem('nortex_pending_cart', JSON.stringify(persistentCart));
-        // Venía del catálogo con un carrito: lo llevamos directo a cobrar.
-        navigate('/app/pos');
-      } else {
-        // Registro normal: lo recibe el panel con la bienvenida + primeros pasos.
-        navigate('/app/dashboard?welcome=1');
-      }
+      navigate(postRegistrationDestination({
+        role: data.user.role,
+        tenantType: formData.type,
+        intent: registrationContext.intent,
+      }));
 
-    } catch (err: any) {
+    } catch {
       setError('No pudimos conectar con el servidor. Revisá tu internet e intentá de nuevo.');
     } finally {
       setLoading(false);
     }
-  }, [formData, initialCart, navigate, registrationSource]);
+  }, [formData, navigate, registrationContext.intent, registrationContext.source]);
 
-  const containerClasses = React.useMemo(() =>
-    isModal
-      ? "w-full bg-nortex-900 p-6 rounded-2xl relative"
-      : "w-full max-w-md bg-nortex-800/80 backdrop-blur-lg border border-nortex-700 p-8 rounded-2xl shadow-2xl relative z-10",
-    [isModal]
-  );
+  const controlClass = (invalid: boolean, valid = false) => [
+    'w-full rounded-control border bg-white/[0.03] py-3 text-white outline-none transition-colors',
+    invalid
+      ? 'border-red-500/70 focus:border-red-500 focus:ring-2 focus:ring-red-500/20'
+      : valid
+        ? 'border-brand/50 focus:border-brand focus:ring-2 focus:ring-brand/20'
+        : 'border-white/[0.10] focus:border-brand focus:ring-2 focus:ring-brand/20',
+  ].join(' ');
 
   return (
-    <PageWrapper isModal={isModal}>
-      <div className={containerClasses}>
-
-        <div className="text-center mb-6">
-          {!isModal && (
-            <div className="w-12 h-12 bg-nortex-accent rounded-lg flex items-center justify-center mx-auto mb-4">
-              <span className="font-bold text-nortex-900 text-xl">N</span>
-            </div>
-          )}
-          <h2 className={`text-2xl font-bold text-white ${isModal ? 'text-lg' : ''}`}>
-            {isModal ? '¡Casi listo! Guarda tu venta' : 'Crea tu Cuenta Nortex'}
-          </h2>
-          <p className="text-slate-400 text-sm mt-2">
-            {isModal ? 'Registra tu negocio gratis para imprimir este ticket.' : 'Empieza a gestionar tu negocio hoy.'}
-          </p>
-        </div>
+    <main className="min-h-[100dvh] bg-surface-950 px-4 py-8 text-slate-100 sm:py-12">
+      <section className="panel-premium relative mx-auto w-full max-w-md bg-surface-900/90 p-6 sm:p-8" aria-labelledby="register-title">
+        <header className="mb-7 text-center">
+          <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-control bg-brand text-lg font-bold text-surface-950">
+            N
+          </div>
+          <h1 id="register-title" className="text-2xl font-bold tracking-tight text-white">Creá tu cuenta Nortex</h1>
+          <p className="mt-2 text-sm text-slate-400">30 días gratis. Sin tarjeta. Empezá con tu primera venta.</p>
+        </header>
 
         {error && (
-          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400 text-sm flex items-start gap-2">
-            <AlertCircle size={16} className="mt-0.5 shrink-0" />
+          <div role="alert" aria-live="assertive" className="mb-5 flex items-start gap-2 rounded-control border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+            <AlertCircle aria-hidden="true" size={17} className="mt-0.5 shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate aria-busy={loading}>
           <div>
-            <label className="block text-xs font-mono text-slate-400 mb-1">NOMBRE DEL NEGOCIO</label>
+            <label htmlFor="register-companyName" className="mb-1.5 block text-sm font-medium text-slate-300">Nombre del negocio</label>
             <div className="relative">
-              <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+              <Building2 aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
               <input
+                id="register-companyName"
                 type="text"
-                name="organization"
+                name="companyName"
                 autoComplete="organization"
                 required
-                className={`w-full bg-nortex-800 border text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none transition-colors ${fieldErrors.companyName ? 'border-red-500/70 focus:border-red-500' : 'border-nortex-700 focus:border-nortex-accent'}`}
-                placeholder="Ej. Mi Negocio"
+                maxLength={120}
+                aria-invalid={Boolean(fieldErrors.companyName)}
+                aria-describedby={fieldErrors.companyName ? 'register-companyName-error' : undefined}
+                className={`${controlClass(Boolean(fieldErrors.companyName))} pl-10 pr-4`}
+                placeholder="Ej. Ferretería San José"
                 value={formData.companyName}
                 onChange={e => updateField('companyName', e.target.value)}
               />
             </div>
-            {fieldErrors.companyName && (
-              <p className="text-xs text-red-400 mt-1">{fieldErrors.companyName}</p>
-            )}
+            {fieldErrors.companyName && <p id="register-companyName-error" className="mt-1 text-xs text-red-400">{fieldErrors.companyName}</p>}
           </div>
 
           <div>
-            <label className="block text-xs font-mono text-slate-400 mb-1">TIPO DE NEGOCIO</label>
+            <label htmlFor="register-type" className="mb-1.5 block text-sm font-medium text-slate-300">Tipo de negocio</label>
             <select
-              name="businessType"
+              id="register-type"
+              name="type"
               required
               aria-invalid={Boolean(fieldErrors.type)}
-              className={`w-full bg-nortex-800 border text-white px-4 py-3 rounded-lg focus:outline-none transition-colors ${fieldErrors.type ? 'border-red-500/70 focus:border-red-500' : 'border-nortex-700 focus:border-nortex-accent'}`}
+              aria-describedby={fieldErrors.type ? 'register-type-error' : undefined}
+              className={`${controlClass(Boolean(fieldErrors.type))} px-4`}
               value={formData.type}
               onChange={e => updateBusinessType(e.target.value)}
             >
               <option value="" disabled>Seleccioná tu tipo de negocio</option>
-              {BUSINESS_TYPES.map(({ value, label }) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
+              {BUSINESS_TYPES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
             </select>
-            {fieldErrors.type && (
-              <p className="text-xs text-red-400 mt-1">{fieldErrors.type}</p>
-            )}
+            {fieldErrors.type && <p id="register-type-error" className="mt-1 text-xs text-red-400">{fieldErrors.type}</p>}
           </div>
 
-          <fieldset className="rounded-lg border border-nortex-700 bg-nortex-800/50 p-3">
-            <legend className="px-1 text-xs font-mono text-slate-400">TAMBIÉN VENDO</legend>
-            <p className="mb-2 text-xs text-slate-500">Podés combinar opciones; no cambian tus impuestos automáticamente.</p>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {([
-                ['CARNES_AVES', 'Carne o pollo por peso'],
-                ['ALIMENTO_ANIMAL', 'Alimento para animales'],
-                ['AGROINSUMOS', 'Insumos agropecuarios'],
-                ['PERECEDEROS', 'Productos con lote/vencimiento'],
-                ['MAYOREO', 'Venta por mayor o sacos'],
-              ] as const).map(([code, label]) => (
-                <label key={code} className="flex cursor-pointer items-start gap-2 text-sm text-slate-300">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5 h-4 w-4 rounded border-nortex-600 bg-nortex-900 text-nortex-accent"
-                    checked={formData.capabilities.includes(code)}
-                    onChange={event => updateCapability(code, event.target.checked)}
-                  />
-                  <span>{label}</span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
+          <details className="rounded-control border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-sm text-slate-300">
+            <summary className="cursor-pointer select-none font-medium text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40">
+              Opciones de inventario (opcional)
+              {formData.capabilities.length > 0 ? ` · ${formData.capabilities.length} activas` : ''}
+            </summary>
+            <fieldset className="mt-3 border-t border-white/[0.08] pt-3">
+              <legend className="sr-only">Opciones de inventario</legend>
+              <p className="mb-3 text-xs leading-relaxed text-slate-500">Elegí solo si vendés por peso, lote o mayoreo. Podés cambiarlo después.</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {([
+                  ['CARNES_AVES', 'Carne o pollo por peso'],
+                  ['ALIMENTO_ANIMAL', 'Alimento para animales'],
+                  ['AGROINSUMOS', 'Insumos agropecuarios'],
+                  ['PERECEDEROS', 'Productos con lote o vencimiento'],
+                  ['MAYOREO', 'Venta por mayor o sacos'],
+                ] as const).map(([code, label]) => (
+                  <label key={code} className="flex cursor-pointer items-start gap-2 text-sm text-slate-300">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 rounded border-white/20 bg-surface-950 text-brand focus:ring-brand/40"
+                      checked={formData.capabilities.includes(code)}
+                      onChange={event => updateCapability(code, event.target.checked)}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          </details>
 
           <div>
-            <label className="block text-xs font-mono text-slate-400 mb-1">EMAIL ADMINISTRADOR</label>
+            <label htmlFor="register-email" className="mb-1.5 block text-sm font-medium text-slate-300">Correo del administrador</label>
             <div className="relative">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+              <Mail aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
               <input
+                id="register-email"
                 type="email"
                 name="email"
                 autoComplete="email"
                 required
-                className={`w-full bg-nortex-800 border text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none transition-colors ${fieldErrors.email ? 'border-red-500/70 focus:border-red-500' : 'border-nortex-700 focus:border-nortex-accent'}`}
+                aria-invalid={Boolean(fieldErrors.email)}
+                aria-describedby={fieldErrors.email ? 'register-email-error' : undefined}
+                className={`${controlClass(Boolean(fieldErrors.email))} pl-10 pr-4`}
                 placeholder="dueno@empresa.com"
                 value={formData.email}
                 onChange={e => updateField('email', e.target.value)}
               />
             </div>
-            {fieldErrors.email && (
-              <p className="text-xs text-red-400 mt-1">{fieldErrors.email}</p>
-            )}
+            {fieldErrors.email && <p id="register-email-error" className="mt-1 text-xs text-red-400">{fieldErrors.email}</p>}
           </div>
 
-          {/* WhatsApp opcional (retención R1): el canal de rescate. Sin él, un
-              email con typo = tenant inalcanzable para siempre. */}
           <div>
-            <label className="block text-xs font-mono text-slate-400 mb-1">WHATSAPP <span className="text-slate-600">(OPCIONAL — PARA AYUDARTE A ARRANCAR)</span></label>
+            <label htmlFor="register-phone" className="mb-1.5 block text-sm font-medium text-slate-300">
+              WhatsApp <span className="font-normal text-slate-500">(opcional)</span>
+            </label>
             <div className="relative">
-              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+              <Phone aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
               <input
+                id="register-phone"
                 type="tel"
-                name="tel"
+                name="phone"
                 autoComplete="tel"
                 inputMode="tel"
-                className={`w-full bg-nortex-800 border text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none transition-colors ${fieldErrors.phone ? 'border-red-500/70 focus:border-red-500' : 'border-nortex-700 focus:border-nortex-accent'}`}
+                maxLength={20}
+                aria-invalid={Boolean(fieldErrors.phone)}
+                aria-describedby={fieldErrors.phone ? 'register-phone-error' : 'register-phone-hint'}
+                className={`${controlClass(Boolean(fieldErrors.phone))} pl-10 pr-4`}
                 placeholder="8888 8888"
                 value={formData.phone}
                 onChange={e => updateField('phone', e.target.value)}
               />
             </div>
-            {fieldErrors.phone && (
-              <p className="text-xs text-red-400 mt-1">{fieldErrors.phone}</p>
-            )}
+            {fieldErrors.phone
+              ? <p id="register-phone-error" className="mt-1 text-xs text-red-400">{fieldErrors.phone}</p>
+              : <p id="register-phone-hint" className="mt-1 text-xs text-slate-500">Solo para ayudarte a arrancar; no compartimos tu número.</p>}
           </div>
 
           <div>
-            <label className="block text-xs font-mono text-slate-400 mb-1">CONTRASEÑA</label>
+            <label htmlFor="register-password" className="mb-1.5 block text-sm font-medium text-slate-300">Contraseña</label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+              <Lock aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
               <input
-                type="password"
-                name="new-password"
+                id="register-password"
+                type={showPassword ? 'text' : 'password'}
+                name="password"
                 autoComplete="new-password"
                 required
                 minLength={PASSWORD_MIN}
-                aria-describedby="password-hint"
-                className={`w-full bg-nortex-800 border text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none transition-colors ${(fieldErrors.password || passwordTooShort) ? 'border-red-500/70 focus:border-red-500' : passwordValid ? 'border-nortex-accent/60 focus:border-nortex-accent' : 'border-nortex-700 focus:border-nortex-accent'}`}
+                maxLength={200}
+                aria-invalid={Boolean(fieldErrors.password || passwordTooShort)}
+                aria-describedby="register-password-hint"
+                className={`${controlClass(Boolean(fieldErrors.password || passwordTooShort), passwordValid)} pl-10 pr-12`}
                 placeholder="••••••••"
                 value={formData.password}
                 onChange={e => updateField('password', e.target.value)}
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(current => !current)}
+                className="absolute right-1 top-1/2 flex h-touch w-touch -translate-y-1/2 items-center justify-center rounded-control text-slate-400 hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                aria-pressed={showPassword}
+              >
+                {showPassword ? <EyeOff aria-hidden="true" size={18} /> : <Eye aria-hidden="true" size={18} />}
+              </button>
             </div>
-            {/* Pista visible del mínimo + feedback en vivo (verde al cumplir, rojo si falta). */}
-            <p
-              id="password-hint"
-              className={`text-xs mt-1 flex items-center gap-1 ${(fieldErrors.password || passwordTooShort) ? 'text-red-400' : passwordValid ? 'text-nortex-accent' : 'text-slate-500'}`}
-            >
-              {passwordValid && <Check size={13} className="shrink-0" />}
-              {fieldErrors.password
-                ? fieldErrors.password
-                : passwordValid
-                  ? 'Contraseña válida'
-                  : `Mínimo ${PASSWORD_MIN} caracteres`}
+            <p id="register-password-hint" className={`mt-1 flex items-center gap-1 text-xs ${(fieldErrors.password || passwordTooShort) ? 'text-red-400' : passwordValid ? 'text-brand' : 'text-slate-500'}`}>
+              {passwordValid && <Check aria-hidden="true" size={13} className="shrink-0" />}
+              {fieldErrors.password || (passwordValid ? 'Contraseña lista' : `Mínimo ${PASSWORD_MIN} caracteres`)}
             </p>
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full mt-6 bg-nortex-accent text-nortex-900 font-bold py-3 rounded-lg hover:bg-emerald-400 transition-all flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? <Loader2 className="animate-spin" /> : (isModal ? 'Registrar y Cobrar' : 'Registrar Empresa')}
-            {!loading && <ArrowRight size={18} />}
+          <button type="submit" disabled={loading} className="btn-primary mt-6 flex w-full items-center justify-center gap-2 py-3.5 disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100">
+            {loading ? <><Loader2 aria-hidden="true" className="animate-spin" size={19} /> Creando tu negocio…</> : <>Crear mi negocio <ArrowRight aria-hidden="true" size={18} /></>}
           </button>
 
-          <p className="text-xs text-slate-500 text-center mt-3">
-            Al registrarte, aceptas nuestros{' '}
-            <Link to="/terms" className="text-nortex-accent hover:underline">Términos de Servicio</Link>
-            {' '}y{' '}
-            <Link to="/privacy" className="text-nortex-accent hover:underline">Política de Privacidad</Link>.
+          <p className="mt-3 text-center text-xs leading-relaxed text-slate-500">
+            Al registrarte, aceptás nuestros <Link to="/terms" className="text-brand hover:underline">Términos</Link> y <Link to="/privacy" className="text-brand hover:underline">Privacidad</Link>.
           </p>
         </form>
 
-        {!isModal && (
-          <div className="mt-6 text-center text-sm text-slate-500">
-            ¿Ya tienes cuenta? <Link to="/login" className="text-nortex-accent hover:underline">Inicia Sesión</Link>
-          </div>
-        )}
-      </div>
-
-    </PageWrapper>
+        <div className="mt-6 border-t border-white/[0.06] pt-5 text-center text-sm text-slate-500">
+          ¿Ya tenés cuenta? <Link to="/login" className="font-medium text-brand hover:text-brand-hover">Entrá aquí</Link>
+        </div>
+      </section>
+    </main>
   );
 };
 

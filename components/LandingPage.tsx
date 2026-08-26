@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CheckCircle, Shield, Zap, TrendingUp, ChevronRight, Play } from 'lucide-react';
+import { ArrowRight, CheckCircle, Shield, Zap, TrendingUp, ChevronRight, Play, X } from 'lucide-react';
 
 const LandingPage: React.FC = () => {
     return (
@@ -9,18 +9,18 @@ const LandingPage: React.FC = () => {
             {/* NAVBAR */}
             <nav className="fixed top-0 w-full bg-white/80 backdrop-blur-md border-b border-slate-200 z-50 transition-all duration-300">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-                    <div className="flex items-center gap-2 group cursor-pointer hover:opacity-80 transition-opacity">
+                    <Link to="/" aria-label="Nortex, inicio" className="group flex items-center gap-2 transition-opacity hover:opacity-80">
                         <div className="w-8 h-8 bg-nortex-900 rounded flex items-center justify-center text-white font-bold text-xl shadow-md group-hover:bg-slate-800 transition-colors">
                             N
                         </div>
-                        <span className="text-xl font-bold tracking-tight text-slate-900 group-hover:text-nortex-accent transition-colors">NORTEX</span>
-                    </div>
-                    <div className="flex items-center gap-4">
-                        <Link to="/login" className="text-sm font-semibold text-slate-600 hover:text-nortex-900 transition-colors">
-                            Iniciar Sesión
+                        <span className="hidden text-xl font-bold tracking-tight text-slate-900 transition-colors group-hover:text-nortex-accent sm:inline">NORTEX</span>
+                    </Link>
+                    <div className="flex items-center gap-2 sm:gap-4">
+                        <Link to="/login" className="whitespace-nowrap text-sm font-semibold text-slate-600 transition-colors hover:text-nortex-900">
+                            Entrar
                         </Link>
-                        <Link to="/demo?source=landing_spa&location=nav" className="text-sm font-bold bg-nortex-900 text-white px-5 py-2 rounded-lg hover:bg-slate-800 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-nortex-900">
-                            Probar una venta
+                        <Link to="/demo?source=landing_spa&location=nav" className="whitespace-nowrap rounded-lg bg-nortex-900 px-3 py-2 text-sm font-bold text-white transition-all duration-300 hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-nortex-900 focus:ring-offset-2 sm:px-5">
+                            <span className="sm:hidden">Probar</span><span className="hidden sm:inline">Probar una venta</span>
                         </Link>
                     </div>
                 </div>
@@ -33,11 +33,11 @@ const LandingPage: React.FC = () => {
                 <div className="absolute top-40 left-1/4 w-[400px] h-[300px] bg-nortex-accent/10 rounded-full blur-[100px] -z-10 pointer-events-none animate-pulse"></div>
 
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-nortex-100/80 backdrop-blur-sm border border-nortex-200 text-nortex-800 text-sm font-semibold mb-6 shadow-sm hover:shadow-md transition-shadow">
-                    <Zap size={16} className="text-nortex-600 animate-pulse" /> El Sistema #1 para PyMES en Nicaragua
+                    <Zap size={16} className="text-nortex-600" /> Hecho para PyMES en Nicaragua
                 </div>
                 <h1 className="text-5xl md:text-7xl font-extrabold text-slate-900 tracking-tight mb-6 leading-[1.1]">
-                    No más libretas.<br className="hidden md:block" />
-                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-nortex-600 to-nortex-900 drop-shadow-sm">
+                    No más libretas.
+                    <span className="block text-transparent bg-clip-text bg-gradient-to-r from-nortex-600 to-nortex-900 drop-shadow-sm">
                         Control total de tu negocio.
                     </span>
                 </h1>
@@ -71,7 +71,7 @@ const LandingPage: React.FC = () => {
                                 ].map((item, i) => (
                                     <li key={i} className="flex items-start gap-4">
                                         <div className="mt-1 flex-shrink-0 w-6 h-6 rounded-full bg-red-50 border border-red-100 flex items-center justify-center shadow-sm">
-                                            <span className="text-red-500 font-bold text-xs"></span>
+                                            <X aria-hidden="true" className="text-red-500" size={14} strokeWidth={2.5} />
                                         </div>
                                         <span className="text-slate-700 font-medium leading-relaxed">{item}</span>
                                     </li>
@@ -90,7 +90,7 @@ const LandingPage: React.FC = () => {
                                 {[
                                     "Cierres de turno ciegos a prueba de robos hormiga.",
                                     "Facturación con Serie A/B y reportes DGI a un clic.",
-                                    "Nómina automática que cumple el Código del Trabajo al 100%.",
+                                    "Nómina con cálculos y reportes para aplicar la Ley 185.",
                                     "Oráculo de Inventario que te avisa antes de que te quedes sin stock."
                                 ].map((item, i) => (
                                     <li key={i} className="group/item flex items-start gap-4">
@@ -116,7 +116,7 @@ const LandingPage: React.FC = () => {
                     </div>
                     <h2 className="text-4xl md:text-5xl font-extrabold mb-6 tracking-tight drop-shadow-md">Tu buena facturación te abre puertas.</h2>
                     <p className="text-xl md:text-2xl text-nortex-100 max-w-3xl mx-auto mb-12 leading-relaxed font-light">
-                        Con <strong className="font-bold text-white">Nortex Capital</strong>, no necesitas rogarle a los bancos. El sistema analiza tu volumen de ventas y te pre-aprueba líneas de crédito de capital de trabajo al instante para que llenes tus tramos. <span className="opacity-80">Sin papeleos ridículos, directo a tu Kardex.</span>
+                        <strong className="font-bold text-white">Nortex Capital está en desarrollo.</strong> La meta es que tu historial de ventas te ayude a solicitar capital de trabajo cuando el servicio esté disponible. <span className="opacity-80">Hoy Nortex no promete ni pre-aprueba crédito.</span>
                     </p>
                     <Link to="/register" className="group inline-flex items-center justify-center gap-3 bg-white text-nortex-900 text-lg font-bold px-10 py-5 rounded-2xl hover:bg-slate-50 transition-all duration-300 shadow-[0_0_40px_rgba(255,255,255,0.1)] hover:shadow-[0_0_60px_rgba(255,255,255,0.2)] hover:-translate-y-1">
                         Empieza a Facturar Hoy <ChevronRight size={22} className="transition-transform duration-300 group-hover:translate-x-1" />
