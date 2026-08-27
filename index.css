@@ -27,6 +27,10 @@
     visibility: visible;
     height: auto;
     overflow: visible;
+    /* El ticket vive con `opacity-0` mientras no se imprime. Esta regla por ID
+       es la garantía autoritativa de impresión: no depende del orden en que el
+       navegador aplique la utilidad Tailwind `print:opacity-100`. */
+    opacity: 1 !important;
     /* 🖨️ ANULAR EL TEMA OBSIDIAN: papel térmico = tinta negra sobre blanco.
        Sin fondos oscuros, sin sombras ni glows (no imprimen / arruinan el ticket). */
     background: transparent !important;
