@@ -1,0 +1,65 @@
+/* NORTEX — Tipografía auto-hospedada.
+   ============================================================================
+
+   POR QUÉ NO GOOGLE FONTS: hasta este cambio, `index.html` y `landing.html`
+   pedían la tipografía a `fonts.googleapis.com` con un <link rel="stylesheet">.
+   Una hoja de estilos externa es BLOQUEANTE: hasta que esa petición no resuelve,
+   el navegador no pinta nada. No una fuente fea — blanco.
+
+   Eso ataba el arranque del punto de venta a un servidor que no controlamos.
+   Medido en el navegador con la petición colgada, el POS tardaba 12,788 ms en
+   aparecer; cortando ese único <link>, 96 ms. En una conexión normal Google
+   contesta rápido, pero el modo de falla es el que importa: cuando va lento,
+   está filtrado o no hay señal, el cajero mira una pantalla en blanco.
+
+   Y Nortex es PWA: el service worker precachea megas de archivos propios para
+   funcionar sin internet, pero el único recurso que decidía el primer pintado
+   era de otro dominio y no se precacheaba. Un POS que promete andar sin
+   internet arrancaba en blanco justamente sin internet. Ahora los .woff2 viven
+   en /fonts y entran al precache por el globPatterns del SW.
+
+   POR QUÉ ESTOS DOS ARCHIVOS Y NO DIEZ: son fuentes VARIABLES. Un solo archivo
+   por familia cubre todo el rango de pesos (200–800 en Jakarta, 100–800 en
+   Mono), así que `--nx-fw-semi: 650` se renderiza de verdad y no sintetizado.
+   Las dos juntas pesan 67 KB — menos que los cinco pesos estáticos que servía
+   Google.
+
+   El subconjunto es `latin` (U+0000-00FF y afines): cubre acentos, ñ, ¿ y ¡,
+   o sea todo el español. Lo que caiga fuera lo resuelve la pila de respaldo.
+
+   No se incluyen las itálicas a propósito: la app no usa texto en itálica y el
+   navegador puede inclinar sintéticamente los casos sueltos. Son 72 KB que no
+   se bajan.
+
+   Origen: @fontsource-variable/plus-jakarta-sans@5.3.0 y
+           @fontsource-variable/jetbrains-mono@5.3.0 (SIL Open Font License 1.1).
+   Para actualizarlas: `npm pack @fontsource-variable/<familia>` y copiar el
+   `files/*-latin-wght-normal.woff2` a esta carpeta.
+
+   Este archivo lo consumen las DOS superficies —el SPA (index.css) y la landing
+   estática (landing.css)—, que se sirven del mismo origen y comparten el mismo
+   archivo cacheado. */
+
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 200 800;
+  /* `swap`: el texto se pinta YA con la fuente de respaldo y cambia cuando la
+     nuestra llega. Nunca hay un intervalo con el texto invisible. */
+  font-display: swap;
+  src: url('/fonts/plus-jakarta-sans-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+                 U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+                 U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+                 U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+                 U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}

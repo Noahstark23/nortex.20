@@ -3,7 +3,10 @@ import type { Product } from '../../types';
 import { formatMoney } from '../../utils/money';
 
 export interface CajaNicaCatalogProps {
+    /** Lo que se muestra: ya viene recortado por el POS. */
     products: Product[];
+    /** Cuántos hay EN TOTAL detrás del recorte (para poder declararlo). */
+    total: number;
     categories: string[];
     selectedCategory: string;
     searchTerm: string;
@@ -16,6 +19,9 @@ const stockFormatter = new Intl.NumberFormat('es-NI', {
     maximumFractionDigits: 3,
 });
 
+/** Conteos de catálogo: "1,003" y no "1003", que a cuatro cifras ya se lee mal. */
+const conteoFormatter = new Intl.NumberFormat('es-NI');
+
 /**
  * Catálogo táctil de Caja Nica.
  *
@@ -25,6 +31,7 @@ const stockFormatter = new Intl.NumberFormat('es-NI', {
  */
 export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
     products,
+    total,
     categories,
     selectedCategory,
     searchTerm,
@@ -36,6 +43,7 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
     const panelId = `${catalogId}-products`;
     const activeCategoryIndex = categories.indexOf(selectedCategory);
     const isSearching = searchTerm.trim().length > 0;
+    const ocultos = Math.max(0, total - products.length);
 
     const handleCategoryKeyDown = (
         event: KeyboardEvent<HTMLButtonElement>,
@@ -66,8 +74,11 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
                 >
                     {isSearching ? 'Resultados' : 'Tus productos'}
                 </h2>
+                {/* El número es el TOTAL, no el de la lista recortada. Antes decía
+                    `products.length`, que ya venía cortado a 12: a un negocio con
+                    1,003 productos la pantalla le afirmaba que tenía doce. */}
                 <span className="text-xs tabular-nums text-slate-500" aria-live="polite">
-                    {products.length} {products.length === 1 ? 'producto' : 'productos'}
+                    {conteoFormatter.format(total)} {total === 1 ? 'producto' : 'productos'}
                 </span>
             </div>
 
@@ -120,6 +131,19 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
 
                             return (
                                 <li key={product.id} className="min-w-0 bg-surface-950">
+                                    {/* Alto FIJO de 96px (h-24), antes min-h-[190px].
+                                        La tarjeta llevaba el nombre arriba y el precio abajo con
+                                        ~90px de nada en medio: el hueco de una imagen que este
+                                        componente no renderiza a propósito. Con eso entraban 12
+                                        productos en pantalla. El otro catálogo del POS
+                                        (`TarjetaProducto`) ya se había corregido así; esto porta
+                                        la corrección al modo guiado, que es justo el que ve un
+                                        negocio recién dado de alta.
+
+                                        Fija y no `min-h`: mantiene el ritmo del rack, que es la
+                                        razón de ser de esta grilla — el cajero reconoce los
+                                        productos por posición, y una fila que cambia de alto
+                                        según el largo del nombre rompe esa memoria. */}
                                     <button
                                         type="button"
                                         aria-disabled={blocked || undefined}
@@ -129,23 +153,24 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
                                         onClick={() => {
                                             if (!blocked) onAdd(product);
                                         }}
-                                        className={`flex min-h-[132px] w-full flex-col items-stretch justify-between px-4 py-4 text-left transition-colors focus-visible:relative focus-visible:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 focus-visible:ring-inset sm:min-h-[160px] lg:min-h-[190px] ${blocked
+                                        className={`flex h-24 w-full flex-col items-stretch justify-between px-3 py-2.5 text-left transition-colors focus-visible:relative focus-visible:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 focus-visible:ring-inset ${blocked
                                             ? 'cursor-not-allowed bg-danger-soft hover:bg-danger-soft'
                                             : 'bg-surface-950 hover:bg-surface-900 active:bg-surface-800'}`}
                                     >
                                         <span className="min-w-0">
-                                            <span className={`line-clamp-2 text-[15px] font-semibold leading-snug sm:text-base ${blocked ? 'text-slate-400' : 'text-slate-100'}`}>
+                                            <span className={`line-clamp-2 text-sm font-semibold leading-tight ${blocked ? 'text-slate-400' : 'text-slate-100'}`}>
                                                 {product.name}
-                                            </span>
-                                            <span className="mt-1 block text-xs text-slate-500">
-                                                Por {unit}
                                             </span>
                                         </span>
 
-                                        <span className="mt-5 flex min-w-0 items-end justify-between gap-2">
-                                            <span className={`nx-num truncate text-base font-bold sm:text-lg ${blocked ? 'text-slate-500' : 'text-slate-100'}`}>
+                                        <span className="flex min-w-0 items-end justify-between gap-2">
+                                            <span className={`nx-num truncate text-[15px] font-bold sm:text-[17px] ${blocked ? 'text-slate-500' : 'text-brand'}`}>
                                                 {formattedPrice}
                                             </span>
+                                            {/* La existencia ocupa SIEMPRE este lugar, esté sana o
+                                                no. Antes solo aparecía en agotado o stock bajo, así
+                                                que el dato que decide si podés vender estaba
+                                                justamente ausente cuando todo iba bien. */}
                                             {blocked ? (
                                                 <span className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-danger">
                                                     Agotado
@@ -154,12 +179,30 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
                                                 <span className="shrink-0 text-[11px] font-bold text-warning">
                                                     Quedan {stockFormatter.format(product.stock)}
                                                 </span>
-                                            ) : null}
+                                            ) : (
+                                                <span className="shrink-0 text-xs text-slate-400">
+                                                    {stockFormatter.format(product.stock)}
+                                                </span>
+                                            )}
                                         </span>
                                     </button>
                                 </li>
                             );
                         })}
+                        {/* El recorte se DECLARA. Una lista cortada en silencio se lee
+                            como "esto es todo lo que tengo", y en un negocio eso hace
+                            que el dueño vuelva a comprar algo que ya tiene. Es la misma
+                            regla —y la misma frase— que el otro catálogo del POS; acá
+                            faltaba, y la pantalla afirmaba tener 12 productos. */}
+                        {ocultos > 0 && (
+                            <li className="col-span-full bg-surface-950">
+                                <p className="px-4 py-3 text-center text-xs text-slate-400" aria-live="polite">
+                                    {isSearching
+                                        ? `Mostrando ${products.length} de ${conteoFormatter.format(total)} coincidencias — afiná la búsqueda.`
+                                        : `Mostrando ${products.length} de ${conteoFormatter.format(total)} productos — escaneá o escribí para buscar el resto.`}
+                                </p>
+                            </li>
+                        )}
                     </ul>
                 ) : (
                     <div className="flex min-h-[176px] items-center justify-center bg-surface-950 px-6 py-10 text-center">

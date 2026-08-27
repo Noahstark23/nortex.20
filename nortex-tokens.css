@@ -37,7 +37,13 @@
   --nx-success:       var(--nx-brand);
 
   /* ---------- Tipografía ---------- */
-  --nx-font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* Plus Jakarta Sans, auto-hospedada en /fonts (ver public/fonts/fuentes.css).
+     Antes acá decía `Inter`, pero Inter no se descargaba en ningún lado del
+     repo: el único <link> de fuentes pedía Plus Jakarta Sans y JetBrains Mono.
+     O sea que la app entera se pintaba con la fuente del sistema mientras
+     descargaba una familia que ningún estilo suyo usaba. Ahora es una sola
+     familia para el producto y la landing, y llega de verdad. */
+  --nx-font: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --nx-font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace; /* SOLO SKU y códigos */
 
   --nx-fs-display: 40px;  --nx-lh-display: 1.05;  /* TOTAL a cobrar, ganancia del día */
