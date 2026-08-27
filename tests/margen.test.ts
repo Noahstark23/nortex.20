@@ -82,6 +82,18 @@ describe('calcularMargenBruto — ganancia bruta REAL (ingreso neto − costo)',
         expect(conNull.ingresoNeto.toNumber()).toBe(100);
     });
 
+    it('CUOTA_FIJA reconoce el total completo como ingreso y no separa IVA', () => {
+        const r = calcularMargenBruto([{
+            total: 115,
+            exemptTotal: 0,
+            fiscalRegimeAtSale: 'CUOTA_FIJA',
+            items: [{ costAtSale: 60, quantity: 1 }],
+        }]);
+        expect(r.ingresoNeto.toNumber()).toBe(115);
+        expect(r.costoVendido.toNumber()).toBe(60);
+        expect(r.gananciaBruta.toNumber()).toBe(55);
+    });
+
     it('línea SIN costo (costAtSale null): no suma COGS y se contabiliza para avisar', () => {
         const r = calcularMargenBruto([
             {

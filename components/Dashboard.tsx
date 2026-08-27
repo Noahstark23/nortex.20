@@ -8,6 +8,27 @@ import { useNavigate } from 'react-router-dom';
 import LenderDashboard from './LenderMode/LenderDashboard';
 import MotorizadosPanel from './LenderMode/MotorizadosPanel';
 import { fetchOnboardingStatus } from '../utils/onboardingStatus';
+import {
+  FISCAL_REGIME_GENERAL,
+  type FiscalRegime,
+  normalizeFiscalRegime,
+} from '../utils/fiscalRegime';
+
+interface FiscalData {
+  taxId: string;
+  address: string;
+  phone: string;
+  dgiAuthCode: string;
+  fiscalRegime: FiscalRegime;
+}
+
+const EMPTY_FISCAL_DATA: FiscalData = {
+  taxId: '',
+  address: '',
+  phone: '',
+  dgiAuthCode: '',
+  fiscalRegime: FISCAL_REGIME_GENERAL,
+};
 
 /** Lee el tipo de tenant del usuario guardado (LENDER = prestamista). */
 function getTenantType(): string {
@@ -59,7 +80,7 @@ const RetailDashboard: React.FC = () => {
 
   // Fiscal Settings State
   const [showFiscalModal, setShowFiscalModal] = useState(false);
-  const [fiscalData, setFiscalData] = useState({ taxId: '', address: '', phone: '', dgiAuthCode: '' });
+  const [fiscalData, setFiscalData] = useState<FiscalData>(EMPTY_FISCAL_DATA);
   const [savingFiscal, setSavingFiscal] = useState(false);
 
   // Deep-link del onboarding: el paso fiscal apunta a /app/dashboard?config=fiscal
@@ -142,7 +163,8 @@ const RetailDashboard: React.FC = () => {
             taxId: data.tenant.taxId || '',
             address: data.tenant.address || '',
             phone: data.tenant.phone || '',
-            dgiAuthCode: data.tenant.dgiAuthCode || ''
+            dgiAuthCode: data.tenant.dgiAuthCode || '',
+            fiscalRegime: normalizeFiscalRegime(data.tenant.fiscalRegime),
           });
           setChartData(data.chartData);
           if (data.todayStats) setTodayStats(data.todayStats);
@@ -328,6 +350,13 @@ const RetailDashboard: React.FC = () => {
       const updatedTenant = await res.json();
       setTenantData(updatedTenant);
       localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
+      setFiscalData({
+        taxId: updatedTenant.taxId || '',
+        address: updatedTenant.address || '',
+        phone: updatedTenant.phone || '',
+        dgiAuthCode: updatedTenant.dgiAuthCode || '',
+        fiscalRegime: normalizeFiscalRegime(updatedTenant.fiscalRegime),
+      });
       setShowFiscalModal(false);
       alert('Configuración Fiscal (DGI) actualizada correctamente.');
     } catch (error: any) {
@@ -942,21 +971,75 @@ const RetailDashboard: React.FC = () => {
       {/* FISCAL SETTINGS MODAL */}
       {showFiscalModal && (
         <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-white/[0.06]">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="fiscal-settings-title"
+            aria-describedby="fiscal-settings-description"
+            className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-md max-h-[calc(100vh-2rem)] overflow-y-auto border border-white/[0.06]"
+          >
             <div className="bg-slate-800 p-6 relative overflow-hidden">
               <button
+                type="button"
                 onClick={() => setShowFiscalModal(false)}
-                className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+                aria-label="Cerrar configuración fiscal"
+                className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded"
               >
                 <X size={20} />
               </button>
-              <h3 className="text-xl font-bold text-white flex items-center gap-2 relative z-10">
+              <h3 id="fiscal-settings-title" className="text-xl font-bold text-white flex items-center gap-2 relative z-10">
                 <FileText size={24} className="text-blue-400" /> Facturación DGI
               </h3>
-              <p className="text-slate-300 text-sm mt-1 relative z-10">Configura los datos fiscales para tus recibos.</p>
+              <p id="fiscal-settings-description" className="text-slate-300 text-sm mt-1 relative z-10">Configurá los datos fiscales para tus recibos.</p>
             </div>
 
             <form onSubmit={handleSaveFiscalData} className="p-6 space-y-4">
+              <fieldset aria-describedby="fiscal-regime-help" className="space-y-2">
+                <legend className="block text-xs font-bold text-slate-300 mb-2">RÉGIMEN FISCAL</legend>
+
+                <label className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-colors ${
+                  fiscalData.fiscalRegime === 'GENERAL'
+                    ? 'border-blue-500 bg-blue-500/10'
+                    : 'border-white/10 hover:border-white/20'
+                }`}>
+                  <input
+                    type="radio"
+                    name="fiscalRegime"
+                    value="GENERAL"
+                    checked={fiscalData.fiscalRegime === 'GENERAL'}
+                    onChange={() => setFiscalData({ ...fiscalData, fiscalRegime: 'GENERAL' })}
+                    className="mt-1 h-4 w-4 accent-blue-500"
+                  />
+                  <span>
+                    <span className="block text-sm font-bold text-white">Régimen general</span>
+                    <span className="block text-xs text-slate-400 mt-0.5">La factura calcula y desglosa el IVA.</span>
+                  </span>
+                </label>
+
+                <label className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-colors ${
+                  fiscalData.fiscalRegime === 'CUOTA_FIJA'
+                    ? 'border-blue-500 bg-blue-500/10'
+                    : 'border-white/10 hover:border-white/20'
+                }`}>
+                  <input
+                    type="radio"
+                    name="fiscalRegime"
+                    value="CUOTA_FIJA"
+                    checked={fiscalData.fiscalRegime === 'CUOTA_FIJA'}
+                    onChange={() => setFiscalData({ ...fiscalData, fiscalRegime: 'CUOTA_FIJA' })}
+                    className="mt-1 h-4 w-4 accent-blue-500"
+                  />
+                  <span>
+                    <span className="block text-sm font-bold text-white">Cuota fija</span>
+                    <span className="block text-xs text-slate-400 mt-0.5">La factura no calcula ni muestra un desglose de IVA.</span>
+                  </span>
+                </label>
+
+                <p id="fiscal-regime-help" className="text-xs text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                  Este cambio aplica solo a ventas nuevas. No modifica ni reescribe facturas anteriores.
+                </p>
+              </fieldset>
+
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1">RUC DE LA EMPRESA</label>
                 <input

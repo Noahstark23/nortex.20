@@ -131,6 +131,7 @@ import {
     ResetPasswordSchema,
     KardexRecordSchema,
     FinancePurchaseSchema,
+    UpdateFiscalSettingsSchema,
 } from './validation/schemas.js';
 import {
     assertBaseUnitChangeAllowed,
@@ -139,6 +140,10 @@ import {
     type SaleMode,
 } from '../utils/quantity.js';
 import { resolvePurchaseLine } from '../utils/purchasePackaging.js';
+import {
+    FISCAL_REGIME_CUOTA_FIJA,
+    normalizeFiscalRegime,
+} from '../utils/fiscalRegime.js';
 import {
     normalizeTenantCapabilities,
     suggestedCapabilitiesForBusinessType,
@@ -1531,6 +1536,7 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             select: {
                 total: true,
                 exemptTotal: true,
+                fiscalRegimeAtSale: true,
                 items: { select: { costAtSale: true, quantity: true } },
             },
             // Techo duro (guardrail de escalado: nada de findMany sin take sobre
@@ -1546,6 +1552,7 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
             salesTodayForMargin.map((s: any) => ({
                 total: s.total.toString(),
                 exemptTotal: s.exemptTotal == null ? null : s.exemptTotal.toString(),
+                fiscalRegimeAtSale: s.fiscalRegimeAtSale,
                 items: s.items.map((i: any) => ({
                     costAtSale: i.costAtSale == null ? null : i.costAtSale.toString(),
                     quantity: i.quantity,
@@ -2495,6 +2502,10 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), v
                     plan.costoTotal.toNumber(),
                     sale.paymentMethod,
                     sale.exemptTotal == null ? null : Number(sale.exemptTotal),
+                    {
+                        fiscalRegime: sale.fiscalRegimeAtSale,
+                        vatAmount: sale.vatAmountAtSale?.toString() ?? null,
+                    },
                 );
                 await createJournalEntry(
                     tx, authReq.tenantId!,
@@ -3120,6 +3131,7 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                 resolved.costTotal.toNumber(),
                 {
                     exemptTotal: resolved.exemptTotal,
+                    fiscalRegime: sale.fiscalRegimeAtSale,
                     creditReduction,
                     settledRefund,
                     refundMethod: refundMethod ?? 'CASH',
@@ -3137,6 +3149,7 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                         total: resolved.total.toFixed(2),
                         costTotal: resolved.costTotal.toFixed(2),
                         exemptTotal: resolved.exemptTotal.toFixed(2),
+                        fiscalRegime: normalizeFiscalRegime(sale.fiscalRegimeAtSale),
                         items: persistItems,
                         balanceBefore: balanceBefore.toFixed(2),
                         balanceAfter: balanceAfter.toFixed(2),
@@ -7151,6 +7164,16 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 : null;
             const requestedFromLinkedPO = new Map<string, Decimal>();
 
+            // El régimen sale del tenant autenticado y se congela junto con la
+            // compra dentro de esta misma transacción. Nunca se acepta del body.
+            const tenantFiscal = await tx.tenant.findUnique({
+                where: { id: authReq.tenantId! },
+                select: { fiscalRegime: true },
+            });
+            if (!tenantFiscal) throw new Error('TENANT_NOT_FOUND');
+            const fiscalRegimeAtPurchase = normalizeFiscalRegime(tenantFiscal.fiscalRegime);
+            const cuotaFijaPurchase = fiscalRegimeAtPurchase === FISCAL_REGIME_CUOTA_FIJA;
+
             // 1. Calcular totales. T2 Fase 2 — el crédito fiscal (IVA de compras)
             //    se genera SOLO por los ítems GRAVADOS. Antes se aplicaba 15% a
             //    TODO el subtotal, así que una farmacia que compra medicamentos
@@ -7239,7 +7262,13 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     quantityExact: exactQuantity.toFixed(),
                     stockQuantity: exactQuantity.toNumber(),
                     unit: product.unit,
-                    averageUnitCost: resolvedLine.baseUnitCost.toString(),
+                    // En cuota fija el IVA del proveedor no es acreditable: forma
+                    // parte del costo del inventario gravado.
+                    averageUnitCost: (
+                        cuotaFijaPurchase && !product.ivaExento
+                            ? resolvedLine.baseUnitCost.mul('1.15')
+                            : resolvedLine.baseUnitCost
+                    ).toString(),
                     unitCost:    unitCost.toFixed(2),
                     totalCost:   totalCost.toNumber(),
                     batchNumber: item.batchNumber || null,
@@ -7254,6 +7283,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             const subtotalAmount = subtotal.toDecimalPlaces(4);
             const taxAmount = taxableSubtotal.mul('0.15').toDecimalPlaces(4); // IVA 15% Nicaragua
             const totalAmount = subtotalAmount.plus(taxAmount).toDecimalPlaces(4);
+            const creditableTax = cuotaFijaPurchase ? new Decimal(0) : taxAmount;
 
             // 2. Crear cabecera de compra
             const purchase = await tx.purchase.create({
@@ -7268,6 +7298,8 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     dueDate: dueDate ? normalizeCalendarDateInput(dueDate) : null,
                     subtotal: subtotalAmount.toNumber(),
                     tax: taxAmount.toNumber(),
+                    fiscalRegimeAtPurchase,
+                    creditableTax: creditableTax.toNumber(),
                     total: totalAmount.toNumber(),
                     status: paymentMethod === 'CASH' ? 'COMPLETED' : 'PENDING_PAYMENT',
                     paymentMethod,
@@ -7421,7 +7453,8 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 purchase.id,
                 totalAmount.toNumber(),
                 taxAmount.toNumber(),
-                paymentMethod
+                paymentMethod,
+                creditableTax.toNumber(),
             );
 
             // Asiento inmutable de auditoría (Capa 3): toda compra mueve su efecto
@@ -7442,6 +7475,8 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                         paymentMethod,
                         subtotal: subtotalAmount.toString(),
                         tax: taxAmount.toString(),
+                        creditableTax: creditableTax.toString(),
+                        fiscalRegime: fiscalRegimeAtPurchase,
                         total: totalAmount.toString(),
                         shiftId: turnoDeContado?.id ?? null,
                         efectivoAntes: efectivoAntesCompra?.toNumber() ?? null,
@@ -7484,6 +7519,9 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
         }
         if (error?.message === 'OC_NO_ENCONTRADA') {
             return res.status(404).json({ error: 'Orden de compra no encontrada' });
+        }
+        if (error?.message === 'TENANT_NOT_FOUND') {
+            return res.status(404).json({ error: 'Negocio no encontrado' });
         }
         if (error?.message?.startsWith('LOTE_REQUERIDO|')) {
             const productName = error.message.slice('LOTE_REQUERIDO|'.length);
@@ -9276,24 +9314,34 @@ app.post('/api/quotations', authenticate, checkRole(QUOTATION_WRITE_ROLES), asyn
         }));
 
         const productIds = [...new Set(parsedItems.map((item) => String(item.productId ?? item.id)))];
-        const products: QuotationProductAuthority[] = await prisma.product.findMany({
-            where: { tenantId: authReq.tenantId!, id: { in: productIds } },
-            select: {
-                id: true,
-                name: true,
-                price: true,
-                unit: true,
-                ivaExento: true,
-                saleMode: true,
-                quantityStep: true,
-            },
-        });
+        const [products, tenantFiscal] = await Promise.all([
+            prisma.product.findMany({
+                where: { tenantId: authReq.tenantId!, id: { in: productIds } },
+                select: {
+                    id: true,
+                    name: true,
+                    price: true,
+                    unit: true,
+                    ivaExento: true,
+                    saleMode: true,
+                    quantityStep: true,
+                },
+            }) as Promise<QuotationProductAuthority[]>,
+            prisma.tenant.findUnique({
+                where: { id: authReq.tenantId! },
+                select: { fiscalRegime: true },
+            }),
+        ]);
+        if (!tenantFiscal) return res.status(404).json({ error: 'Negocio no encontrado' });
+        const fiscalRegimeAtQuote = normalizeFiscalRegime(tenantFiscal.fiscalRegime);
         const resolvedItems = resolveQuotationItems(parsedItems, products);
 
         let subtotalD = new Decimal(0);
         let taxD = new Decimal(0);
+        let grossTotalD = new Decimal(0);
         for (const item of resolvedItems) {
             const lineTotal = item.price.mul(item.quantityExact).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            grossTotalD = grossTotalD.plus(lineTotal);
             if (item.ivaExento) {
                 subtotalD = subtotalD.plus(lineTotal);
                 continue;
@@ -9303,9 +9351,14 @@ app.post('/api/quotations', authenticate, checkRole(QUOTATION_WRITE_ROLES), asyn
             taxD = taxD.plus(iva);
         }
 
-        const subtotal = subtotalD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
-        const tax = taxD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
-        const total = new Decimal(subtotal).plus(tax).toNumber();
+        const cuotaFija = fiscalRegimeAtQuote === FISCAL_REGIME_CUOTA_FIJA;
+        const subtotal = (cuotaFija ? grossTotalD : subtotalD)
+            .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+            .toNumber();
+        const tax = cuotaFija ? 0 : taxD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+        const total = cuotaFija
+            ? grossTotalD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber()
+            : new Decimal(subtotal).plus(tax).toNumber();
 
         const quote = await prisma.quotation.create({
             data: {
@@ -9314,6 +9367,7 @@ app.post('/api/quotations', authenticate, checkRole(QUOTATION_WRITE_ROLES), asyn
                 customerRuc,
                 subtotal,
                 tax,
+                fiscalRegimeAtQuote,
                 total,
                 expiresAt: new Date(expiresAt),
                 items: {
@@ -9765,24 +9819,107 @@ app.get('/api/tax-report/dmi', authenticate, checkRole(FISCAL_REPORT_ROLES), asy
     }
 });
 
-// Configurar datos fiscales del Tenant
-app.put('/api/tenant/fiscal', authenticate, checkRole(['ADMIN', 'OWNER']), async (req: any, res: any) => {
+// Configuración fiscal efectiva para POS/cotizaciones. El tenant siempre sale
+// del JWT; un cajero puede leerla porque la necesita para emitir el documento,
+// pero solo dueño/administrador puede cambiarla.
+app.get('/api/tenant/fiscal-settings', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { taxId, address, phone, dgiAuthCode } = req.body;
+    try {
+        const tenant = await prisma.tenant.findUnique({
+            where: { id: authReq.tenantId! },
+            select: { fiscalRegime: true, fiscalRegimeVersion: true },
+        });
+        if (!tenant) return res.status(404).json({ error: 'Negocio no encontrado' });
+        res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+        return res.json({
+            fiscalRegime: normalizeFiscalRegime(tenant.fiscalRegime),
+            fiscalRegimeVersion: tenant.fiscalRegimeVersion,
+        });
+    } catch (error) {
+        console.error('Error al leer configuración fiscal:', error);
+        return res.status(500).json({ error: 'Error al leer configuración fiscal' });
+    }
+});
+
+// Configurar datos fiscales del Tenant. El cambio de régimen y su auditoría
+// confirman en la misma transacción; la versión solo avanza cuando cambia la
+// regla que afectará ventas futuras.
+app.put('/api/tenant/fiscal', authenticate, checkRole(['ADMIN', 'OWNER']), validate(UpdateFiscalSettingsSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { taxId, address, phone, dgiAuthCode, fiscalRegime } = req.body;
 
     try {
-        const tenant = await prisma.tenant.update({
-            where: { id: authReq.tenantId! },
-            data: {
-                taxId: taxId || undefined,
-                address: address !== undefined ? address : undefined,
-                phone: phone !== undefined ? phone : undefined,
-                dgiAuthCode: dgiAuthCode !== undefined ? dgiAuthCode : undefined,
-            }
+        const tenant = await prisma.$transaction(async (tx) => {
+            // Serializa cambios de régimen para que dos administradores no
+            // reutilicen la misma versión con reglas distintas. La versión es el
+            // guard que obliga a conciliar ventas offline nacidas bajo otro régimen.
+            await tx.$queryRaw`SELECT id FROM \`Tenant\` WHERE id = ${authReq.tenantId!} FOR UPDATE`;
+            const before = await tx.tenant.findUnique({
+                where: { id: authReq.tenantId! },
+                select: {
+                    id: true,
+                    taxId: true,
+                    address: true,
+                    phone: true,
+                    dgiAuthCode: true,
+                    fiscalRegime: true,
+                    fiscalRegimeVersion: true,
+                },
+            });
+            if (!before) return null;
+
+            const nextRegime = fiscalRegime === undefined
+                ? normalizeFiscalRegime(before.fiscalRegime)
+                : normalizeFiscalRegime(fiscalRegime);
+            const regimeChanged = nextRegime !== normalizeFiscalRegime(before.fiscalRegime);
+            const data: Record<string, unknown> = {
+                ...(taxId !== undefined ? { taxId } : {}),
+                ...(address !== undefined ? { address: address || null } : {}),
+                ...(phone !== undefined ? { phone: phone || null } : {}),
+                ...(dgiAuthCode !== undefined ? { dgiAuthCode: dgiAuthCode || null } : {}),
+                ...(fiscalRegime !== undefined ? { fiscalRegime: nextRegime } : {}),
+                ...(regimeChanged ? { fiscalRegimeVersion: { increment: 1 } } : {}),
+            };
+
+            const updated = await tx.tenant.update({
+                where: { id: before.id },
+                data,
+            });
+            const changedFields = [
+                taxId !== undefined ? 'taxId' : null,
+                address !== undefined ? 'address' : null,
+                phone !== undefined ? 'phone' : null,
+                dgiAuthCode !== undefined ? 'dgiAuthCode' : null,
+                fiscalRegime !== undefined ? 'fiscalRegime' : null,
+            ].filter((field): field is string => field !== null);
+            await tx.auditLog.create({
+                data: {
+                    tenantId: before.id,
+                    userId: authReq.userId!,
+                    action: 'FISCAL_SETTINGS_UPDATED',
+                    details: JSON.stringify({
+                        changedFields,
+                        before: {
+                            fiscalRegime: normalizeFiscalRegime(before.fiscalRegime),
+                            fiscalRegimeVersion: before.fiscalRegimeVersion,
+                        },
+                        after: {
+                            fiscalRegime: normalizeFiscalRegime(updated.fiscalRegime),
+                            fiscalRegimeVersion: updated.fiscalRegimeVersion,
+                        },
+                    }),
+                },
+            });
+            return updated;
         });
+        if (!tenant) return res.status(404).json({ error: 'Negocio no encontrado' });
         res.json(tenant);
     } catch (error: any) {
-        res.status(500).json({ error: 'Error al actualizar configuración fiscal', details: error.message });
+        if (error?.code === 'P2002') {
+            return res.status(409).json({ error: 'El RUC ya está registrado' });
+        }
+        console.error('Error al actualizar configuración fiscal:', error);
+        res.status(500).json({ error: 'Error al actualizar configuración fiscal' });
     }
 });
 
@@ -11048,6 +11185,17 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
             });
             if (!supplier) throw new Error('SUPPLIER_NOT_FOUND');
 
+            const tenantFiscal = await tx.tenant.findUnique({
+                where: { id: authReq.tenantId! },
+                select: { fiscalRegime: true },
+            });
+            if (!tenantFiscal) throw new Error('TENANT_NOT_FOUND');
+            const fiscalRegimeAtPurchase = normalizeFiscalRegime(tenantFiscal.fiscalRegime);
+            const creditableTaxD = fiscalRegimeAtPurchase === FISCAL_REGIME_CUOTA_FIJA
+                ? new Decimal(0)
+                : taxD;
+            const inventoryValueD = totalD.minus(creditableTaxD).toDecimalPlaces(4);
+
             const productIds: string[] = [...new Set(items.map((i: any) => i.productId))];
             const ownedProducts = await tx.product.findMany({
                 where: { id: { in: productIds }, tenantId: authReq.tenantId! },
@@ -11079,6 +11227,8 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
                     invoiceNumber: `NXC-${Date.now()}`,
                     subtotal,
                     tax,
+                    fiscalRegimeAtPurchase,
+                    creditableTax: creditableTaxD.toNumber(),
                     total,
                     status: 'PENDING_PAYMENT',
                     paymentMethod: 'NORTEX_CAPITAL',
@@ -11113,8 +11263,8 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
             // y se omitía IVA Crédito Fiscal (1.1.5): el inventario quedaba
             // sobrevaluado en el 15% y se PERDÍA el crédito fiscal del IVA de la
             // compra. Ahora se separa igual que `recordPurchase`:
-            //   Debe: Inventario (1.1.4) = subtotal SIN IVA
-            //   Debe: IVA Crédito Fiscal (1.1.5) = IVA de la compra
+            //   Debe: Inventario (1.1.4) = total menos IVA acreditable
+            //   Debe: IVA Crédito Fiscal (1.1.5) = IVA acreditable (cero en cuota fija)
             //   Haber: Préstamos Nortex Capital por Pagar (2.1.8) = total
             const { createJournalEntry } = await import('./services/accounting');
             await createJournalEntry(
@@ -11125,11 +11275,32 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
                 'CAPITAL_LOAN',
                 authReq.userId!,
                 [
-                    { accountCode: '1.1.4', debit: subtotal, credit: 0 },  // Inventario ↑ (sin IVA)
-                    { accountCode: '1.1.5', debit: tax, credit: 0 },       // IVA Crédito Fiscal ↑
-                    { accountCode: '2.1.8', debit: 0, credit: total },     // Préstamo por Pagar ↑
+                    { accountCode: '1.1.4', debit: inventoryValueD.toNumber(), credit: 0 },
+                    ...(creditableTaxD.isZero()
+                        ? []
+                        : [{ accountCode: '1.1.5', debit: creditableTaxD.toNumber(), credit: 0 }]),
+                    { accountCode: '2.1.8', debit: 0, credit: total },
                 ]
             );
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'CAPITAL_PURCHASE_FINANCED',
+                    details: JSON.stringify({
+                        purchaseId: purchase.id,
+                        loanId: loan.id,
+                        fiscalRegime: fiscalRegimeAtPurchase,
+                        subtotal: subtotalD.toString(),
+                        invoicedTax: taxD.toString(),
+                        creditableTax: creditableTaxD.toString(),
+                        inventoryValue: inventoryValueD.toString(),
+                        total: totalD.toString(),
+                        totalDue: totalDueD.toString(),
+                    }),
+                },
+            });
 
             return { purchase, loan };
         });
@@ -11152,6 +11323,9 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
         }
         if (error instanceof Error && error.message === 'PRODUCT_NOT_FOUND') {
             return res.status(404).json({ error: 'Uno o más productos no pertenecen a tu negocio.' });
+        }
+        if (error instanceof Error && error.message === 'TENANT_NOT_FOUND') {
+            return res.status(404).json({ error: 'Negocio no encontrado.' });
         }
         console.error('Capital Finance Error:', error);
         res.status(500).json({ error: 'Error procesando el financiamiento' });
@@ -12141,6 +12315,14 @@ app.patch('/api/public-orders/:id/convert', authenticate, checkRole(QUOTATION_WR
             }
 
             const items = publicOrderItemsForQuotation(order.items);
+            const tenantFiscal = await tx.tenant.findUnique({
+                where: { id: authReq.tenantId! },
+                select: { fiscalRegime: true },
+            });
+            if (!tenantFiscal) {
+                throw new PublicOrderItemError('PRODUCT_NOT_FOUND', 'Negocio no encontrado', 404);
+            }
+            const fiscalRegimeAtQuote = normalizeFiscalRegime(tenantFiscal.fiscalRegime);
             // Los precios públicos ya incluyen IVA: desglosar línea por línea
             // usando la clasificación congelada evita gravar productos exentos.
             let subtotalD = new Decimal(0);
@@ -12156,8 +12338,11 @@ app.patch('/api/public-orders/:id/convert', authenticate, checkRole(QUOTATION_WR
                     taxD = taxD.plus(iva);
                 }
             }
-            const subtotal = subtotalD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
-            const tax = taxD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+            const cuotaFija = fiscalRegimeAtQuote === FISCAL_REGIME_CUOTA_FIJA;
+            const subtotal = (cuotaFija ? totalD : subtotalD)
+                .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+                .toNumber();
+            const tax = cuotaFija ? 0 : taxD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
             const total = totalD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
             const quotation = await tx.quotation.create({
                 data: {
@@ -12166,6 +12351,7 @@ app.patch('/api/public-orders/:id/convert', authenticate, checkRole(QUOTATION_WR
                     customerRuc: null,
                     subtotal,
                     tax,
+                    fiscalRegimeAtQuote,
                     total,
                     expiresAt: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000),
                     items: {
@@ -12458,6 +12644,47 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
 // el resumen VET y la declaración mensual TIENEN que recortar las mismas ventas.
 // Antes había una copia acá y otra fórmula distinta en generateMonthlyReport.
 
+const fiscalSaleSnapshotBreakdown = (sale: {
+    total: { toString(): string } | string | number;
+    exemptTotal?: { toString(): string } | string | number | null;
+    fiscalRegimeAtSale?: unknown;
+    vatAmountAtSale?: { toString(): string } | string | number | null;
+}) => {
+    const total = new Decimal(sale.total.toString()).toDecimalPlaces(4);
+    const fiscalRegime = normalizeFiscalRegime(sale.fiscalRegimeAtSale);
+    if (fiscalRegime === FISCAL_REGIME_CUOTA_FIJA) {
+        return {
+            fiscalRegime,
+            exonerado: new Decimal(0),
+            netoGravado: new Decimal(0),
+            iva: new Decimal(0),
+            cuotaFija: total,
+            total,
+        };
+    }
+
+    const legacy = desglosarVentaConExoneracion(
+        total,
+        sale.exemptTotal?.toString() ?? '0',
+    );
+    let iva = legacy.iva;
+    if (sale.vatAmountAtSale != null) {
+        const snapshot = new Decimal(sale.vatAmountAtSale.toString());
+        const maxVat = total.minus(legacy.exonerado);
+        if (snapshot.isFinite() && snapshot.greaterThanOrEqualTo(0) && snapshot.lessThanOrEqualTo(maxVat)) {
+            iva = snapshot.toDecimalPlaces(4);
+        }
+    }
+    return {
+        fiscalRegime,
+        exonerado: legacy.exonerado,
+        netoGravado: total.minus(legacy.exonerado).minus(iva).toDecimalPlaces(4),
+        iva,
+        cuotaFija: new Decimal(0),
+        total,
+    };
+};
+
 // ── A1: LIBRO DE VENTAS (Excel) ─────────────────────────────────────────────
 // GET /api/fiscal/libro-ventas/:month/:year
 app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
@@ -12485,10 +12712,7 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(FISCAL_
         // con la declaración del mismo mes, que sí las respetaba.
         const rows = sales.map((s, i) => {
             const fiscalSaleDate = fiscalCivilDate(s.createdAt);
-            const d = desglosarVentaConExoneracion(
-                s.total.toString(),
-                s.exemptTotal?.toString() ?? '0',
-            );
+            const d = fiscalSaleSnapshotBreakdown(s);
             return {
                 'N°':            i + 1,
                 'Fecha':         fiscalSaleDate.shortLabel,
@@ -12496,26 +12720,29 @@ app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(FISCAL_
                 'Cliente':       s.customerName || s.customer?.name || 'Consumidor Final',
                 'RUC/Cédula':    s.customer?.taxId || '---',
                 'Método Pago':   s.paymentMethod,
+                'Régimen':       d.fiscalRegime,
                 'Exento C$':     d.exonerado.toDecimalPlaces(2).toNumber(),
                 'Subtotal C$':   d.netoGravado.toDecimalPlaces(2).toNumber(),
                 'IVA 15% C$':    d.iva.toDecimalPlaces(2).toNumber(),
-                'Total C$':      d.exonerado.plus(d.netoGravado).plus(d.iva).toDecimalPlaces(2).toNumber(),
+                'Cuota Fija C$': d.cuotaFija.toDecimalPlaces(2).toNumber(),
+                'Total C$':      d.total.toDecimalPlaces(2).toNumber(),
             };
         });
 
         // Totales (acumulados con Decimal; se convierten a number solo al escribir la celda)
         const totals = {
             'N°': '', 'Fecha': '', 'N° Factura': '', 'Cliente': 'TOTALES',
-            'RUC/Cédula': '', 'Método Pago': '',
+            'RUC/Cédula': '', 'Método Pago': '', 'Régimen': '',
             'Exento C$':   rows.reduce((s, r) => s.plus(r['Exento C$']), new Decimal(0)).toNumber(),
             'Subtotal C$': rows.reduce((s, r) => s.plus(r['Subtotal C$']), new Decimal(0)).toNumber(),
             'IVA 15% C$':  rows.reduce((s, r) => s.plus(r['IVA 15% C$']), new Decimal(0)).toNumber(),
+            'Cuota Fija C$': rows.reduce((s, r) => s.plus(r['Cuota Fija C$']), new Decimal(0)).toNumber(),
             'Total C$':    rows.reduce((s, r) => s.plus(r['Total C$']), new Decimal(0)).toNumber(),
         };
         rows.push(totals as any);
 
         const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [4, 12, 14, 28, 16, 12, 14, 14, 14, 14].map(w => ({ wch: w }));
+        ws['!cols'] = [4, 12, 14, 28, 16, 12, 14, 14, 14, 14, 14, 14].map(w => ({ wch: w }));
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, `Ventas ${month}-${year}`);
 
@@ -12570,7 +12797,9 @@ app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(FISCAL
         const rows = purchases.map((p, i) => {
             const fiscalInvoiceDate = fiscalCivilDate(p.date);
             const subtotalD = new Decimal(p.subtotal.toString());
-            const ivaD      = new Decimal(p.tax.toString());
+            const ivaFacturadoD = new Decimal(p.tax.toString());
+            const ivaD = new Decimal(p.creditableTax?.toString() ?? p.tax.toString());
+            const ivaNoAcreditableD = Decimal.max(0, ivaFacturadoD.minus(ivaD)).toDecimalPlaces(2);
             const totalD    = new Decimal(p.total.toString());
             const irD       = irByPurchase.get(p.id)  || new Decimal(0);
             const imiD      = imiByPurchase.get(p.id) || new Decimal(0);
@@ -12581,8 +12810,11 @@ app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(FISCAL
                 'N° Factura Prov.': p.invoiceNumber,
                 'Proveedor':       p.supplier.name,
                 'RUC Proveedor':   (p.supplier as any).ruc || '---',
+                'Régimen':         normalizeFiscalRegime(p.fiscalRegimeAtPurchase),
                 'Subtotal C$':     subtotalD.toNumber(),
+                'IVA Facturado C$': ivaFacturadoD.toNumber(),
                 'IVA Crédito C$':  ivaD.toNumber(),
+                'IVA no acreditable C$': ivaNoAcreditableD.toNumber(),
                 'IR Ret. 2% C$':   irD.toNumber(),
                 'IMI Ret. 1% C$':  imiD.toNumber(),
                 'Neto Pagado C$':  netoD.toNumber(),
@@ -12591,9 +12823,11 @@ app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(FISCAL
         });
 
         const totals: any = {
-            'N°': '', 'Fecha': '', 'N° Factura Prov.': '', 'Proveedor': 'TOTALES', 'RUC Proveedor': '',
+            'N°': '', 'Fecha': '', 'N° Factura Prov.': '', 'Proveedor': 'TOTALES', 'RUC Proveedor': '', 'Régimen': '',
             'Subtotal C$':     rows.reduce((s, r) => s.plus(r['Subtotal C$']), new Decimal(0)).toNumber(),
+            'IVA Facturado C$': rows.reduce((s, r) => s.plus(r['IVA Facturado C$']), new Decimal(0)).toNumber(),
             'IVA Crédito C$':  rows.reduce((s, r) => s.plus(r['IVA Crédito C$']), new Decimal(0)).toNumber(),
+            'IVA no acreditable C$': rows.reduce((s, r) => s.plus(r['IVA no acreditable C$']), new Decimal(0)).toNumber(),
             'IR Ret. 2% C$':   rows.reduce((s, r) => s.plus(r['IR Ret. 2% C$']), new Decimal(0)).toNumber(),
             'IMI Ret. 1% C$':  rows.reduce((s, r) => s.plus(r['IMI Ret. 1% C$']), new Decimal(0)).toNumber(),
             'Neto Pagado C$':  rows.reduce((s, r) => s.plus(r['Neto Pagado C$']), new Decimal(0)).toNumber(),
@@ -12602,7 +12836,7 @@ app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(FISCAL
         rows.push(totals);
 
         const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [4, 12, 16, 28, 16, 14, 14, 14, 14, 14, 14].map(w => ({ wch: w }));
+        ws['!cols'] = [4, 12, 16, 28, 16, 14, 14, 14, 14, 14, 14, 14, 14, 14].map(w => ({ wch: w }));
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, `Compras ${month}-${year}`);
 
@@ -12663,20 +12897,22 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(FISCAL_RE
 
         for (const s of sales) {
             // Mismo desglose que el Libro de Ventas y la declaración mensual.
-            const d = desglosarVentaConExoneracion(
-                s.total.toString(),
-                s.exemptTotal?.toString() ?? '0',
-            );
+            const d = fiscalSaleSnapshotBreakdown(s);
             const exentoD   = d.exonerado.toDecimalPlaces(2);
-            const subtotalD = d.netoGravado.toDecimalPlaces(2);
+            const subtotalD = (d.fiscalRegime === FISCAL_REGIME_CUOTA_FIJA
+                ? d.cuotaFija
+                : d.netoGravado).toDecimalPlaces(2);
             const ivaD      = d.iva.toDecimalPlaces(2);
-            const totalD    = exentoD.plus(subtotalD).plus(ivaD);
+            const totalD    = d.total.toDecimalPlaces(2);
             const fecha    = fiscalCivilDate(s.createdAt).compact;
             const factura  = s.invoiceNumber
                 ? `${s.invoiceSeries || 'A'}${String(s.invoiceNumber).padStart(6,'0')}`
                 : 'CF';
             const nombre   = (s.customerName || s.customer?.name || 'CONSUMIDOR FINAL').toUpperCase().substring(0, 60);
             const rucV     = s.customer?.taxId || '000-000000-0000X';
+            if (d.fiscalRegime === FISCAL_REGIME_CUOTA_FIJA) {
+                lines.push(`# REGIMEN CUOTA_FIJA | FACTURA ${factura} | IVA TRASLADADO 0.00`);
+            }
             lines.push(`V|${fecha}|${factura}|${rucV}|${nombre}|${exentoD.toFixed(2)}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
         }
 
@@ -12684,9 +12920,11 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(FISCAL_RE
         lines.push('## LIBRO DE COMPRAS');
 
         for (const p of purchases) {
-            const subtotalD = new Decimal(p.subtotal.toString()).toDecimalPlaces(2);
-            const ivaD      = new Decimal(p.tax.toString()).toDecimalPlaces(2);
             const totalD    = new Decimal(p.total.toString()).toDecimalPlaces(2);
+            const ivaD      = new Decimal(p.creditableTax?.toString() ?? p.tax.toString()).toDecimalPlaces(2);
+            // El IVA no acreditable se capitaliza; por eso el subtotal contable
+            // de cuota fija es el total completo y el crédito mostrado queda en 0.
+            const subtotalD = totalD.minus(ivaD).toDecimalPlaces(2);
             // La compra guarda subtotal/IVA/total por separado; lo que no cuadra
             // contra el total es la parte exenta (proveedor exonerado, canasta
             // básica). Se acota a ≥0 para que un dato inconsistente no salga en
@@ -12695,6 +12933,9 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(FISCAL_RE
             const fecha    = fiscalCivilDate(p.date).compact;
             const nombre   = p.supplier.name.toUpperCase().substring(0, 60);
             const rucC     = (p.supplier as any).ruc || '000-000000-0000X';
+            if (normalizeFiscalRegime(p.fiscalRegimeAtPurchase) === FISCAL_REGIME_CUOTA_FIJA) {
+                lines.push(`# COMPRA CUOTA_FIJA | FACTURA ${p.invoiceNumber} | IVA ACREDITABLE 0.00`);
+            }
             lines.push(`C|${fecha}|${p.invoiceNumber}|${rucC}|${nombre}|${exentoD.toFixed(2)}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
         }
 

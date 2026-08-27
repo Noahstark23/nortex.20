@@ -10,6 +10,11 @@ import {
 } from './saleBatchAllocationService.js';
 import { effectiveSaleModeAndStep } from './saleItemMeasurementService.js';
 import { exactPedidoItemQuantity } from './publicOrderItemService.js';
+import { desglosarVentaConExoneracion } from './nicaTax.js';
+import {
+    normalizeFiscalRegime,
+    resolveSaleFiscalAmounts,
+} from '../../utils/fiscalRegime.js';
 
 type PrismaTx = Prisma.TransactionClient;
 
@@ -21,6 +26,7 @@ export type PedidoFulfillmentCode =
     | 'PEDIDO_RESERVATION_MISMATCH'
     | 'PEDIDO_CANCELLATION_RECONCILIATION_REQUIRED'
     | 'PEDIDO_ACCOUNTING_USER_NOT_FOUND'
+    | 'PEDIDO_TENANT_NOT_FOUND'
     | 'PEDIDO_BATCH_STOCK_INSUFFICIENT';
 
 export class PedidoFulfillmentError extends Error {
@@ -835,13 +841,24 @@ export async function completePedidoDeliveryInTransaction(
         select: { productId: true, quantity: true, batchId: true },
     });
     const wasReserved = reservations.length > 0;
-    const tenant = wasReserved
-        ? null
-        : await tx.tenant.findUnique({
-            where: { id: pedido.tenantId },
-            select: { allowNegativeStock: true },
-        });
-    const enforceStock = !(tenant?.allowNegativeStock ?? false);
+    // Siempre se carga, incluso si el stock ya estaba reservado: la entrega crea
+    // una venta y debe congelar el régimen autoritativo del tenant en esta tx.
+    const tenant = await tx.tenant.findUnique({
+        where: { id: pedido.tenantId },
+        select: {
+            allowNegativeStock: true,
+            fiscalRegime: true,
+            fiscalRegimeVersion: true,
+        },
+    });
+    if (!tenant) {
+        throw new PedidoFulfillmentError(
+            'PEDIDO_TENANT_NOT_FOUND',
+            409,
+            'El negocio del pedido ya no está disponible para facturar la entrega.',
+        );
+    }
+    const enforceStock = !tenant.allowNegativeStock;
 
     if (wasReserved) {
         validatePedidoReservationTotals(pedido.items, reservations);
@@ -866,12 +883,23 @@ export async function completePedidoDeliveryInTransaction(
             ? sum.plus(item.subtotal.toString())
             : sum;
     }, new Decimal(0)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const saleTotal = new Decimal(pedido.total.toString()).toDecimalPlaces(4);
+    const fiscalRegime = normalizeFiscalRegime(tenant.fiscalRegime);
+    const generalBreakdown = desglosarVentaConExoneracion(saleTotal, exemptTotal);
+    const fiscalAmounts = resolveSaleFiscalAmounts(
+        saleTotal,
+        generalBreakdown.iva,
+        fiscalRegime,
+    );
 
     const sale = await tx.sale.create({
         data: {
             tenantId: pedido.tenantId,
-            total: pedido.total,
+            total: saleTotal.toFixed(4),
             exemptTotal: exemptTotal.toFixed(2),
+            fiscalRegimeAtSale: fiscalRegime,
+            fiscalRegimeVersionAtSale: tenant.fiscalRegimeVersion,
+            vatAmountAtSale: fiscalAmounts.vatAmount.toFixed(4),
             status: 'COMPLETED',
             paymentMethod: 'CASH',
             soldById: params.actorUserId ?? null,
@@ -1007,10 +1035,14 @@ export async function completePedidoDeliveryInTransaction(
         pedido.tenantId,
         financialUserId,
         sale.id,
-        Number(pedido.total),
+        saleTotal,
         costTotal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
         'CASH',
         exemptTotal.toNumber(),
+        {
+            fiscalRegime,
+            vatAmount: fiscalAmounts.vatAmount,
+        },
     );
     await tx.pedido.update({ where: { id: pedido.id }, data: { facturaId: sale.id } });
     await tx.auditLog.create({
@@ -1021,7 +1053,10 @@ export async function completePedidoDeliveryInTransaction(
             details: JSON.stringify({
                 pedidoId: pedido.id,
                 saleId: sale.id,
-                total: pedido.total.toString(),
+                total: saleTotal.toFixed(4),
+                fiscalRegime,
+                fiscalRegimeVersion: tenant.fiscalRegimeVersion,
+                vatAmount: fiscalAmounts.vatAmount.toFixed(4),
                 source: params.source,
                 paymentMethod: 'CASH',
                 measuredItemCount: pedido.items.filter((item) => !exactPedidoItemQuantity(item).isInteger()).length,

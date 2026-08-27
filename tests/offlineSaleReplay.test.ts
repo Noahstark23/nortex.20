@@ -17,6 +17,7 @@ import {
     type OfflineReplaySaleInput,
 } from '../backend/lib/offlineSaleReplay';
 import {
+    assertOfflineFiscalRegimeVersion,
     CreateSaleSchema,
     executeSaleWithResult,
 } from '../backend/services/salesService';
@@ -53,6 +54,27 @@ describe('idempotencia fuerte de ventas offline', () => {
     beforeEach(() => {
         saleFindFirst.mockReset();
         transaction.mockReset();
+    });
+
+    it('valida una versión fiscal positiva y entera cuando el cliente la observa', () => {
+        expect(CreateSaleSchema.parse(rawSale({ fiscalRegimeVersion: 3 })).fiscalRegimeVersion).toBe(3);
+        for (const fiscalRegimeVersion of [0, -1, 1.5, '3']) {
+            expect(CreateSaleSchema.safeParse(rawSale({ fiscalRegimeVersion })).success).toBe(false);
+        }
+    });
+
+    it('manda a conciliación solo el sync offline con versión fiscal divergente', () => {
+        expect(() => assertOfflineFiscalRegimeVersion(true, 2, 2)).not.toThrow();
+        expect(() => assertOfflineFiscalRegimeVersion(true, undefined, 1)).not.toThrow();
+        expect(() => assertOfflineFiscalRegimeVersion(false, 1, 2)).not.toThrow();
+        for (const observedVersion of [undefined, 1]) {
+            expect(() => assertOfflineFiscalRegimeVersion(true, observedVersion, 2)).toThrowError(
+                expect.objectContaining({
+                    code: 'RECONCILIATION_REQUIRED',
+                    httpStatus: 409,
+                }),
+            );
+        }
     });
 
     it('misma tenant, offlineId y payload devuelve la venta como replay omitido', async () => {
@@ -257,6 +279,7 @@ describe('idempotencia fuerte de ventas offline', () => {
             { ...context, input: { ...input, customerId: 'customer-2' } },
             { ...context, input: { ...input, customerName: 'Cliente Dos' } },
             { ...context, input: { ...input, employeeId: 'employee-2' } },
+            { ...context, input: { ...input, fiscalRegimeVersion: 2 } },
             { ...context, input: { ...input, globalDiscount: '4' } },
             { ...context, input: { ...input, items: [{ ...measuredItem, id: 'product-x' }, input.items[1]] } },
             { ...context, input: { ...input, items: [{ ...measuredItem, quotationItemId: 'quote-line-2' }, input.items[1]] } },

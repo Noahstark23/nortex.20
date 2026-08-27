@@ -3,6 +3,11 @@
 // Dependencia cero, latencia cero.
 
 import Decimal from 'decimal.js';
+import {
+    FISCAL_REGIME_CUOTA_FIJA,
+    normalizeFiscalRegime,
+    type FiscalRegime,
+} from './fiscalRegime';
 import { formatQuantityValue } from './quantity';
 
 class ESCPOS {
@@ -98,6 +103,7 @@ export interface ThermalReceiptData {
     cashReceived?: number;
     change?: number;
     user?: string;
+    fiscalRegime?: FiscalRegime;
 }
 
 // 80 mm suele ofrecer 576 dots imprimibles: 48 columnas con la fuente A
@@ -170,6 +176,7 @@ const thermalLine = (item: ThermalItem, index: number) => {
 
 /** Genera bytes ESC/POS puros; se exporta para poder probar el ticket sin USB. */
 export function build80mmReceiptPayload(data: ThermalReceiptData): Uint8Array {
+    const isFixedQuota = normalizeFiscalRegime(data.fiscalRegime) === FISCAL_REGIME_CUOTA_FIJA;
     const cmd = new ESCPOS();
     const divider = '-'.repeat(TICKET_80MM_COLUMNS);
     const totalWidth = 14;
@@ -188,7 +195,14 @@ export function build80mmReceiptPayload(data: ThermalReceiptData): Uint8Array {
 
     // --- TRANSACCION ---
     cmd.align('L');
-    if (data.invoiceNumber) {
+    if (isFixedQuota) {
+        cmd.bold(true).textLine('FACTURA SIMPLIFICADA').bold(false);
+        if (data.invoiceNumber) {
+            const series = data.invoiceSeries ? `${data.invoiceSeries}-` : '';
+            cmd.textLine(`No. ${series}${String(data.invoiceNumber).padStart(6, '0')}`);
+        }
+        cmd.textLine('Régimen de Cuota Fija');
+    } else if (data.invoiceNumber) {
         const series = data.invoiceSeries ? `${data.invoiceSeries}-` : '';
         cmd.bold(true).textLine(`FACTURA ${series}${String(data.invoiceNumber).padStart(6, '0')}`).bold(false);
     }
@@ -221,7 +235,7 @@ export function build80mmReceiptPayload(data: ThermalReceiptData): Uint8Array {
     if (data.discount && data.discount > 0) {
         cmd.textLine(`Descuento: -C$ ${money(data.discount, 'discount')}`);
     }
-    cmd.textLine(`IVA incl. 15%: C$ ${money(data.tax, 'tax')}`);
+    if (!isFixedQuota) cmd.textLine(`IVA incl. 15%: C$ ${money(data.tax, 'tax')}`);
     cmd.bold(true).textLine(`TOTAL: C$ ${money(data.grandTotal, 'grandTotal')}`).bold(false);
     if (typeof data.cashReceived === 'number') {
         cmd.textLine(`Recibido: C$ ${money(data.cashReceived, 'cashReceived')}`);

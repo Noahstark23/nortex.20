@@ -10,13 +10,13 @@
  * Precisión: Decimal.js con ROUND_HALF_UP (norma DGI Nicaragua)
  */
 
-import { PrismaClient } from '@prisma/client';
 import Decimal from 'decimal.js';
+import prisma from '../lib/prisma';
 import { ESTADO_ANULADA } from './saleCancellation';
 
+// Cliente compartido: este motor no abre un pool Prisma adicional.
+// Mantener este bloque también conserva el rango fiscal de mutación (26-76).
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
-
-const prisma = new PrismaClient();
 
 const IVA_RATE = new Decimal('0.15');
 const ANTICIPO_IR_RATE = new Decimal('0.01');  // 1% anticipo mensual
@@ -80,11 +80,12 @@ export interface MonthlyTaxReport {
     year: number;
 
     // Ventas
-    totalSales: number;           // Ventas brutas (con IVA)
-    ventasExentas: number;        // T2 — ventas EXONERADAS (canasta básica, medicinas)
-    ventasGravadas: number;       // T2 — ventas gravadas brutas (total − exentas)
-    salesNetasSinIVA: number;     // Ventas sin IVA (neto gravado + exentas)
-    totalIVACollected: number;    // IVA cobrado (solo sobre lo gravado)
+    totalSales: number;           // Ventas brutas de todos los regímenes
+    ventasCuotaFija: number;      // Ventas sin IVA/Anticipo IR/IMI del régimen general
+    ventasExentas: number;        // T2 — ventas GENERAL exoneradas (canasta básica, medicinas)
+    ventasGravadas: number;       // T2 — ventas GENERAL gravadas brutas (total − exentas)
+    salesNetasSinIVA: number;     // Base GENERAL (neto gravado + exentas); excluye cuota fija
+    totalIVACollected: number;    // IVA cobrado en GENERAL (snapshot + fallback legacy)
 
     // Compras
     totalPurchases: number;       // Compras brutas (con IVA)
@@ -124,56 +125,122 @@ export async function generateMonthlyReport(
     // distintas en el borde. Ojo: `end` es EXCLUSIVO (`lt`, no `lte`).
     const { start: startDate, end: endDate } = fiscalMonthRange(month, year);
 
-    // 1. Obtener ventas del mes (excluyendo anuladas, igual que el Libro de Ventas / VET)
-    const salesResult = await prisma.sale.aggregate({
-        where: {
-            tenantId,
-            createdAt: { gte: startDate, lt: endDate },
-            status: { not: ESTADO_ANULADA },
-        },
-        _sum: { total: true, exemptTotal: true },
-        _count: true,
-    });
+    const saleWhere = {
+        tenantId,
+        createdAt: { gte: startDate, lt: endDate },
+        status: { not: ESTADO_ANULADA },
+    };
+    const purchaseWhere = {
+        tenantId,
+        date: { gte: startDate, lt: endDate },
+        status: { in: ['COMPLETED', 'PENDING_PAYMENT'] },
+    };
 
-    const totalSalesRaw = new Decimal(salesResult._sum.total?.toString() ?? '0');
+    // Los snapshots fiscales hacen que un cambio posterior de configuración no
+    // reescriba la historia. Todo se agrega en MySQL: nunca cargamos las ventas
+    // del período en memoria. Las filas previas al snapshot conservan IVA NULL
+    // y se recalculan con el comportamiento histórico, exclusivamente en GENERAL.
+    const [
+        salesByRegime,
+        legacyGeneralSales,
+        purchasesResult,
+        legacyPurchasesResult,
+        cfg,
+        retenciones,
+    ] = await Promise.all([
+        prisma.sale.groupBy({
+            by: ['fiscalRegimeAtSale'],
+            where: saleWhere,
+            _sum: { total: true, exemptTotal: true, vatAmountAtSale: true },
+        }),
+        prisma.sale.aggregate({
+            where: {
+                ...saleWhere,
+                fiscalRegimeAtSale: { not: 'CUOTA_FIJA' },
+                vatAmountAtSale: null,
+            },
+            _sum: { total: true, exemptTotal: true },
+        }),
+        prisma.purchase.aggregate({
+            where: purchaseWhere,
+            _sum: { total: true, creditableTax: true },
+        }),
+        prisma.purchase.aggregate({
+            where: { ...purchaseWhere, creditableTax: null },
+            _sum: { tax: true },
+        }),
+        // B4 — Tasas desde TaxConfig del tenant (fallback legal).
+        prisma.taxConfig.findUnique({ where: { tenantId } }),
+        // B1 — Agrupar en BD evita un findMany sin límite sobre datos fiscales.
+        prisma.retencionSufrida.groupBy({
+            by: ['tipo'],
+            where: { tenantId, fecha: { gte: startDate, lt: endDate } },
+            _sum: { amount: true },
+        }),
+    ]);
 
-    // T2 — Ventas EXONERADAS del período (canasta básica, medicamentos…).
-    // `Sale.exemptTotal` es NULL en ventas anteriores a T2: el _sum las ignora,
-    // así que quedan como gravadas — el comportamiento histórico, sin backfill.
-    // El IVA se separa SOLO de lo gravado (misma función que usa el asiento
-    // contable, para que el mayor y el VET nunca discrepen). Antes se dividía el
-    // total ENTERO, así que se declaraba —y se pagaba— IVA por ventas exoneradas
-    // que nunca se le cobraron al cliente.
-    const desglose = desglosarVentaConExoneracion(
-        totalSalesRaw,
-        salesResult._sum.exemptTotal?.toString() ?? '0'
+    let totalGeneral = new Decimal(0);
+    let ventasCuotaFija = new Decimal(0);
+    let ventasExentas = new Decimal(0);
+    let snapshotIVA = new Decimal(0);
+    for (const row of salesByRegime) {
+        const total = new Decimal(row._sum.total?.toString() ?? 0);
+        if (row.fiscalRegimeAtSale === 'CUOTA_FIJA') {
+            // Aun si una fila corrupta trajera vatAmountAtSale > 0, cuota fija no
+            // alimenta ningún impuesto del régimen general.
+            ventasCuotaFija = ventasCuotaFija.plus(total);
+            continue;
+        }
+        // GENERAL y valores legacy/desconocidos preservan el tratamiento previo.
+        totalGeneral = totalGeneral.plus(total);
+        ventasExentas = ventasExentas.plus(row._sum.exemptTotal?.toString() ?? 0);
+        snapshotIVA = snapshotIVA.plus(row._sum.vatAmountAtSale?.toString() ?? 0);
+    }
+
+    totalGeneral = totalGeneral.toDecimalPlaces(4);
+    ventasCuotaFija = ventasCuotaFija.toDecimalPlaces(4);
+    ventasExentas = Decimal.min(
+        Decimal.max(ventasExentas, new Decimal(0)),
+        totalGeneral
+    ).toDecimalPlaces(4);
+    snapshotIVA = snapshotIVA.toDecimalPlaces(4);
+
+    const legacyGeneralTotal = new Decimal(
+        legacyGeneralSales._sum.total?.toString() ?? 0
+    ).toDecimalPlaces(4);
+    const legacyDesglose = desglosarVentaConExoneracion(
+        legacyGeneralTotal,
+        legacyGeneralSales._sum.exemptTotal?.toString() ?? 0
     );
-    const ventasExentas = desglose.exonerado;
-    const ventasGravadas = desglose.gravado;
-    const totalIVACollected = desglose.iva;
-    // Base del anticipo IR / IMI: ingreso neto (gravado sin IVA + exoneradas).
-    const salesNetasSinIVA = desglose.ingresoNeto;
+    const snapshotGeneralTotal = totalGeneral.minus(legacyGeneralTotal);
+    const snapshotGeneralNet = snapshotGeneralTotal.minus(snapshotIVA);
 
-    // 2. Obtener compras del mes (IVA pagado = crédito fiscal)
-    const purchasesResult = await prisma.purchase.aggregate({
-        where: {
-            tenantId,
-            date: { gte: startDate, lt: endDate },
-            status: { in: ['COMPLETED', 'PENDING_PAYMENT'] },
-        },
-        _sum: { total: true, tax: true },
-    });
+    const totalSalesRaw = totalGeneral.plus(ventasCuotaFija).toDecimalPlaces(4);
+    const ventasGravadas = totalGeneral.minus(ventasExentas).toDecimalPlaces(4);
+    const totalIVACollected = snapshotIVA.plus(legacyDesglose.iva).toDecimalPlaces(4);
+    // Base del Anticipo IR / IMI GENERAL. Cuota fija queda explícitamente fuera.
+    const salesNetasSinIVA = snapshotGeneralNet
+        .plus(legacyDesglose.ingresoNeto)
+        .toDecimalPlaces(4);
 
-    const totalPurchases = new Decimal(purchasesResult._sum.total?.toString() ?? '0');
-    const totalIVAPaid = new Decimal(purchasesResult._sum.tax?.toString() ?? '0');
+    // `creditableTax = 0` es un snapshot explícito (p. ej. cuota fija), no debe
+    // caer al IVA bruto. Solo NULL identifica compras legacy sin snapshot.
+    const totalPurchases = new Decimal(purchasesResult._sum.total?.toString() ?? 0);
+    const snapshottedCreditableTax = new Decimal(
+        purchasesResult._sum.creditableTax?.toString() ?? 0
+    );
+    const legacyCreditableTax = new Decimal(
+        legacyPurchasesResult._sum.tax?.toString() ?? 0
+    );
+    const totalIVAPaid = snapshottedCreditableTax
+        .plus(legacyCreditableTax)
+        .toDecimalPlaces(4);
 
     // 3. Calcular IVA Neto
     const ivaRaw = totalIVACollected.minus(totalIVAPaid);
     const ivaNeto = Decimal.max(0, ivaRaw).toDecimalPlaces(4);
     const ivaCredito = ivaRaw.lessThan(0) ? ivaRaw.abs().toDecimalPlaces(4) : new Decimal(0);
 
-    // B4 — Tasas desde TaxConfig del tenant (fallback a las constantes legales).
-    const cfg = await prisma.taxConfig.findUnique({ where: { tenantId } });
     const anticipoRate = cfg ? new Decimal(cfg.anticipoIrRate.toString()) : ANTICIPO_IR_RATE;
     const imiRateCfg = cfg ? new Decimal(cfg.imiRate.toString()) : IMI_RATE;
 
@@ -184,15 +251,12 @@ export async function generateMonthlyReport(
     const imiAlcaldia = salesNetasSinIVA.mul(imiRateCfg).toDecimalPlaces(4);
 
     // B1 — Retenciones SUFRIDAS del mes (crédito contra anticipo IR / IMI).
-    const retenciones = await prisma.retencionSufrida.findMany({
-        where: { tenantId, fecha: { gte: startDate, lt: endDate } },
-        select: { tipo: true, amount: true },
-    });
     let retIR = new Decimal(0);
     let retIMI = new Decimal(0);
     for (const r of retenciones) {
-        if (r.tipo === 'IR_2') retIR = retIR.plus(r.amount.toString());
-        else if (r.tipo === 'IMI_1') retIMI = retIMI.plus(r.amount.toString());
+        const amount = r._sum.amount?.toString() ?? 0;
+        if (r.tipo === 'IR_2') retIR = retIR.plus(amount);
+        else if (r.tipo === 'IMI_1') retIMI = retIMI.plus(amount);
     }
     retIR = retIR.toDecimalPlaces(4);
     retIMI = retIMI.toDecimalPlaces(4);
@@ -211,15 +275,18 @@ export async function generateMonthlyReport(
 Preparado por: NORTEX ERP
 
 📊 VENTAS DEL PERÍODO
-   Ventas Brutas (con IVA): C$ ${totalSalesRaw.toFixed(2)}${ventasExentas.greaterThan(0) ? `
+   Ventas Brutas (todos los regímenes): C$ ${totalSalesRaw.toFixed(2)}${ventasCuotaFija.greaterThan(0) ? `
+   (−) Ventas de Cuota Fija:           C$ ${ventasCuotaFija.toFixed(2)}
+   = Ventas de Régimen General:         C$ ${totalGeneral.toFixed(2)}` : ''}${ventasExentas.greaterThan(0) ? `
    (−) Ventas Exoneradas:   C$ ${ventasExentas.toFixed(2)}
    = Ventas Gravadas:       C$ ${ventasGravadas.toFixed(2)}` : ''}
-   Ventas Netas (sin IVA):  C$ ${salesNetasSinIVA.toFixed(2)}
-   IVA Cobrado (15%):       C$ ${totalIVACollected.toFixed(2)}
+   Base General (sin IVA):  C$ ${salesNetasSinIVA.toFixed(2)}
+   IVA Cobrado General:     C$ ${totalIVACollected.toFixed(2)}${ventasCuotaFija.greaterThan(0) ? `
+   Nota: Cuota Fija no alimenta IVA, Anticipo IR ni IMI del régimen general.` : ''}
 
 🛒 COMPRAS DEL PERÍODO
    Compras Brutas (con IVA): C$ ${totalPurchases.toFixed(2)}
-   IVA Pagado (Crédito):     C$ ${totalIVAPaid.toFixed(2)}
+   IVA Crédito Acreditable:  C$ ${totalIVAPaid.toFixed(2)}
 
 💰 IMPUESTOS A PAGAR
    IVA Neto (Ventas - Compras): C$ ${ivaNeto.toFixed(2)}${ivaCredito.greaterThan(0) ? `\n   ⚠️ Crédito Fiscal a Favor: C$ ${ivaCredito.toFixed(2)}` : ''}
@@ -228,14 +295,16 @@ Preparado por: NORTEX ERP
    ────────────────────────────────
    TOTAL A PAGAR:               C$ ${totalToPay.toFixed(2)}
 
-📋 Presentar en VET (ventanilla.dgi.gob.ni)
-   antes del 15 de ${monthNames[month] || monthNames[0]} ${month === 12 ? year + 1 : year}
+${totalGeneral.isZero() && ventasCuotaFija.greaterThan(0)
+        ? '📋 Período compuesto exclusivamente por ventas de Cuota Fija.\n   No usar este resumen como declaración del régimen general sin revisión contable.'
+        : `📋 Presentar en VET (ventanilla.dgi.gob.ni)\n   antes del 15 de ${monthNames[month] || monthNames[0]} ${month === 12 ? year + 1 : year}`}
 `.trim();
 
     return {
         month,
         year,
         totalSales: totalSalesRaw.toNumber(),
+        ventasCuotaFija: ventasCuotaFija.toNumber(),
         ventasExentas: ventasExentas.toNumber(),
         ventasGravadas: ventasGravadas.toNumber(),
         salesNetasSinIVA: salesNetasSinIVA.toNumber(),
@@ -265,13 +334,15 @@ export async function generateDMIReport(tenantId: string, month: number, year: n
     // Mismo rango fiscal anclado a Managua que la declaración y los libros.
     const { start: startDate, end: endDate } = fiscalMonthRange(month, year);
 
-    // Obtener rango de facturas emitidas en el período
+    // El DMI pertenece al régimen general. Las facturas de cuota fija conservan
+    // su correlativo histórico, pero no se mezclan en el rango declarado acá.
     const invoiceRange = await prisma.sale.aggregate({
         where: {
             tenantId,
             createdAt: { gte: startDate, lt: endDate },
             invoiceNumber: { not: null },
             status: { not: ESTADO_ANULADA },
+            fiscalRegimeAtSale: { not: 'CUOTA_FIJA' },
         },
         _min: { invoiceNumber: true },
         _max: { invoiceNumber: true },
@@ -289,6 +360,10 @@ export async function generateDMIReport(tenantId: string, month: number, year: n
 
     const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
     const pad = (n: number | null, len = 6) => n ? String(n).padStart(len, '0') : '------';
+    const ventasGeneralBrutas = new Decimal(taxReport.totalSales.toString())
+        .minus(taxReport.ventasCuotaFija.toString());
+    const ventasGravadasNetas = new Decimal(taxReport.salesNetasSinIVA.toString())
+        .minus(taxReport.ventasExentas.toString());
 
     const dmiReport = `
 ══════════════════════════════════════════════
@@ -302,13 +377,14 @@ Período: ${monthNames[month - 1].toUpperCase()} ${year}
 
 🧾 RANGO DE FACTURAS UTILIZADAS
    Serie A: ${pad(invoiceRange._min.invoiceNumber)} — ${pad(invoiceRange._max.invoiceNumber)}
-   Total Facturas Emitidas: ${invoiceRange._count}
+   Facturas de Régimen General: ${invoiceRange._count}
 
 📊 RESUMEN DE VENTAS
-   Ventas Gravadas (sin IVA):  C$ ${(taxReport.salesNetasSinIVA - taxReport.ventasExentas).toFixed(2)}
+   Ventas Gravadas (sin IVA):  C$ ${ventasGravadasNetas.toFixed(2)}
    IVA 15%:                     C$ ${taxReport.totalIVACollected.toFixed(2)}
    Ventas Exentas:              C$ ${taxReport.ventasExentas.toFixed(2)}
-   Total Ventas (con IVA):      C$ ${taxReport.totalSales.toFixed(2)}
+   Total Régimen General:        C$ ${ventasGeneralBrutas.toFixed(2)}${taxReport.ventasCuotaFija > 0 ? `
+   Ventas Cuota Fija (fuera de DMI): C$ ${new Decimal(taxReport.ventasCuotaFija.toString()).toFixed(2)}` : ''}
 
 🛒 COMPRAS Y CRÉDITO FISCAL
    Compras (con IVA):           C$ ${taxReport.totalPurchases.toFixed(2)}

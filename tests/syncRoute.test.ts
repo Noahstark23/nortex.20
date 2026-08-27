@@ -26,6 +26,7 @@ describe('normalizeOfflineSalePayload', () => {
                 paymentMethod: 'CASH',
                 total: '10.00',
                 globalDiscount: '0',
+                fiscalRegimeVersion: 4,
                 createdAt: '2026-08-22T12:00:00.000Z',
                 items: [{
                     id: 'product-1',
@@ -45,8 +46,21 @@ describe('normalizeOfflineSalePayload', () => {
         expect(payload).toMatchObject({
             offlineId: 'offline-indexeddb',
             source: 'OFFLINE_SYNC',
+            fiscalRegimeVersion: 4,
             items: [{ quotationItemId: 'quote-item-1' }],
         });
+    });
+
+    it('rechaza versiones fiscales offline no positivas', () => {
+        const base = {
+            offlineId: 'offline-invalid-version',
+            tenantId: 'tenant-a',
+            paymentMethod: 'CASH' as const,
+            createdAt: '2026-08-22T12:00:00.000Z',
+            items: [{ id: 'product-1', quantity: '1' }],
+        };
+        expect(syncBodySchema.safeParse({ sales: [{ ...base, fiscalRegimeVersion: 0 }] }).success).toBe(false);
+        expect(syncBodySchema.safeParse({ sales: [{ ...base, fiscalRegimeVersion: 1 }] }).success).toBe(true);
     });
 
     it('preserva el contrato v3 de medicion offline para reparseo server-side', () => {

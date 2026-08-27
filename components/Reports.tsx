@@ -96,6 +96,7 @@ interface TaxReportData {
     month: number;
     year: number;
     totalSales: number;
+    ventasCuotaFija?: number;
     salesNetasSinIVA: number;
     totalIVACollected: number;
     totalPurchases: number;
@@ -877,16 +878,28 @@ const Reports: React.FC = () => {
                         <div className="text-center py-20 text-slate-400">
                             <Landmark size={64} className="mx-auto mb-4 opacity-30" />
                             <p className="text-lg font-bold">Selecciona un periodo y genera la declaración</p>
-                            <p className="text-sm mt-1">El sistema calculará IVA, Anticipo IR y Cuota Alcaldía automáticamente</p>
+                            <p className="text-sm mt-1">El sistema separará las obligaciones según el régimen fiscal de cada venta</p>
                         </div>
                     ) : (
                         <>
+                            {(taxReport.ventasCuotaFija ?? 0) > 0 && (
+                                <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 p-5 text-amber-100">
+                                    <div className="font-bold">Ventas bajo Cuota Fija: {formatC(taxReport.ventasCuotaFija ?? 0)}</div>
+                                    <p className="mt-1 text-sm text-amber-200/80">
+                                        Estas ventas no alimentan el IVA, Anticipo IR ni IMI del régimen general. Nortex no calcula aquí el monto fijo asignado por la DGI; verificá esa cuota con tu constancia o contador.
+                                    </p>
+                                </div>
+                            )}
                             {/* MEGA CARD: Total a Pagar */}
                             <div className="bg-gradient-to-br from-red-600 to-red-800 text-white p-8 rounded-2xl shadow-xl mb-8 relative overflow-hidden">
                                 <div className="absolute -right-10 -top-10 w-40 h-40 bg-white/5 rounded-full" />
                                 <div className="absolute -right-5 bottom-0 w-24 h-24 bg-white/5 rounded-full" />
                                 <div className="relative z-10">
-                                    <div className="text-sm font-mono opacity-80 mb-1">IMPUESTOS A PAGAR ESTE MES</div>
+                                    <div className="text-sm font-mono opacity-80 mb-1">
+                                        {(taxReport.ventasCuotaFija ?? 0) > 0
+                                            ? 'OBLIGACIONES CALCULADAS DEL RÉGIMEN GENERAL'
+                                            : 'IMPUESTOS A PAGAR ESTE MES'}
+                                    </div>
                                     <div className="text-xs opacity-60 mb-4">{monthNames[taxReport.month - 1]} {taxReport.year}</div>
                                     <div className="text-5xl font-bold mb-4">{formatC(taxReport.totalToPay)}</div>
                                     <div className="text-sm opacity-80">

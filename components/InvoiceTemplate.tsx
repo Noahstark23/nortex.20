@@ -2,6 +2,11 @@
 // Opens a new window with formatted HTML and triggers window.print()
 
 import Decimal from 'decimal.js';
+import {
+    FISCAL_REGIME_CUOTA_FIJA,
+    normalizeFiscalRegime,
+    type FiscalRegime,
+} from '../utils/fiscalRegime';
 import { formatQuantityValue } from '../utils/quantity';
 
 export type PrintablePresentation =
@@ -47,6 +52,7 @@ export interface InvoiceData {
     cashReceived?: number;
     change?: number;
     user?: string;
+    fiscalRegime?: FiscalRegime;
 }
 
 const SHARED_STYLES = `
@@ -159,6 +165,7 @@ const escapeHtml = (value: unknown): string => String(value ?? '')
 
 /** HTML aislado del ticket: es testeable y no depende del DOM de la app. */
 export function buildTicket80mmHtml(data: InvoiceData): string {
+    const isFixedQuota = normalizeFiscalRegime(data.fiscalRegime) === FISCAL_REGIME_CUOTA_FIJA;
     const itemsHTML = data.items.map((item, index) => {
         const line = printableLine(item, index);
         return `<tr>
@@ -178,6 +185,13 @@ export function buildTicket80mmHtml(data: InvoiceData): string {
     const invoiceLabel = data.invoiceNumber
         ? `FACTURA ${data.invoiceSeries ? `${escapeHtml(data.invoiceSeries)}-` : ''}${escapeHtml(String(data.invoiceNumber).padStart(6, '0'))}`
         : '';
+    const simplifiedInvoiceNumber = data.invoiceNumber
+        ? `No. ${data.invoiceSeries ? `${escapeHtml(data.invoiceSeries)}-` : ''}${escapeHtml(String(data.invoiceNumber).padStart(6, '0'))}`
+        : '';
+    const documentHeading = isFixedQuota
+        ? `<div class="center invoice">FACTURA SIMPLIFICADA${simplifiedInvoiceNumber ? `<br><span style="font-size:10px">${simplifiedInvoiceNumber}</span>` : ''}</div>
+<div class="center" style="font-size:10px;font-weight:bold">Régimen de Cuota Fija</div>`
+        : invoiceLabel ? `<div class="center invoice">${invoiceLabel}</div>` : '';
 
     return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Ticket 80 mm</title>
@@ -210,7 +224,7 @@ export function buildTicket80mmHtml(data: InvoiceData): string {
     <div style="font-size:9px;color:#666">Sistema Nortex</div>
 </div>
 
-${invoiceLabel ? `<div class="center invoice">${invoiceLabel}</div>` : ''}
+${documentHeading}
 
 <div class="divider"></div>
 
@@ -229,7 +243,7 @@ ${data.customerRuc ? `<div style="font-size:10px"><strong>RUC/Cédula:</strong> 
 <table>
     <tr><td>Subtotal</td><td class="right">C$ ${formatMoney(data.subtotal, 'subtotal')}</td></tr>
     ${data.discount && data.discount > 0 ? `<tr><td>Descuento</td><td class="right">-C$ ${formatMoney(data.discount, 'discount')}</td></tr>` : ''}
-    <tr><td>IVA incluido (15%)</td><td class="right">C$ ${formatMoney(data.tax, 'tax')}</td></tr>
+    ${isFixedQuota ? '' : `<tr><td>IVA incluido (15%)</td><td class="right">C$ ${formatMoney(data.tax, 'tax')}</td></tr>`}
 </table>
 
 <div class="divider"></div>
@@ -296,6 +310,7 @@ export function printTicket(data: InvoiceData): boolean {
 // FACTURA A4 (Corporate Invoice)
 // =============================
 export function buildA4Html(data: InvoiceData): string {
+    const isFixedQuota = normalizeFiscalRegime(data.fiscalRegime) === FISCAL_REGIME_CUOTA_FIJA;
     const itemsHTML = data.items.map((item, i) => {
         const line = printableLine(item, i);
         const unitPrice = line.unit
@@ -340,10 +355,11 @@ export function buildA4Html(data: InvoiceData): string {
 <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px">
     <div>
         <div style="font-size:28px;font-weight:800;color:#0f172a;letter-spacing:-0.5px">${escapeHtml(data.tenantName)}</div>
-        <div style="color:#64748b;font-size:12px;margin-top:4px">Sistema Nortex | Factura Comercial</div>
+        <div style="color:#64748b;font-size:12px;margin-top:4px">Sistema Nortex | ${isFixedQuota ? 'Factura Simplificada' : 'Factura Comercial'}</div>
+        ${isFixedQuota ? '<div style="color:#475569;font-size:11px;font-weight:700;margin-top:3px">Régimen de Cuota Fija</div>' : ''}
     </div>
     <div style="text-align:right">
-        <div style="font-size:20px;font-weight:700;color:#0f172a">FACTURA</div>
+        <div style="font-size:20px;font-weight:700;color:#0f172a">${isFixedQuota ? 'FACTURA SIMPLIFICADA' : 'FACTURA'}</div>
         <div style="color:#64748b;font-size:11px;margin-top:4px">${escapeHtml(data.date)}</div>
         ${data.saleId ? `<div style="color:#94a3b8;font-size:10px;font-family:monospace;margin-top:2px">#${escapeHtml(data.saleId.slice(0, 12))}</div>` : ''}
     </div>
@@ -388,10 +404,10 @@ export function buildA4Html(data: InvoiceData): string {
             <span style="color:#64748b">Descuento</span>
             <span style="font-family:monospace;font-weight:500">-C$ ${formatMoney(data.discount, 'discount')}</span>
         </div>` : ''}
-        <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e2e8f0">
+        ${isFixedQuota ? '' : `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e2e8f0">
             <span style="color:#64748b">IVA incluido (15%)</span>
             <span style="font-family:monospace;font-weight:500">C$ ${formatMoney(data.tax, 'tax')}</span>
-        </div>
+        </div>`}
         <div style="display:flex;justify-content:space-between;padding:12px 0;font-size:18px;font-weight:800;color:#0f172a;border-top:2px solid #0f172a;margin-top:4px">
             <span>TOTAL</span>
             <span style="font-family:monospace">C$ ${formatMoney(data.grandTotal, 'grandTotal')}</span>
@@ -456,6 +472,7 @@ const plainText = (value: unknown): string => String(value ?? '')
     .trim();
 
 export function buildWhatsAppReceiptMessage(data: InvoiceData): string {
+    const isFixedQuota = normalizeFiscalRegime(data.fiscalRegime) === FISCAL_REGIME_CUOTA_FIJA;
     const itemLines = data.items.map((item, index) => {
         const line = printableLine(item, index);
         return `${plainText(line.name)}\n${plainText(line.equation)} = C$ ${line.total}`;
@@ -464,7 +481,8 @@ export function buildWhatsAppReceiptMessage(data: InvoiceData): string {
     const payLabel = data.paymentMethod === 'CREDIT' ? 'PENDIENTE' : 'PAGADO';
 
     return [
-        `*RECIBO NORTEX*`,
+        isFixedQuota ? `*FACTURA SIMPLIFICADA*` : `*RECIBO NORTEX*`,
+        ...(isFixedQuota ? [`Régimen de Cuota Fija`] : []),
         `Fecha: ${plainText(data.date)}`,
         `*${plainText(data.tenantName)}*`,
         `--------------------------------`,
@@ -474,7 +492,7 @@ export function buildWhatsAppReceiptMessage(data: InvoiceData): string {
         `--------------------------------`,
         `   Subtotal: C$ ${formatMoney(data.subtotal, 'subtotal')}`,
         ...(data.discount && data.discount > 0 ? [`   Descuento: -C$ ${formatMoney(data.discount, 'discount')}`] : []),
-        `   IVA incl.: C$ ${formatMoney(data.tax, 'tax')}`,
+        ...(!isFixedQuota ? [`   IVA incl.: C$ ${formatMoney(data.tax, 'tax')}`] : []),
         `*TOTAL: C$ ${formatMoney(data.grandTotal, 'grandTotal')}*`,
         `Estado: ${payLabel}`,
         `--------------------------------`,

@@ -122,6 +122,25 @@ const numeric = z
 /** Método de pago permitido */
 const paymentMethod = z.enum(['CASH', 'CARD', 'TRANSFER', 'CREDIT', 'QR']);
 
+/**
+ * PUT /api/tenant/fiscal
+ *
+ * El régimen es una lista cerrada porque cambia el reconocimiento contable de
+ * ventas futuras. Los demás campos admiten cadena vacía/null para que la pantalla
+ * de configuración pueda limpiar valores previamente guardados.
+ */
+export const UpdateFiscalSettingsSchema = z.object({
+    // Tenant.taxId es NOT NULL. Se puede omitir para editar solo el régimen,
+    // pero nunca limpiar con null/vacío y provocar un P2011 en Prisma.
+    taxId: z.string().trim().min(1).max(80).optional(),
+    address: z.string().trim().max(500).nullable().optional(),
+    phone: z.string().trim().max(80).nullable().optional(),
+    dgiAuthCode: z.string().trim().max(120).nullable().optional(),
+    fiscalRegime: z.enum(['GENERAL', 'CUOTA_FIJA']).optional(),
+}).strict().refine((value) => Object.values(value).some((field) => field !== undefined), {
+    message: 'Indicá al menos un dato fiscal',
+});
+
 // ============================================================
 // ESQUEMAS POR ENDPOINT
 // ============================================================
