@@ -100,12 +100,13 @@ al chat.
 Configuración requerida:
 
 - bucket privado; acceso público y CDN deshabilitados;
-- versionado habilitado;
-- una llave runtime limitada únicamente al bucket con el permiso mínimo que
-  permita escribir y actualizar last-backup.json;
+- versionado habilitado mediante la API S3/AWS CLI con el endpoint regional del
+  Space; no asumir que se activa desde la UI;
+- una llave runtime limitada únicamente al bucket con permiso
+  `Read/Write/Delete`, suficiente para subir dumps y actualizar `last-backup.json`;
 - una identidad de restauración separada con lectura;
-- una identidad administrativa solo para versionado/ciclo de vida; no instalarla
-  en la aplicación;
+- una identidad administrativa `Full access` solo para versionado/ciclo de vida;
+  no instalarla en la aplicación;
 - cifrado de transporte HTTPS;
 - ciclo de vida inicial: 90 días para dumps diarios y 30 días para versiones no
   actuales, después de medir el tamaño real;
@@ -122,8 +123,8 @@ Configurar como secretos o variables protegidas, según corresponda:
 
 | Nombre | Tratamiento |
 |---|---|
-| BACKUP_S3_BUCKET | URI del bucket/prefijo, no pública |
-| BACKUP_S3_ENDPOINT | endpoint regional S3 compatible |
+| BACKUP_S3_BUCKET | `s3://bucket[/prefijo]`, sin hacerlo público |
+| BACKUP_S3_ENDPOINT | `https://<region>.digitaloceanspaces.com` |
 | AWS_DEFAULT_REGION | región del Space |
 | AWS_ACCESS_KEY_ID | secreto, llave runtime limitada |
 | AWS_SECRET_ACCESS_KEY | secreto, nunca visible después de guardar |
@@ -133,6 +134,11 @@ Configurar como secretos o variables protegidas, según corresponda:
 
 No se modifica DATABASE_URL para esta fase. El servicio backup existente usa la
 red interna del compose y debe seguir aislado de Internet.
+
+Las llaves de Spaces no se crean por API/CLI: se generan en el Control Panel de
+DigitalOcean y el secreto solo aparece una vez. Si el flujo disponible lo expone
+en claro en una herramienta intermedia, el operador debe cargarlo directo en
+Coolify en vez de pasarlo por chat o terminal compartida.
 
 La configuración está incompleta si el contenedor backup está “running” pero no
 puede escribir en el Space. La señal válida es un objeto verificado más el

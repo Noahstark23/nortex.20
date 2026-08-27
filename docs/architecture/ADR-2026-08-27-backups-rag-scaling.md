@@ -152,6 +152,11 @@ limitada a ese bucket; una identidad administrativa separada configurará
 versionado y ciclo de vida. La llave de aplicación no tendrá acceso a otros
 buckets ni al panel de DigitalOcean.
 
+Las access keys de Spaces hoy se crean y gestionan en el Control Panel de
+DigitalOcean, no por API o CLI. La llave limitada del runtime tendrá permiso
+`Read/Write/Delete` sobre ese bucket; la configuración de versionado/lifecycle
+requiere una identidad de mayor privilegio que queda fuera de Coolify.
+
 Se habilitará versionado y retención remota. Versionado protege contra
 sobrescrituras y borrados accidentales, pero **no convierte Spaces en una copia
 regional inmutable**. Cuando el riesgo del negocio exija tolerar pérdida de

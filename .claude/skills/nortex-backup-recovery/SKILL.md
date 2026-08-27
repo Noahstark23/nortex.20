@@ -30,13 +30,19 @@ respaldada.
 1. Confirmar bucket privado off-site, región, retención y alertas. Para Spaces usar su
    endpoint S3-compatible; no habilitar publicación/CDN para respaldos.
 2. Confirmar que Coolify ya contiene `DB_ROOT_PASSWORD`; Compose deriva con ella la
-   `DATABASE_URL` interna del servicio. Cargar allí `BACKUP_S3_BUCKET`,
-   `BACKUP_S3_ENDPOINT`, `AWS_DEFAULT_REGION`, `AWS_ACCESS_KEY_ID` y
-   `AWS_SECRET_ACCESS_KEY`. Configurar `BACKUP_ALERT_WEBHOOK` cuando exista un canal
-   autorizado. No transportar valores por chat, commits o logs.
-3. Mantener el servicio `backup` separado de `app`: una falla de respaldo debe verse y
+   `DATABASE_URL` interna del servicio. Cargar allí `BACKUP_S3_BUCKET`
+   (`s3://bucket[/prefijo]`), `BACKUP_S3_ENDPOINT`
+   (`https://<region>.digitaloceanspaces.com` en Spaces), `AWS_DEFAULT_REGION`,
+   `AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY`. Configurar
+   `BACKUP_ALERT_WEBHOOK` cuando exista un canal autorizado. No transportar valores
+   por chat, commits o logs.
+3. En DigitalOcean Spaces, las access keys se crean y gestionan solo en el Control
+   Panel. La app usa una llave limitada al bucket con permiso `Read/Write/Delete`;
+   versionado y lifecycle se administran aparte con una identidad de mayor
+   privilegio que no se instala en Coolify.
+4. Mantener el servicio `backup` separado de `app`: una falla de respaldo debe verse y
    alertar sin tumbar el POS, pero debe bloquear una promoción de schema.
-4. Establecer por escrito RPO, RTO, retención y responsable. Si aún no hay decisión,
+5. Establecer por escrito RPO, RTO, retención y responsable. Si aún no hay decisión,
    reportarla como pendiente; el umbral técnico actual de frescura es
    `BACKUP_MAX_AGE_HOURS=26`, no una promesa comercial implícita.
 
