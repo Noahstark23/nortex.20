@@ -143,6 +143,7 @@ import { resolvePurchaseLine } from '../utils/purchasePackaging.js';
 import {
     FISCAL_REGIME_CUOTA_FIJA,
     normalizeFiscalRegime,
+    vatCollectedFromSale,
 } from '../utils/fiscalRegime.js';
 import {
     normalizeTenantCapabilities,
@@ -6713,8 +6714,35 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
         let totalVentas = new Decimal(0);   // Total con IVA
         let totalCOGS   = new Decimal(0);   // Costo de Ventas
 
-        sales.forEach((sale: { total: unknown; items: { costAtSale: unknown; quantity: unknown }[] }) => {
-            totalVentas = totalVentas.plus(new Decimal(sale.total?.toString() ?? '0'));
+        // El IVA se acumula VENTA POR VENTA, leyendo lo que cada venta guardó de
+        // sí misma (`vatCollectedFromSale`), con las mismas reglas que la
+        // declaración mensual.
+        //
+        // Antes acá se hacía `totalVentas / 1.15` sobre el período entero, o sea
+        // se daba por hecho que TODO córdoba vendido trae 15% adentro. Eso le
+        // inventaba al dueño un IVA que nunca cobró en dos casos reales —el
+        // negocio de CUOTA FIJA, que no traslada IVA en ninguna venta, y la venta
+        // exonerada de canasta básica o medicinas— y de paso le recortaba esa
+        // misma plata a la utilidad bruta. Y no era un número escondido: la
+        // pantalla de Reportes lo rotula "IVA RECAUDADO (15%) · Para declarar a
+        // la DGI".
+        let ivaRecaudadoD = new Decimal(0);
+
+        sales.forEach((sale: {
+            total: unknown;
+            exemptTotal: unknown;
+            fiscalRegimeAtSale: unknown;
+            vatAmountAtSale: unknown;
+            items: { costAtSale: unknown; quantity: unknown }[];
+        }) => {
+            const saleTotal = new Decimal(sale.total?.toString() ?? '0');
+            totalVentas = totalVentas.plus(saleTotal);
+            ivaRecaudadoD = ivaRecaudadoD.plus(vatCollectedFromSale({
+                total: saleTotal,
+                exemptTotal: sale.exemptTotal?.toString() ?? 0,
+                fiscalRegimeAtSale: sale.fiscalRegimeAtSale,
+                vatAmountAtSale: sale.vatAmountAtSale?.toString() ?? null,
+            }));
             sale.items.forEach((item) => {
                 totalCOGS = totalCOGS.plus(
                     new Decimal(item.costAtSale?.toString() ?? '0').mul(item.quantity?.toString() ?? '0')
@@ -6722,9 +6750,8 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
             });
         });
 
-        // IVA Nicaragua 15%: total = subtotal * 1.15, subtotal = total / 1.15
-        const ventasNetas   = totalVentas.dividedBy('1.15').toDecimalPlaces(4);
-        const ivaRecaudado  = totalVentas.minus(ventasNetas).toDecimalPlaces(4);
+        const ivaRecaudado  = ivaRecaudadoD.toDecimalPlaces(4);
+        const ventasNetas   = totalVentas.minus(ivaRecaudado).toDecimalPlaces(4);
         const utilidadBruta = ventasNetas.minus(totalCOGS).toDecimalPlaces(4);
 
         // 3. Group sales by day for chart
