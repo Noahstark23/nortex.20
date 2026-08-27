@@ -48,7 +48,7 @@ describe('autorizacion del modulo de clientes', () => {
 
     it('separa el lookup básico del POS de la lectura rica de cartera', () => {
         expect(CUSTOMER_HUB_READ_ROLES).toEqual([
-            'OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'CASHIER', 'VIEWER', 'VENDEDOR',
+            'OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'CASHIER', 'VIEWER', 'VENDEDOR', 'ACCOUNTANT',
         ]);
         for (const role of CUSTOMER_HUB_READ_ROLES) {
             expect(runGuard(CUSTOMER_HUB_READ_ROLES, role).next).toHaveBeenCalledOnce();
@@ -58,6 +58,18 @@ describe('autorizacion del modulo de clientes', () => {
         const employeeHub = runGuard(CUSTOMER_HUB_READ_ROLES, 'EMPLOYEE');
         expect(employeeHub.next).not.toHaveBeenCalled();
         expect(employeeHub.res.statusCode).toBe(403);
+    });
+
+    it('ACCOUNTANT puede leer la CxC para conciliar retenciones sin poder crear ni mutar clientes', () => {
+        expect(runGuard(CUSTOMER_HUB_READ_ROLES, 'ACCOUNTANT').next).toHaveBeenCalledOnce();
+
+        const create = runGuard(CUSTOMER_CREATE_ROLES, 'ACCOUNTANT');
+        expect(create.next).not.toHaveBeenCalled();
+        expect(create.res.statusCode).toBe(403);
+
+        const update = runGuard(CUSTOMER_UPDATE_ROLES, 'ACCOUNTANT');
+        expect(update.next).not.toHaveBeenCalled();
+        expect(update.res.statusCode).toBe(403);
     });
 
     it('reserva nombre y documento legal para roles administrativos', () => {
@@ -81,7 +93,7 @@ describe('autorizacion del modulo de clientes', () => {
         for (const role of CUSTOMER_UPDATE_ROLES) {
             expect(runGuard(CUSTOMER_UPDATE_ROLES, role).next).toHaveBeenCalledOnce();
         }
-        for (const role of ['CASHIER', 'VIEWER', 'EMPLOYEE']) {
+        for (const role of ['CASHIER', 'VIEWER', 'EMPLOYEE', 'ACCOUNTANT']) {
             const update = runGuard(CUSTOMER_UPDATE_ROLES, role);
             expect(update.next).not.toHaveBeenCalled();
             expect(update.res.statusCode).toBe(403);
@@ -186,6 +198,31 @@ describe('autorizacion del modulo de clientes', () => {
         expect(server).toContain("where: applySellerCustomerScope(authReq, { id, tenantId })");
         expect(server).toContain('...receivableCustomerScope(authReq),');
         expect(server).toContain('const existingWhere = applySellerCustomerScope(authReq, { id, tenantId: authReq.tenantId });');
+
+        const debtorsStart = server.indexOf("app.get('/api/credits/debtors'");
+        const debtorsEnd = server.indexOf("app.get('/api/collections/worklist'", debtorsStart);
+        const debtors = server.slice(debtorsStart, debtorsEnd);
+        expect(debtors).toContain(
+            "app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async",
+        );
+        expect(debtors).toContain('...receivableCustomerScope(authReq),');
+    });
+
+    it('falla cerrado si una cartera se reasigna durante el detalle o estado de cuenta', () => {
+        const hubStart = server.indexOf("app.get('/api/customers/:id/hub'");
+        const hubEnd = server.indexOf("'/api/customers/:id/interactions'", hubStart);
+        const hub = server.slice(hubStart, hubEnd);
+        expect(hub).toContain("authReq.role === 'VENDEDOR' ? Promise.resolve([]) : prisma.auditLog.findMany");
+        expect(hub).toContain("? { customer: { sellerId: authReq.userId! } }");
+        expect(hub).toContain('const stillAuthorized = await prisma.customer.findFirst({');
+        expect(hub).toContain('where: customerWhere,');
+
+        const statementStart = server.indexOf("app.get('/api/customers/:id/statement'");
+        const statementEnd = server.indexOf('// POST /api/credits/payment', statementStart);
+        const statement = server.slice(statementStart, statementEnd);
+        expect(statement).toContain('...receivableCustomerScope(authReq),');
+        expect(statement).toContain('const stillAuthorized = await prisma.customer.findFirst({');
+        expect(statement).toContain('where: applySellerCustomerScope(authReq, { id, tenantId }),');
     });
 
     it('clasifica el payload completo y devuelve 403 antes de abrir la transaccion', () => {

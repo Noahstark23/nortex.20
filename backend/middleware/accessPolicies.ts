@@ -25,6 +25,7 @@ export const CUSTOMER_READ_ROLES = [
     'VIEWER',
     'EMPLOYEE',
     'VENDEDOR',
+    'ACCOUNTANT',
 ];
 
 /** Hub, cartera y cobranza: refleja los roles con `customers:read`. */
@@ -36,6 +37,7 @@ export const CUSTOMER_HUB_READ_ROLES = [
     'CASHIER',
     'VIEWER',
     'VENDEDOR',
+    'ACCOUNTANT',
 ];
 
 /** Alta de clientes desde POS/CRM; VIEWER nunca muta. */
@@ -152,6 +154,20 @@ export const CUSTOMER_PAYMENT_ROLES = [
     'VENDEDOR',
 ];
 
+/**
+ * Lectura de estados financieros, libros, cierres y reportes de antigüedad.
+ *
+ * Estos endpoints exponen saldos de todo el negocio, por lo que no heredan
+ * los roles operativos de POS/CRM. SUPER_ADMIN se declara explícitamente para
+ * que la política sea legible aunque `checkRole` también preserve su bypass.
+ */
+export const ACCOUNTING_READ_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'ACCOUNTANT',
+];
+
 /** Lectura operativa de pedidos; VIEWER puede observar, nunca mutar. */
 export const PEDIDO_READ_ROLES = [
     'OWNER',
@@ -198,8 +214,4 @@ export const QUOTATION_WRITE_ROLES = [
 ];
 
 /** Reportes y exportaciones fiscales que el contador prepara para DGI. */
-export const FISCAL_DGI_ROLES = [
-    'OWNER',
-    'ADMIN',
-    'ACCOUNTANT',
-];
+export const FISCAL_DGI_ROLES = ACCOUNTING_READ_ROLES;

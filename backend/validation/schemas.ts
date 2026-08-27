@@ -14,6 +14,7 @@ import { z } from 'zod';
 import type { Request, Response, NextFunction } from 'express';
 import Decimal from 'decimal.js';
 import { MAX_QUANTITY, QUANTITY_DECIMAL_PLACES, validateQuantity } from '../../utils/quantity.js';
+import { fiscalCivilDate } from '../lib/fiscalAccess.js';
 
 // ============================================================
 // HELPERS
@@ -329,6 +330,60 @@ export const CreatePurchaseSchema = z
             });
         }
     });
+
+// POST /api/accounting/retenciones-sufridas
+// La retención es dinero y crédito fiscal real: conserva los decimales como
+// texto hasta el handler y fija la fecha a un día civil de Managua. La BD
+// conserva nullable los identificadores de filas históricas, pero la API
+// actual exige factura + UUID para reconciliar la CxC y hacer seguro el retry.
+const retencionMoney = moneyAmountPositive
+    .refine((value) => decimalPredicate(value, (decimal) => decimal.decimalPlaces() <= 2), {
+        message: 'El monto admite como máximo 2 decimales',
+    })
+    .refine((value) => decimalPredicate(value, (decimal) => decimal.lessThanOrEqualTo('9999999999.99')), {
+        message: 'El monto excede el máximo permitido',
+    });
+
+const retencionDateInput = z.string()
+    .refine(
+        (value) => purchaseDateOnly.safeParse(value).success
+            || purchaseDateTimeWithOffset.safeParse(value).success,
+        { message: 'Fecha inválida: usa YYYY-MM-DD o datetime ISO con zona horaria' },
+    )
+    .transform((value) => purchaseDateOnly.safeParse(value).success
+        ? value
+        : fiscalCivilDate(value).isoDay);
+
+const optionalRetencionText = (maxLength: number) => z.preprocess(
+    (value) => value === null || (typeof value === 'string' && value.trim() === '')
+        ? undefined
+        : value,
+    z.string().trim().max(maxLength).optional(),
+);
+
+export const CreateRetencionSufridaSchema = z.object({
+    fecha: retencionDateInput,
+    clienteRetenedor: z.string().trim().min(1, 'El cliente retenedor es requerido').max(160),
+    tipo: z.enum(['IR_2', 'IMI_1']),
+    baseAmount: retencionMoney,
+    amount: retencionMoney,
+    numeroConstancia: optionalRetencionText(60),
+    saleId: z.string().trim().min(1, 'saleId requerido').max(191, 'saleId inválido'),
+    clientEventId: z.preprocess(
+        (value) => value === null ? undefined : value,
+        z.string().trim().uuid('clientEventId debe ser UUID'),
+    ),
+}).strict().superRefine((retencion, ctx) => {
+    const amountExceedsBase = decimalPredicate(retencion.amount, (amount) =>
+        decimalPredicate(retencion.baseAmount, (base) => amount.greaterThan(base)));
+    if (amountExceedsBase) {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['amount'],
+            message: 'El monto retenido no puede exceder la base',
+        });
+    }
+});
 
 // POST /api/inventory/adjust
 export const InventoryAdjustSchema = z.object({

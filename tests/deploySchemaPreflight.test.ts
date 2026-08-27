@@ -4,6 +4,7 @@ import {
     applyDeploySchemaPreflight,
     applyPaymentSchemaPreflight,
     applyProductReturnSchemaPreflight,
+    applyRetencionSufridaSchemaPreflight,
     applyStockCountSchemaPreflight,
     inspectPaymentClientEventIdColumn,
     inspectPaymentIdempotencyIndex,
@@ -11,6 +12,9 @@ import {
     inspectProductReturnClientEventIdColumn,
     inspectProductReturnIdempotencyIndex,
     inspectProductReturnPayloadHashColumn,
+    inspectRetencionSufridaClientEventIdColumn,
+    inspectRetencionSufridaIdempotencyIndex,
+    inspectRetencionSufridaPayloadHashColumn,
     inspectStockCountNullableIdColumn,
     inspectStockCountOpenWarehouseIndex,
     inspectStockCountTenantWarehouseStatusIndex,
@@ -20,6 +24,7 @@ import {
     inspectWarehouseSellerIndex,
     PAYMENT_IDEMPOTENCY_INDEX,
     PRODUCT_RETURN_IDEMPOTENCY_INDEX,
+    RETENCION_SUFRIDA_IDEMPOTENCY_INDEX,
     STOCK_COUNT_OPEN_WAREHOUSE_INDEX,
     STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX,
     STOCK_COUNT_WAREHOUSE_FOREIGN_KEY,
@@ -31,6 +36,8 @@ import {
     type PaymentIndexRow,
     type ProductReturnColumnRow,
     type ProductReturnIndexRow,
+    type RetencionSufridaColumnRow,
+    type RetencionSufridaIndexRow,
     type StockCountColumnRow,
     type StockCountForeignKeyRow,
     type StockCountIndexRow,
@@ -100,6 +107,11 @@ type ProductReturnAction =
     | 'index:idempotency';
 
 type PaymentAction =
+    | 'column:clientEventId'
+    | 'column:payloadHash'
+    | 'index:idempotency';
+
+type RetencionSufridaAction =
     | 'column:clientEventId'
     | 'column:payloadHash'
     | 'index:idempotency';
@@ -479,6 +491,117 @@ class PaymentSchemaFake implements DeploySchemaClient {
     }
 }
 
+const validRetencionSufridaClientEventIdColumn: RetencionSufridaColumnRow = {
+    ...validColumn,
+    columnType: 'varchar(128)',
+    characterMaximumLength: 128n,
+};
+
+const validRetencionSufridaPayloadHashColumn: RetencionSufridaColumnRow = {
+    ...validColumn,
+    columnType: 'varchar(64)',
+    characterMaximumLength: 64n,
+};
+
+class RetencionSufridaSchemaFake implements DeploySchemaClient {
+    tableExists = true;
+    columns: Record<'clientEventId' | 'payloadHash', State> = {
+        clientEventId: 'missing',
+        payloadHash: 'missing',
+    };
+    index: State = 'missing';
+    duplicates: unknown[] = [];
+    raceWins = new Set<RetencionSufridaAction>();
+    hardFailures = new Set<RetencionSufridaAction>();
+    events: string[] = [];
+    duplicateQueries: string[] = [];
+
+    makeEverythingValid(): this {
+        this.columns.clientEventId = 'valid';
+        this.columns.payloadHash = 'valid';
+        this.index = 'valid';
+        return this;
+    }
+
+    private columnRows(
+        columnName: 'clientEventId' | 'payloadHash',
+    ): RetencionSufridaColumnRow[] {
+        const state = this.columns[columnName];
+        if (state === 'missing') return [];
+        const valid = columnName === 'clientEventId'
+            ? validRetencionSufridaClientEventIdColumn
+            : validRetencionSufridaPayloadHashColumn;
+        return [{ ...(state === 'valid' ? valid : { ...valid, isNullable: 'NO' }) }];
+    }
+
+    async query<T>(statement: Prisma.Sql): Promise<T> {
+        const text = sqlText(statement);
+        const values = statement.values as unknown[];
+
+        if (text.includes("TABLE_NAME = 'RetencionSufrida'")
+            && text.includes('information_schema.TABLES')) {
+            return (this.tableExists ? [{ tableName: 'RetencionSufrida' }] : []) as T;
+        }
+        if (text.includes("TABLE_NAME = 'RetencionSufrida'")
+            && text.includes("COLUMN_NAME = 'tenantId'")) {
+            return [{ ...validColumn, isNullable: 'NO' }] as T;
+        }
+        if (text.includes('FROM information_schema.COLUMNS')
+            && text.includes("TABLE_NAME = 'RetencionSufrida'")) {
+            const columnName = values.find(value => (
+                value === 'clientEventId' || value === 'payloadHash'
+            ));
+            if (columnName === 'clientEventId' || columnName === 'payloadHash') {
+                return this.columnRows(columnName) as T;
+            }
+        }
+        if (text.includes('information_schema.STATISTICS')
+            && values.includes(RETENCION_SUFRIDA_IDEMPOTENCY_INDEX)) {
+            if (this.index === 'missing') return [] as T;
+            const rows: RetencionSufridaIndexRow[] = exactIndexRows(
+                RETENCION_SUFRIDA_IDEMPOTENCY_INDEX,
+                ['tenantId', 'clientEventId'],
+                true,
+            );
+            return (this.index === 'valid'
+                ? rows
+                : rows.map(row => ({ ...row, nonUnique: 1n }))) as T;
+        }
+        if (text.includes('GROUP BY tenantId, clientEventId')) {
+            this.events.push('query:safety:duplicates');
+            this.duplicateQueries.push(text);
+            return this.duplicates as T;
+        }
+
+        throw new Error(`Query inesperada en fake de RetencionSufrida: ${text}`);
+    }
+
+    private actionFor(statement: Prisma.Sql): RetencionSufridaAction {
+        const text = sqlText(statement);
+        if (text.includes('ADD COLUMN `clientEventId`')) return 'column:clientEventId';
+        if (text.includes('ADD COLUMN `payloadHash`')) return 'column:payloadHash';
+        if (text.includes(`CREATE UNIQUE INDEX \`${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX}\``)) {
+            return 'index:idempotency';
+        }
+        throw new Error(`DDL inesperado en fake de RetencionSufrida: ${text}`);
+    }
+
+    private apply(action: RetencionSufridaAction): void {
+        if (action === 'column:clientEventId') this.columns.clientEventId = 'valid';
+        if (action === 'column:payloadHash') this.columns.payloadHash = 'valid';
+        if (action === 'index:idempotency') this.index = 'valid';
+    }
+
+    async execute(statement: Prisma.Sql): Promise<number> {
+        const action = this.actionFor(statement);
+        this.events.push(`execute:${action}`);
+        if (this.hardFailures.has(action)) throw new Error(`fallo ${action}`);
+        this.apply(action);
+        if (this.raceWins.has(action)) throw new Error(`otro iniciador ganó ${action}`);
+        return 0;
+    }
+}
+
 describe('deploy schema preflight', () => {
     it('acepta únicamente Warehouse.sellerId nullable varchar(191)', () => {
         expect(inspectWarehouseSellerColumn([])).toBe('missing');
@@ -510,7 +633,7 @@ describe('deploy schema preflight', () => {
 
         await applyDeploySchemaPreflight({ query, execute }, { info, warn: vi.fn() });
 
-        expect(query).toHaveBeenCalledTimes(4);
+        expect(query).toHaveBeenCalledTimes(5);
         expect(execute).not.toHaveBeenCalled();
         expect(info).toHaveBeenCalledWith(expect.stringContaining('Warehouse aún no existe'));
     });
@@ -519,6 +642,7 @@ describe('deploy schema preflight', () => {
         const query = vi.fn()
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([{ tableName: 'StockCount' }])
+            .mockResolvedValueOnce([])
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([]);
 
@@ -533,7 +657,22 @@ describe('deploy schema preflight', () => {
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([{ tableName: 'ProductReturn' }])
+            .mockResolvedValueOnce([])
             .mockResolvedValueOnce([]);
+
+        await expect(applyDeploySchemaPreflight(
+            { query, execute: vi.fn() },
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(UnsafeSchemaStateError);
+    });
+
+    it('falla cerrado si RetencionSufrida existe sin Warehouse', async () => {
+        const query = vi.fn()
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{ tableName: 'RetencionSufrida' }]);
 
         await expect(applyDeploySchemaPreflight(
             { query, execute: vi.fn() },
@@ -1020,6 +1159,161 @@ describe('Payment deploy schema preflight', () => {
         db.hardFailures.add('column:clientEventId');
 
         await expect(applyPaymentSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('fallo column:clientEventId');
+        expect(db.columns.clientEventId).toBe('missing');
+    });
+});
+
+describe('RetencionSufrida deploy schema preflight', () => {
+    it('valida columnas nullable e índice único con la forma exacta de Prisma', () => {
+        expect(inspectRetencionSufridaClientEventIdColumn([])).toBe('missing');
+        expect(inspectRetencionSufridaClientEventIdColumn([
+            validRetencionSufridaClientEventIdColumn,
+        ])).toBe('valid');
+        expect(inspectRetencionSufridaClientEventIdColumn([{
+            ...validRetencionSufridaClientEventIdColumn,
+            characterMaximumLength: 191n,
+            columnType: 'varchar(191)',
+        }])).toBe('invalid');
+        expect(inspectRetencionSufridaPayloadHashColumn([
+            validRetencionSufridaPayloadHashColumn,
+        ])).toBe('valid');
+        expect(inspectRetencionSufridaPayloadHashColumn([{
+            ...validRetencionSufridaPayloadHashColumn,
+            isNullable: 'NO',
+        }])).toBe('invalid');
+
+        const index = exactIndexRows(
+            RETENCION_SUFRIDA_IDEMPOTENCY_INDEX,
+            ['tenantId', 'clientEventId'],
+            true,
+        );
+        expect(inspectRetencionSufridaIdempotencyIndex([...index].reverse())).toBe('valid');
+        expect(inspectRetencionSufridaIdempotencyIndex(
+            index.map(row => ({ ...row, nonUnique: 1n })),
+        )).toBe('invalid');
+        expect(inspectRetencionSufridaIdempotencyIndex([
+            { ...index[0], columnName: 'clientEventId' },
+            { ...index[1], columnName: 'tenantId' },
+        ])).toBe('invalid');
+    });
+
+    it('deja que db push cree RetencionSufrida cuando la tabla aún no existe', async () => {
+        const db = new RetencionSufridaSchemaFake();
+        db.tableExists = false;
+        const info = vi.fn();
+
+        await applyRetencionSufridaSchemaPreflight(db, { info, warn: vi.fn() });
+
+        expect(db.events).toEqual([]);
+        expect(info).toHaveBeenCalledWith(expect.stringContaining('RetencionSufrida aún no existe'));
+    });
+
+    it('converge desde el schema legacy con DDL expand-only y conserva históricos null', async () => {
+        const db = new RetencionSufridaSchemaFake();
+
+        await applyRetencionSufridaSchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+
+        expect(db.columns).toEqual({ clientEventId: 'valid', payloadHash: 'valid' });
+        expect(db.index).toBe('valid');
+        expect(db.events.filter(event => event.startsWith('execute:'))).toEqual([
+            'execute:column:clientEventId',
+            'execute:column:payloadHash',
+            'execute:index:idempotency',
+        ]);
+        expect(db.events.indexOf('query:safety:duplicates')).toBeLessThan(
+            db.events.indexOf('execute:index:idempotency'),
+        );
+        expect(db.duplicateQueries.length).toBeGreaterThan(0);
+        expect(db.duplicateQueries.every(query => (
+            query.includes('WHERE clientEventId IS NOT NULL')
+        ))).toBe(true);
+    });
+
+    it('es idempotente con el schema completo y converge desde estados parciales', async () => {
+        const complete = new RetencionSufridaSchemaFake().makeEverythingValid();
+        await applyRetencionSufridaSchemaPreflight(complete, { info: vi.fn(), warn: vi.fn() });
+        await applyRetencionSufridaSchemaPreflight(complete, { info: vi.fn(), warn: vi.fn() });
+        expect(complete.events.some(event => event.startsWith('execute:'))).toBe(false);
+
+        const partial = new RetencionSufridaSchemaFake().makeEverythingValid();
+        partial.columns.payloadHash = 'missing';
+        partial.index = 'missing';
+        await applyRetencionSufridaSchemaPreflight(partial, { info: vi.fn(), warn: vi.fn() });
+        expect(partial.events.filter(event => event.startsWith('execute:'))).toEqual([
+            'execute:column:payloadHash',
+            'execute:index:idempotency',
+        ]);
+    });
+
+    it.each([
+        [
+            'clientEventId incompatible',
+            (db: RetencionSufridaSchemaFake) => { db.columns.clientEventId = 'invalid'; },
+            'RetencionSufrida.clientEventId',
+        ],
+        [
+            'payloadHash incompatible',
+            (db: RetencionSufridaSchemaFake) => { db.columns.payloadHash = 'invalid'; },
+            'RetencionSufrida.payloadHash',
+        ],
+        [
+            'índice homónimo incompatible',
+            (db: RetencionSufridaSchemaFake) => { db.index = 'invalid'; },
+            RETENCION_SUFRIDA_IDEMPOTENCY_INDEX,
+        ],
+    ])('falla cerrado ante %s', async (_label, arrange, message) => {
+        const db = new RetencionSufridaSchemaFake().makeEverythingValid();
+        arrange(db);
+
+        await expect(applyRetencionSufridaSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(message);
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('falla cerrado ante duplicados no-null sin cambiar filas ni crear el índice', async () => {
+        const db = new RetencionSufridaSchemaFake().makeEverythingValid();
+        db.index = 'missing';
+        db.duplicates = [{
+            tenantId: 'tenant-1',
+            clientEventId: 'retencion-event-1',
+            duplicateCount: 2n,
+        }];
+
+        await expect(applyRetencionSufridaSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('clientEventId duplicado');
+        expect(db.index).toBe('missing');
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('tolera carreras únicamente cuando la relectura confirma cada objeto exacto', async () => {
+        const db = new RetencionSufridaSchemaFake();
+        const actions: RetencionSufridaAction[] = [
+            'column:clientEventId',
+            'column:payloadHash',
+            'index:idempotency',
+        ];
+        actions.forEach(action => db.raceWins.add(action));
+        const warn = vi.fn();
+
+        await applyRetencionSufridaSchemaPreflight(db, { info: vi.fn(), warn });
+
+        expect(db.columns).toEqual({ clientEventId: 'valid', payloadHash: 'valid' });
+        expect(db.index).toBe('valid');
+        expect(warn).toHaveBeenCalledTimes(actions.length);
+    });
+
+    it('propaga un error DDL cuando el estado final sigue ausente', async () => {
+        const db = new RetencionSufridaSchemaFake();
+        db.hardFailures.add('column:clientEventId');
+
+        await expect(applyRetencionSufridaSchemaPreflight(
             db,
             { info: vi.fn(), warn: vi.fn() },
         )).rejects.toThrow('fallo column:clientEventId');

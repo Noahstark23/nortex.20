@@ -8,6 +8,7 @@ export const STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX = 'StockCount_tenantId_wa
 export const STOCK_COUNT_WAREHOUSE_FOREIGN_KEY = 'StockCount_warehouseId_fkey';
 export const PRODUCT_RETURN_IDEMPOTENCY_INDEX = 'ProductReturn_tenantId_clientEventId_key';
 export const PAYMENT_IDEMPOTENCY_INDEX = 'Payment_saleId_clientEventId_key';
+export const RETENCION_SUFRIDA_IDEMPOTENCY_INDEX = 'RetencionSufrida_tenantId_clientEventId_key';
 
 // Identificadores internos y constantes: nunca contienen entrada del usuario.
 const WAREHOUSE_TABLE_SQL = Prisma.raw('`Warehouse`');
@@ -26,10 +27,12 @@ const STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX_SQL = Prisma.raw('`StockCount_te
 const STOCK_COUNT_WAREHOUSE_FOREIGN_KEY_SQL = Prisma.raw('`StockCount_warehouseId_fkey`');
 const PRODUCT_RETURN_TABLE_SQL = Prisma.raw('`ProductReturn`');
 const PAYMENT_TABLE_SQL = Prisma.raw('`Payment`');
+const RETENCION_SUFRIDA_TABLE_SQL = Prisma.raw('`RetencionSufrida`');
 const CLIENT_EVENT_ID_COLUMN_SQL = Prisma.raw('`clientEventId`');
 const PAYLOAD_HASH_COLUMN_SQL = Prisma.raw('`payloadHash`');
 const PRODUCT_RETURN_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`ProductReturn_tenantId_clientEventId_key`');
 const PAYMENT_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`Payment_saleId_clientEventId_key`');
+const RETENCION_SUFRIDA_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`RetencionSufrida_tenantId_clientEventId_key`');
 const SALE_ID_COLUMN_SQL = Prisma.raw('`saleId`');
 
 export class UnsafeSchemaStateError extends Error {
@@ -79,6 +82,8 @@ export type ProductReturnColumnRow = WarehouseSellerColumnRow;
 export type ProductReturnIndexRow = WarehouseSellerIndexRow;
 export type PaymentColumnRow = WarehouseSellerColumnRow;
 export type PaymentIndexRow = WarehouseSellerIndexRow;
+export type RetencionSufridaColumnRow = WarehouseSellerColumnRow;
+export type RetencionSufridaIndexRow = WarehouseSellerIndexRow;
 
 export interface StockCountForeignKeyRow {
     constraintName: string;
@@ -131,6 +136,12 @@ interface DuplicateProductReturnEventRow {
 
 interface DuplicatePaymentEventRow {
     saleId: string;
+    clientEventId: string;
+    duplicateCount: number | bigint;
+}
+
+interface DuplicateRetencionSufridaEventRow {
+    tenantId: string;
     clientEventId: string;
     duplicateCount: number | bigint;
 }
@@ -194,6 +205,18 @@ export function inspectPaymentClientEventIdColumn(
 
 export function inspectPaymentPayloadHashColumn(
     rows: PaymentColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 64);
+}
+
+export function inspectRetencionSufridaClientEventIdColumn(
+    rows: RetencionSufridaColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 128);
+}
+
+export function inspectRetencionSufridaPayloadHashColumn(
+    rows: RetencionSufridaColumnRow[],
 ): SchemaObjectState {
     return inspectNullableVarcharColumn(rows, 64);
 }
@@ -308,6 +331,17 @@ export function inspectPaymentIdempotencyIndex(
     );
 }
 
+export function inspectRetencionSufridaIdempotencyIndex(
+    rows: RetencionSufridaIndexRow[],
+): SchemaObjectState {
+    return inspectExactIndex(
+        rows,
+        RETENCION_SUFRIDA_IDEMPOTENCY_INDEX,
+        ['tenantId', 'clientEventId'],
+        true,
+    );
+}
+
 async function readSellerColumn(db: DeploySchemaClient): Promise<WarehouseSellerColumnRow[]> {
     return db.query<WarehouseSellerColumnRow[]>(Prisma.sql`
         SELECT
@@ -385,6 +419,17 @@ async function paymentTableExists(db: DeploySchemaClient): Promise<boolean> {
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'Payment'
+        LIMIT 1
+    `);
+    return rows.length === 1;
+}
+
+async function retencionSufridaTableExists(db: DeploySchemaClient): Promise<boolean> {
+    const rows = await db.query<Array<{ tableName: string }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'RetencionSufrida'
         LIMIT 1
     `);
     return rows.length === 1;
@@ -648,6 +693,71 @@ async function readPaymentIdempotencyIndex(
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'Payment'
           AND INDEX_NAME = ${PAYMENT_IDEMPOTENCY_INDEX}
+        ORDER BY SEQ_IN_INDEX
+    `);
+}
+
+async function readRetencionSufridaColumn(
+    db: DeploySchemaClient,
+    columnName: 'clientEventId' | 'payloadHash',
+): Promise<RetencionSufridaColumnRow[]> {
+    return db.query<RetencionSufridaColumnRow[]>(Prisma.sql`
+        SELECT
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'RetencionSufrida'
+          AND COLUMN_NAME = ${columnName}
+    `);
+}
+
+async function readRetencionSufridaTenantIdColumn(
+    db: DeploySchemaClient,
+): Promise<RetencionSufridaColumnRow[]> {
+    return db.query<RetencionSufridaColumnRow[]>(Prisma.sql`
+        SELECT
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'RetencionSufrida'
+          AND COLUMN_NAME = 'tenantId'
+    `);
+}
+
+async function readRetencionSufridaIdempotencyIndex(
+    db: DeploySchemaClient,
+): Promise<RetencionSufridaIndexRow[]> {
+    return db.query<RetencionSufridaIndexRow[]>(Prisma.sql`
+        SELECT
+            INDEX_NAME AS indexName,
+            NON_UNIQUE AS nonUnique,
+            SEQ_IN_INDEX AS seqInIndex,
+            COLUMN_NAME AS columnName,
+            SUB_PART AS subPart,
+            INDEX_TYPE AS indexType,
+            IS_VISIBLE AS isVisible,
+            COLLATION AS collation,
+            EXPRESSION AS expression
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'RetencionSufrida'
+          AND INDEX_NAME = ${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX}
         ORDER BY SEQ_IN_INDEX
     `);
 }
@@ -1303,6 +1413,149 @@ export async function applyPaymentSchemaPreflight(
     logger.info('Preflight DDL verificado: idempotencia de Payment lista sin alterar históricos.');
 }
 
+async function assertRetencionSufridaEventsAreUnique(db: DeploySchemaClient): Promise<void> {
+    const duplicates = await db.query<DuplicateRetencionSufridaEventRow[]>(Prisma.sql`
+        SELECT tenantId, clientEventId, COUNT(*) AS duplicateCount
+        FROM ${RETENCION_SUFRIDA_TABLE_SQL}
+        WHERE clientEventId IS NOT NULL
+        GROUP BY tenantId, clientEventId
+        HAVING COUNT(*) > 1
+        LIMIT 10
+    `);
+
+    if (duplicates.length === 0) return;
+
+    const detail = duplicates
+        .map(row => `${row.tenantId}/${row.clientEventId} (${String(row.duplicateCount)})`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `Hay retenciones sufridas con clientEventId duplicado; no se creará el índice único: ${detail}`,
+    );
+}
+
+type RetencionSufridaNullableColumn = 'clientEventId' | 'payloadHash';
+
+function inspectRetencionSufridaColumn(
+    columnName: RetencionSufridaNullableColumn,
+    rows: RetencionSufridaColumnRow[],
+): SchemaObjectState {
+    return columnName === 'clientEventId'
+        ? inspectRetencionSufridaClientEventIdColumn(rows)
+        : inspectRetencionSufridaPayloadHashColumn(rows);
+}
+
+async function ensureRetencionSufridaColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    columnName: RetencionSufridaNullableColumn,
+): Promise<void> {
+    const initialState = inspectRetencionSufridaColumn(
+        columnName,
+        await readRetencionSufridaColumn(db, columnName),
+    );
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `RetencionSufrida.${columnName} existe con una definición incompatible; se requiere intervención manual.`,
+        );
+    }
+
+    if (initialState === 'missing') {
+        const length = columnName === 'clientEventId' ? 128 : 64;
+        logger.info(`Aplicando DDL seguro: RetencionSufrida.${columnName} VARCHAR(${length}) NULL.`);
+        try {
+            if (columnName === 'clientEventId') {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${RETENCION_SUFRIDA_TABLE_SQL}
+                    ADD COLUMN ${CLIENT_EVENT_ID_COLUMN_SQL} VARCHAR(128) NULL
+                `);
+            } else {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${RETENCION_SUFRIDA_TABLE_SQL}
+                    ADD COLUMN ${PAYLOAD_HASH_COLUMN_SQL} VARCHAR(64) NULL
+                `);
+            }
+        } catch (error) {
+            const concurrentState = inspectRetencionSufridaColumn(
+                columnName,
+                await readRetencionSufridaColumn(db, columnName),
+            );
+            if (concurrentState !== 'valid') throw error;
+            logger.warn(`RetencionSufrida.${columnName} fue creada concurrentemente; definición verificada.`);
+        }
+    }
+
+    const finalColumn = await readRetencionSufridaColumn(db, columnName);
+    if (inspectRetencionSufridaColumn(columnName, finalColumn) !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de RetencionSufrida.${columnName}.`,
+        );
+    }
+
+    const tenantIdColumn = await readRetencionSufridaTenantIdColumn(db);
+    if (!columnsUseSameEncoding(finalColumn, tenantIdColumn)) {
+        throw new UnsafeSchemaStateError(
+            `RetencionSufrida.${columnName} no usa el mismo charset/collation que RetencionSufrida.tenantId.`,
+        );
+    }
+}
+
+async function ensureRetencionSufridaIdempotencyIndex(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+): Promise<void> {
+    const initialState = inspectRetencionSufridaIdempotencyIndex(
+        await readRetencionSufridaIdempotencyIndex(db),
+    );
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX} existe con columnas u opciones incompatibles.`,
+        );
+    }
+
+    if (initialState === 'missing') {
+        logger.info(`Aplicando DDL seguro: índice único ${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX}.`);
+        try {
+            await db.execute(Prisma.sql`
+                CREATE UNIQUE INDEX ${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX_SQL}
+                ON ${RETENCION_SUFRIDA_TABLE_SQL}(${TENANT_ID_COLUMN_SQL}, ${CLIENT_EVENT_ID_COLUMN_SQL})
+            `);
+        } catch (error) {
+            if (inspectRetencionSufridaIdempotencyIndex(
+                await readRetencionSufridaIdempotencyIndex(db),
+            ) !== 'valid') {
+                await assertRetencionSufridaEventsAreUnique(db);
+                throw error;
+            }
+            logger.warn(`${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX} fue creado concurrentemente; definición verificada.`);
+        }
+    }
+
+    if (inspectRetencionSufridaIdempotencyIndex(
+        await readRetencionSufridaIdempotencyIndex(db),
+    ) !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX}.`,
+        );
+    }
+}
+
+export async function applyRetencionSufridaSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    if (!await retencionSufridaTableExists(db)) {
+        logger.info('Preflight DDL: RetencionSufrida aún no existe; db push creará su schema completo.');
+        return;
+    }
+
+    await ensureRetencionSufridaColumn(db, logger, 'clientEventId');
+    await ensureRetencionSufridaColumn(db, logger, 'payloadHash');
+    await assertRetencionSufridaEventsAreUnique(db);
+    await ensureRetencionSufridaIdempotencyIndex(db, logger);
+    await assertRetencionSufridaEventsAreUnique(db);
+    logger.info('Preflight DDL verificado: idempotencia de RetencionSufrida lista sin alterar históricos.');
+}
+
 /**
  * DDL expand-only que Prisma db push considera "data loss" aunque no borra filas.
  * Se ejecuta antes del db push normal y converge desde estados parciales.
@@ -1317,7 +1570,8 @@ export async function applyDeploySchemaPreflight(
         const stockCountExists = await stockCountTableExists(db);
         const productReturnExists = await productReturnTableExists(db);
         const paymentExists = await paymentTableExists(db);
-        if (stockCountExists || productReturnExists || paymentExists) {
+        const retencionSufridaExists = await retencionSufridaTableExists(db);
+        if (stockCountExists || productReturnExists || paymentExists || retencionSufridaExists) {
             throw new UnsafeSchemaStateError(
                 'Hay tablas de negocio sin Warehouse; el schema parcial requiere intervención manual.',
             );
@@ -1334,4 +1588,5 @@ export async function applyDeploySchemaPreflight(
     await applyStockCountSchemaPreflight(db, logger);
     await applyProductReturnSchemaPreflight(db, logger);
     await applyPaymentSchemaPreflight(db, logger);
+    await applyRetencionSufridaSchemaPreflight(db, logger);
 }

@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 const source = (file: string) => readFileSync(resolve(process.cwd(), file), 'utf8');
 const clients = source('components/Clients.tsx');
+const customer360 = source('components/customer/Customer360Detail.tsx');
+const customerHubUi = `${clients}\n${customer360}`;
 const receivables = source('components/AccountsReceivable.tsx');
 const server = source('backend/server.ts');
 
@@ -19,9 +21,10 @@ describe('modulo de clientes y salto a cobranza', () => {
     it('carga el detalle del cliente en el hub y mantiene acceso directo al estado de cuenta por URL', () => {
         expect(clients).toContain("authFetch(`/api/customers/${customerId}/hub`)");
         expect(clients).toContain("navigate(`/app/receivables?customerId=${detail.profile.id}`)");
-        expect(clients).toContain('Editar ficha');
-        expect(clients).toContain('Timeline operativa');
-        expect(clients).toContain('Últimos abonos');
+        expect(customerHubUi).toContain('Enviar estado');
+        expect(customerHubUi).toContain('Editar ficha');
+        expect(customerHubUi).toContain('Actividad reciente');
+        expect(customerHubUi).toContain('Registrar abono');
         expect(receivables).toContain("const [searchParams] = useSearchParams();");
         expect(receivables).toContain("const customerIdFromUrl = searchParams.get('customerId');");
         expect(receivables).toContain('void loadStatementByCustomerId(customerIdFromUrl);');
@@ -30,7 +33,7 @@ describe('modulo de clientes y salto a cobranza', () => {
     it('usa el formateador unico para deuda y limite', () => {
         expect(clients).toContain('const fmtMoney = (value: number) => formatMoney(value);');
         expect(clients).toContain('fmtMoney(summary.debt)');
-        expect(clients).toContain('fmtMoney(customer.creditLimit)');
+        expect(customer360).toContain('money(detail.profile.creditLimit)');
     });
 
     it('separa la edición de identidad legal de los datos de contacto', () => {
@@ -55,5 +58,23 @@ describe('modulo de clientes y salto a cobranza', () => {
     it('muestra incobrable a super admin igual que al permiso real del backend', () => {
         expect(receivables).toContain("return r === 'OWNER' || r === 'ADMIN' || r === 'SUPER_ADMIN';");
         expect(receivables).toContain('{canWriteOff && (');
+    });
+
+    it('reemplaza alertas nativas de cobranza por toasts y modales del producto', () => {
+        expect(receivables).toContain("const { toast, showToast, dismissToast } = useToast();");
+        expect(receivables).toContain('<ToastViewport toast={toast} onDismiss={dismissToast} />');
+        expect(receivables).toContain('setWriteoffDraft({ saleId, customerName, balance, reason: \'\' });');
+        expect(receivables).not.toContain('alert(');
+        expect(receivables).not.toContain('window.confirm(');
+        expect(receivables).not.toContain('window.prompt(');
+    });
+
+    it('mantiene los diálogos de clientes dentro del sistema y sin APIs nativas', () => {
+        expect(clients).toContain('useAccessibleDialog(');
+        expect(clients).toContain('role="alertdialog"');
+        expect(clients).toContain("event.key === 'Escape'");
+        expect(clients).not.toContain('alert(');
+        expect(clients).not.toContain('window.confirm(');
+        expect(clients).not.toContain('window.prompt(');
     });
 });

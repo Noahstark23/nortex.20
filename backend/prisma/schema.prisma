@@ -1928,9 +1928,14 @@ model RetencionSufrida {
   amount           Decimal  @db.Decimal(12, 2)
   numeroConstancia String?  @db.VarChar(60)
   saleId           String?
+  // Nullable solo para históricos y clientes legacy. Los clientes nuevos
+  // conservan este UUID entre reintentos de la misma operación lógica.
+  clientEventId    String?  @db.VarChar(128)
+  payloadHash      String?  @db.VarChar(64)
   createdBy        String
   createdAt        DateTime @default(now())
 
+  @@unique([tenantId, clientEventId])
   @@index([tenantId, fecha])
 }
 

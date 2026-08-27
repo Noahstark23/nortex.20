@@ -845,7 +845,7 @@ export async function recordBadDebt(
     tenantId: string,
     userId: string,
     saleId: string,
-    amount: number
+    amount: Decimal.Value
 ) {
     const amt = new Decimal(amount).toDecimalPlaces(2);
     if (amt.lessThanOrEqualTo(0)) return;
@@ -1139,28 +1139,41 @@ export async function getEstadoResultados(tenantId: string, month?: number, year
 const IR_RETENTION_RATE = 0.02;   // 2% sobre compras de bienes/servicios
 const IMI_RETENTION_RATE = 0.01;  // 1% impuesto municipal
 const IVA_RETENTION_RATE = 0.15;  // 15% IVA retenido (gran contribuyente)
+const PURCHASE_FISCAL_STATUSES = ['COMPLETED', 'PENDING_PAYMENT'] as const;
 
 /**
  * Genera retenciones fiscales del periodo desde las compras registradas.
  * Crea registros en FiscalRetention para cada tipo.
  */
-export async function generateRetentions(tenantId: string, month: number, year: number, db: AnyTx = prisma) {
+export async function generateRetentions(tenantId: string, month: number, year: number, tx: AnyTx) {
     const period = `${year}-${String(month).padStart(2, '0')}`;
     const { start: startDate, end: endDate } = fiscalMonthRange(month, year);
 
-    // Verificar si ya se generaron para este periodo
-    const existing = await db.fiscalRetention.count({
-        where: { tenantId, period }
-    });
-    if (existing > 0) {
-        return { message: `Retenciones ya generadas para ${period}`, existing: true };
+    // Todas las regeneraciones del tenant se serializan sobre una fila estable.
+    // El template tag de Prisma parametriza tenantId; no se concatena SQL.
+    const lockedTenant = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id
+        FROM \`Tenant\`
+        WHERE id = ${tenantId}
+        FOR UPDATE
+    `;
+    if (lockedTenant.length !== 1) {
+        throw new Error('Tenant no encontrado al generar retenciones');
     }
 
+    // FiscalRetention no pasa por createJournalEntry, por lo que aplica la
+    // misma frontera de períodos cerrados antes de leer, borrar o recrear.
+    await assertPeriodOpen(tx, tenantId, new Date(Date.UTC(year, month - 1, 1, 12)));
+
     // Obtener compras del periodo
-    const purchases = await db.purchase.findMany({
+    const purchases = await tx.purchase.findMany({
         where: {
             tenantId,
             date: { gte: startDate, lt: endDate },
+            // Mismo universo fiscal que nicaTax/Libro de Compras: contado
+            // completado y crédito todavía pendiente. Estados anulados u
+            // operativos no pueden producir retenciones DGI.
+            status: { in: [...PURCHASE_FISCAL_STATUSES] },
         },
         include: {
             supplier: { select: { id: true, name: true } },
@@ -1226,14 +1239,20 @@ export async function generateRetentions(tenantId: string, month: number, year: 
         }
     }
 
-    // Guardar todas las retenciones
+    // Reemplazo determinista dentro de la transacción del caller. El lock evita
+    // que dos generadores intercalen delete/create y el delete autocura cualquier
+    // conjunto parcial previo del período.
+    const replaced = await tx.fiscalRetention.deleteMany({
+        where: { tenantId, period },
+    });
     if (retentions.length > 0) {
-        await db.fiscalRetention.createMany({ data: retentions });
+        await tx.fiscalRetention.createMany({ data: retentions });
     }
 
     return {
         period,
         existing: false,
+        replacedRetentions: replaced.count,
         purchasesProcessed: purchases.length,
         retentions: {
             ir2pct: { count: purchases.length, total: totalIR.toNumber() },

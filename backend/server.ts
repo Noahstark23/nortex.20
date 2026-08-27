@@ -12,6 +12,7 @@ import bcrypt from 'bcryptjs';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
 import {
+    ACCOUNTING_READ_ROLES,
     CUSTOMER_CREATE_ROLES,
     CUSTOMER_HUB_READ_ROLES,
     CUSTOMER_INTERACTION_WRITE_ROLES,
@@ -91,6 +92,7 @@ import agentBankingRouter from './routes/agentBanking';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 import { normalizeCalendarDateInput } from './lib/calendarDate';
+import { daysSinceManaguaCivilDate, managuaBusinessDate, parseManaguaCivilDateInput } from './lib/managuaBusinessDate';
 import {
     QuotationItemError,
     resolveQuotationItems,
@@ -141,6 +143,7 @@ import {
     KardexRecordSchema,
     FinancePurchaseSchema,
     UpdateFiscalSettingsSchema,
+    CreateRetencionSufridaSchema,
 } from './validation/schemas.js';
 import {
     assertBaseUnitChangeAllowed,
@@ -1925,9 +1928,8 @@ function normalizeOptionalCustomerText(value: unknown): string | null | undefine
     return text === '' ? null : text;
 }
 
-function startOfTodayLocal() {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+function startOfTodayManaguaBusiness(asOf: Date = new Date()) {
+    return managuaBusinessDate(asOf);
 }
 
 function formatCustomerMoney(value: Decimal.Value | null | undefined) {
@@ -1969,7 +1971,7 @@ function customerHubOrderBy(segment: string) {
     ];
 }
 
-function customerHubSegmentWhere(segment: string) {
+function customerHubSegmentWhere(segment: string, asOf: Date = new Date()) {
     if (segment === 'withDebt') return { currentDebt: { gt: 0 } };
     if (segment === 'overlimit') {
         return {
@@ -1986,12 +1988,15 @@ function customerHubSegmentWhere(segment: string) {
         return { isWholesale: true, isBlocked: false, currentDebt: 0 };
     }
     if (segment === 'inactive') {
-        const cutoff = new Date(Date.now() - 60 * 86400000);
+        // Un cliente pasa a inactivo cuando su última actividad quedó en un
+        // día civil <= hoy-60. El primer instante todavía activo es el inicio
+        // de Managua de hace 59 días (p. ej. 29-jun 00:00 para hoy 27-ago).
+        const cutoff = new Date(inicioDelDiaManagua(asOf).getTime() - 59 * 86400000);
         return {
             isBlocked: false,
             isWholesale: false,
             currentDebt: 0,
-            createdAt: { lte: cutoff },
+            createdAt: { lt: cutoff },
             sales: {
                 none: {
                     status: { not: ESTADO_ANULADA },
@@ -2004,11 +2009,11 @@ function customerHubSegmentWhere(segment: string) {
     return {};
 }
 
-async function buildCustomerHubList(tenantId: string, customers: any[]) {
+async function buildCustomerHubList(tenantId: string, customers: any[], asOf: Date = new Date()) {
     if (customers.length === 0) return [];
 
     const customerIds = customers.map((customer) => customer.id);
-    const today = startOfTodayLocal();
+    const today = startOfTodayManaguaBusiness(asOf);
     const baseSaleWhere = {
         tenantId,
         customerId: { in: customerIds },
@@ -2089,7 +2094,7 @@ async function buildCustomerHubList(tenantId: string, customers: any[]) {
                 openInvoices,
                 lastSaleAt,
                 createdAt: customer.createdAt,
-            });
+            }, asOf);
 
             return {
                 id: customer.id,
@@ -2297,10 +2302,11 @@ app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), 
     }
 
     try {
+        const asOf = new Date();
         const whereClause: any = applySellerCustomerScope(authReq, {
             tenantId,
             ...customerSearchWhere(req.query.search),
-            ...customerHubSegmentWhere(segment),
+            ...customerHubSegmentWhere(segment, asOf),
         });
         if (authReq.role !== 'VENDEDOR') {
             Object.assign(whereClause, customerSellerWhere(req.query.sellerId));
@@ -2313,8 +2319,24 @@ app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), 
             include: { seller: { select: { id: true, name: true, status: true } } },
         });
 
-        const hub = await buildCustomerHubList(tenantId, customers);
-        const filtered = hub.filter((customer) => {
+        const hub = await buildCustomerHubList(tenantId, customers, asOf);
+        let visibleHub = hub;
+        if (authReq.role === 'VENDEDOR' && hub.length > 0) {
+            // La asignación puede cambiar mientras se agregan las ventas. Antes
+            // de responder, revalidar contra el estado actual y fallar cerrado.
+            const stillAssigned = await prisma.customer.findMany({
+                where: {
+                    tenantId,
+                    sellerId: authReq.userId!,
+                    id: { in: hub.map((customer) => customer.id) },
+                },
+                select: { id: true },
+            });
+            const assignedIds = new Set(stillAssigned.map((customer) => customer.id));
+            visibleHub = hub.filter((customer) => assignedIds.has(customer.id));
+        }
+
+        const filtered = visibleHub.filter((customer) => {
             return matchesCustomerHubSegment(segment, customer.segment, {
                 creditLimit: customer.creditLimit,
                 currentDebt: customer.currentDebt,
@@ -2347,14 +2369,15 @@ app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLE
         });
         if (!customer) return res.status(404).json({ error: 'Cliente no encontrado' });
 
-        const [profile] = await buildCustomerHubList(tenantId, [customer]);
+        const now = new Date();
+        const [profile] = await buildCustomerHubList(tenantId, [customer], now);
         const saleScope = {
             tenantId,
             customerId: id,
             status: { not: ESTADO_ANULADA },
             ...receivableCustomerScope(authReq),
         };
-        const today = startOfTodayLocal();
+        const today = managuaBusinessDate(now);
 
         const [
             creditSales,
@@ -2400,7 +2423,7 @@ app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLE
                     sale: { select: { id: true, invoiceNumber: true, total: true, balance: true, createdAt: true } },
                 },
             }),
-            prisma.auditLog.findMany({
+            authReq.role === 'VENDEDOR' ? Promise.resolve([]) : prisma.auditLog.findMany({
                 where: {
                     tenantId,
                     action: { in: ['CUSTOMER_CREATED', 'CUSTOMER_UPDATED', 'CREDIT_PAYMENT', 'BAD_DEBT_WRITEOFF'] },
@@ -2411,7 +2434,13 @@ app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLE
                 include: { user: { select: { id: true, name: true } } },
             }),
             prisma.customerInteraction.findMany({
-                where: { tenantId, customerId: id },
+                where: {
+                    tenantId,
+                    customerId: id,
+                    ...(authReq.role === 'VENDEDOR'
+                        ? { customer: { sellerId: authReq.userId! } }
+                        : {}),
+                },
                 orderBy: { createdAt: 'desc' },
                 take: 20,
                 include: { creator: { select: { id: true, name: true } } },
@@ -2441,6 +2470,17 @@ app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLE
             }),
         ]);
 
+        // La cartera puede reasignarse mientras se calculan los paneles. Antes
+        // de devolver datos sensibles, el vendedor debe seguir siendo dueño de
+        // la ficha; si cambió, la respuesta falla cerrada.
+        if (authReq.role === 'VENDEDOR') {
+            const stillAuthorized = await prisma.customer.findFirst({
+                where: customerWhere,
+                select: { id: true },
+            });
+            if (!stillAuthorized) return res.status(404).json({ error: 'Cliente no encontrado' });
+        }
+
         const totalBilled = new Decimal(creditTotals._sum.total ?? 0);
         const totalBalance = new Decimal(creditTotals._sum.balance ?? 0);
         const totalPaid = totalBilled.minus(totalBalance);
@@ -2452,7 +2492,7 @@ app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLE
             const balance = new Decimal(sale.balance.toString());
             const paid = total.minus(balance);
             const ref = sale.dueDate ?? sale.createdAt;
-            const overdueDays = Math.floor((today.getTime() - new Date(ref.getFullYear(), ref.getMonth(), ref.getDate()).getTime()) / 86400000);
+            const overdueDays = daysSinceManaguaCivilDate(ref, now);
             const overdue = balance.greaterThan(0) && overdueDays > 0;
 
             return {
@@ -10194,14 +10234,8 @@ app.get('/api/collections/worklist', authenticate, checkRole(CUSTOMER_HUB_READ_R
     const dueSoonDays = Math.min(60, Math.max(1, parseInt(req.query.dueSoonDays) || 7));
     try {
         const now = new Date();
-        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const MS_DAY = 86400000;
         // Días vencidos desde la referencia (vence ?? emisión); >0 vencido, <0 por vencer.
-        const diasVencido = (ref: Date) => {
-            const r = new Date(ref);
-            const refMid = new Date(r.getFullYear(), r.getMonth(), r.getDate()).getTime();
-            return Math.floor((hoy.getTime() - refMid) / MS_DAY);
-        };
+        const diasVencido = (ref: Date) => daysSinceManaguaCivilDate(ref, now);
         const bucketDe = (d: number) => d <= 0 ? 'corriente' : d <= 30 ? 'b1_30' : d <= 60 ? 'b31_60' : d <= 90 ? 'b61_90' : 'b90';
 
         const sales = await prisma.sale.findMany({
@@ -10246,7 +10280,7 @@ app.get('/api/collections/worklist', authenticate, checkRole(CUSTOMER_HUB_READ_R
         // Más vencido primero; luego por vencer (más cerca de hoy), luego corriente.
         items.sort((a, b) => b.daysOverdue - a.daysOverdue);
 
-        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const startOfDay = inicioDelDiaManagua(now);
         const collectedToday = await prisma.payment.aggregate({
             where: {
                 sale: {
@@ -10300,13 +10334,7 @@ app.get('/api/customers/:id/statement', authenticate, checkRole(CUSTOMER_HUB_REA
         });
 
         const now = new Date();
-        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const MS_DAY = 86400000;
-        const diasVencido = (ref: Date) => {
-            const r = new Date(ref);
-            const refMid = new Date(r.getFullYear(), r.getMonth(), r.getDate()).getTime();
-            return Math.floor((hoy.getTime() - refMid) / MS_DAY);
-        };
+        const diasVencido = (ref: Date) => daysSinceManaguaCivilDate(ref, now);
 
         let totalBilled = new Decimal(0), totalPaid = new Decimal(0), totalBalance = new Decimal(0), totalOverdue = new Decimal(0);
         const invoices = sales.map((s: any) => {
@@ -10335,6 +10363,14 @@ app.get('/api/customers/:id/statement', authenticate, checkRole(CUSTOMER_HUB_REA
                 })),
             };
         });
+
+        if (authReq.role === 'VENDEDOR') {
+            const stillAuthorized = await prisma.customer.findFirst({
+                where: applySellerCustomerScope(authReq, { id, tenantId }),
+                select: { id: true },
+            });
+            if (!stillAuthorized) return res.status(404).json({ error: 'Cliente no encontrado' });
+        }
 
         res.json({
             customer: {
@@ -10539,7 +10575,7 @@ async function registerCreditPayment(req: any, res: any) {
 // POST /api/credits/:saleId/writeoff - Castigar una venta a crédito como incobrable
 // (Cobranza B1). Postea el asiento Debe 5.2.7 / Haber 1.1.3, salda la venta y baja
 // la deuda del cliente. Solo OWNER/ADMIN; respeta el lock de período.
-app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN', 'SUPER_ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { saleId } = req.params;
     const reason = (req.body?.reason || '').toString().trim();
@@ -10550,23 +10586,55 @@ app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADM
         await seedChartOfAccounts(authReq.tenantId!); // garantiza 5.2.7
 
         const result = await prisma.$transaction(async (tx: any) => {
-            const sale = await tx.sale.findFirst({ where: { id: saleId, tenantId: authReq.tenantId! } });
+            const lockedSales: Array<{
+                id: string;
+                customerId: string | null;
+                paymentMethod: string;
+                status: string;
+                balance: any;
+            }> = await tx.$queryRaw`
+                SELECT id, customerId, paymentMethod, status, balance
+                FROM \`Sale\`
+                WHERE id = ${saleId} AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            const sale = lockedSales[0];
             if (!sale) throw new Error('Venta no encontrada');
             if (sale.paymentMethod !== 'CREDIT') throw new Error('Solo se castigan ventas a crédito.');
             const balance = new Decimal(sale.balance.toString());
             if (balance.lessThanOrEqualTo(0)) throw new Error('Esta venta no tiene saldo pendiente.');
 
+            // Mantener el mismo orden global que abonos y retenciones: Sale →
+            // Customer → asientos. Así dos movimientos de la misma cartera no
+            // invierten locks entre el subledger y las cuentas del mayor.
+            let currentDebt: Decimal | null = null;
+            let newDebt: Decimal | null = null;
+            if (sale.customerId) {
+                const lockedCustomers: Array<{ currentDebt: any }> = await tx.$queryRaw`
+                    SELECT currentDebt FROM \`Customer\`
+                    WHERE id = ${sale.customerId} AND tenantId = ${authReq.tenantId!}
+                    FOR UPDATE`;
+                if (lockedCustomers.length === 0) throw new Error('Cliente no encontrado');
+                currentDebt = new Decimal(lockedCustomers[0].currentDebt.toString());
+                newDebt = Decimal.max(0, currentDebt.minus(balance)).toDecimalPlaces(2);
+            }
+
             // Asiento de incobrable (assertPeriodOpen vive dentro de createJournalEntry).
-            await recordBadDebt(tx, authReq.tenantId!, authReq.userId!, saleId, balance.toNumber());
+            await recordBadDebt(tx, authReq.tenantId!, authReq.userId!, saleId, balance);
 
             // Saldar la venta y marcarla como incobrable.
-            await tx.sale.update({ where: { id: saleId }, data: { balance: 0, status: 'UNCOLLECTIBLE' } });
+            const saleUpdated = await tx.sale.updateMany({
+                where: { id: saleId, tenantId: authReq.tenantId! },
+                data: { balance: 0, status: 'UNCOLLECTIBLE' },
+            });
+            if (saleUpdated.count !== 1) throw new Error('Venta no encontrada');
 
             // Bajar la deuda del cliente (clamp a 0 por si el contador venía desfasado).
-            if (sale.customerId) {
-                const cust = await tx.customer.findUnique({ where: { id: sale.customerId }, select: { currentDebt: true } });
-                const newDebt = Math.max(0, Number(cust?.currentDebt || 0) - balance.toNumber());
-                await tx.customer.update({ where: { id: sale.customerId }, data: { currentDebt: newDebt } });
+            if (sale.customerId && newDebt) {
+                const customerUpdated = await tx.customer.updateMany({
+                    where: { id: sale.customerId, tenantId: authReq.tenantId! },
+                    data: { currentDebt: newDebt.toFixed(2) },
+                });
+                if (customerUpdated.count !== 1) throw new Error('Cliente no encontrado');
             }
 
             await tx.auditLog.create({
@@ -10574,7 +10642,25 @@ app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADM
                     tenantId: authReq.tenantId!,
                     userId: authReq.userId!,
                     action: 'BAD_DEBT_WRITEOFF',
-                    details: JSON.stringify({ saleId, customerId: sale.customerId, amount: balance.toDecimalPlaces(2).toNumber(), reason, timestamp: new Date().toISOString() }),
+                    details: JSON.stringify({
+                        saleId,
+                        customerId: sale.customerId,
+                        amount: balance.toFixed(2),
+                        reason,
+                        before: {
+                            sale: { status: sale.status, balance: balance.toFixed(2) },
+                            customer: sale.customerId
+                                ? { currentDebt: currentDebt?.toFixed(2) ?? null }
+                                : null,
+                        },
+                        after: {
+                            sale: { status: 'UNCOLLECTIBLE', balance: '0.00' },
+                            customer: sale.customerId
+                                ? { currentDebt: newDebt?.toFixed(2) ?? null }
+                                : null,
+                        },
+                        timestamp: new Date().toISOString(),
+                    }),
                 },
             });
 
@@ -10586,7 +10672,8 @@ app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADM
         console.error('Error castigando incobrable:', error);
         const msg = error?.message || 'Error castigando la venta';
         const code = error instanceof PeriodLockedError ? 423
-            : (msg.includes('no encontrada') || msg.includes('crédito') || msg.includes('saldo')) ? 400 : 500;
+            : (msg.includes('no encontrada') || msg.includes('no encontrado')) ? 404
+            : (msg.includes('crédito') || msg.includes('saldo')) ? 400 : 500;
         res.status(code).json({ error: msg });
     }
 });
@@ -10858,7 +10945,7 @@ app.post('/api/accounting/seed', authenticate, async (req: any, res: any) => {
 });
 
 // Balance General
-app.get('/api/accounting/balance-general', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/balance-general', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const balance = await getBalanceGeneral(authReq.tenantId!);
@@ -10867,7 +10954,7 @@ app.get('/api/accounting/balance-general', authenticate, async (req: any, res: a
 });
 
 // Estado de Resultados
-app.get('/api/accounting/estado-resultados', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/estado-resultados', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { month, year } = req.query;
     try {
@@ -10881,7 +10968,7 @@ app.get('/api/accounting/estado-resultados', authenticate, async (req: any, res:
 });
 
 // Chart of Accounts (Catálogo de cuentas)
-app.get('/api/accounting/chart', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/chart', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         await seedChartOfAccounts(authReq.tenantId!);
@@ -10894,7 +10981,7 @@ app.get('/api/accounting/chart', authenticate, async (req: any, res: any) => {
 });
 
 // Libro Diario (Journal Entries)
-app.get('/api/accounting/journal', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/journal', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { month, year } = req.query;
     try {
@@ -10989,7 +11076,7 @@ app.post('/api/accounting/journal', authenticate, checkRole(['OWNER', 'ADMIN', '
 });
 
 // GET /api/accounting/libro-diario/:year/:month — Libro Diario (A4)
-app.get('/api/accounting/libro-diario/:year/:month', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/libro-diario/:year/:month', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const year = parseInt(req.params.year);
     const month = parseInt(req.params.month);
@@ -11035,7 +11122,7 @@ app.get('/api/accounting/libro-diario/:year/:month', authenticate, async (req: a
 // GET /api/accounting/libro-mayor/:year/:month?accountCode= — Mayor / Balanza (A4)
 // Sin accountCode → balanza de comprobación (saldo inicial + debe + haber + final
 // por cuenta). Con accountCode → detalle de movimientos de esa cuenta.
-app.get('/api/accounting/libro-mayor/:year/:month', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/libro-mayor/:year/:month', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const year = parseInt(req.params.year);
@@ -11114,7 +11201,7 @@ app.get('/api/accounting/libro-mayor/:year/:month', authenticate, async (req: an
 });
 
 // GET /api/accounting/periods — estado de los períodos cerrados/reabiertos (A3)
-app.get('/api/accounting/periods', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/periods', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const periods = await prisma.fiscalPeriod.findMany({
@@ -11168,7 +11255,7 @@ app.post('/api/accounting/periods/:year/:month/reopen', authenticate, checkRole(
 // ══════════════════════════════════════════════════════════════════════════
 
 // B4 — GET/PUT configuración fiscal del tenant
-app.get('/api/accounting/tax-config', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/tax-config', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const cfg = await prisma.taxConfig.findUnique({ where: { tenantId: authReq.tenantId! } });
@@ -11231,9 +11318,8 @@ app.post('/api/accounting/exchange-rate', authenticate, checkRole(['OWNER', 'ADM
         const { fecha, rate } = req.body ?? {};
         const r = new Decimal(Number(rate) || 0);
         if (r.lessThanOrEqualTo(0) || r.greaterThan(10000)) return res.status(400).json({ error: 'Tipo de cambio inválido.' });
-        const day = fecha ? new Date(fecha) : new Date();
-        if (isNaN(day.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
-        day.setHours(0, 0, 0, 0);
+        const day = fecha ? parseManaguaCivilDateInput(fecha) : managuaBusinessDate();
+        if (!day) return res.status(400).json({ error: 'Fecha inválida.' });
         const saved = await prisma.exchangeRate.upsert({
             where: { tenantId_fecha: { tenantId: authReq.tenantId!, fecha: day } },
             create: { tenantId: authReq.tenantId!, fecha: day, rate: r.toDecimalPlaces(4).toNumber(), source: 'MANUAL' },
@@ -11247,57 +11333,252 @@ app.post('/api/accounting/exchange-rate', authenticate, checkRole(['OWNER', 'ADM
 });
 
 // B1 — Retenciones SUFRIDAS (crédito contra el anticipo IR / IMI)
-app.post('/api/accounting/retenciones-sufridas', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+app.post('/api/accounting/retenciones-sufridas', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), validate(CreateRetencionSufridaSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    try {
-        const { fecha, clienteRetenedor, tipo, baseAmount, amount, numeroConstancia, saleId } = req.body ?? {};
-        if (!clienteRetenedor || typeof clienteRetenedor !== 'string') return res.status(400).json({ error: 'El cliente retenedor es requerido.' });
-        if (tipo !== 'IR_2' && tipo !== 'IMI_1') return res.status(400).json({ error: 'Tipo inválido (IR_2 | IMI_1).' });
-        const amt = new Decimal(Number(amount) || 0).toDecimalPlaces(2);
-        const base = new Decimal(Number(baseAmount) || 0).toDecimalPlaces(2);
-        if (amt.lessThanOrEqualTo(0)) return res.status(400).json({ error: 'El monto retenido debe ser mayor a cero.' });
-        const day = fecha ? new Date(fecha) : new Date();
-        if (isNaN(day.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
+    const {
+        fecha,
+        clienteRetenedor,
+        tipo,
+        baseAmount,
+        amount,
+        numeroConstancia,
+        saleId,
+        clientEventId,
+    } = req.body;
+    const day = normalizeCalendarDateInput(fecha);
+    const base = new Decimal(baseAmount);
+    const amt = new Decimal(amount);
+    const payloadHash = crypto.createHash('sha256').update(JSON.stringify({
+        fecha,
+        clienteRetenedor,
+        tipo,
+        baseAmount: base.toFixed(2),
+        amount: amt.toFixed(2),
+        numeroConstancia: numeroConstancia ?? null,
+        saleId,
+    })).digest('hex');
 
-        await prisma.$transaction(async (tx: any) => {
-            await tx.retencionSufrida.create({
+    try {
+        const result = await prisma.$transaction(async (tx: any) => {
+            // La retención liquida CxC igual que un abono: se bloquea primero la
+            // venta y después su cliente. Este orden estable serializa retenciones
+            // simultáneas sin perder saldo ni deuda agregada.
+            const lockedSales: Array<{
+                id: string;
+                customerId: string | null;
+                paymentMethod: string;
+                status: string;
+                balance: any;
+            }> = await tx.$queryRaw`
+                SELECT id, customerId, paymentMethod, status, balance
+                FROM \`Sale\`
+                WHERE id = ${saleId} AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            const lockedSale = lockedSales[0];
+            if (!lockedSale) throw new Error('RETENCION_SALE_NOT_FOUND');
+            if (!lockedSale.customerId) throw new Error('RETENCION_CUSTOMER_NOT_FOUND');
+
+            const lockedCustomers: Array<{
+                id: string;
+                name: string;
+                currentDebt: any;
+            }> = await tx.$queryRaw`
+                SELECT id, name, currentDebt
+                FROM \`Customer\`
+                WHERE id = ${lockedSale.customerId} AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            const lockedCustomer = lockedCustomers[0];
+            if (!lockedCustomer) throw new Error('RETENCION_CUSTOMER_NOT_FOUND');
+
+            // Debe ocurrir después de ambos locks: una solicitud gemela que
+            // esperaba a la ganadora observa el replay antes de revalidar saldos.
+            const replay = await tx.retencionSufrida.findFirst({
+                where: { tenantId: authReq.tenantId!, clientEventId },
+            });
+            if (replay) {
+                if (!replay.payloadHash || replay.payloadHash !== payloadHash) {
+                    throw new Error('RETENCION_IDEMPOTENCY_CONFLICT');
+                }
+                return { retencionId: replay.id, idempotentReplay: true };
+            }
+
+            if (lockedSale.paymentMethod !== 'CREDIT') throw new Error('RETENCION_SALE_NOT_CREDIT');
+            const balanceBefore = new Decimal(lockedSale.balance.toString());
+            if (!balanceBefore.greaterThan(0)) throw new Error('RETENCION_SALE_SETTLED');
+            if (amt.greaterThan(balanceBefore)) throw new Error('RETENCION_EXCEEDS_BALANCE');
+
+            const balanceAfter = balanceBefore.minus(amt).toDecimalPlaces(2);
+            const statusAfter = balanceAfter.isZero() ? 'PAID' : 'CREDIT_PENDING';
+            const debtBefore = new Decimal(lockedCustomer.currentDebt.toString());
+            const debtAfter = Decimal.max(0, debtBefore.minus(amt)).toDecimalPlaces(2);
+
+            const retencion = await tx.retencionSufrida.create({
                 data: {
-                    tenantId: authReq.tenantId!, fecha: day, clienteRetenedor: clienteRetenedor.trim(),
-                    tipo, baseAmount: base.toNumber(), amount: amt.toNumber(),
-                    numeroConstancia: numeroConstancia ? String(numeroConstancia).trim() : null,
-                    saleId: saleId ? String(saleId) : null, createdBy: authReq.userId!,
+                    tenantId: authReq.tenantId!,
+                    fecha: day,
+                    clienteRetenedor,
+                    tipo,
+                    baseAmount: base.toFixed(2),
+                    amount: amt.toFixed(2),
+                    numeroConstancia: numeroConstancia ?? null,
+                    saleId,
+                    clientEventId,
+                    payloadHash,
+                    createdBy: authReq.userId!,
                 },
             });
+
+            const saleUpdated = await tx.sale.updateMany({
+                where: { id: saleId, tenantId: authReq.tenantId! },
+                data: { balance: balanceAfter.toFixed(2), status: statusAfter },
+            });
+            if (saleUpdated.count !== 1) throw new Error('RETENCION_SALE_NOT_FOUND');
+
+            const customerUpdated = await tx.customer.updateMany({
+                where: { id: lockedCustomer.id, tenantId: authReq.tenantId! },
+                data: { currentDebt: debtAfter.toFixed(2) },
+            });
+            if (customerUpdated.count !== 1) throw new Error('RETENCION_CUSTOMER_NOT_FOUND');
+
             // Asiento: el crédito fiscal (activo) sube; la CxC del cliente baja
             // (el cliente liquidó parte del saldo vía retención).
             await createJournalEntry(
                 tx, authReq.tenantId!,
-                `Retención ${tipo === 'IR_2' ? 'IR 2%' : 'IMI 1%'} sufrida — ${clienteRetenedor.trim()}`,
-                '', 'RETENCION_SUFRIDA', authReq.userId!,
+                `Retención ${tipo === 'IR_2' ? 'IR 2%' : 'IMI 1%'} sufrida — ${clienteRetenedor}`,
+                retencion.id, 'RETENCION_SUFRIDA', authReq.userId!,
                 [
                     { accountCode: '1.1.6', debit: amt.toNumber(), credit: 0 },
                     { accountCode: '1.1.3', debit: 0, credit: amt.toNumber() },
                 ],
                 { isAutomatic: true, date: day }
             );
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'RETENCION_SUFRIDA_CREATE',
+                    details: JSON.stringify({
+                        retencionId: retencion.id,
+                        clientEventId,
+                        before: {
+                            sale: {
+                                id: lockedSale.id,
+                                paymentMethod: lockedSale.paymentMethod,
+                                status: lockedSale.status,
+                                balance: balanceBefore.toFixed(2),
+                            },
+                            customer: {
+                                id: lockedCustomer.id,
+                                name: lockedCustomer.name,
+                                currentDebt: debtBefore.toFixed(2),
+                            },
+                        },
+                        after: {
+                            retencionId: retencion.id,
+                            fecha,
+                            clienteRetenedor,
+                            tipo,
+                            baseAmount: base.toFixed(2),
+                            amount: amt.toFixed(2),
+                            numeroConstancia: numeroConstancia ?? null,
+                            sale: {
+                                id: lockedSale.id,
+                                status: statusAfter,
+                                balance: balanceAfter.toFixed(2),
+                            },
+                            customer: {
+                                id: lockedCustomer.id,
+                                currentDebt: debtAfter.toFixed(2),
+                            },
+                        },
+                    }),
+                },
+            });
+
+            return { retencionId: retencion.id, idempotentReplay: false };
         });
-        res.status(201).json({ message: 'Retención sufrida registrada — se acreditará contra tu anticipo IR del mes.' });
-    } catch (error: unknown) {
-        if (error instanceof PeriodLockedError) return res.status(409).json({ error: error.message });
+
+        return res.status(result.idempotentReplay ? 200 : 201).json({
+            message: result.idempotentReplay
+                ? 'La retención ya estaba registrada; no se duplicó el crédito fiscal.'
+                : 'Retención sufrida registrada — se acreditará contra tu anticipo IR del mes.',
+            id: result.retencionId,
+            idempotentReplay: result.idempotentReplay,
+        });
+    } catch (error: any) {
+        // Dos transacciones pueden observar una clave ausente. El UNIQUE arbitra
+        // la carrera y revierte por completo asiento + auditoría del perdedor.
+        if (error?.code === 'P2002' && clientEventId) {
+            try {
+                const replay = await prisma.retencionSufrida.findFirst({
+                    where: { tenantId: authReq.tenantId!, clientEventId },
+                });
+                if (replay) {
+                    if (!replay.payloadHash || replay.payloadHash !== payloadHash) {
+                        return res.status(409).json({
+                            error: 'La misma operación ya se usó con datos distintos.',
+                            code: 'RETENCION_IDEMPOTENCY_CONFLICT',
+                        });
+                    }
+                    return res.status(200).json({
+                        message: 'La retención ya estaba registrada; no se duplicó el crédito fiscal.',
+                        id: replay.id,
+                        idempotentReplay: true,
+                    });
+                }
+            } catch (lookupError) {
+                console.error('Retención sufrida replay lookup error:', lookupError);
+                return res.status(500).json({ error: 'Error al comprobar el reintento de la retención.' });
+            }
+        }
+        if (error?.message === 'RETENCION_IDEMPOTENCY_CONFLICT') {
+            return res.status(409).json({
+                error: 'La misma operación ya se usó con datos distintos.',
+                code: error.message,
+            });
+        }
+        if (error?.message === 'RETENCION_SALE_NOT_FOUND' || error?.message === 'RETENCION_CUSTOMER_NOT_FOUND') {
+            return res.status(404).json({
+                error: 'La venta o su cliente no existe en este negocio.',
+                code: error.message,
+            });
+        }
+        const businessErrors: Record<string, string> = {
+            RETENCION_SALE_NOT_CREDIT: 'La factura seleccionada no es una venta a crédito.',
+            RETENCION_SALE_SETTLED: 'La factura seleccionada ya no tiene saldo pendiente.',
+            RETENCION_EXCEEDS_BALANCE: 'La retención excede el saldo pendiente de la factura.',
+        };
+        if (businessErrors[error?.message]) {
+            return res.status(400).json({ error: businessErrors[error.message], code: error.message });
+        }
+        if (error instanceof PeriodLockedError) {
+            return res.status(409).json({ error: error.message, code: 'PERIOD_LOCKED' });
+        }
         console.error('Retención sufrida error:', error);
-        res.status(500).json({ error: error instanceof Error ? error.message : 'Error al registrar la retención.' });
+        res.status(500).json({ error: 'Error al registrar la retención.' });
     }
 });
 
-app.get('/api/accounting/retenciones-sufridas', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/retenciones-sufridas', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const where: any = { tenantId: authReq.tenantId! };
-        const { month, year } = req.query;
-        if (month && year) {
-            const s = new Date(parseInt(year), parseInt(month) - 1, 1);
-            const e = new Date(parseInt(year), parseInt(month), 0, 23, 59, 59);
-            where.fecha = { gte: s, lte: e };
+        const fiscalPeriod = parseFiscalPeriod(req.query.month, req.query.year);
+        if ((req.query.month != null || req.query.year != null) && !fiscalPeriod) {
+            return res.status(400).json({ error: 'Periodo inválido. Usa month=1-12 y year=YYYY.' });
+        }
+        if (fiscalPeriod) {
+            const start = normalizeCalendarDateInput(
+                `${fiscalPeriod.year}-${String(fiscalPeriod.month).padStart(2, '0')}-01`,
+            );
+            const nextMonth = fiscalPeriod.month === 12
+                ? { year: fiscalPeriod.year + 1, month: 1 }
+                : { year: fiscalPeriod.year, month: fiscalPeriod.month + 1 };
+            const endExclusive = normalizeCalendarDateInput(
+                `${nextMonth.year}-${String(nextMonth.month).padStart(2, '0')}-01`,
+            );
+            where.fecha = { gte: start, lt: endExclusive };
         }
         const items = await prisma.retencionSufrida.findMany({ where, orderBy: { fecha: 'desc' }, take: 200 });
         res.json({ retenciones: items.map(r => ({ ...r, baseAmount: Number(r.baseAmount), amount: Number(r.amount) })) });
@@ -11307,7 +11588,7 @@ app.get('/api/accounting/retenciones-sufridas', authenticate, async (req: any, r
 // ── B2 — Activos fijos + depreciación ───────────────────────────────────────
 
 // GET lista (con valor en libros)
-app.get('/api/accounting/fixed-assets', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/fixed-assets', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const assets = await prisma.fixedAsset.findMany({
@@ -11339,8 +11620,10 @@ app.post('/api/accounting/fixed-assets', authenticate, checkRole(['OWNER', 'ADMI
         if (!(cat in VIDA_UTIL_DEFAULT)) return res.status(400).json({ error: 'Categoría inválida.' });
         const costoD = new Decimal(Number(costo) || 0);
         if (costoD.lessThanOrEqualTo(0)) return res.status(400).json({ error: 'El costo debe ser mayor a cero.' });
-        const fecha = fechaAdquisicion ? new Date(fechaAdquisicion) : new Date();
-        if (isNaN(fecha.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
+        const fecha = fechaAdquisicion
+            ? parseManaguaCivilDateInput(fechaAdquisicion)
+            : managuaBusinessDate();
+        if (!fecha) return res.status(400).json({ error: 'Fecha inválida.' });
         const vida = Number(vidaUtilMeses) > 0 ? Math.floor(Number(vidaUtilMeses)) : VIDA_UTIL_DEFAULT[cat];
 
         // E1: el alta ahora CAPITALIZA el activo (Debe 1.2.1) dentro de una
@@ -11468,7 +11751,7 @@ app.post('/api/accounting/depreciacion/run', authenticate, checkRole(['OWNER', '
 });
 
 // ── B3 — Declaración anual de IR ────────────────────────────────────────────
-app.get('/api/fiscal/renta-anual/:year', authenticate, async (req: any, res: any) => {
+app.get('/api/fiscal/renta-anual/:year', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const year = parseInt(req.params.year);
     if (isNaN(year) || year < 2000 || year > 2100) return res.status(400).json({ error: 'Año inválido.' });
@@ -11487,7 +11770,7 @@ app.get('/api/fiscal/renta-anual/:year', authenticate, async (req: any, res: any
 // ══════════════════════════════════════════════════════════════════════════
 const OBLIGATION_KEYS = ['IVA', 'ANTICIPO_IR', 'IMI', 'INSS', 'INATEC', 'IR_LABORAL'];
 
-app.get('/api/accounting/cierre-mensual/:year/:month', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/cierre-mensual/:year/:month', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const year = parseInt(req.params.year);
@@ -11578,7 +11861,7 @@ app.put('/api/accounting/cierre-mensual/:year/:month/:key', authenticate, checkR
 // ==========================================
 
 // GET /api/accounting/aging — ¿quién me debe y a quién le debo, por antigüedad?
-app.get('/api/accounting/aging', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/aging', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     try {
@@ -11588,15 +11871,10 @@ app.get('/api/accounting/aging', authenticate, async (req: any, res: any) => {
         interface RawItem { id: string; entidadId: string; entidadNombre: string; telefono: string | null; numero: string | null; fecha: Date; vence: Date | null; monto: number; saldo: Decimal; }
 
         const now = new Date();
-        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const MS_DAY = 86400000;
+        const hoy = managuaBusinessDate(now);
 
         // Días vencidos desde la fecha de referencia (vence ?? fecha de emisión).
-        const diasVencido = (ref: Date) => {
-            const r = new Date(ref);
-            const refMid = new Date(r.getFullYear(), r.getMonth(), r.getDate()).getTime();
-            return Math.floor((hoy.getTime() - refMid) / MS_DAY);
-        };
+        const diasVencido = (ref: Date) => daysSinceManaguaCivilDate(ref, now);
         const bucketDe = (d: number): BucketKey => d <= 0 ? 'corriente' : d <= 30 ? 'b1_30' : d <= 60 ? 'b31_60' : d <= 90 ? 'b61_90' : 'b90';
         const zero = (): Record<BucketKey, Decimal> => ({ corriente: new Decimal(0), b1_30: new Decimal(0), b31_60: new Decimal(0), b61_90: new Decimal(0), b90: new Decimal(0) });
         const numBuckets = (b: Record<BucketKey, Decimal>) => ({
@@ -11681,7 +11959,7 @@ app.get('/api/accounting/aging', authenticate, async (req: any, res: any) => {
 // Método directo, derivado del mayor de las cuentas de efectivo (Caja 1.1.1 + Bancos
 // 1.1.2). Un débito a efectivo es entrada; un crédito, salida. Reconcilia con el
 // balance: saldoInicial + flujoNeto = saldoFinal.
-app.get('/api/accounting/flujo-efectivo/:year/:month', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/flujo-efectivo/:year/:month', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const year = parseInt(req.params.year);
@@ -12155,7 +12433,7 @@ app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchase
 // ==========================================
 
 // GET /api/financial-health — Dashboard de salud financiera del tenant
-app.get('/api/financial-health', authenticate, async (req: any, res: any) => {
+app.get('/api/financial-health', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const { getBalanceGeneral, getEstadoResultados, seedChartOfAccounts } = await import('./services/accounting');
@@ -12289,16 +12567,20 @@ app.post('/api/accounting/retentions', authenticate, checkRole(['OWNER', 'ADMIN'
 
     try {
         const { generateRetentions } = await import('./services/accounting');
-        const result = await generateRetentions(authReq.tenantId!, month, year);
+        const result = await prisma.$transaction((tx: any) =>
+            generateRetentions(authReq.tenantId!, month, year, tx));
         res.json(result);
     } catch (error) {
         console.error('Generate retentions error:', error);
+        if (error instanceof PeriodLockedError) {
+            return res.status(409).json({ error: error.message, code: 'PERIOD_LOCKED' });
+        }
         res.status(500).json({ error: 'Error al generar retenciones' });
     }
 });
 
 // GET /api/accounting/retentions/:period — Consultar retenciones de un periodo
-app.get('/api/accounting/retentions/:period', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/retentions/:period', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { period } = req.params; // "2026-03"
 
@@ -12342,6 +12624,9 @@ app.post('/api/accounting/fiscal-close', authenticate, checkRole(['OWNER']), asy
         res.json({ message: `Cierre fiscal ${month}/${year} completado y período BLOQUEADO`, ...result });
     } catch (error) {
         console.error('Fiscal close error:', error);
+        if (error instanceof PeriodLockedError) {
+            return res.status(409).json({ error: error.message, code: 'PERIOD_LOCKED' });
+        }
         res.status(500).json({ error: 'Error al realizar cierre fiscal' });
     }
 });

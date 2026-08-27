@@ -85,4 +85,13 @@ describe('integridad de abonos de clientes', () => {
         expect(migration).toContain('ADD COLUMN `payloadHash` VARCHAR(64) NULL');
         expect(migration).toContain('CREATE UNIQUE INDEX `Payment_saleId_clientEventId_key`');
     });
+
+    it('mantiene el castigo de incobrables scopeado por tenant y habilita super admin igual que la UI', () => {
+        expect(server).toContain("app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN', 'SUPER_ADMIN'])");
+        expect(server).toContain('FROM \\`Sale\\`');
+        expect(server).toContain('WHERE id = ${saleId} AND tenantId = ${authReq.tenantId!}');
+        expect(server).toContain('SELECT currentDebt FROM \\`Customer\\`');
+        expect(server).toContain('WHERE id = ${sale.customerId} AND tenantId = ${authReq.tenantId!}');
+        expect(server).toContain("data: { currentDebt: newDebt.toFixed(2) }");
+    });
 });
