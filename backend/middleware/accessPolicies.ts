@@ -15,6 +15,123 @@ export const POS_SALE_ROLES = [
     'VENDEDOR',
 ];
 
+/** Clientes: lectura operativa desde CRM/POS. */
+export const CUSTOMER_READ_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'CASHIER',
+    'VIEWER',
+    'EMPLOYEE',
+    'VENDEDOR',
+];
+
+/** Alta de clientes desde POS/CRM; VIEWER nunca muta. */
+export const CUSTOMER_CREATE_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'CASHIER',
+    'EMPLOYEE',
+    'VENDEDOR',
+];
+
+/** Identidad legal del cliente: solo administración puede cambiar nombre o documento. */
+export const CUSTOMER_IDENTITY_UPDATE_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+];
+
+/** Edición de contacto; VENDEDOR queda limitado a su propia cartera. */
+export const CUSTOMER_CONTACT_UPDATE_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'VENDEDOR',
+];
+
+/** Bloqueo, cupo, mayoreo y asignación son controles administrativos. */
+export const CUSTOMER_CONTROL_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+];
+
+export type CustomerCreateIntent = {
+    financialControls: boolean;
+    sellerAssignment: boolean;
+};
+
+/**
+ * El alta operativa admite la ficha básica. Cupo/mayoreo y asignación manual
+ * requieren administración; VENDEDOR es la única excepción de cartera porque
+ * el servidor ignora el destino solicitado y lo fuerza al usuario autenticado.
+ */
+export function isCustomerCreateAuthorized(
+    role: string | undefined,
+    intent: CustomerCreateIntent,
+): boolean {
+    const currentRole = role || '';
+    const canManageControls = CUSTOMER_CONTROL_ROLES.includes(currentRole);
+    return (!intent.financialControls || canManageControls)
+        && (!intent.sellerAssignment || currentRole === 'VENDEDOR' || canManageControls);
+}
+
+export function resolveCustomerSellerIdForCreate(
+    role: string | undefined,
+    userId: string,
+    requestedSellerId: string | null | undefined,
+): string | null | undefined {
+    if (role === 'VENDEDOR') return userId;
+    if (CUSTOMER_CONTROL_ROLES.includes(role || '')) return requestedSellerId;
+    return undefined;
+}
+
+export type CustomerUpdateIntent = {
+    identity: boolean;
+    contact: boolean;
+    controls: boolean;
+};
+
+/**
+ * Autoriza el payload completo antes de abrir la transacción. Si un solo grupo
+ * no está permitido, se rechaza todo el cambio para evitar actualizaciones
+ * parciales de contacto, identidad legal o controles financieros.
+ */
+export function isCustomerUpdateAuthorized(
+    role: string | undefined,
+    intent: CustomerUpdateIntent,
+): boolean {
+    const currentRole = role || '';
+    return (!intent.identity || CUSTOMER_IDENTITY_UPDATE_ROLES.includes(currentRole))
+        && (!intent.contact || CUSTOMER_CONTACT_UPDATE_ROLES.includes(currentRole))
+        && (!intent.controls || CUSTOMER_CONTROL_ROLES.includes(currentRole));
+}
+
+/** Registrar gestiones y promesas en la cartera propia o global. */
+export const CUSTOMER_INTERACTION_WRITE_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'CASHIER',
+    'VENDEDOR',
+];
+
+/** Registrar abonos: excluye explícitamente VIEWER/EMPLOYEE/BODEGUERO. */
+export const CUSTOMER_PAYMENT_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'CASHIER',
+    'VENDEDOR',
+];
+
 /** Lectura operativa de pedidos; VIEWER puede observar, nunca mutar. */
 export const PEDIDO_READ_ROLES = [
     'OWNER',

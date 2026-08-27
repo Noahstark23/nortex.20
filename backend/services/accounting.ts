@@ -356,9 +356,32 @@ export async function recordSale(
     );
 }
 
+export type CustomerPaymentMethod = 'CASH' | 'CARD' | 'TRANSFER' | 'QR';
+
+/** Construye el asiento del abono sin confundir cobros bancarios con efectivo. */
+export function buildPaymentJournalLines(amount: Decimal.Value, paymentMethod: CustomerPaymentMethod = 'CASH') {
+    let normalizedAmount: Decimal;
+    try {
+        normalizedAmount = new Decimal(amount);
+    } catch {
+        throw new Error('amount no es un monto decimal válido');
+    }
+    if (!normalizedAmount.isFinite() || !normalizedAmount.greaterThan(0)) {
+        throw new Error('amount debe ser finito y mayor que cero');
+    }
+    if (normalizedAmount.decimalPlaces() > 2 || normalizedAmount.greaterThan('99999999.99')) {
+        throw new Error('amount no cabe en el rango monetario permitido');
+    }
+    const settlementAccount = paymentMethod === 'CASH' ? '1.1.1' : '1.1.2';
+    return [
+        { accountCode: settlementAccount, debit: normalizedAmount.toNumber(), credit: 0 },
+        { accountCode: '1.1.3', debit: 0, credit: normalizedAmount.toNumber() },
+    ];
+}
+
 /**
  * PAGO DE CLIENTE (abono a crédito):
- *   Debe: Caja (1.1.1)
+ *   Debe: Caja (1.1.1) si es efectivo; Bancos (1.1.2) para tarjeta/transferencia/QR.
  *   Haber: Cuentas por Cobrar (1.1.3)
  */
 export async function recordPayment(
@@ -366,11 +389,11 @@ export async function recordPayment(
     tenantId: string,
     userId: string,
     paymentId: string,
-    amount: number
+    amount: Decimal.Value,
+    paymentMethod: CustomerPaymentMethod = 'CASH',
 ) {
     await createJournalEntry(tx, tenantId, `Abono a crédito #${paymentId.slice(0, 8)}`, paymentId, 'PAYMENT', userId, [
-        { accountCode: '1.1.1', debit: amount, credit: 0 },
-        { accountCode: '1.1.3', debit: 0, credit: amount },
+        ...buildPaymentJournalLines(amount, paymentMethod),
     ]);
 }
 

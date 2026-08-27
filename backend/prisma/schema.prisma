@@ -99,6 +99,7 @@ model Tenant {
   scaleDevices              ScaleDevice[]
   saleMeasurements          SaleMeasurement[]
   saleItemBatchAllocations  SaleItemBatchAllocation[]
+  customerInteractions      CustomerInteraction[]
 
   // HR Module
   leaveRequests          LeaveRequest[]
@@ -150,6 +151,7 @@ model User {
   scaleLabelProfileVersionsCreated ScaleLabelProfileVersion[] @relation("ScaleLabelProfileVersionCreator")
   scaleDevicesCreated              ScaleDevice[]              @relation("ScaleDeviceCreator")
   saleMeasurements                 SaleMeasurement[]          @relation("SaleMeasurementUser")
+  customerInteractionsCreated      CustomerInteraction[]      @relation("CustomerInteractionCreator")
 
   @@index([tenantId])
   // Retención: escaneo de usuarios activos por recencia de login (métricas admin
@@ -219,12 +221,39 @@ model Customer {
   tenant Tenant @relation(fields: [tenantId], references: [id])
   seller User?  @relation("CustomerSeller", fields: [sellerId], references: [id])
   sales  Sale[]
+  interactions CustomerInteraction[]
 
   loans Loan[]
 
   @@index([tenantId])
   // Filtro de cartera: GET /api/customers?sellerId=… — índice con su query.
   @@index([tenantId, sellerId])
+}
+
+/// Gestión comercial/cobranza persistida en la ficha del cliente. El texto es
+/// operativo y tenant-scoped; las bitácoras guardan solo metadatos, no su nota.
+model CustomerInteraction {
+  id             String    @id @default(cuid())
+  tenantId       String
+  customerId     String
+  type           String // NOTE | CALL | WHATSAPP | VISIT | PROMISE
+  note           String    @db.Text
+  status         String    @default("OPEN") // OPEN | COMPLETED | CANCELLED
+  promisedAmount Decimal?  @db.Decimal(18, 4)
+  promisedAt     DateTime?
+  followUpAt     DateTime?
+  completedAt    DateTime?
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  creator  User     @relation("CustomerInteractionCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, customerId, createdAt])
+  @@index([tenantId, status, followUpAt])
+  @@index([createdBy])
 }
 
 model Supplier {
@@ -845,11 +874,16 @@ model Payment {
   amount      Decimal  @db.Decimal(10, 2)
   method      String
   collectedBy String
+  // Opcional por compatibilidad histórica. Clientes nuevos lo envían y el
+  // índice evita cobrar dos veces ante retry/doble clic.
+  clientEventId String?  @db.VarChar(128)
+  payloadHash   String?  @db.VarChar(64)
   createdAt   DateTime @default(now())
 
   sale Sale @relation(fields: [saleId], references: [id])
   user User @relation(fields: [collectedBy], references: [id])
 
+  @@unique([saleId, clientEventId])
   @@index([saleId])
   // B1: el agregado de cobros del día recorre pagos por fecha (el tenant
   // viene por el join a Sale, que ya tiene su compuesto).

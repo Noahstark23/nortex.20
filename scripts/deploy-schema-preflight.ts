@@ -7,6 +7,7 @@ export const STOCK_COUNT_WAREHOUSE_INDEX = 'StockCount_warehouseId_idx';
 export const STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX = 'StockCount_tenantId_warehouseId_status_idx';
 export const STOCK_COUNT_WAREHOUSE_FOREIGN_KEY = 'StockCount_warehouseId_fkey';
 export const PRODUCT_RETURN_IDEMPOTENCY_INDEX = 'ProductReturn_tenantId_clientEventId_key';
+export const PAYMENT_IDEMPOTENCY_INDEX = 'Payment_saleId_clientEventId_key';
 
 // Identificadores internos y constantes: nunca contienen entrada del usuario.
 const WAREHOUSE_TABLE_SQL = Prisma.raw('`Warehouse`');
@@ -24,9 +25,12 @@ const STOCK_COUNT_WAREHOUSE_INDEX_SQL = Prisma.raw('`StockCount_warehouseId_idx`
 const STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX_SQL = Prisma.raw('`StockCount_tenantId_warehouseId_status_idx`');
 const STOCK_COUNT_WAREHOUSE_FOREIGN_KEY_SQL = Prisma.raw('`StockCount_warehouseId_fkey`');
 const PRODUCT_RETURN_TABLE_SQL = Prisma.raw('`ProductReturn`');
+const PAYMENT_TABLE_SQL = Prisma.raw('`Payment`');
 const CLIENT_EVENT_ID_COLUMN_SQL = Prisma.raw('`clientEventId`');
 const PAYLOAD_HASH_COLUMN_SQL = Prisma.raw('`payloadHash`');
 const PRODUCT_RETURN_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`ProductReturn_tenantId_clientEventId_key`');
+const PAYMENT_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`Payment_saleId_clientEventId_key`');
+const SALE_ID_COLUMN_SQL = Prisma.raw('`saleId`');
 
 export class UnsafeSchemaStateError extends Error {
     constructor(message: string) {
@@ -73,6 +77,8 @@ export type StockCountColumnRow = WarehouseSellerColumnRow;
 export type StockCountIndexRow = WarehouseSellerIndexRow;
 export type ProductReturnColumnRow = WarehouseSellerColumnRow;
 export type ProductReturnIndexRow = WarehouseSellerIndexRow;
+export type PaymentColumnRow = WarehouseSellerColumnRow;
+export type PaymentIndexRow = WarehouseSellerIndexRow;
 
 export interface StockCountForeignKeyRow {
     constraintName: string;
@@ -119,6 +125,12 @@ interface InvalidOpenWarehouseKeyRow {
 
 interface DuplicateProductReturnEventRow {
     tenantId: string;
+    clientEventId: string;
+    duplicateCount: number | bigint;
+}
+
+interface DuplicatePaymentEventRow {
+    saleId: string;
     clientEventId: string;
     duplicateCount: number | bigint;
 }
@@ -170,6 +182,18 @@ export function inspectProductReturnClientEventIdColumn(
 
 export function inspectProductReturnPayloadHashColumn(
     rows: ProductReturnColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 64);
+}
+
+export function inspectPaymentClientEventIdColumn(
+    rows: PaymentColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 128);
+}
+
+export function inspectPaymentPayloadHashColumn(
+    rows: PaymentColumnRow[],
 ): SchemaObjectState {
     return inspectNullableVarcharColumn(rows, 64);
 }
@@ -273,6 +297,17 @@ export function inspectProductReturnIdempotencyIndex(
     );
 }
 
+export function inspectPaymentIdempotencyIndex(
+    rows: PaymentIndexRow[],
+): SchemaObjectState {
+    return inspectExactIndex(
+        rows,
+        PAYMENT_IDEMPOTENCY_INDEX,
+        ['saleId', 'clientEventId'],
+        true,
+    );
+}
+
 async function readSellerColumn(db: DeploySchemaClient): Promise<WarehouseSellerColumnRow[]> {
     return db.query<WarehouseSellerColumnRow[]>(Prisma.sql`
         SELECT
@@ -339,6 +374,17 @@ async function productReturnTableExists(db: DeploySchemaClient): Promise<boolean
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'ProductReturn'
+        LIMIT 1
+    `);
+    return rows.length === 1;
+}
+
+async function paymentTableExists(db: DeploySchemaClient): Promise<boolean> {
+    const rows = await db.query<Array<{ tableName: string }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Payment'
         LIMIT 1
     `);
     return rows.length === 1;
@@ -537,6 +583,71 @@ async function readProductReturnIdempotencyIndex(
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'ProductReturn'
           AND INDEX_NAME = ${PRODUCT_RETURN_IDEMPOTENCY_INDEX}
+        ORDER BY SEQ_IN_INDEX
+    `);
+}
+
+async function readPaymentColumn(
+    db: DeploySchemaClient,
+    columnName: 'clientEventId' | 'payloadHash',
+): Promise<PaymentColumnRow[]> {
+    return db.query<PaymentColumnRow[]>(Prisma.sql`
+        SELECT
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Payment'
+          AND COLUMN_NAME = ${columnName}
+    `);
+}
+
+async function readPaymentSaleIdColumn(
+    db: DeploySchemaClient,
+): Promise<PaymentColumnRow[]> {
+    return db.query<PaymentColumnRow[]>(Prisma.sql`
+        SELECT
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Payment'
+          AND COLUMN_NAME = 'saleId'
+    `);
+}
+
+async function readPaymentIdempotencyIndex(
+    db: DeploySchemaClient,
+): Promise<PaymentIndexRow[]> {
+    return db.query<PaymentIndexRow[]>(Prisma.sql`
+        SELECT
+            INDEX_NAME AS indexName,
+            NON_UNIQUE AS nonUnique,
+            SEQ_IN_INDEX AS seqInIndex,
+            COLUMN_NAME AS columnName,
+            SUB_PART AS subPart,
+            INDEX_TYPE AS indexType,
+            IS_VISIBLE AS isVisible,
+            COLLATION AS collation,
+            EXPRESSION AS expression
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Payment'
+          AND INDEX_NAME = ${PAYMENT_IDEMPOTENCY_INDEX}
         ORDER BY SEQ_IN_INDEX
     `);
 }
@@ -1049,6 +1160,149 @@ export async function applyProductReturnSchemaPreflight(
     logger.info('Preflight DDL verificado: idempotencia de ProductReturn lista sin alterar históricos.');
 }
 
+async function assertPaymentEventsAreUnique(db: DeploySchemaClient): Promise<void> {
+    const duplicates = await db.query<DuplicatePaymentEventRow[]>(Prisma.sql`
+        SELECT saleId, clientEventId, COUNT(*) AS duplicateCount
+        FROM ${PAYMENT_TABLE_SQL}
+        WHERE clientEventId IS NOT NULL
+        GROUP BY saleId, clientEventId
+        HAVING COUNT(*) > 1
+        LIMIT 10
+    `);
+
+    if (duplicates.length === 0) return;
+
+    const detail = duplicates
+        .map(row => `${row.saleId}/${row.clientEventId} (${String(row.duplicateCount)})`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `Hay abonos con clientEventId duplicado; no se creará el índice único: ${detail}`,
+    );
+}
+
+type PaymentNullableColumn = 'clientEventId' | 'payloadHash';
+
+function inspectPaymentColumn(
+    columnName: PaymentNullableColumn,
+    rows: PaymentColumnRow[],
+): SchemaObjectState {
+    return columnName === 'clientEventId'
+        ? inspectPaymentClientEventIdColumn(rows)
+        : inspectPaymentPayloadHashColumn(rows);
+}
+
+async function ensurePaymentColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    columnName: PaymentNullableColumn,
+): Promise<void> {
+    const initialState = inspectPaymentColumn(
+        columnName,
+        await readPaymentColumn(db, columnName),
+    );
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `Payment.${columnName} existe con una definición incompatible; se requiere intervención manual.`,
+        );
+    }
+
+    if (initialState === 'missing') {
+        const length = columnName === 'clientEventId' ? 128 : 64;
+        logger.info(`Aplicando DDL seguro: Payment.${columnName} VARCHAR(${length}) NULL.`);
+        try {
+            if (columnName === 'clientEventId') {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${PAYMENT_TABLE_SQL}
+                    ADD COLUMN ${CLIENT_EVENT_ID_COLUMN_SQL} VARCHAR(128) NULL
+                `);
+            } else {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${PAYMENT_TABLE_SQL}
+                    ADD COLUMN ${PAYLOAD_HASH_COLUMN_SQL} VARCHAR(64) NULL
+                `);
+            }
+        } catch (error) {
+            const concurrentState = inspectPaymentColumn(
+                columnName,
+                await readPaymentColumn(db, columnName),
+            );
+            if (concurrentState !== 'valid') throw error;
+            logger.warn(`Payment.${columnName} fue creada concurrentemente; definición verificada.`);
+        }
+    }
+
+    const finalColumn = await readPaymentColumn(db, columnName);
+    if (inspectPaymentColumn(columnName, finalColumn) !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de Payment.${columnName}.`,
+        );
+    }
+
+    const saleIdColumn = await readPaymentSaleIdColumn(db);
+    if (!columnsUseSameEncoding(finalColumn, saleIdColumn)) {
+        throw new UnsafeSchemaStateError(
+            `Payment.${columnName} no usa el mismo charset/collation que Payment.saleId.`,
+        );
+    }
+}
+
+async function ensurePaymentIdempotencyIndex(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+): Promise<void> {
+    const initialState = inspectPaymentIdempotencyIndex(
+        await readPaymentIdempotencyIndex(db),
+    );
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${PAYMENT_IDEMPOTENCY_INDEX} existe con columnas u opciones incompatibles.`,
+        );
+    }
+
+    if (initialState === 'missing') {
+        logger.info(`Aplicando DDL seguro: índice único ${PAYMENT_IDEMPOTENCY_INDEX}.`);
+        try {
+            await db.execute(Prisma.sql`
+                CREATE UNIQUE INDEX ${PAYMENT_IDEMPOTENCY_INDEX_SQL}
+                ON ${PAYMENT_TABLE_SQL}(${SALE_ID_COLUMN_SQL}, ${CLIENT_EVENT_ID_COLUMN_SQL})
+            `);
+        } catch (error) {
+            if (inspectPaymentIdempotencyIndex(
+                await readPaymentIdempotencyIndex(db),
+            ) !== 'valid') {
+                await assertPaymentEventsAreUnique(db);
+                throw error;
+            }
+            logger.warn(`${PAYMENT_IDEMPOTENCY_INDEX} fue creado concurrentemente; definición verificada.`);
+        }
+    }
+
+    if (inspectPaymentIdempotencyIndex(
+        await readPaymentIdempotencyIndex(db),
+    ) !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${PAYMENT_IDEMPOTENCY_INDEX}.`,
+        );
+    }
+}
+
+export async function applyPaymentSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    if (!await paymentTableExists(db)) {
+        logger.info('Preflight DDL: Payment aún no existe; db push creará su schema completo.');
+        return;
+    }
+
+    await ensurePaymentColumn(db, logger, 'clientEventId');
+    await ensurePaymentColumn(db, logger, 'payloadHash');
+    await assertPaymentEventsAreUnique(db);
+    await ensurePaymentIdempotencyIndex(db, logger);
+    await assertPaymentEventsAreUnique(db);
+    logger.info('Preflight DDL verificado: idempotencia de Payment lista sin alterar históricos.');
+}
+
 /**
  * DDL expand-only que Prisma db push considera "data loss" aunque no borra filas.
  * Se ejecuta antes del db push normal y converge desde estados parciales.
@@ -1062,7 +1316,8 @@ export async function applyDeploySchemaPreflight(
     if (!await warehouseTableExists(db)) {
         const stockCountExists = await stockCountTableExists(db);
         const productReturnExists = await productReturnTableExists(db);
-        if (stockCountExists || productReturnExists) {
+        const paymentExists = await paymentTableExists(db);
+        if (stockCountExists || productReturnExists || paymentExists) {
             throw new UnsafeSchemaStateError(
                 'Hay tablas de negocio sin Warehouse; el schema parcial requiere intervención manual.',
             );
@@ -1078,4 +1333,5 @@ export async function applyDeploySchemaPreflight(
     logger.info('Preflight DDL verificado: Warehouse.sellerId e índice único listos.');
     await applyStockCountSchemaPreflight(db, logger);
     await applyProductReturnSchemaPreflight(db, logger);
+    await applyPaymentSchemaPreflight(db, logger);
 }
