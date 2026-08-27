@@ -7048,16 +7048,21 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             // el chequeo de factura duplicada.
             await tx.$queryRaw`SELECT id FROM \`Supplier\` WHERE id = ${supplierId} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
 
-            // ORDEN DE BLOQUEO: el turno se toma ACÁ, ANTES de los locks de
-            // Product del punto 3. La devolución en efectivo bloquea Shift y
-            // recién después toca el stock (Shift → Product); si la compra de
-            // contado tomara el turno al final (Product → Shift) las dos se
-            // deadlockearían sobre el mismo producto y la misma caja. El lock es
-            // reentrante: `registrarSalidaDeCajaPorCompra` lo vuelve a pedir y
-            // ya lo tiene. A crédito no hay salida de efectivo → no se bloquea.
-            if (turnoDeContado) {
-                await tx.$queryRaw`SELECT id FROM \`Shift\` WHERE id = ${turnoDeContado.id} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
-            }
+            // ORDEN DE BLOQUEO — Product ANTES que Shift, a propósito.
+            //
+            // El turno NO se bloquea acá: lo toma `registrarSalidaDeCajaPorCompra`
+            // en el punto 4, DESPUÉS de los locks de Product del punto 3. Ese es
+            // el mismo orden que usa la devolución en efectivo, que es la otra
+            // transacción del sistema que bloquea las dos tablas:
+            //   /api/returns:   Sale → Product (applyStockDelta) → Shift
+            //   /api/purchases: Supplier → Product → Shift
+            // Un intento anterior adelantó el lock del turno hasta acá creyendo
+            // que la devolución era Shift → Product. No lo es (el `FOR UPDATE`
+            // del turno vive dentro del bloque de reembolso CASH, después del
+            // bucle de stock), así que adelantarlo INVERTÍA el orden y abría el
+            // deadlock que pretendía cerrar: una devolución y una compra de
+            // contado del mismo producto, en el mismo turno, se trababan.
+            // Si algún día se cambia este orden, hay que cambiar los DOS lados.
 
             // Verificar propiedad del proveedor: nunca confiar en supplierId del body sin
             // scoping por tenant. Sin esto, el include: { supplier: true } filtraría PII
