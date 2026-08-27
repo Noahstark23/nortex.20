@@ -5,8 +5,10 @@ import {
     CUSTOMER_CONTACT_UPDATE_ROLES,
     CUSTOMER_CONTROL_ROLES,
     CUSTOMER_CREATE_ROLES,
+    CUSTOMER_HUB_READ_ROLES,
     CUSTOMER_IDENTITY_UPDATE_ROLES,
     CUSTOMER_READ_ROLES,
+    CUSTOMER_UPDATE_ROLES,
     isCustomerCreateAuthorized,
     isCustomerUpdateAuthorized,
     resolveCustomerSellerIdForCreate,
@@ -44,12 +46,29 @@ describe('autorizacion del modulo de clientes', () => {
         }
     });
 
+    it('separa el lookup básico del POS de la lectura rica de cartera', () => {
+        expect(CUSTOMER_HUB_READ_ROLES).toEqual([
+            'OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'CASHIER', 'VIEWER', 'VENDEDOR',
+        ]);
+        for (const role of CUSTOMER_HUB_READ_ROLES) {
+            expect(runGuard(CUSTOMER_HUB_READ_ROLES, role).next).toHaveBeenCalledOnce();
+        }
+
+        expect(runGuard(CUSTOMER_READ_ROLES, 'EMPLOYEE').next).toHaveBeenCalledOnce();
+        const employeeHub = runGuard(CUSTOMER_HUB_READ_ROLES, 'EMPLOYEE');
+        expect(employeeHub.next).not.toHaveBeenCalled();
+        expect(employeeHub.res.statusCode).toBe(403);
+    });
+
     it('reserva nombre y documento legal para roles administrativos', () => {
         expect(CUSTOMER_IDENTITY_UPDATE_ROLES).toEqual(['OWNER', 'ADMIN', 'SUPER_ADMIN']);
         expect(CUSTOMER_CONTACT_UPDATE_ROLES).toEqual([
             'OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'VENDEDOR',
         ]);
         expect(CUSTOMER_CONTROL_ROLES).toEqual(['OWNER', 'ADMIN', 'SUPER_ADMIN']);
+        expect(CUSTOMER_UPDATE_ROLES).toEqual([
+            'OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'VENDEDOR',
+        ]);
 
         for (const role of ['OWNER', 'ADMIN', 'SUPER_ADMIN']) {
             expect(isCustomerUpdateAuthorized(role, {
@@ -57,6 +76,15 @@ describe('autorizacion del modulo de clientes', () => {
                 contact: true,
                 controls: true,
             })).toBe(true);
+        }
+
+        for (const role of CUSTOMER_UPDATE_ROLES) {
+            expect(runGuard(CUSTOMER_UPDATE_ROLES, role).next).toHaveBeenCalledOnce();
+        }
+        for (const role of ['CASHIER', 'VIEWER', 'EMPLOYEE']) {
+            const update = runGuard(CUSTOMER_UPDATE_ROLES, role);
+            expect(update.next).not.toHaveBeenCalled();
+            expect(update.res.statusCode).toBe(403);
         }
     });
 
@@ -144,7 +172,15 @@ describe('autorizacion del modulo de clientes', () => {
     it('protege clientes y cobranza con guards y scope de cartera propia', () => {
         expect(server).toContain("app.post('/api/customers', authenticate, checkRole(CUSTOMER_CREATE_ROLES), validate(CreateCustomerSchema)");
         expect(server).toContain("app.get('/api/customers', authenticate, checkRole(CUSTOMER_READ_ROLES), async");
-        expect(server).toContain("app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_READ_ROLES), async");
+        for (const path of [
+            '/api/customers/hub',
+            '/api/customers/:id/hub',
+            '/api/credits/debtors',
+            '/api/collections/worklist',
+            '/api/customers/:id/statement',
+        ]) {
+            expect(server).toContain(`app.get('${path}', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async`);
+        }
         expect(server).toContain('function applySellerCustomerScope(authReq: AuthRequest, whereClause: Record<string, unknown>)');
         expect(server).toContain('function receivableCustomerScope(authReq: AuthRequest)');
         expect(server).toContain("where: applySellerCustomerScope(authReq, { id, tenantId })");
@@ -153,21 +189,36 @@ describe('autorizacion del modulo de clientes', () => {
     });
 
     it('clasifica el payload completo y devuelve 403 antes de abrir la transaccion', () => {
+        const schemaStart = server.indexOf('const UpdateCustomerSchema = z.object({');
+        const schemaEnd = server.indexOf('const CreateCustomerInteractionSchema', schemaStart);
+        const schema = server.slice(schemaStart, schemaEnd);
         const routeStart = server.indexOf("app.put('/api/customers/:id'");
         const routeEnd = server.indexOf("app.get('/api/sellers/:sellerId/catalog", routeStart);
         const route = server.slice(routeStart, routeEnd);
+        const roleGuard = route.indexOf('checkRole(CUSTOMER_UPDATE_ROLES)');
+        const validation = route.indexOf('validate(UpdateCustomerSchema)');
+        const handlerBody = route.indexOf('const authReq = req as AuthRequest;');
         const permissionGuard = route.indexOf('if (!isCustomerUpdateAuthorized(authReq.role');
         const transaction = route.indexOf('await prisma.$transaction');
+        const lookup = route.indexOf('await tx.customer.findFirst({ where: existingWhere })');
 
+        expect(schema).toContain('}).refine((value) => Object.values(value).some((field) => field !== undefined), {');
+        expect(schema).toContain("message: 'Indicá al menos un cambio'");
+        expect(schema).toContain("path: ['_form']");
+        expect(roleGuard).toBeGreaterThan(-1);
+        expect(validation).toBeGreaterThan(roleGuard);
+        expect(handlerBody).toBeGreaterThan(validation);
         expect(route).toContain('const wantsIdentityChange = [name, taxId].some((value) => value !== undefined);');
         expect(route).toContain('const wantsContactChange = [phone, email, address].some((value) => value !== undefined);');
         expect(route).toContain('const wantsControlChange = [creditLimit, isBlocked, isWholesale, sellerId].some((value) => value !== undefined);');
         expect(permissionGuard).toBeGreaterThan(-1);
         expect(transaction).toBeGreaterThan(permissionGuard);
+        expect(lookup).toBeGreaterThan(handlerBody);
         expect(route.slice(permissionGuard, transaction)).toContain("return res.status(403).json({ error: 'No tenés permiso para actualizar este cliente' });");
         expect(route).toContain('const existingWhere = applySellerCustomerScope(authReq, { id, tenantId: authReq.tenantId });');
         expect(route).toContain('const updateResult = await tx.customer.updateMany({ where: existingWhere, data });');
         expect(route).toContain("if (updateResult.count !== 1) throw new Error('CUSTOMER_NOT_FOUND');");
         expect(route).not.toContain('tx.customer.update({ where: { id }, data });');
+        expect(route).not.toContain('if (Object.keys(data).length === 0) return;');
     });
 });

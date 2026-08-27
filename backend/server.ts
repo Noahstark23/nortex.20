@@ -13,9 +13,11 @@ import bcrypt from 'bcryptjs';
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
 import {
     CUSTOMER_CREATE_ROLES,
+    CUSTOMER_HUB_READ_ROLES,
     CUSTOMER_INTERACTION_WRITE_ROLES,
     CUSTOMER_PAYMENT_ROLES,
     CUSTOMER_READ_ROLES,
+    CUSTOMER_UPDATE_ROLES,
     isCustomerCreateAuthorized,
     isCustomerUpdateAuthorized,
     QUOTATION_READ_ROLES,
@@ -1890,6 +1892,9 @@ const UpdateCustomerSchema = z.object({
     isBlocked: z.boolean().optional(),
     isWholesale: z.boolean().optional(),
     sellerId: z.string().min(1).nullable().optional(),
+}).refine((value) => Object.values(value).some((field) => field !== undefined), {
+    message: 'Indicá al menos un cambio',
+    path: ['_form'],
 });
 
 const CreateCustomerInteractionSchema = z.object({
@@ -2281,7 +2286,7 @@ app.get('/api/customers', authenticate, checkRole(CUSTOMER_READ_ROLES), async (r
     }
 });
 
-app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const segment = typeof req.query.segment === 'string' ? req.query.segment : 'all';
@@ -2329,7 +2334,7 @@ app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_READ_ROLES), asyn
     }
 });
 
-app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const { id } = req.params;
@@ -2696,7 +2701,7 @@ app.patch(
     },
 );
 
-app.put('/api/customers/:id', authenticate, validate(UpdateCustomerSchema), async (req: any, res: any) => {
+app.put('/api/customers/:id', authenticate, checkRole(CUSTOMER_UPDATE_ROLES), validate(UpdateCustomerSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
     const { name, taxId, phone, email, address, creditLimit, isBlocked, isWholesale, sellerId } = req.body;
@@ -2735,8 +2740,6 @@ app.put('/api/customers/:id', authenticate, validate(UpdateCustomerSchema), asyn
             if (isBlocked !== undefined) data.isBlocked = Boolean(isBlocked);
             if (isWholesale !== undefined) data.isWholesale = Boolean(isWholesale);
             if (sellerId !== undefined) data.sellerId = sellerId; // null = desasignar
-
-            if (Object.keys(data).length === 0) return;
 
             // Repetir tenant/cartera en el sink cierra la ventana entre el
             // lookup y la escritura si un admin reasigna al cliente en paralelo.
@@ -10142,7 +10145,7 @@ app.post('/api/quotations', authenticate, checkRole(QUOTATION_WRITE_ROLES), asyn
 // ==========================================
 
 // GET /api/credits/debtors - Clientes con deuda pendiente
-app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         // Buscar ventas a CRÉDITO con saldo pendiente > 0
@@ -10185,7 +10188,7 @@ app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_READ_ROLES), as
 
 // GET /api/collections/worklist - "Cobrar hoy" (Cobranza A1): deudas a crédito por
 // urgencia (vencidas primero) + KPIs de cobranza. dueSoonDays = ventana "por vencer".
-app.get('/api/collections/worklist', authenticate, checkRole(CUSTOMER_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/collections/worklist', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const dueSoonDays = Math.min(60, Math.max(1, parseInt(req.query.dueSoonDays) || 7));
@@ -10275,7 +10278,7 @@ app.get('/api/collections/worklist', authenticate, checkRole(CUSTOMER_READ_ROLES
 
 // GET /api/customers/:id/statement - Estado de cuenta del cliente (Cobranza A2):
 // facturas a crédito con saldo/abonos + aging + totales. Para imprimir/enviar.
-app.get('/api/customers/:id/statement', authenticate, checkRole(CUSTOMER_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/customers/:id/statement', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const { id } = req.params;
@@ -10367,13 +10370,11 @@ async function registerCreditPayment(req: any, res: any) {
     const { saleId, amount, clientEventId } = req.body;
     const method = req.body.method || 'CASH';
     const paymentAmount = new Decimal(amount).toDecimalPlaces(2);
-    const payloadHash = clientEventId
-        ? crypto.createHash('sha256').update(JSON.stringify({
-            saleId,
-            amount: paymentAmount.toFixed(2),
-            method,
-        })).digest('hex')
-        : null;
+    const payloadHash = crypto.createHash('sha256').update(JSON.stringify({
+        saleId,
+        amount: paymentAmount.toFixed(2),
+        method,
+    })).digest('hex');
 
     try {
         const result = await prisma.$transaction(async (tx: any) => {
@@ -10408,16 +10409,14 @@ async function registerCreditPayment(req: any, res: any) {
                 throw new Error('PAYMENT_SALE_NOT_FOUND');
             }
 
-            if (clientEventId) {
-                const replay = await tx.payment.findFirst({
-                    where: { saleId, clientEventId },
-                });
-                if (replay) {
-                    if (!replay.payloadHash || replay.payloadHash !== payloadHash) {
-                        throw new Error('PAYMENT_IDEMPOTENCY_CONFLICT');
-                    }
-                    return { replayed: true, paymentId: replay.id };
+            const replay = await tx.payment.findFirst({
+                where: { saleId, clientEventId },
+            });
+            if (replay) {
+                if (!replay.payloadHash || replay.payloadHash !== payloadHash) {
+                    throw new Error('PAYMENT_IDEMPOTENCY_CONFLICT');
                 }
+                return { replayed: true, paymentId: replay.id };
             }
 
             if (lockedSale.paymentMethod !== 'CREDIT') throw new Error('PAYMENT_NOT_CREDIT');
@@ -10432,7 +10431,7 @@ async function registerCreditPayment(req: any, res: any) {
                     amount: paymentAmount.toFixed(2),
                     method,
                     collectedBy: authReq.userId!,
-                    clientEventId: clientEventId ?? null,
+                    clientEventId,
                     payloadHash,
                 },
             });
@@ -10473,7 +10472,7 @@ async function registerCreditPayment(req: any, res: any) {
                         saleId,
                         customerId: lockedSale.customerId,
                         paymentId: payment.id,
-                        clientEventId: clientEventId ?? null,
+                        clientEventId,
                         amount: paymentAmount.toFixed(2),
                         balanceBefore: balanceBefore.toFixed(2),
                         balanceAfter: balanceAfter.toFixed(2),

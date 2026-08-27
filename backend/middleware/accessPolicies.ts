@@ -15,7 +15,7 @@ export const POS_SALE_ROLES = [
     'VENDEDOR',
 ];
 
-/** Clientes: lectura operativa desde CRM/POS. */
+/** Lookup básico de clientes en POS; EMPLOYEE lo necesita para facturar. */
 export const CUSTOMER_READ_ROLES = [
     'OWNER',
     'ADMIN',
@@ -24,6 +24,17 @@ export const CUSTOMER_READ_ROLES = [
     'CASHIER',
     'VIEWER',
     'EMPLOYEE',
+    'VENDEDOR',
+];
+
+/** Hub, cartera y cobranza: refleja los roles con `customers:read`. */
+export const CUSTOMER_HUB_READ_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'CASHIER',
+    'VIEWER',
     'VENDEDOR',
 ];
 
@@ -59,6 +70,15 @@ export const CUSTOMER_CONTROL_ROLES = [
     'OWNER',
     'ADMIN',
     'SUPER_ADMIN',
+];
+
+/** Entrada al PUT; la autorización fina por grupo se aplica después. */
+export const CUSTOMER_UPDATE_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'VENDEDOR',
 ];
 
 export type CustomerCreateIntent = {

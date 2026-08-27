@@ -15,7 +15,7 @@ type ApiResult<T = any> = {
     body: T;
 };
 
-type OperationalRole = 'MANAGER' | 'VENDEDOR' | 'CASHIER';
+type OperationalRole = 'MANAGER' | 'VENDEDOR' | 'CASHIER' | 'EMPLOYEE';
 
 type Session = {
     token: string;
@@ -28,6 +28,7 @@ let owner: Session;
 let manager: Session;
 let seller: Session;
 let cashier: Session;
+let employee: Session;
 let foreignOwner: Session;
 
 let managerCustomerId = '';
@@ -127,6 +128,7 @@ qaDescribe('QA integración: clientes, cartera y cobranza', () => {
         manager = await inviteAndAccept('MANAGER', 'Gerencia QA');
         seller = await inviteAndAccept('VENDEDOR', 'Ventas QA');
         cashier = await inviteAndAccept('CASHIER', 'Caja QA');
+        employee = await inviteAndAccept('EMPLOYEE', 'Operación POS QA');
         foreignOwner = await registerTenant('Aislado');
     }, 120_000);
 
@@ -213,6 +215,18 @@ qaDescribe('QA integración: clientes, cartera y cobranza', () => {
         ]));
         expect(managerIds).not.toContain(foreignCustomerId);
 
+        const employeeBasicLookup = await get<any[]>('/api/customers', employee.token);
+        expectStatus(employeeBasicLookup, 200);
+        for (const richPath of [
+            '/api/customers/hub',
+            `/api/customers/${managerCustomerId}/hub`,
+            '/api/credits/debtors',
+            '/api/collections/worklist',
+            `/api/customers/${managerCustomerId}/statement`,
+        ]) {
+            expectStatus(await get(richPath, employee.token), 403);
+        }
+
         expectStatus(await get(`/api/customers/${managerCustomerId}/hub`, seller.token), 404);
         expectStatus(await get(`/api/customers/${managerCustomerId}/hub`, foreignOwner.token), 404);
         expectStatus(await get(`/api/customers/${foreignCustomerId}/hub`, owner.token), 404);
@@ -224,6 +238,11 @@ qaDescribe('QA integración: clientes, cartera y cobranza', () => {
     }, 60_000);
 
     it('permite contacto a MANAGER/VENDEDOR, rechaza identidad y deja el payload mixto sin aplicar', async () => {
+        const emptyUpdate = await put(`/api/customers/no-existe-${runId}`, {}, manager.token);
+        expectStatus(emptyUpdate, 400);
+        expect(emptyUpdate.body.error).toBe('Datos de entrada inválidos');
+        expect(emptyUpdate.body.details?._form).toContain('Indicá al menos un cambio');
+
         const managerContact = {
             phone: '0000-3101',
             email: `contacto-manager-${runId}@example.invalid`,
@@ -381,6 +400,17 @@ qaDescribe('QA integración: clientes, cartera y cobranza', () => {
         expect(Number(sale.body.balance)).toBe(100);
         expect(sale.body.status).toBe('CREDIT_PENDING');
         const saleId = sale.body.id;
+
+        for (const endpoint of ['/api/credits/payment', '/api/payments']) {
+            const paymentWithoutIdempotencyKey = await post(endpoint, {
+                saleId,
+                amount: '1.00',
+                method: 'TRANSFER',
+            }, seller.token);
+            expectStatus(paymentWithoutIdempotencyKey, 400);
+            expect(paymentWithoutIdempotencyKey.body.error).toBe('Datos de entrada inválidos');
+            expect(paymentWithoutIdempotencyKey.body.details?.clientEventId).toBeDefined();
+        }
 
         const foreignPayment = await post('/api/credits/payment', {
             saleId,
