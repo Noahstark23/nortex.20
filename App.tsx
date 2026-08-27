@@ -5,6 +5,7 @@ import { VentaEnCursoProvider } from './components/VentaEnCursoContext';
 import { trackPageView } from './utils/analytics';
 import { homePathFor } from './utils/navigation';
 import { currentSessionRole } from './utils/roleCapabilities';
+import PwaUpdateNotice from './components/PwaUpdateNotice';
 
 // ── Camino crítico EAGER: login, registro y la primera pantalla post-login.
 // Solo esto entra al bundle inicial — es lo que un usuario NUEVO necesita
@@ -315,6 +316,7 @@ function App() {
           <Route path="/app/*" element={<ProtectedApp />} />
         </Routes>
       </Suspense>
+      <PwaUpdateNotice />
     </BrowserRouter>
   );
 }

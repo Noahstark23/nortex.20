@@ -273,9 +273,24 @@ ${typeof data.change === 'number' ? `<div style="font-size:10px"><strong>Vuelto:
 }
 
 export function printTicket(data: InvoiceData): boolean {
-    // El ticket 80 mm del POS ya está montado en el DOM actual mediante
-    // <ReceiptTicket />. Imprimir desde la misma página evita depender de
-    // popups, que fallan en varios WebViews/PWAs aunque el click sea real.
+    if (typeof window === 'undefined') return false;
+
+    // La ventana se abre dentro del click del usuario y recibe un documento
+    // autocontenido. Así el ticket no hereda estados invisibles ni estilos del
+    // POS. Si el navegador bloquea el popup, conservamos la ruta same-page que
+    // funciona en WebViews/PWAs; el caller muestra un único aviso solo si ambas
+    // rutas fallan.
+    try {
+        if (openPrintWindow(buildTicket80mmHtml(data), false)) return true;
+    } catch {
+        // El documento actual sigue siendo una salida segura si el popup no se
+        // pudo preparar, incluso cuando window.open lanzó en vez de retornar null.
+    }
+
+    return printTicketInCurrentDocument(data);
+}
+
+function printTicketInCurrentDocument(data: InvoiceData): boolean {
     if (typeof document === 'undefined' || typeof window.print !== 'function') return false;
     const receipt = document.getElementById('receipt-area');
     const content = receipt?.firstElementChild as HTMLElement | null;
@@ -432,10 +447,15 @@ export function printA4(data: InvoiceData) {
 // =============================
 // Helper: Open Print Window
 // =============================
-function openPrintWindow(html: string): boolean {
-    const printWindow = window.open('', '_blank', 'width=800,height=600');
+function openPrintWindow(html: string, alertWhenBlocked = true): boolean {
+    let printWindow: Window | null = null;
+    try {
+        printWindow = window.open('', '_blank', 'width=800,height=600');
+    } catch {
+        // Algunos WebViews lanzan SecurityError en vez de retornar null.
+    }
     if (!printWindow) {
-        alert('Permite ventanas emergentes para imprimir.');
+        if (alertWhenBlocked) alert('Permite ventanas emergentes para imprimir.');
         return false;
     }
     let printScheduled = false;
