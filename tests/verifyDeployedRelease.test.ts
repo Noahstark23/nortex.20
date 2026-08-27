@@ -67,4 +67,38 @@ describe('verificación post-deploy por commit', () => {
             fetchImpl,
         })).rejects.toThrow(`COMMIT_MISMATCH:old`);
     });
+
+    it('mantiene ocho minutos de reintentos aunque reciba respuestas inmediatas', async () => {
+        const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 503 });
+        const sleep = vi.fn().mockResolvedValue(undefined);
+
+        await expect(waitForExpectedRelease({
+            baseUrl: 'https://staging.somosnortex.com',
+            expectedCommit: SHA,
+            fetchImpl,
+            sleep,
+        })).rejects.toThrow('HTTP_503');
+
+        expect(fetchImpl).toHaveBeenCalledTimes(97);
+        expect(sleep).toHaveBeenCalledTimes(96);
+        expect(sleep).toHaveBeenCalledWith(5_000);
+    });
+
+    it('no intenta parsear como JSON una respuesta HTTP no exitosa', async () => {
+        const response = new Response('Service Unavailable', {
+            status: 503,
+            headers: { 'content-type': 'text/plain' },
+        });
+        const json = vi.spyOn(response, 'json');
+        const fetchImpl = vi.fn().mockResolvedValue(response);
+
+        await expect(waitForExpectedRelease({
+            baseUrl: 'https://somosnortex.com',
+            expectedCommit: SHA,
+            attempts: 1,
+            fetchImpl,
+        })).rejects.toThrow('HTTP_503');
+
+        expect(json).not.toHaveBeenCalled();
+    });
 });
