@@ -50,12 +50,11 @@ const PISO_MUTANTES = {
     // no había aserción honesta que los distinguiera porque cualquier valor
     // distinto de 'PACK' se trata como BASE. Menos mutantes, mayor señal.
     'utils/pricing.ts': 51,
-    // margen.ts entró con NX-01/02/03 (ganancia bruta real, retiro seguro y
-    // efectivo del turno): 66 mutantes, score medido 100.00% — sin
-    // sobrevivientes. El 15% de IVA se construye DENTRO de la función a
+    // margen.ts cubre ganancia bruta real, retiro seguro, efectivo del turno y
+    // el ingreso de CUOTA_FIJA: 70/70 mutantes detectados. El 15% de IVA se construye DENTRO de la función a
     // propósito: como constante de módulo su mutante sobrevivía siempre
     // (se evalúa al importar, antes de que Stryker active el mutante).
-    'utils/margen.ts': 66,
+    'utils/margen.ts': 70,
     // stockAlert.ts entró con el aviso de existencias del carrito: 110 mutantes,
     // score medido 99.09%. No es dinero, es inventario — pero es la misma clase
     // de número que el dueño verifica a ojo contra la góndola, y un aviso falso
@@ -100,9 +99,10 @@ const PISO_MUTANTES = {
     'backend/lib/purchaseOrderAvailability.ts': 16,
     // Telemetría de rechazo sin barcode crudo: 31/31.
     'backend/lib/scaleLabelTelemetry.ts': 31,
-    // Huella canónica del replay offline: 54/54. Incluye identidad económica,
-    // mediciones y privacidad (solo SHA-256 del código; nunca código crudo).
-    'backend/lib/offlineSaleReplay.ts': 54,
+    // Huella canónica del replay offline: 58/58. Incluye identidad económica,
+    // versión fiscal observada, mediciones y privacidad (solo SHA-256 del
+    // código; nunca código crudo).
+    'backend/lib/offlineSaleReplay.ts': 58,
     // Escape de HTML + CSP con nonce acotado para vistas fiscales: 27/27.
     'backend/lib/htmlSecurity.ts': 27,
     // saleCancellation.ts: las reglas de ANULACIÓN de comprobantes (DGI-5).
@@ -144,7 +144,12 @@ const PISO_MUTANTES = {
     // un monto topado. Entra por rangos: las constantes de módulo y
     // calculateLaborLiability (llama `new Date()`) quedan fuera — ver el config.
     'backend/services/nicaLabor.ts': 106,
-    'backend/services/nicaTax.ts': 7,
+    // Desglose histórico + agregación mensual GENERAL/CUOTA_FIJA: 46/46.
+    'backend/services/nicaTax.ts': 46,
+    // Régimen fiscal puro: normalización, conflicto de versión (incluido el
+    // cliente legacy tras un cambio) y desglose autoritativo GENERAL/CUOTA_FIJA.
+    // 42/42 mutantes detectados.
+    'utils/fiscalRegime.ts': 42,
     // sellerReport.ts: fold puro del reporte por vendedor (cuánto vende y
     // cuánto cobra cada quien — el número con el que el dueño paga o reclama).
     // 59 mutantes, score medido 100.00%.
@@ -158,7 +163,8 @@ const PISO_MUTANTES = {
     // anticipado.
     'backend/services/stripe.ts': 13,
     'backend/services/stockService.ts': 5,
-    'backend/services/accounting.ts': 18,
+    // Asientos puros de venta, compra y devolución: 109/109 mutantes detectados.
+    'backend/services/accounting.ts': 109,
     // supplierPayment.ts entra por sus DOS funciones puras (93-138): si la caja
     // del turno alcanza para pagarle al proveedor, y cuánto efectivo hay de
     // verdad en la gaveta. 19 mutantes, score medido 100.00%. Lo que protege es

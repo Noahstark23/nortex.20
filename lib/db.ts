@@ -184,6 +184,12 @@ export interface OfflineSale {
     paymentMethod: string;
     total: number;
     globalDiscount: number;
+    /**
+     * Versión fiscal observada al cobrar. El régimen NO viaja como autoridad:
+     * durante el sync el backend compara esta versión con la vigente y manda a
+     * conciliación si cambió, en vez de reinterpretar una factura entregada.
+     */
+    fiscalRegimeVersion: number;
     items: OfflineCartItem[];
     createdAt: string;          // ISO string
     // 0 = pendiente, 1 = sincronizada. NÚMERO, no booleano: IndexedDB no
@@ -238,6 +244,9 @@ export function generateOfflineId(): string {
 }
 
 export async function saveSaleOffline(sale: Omit<OfflineSale, 'synced'>): Promise<void> {
+    if (!Number.isSafeInteger(sale.fiscalRegimeVersion) || sale.fiscalRegimeVersion < 1) {
+        throw new Error('La venta offline necesita una versión fiscal válida');
+    }
     for (const item of sale.items) {
         parseQuantity(item.quantity);
         if (item.measurement?.source === 'SCALE_LABEL') {

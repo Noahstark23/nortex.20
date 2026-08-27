@@ -11,6 +11,11 @@
 import Decimal from 'decimal.js';
 import { generateMonthlyReport, desglosarVentaConExoneracion, fiscalMonthRange } from './nicaTax';
 import prisma from '../lib/prisma';
+import {
+    FISCAL_REGIME_GENERAL,
+    resolveSaleFiscalAmounts,
+    type FiscalRegime,
+} from '../../utils/fiscalRegime';
 
 // Configuración global: 20 dígitos significativos, redondeo HALF_UP (DGI)
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
@@ -253,36 +258,57 @@ export async function createJournalEntry(
  * la parte NO exonerada (canasta básica/medicinas quedan sin IVA que separar).
  */
 export function buildSaleJournalLines(
-    saleTotal: number,
-    costTotal: number,
+    saleTotal: Decimal.Value,
+    costTotal: Decimal.Value,
     paymentMethod: string,
-    exemptTotal?: number | null
+    exemptTotal?: Decimal.Value | null,
+    fiscalSnapshot: {
+        fiscalRegime?: FiscalRegime | string | null;
+        vatAmount?: Decimal.Value | null;
+    } = {},
 ): { accountCode: string; debit: number; credit: number }[] {
     const desglose = desglosarVentaConExoneracion(saleTotal, exemptTotal ?? 0);
+    const fiscalAmounts = resolveSaleFiscalAmounts(
+        saleTotal,
+        fiscalSnapshot.vatAmount ?? desglose.iva,
+        fiscalSnapshot.fiscalRegime ?? FISCAL_REGIME_GENERAL,
+    );
+    const normalizedTotal = fiscalAmounts.netRevenue.plus(fiscalAmounts.vatAmount);
+    const normalizedCost = new Decimal(costTotal).toDecimalPlaces(4);
+    if (!normalizedCost.isFinite() || normalizedCost.isNegative()) {
+        throw new Error('El costo de venta debe ser finito y no negativo');
+    }
     const cashAccount = paymentMethod === 'CREDIT' ? '1.1.3' : '1.1.1'; // CxC vs Caja
     return [
-        { accountCode: cashAccount, debit: saleTotal, credit: 0 },
-        { accountCode: '4.1.1', debit: 0, credit: desglose.ingresoNeto.toNumber() },
-        { accountCode: '2.1.2', debit: 0, credit: desglose.iva.toNumber() },
-        { accountCode: '5.1.1', debit: costTotal, credit: 0 },
-        { accountCode: '1.1.4', debit: 0, credit: costTotal },
+        { accountCode: cashAccount, debit: normalizedTotal.toNumber(), credit: 0 },
+        { accountCode: '4.1.1', debit: 0, credit: fiscalAmounts.netRevenue.toNumber() },
+        { accountCode: '2.1.2', debit: 0, credit: fiscalAmounts.vatAmount.toNumber() },
+        { accountCode: '5.1.1', debit: normalizedCost.toNumber(), credit: 0 },
+        { accountCode: '1.1.4', debit: 0, credit: normalizedCost.toNumber() },
     ];
 }
 
 /** Contrato puro usado por recordSale; mantiene fecha economica online/offline. */
 export function buildSaleJournalRequest(
     saleId: string,
-    saleTotal: number,
-    costTotal: number,
+    saleTotal: Decimal.Value,
+    costTotal: Decimal.Value,
     paymentMethod: string,
-    exemptTotal?: number | null,
-    opts?: { date?: Date },
+    exemptTotal?: Decimal.Value | null,
+    opts?: {
+        date?: Date;
+        fiscalRegime?: FiscalRegime | string | null;
+        vatAmount?: Decimal.Value | null;
+    },
 ) {
     return {
         description: paymentMethod === 'CREDIT'
             ? `Venta a crédito #${saleId.slice(0, 8)}`
             : `Venta de contado #${saleId.slice(0, 8)}`,
-        lines: buildSaleJournalLines(saleTotal, costTotal, paymentMethod, exemptTotal),
+        lines: buildSaleJournalLines(saleTotal, costTotal, paymentMethod, exemptTotal, {
+            fiscalRegime: opts?.fiscalRegime,
+            vatAmount: opts?.vatAmount,
+        }),
         entryOptions: opts?.date ? { date: opts.date } : undefined,
     };
 }
@@ -297,14 +323,18 @@ export async function recordSale(
     tenantId: string,
     userId: string,
     saleId: string,
-    saleTotal: number,
-    costTotal: number,
+    saleTotal: Decimal.Value,
+    costTotal: Decimal.Value,
     paymentMethod: string,
     // T2 — porción EXONERADA del total (canasta básica, medicamentos…). Opcional:
     // si no viene (o es null), la venta se trata como 100% GRAVADA, que es el
     // comportamiento histórico. Así las llamadas viejas siguen funcionando igual.
-    exemptTotal?: number | null,
-    opts?: { date?: Date },
+    exemptTotal?: Decimal.Value | null,
+    opts?: {
+        date?: Date;
+        fiscalRegime?: FiscalRegime | string | null;
+        vatAmount?: Decimal.Value | null;
+    },
 ) {
     // IVA Nicaragua 15% SOLO sobre la parte gravada (misma función pura que usa
     // la declaración mensual → el mayor y el VET no pueden discrepar). Antes se
@@ -354,21 +384,67 @@ export async function recordPurchase(
     tenantId: string,
     userId: string,
     purchaseId: string,
-    total: number,
-    tax: number,
-    paymentMethod: string
+    total: Decimal.Value,
+    tax: Decimal.Value,
+    paymentMethod: string,
+    creditableTax?: Decimal.Value | null,
 ) {
-    const subtotal = new Decimal(total).minus(tax).toDecimalPlaces(4).toNumber();
-    const creditAccount = paymentMethod === 'CREDIT' ? '2.1.1' : '1.1.1';
     const description = paymentMethod === 'CREDIT'
         ? `Compra a crédito #${purchaseId.slice(0, 8)}`
         : `Compra de contado #${purchaseId.slice(0, 8)}`;
 
-    await createJournalEntry(tx, tenantId, description, purchaseId, 'PURCHASE', userId, [
-        { accountCode: '1.1.4', debit: subtotal, credit: 0 },       // Inventario ↑
-        { accountCode: '1.1.5', debit: tax, credit: 0 },            // IVA Crédito ↑
-        { accountCode: creditAccount, debit: 0, credit: total },     // Caja ↓ o CxP ↑
-    ]);
+    await createJournalEntry(
+        tx,
+        tenantId,
+        description,
+        purchaseId,
+        'PURCHASE',
+        userId,
+        buildPurchaseJournalLines(total, tax, paymentMethod, creditableTax),
+    );
+}
+
+/**
+ * Líneas puras de compra. `creditableTax == null` conserva el contrato legacy:
+ * todo `tax` es crédito fiscal. CUOTA_FIJA pasa cero explícito, por lo que ese
+ * impuesto se capitaliza como parte del costo del inventario.
+ */
+export function buildPurchaseJournalLines(
+    total: Decimal.Value,
+    tax: Decimal.Value,
+    paymentMethod: string,
+    creditableTax?: Decimal.Value | null,
+): { accountCode: string; debit: number; credit: number }[] {
+    const normalizedTotal = new Decimal(total).toDecimalPlaces(4);
+    const normalizedTax = new Decimal(tax).toDecimalPlaces(4);
+    const effectiveCreditableTax = new Decimal(
+        creditableTax == null ? normalizedTax : creditableTax,
+    ).toDecimalPlaces(4);
+    if (!normalizedTotal.isFinite() || normalizedTotal.isNegative()) {
+        throw new Error('El total de compra debe ser finito y no negativo');
+    }
+    if (
+        !normalizedTax.isFinite()
+        || normalizedTax.isNegative()
+        || normalizedTax.greaterThan(normalizedTotal)
+    ) {
+        throw new Error('El IVA de compra debe estar entre cero y el total de compra');
+    }
+    if (
+        !effectiveCreditableTax.isFinite()
+        || effectiveCreditableTax.isNegative()
+        || effectiveCreditableTax.greaterThan(normalizedTax)
+    ) {
+        throw new Error('El crédito fiscal debe estar entre cero y el IVA de compra');
+    }
+
+    const inventoryCost = normalizedTotal.minus(effectiveCreditableTax).toDecimalPlaces(4);
+    const creditAccount = paymentMethod === 'CREDIT' ? '2.1.1' : '1.1.1';
+    return [
+        { accountCode: '1.1.4', debit: inventoryCost.toNumber(), credit: 0 },
+        { accountCode: '1.1.5', debit: effectiveCreditableTax.toNumber(), credit: 0 },
+        { accountCode: creditAccount, debit: 0, credit: normalizedTotal.toNumber() },
+    ];
 }
 
 /**
@@ -618,6 +694,8 @@ export interface ReturnJournalInput {
     costTotal: Decimal.Value;
     /** Porción del reembolso correspondiente a líneas exoneradas de IVA. */
     exemptTotal?: Decimal.Value | null;
+    /** Foto del régimen de la venta original; ausente = GENERAL legacy. */
+    fiscalRegime?: FiscalRegime | string | null;
     /** Saldo pendiente que se cancela contra Cuentas por Cobrar. */
     creditReduction: Decimal.Value;
     /** Importe ya cobrado que se devuelve por el canal de liquidación. */
@@ -665,10 +743,15 @@ export function buildReturnJournalLines(input: ReturnJournalInput): ReturnJourna
     }
 
     const desglose = desglosarVentaConExoneracion(total, exemptTotal);
+    const fiscalAmounts = resolveSaleFiscalAmounts(
+        total,
+        desglose.iva,
+        input.fiscalRegime ?? FISCAL_REGIME_GENERAL,
+    );
     const settlementAccount = input.refundMethod === 'CASH' ? '1.1.1' : '1.1.2';
     return [
-        { accountCode: '4.1.2', debit: desglose.ingresoNeto.toNumber(), credit: 0 },
-        { accountCode: '2.1.2', debit: desglose.iva.toNumber(), credit: 0 },
+        { accountCode: '4.1.2', debit: fiscalAmounts.netRevenue.toNumber(), credit: 0 },
+        { accountCode: '2.1.2', debit: fiscalAmounts.vatAmount.toNumber(), credit: 0 },
         { accountCode: '1.1.4', debit: costTotal.toNumber(), credit: 0 },
         { accountCode: '1.1.3', debit: 0, credit: creditReduction.toNumber() },
         { accountCode: settlementAccount, debit: 0, credit: settledRefund.toNumber() },
@@ -693,6 +776,7 @@ export async function recordReturn(
     costTotal: number,
     options: {
         exemptTotal?: Decimal.Value | null;
+        fiscalRegime?: FiscalRegime | string | null;
         creditReduction?: Decimal.Value;
         settledRefund?: Decimal.Value;
         refundMethod?: 'CASH' | 'CARD' | 'QR' | 'TRANSFER';
@@ -710,6 +794,7 @@ export async function recordReturn(
         total: dTotal,
         costTotal,
         exemptTotal: options.exemptTotal,
+        fiscalRegime: options.fiscalRegime,
         creditReduction,
         settledRefund,
         refundMethod,

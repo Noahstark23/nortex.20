@@ -31,6 +31,12 @@ import {
     offlineReplayPayloadHash,
     type OfflineReplaySaleInput,
 } from '../lib/offlineSaleReplay.js';
+import { desglosarVentaConExoneracion } from './nicaTax.js';
+import {
+    hasFiscalRegimeVersionConflict,
+    normalizeFiscalRegime,
+    resolveSaleFiscalAmounts,
+} from '../../utils/fiscalRegime.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -67,6 +73,19 @@ export class SaleError extends Error {
         this.name = 'SaleError';
     }
 }
+
+export const assertOfflineFiscalRegimeVersion = (
+    offlineSync: boolean,
+    observedVersion: number | null | undefined,
+    currentVersion: number,
+): void => {
+    if (!offlineSync || !hasFiscalRegimeVersionConflict(observedVersion, currentVersion)) return;
+    throw new SaleError(
+        'RECONCILIATION_REQUIRED',
+        409,
+        'El régimen fiscal cambió desde que se preparó la venta; requiere conciliación',
+    );
+};
 
 const quantityInput = z
     .union([z.string(), z.number()])
@@ -150,6 +169,10 @@ export const CreateSaleSchema = z.object({
     globalDiscount: percentageInput.optional().default('0'),
     source: z.enum(['POS', 'WHATSAPP', 'PUBLIC_ORDER', 'OFFLINE_SYNC']).default('POS'),
     offlineId: z.string().trim().min(1).max(191).optional(),
+    // Solo OFFLINE_SYNC compara esta foto con la versión autoritativa del tenant.
+    // Las ventas online aceptan el campo por compatibilidad, pero nunca deciden
+    // su régimen a partir del cliente.
+    fiscalRegimeVersion: z.number().int().positive().optional(),
 });
 
 type CreateSaleInput = z.output<typeof CreateSaleSchema>;
@@ -564,6 +587,27 @@ export async function executeSaleWithResult(
                 if (!shift) throw new SaleError('NO_SHIFT', 400, 'Turno offline ajeno, de otro usuario o inexistente');
             }
 
+            // Una sola lectura autoritativa dentro de la transacción: el régimen
+            // nunca viene del cliente y se congela junto con la venta.
+            const tenantConfig = await tx.tenant.findUnique({
+                where: { id: tenantId },
+                select: {
+                    allowNegativeStock: true,
+                    fiscalRegime: true,
+                    fiscalRegimeVersion: true,
+                },
+            });
+            if (!tenantConfig) {
+                throw new SaleError('INVALID_INPUT', 404, 'Negocio no encontrado');
+            }
+            assertOfflineFiscalRegimeVersion(
+                offlineSync,
+                input.fiscalRegimeVersion,
+                tenantConfig.fiscalRegimeVersion,
+            );
+            const fiscalRegime = normalizeFiscalRegime(tenantConfig.fiscalRegime);
+            const enforceStock = !offlineSync && !tenantConfig.allowNegativeStock;
+
             let customer = null as Awaited<ReturnType<typeof tx.customer.findFirst>>;
             if (input.customerId) {
                 customer = await tx.customer.findFirst({
@@ -650,6 +694,12 @@ export async function executeSaleWithResult(
                 new Decimal(0),
             );
             const exemptTotal = exemptSubtotal.mul(globalFactor).toDecimalPlaces(2);
+            const generalBreakdown = desglosarVentaConExoneracion(finalTotal, exemptTotal);
+            const fiscalAmounts = resolveSaleFiscalAmounts(
+                finalTotal,
+                generalBreakdown.iva,
+                fiscalRegime,
+            );
 
             let finalStatus = 'COMPLETED';
             let creditBalance = new Decimal(0);
@@ -694,6 +744,9 @@ export async function executeSaleWithResult(
                     tenantId,
                     total: finalTotal.toNumber(),
                     exemptTotal: exemptTotal.toNumber(),
+                    fiscalRegimeAtSale: fiscalRegime,
+                    fiscalRegimeVersionAtSale: tenantConfig.fiscalRegimeVersion,
+                    vatAmountAtSale: fiscalAmounts.vatAmount.toFixed(4),
                     status: finalStatus,
                     paymentMethod: input.paymentMethod,
                     customerName: input.customerName ?? '',
@@ -718,11 +771,6 @@ export async function executeSaleWithResult(
                 where: { tenantId, sellerId: userId, isActive: true },
                 select: { id: true },
             });
-            const tenantConfig = await tx.tenant.findUnique({
-                where: { id: tenantId },
-                select: { allowNegativeStock: true },
-            });
-            const enforceStock = !offlineSync && !(tenantConfig?.allowNegativeStock ?? false);
             let costTotal = new Decimal(0);
 
             for (const item of normalizedItems) {
@@ -873,7 +921,11 @@ export async function executeSaleWithResult(
                 costTotal.toDecimalPlaces(2).toNumber(),
                 input.paymentMethod,
                 exemptTotal.toNumber(),
-                { date: saleCreatedAt },
+                {
+                    date: saleCreatedAt,
+                    fiscalRegime,
+                    vatAmount: fiscalAmounts.vatAmount,
+                },
             );
 
             await tx.auditLog.create({
@@ -885,6 +937,9 @@ export async function executeSaleWithResult(
                         saleId: created.id,
                         offlineId: input.offlineId ?? null,
                         total: finalTotal.toFixed(2),
+                        fiscalRegime,
+                        fiscalRegimeVersion: tenantConfig.fiscalRegimeVersion,
+                        vatAmount: fiscalAmounts.vatAmount.toFixed(4),
                         source,
                         quotationId,
                         itemCount: normalizedItems.length,

@@ -26,6 +26,18 @@ import { CajaNicaCatalog } from './pos/CajaNicaCatalog';
 import { CajaNicaCheckout } from './pos/CajaNicaCheckout';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import { buildPostSalePrintOptions } from '../utils/postSalePrintOptions';
+import {
+    FISCAL_REGIME_CUOTA_FIJA,
+    includedVatFromGross,
+    normalizeFiscalRegime,
+    resolveSaleFiscalAmounts,
+    type FiscalRegime,
+} from '../utils/fiscalRegime';
+import {
+    normalizeFiscalRegimeVersion,
+    normalizeFiscalSettingsSnapshot,
+    type FiscalSettingsSnapshot,
+} from '../utils/fiscalSettingsSnapshot';
 // xlsx (~430 KB) se importa dinámicamente en handleFileUpload — fuera del bundle inicial.
 import {
     generateOfflineId, saveSaleOffline, getPendingSales, markSalesSynced, recordOfflineSyncResults,
@@ -111,6 +123,15 @@ const toDecimal = (v: string | number): Decimal => {
     }
 };
 
+const nonNegativeDecimalOrNull = (value: unknown): Decimal | null => {
+    try {
+        const parsed = new Decimal(value as Decimal.Value);
+        return parsed.isFinite() && !parsed.isNegative() ? parsed : null;
+    } catch {
+        return null;
+    }
+};
+
 // ── Rótulo honesto del acceso rápido de productos ───────────────────────────
 // POR QUÉ: la sección decía "Más vendidos" el día 1, cuando lo que lista son los
 // primeros productos del catálogo y NUNCA se vendió nada. El dueño ve el nombre
@@ -190,6 +211,32 @@ const identidadLocal = (): { tenantId: string; userId: string } | null => {
         }
     } catch { /* storage ilegible → no se persiste */ }
     return null;
+};
+
+const fiscalSettingsFromTenantCache = (): FiscalSettingsSnapshot => {
+    try {
+        return normalizeFiscalSettingsSnapshot(
+            JSON.parse(localStorage.getItem('nortex_tenant_data') || '{}'),
+        );
+    } catch {
+        return normalizeFiscalSettingsSnapshot(undefined);
+    }
+};
+
+const cacheFiscalSettingsForTenant = (
+    tenantId: string | undefined,
+    settings: FiscalSettingsSnapshot,
+): void => {
+    if (!tenantId) return;
+    try {
+        const raw = localStorage.getItem('nortex_tenant_data');
+        if (!raw) return;
+        const tenant = JSON.parse(raw);
+        if (!tenant || typeof tenant !== 'object' || Array.isArray(tenant) || tenant.id !== tenantId) return;
+        localStorage.setItem('nortex_tenant_data', JSON.stringify({ ...tenant, ...settings }));
+    } catch {
+        // Una caché ilegible no debe bloquear el POS; el estado en memoria sigue vigente.
+    }
 };
 
 /** Línea del carrito → forma serializable. Se conserva TODO (mayoreo, empaque,
@@ -315,6 +362,10 @@ interface CompletedSale {
     date: string;
     invoiceNumber?: number;
     invoiceSeries?: string;
+    /** Foto fiscal usada para este comprobante; nunca se re-deriva de Settings. */
+    fiscalRegimeAtSale: FiscalRegime;
+    fiscalRegimeVersionAtSale: number;
+    vatAmountAtSale: number;
     // Efectivo recibido AL MOMENTO del cobro (string decimal crudo, sin float).
     // Va en la venta y no en un estado suelto porque el estado se limpia apenas
     // termina el cobro: por eso la pantalla de éxito nunca mostraba el vuelto.
@@ -496,6 +547,7 @@ const POS: React.FC = () => {
     // La cura de fondo es que el carrito sea durable: si vuelve intacto, el bug
     // deja de existir sin tocar el router. Ver utils/cartPersistence.ts.
     const [identidad] = useState(identidadLocal);
+    const [fiscalSettings, setFiscalSettings] = useState<FiscalSettingsSnapshot>(fiscalSettingsFromTenantCache);
     const [rescate] = useState<CarritoGuardado | null>(() => {
         if (!identidad) return null;
         const actual = localStorage.getItem(claveCarrito(identidad.tenantId, identidad.userId));
@@ -835,6 +887,22 @@ const POS: React.FC = () => {
         'Authorization': `Bearer ${token}`
     }), [token]);
 
+    const refreshFiscalSettings = useCallback(async () => {
+        if (!identidad?.tenantId || !token || !navigator.onLine) return;
+        try {
+            const response = await fetch('/api/tenant/fiscal-settings', { headers });
+            if (!response.ok) return;
+            const payload = await response.json();
+            setFiscalSettings(previous => {
+                const normalized = normalizeFiscalSettingsSnapshot(payload, previous);
+                cacheFiscalSettingsForTenant(identidad.tenantId, normalized);
+                return normalized;
+            });
+        } catch {
+            // Offline/lie-fi: se conserva exactamente el snapshot cacheado.
+        }
+    }, [headers, identidad?.tenantId, token]);
+
     // ==========================================
     // FETCH PRODUCTS FROM DB
     // ==========================================
@@ -864,6 +932,7 @@ const POS: React.FC = () => {
                     packPrice: p.packPrice ?? null,
                     saleMode: p.saleMode ?? null,
                     quantityStep: p.quantityStep == null ? null : Number(p.quantityStep),
+                    ivaExento: p.ivaExento === true,
                     productFamily: p.productFamily ?? null,
                 }));
                 setProducts(mapped);
@@ -911,7 +980,7 @@ const POS: React.FC = () => {
                 );
                 if (reconciliationCount > 0) {
                     setLastScanFeedback({
-                        message: `${reconciliationCount} venta${reconciliationCount === 1 ? '' : 's'} offline requiere${reconciliationCount === 1 ? '' : 'n'} revisión; no se reinterpretó la etiqueta`,
+                        message: `${reconciliationCount} venta${reconciliationCount === 1 ? '' : 's'} offline requiere${reconciliationCount === 1 ? '' : 'n'} revisión; no se modificó el comprobante`,
                         type: 'error',
                     });
                     window.setTimeout(() => setLastScanFeedback(null), 8000);
@@ -1139,6 +1208,7 @@ const POS: React.FC = () => {
         const handleOnline = () => {
             setIsOnline(true);
             void refreshScaleContext();
+            void refreshFiscalSettings();
             void syncOfflineSales();
         };
         const handleOffline = () => setIsOnline(false);
@@ -1148,7 +1218,11 @@ const POS: React.FC = () => {
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
         };
-    }, [syncOfflineSales, refreshOfflineCount, refreshScaleContext]);
+    }, [syncOfflineSales, refreshOfflineCount, refreshScaleContext, refreshFiscalSettings]);
+
+    useEffect(() => {
+        void refreshFiscalSettings();
+    }, [refreshFiscalSettings]);
 
     // ==========================================
     // INIT POS
@@ -3015,7 +3089,7 @@ const POS: React.FC = () => {
     const globalDiscountD = hasQuotationLines
         ? new Decimal(0)
         : Decimal.min(100, Decimal.max(0, toDecimal(globalDiscount)));
-    const totalD = cart.reduce((acc, item) => {
+    const cartTotalsD = cart.reduce((acc, item) => {
         const lineDiscount = isQuotationCartLine(item)
             ? new Decimal(0)
             : toDecimal((item as CartLine).discount ?? 0);
@@ -3023,8 +3097,13 @@ const POS: React.FC = () => {
         const quantity = isQuotationCartLine(item) && item.quantityExact
             ? toDecimal(item.quantityExact)
             : toDecimal(item.quantity);
-        return acc.plus(toDecimal(item.price).mul(quantity).mul(factor));
-    }, new Decimal(0));
+        const lineTotal = toDecimal(item.price).mul(quantity).mul(factor);
+        return {
+            gross: acc.gross.plus(lineTotal),
+            taxableGross: item.ivaExento ? acc.taxableGross : acc.taxableGross.plus(lineTotal),
+        };
+    }, { gross: new Decimal(0), taxableGross: new Decimal(0) });
+    const totalD = cartTotalsD.gross;
     const discountedTotalD = totalD.mul(new Decimal(1).minus(globalDiscountD.div(100)));
     // IVA 15% Nicaragua — DESGLOSE, no recargo. El precio de mostrador ya
     // incluye el IVA (convención nica) y el backend registra exactamente
@@ -3033,7 +3112,22 @@ const POS: React.FC = () => {
     // 15% encima: el cliente pagaba C$115 y la BD guardaba C$100 → sobrante
     // fantasma en todos los arqueos y fiado registrado 15% por debajo.
     const grandTotalD = discountedTotalD;
-    const taxD = grandTotalD.minus(grandTotalD.div('1.15')); // informativo (incluido)
+    // El backend redondea total y exento a centavos antes del desglose. Este
+    // espejo evita que una venta medida offline imprima un IVA distinto por un
+    // centavo cuando finalmente sincronice.
+    const fiscalTotalD = grandTotalD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const exemptGrandTotalD = cartTotalsD.gross.minus(cartTotalsD.taxableGross)
+        .mul(new Decimal(1).minus(globalDiscountD.div(100)))
+        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const taxableGrandTotalD = fiscalTotalD.minus(exemptGrandTotalD);
+    const generalTaxD = includedVatFromGross(taxableGrandTotalD);
+    const fiscalAmounts = resolveSaleFiscalAmounts(
+        fiscalTotalD,
+        generalTaxD,
+        fiscalSettings.fiscalRegime,
+    );
+    const taxD = fiscalAmounts.vatAmount; // informativo (incluido); cero en cuota fija
+    const isFixedQuota = fiscalAmounts.fiscalRegime === FISCAL_REGIME_CUOTA_FIJA;
 
     // Proyecciones numéricas (2 decimales) para UI y payload; la verdad es Decimal.
     const total = totalD.toDecimalPlaces(2).toNumber();
@@ -3190,6 +3284,7 @@ const POS: React.FC = () => {
             customerId: selectedCustomer?.id ?? null,
             employeeId: currentShift.employeeId ?? currentShift.employee?.id ?? null,
             globalDiscount: globalDiscountD.toString(),
+            fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
             items: saleItems.map(({ name: _name, ...item }) => item),
         });
         const attempt = checkoutAttemptFor(
@@ -3237,6 +3332,7 @@ const POS: React.FC = () => {
                 paymentMethod: method,
                 total: grandTotal,
                 globalDiscount: globalDiscountNum,
+                fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
                 items: saleItems,
                 createdAt: new Date().toISOString(),
             });
@@ -3265,6 +3361,9 @@ const POS: React.FC = () => {
                 customerPhone: selectedCustomer?.phone,
                 saleId: offlineId,
                 date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                fiscalRegimeAtSale: fiscalAmounts.fiscalRegime,
+                fiscalRegimeVersionAtSale: fiscalSettings.fiscalRegimeVersion,
+                vatAmountAtSale: tax,
                 // Foto del efectivo recibido: el estado se limpia en la línea
                 // siguiente, así que el vuelto tiene que quedar en la venta.
                 cashReceived: method === 'CASH' ? cashReceived : undefined,
@@ -3332,6 +3431,31 @@ const POS: React.FC = () => {
                 );
             }
 
+            // La factura online usa la foto AUTORITATIVA de la venta creada, no
+            // el Settings que pudo quedar viejo mientras el cajero cobraba.
+            const authoritativeFiscalRegime = Object.prototype.hasOwnProperty.call(data, 'fiscalRegimeAtSale')
+                ? normalizeFiscalRegime(data.fiscalRegimeAtSale)
+                : fiscalAmounts.fiscalRegime;
+            const fallbackFiscalAmounts = resolveSaleFiscalAmounts(
+                fiscalTotalD,
+                generalTaxD,
+                authoritativeFiscalRegime,
+            );
+            const responseVat = nonNegativeDecimalOrNull(data.vatAmountAtSale);
+            const authoritativeVat = responseVat && responseVat.lessThanOrEqualTo(fiscalTotalD)
+                ? responseVat
+                : fallbackFiscalAmounts.vatAmount;
+            const authoritativeFiscalVersion = normalizeFiscalRegimeVersion(
+                data.fiscalRegimeVersionAtSale,
+                fiscalSettings.fiscalRegimeVersion,
+            );
+            const authoritativeFiscalSettings = {
+                fiscalRegime: authoritativeFiscalRegime,
+                fiscalRegimeVersion: authoritativeFiscalVersion,
+            };
+            setFiscalSettings(authoritativeFiscalSettings);
+            cacheFiscalSettingsForTenant(identidad?.tenantId, authoritativeFiscalSettings);
+
             fetchProducts();
             fetchPulso();
             // Aviso global (retención R2): el checklist de primeros pasos se
@@ -3342,7 +3466,7 @@ const POS: React.FC = () => {
                 items: [...cart],
                 subtotal: total,
                 discount: discountAmount,
-                tax,
+                tax: authoritativeVat.toDecimalPlaces(2).toNumber(),
                 grandTotal,
                 paymentMethod: method,
                 customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
@@ -3351,6 +3475,9 @@ const POS: React.FC = () => {
                 date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
                 invoiceNumber: data.invoiceNumber,
                 invoiceSeries: data.invoiceSeries,
+                fiscalRegimeAtSale: authoritativeFiscalRegime,
+                fiscalRegimeVersionAtSale: authoritativeFiscalVersion,
+                vatAmountAtSale: authoritativeVat.toDecimalPlaces(2).toNumber(),
                 cashReceived: method === 'CASH' ? cashReceived : undefined,
                 usdReceived: method === 'CASH' && payingInUSD ? usdAmount : undefined,
             });
@@ -3478,6 +3605,7 @@ const POS: React.FC = () => {
             saleId: completedSale.saleId,
             invoiceNumber: completedSale.invoiceNumber,
             invoiceSeries: completedSale.invoiceSeries,
+            fiscalRegime: completedSale.fiscalRegimeAtSale,
             cashReceived: vueltoDeLaVenta ? Number(vueltoDeLaVenta.recibido.toFixed(2)) : undefined,
             change: vueltoDeLaVenta ? Number(vueltoDeLaVenta.vuelto.toFixed(2)) : undefined,
             user: currentShift?.employee
@@ -6316,7 +6444,14 @@ const POS: React.FC = () => {
                         entre sí y con la declaración.
                         Subtotal y Descuento solo aparecen cuando hubo descuento;
                         sin él eran una cifra repetida. */}
-                    {(!guidedSimpleMode || showSaleDetails) ? (
+                    {isFixedQuota ? (
+                        globalDiscountD.greaterThan(0) ? (
+                            <div className="mb-2">
+                                <div className="flex justify-between text-sm text-slate-400 mb-1"><span>Subtotal</span><span className="nx-num">{formatMoney(total)}</span></div>
+                                <div className="flex justify-between text-sm text-danger"><span>Descuento ({globalDiscountNum}%)</span><span className="nx-num">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span></div>
+                            </div>
+                        ) : null
+                    ) : (!guidedSimpleMode || showSaleDetails) ? (
                         <div className="mb-2">
                             {globalDiscountD.greaterThan(0) && (
                                 <>
@@ -7295,6 +7430,7 @@ const POS: React.FC = () => {
                 tax: completedSale.tax,
                 total: completedSale.grandTotal,
                 paymentMethod: completedSale.paymentMethod,
+                fiscalRegime: completedSale.fiscalRegimeAtSale,
                 // Solo si hubo vuelto real (efectivo > total): el ticket no
                 // imprime un vuelto inventado en pagos justos ni a crédito.
                 cashReceived: vueltoDeLaVenta ? Number(vueltoDeLaVenta.recibido.toFixed(2)) : undefined,

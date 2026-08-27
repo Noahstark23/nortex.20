@@ -41,6 +41,42 @@ describe('plantilla del ticket 80 mm', () => {
         expect(html).toContain('Ferretería El Roble');
     });
 
+    it('mantiene el documento general sin cambios cuando el regimen se omite o se explicita', () => {
+        const general: InvoiceData = { ...invoice, fiscalRegime: 'GENERAL' };
+
+        expect(buildTicket80mmHtml(general)).toBe(buildTicket80mmHtml(invoice));
+        expect(buildA4Html(general)).toBe(buildA4Html(invoice));
+        expect(buildWhatsAppReceiptMessage(general)).toBe(buildWhatsAppReceiptMessage(invoice));
+        expect(buildTicket80mmHtml(general)).toContain('IVA incluido (15%)');
+    });
+
+    it('genera factura simplificada de cuota fija sin exponer ningun desglose de IVA', () => {
+        const fixedQuota: InvoiceData = {
+            ...invoice,
+            fiscalRegime: 'CUOTA_FIJA',
+            subtotal: 105,
+            discount: 5,
+            tax: 13.04,
+            grandTotal: 100,
+        };
+        const ticket = buildTicket80mmHtml(fixedQuota);
+        const a4 = buildA4Html(fixedQuota);
+        const whatsapp = buildWhatsAppReceiptMessage(fixedQuota);
+
+        for (const output of [ticket, a4, whatsapp]) {
+            expect(output).toContain('FACTURA SIMPLIFICADA');
+            expect(output).toContain('Régimen de Cuota Fija');
+            expect(output).toContain('Subtotal');
+            expect(output).toContain('Descuento');
+            expect(output).not.toMatch(/IVA/i);
+            expect(output).not.toMatch(/Base imponible/i);
+        }
+        expect(ticket).toContain('TOTAL</td><td class="right">C$ 100.00');
+        expect(a4).toContain('<span>TOTAL</span>');
+        expect(a4).toContain('C$ 100.00');
+        expect(whatsapp).toContain('*TOTAL: C$ 100.00*');
+    });
+
     it('escapa nombres controlados por usuario antes de escribir el popup', () => {
         const html = buildTicket80mmHtml({
             ...invoice,

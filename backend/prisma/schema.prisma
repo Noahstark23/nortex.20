@@ -51,6 +51,10 @@ model Tenant {
   // arqueo. Si cada quien entra con su usuario, `Shift.userId` ya lo resuelve.
   requireCashierPin    Boolean   @default(false)
   // Campos Fiscales DGI
+  // GENERAL preserva el cálculo y desglose fiscal de todos los tenants
+  // existentes; la versión permite congelar qué configuración usó cada documento.
+  fiscalRegime         String    @default("GENERAL") @db.VarChar(32)
+  fiscalRegimeVersion  Int       @default(1)
   address              String? // Dirección fiscal
   phone                String? // Teléfono del negocio
   dgiAuthCode          String? // Código autorización DGI (AIMS-xxxx)
@@ -256,6 +260,10 @@ model Purchase {
   dueDate       DateTime? // Fecha de vencimiento (para crédito)
   subtotal      Decimal   @db.Decimal(12, 2)
   tax           Decimal   @default(0) @db.Decimal(12, 2)
+  // Foto fiscal de la compra: los defaults conservan el régimen general en el
+  // histórico y NULL distingue el crédito fiscal que nunca se persistió.
+  fiscalRegimeAtPurchase String  @default("GENERAL") @db.VarChar(32)
+  creditableTax          Decimal? @db.Decimal(18, 4)
   total         Decimal   @db.Decimal(12, 2)
   status        String    @default("COMPLETED") // COMPLETED | PENDING_PAYMENT
   paymentMethod String // CASH | CREDIT
@@ -278,6 +286,8 @@ model Purchase {
   @@index([status])
   // B1: libros de compras DGI y reportes filtran tenant+fecha de factura.
   @@index([tenantId, date])
+  // Libros fiscales por régimen sin cruzar datos entre tenants.
+  @@index([tenantId, fiscalRegimeAtPurchase, date])
 }
 
 model PurchaseItem {
@@ -560,6 +570,11 @@ model Sale {
   // se trata como 100% GRAVADA, exactamente el comportamiento histórico. Solo
   // las ventas nuevas escriben un valor (0 cuando todo es gravado).
   exemptTotal    Decimal?  @db.Decimal(18, 4)
+  // Foto inmutable del régimen aplicado. GENERAL/1 preserva el comportamiento
+  // de ventas históricas; IVA NULL significa que el monto no quedó persistido.
+  fiscalRegimeAtSale        String   @default("GENERAL") @db.VarChar(32)
+  fiscalRegimeVersionAtSale Int      @default(1)
+  vatAmountAtSale           Decimal? @db.Decimal(18, 4)
   status         String
   paymentMethod  String
   customerName   String?
@@ -627,6 +642,8 @@ model Sale {
   // a recorrer la tabla de ventas entera — el guardrail 3 pide el índice en el
   // MISMO cambio que la query.
   @@index([tenantId, status])
+  // Reportes/libros por régimen y período, siempre aislados por tenant.
+  @@index([tenantId, fiscalRegimeAtSale, createdAt])
 }
 
 model SaleItem {
@@ -1482,6 +1499,8 @@ model Quotation {
   customerRuc  String?
   subtotal     Decimal  @db.Decimal(10, 2)
   tax          Decimal  @db.Decimal(10, 2)
+  // Snapshot fiscal de la cotización; GENERAL conserva el formato histórico.
+  fiscalRegimeAtQuote String @default("GENERAL") @db.VarChar(32)
   total        Decimal  @db.Decimal(10, 2)
   status       String   @default("SENT") // SENT | CONVERTED | EXPIRED
   createdAt    DateTime @default(now())
