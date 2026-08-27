@@ -91,3 +91,36 @@ describe('navegación de BODEGUERO', () => {
         expect(homePathFor('BODEGUERO')).toBe('/app/warehouses');
     });
 });
+
+describe('acceso al catálogo de clientes', () => {
+    const customerPaths = ['/app/clients', '/app/receivables'];
+    const allPaths = (role: string, simple: boolean) => {
+        const navigation = buildNavigation({ tenantType: 'RETAIL', role, simple });
+        return [...navigation.primary, ...navigation.more].map(item => item.path);
+    };
+
+    it.each([['simple', true], ['completo', false]] as const)(
+        'oculta Clientes y Fiado a EMPLOYEE en modo %s',
+        (_mode, simple) => {
+            const paths = allPaths('EMPLOYEE', simple);
+
+            for (const path of customerPaths) expect(paths).not.toContain(path);
+        },
+    );
+
+    it.each([['simple', true], ['completo', false]] as const)(
+        'conserva ambos módulos para los roles retail autorizados en modo %s',
+        (_mode, simple) => {
+            for (const role of ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'CASHIER', 'VIEWER']) {
+                expect(allPaths(role, simple), role).toEqual(expect.arrayContaining(customerPaths));
+            }
+        },
+    );
+
+    it.each([['simple', true], ['completo', false]] as const)(
+        'conserva el menú dedicado de VENDEDOR en modo %s',
+        (_mode, simple) => {
+            expect(allPaths('VENDEDOR', simple)).toEqual(expect.arrayContaining(customerPaths));
+        },
+    );
+});

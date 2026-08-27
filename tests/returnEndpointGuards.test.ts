@@ -5,22 +5,31 @@ import { describe, expect, it } from 'vitest';
 const server = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8');
 const pos = readFileSync(resolve(process.cwd(), 'components/POS.tsx'), 'utf8');
 
-const between = (source: string, start: string, end: string): string => {
-    const from = source.indexOf(start);
-    const to = source.indexOf(end, from + start.length);
-    if (from < 0 || to < 0) throw new Error(`No se encontró el bloque ${start}`);
+const locate = (source: string, pattern: string | RegExp): number => {
+    if (typeof pattern === 'string') return source.indexOf(pattern);
+    const match = pattern.exec(source);
+    return match?.index ?? -1;
+};
+
+const between = (source: string, start: string | RegExp, end: string | RegExp): string => {
+    const from = locate(source, start);
+    const startLength = typeof start === 'string' ? start.length : 1;
+    const tail = source.slice(from + Math.max(startLength, 1));
+    const tailOffset = locate(tail, end);
+    const to = tailOffset < 0 ? -1 : from + Math.max(startLength, 1) + tailOffset;
+    if (from < 0 || to < 0) throw new Error(`No se encontró el bloque ${String(start)}`);
     return source.slice(from, to);
 };
 
 const searchRoute = between(
     server,
     "app.get('/api/sales/search'",
-    "app.post('/api/returns'",
+    /app\.post\(\s*['"]\/api\/returns['"]/,
 );
 const returnRoute = between(
     server,
-    "app.post('/api/returns'",
-    "app.post('/api/payments'",
+    /app\.post\(\s*['"]\/api\/returns['"]/,
+    /app\.post\(\s*['"]\/api\/payments['"]/,
 );
 const returnSubmitFlow = between(
     pos,

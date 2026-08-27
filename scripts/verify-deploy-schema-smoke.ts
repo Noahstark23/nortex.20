@@ -1,5 +1,8 @@
 import prisma from '../backend/lib/prisma';
 import {
+    inspectPaymentClientEventIdColumn,
+    inspectPaymentIdempotencyIndex,
+    inspectPaymentPayloadHashColumn,
     inspectProductReturnClientEventIdColumn,
     inspectProductReturnIdempotencyIndex,
     inspectProductReturnPayloadHashColumn,
@@ -10,12 +13,15 @@ import {
     inspectStockCountWarehouseIndex,
     inspectWarehouseSellerColumn,
     inspectWarehouseSellerIndex,
+    PAYMENT_IDEMPOTENCY_INDEX,
     PRODUCT_RETURN_IDEMPOTENCY_INDEX,
     STOCK_COUNT_OPEN_WAREHOUSE_INDEX,
     STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX,
     STOCK_COUNT_WAREHOUSE_FOREIGN_KEY,
     STOCK_COUNT_WAREHOUSE_INDEX,
     type StockCountForeignKeyRow,
+    type PaymentColumnRow,
+    type PaymentIndexRow,
     type ProductReturnColumnRow,
     type ProductReturnIndexRow,
     type WarehouseSellerColumnRow,
@@ -142,6 +148,122 @@ async function verifyProductReturnUpgrade(): Promise<void> {
     assert(
         inspectProductReturnIdempotencyIndex(indexRows) === 'valid',
         `${PRODUCT_RETURN_IDEMPOTENCY_INDEX} es incorrecto.`,
+    );
+}
+
+async function readPaymentIndex(): Promise<PaymentIndexRow[]> {
+    return prisma.$queryRaw<PaymentIndexRow[]>`
+        SELECT
+            INDEX_NAME AS indexName,
+            NON_UNIQUE AS nonUnique,
+            SEQ_IN_INDEX AS seqInIndex,
+            COLUMN_NAME AS columnName,
+            SUB_PART AS subPart,
+            INDEX_TYPE AS indexType,
+            IS_VISIBLE AS isVisible,
+            COLLATION AS collation,
+            EXPRESSION AS expression
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Payment'
+          AND INDEX_NAME = ${PAYMENT_IDEMPOTENCY_INDEX}
+        ORDER BY SEQ_IN_INDEX
+    `;
+}
+
+async function verifyPaymentUpgrade(): Promise<void> {
+    const columns = await prisma.$queryRaw<Array<PaymentColumnRow & { columnName: string }>>`
+        SELECT
+            COLUMN_NAME AS columnName,
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Payment'
+          AND COLUMN_NAME IN ('clientEventId', 'payloadHash')
+        ORDER BY COLUMN_NAME
+    `;
+    assert(
+        inspectPaymentClientEventIdColumn(
+            columns.filter(row => row.columnName === 'clientEventId'),
+        ) === 'valid',
+        'Payment.clientEventId no coincide con VARCHAR(128) NULL.',
+    );
+    assert(
+        inspectPaymentPayloadHashColumn(
+            columns.filter(row => row.columnName === 'payloadHash'),
+        ) === 'valid',
+        'Payment.payloadHash no coincide con VARCHAR(64) NULL.',
+    );
+
+    const indexRows = await readPaymentIndex();
+    const payments = await prisma.$queryRaw<Array<{
+        id: string;
+        saleId: string;
+        amount: unknown;
+        method: string;
+        collectedBy: string;
+        clientEventId: string | null;
+        payloadHash: string | null;
+    }>>`
+        SELECT id, saleId, amount, method, collectedBy, clientEventId, payloadHash
+        FROM Payment
+        WHERE id IN ('payment-deploy-legacy', 'payment-deploy-duplicate')
+        ORDER BY id
+    `;
+    const aggregate = await prisma.$queryRaw<Array<{
+        paymentCount: number | bigint;
+        paymentTotal: unknown;
+    }>>`
+        SELECT COUNT(*) AS paymentCount, COALESCE(SUM(amount), 0) AS paymentTotal
+        FROM Payment
+        WHERE saleId = 'sale-deploy-legacy'
+    `;
+    const paymentCount = Number(aggregate[0]?.paymentCount ?? -1);
+    const paymentTotal = String(aggregate[0]?.paymentTotal ?? 'missing');
+
+    if (mode === 'payment-duplicates') {
+        assert(payments.length === 2, `El preflight alteró abonos duplicados: hay ${payments.length}.`);
+        const duplicate = payments.find(row => row.id === 'payment-deploy-duplicate');
+        const legacy = payments.find(row => row.id === 'payment-deploy-legacy');
+        assert(String(legacy?.amount) === '4.25', 'El preflight cambió el monto del abono histórico.');
+        assert(String(duplicate?.amount) === '1.75', 'El preflight cambió el monto del abono duplicado.');
+        assert(paymentCount === 2, `El preflight cambió el conteo de abonos duplicados: ${paymentCount}.`);
+        assert(paymentTotal === '6', `El preflight cambió la suma de abonos duplicados: ${paymentTotal}.`);
+        assert(
+            payments.every(row => row.saleId === 'sale-deploy-legacy'
+                && row.clientEventId === 'payment-event-deploy-duplicate'),
+            'El preflight alteró la venta o los clientEventId duplicados.',
+        );
+        assert(
+            payments.every(row => row.payloadHash === null),
+            'El preflight inventó hashes para abonos duplicados.',
+        );
+        assert(indexRows.length === 0, 'El índice de abonos no debía crearse con duplicados.');
+        return;
+    }
+
+    assert(payments.length === 1, `El upgrade no conservó el abono histórico único: hay ${payments.length}.`);
+    const legacyPayment = payments[0];
+    assert(legacyPayment?.id === 'payment-deploy-legacy', 'Cambió el abono histórico.');
+    assert(legacyPayment?.saleId === 'sale-deploy-legacy', 'Cambió la venta del abono histórico.');
+    assert(String(legacyPayment?.amount) === '4.25', 'Cambió el monto del abono histórico.');
+    assert(legacyPayment?.method === 'CASH', 'Cambió el método del abono histórico.');
+    assert(legacyPayment?.collectedBy === 'user-deploy-smoke', 'Cambió el cobrador del abono histórico.');
+    assert(legacyPayment?.clientEventId === null, 'El upgrade inventó clientEventId para el abono histórico.');
+    assert(legacyPayment?.payloadHash === null, 'El upgrade inventó payloadHash para el abono histórico.');
+    assert(paymentCount === 1, `El upgrade cambió el conteo histórico de abonos: ${paymentCount}.`);
+    assert(paymentTotal === '4.25', `El upgrade cambió la suma histórica de abonos: ${paymentTotal}.`);
+    assert(
+        inspectPaymentIdempotencyIndex(indexRows) === 'valid',
+        `${PAYMENT_IDEMPOTENCY_INDEX} es incorrecto.`,
     );
 }
 
@@ -548,10 +670,16 @@ async function main(): Promise<void> {
     const indexRows = await readIndex();
     await verifyStockCountUpgrade();
     await verifyProductReturnUpgrade();
+    await verifyPaymentUpgrade();
     await verifyMeasuredExpansion();
 
     if (mode === 'return-duplicates') {
         console.log('Smoke adversarial verificado: devoluciones duplicadas intactas e índice ausente.');
+        return;
+    }
+
+    if (mode === 'payment-duplicates') {
+        console.log('Smoke adversarial verificado: abonos duplicados intactos, suma preservada e índice ausente.');
         return;
     }
 

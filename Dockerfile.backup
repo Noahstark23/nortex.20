@@ -25,12 +25,18 @@ FROM mysql:8.0
 COPY --from=awscli /usr/local/aws-cli/ /usr/local/aws-cli/
 RUN ln -s /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin/aws
 
-# `mysql:8.0` ya incluye gzip y findutils. Consultar los repositorios con
-# microdnf para reinstalarlos tardaba hasta 11 minutos y terminaba en
-# "Nothing to do". Verificamos los binarios localmente para fallar rápido si una
-# futura imagen base cambia, sin convertir la red de paquetes en requisito del
-# despliegue.
-RUN command -v gzip >/dev/null && command -v find >/dev/null
+# `mysql:8.0` ya incluye gzip y findutils, pero NO `diff`: el restore drill lo
+# necesita para comparar tabla por tabla el origen contra la restauración. Lo
+# instalamos explícitamente; sin esto el restore puede terminar bien y fallar al
+# final con `diff: command not found`, dejando la recuperabilidad sin demostrar.
+# No reinstalamos gzip/findutils: en esta base eso solo alarga el build con
+# "Nothing to do". El mismo layer verifica todos los binarios para que una
+# futura imagen base falle durante el build, no durante una emergencia.
+RUN microdnf install -y diffutils \
+    && microdnf clean all \
+    && command -v diff >/dev/null \
+    && command -v gzip >/dev/null \
+    && command -v find >/dev/null
 
 WORKDIR /app
 COPY scripts/db-url.sh scripts/backup-db.sh scripts/backup-scheduler.sh \

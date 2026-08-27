@@ -2,8 +2,12 @@ import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import {
     applyDeploySchemaPreflight,
+    applyPaymentSchemaPreflight,
     applyProductReturnSchemaPreflight,
     applyStockCountSchemaPreflight,
+    inspectPaymentClientEventIdColumn,
+    inspectPaymentIdempotencyIndex,
+    inspectPaymentPayloadHashColumn,
     inspectProductReturnClientEventIdColumn,
     inspectProductReturnIdempotencyIndex,
     inspectProductReturnPayloadHashColumn,
@@ -14,6 +18,7 @@ import {
     inspectStockCountWarehouseIndex,
     inspectWarehouseSellerColumn,
     inspectWarehouseSellerIndex,
+    PAYMENT_IDEMPOTENCY_INDEX,
     PRODUCT_RETURN_IDEMPOTENCY_INDEX,
     STOCK_COUNT_OPEN_WAREHOUSE_INDEX,
     STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX,
@@ -22,6 +27,8 @@ import {
     UnsafeSchemaStateError,
     WAREHOUSE_SELLER_INDEX,
     type DeploySchemaClient,
+    type PaymentColumnRow,
+    type PaymentIndexRow,
     type ProductReturnColumnRow,
     type ProductReturnIndexRow,
     type StockCountColumnRow,
@@ -88,6 +95,11 @@ type Action =
     | 'foreignKey:warehouseId';
 
 type ProductReturnAction =
+    | 'column:clientEventId'
+    | 'column:payloadHash'
+    | 'index:idempotency';
+
+type PaymentAction =
     | 'column:clientEventId'
     | 'column:payloadHash'
     | 'index:idempotency';
@@ -358,6 +370,115 @@ class ProductReturnSchemaFake implements DeploySchemaClient {
     }
 }
 
+const validPaymentClientEventIdColumn: PaymentColumnRow = {
+    ...validColumn,
+    columnType: 'varchar(128)',
+    characterMaximumLength: 128n,
+};
+
+const validPaymentPayloadHashColumn: PaymentColumnRow = {
+    ...validColumn,
+    columnType: 'varchar(64)',
+    characterMaximumLength: 64n,
+};
+
+class PaymentSchemaFake implements DeploySchemaClient {
+    paymentExists = true;
+    columns: Record<'clientEventId' | 'payloadHash', State> = {
+        clientEventId: 'missing',
+        payloadHash: 'missing',
+    };
+    index: State = 'missing';
+    duplicates: unknown[] = [];
+    raceWins = new Set<PaymentAction>();
+    hardFailures = new Set<PaymentAction>();
+    events: string[] = [];
+
+    makeEverythingValid(): this {
+        this.columns.clientEventId = 'valid';
+        this.columns.payloadHash = 'valid';
+        this.index = 'valid';
+        return this;
+    }
+
+    private columnRows(
+        columnName: 'clientEventId' | 'payloadHash',
+    ): PaymentColumnRow[] {
+        const state = this.columns[columnName];
+        if (state === 'missing') return [];
+        const valid = columnName === 'clientEventId'
+            ? validPaymentClientEventIdColumn
+            : validPaymentPayloadHashColumn;
+        return [{ ...(state === 'valid' ? valid : { ...valid, isNullable: 'NO' }) }];
+    }
+
+    async query<T>(statement: Prisma.Sql): Promise<T> {
+        const text = sqlText(statement);
+        const values = statement.values as unknown[];
+
+        if (text.includes("TABLE_NAME = 'Payment'")
+            && text.includes('information_schema.TABLES')) {
+            return (this.paymentExists ? [{ tableName: 'Payment' }] : []) as T;
+        }
+        if (text.includes("TABLE_NAME = 'Payment'")
+            && text.includes("COLUMN_NAME = 'saleId'")) {
+            return [{ ...validColumn, isNullable: 'NO' }] as T;
+        }
+        if (text.includes('FROM information_schema.COLUMNS')
+            && text.includes("TABLE_NAME = 'Payment'")) {
+            const columnName = values.find(value => (
+                value === 'clientEventId' || value === 'payloadHash'
+            ));
+            if (columnName === 'clientEventId' || columnName === 'payloadHash') {
+                return this.columnRows(columnName) as T;
+            }
+        }
+        if (text.includes('information_schema.STATISTICS')
+            && values.includes(PAYMENT_IDEMPOTENCY_INDEX)) {
+            if (this.index === 'missing') return [] as T;
+            const rows: PaymentIndexRow[] = exactIndexRows(
+                PAYMENT_IDEMPOTENCY_INDEX,
+                ['saleId', 'clientEventId'],
+                true,
+            );
+            return (this.index === 'valid'
+                ? rows
+                : rows.map(row => ({ ...row, nonUnique: 1n }))) as T;
+        }
+        if (text.includes('GROUP BY saleId, clientEventId')) {
+            this.events.push('query:safety:duplicates');
+            return this.duplicates as T;
+        }
+
+        throw new Error(`Query inesperada en fake de Payment: ${text}`);
+    }
+
+    private actionFor(statement: Prisma.Sql): PaymentAction {
+        const text = sqlText(statement);
+        if (text.includes('ADD COLUMN `clientEventId`')) return 'column:clientEventId';
+        if (text.includes('ADD COLUMN `payloadHash`')) return 'column:payloadHash';
+        if (text.includes(`CREATE UNIQUE INDEX \`${PAYMENT_IDEMPOTENCY_INDEX}\``)) {
+            return 'index:idempotency';
+        }
+        throw new Error(`DDL inesperado en fake de Payment: ${text}`);
+    }
+
+    private apply(action: PaymentAction): void {
+        if (action === 'column:clientEventId') this.columns.clientEventId = 'valid';
+        if (action === 'column:payloadHash') this.columns.payloadHash = 'valid';
+        if (action === 'index:idempotency') this.index = 'valid';
+    }
+
+    async execute(statement: Prisma.Sql): Promise<number> {
+        const action = this.actionFor(statement);
+        this.events.push(`execute:${action}`);
+        if (this.hardFailures.has(action)) throw new Error(`fallo ${action}`);
+        this.apply(action);
+        if (this.raceWins.has(action)) throw new Error(`otro iniciador ganó ${action}`);
+        return 0;
+    }
+}
+
 describe('deploy schema preflight', () => {
     it('acepta únicamente Warehouse.sellerId nullable varchar(191)', () => {
         expect(inspectWarehouseSellerColumn([])).toBe('missing');
@@ -389,7 +510,7 @@ describe('deploy schema preflight', () => {
 
         await applyDeploySchemaPreflight({ query, execute }, { info, warn: vi.fn() });
 
-        expect(query).toHaveBeenCalledTimes(3);
+        expect(query).toHaveBeenCalledTimes(4);
         expect(execute).not.toHaveBeenCalled();
         expect(info).toHaveBeenCalledWith(expect.stringContaining('Warehouse aún no existe'));
     });
@@ -398,6 +519,7 @@ describe('deploy schema preflight', () => {
         const query = vi.fn()
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([{ tableName: 'StockCount' }])
+            .mockResolvedValueOnce([])
             .mockResolvedValueOnce([]);
 
         await expect(applyDeploySchemaPreflight(
@@ -410,7 +532,8 @@ describe('deploy schema preflight', () => {
         const query = vi.fn()
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([])
-            .mockResolvedValueOnce([{ tableName: 'ProductReturn' }]);
+            .mockResolvedValueOnce([{ tableName: 'ProductReturn' }])
+            .mockResolvedValueOnce([]);
 
         await expect(applyDeploySchemaPreflight(
             { query, execute: vi.fn() },
@@ -746,6 +869,157 @@ describe('ProductReturn deploy schema preflight', () => {
         db.hardFailures.add('column:clientEventId');
 
         await expect(applyProductReturnSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('fallo column:clientEventId');
+        expect(db.columns.clientEventId).toBe('missing');
+    });
+});
+
+describe('Payment deploy schema preflight', () => {
+    it('valida columnas nullable e índice único con la forma exacta de Prisma', () => {
+        expect(inspectPaymentClientEventIdColumn([])).toBe('missing');
+        expect(inspectPaymentClientEventIdColumn([
+            validPaymentClientEventIdColumn,
+        ])).toBe('valid');
+        expect(inspectPaymentClientEventIdColumn([{
+            ...validPaymentClientEventIdColumn,
+            characterMaximumLength: 191n,
+            columnType: 'varchar(191)',
+        }])).toBe('invalid');
+        expect(inspectPaymentPayloadHashColumn([
+            validPaymentPayloadHashColumn,
+        ])).toBe('valid');
+        expect(inspectPaymentPayloadHashColumn([{
+            ...validPaymentPayloadHashColumn,
+            isNullable: 'NO',
+        }])).toBe('invalid');
+
+        const index = exactIndexRows(
+            PAYMENT_IDEMPOTENCY_INDEX,
+            ['saleId', 'clientEventId'],
+            true,
+        );
+        expect(inspectPaymentIdempotencyIndex([...index].reverse())).toBe('valid');
+        expect(inspectPaymentIdempotencyIndex(
+            index.map(row => ({ ...row, nonUnique: 1n })),
+        )).toBe('invalid');
+        expect(inspectPaymentIdempotencyIndex([
+            { ...index[0], columnName: 'clientEventId' },
+            { ...index[1], columnName: 'saleId' },
+        ])).toBe('invalid');
+    });
+
+    it('deja que db push cree Payment cuando la tabla aún no existe', async () => {
+        const db = new PaymentSchemaFake();
+        db.paymentExists = false;
+        const info = vi.fn();
+
+        await applyPaymentSchemaPreflight(db, { info, warn: vi.fn() });
+
+        expect(db.events).toEqual([]);
+        expect(info).toHaveBeenCalledWith(expect.stringContaining('Payment aún no existe'));
+    });
+
+    it('crea columnas nullable e índice único antes de db push', async () => {
+        const db = new PaymentSchemaFake();
+
+        await applyPaymentSchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+
+        expect(db.columns).toEqual({ clientEventId: 'valid', payloadHash: 'valid' });
+        expect(db.index).toBe('valid');
+        expect(db.events.filter(event => event.startsWith('execute:'))).toEqual([
+            'execute:column:clientEventId',
+            'execute:column:payloadHash',
+            'execute:index:idempotency',
+        ]);
+        expect(db.events.indexOf('query:safety:duplicates')).toBeLessThan(
+            db.events.indexOf('execute:index:idempotency'),
+        );
+    });
+
+    it('es idempotente y converge desde un estado parcial', async () => {
+        const complete = new PaymentSchemaFake().makeEverythingValid();
+        await applyPaymentSchemaPreflight(complete, { info: vi.fn(), warn: vi.fn() });
+        await applyPaymentSchemaPreflight(complete, { info: vi.fn(), warn: vi.fn() });
+        expect(complete.events.some(event => event.startsWith('execute:'))).toBe(false);
+
+        const partial = new PaymentSchemaFake().makeEverythingValid();
+        partial.columns.payloadHash = 'missing';
+        partial.index = 'missing';
+        await applyPaymentSchemaPreflight(partial, { info: vi.fn(), warn: vi.fn() });
+        expect(partial.events.filter(event => event.startsWith('execute:'))).toEqual([
+            'execute:column:payloadHash',
+            'execute:index:idempotency',
+        ]);
+    });
+
+    it.each([
+        [
+            'clientEventId incompatible',
+            (db: PaymentSchemaFake) => { db.columns.clientEventId = 'invalid'; },
+            'Payment.clientEventId',
+        ],
+        [
+            'payloadHash incompatible',
+            (db: PaymentSchemaFake) => { db.columns.payloadHash = 'invalid'; },
+            'Payment.payloadHash',
+        ],
+        [
+            'índice homónimo incompatible',
+            (db: PaymentSchemaFake) => { db.index = 'invalid'; },
+            PAYMENT_IDEMPOTENCY_INDEX,
+        ],
+    ])('falla cerrado ante %s', async (_label, arrange, message) => {
+        const db = new PaymentSchemaFake().makeEverythingValid();
+        arrange(db);
+
+        await expect(applyPaymentSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(message);
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('falla cerrado ante duplicados no-null sin cambiar filas ni crear el índice', async () => {
+        const db = new PaymentSchemaFake().makeEverythingValid();
+        db.index = 'missing';
+        db.duplicates = [{
+            saleId: 'sale-1',
+            clientEventId: 'payment-event-1',
+            duplicateCount: 2n,
+        }];
+
+        await expect(applyPaymentSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('clientEventId duplicado');
+        expect(db.index).toBe('missing');
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('tolera carreras únicamente cuando la relectura confirma cada objeto exacto', async () => {
+        const db = new PaymentSchemaFake();
+        const actions: PaymentAction[] = [
+            'column:clientEventId',
+            'column:payloadHash',
+            'index:idempotency',
+        ];
+        actions.forEach(action => db.raceWins.add(action));
+        const warn = vi.fn();
+
+        await applyPaymentSchemaPreflight(db, { info: vi.fn(), warn });
+
+        expect(db.columns).toEqual({ clientEventId: 'valid', payloadHash: 'valid' });
+        expect(db.index).toBe('valid');
+        expect(warn).toHaveBeenCalledTimes(actions.length);
+    });
+
+    it('propaga un error DDL cuando el estado final sigue ausente', async () => {
+        const db = new PaymentSchemaFake();
+        db.hardFailures.add('column:clientEventId');
+
+        await expect(applyPaymentSchemaPreflight(
             db,
             { info: vi.fn(), warn: vi.fn() },
         )).rejects.toThrow('fallo column:clientEventId');

@@ -121,6 +121,7 @@ const numeric = z
 
 /** Método de pago permitido */
 const paymentMethod = z.enum(['CASH', 'CARD', 'TRANSFER', 'CREDIT', 'QR']);
+const customerPaymentMethod = z.enum(['CASH', 'CARD', 'TRANSFER', 'QR']);
 
 /**
  * PUT /api/tenant/fiscal
@@ -223,8 +224,13 @@ export const CreateCashMovementSchema = z.object({
 // POST /api/payments
 export const CreatePaymentSchema = z.object({
     saleId: z.string().min(1, 'saleId requerido'),
-    amount: moneyAmountPositive,
-    method: paymentMethod.optional(),
+    amount: moneyAmountPositive
+        .refine((value) => new Decimal(value).decimalPlaces() <= 2, { message: 'El abono admite como máximo 2 decimales' })
+        .refine((value) => new Decimal(value).lessThanOrEqualTo('99999999.99'), { message: 'El abono excede el máximo permitido' }),
+    method: customerPaymentMethod.optional(),
+    // Obligatorio en toda llamada actual. La nulabilidad persiste únicamente en
+    // la base de datos para conservar filas históricas anteriores a este contrato.
+    clientEventId: z.string().uuid('clientEventId debe ser UUID'),
 });
 
 // POST /api/b2b/order — orden del marketplace pagada con el wallet del tenant.

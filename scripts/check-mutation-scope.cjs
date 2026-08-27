@@ -163,8 +163,11 @@ const PISO_MUTANTES = {
     // anticipado.
     'backend/services/stripe.ts': 13,
     'backend/services/stockService.ts': 5,
-    // Asientos puros de venta, compra y devolución: 109/109 mutantes detectados.
-    'backend/services/accounting.ts': 109,
+    // Asientos puros de venta, abonos, compra y devolución: 140/140 mutantes
+    // detectados. El abono aporta 31/31 y protege que efectivo llegue a Caja,
+    // que tarjeta/transferencia/QR lleguen a Bancos, y que el crédito baje por
+    // el mismo monto Decimal validado. Los rangos excluyen handlers Prisma.
+    'backend/services/accounting.ts': 140,
     // supplierPayment.ts entra por sus DOS funciones puras (93-138): si la caja
     // del turno alcanza para pagarle al proveedor, y cuánto efectivo hay de
     // verdad en la gaveta. 19 mutantes, score medido 100.00%. Lo que protege es

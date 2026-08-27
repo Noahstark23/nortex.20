@@ -96,6 +96,16 @@ VALUES (
     CURRENT_TIMESTAMP(3), 0
 );
 
+-- Abono anterior a la idempotencia de Payment. El upgrade debe conservar tanto
+-- el monto como la cantidad de pagos y dejar la metadata nueva en NULL.
+INSERT INTO `Payment` (
+    `id`, `saleId`, `amount`, `method`, `collectedBy`, `createdAt`
+)
+VALUES (
+    'payment-deploy-legacy', 'sale-deploy-legacy', 4.25, 'CASH',
+    'user-deploy-smoke', CURRENT_TIMESTAMP(3)
+);
+
 INSERT INTO `SaleItem` (
     `id`, `saleId`, `productId`, `quantity`, `priceAtSale`, `costAtSale`, `discount`, `ivaExento`
 )

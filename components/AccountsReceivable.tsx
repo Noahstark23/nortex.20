@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { maybeAutostartTour } from '../utils/tours';
 import { formatMoney } from '../utils/money';
 import { DollarSign, Calendar, User, CheckCircle, Clock, Wallet, MessageCircle, AlertTriangle, Printer, FileText, RefreshCw, Loader2 } from 'lucide-react';
@@ -52,6 +53,7 @@ const urgencyLabel = (it: { daysOverdue: number; status: string }) => {
 };
 
 const AccountsReceivable: React.FC = () => {
+  const [searchParams] = useSearchParams();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [items, setItems] = useState<WorklistItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,13 +67,20 @@ const AccountsReceivable: React.FC = () => {
   const [paySale, setPaySale] = useState<{ id: string; customerName: string; balance: number } | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('CASH');
+  const [paymentClientEventId, setPaymentClientEventId] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const token = localStorage.getItem('nortex_token');
   const headers = useMemo(() => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }), [token]);
-  const isOwner = useMemo(() => {
-    try { const r = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.role; return r === 'OWNER' || r === 'ADMIN'; } catch { return false; }
+  const canWriteOff = useMemo(() => {
+    try {
+      const r = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.role;
+      return r === 'OWNER' || r === 'ADMIN' || r === 'SUPER_ADMIN';
+    } catch {
+      return false;
+    }
   }, []);
+  const customerIdFromUrl = searchParams.get('customerId');
 
   const fetchWorklist = useCallback(async () => {
     setLoading(true);
@@ -91,32 +100,59 @@ const AccountsReceivable: React.FC = () => {
   // Tutorial guiado: si entran con ?tour=fiado (desde Ayuda).
   useEffect(() => { maybeAutostartTour(); }, []);
 
+  const loadStatementByCustomerId = useCallback(async (customerId: string, seed?: Partial<WorklistItem>) => {
+    setStatementLoading(true);
+    try {
+      const res = await fetch(`/api/customers/${encodeURIComponent(customerId)}/statement`, { headers });
+      if (!res.ok) return;
+      const nextStatement: Statement = await res.json();
+      setStatement(nextStatement);
+      setSelected((previous) => ({
+        saleId: seed?.saleId ?? previous?.saleId ?? `customer:${customerId}`,
+        customerId,
+        customerName: nextStatement.customer.name,
+        phone: nextStatement.customer.phone,
+        invoiceNumber: seed?.invoiceNumber ?? null,
+        date: seed?.date ?? previous?.date ?? nextStatement.generatedAt,
+        dueDate: seed?.dueDate ?? null,
+        total: seed?.total ?? nextStatement.totals.billed,
+        balance: nextStatement.totals.balance,
+        daysOverdue: seed?.daysOverdue ?? (nextStatement.totals.overdue > 0 ? 1 : 0),
+        bucket: seed?.bucket ?? (nextStatement.totals.overdue > 0 ? 'b1_30' : 'corriente'),
+        status: seed?.status ?? (nextStatement.totals.overdue > 0 ? 'OVERDUE' : 'CURRENT'),
+      }));
+    } catch (e) {
+      console.error('Error statement:', e);
+    } finally { setStatementLoading(false); }
+  }, [headers]);
+
   const openDetail = async (it: WorklistItem) => {
     setSelected(it);
     setStatement(null);
     if (!it.customerId) return; // walk-in sin ficha de cliente → solo la venta
-    setStatementLoading(true);
-    try {
-      const res = await fetch(`/api/customers/${it.customerId}/statement`, { headers });
-      if (res.ok) setStatement(await res.json());
-    } catch (e) { console.error('Error statement:', e); }
-    finally { setStatementLoading(false); }
+    await loadStatementByCustomerId(it.customerId, it);
   };
 
   const reloadDetail = async () => {
     await fetchWorklist();
     if (selected) {
       if (selected.customerId) {
-        const res = await fetch(`/api/customers/${selected.customerId}/statement`, { headers });
-        if (res.ok) setStatement(await res.json());
+        await loadStatementByCustomerId(selected.customerId, selected);
       }
     }
   };
+
+  useEffect(() => {
+    if (!customerIdFromUrl) return;
+    setStatement(null);
+    void loadStatementByCustomerId(customerIdFromUrl);
+  }, [customerIdFromUrl, loadStatementByCustomerId]);
 
   const openPay = (sale: { id: string; customerName: string; balance: number }) => {
     setPaySale(sale);
     setPaymentAmount('');
     setPaymentMethod('CASH');
+    setPaymentClientEventId(crypto.randomUUID());
     setShowPayModal(true);
   };
 
@@ -152,16 +188,19 @@ const AccountsReceivable: React.FC = () => {
     const amount = parseFloat(paymentAmount);
     if (isNaN(amount) || amount <= 0) { alert('Ingrese un monto válido'); return; }
     if (amount > paySale.balance + 0.001) { alert('El monto no puede exceder el saldo pendiente'); return; }
+    const clientEventId = paymentClientEventId || crypto.randomUUID();
+    if (!paymentClientEventId) setPaymentClientEventId(clientEventId);
     setSubmitting(true);
     try {
       const res = await fetch('/api/credits/payment', {
         method: 'POST', headers,
-        body: JSON.stringify({ saleId: paySale.id, amount, method: paymentMethod }),
+        body: JSON.stringify({ saleId: paySale.id, amount: paymentAmount.trim(), method: paymentMethod, clientEventId }),
       });
       if (res.ok) {
         const receipt = { customer: paySale.customerName, amount, method: paymentMethod, prevBalance: paySale.balance, newBalance: Math.max(0, paySale.balance - amount) };
         setShowPayModal(false);
         setPaymentAmount('');
+        setPaymentClientEventId('');
         await reloadDetail();
         if (window.confirm('Abono registrado. ¿Imprimir recibo?')) printReceipt(receipt);
       } else {
@@ -387,7 +426,7 @@ const AccountsReceivable: React.FC = () => {
                                 className="px-3 py-1 bg-nortex-900 text-white rounded-lg text-xs font-bold hover:bg-nortex-800">
                                 Abonar
                               </button>
-                              {isOwner && (
+                              {canWriteOff && (
                                 <button onClick={() => handleWriteoff(inv.id, inv.balance)}
                                   className="px-2 py-1 border border-white/10 text-slate-500 rounded-lg text-xs font-semibold hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20"
                                   title="Castigar como incobrable">
