@@ -176,6 +176,18 @@ libro firmado de caja · keyring JWT rotable.
   —nunca se baja el umbral ni se debilita una aserción para pasar—. Al agregar una
   función de dinero nueva, sumala al `mutate` (los archivos con Prisma se mutan
   por rango de líneas, solo la parte pura).
+- **Presupuesto del POS (`tests/presupuestoPos.test.ts`, en CI).**
+  `components/POS.tsx` es UN componente de ~6.900 líneas con 122 `useState`:
+  cualquier `setState` re-ejecuta el cuerpo entero. Hay un trinquete con la
+  MISMA regla que el umbral de mutación — **el número solo baja**. Feature nueva
+  del POS ⇒ nace en `components/pos/<feature>.tsx`; adentro de `POS.tsx` se
+  compone, no se implementa. Si sacás una pieza, bajá el presupuesto en el mismo
+  commit. Nunca lo subas para que pase un PR.
+- **Conducta del POS: se prueba renderizando.** `tests/posVentaCritica.test.tsx`
+  caracteriza la venta (escanear → carrito → cobrar → vuelto → registrar) en
+  jsdom, sin aseverar estructura, para que mover código NO la rompa y cambiar la
+  conducta SÍ. Seis tests históricos leen `POS.tsx` como texto y clavan el
+  monolito; esa lista está congelada en el trinquete y solo puede achicarse.
 - No introducir dependencias pesadas sin necesidad; el bundle del SPA ya roza el
   límite de precache del PWA (SWR se eligió sobre react-query por esto).
 - Commits: `feat|fix(<área>): <qué>` con el porqué + resumen de QA en el cuerpo.
