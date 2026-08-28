@@ -5,6 +5,7 @@ import {
     buildWhatsAppReceiptMessage,
     detectThermalTicketPopupMode,
     InvoiceData,
+    printA4,
     printTicket,
 } from '../components/InvoiceTemplate';
 
@@ -40,6 +41,43 @@ describe('plantilla del ticket 80 mm', () => {
         expect(html).toContain('FACTURA A-000042');
         expect(html).toContain('TOTAL</td><td class="right">C$ 100.00');
         expect(html).toContain('Ferretería El Roble');
+        expect(html).toContain('IMPRIMIR TICKET');
+    });
+
+    it('mantiene el documento general sin cambios cuando el regimen se omite o se explicita', () => {
+        const general: InvoiceData = { ...invoice, fiscalRegime: 'GENERAL' };
+
+        expect(buildTicket80mmHtml(general)).toBe(buildTicket80mmHtml(invoice));
+        expect(buildA4Html(general)).toBe(buildA4Html(invoice));
+        expect(buildWhatsAppReceiptMessage(general)).toBe(buildWhatsAppReceiptMessage(invoice));
+        expect(buildTicket80mmHtml(general)).toContain('IVA incluido (15%)');
+    });
+
+    it('genera factura simplificada de cuota fija sin exponer ningun desglose de IVA', () => {
+        const fixedQuota: InvoiceData = {
+            ...invoice,
+            fiscalRegime: 'CUOTA_FIJA',
+            subtotal: 105,
+            discount: 5,
+            tax: 13.04,
+            grandTotal: 100,
+        };
+        const ticket = buildTicket80mmHtml(fixedQuota);
+        const a4 = buildA4Html(fixedQuota);
+        const whatsapp = buildWhatsAppReceiptMessage(fixedQuota);
+
+        for (const output of [ticket, a4, whatsapp]) {
+            expect(output).toContain('FACTURA SIMPLIFICADA');
+            expect(output).toContain('Régimen de Cuota Fija');
+            expect(output).toContain('Subtotal');
+            expect(output).toContain('Descuento');
+            expect(output).not.toMatch(/IVA/i);
+            expect(output).not.toMatch(/Base imponible/i);
+        }
+        expect(ticket).toContain('TOTAL</td><td class="right">C$ 100.00');
+        expect(a4).toContain('<span>TOTAL</span>');
+        expect(a4).toContain('C$ 100.00');
+        expect(whatsapp).toContain('*TOTAL: C$ 100.00*');
     });
 
     it('mantiene el documento general sin cambios cuando el regimen se omite o se explicita', () => {
@@ -180,9 +218,62 @@ describe('plantilla del ticket 80 mm', () => {
         expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     });
 
-    it('usa el documento actual y fija un papel 80 mm con alto medido', () => {
-        const print = vi.fn();
+    it('abre primero un documento aislado completo, calcula el papel y no imprime la pagina del POS', () => {
+        vi.useFakeTimers();
+        const parentPrint = vi.fn();
+        const popupPrint = vi.fn();
+        const popupPageStyle = { textContent: '' };
+        const popupTicket = {
+            scrollHeight: 378,
+            getBoundingClientRect: () => ({ height: 378 }),
+        };
+        let onLoad: (() => void) | undefined;
+        const popupDocument = {
+            readyState: 'loading',
+            getElementById: vi.fn((id: string) => {
+                if (id === 'ticket-content') return popupTicket;
+                if (id === 'ticket-page-size') return popupPageStyle;
+                return null;
+            }),
+            open: vi.fn(),
+            write: vi.fn(),
+            close: vi.fn(),
+        };
+        const popup = {
+            document: popupDocument,
+            addEventListener: vi.fn((event: string, callback: () => void) => {
+                if (event === 'load') onLoad = callback;
+            }),
+            print: popupPrint,
+        };
+        const open = vi.fn(() => popup);
+        vi.stubGlobal('window', { open, print: parentPrint });
+        vi.stubGlobal('document', { getElementById: vi.fn() });
+
+        expect(printTicket(invoice)).toBe(true);
+        expect(open).toHaveBeenCalledWith('', '_blank', 'width=800,height=600');
+        expect(popupDocument.open).toHaveBeenCalledOnce();
+        expect(popupDocument.write).toHaveBeenCalledOnce();
+        const html = popupDocument.write.mock.calls[0][0];
+        expect(html).toContain('<!DOCTYPE html>');
+        expect(html).toContain('Martillo');
+        expect(html).toContain('TOTAL</td><td class="right">C$ 100.00');
+        expect(html).toContain('IMPRIMIR TICKET');
+        expect(parentPrint).not.toHaveBeenCalled();
+
+        onLoad?.();
+        vi.advanceTimersByTime(300);
+
+        expect(popupPageStyle.textContent).toBe('@page { size: 80mm 111mm; margin: 0; }');
+        expect(popupPrint).toHaveBeenCalledOnce();
+        expect(parentPrint).not.toHaveBeenCalled();
+    });
+
+    it('cae silenciosamente a la pagina actual si el popup esta bloqueado', () => {
+        const parentPrint = vi.fn();
         const addEventListener = vi.fn();
+        const open = vi.fn(() => null);
+        const blockedAlert = vi.fn();
         const pageStyle = { id: '', textContent: '', remove: vi.fn() };
         const ticketContent = {
             scrollHeight: 378,
@@ -195,13 +286,71 @@ describe('plantilla del ticket 80 mm', () => {
             createElement: vi.fn(() => pageStyle),
             head: { appendChild },
         });
-        vi.stubGlobal('window', { print, addEventListener } as Pick<Window, 'print' | 'addEventListener'>);
+        vi.stubGlobal('window', {
+            open,
+            print: parentPrint,
+            addEventListener,
+        } as unknown as Window);
+        vi.stubGlobal('alert', blockedAlert);
 
         expect(printTicket(invoice)).toBe(true);
+        expect(open).toHaveBeenCalledOnce();
+        expect(blockedAlert).not.toHaveBeenCalled();
         expect(appendChild).toHaveBeenCalledWith(pageStyle);
         expect(pageStyle.textContent).toBe('@media print { @page { size: 80mm 111mm; margin: 0; } }');
         expect(addEventListener).toHaveBeenCalledWith('afterprint', expect.any(Function), { once: true });
-        expect(print).toHaveBeenCalledOnce();
+        expect(parentPrint).toHaveBeenCalledOnce();
+    });
+
+    it('cae a la pagina actual si window.open lanza una excepcion', () => {
+        const parentPrint = vi.fn();
+        const addEventListener = vi.fn();
+        const pageStyle = { id: '', textContent: '', remove: vi.fn() };
+        const ticketContent = {
+            scrollHeight: 378,
+            getBoundingClientRect: () => ({ height: 378 }),
+        };
+        const receipt = { firstElementChild: ticketContent };
+        vi.stubGlobal('document', {
+            getElementById: vi.fn((id: string) => id === 'receipt-area' ? receipt : null),
+            createElement: vi.fn(() => pageStyle),
+            head: { appendChild: vi.fn() },
+        });
+        vi.stubGlobal('window', {
+            open: vi.fn(() => {
+                throw new DOMException('Popup bloqueado', 'SecurityError');
+            }),
+            print: parentPrint,
+            addEventListener,
+        } as unknown as Window);
+
+        expect(printTicket(invoice)).toBe(true);
+        expect(parentPrint).toHaveBeenCalledOnce();
+    });
+
+    it('retorna fallo sin alerta interna solo cuando popup y pagina actual fallan', () => {
+        const blockedAlert = vi.fn();
+        vi.stubGlobal('window', {
+            open: vi.fn(() => null),
+            print: vi.fn(),
+            addEventListener: vi.fn(),
+        } as unknown as Window);
+        vi.stubGlobal('document', { getElementById: vi.fn(() => null) });
+        vi.stubGlobal('alert', blockedAlert);
+
+        expect(printTicket(invoice)).toBe(false);
+        expect(blockedAlert).not.toHaveBeenCalled();
+    });
+
+    it('conserva la alerta de A4 cuando el navegador bloquea su popup', () => {
+        const blockedAlert = vi.fn();
+        vi.stubGlobal('window', { open: vi.fn(() => null) });
+        vi.stubGlobal('alert', blockedAlert);
+
+        printA4(invoice);
+
+        expect(blockedAlert).toHaveBeenCalledOnce();
+        expect(blockedAlert).toHaveBeenCalledWith('Permite ventanas emergentes para imprimir.');
     });
 
     it('abre el ticket aislado en Android WebView para no depender de window.print del shell', () => {

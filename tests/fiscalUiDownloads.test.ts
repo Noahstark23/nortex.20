@@ -32,6 +32,14 @@ describe('contrato UI de documentos fiscales protegidos', () => {
         expect(reports).not.toContain('Esta funcionalidad se conectara a un generador de XLSX');
     });
 
+    it('separa cuota fija de las obligaciones calculadas del régimen general', () => {
+        expect(reports).toContain('ventasCuotaFija?: number');
+        expect(reports).toContain('Ventas bajo Cuota Fija:');
+        expect(reports).toContain('Estas ventas no alimentan el IVA, Anticipo IR ni IMI del régimen general');
+        expect(reports).toContain('OBLIGACIONES CALCULADAS DEL RÉGIMEN GENERAL');
+        expect(reports).toContain('Nortex no calcula aquí el monto fijo asignado por la DGI');
+    });
+
     it('conserva el Excel de cantidades medidas junto a las descargas DGI', () => {
         expect(reports).toContain("buildMeasuredReportExportRows(salesData.quantityBreakdown)");
         expect(reports).toContain("XLSX.writeFile(workbook, `Cantidades_vendidas_${dates.startDate}_${dates.endDate}.xlsx`)");

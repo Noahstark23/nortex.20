@@ -483,7 +483,7 @@ type OpenPrintWindowOptions = {
 function openPrintWindow(html: string, options: OpenPrintWindowOptions): boolean {
     const printWindow = window.open('', '_blank', `width=${options.width},height=${options.height}`);
     if (!printWindow) {
-        alert('Permite ventanas emergentes para imprimir.');
+        if (alertWhenBlocked) alert('Permite ventanas emergentes para imprimir.');
         return false;
     }
     let printScheduled = false;

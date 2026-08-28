@@ -148,3 +148,18 @@ describe('escribir_cnf está al alcance de quien la llama', () => {
         }
     });
 });
+
+describe('imagen de backup — dependencias del restore drill', () => {
+    it('instala y verifica `diff` antes de construir la imagen', () => {
+        // BUG REAL: la restauración llegó a 84 tablas/11 019 filas y recién al
+        // comparar contra el origen murió con `diff: command not found`.
+        // El build de la imagen en CI ejecuta este RUN, así que estos dos
+        // guardrails convierten esa omisión en un fallo previo al despliegue.
+        const dockerfile = readFileSync(join(raiz, 'Dockerfile.backup'), 'utf-8');
+        expect(dockerfile).toMatch(/RUN microdnf install -y diffutils/);
+        expect(dockerfile).toMatch(/&& command -v diff >\/dev\/null/);
+
+        const workflow = readFileSync(join(raiz, '.github/workflows/ci.yml'), 'utf-8');
+        expect(workflow).toMatch(/diff --version/);
+    });
+});

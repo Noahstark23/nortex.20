@@ -82,6 +82,11 @@ const RetailDashboard: React.FC = () => {
   const [showFiscalModal, setShowFiscalModal] = useState(false);
   const [fiscalData, setFiscalData] = useState<FiscalData>(EMPTY_FISCAL_DATA);
   const [savingFiscal, setSavingFiscal] = useState(false);
+  // Va acá arriba con el resto de los hooks a propósito: más abajo el componente
+  // tiene dos returns tempranos (spinner de carga y estado de error), y un
+  // useState después de ellos rompe el orden de hooks —pantalla en blanco con
+  // "Minified React error #310"—. Lo usa `elegirRegimenFiscal`.
+  const [guardandoRegimen, setGuardandoRegimen] = useState(false);
 
   // Deep-link del onboarding: el paso fiscal apunta a /app/dashboard?config=fiscal
   // para abrir directo el modal de Configuración DGI (la pantalla real del paso).
@@ -328,6 +333,43 @@ const RetailDashboard: React.FC = () => {
       alert(error.message || "Error al procesar el préstamo");
     } finally {
       setLoadingLoan(false);
+    }
+  };
+
+  // El RÉGIMEN se guarda solo, al elegirlo, sin pasar por "GUARDAR DATOS".
+  //
+  // EL PORQUÉ (medido en la pantalla real, no leído en el JSX): el formulario
+  // marca RUC y DIRECCIÓN FÍSICA como `required`, así que el submit se bloquea
+  // en silencio si están vacíos —el navegador muestra "Please fill out this
+  // field." sobre la dirección y el modal se queda abierto—. Y el negocio de
+  // CUOTA FIJA es justamente el que no tiene esos datos cargados: elegía su
+  // régimen, apretaba GUARDAR y no pasaba nada. Guardar al instante es además
+  // como se comportan las otras políticas del negocio (PIN de caja, stock
+  // negativo), y no afloja los datos que la factura sí necesita.
+  const elegirRegimenFiscal = async (fiscalRegime: FiscalRegime) => {
+    if (fiscalRegime === fiscalData.fiscalRegime) return;
+    const previo = fiscalData.fiscalRegime;
+    setFiscalData(prev => ({ ...prev, fiscalRegime }));  // optimista: el radio responde ya
+    setGuardandoRegimen(true);
+    try {
+      const token = localStorage.getItem('nortex_token');
+      const res = await fetch('/api/tenant/fiscal', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ fiscalRegime }),
+      });
+      if (!res.ok) throw new Error('No se pudo cambiar el régimen fiscal. Reintentá.');
+      const updatedTenant = await res.json();
+      setTenantData(updatedTenant);
+      localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
+      setFiscalData(prev => ({ ...prev, fiscalRegime: normalizeFiscalRegime(updatedTenant.fiscalRegime) }));
+    } catch (error: any) {
+      // Volver atrás: dejar el radio marcado en algo que no se guardó le diría
+      // al dueño que ya no cobra IVA mientras el sistema lo sigue cobrando.
+      setFiscalData(prev => ({ ...prev, fiscalRegime: previo }));
+      alert(error.message);
+    } finally {
+      setGuardandoRegimen(false);
     }
   };
 

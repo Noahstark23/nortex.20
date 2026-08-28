@@ -17,7 +17,7 @@ const between = (source: string, start: string, end: string): string => {
 const searchRoute = between(
     server,
     "app.get('/api/sales/search'",
-    "app.post('/api/returns'",
+    /app\.post\(\s*['"]\/api\/returns['"]/,
 );
 const returnRoute = between(
     server,

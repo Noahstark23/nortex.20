@@ -44,8 +44,13 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: always
-    ports:
-      - '3000:3000'
+    # Coolify/Traefik alcanza `app` por la red interna. Publicar `3000:3000`
+    # reservaría el mismo puerto del host para staging y producción, impidiendo
+    # que ambas apps convivan en el Droplet.
+    # Desarrollo local: usar `nortex backend` + `nortex frontend`; este compose
+    # de producción anuncia únicamente el puerto interno del contenedor.
+    expose:
+      - '3000'
     environment:
       - NODE_ENV=production
       - PORT=3000

@@ -1,3 +1,9 @@
+/* Tipografía auto-hospedada. Va antes que nada: Vite la INLINEA en el bundle
+   de CSS, así que no agrega ni una petición y la declaración existe desde el
+   primer byte de estilos. El porqué (y por qué ya no la pedimos a Google) está
+   en el propio archivo. */
+@import './public/fonts/fuentes.css';
+
 /* Tokens de diseño — fuente única de color/radio/espaciado/altura.
    Va PRIMERO: define las :root vars que consumen tanto las clases nx-*
    como el mapeo de Tailwind (tailwind.config.js lee los canales -rgb). */
@@ -21,6 +27,10 @@
     visibility: visible;
     height: auto;
     overflow: visible;
+    /* El ticket vive con `opacity-0` mientras no se imprime. Esta regla por ID
+       es la garantía autoritativa de impresión: no depende del orden en que el
+       navegador aplique la utilidad Tailwind `print:opacity-100`. */
+    opacity: 1 !important;
     /* 🖨️ ANULAR EL TEMA OBSIDIAN: papel térmico = tinta negra sobre blanco.
        Sin fondos oscuros, sin sombras ni glows (no imprimen / arruinan el ticket). */
     background: transparent !important;

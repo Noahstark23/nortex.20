@@ -35,7 +35,13 @@
   --r-xl:  20px;
 
   /* Misma familia que el producto: Plus Jakarta Sans + JetBrains Mono.
-     Se elimina la serif (Instrument Serif) para alinear con el SPA. */
+     Se elimina la serif (Instrument Serif) para alinear con el SPA.
+
+     Esto ahora es CIERTO. Antes no lo era: el SPA pedía `Inter` en sus tokens
+     y esta familia solo la usaba la landing, así que el producto se pintaba
+     con la fuente del sistema. De ahí que la landing se viera diseñada y la
+     app no. El token del SPA ya apunta a esta misma familia y las dos la
+     cargan del mismo archivo en /fonts. */
   --serif: "Plus Jakarta Sans", -apple-system, sans-serif;
   --sans:  "Plus Jakarta Sans", -apple-system, sans-serif;
   --mono:  "JetBrains Mono", ui-monospace, monospace;

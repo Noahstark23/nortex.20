@@ -177,8 +177,8 @@ const RETAIL_CATALOG: CatalogEntry[] = [
     // Mercado B2B oculto del nav hasta tener catálogo real (no mock que debite
     // el wallet). La ruta sigue existiendo con un placeholder "próximamente".
     // ── CLIENTES ──
-    { path: '/app/clients', label: 'Clientes', shortLabel: 'Clientes', group: 'CLIENTES', iconKey: 'users' },
-    { path: '/app/receivables', label: 'Fiado y Cobros', shortLabel: 'Fiado', group: 'CLIENTES', iconKey: 'wallet' },
+    { path: '/app/clients', label: 'Clientes', shortLabel: 'Clientes', group: 'CLIENTES', iconKey: 'users', roles: GATE_CUSTOMER_READ },
+    { path: '/app/receivables', label: 'Fiado y Cobros', shortLabel: 'Fiado', group: 'CLIENTES', iconKey: 'wallet', roles: GATE_CUSTOMER_READ },
     // ── DINERO ──
     { path: '/app/dashboard', label: 'Mi Plata', shortLabel: 'Mi Plata', group: 'DINERO', iconKey: 'layoutGrid' },
     { path: '/app/financial-health', label: 'Salud Financiera', shortLabel: 'Salud', group: 'DINERO', iconKey: 'barChart3', roles: GATE_ADMIN },

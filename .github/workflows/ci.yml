@@ -226,7 +226,7 @@ jobs:
       - name: Las herramientas de la imagen realmente funcionan
         run: |
           docker run --rm --entrypoint bash nortex-backup:ci -lc \
-            'set -e; mysqldump --version; aws --version; command -v gzip; command -v find'
+            'set -e; mysqldump --version; aws --version; diff --version; command -v gzip; command -v find'
 
   # ── Despliegue con COMPUERTA: solo corre en main, cuando la variable
   # NORTEX_DEPLOY_ENABLED vale "true", y después de verify + schema smoke.

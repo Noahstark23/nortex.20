@@ -3,6 +3,7 @@ import type { Product } from '../../types';
 import { formatMoney } from '../../utils/money';
 
 export interface CajaNicaCatalogProps {
+    /** Lo que se muestra: ya viene recortado por el POS. */
     products: Product[];
     totalProducts: number;
     categories: string[];
@@ -96,6 +97,7 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
     const panelId = `${catalogId}-products`;
     const activeCategoryIndex = categories.indexOf(selectedCategory);
     const isSearching = searchTerm.trim().length > 0;
+    const ocultos = Math.max(0, total - products.length);
 
     const handleCategoryKeyDown = (
         event: KeyboardEvent<HTMLButtonElement>,
@@ -126,6 +128,9 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
                 >
                     {isSearching ? 'Resultados' : 'Tus productos'}
                 </h2>
+                {/* El número es el TOTAL, no el de la lista recortada. Antes decía
+                    `products.length`, que ya venía cortado a 12: a un negocio con
+                    1,003 productos la pantalla le afirmaba que tenía doce. */}
                 <span className="text-xs tabular-nums text-slate-500" aria-live="polite">
                     {products.length === totalProducts
                         ? `${totalProducts} ${totalProducts === 1 ? 'producto' : 'productos'}`

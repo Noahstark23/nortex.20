@@ -35,6 +35,12 @@ import { checkRole } from './middleware/checkRole';
 import { BODEGUERO_ROLE, redactBodegueroProduct } from './security/bodegueroPolicy';
 import { calculateTenantScore } from './services/scoring';
 import { ESTADO_ANULADA, puedeAnularse, planDeReversion, textoUtil } from './services/saleCancellation';
+import {
+    pagarFacturaProveedorEnCaja,
+    registrarSalidaDeCajaPorCompra,
+    SupplierPaymentError,
+    MENSAJE_SIN_CAJA_ABIERTA,
+} from './services/supplierPayment';
 import { decidirIdentidadCajero, pinNormalizado, explicarModo } from './services/shiftIdentity';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { composeSeedCatalog } from './data/seedCatalogs';
@@ -1948,6 +1954,9 @@ const UpdateCustomerSchema = z.object({
     isBlocked: z.boolean().optional(),
     isWholesale: z.boolean().optional(),
     sellerId: z.string().min(1).nullable().optional(),
+}).refine((value) => Object.values(value).some((field) => field !== undefined), {
+    message: 'Indicá al menos un cambio',
+    path: ['_form'],
 });
 
 const CreateCustomerInteractionSchema = z.object({
@@ -2795,7 +2804,14 @@ app.put('/api/customers/:id', authenticate, validate(UpdateCustomerSchema), asyn
             if (isWholesale !== undefined) data.isWholesale = Boolean(isWholesale);
             if (sellerId !== undefined) data.sellerId = sellerId; // null = desasignar
 
-            if (Object.keys(data).length === 0) return;
+            // Repetir tenant/cartera en el sink cierra la ventana entre el
+            // lookup y la escritura si un admin reasigna al cliente en paralelo.
+            const updateResult = await tx.customer.updateMany({ where: existingWhere, data });
+            if (updateResult.count !== 1) throw new Error('CUSTOMER_NOT_FOUND');
+            const updated = await tx.customer.findFirst({
+                where: { id, tenantId: authReq.tenantId },
+            });
+            if (!updated) throw new Error('CUSTOMER_NOT_FOUND');
 
             // Repetir tenant/cartera en el sink cierra la ventana entre el
             // lookup y la escritura si un admin reasigna al cliente en paralelo.
@@ -8527,8 +8543,35 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
         let totalVentas = new Decimal(0);   // Total con IVA
         let totalCOGS   = new Decimal(0);   // Costo de Ventas
 
-        sales.forEach((sale: { total: unknown; items: { costAtSale: unknown; quantity: unknown }[] }) => {
-            totalVentas = totalVentas.plus(new Decimal(sale.total?.toString() ?? '0'));
+        // El IVA se acumula VENTA POR VENTA, leyendo lo que cada venta guardó de
+        // sí misma (`vatCollectedFromSale`), con las mismas reglas que la
+        // declaración mensual.
+        //
+        // Antes acá se hacía `totalVentas / 1.15` sobre el período entero, o sea
+        // se daba por hecho que TODO córdoba vendido trae 15% adentro. Eso le
+        // inventaba al dueño un IVA que nunca cobró en dos casos reales —el
+        // negocio de CUOTA FIJA, que no traslada IVA en ninguna venta, y la venta
+        // exonerada de canasta básica o medicinas— y de paso le recortaba esa
+        // misma plata a la utilidad bruta. Y no era un número escondido: la
+        // pantalla de Reportes lo rotula "IVA RECAUDADO (15%) · Para declarar a
+        // la DGI".
+        let ivaRecaudadoD = new Decimal(0);
+
+        sales.forEach((sale: {
+            total: unknown;
+            exemptTotal: unknown;
+            fiscalRegimeAtSale: unknown;
+            vatAmountAtSale: unknown;
+            items: { costAtSale: unknown; quantity: unknown }[];
+        }) => {
+            const saleTotal = new Decimal(sale.total?.toString() ?? '0');
+            totalVentas = totalVentas.plus(saleTotal);
+            ivaRecaudadoD = ivaRecaudadoD.plus(vatCollectedFromSale({
+                total: saleTotal,
+                exemptTotal: sale.exemptTotal?.toString() ?? 0,
+                fiscalRegimeAtSale: sale.fiscalRegimeAtSale,
+                vatAmountAtSale: sale.vatAmountAtSale?.toString() ?? null,
+            }));
             sale.items.forEach((item) => {
                 totalCOGS = totalCOGS.plus(
                     new Decimal(item.costAtSale?.toString() ?? '0').mul(item.quantity?.toString() ?? '0')
@@ -8536,9 +8579,8 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
             });
         });
 
-        // IVA Nicaragua 15%: total = subtotal * 1.15, subtotal = total / 1.15
-        const ventasNetas   = totalVentas.dividedBy('1.15').toDecimalPlaces(4);
-        const ivaRecaudado  = totalVentas.minus(ventasNetas).toDecimalPlaces(4);
+        const ivaRecaudado  = ivaRecaudadoD.toDecimalPlaces(4);
+        const ventasNetas   = totalVentas.minus(ivaRecaudado).toDecimalPlaces(4);
         const utilidadBruta = ventasNetas.minus(totalCOGS).toDecimalPlaces(4);
 
         // 3. Group sales by day for chart
@@ -8861,11 +8903,45 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
         if (!anchorPurchase || !ppvAccount) await seedChartOfAccounts(authReq.tenantId!);
         if (!purchaseOrderId) await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
 
+        // Compra de CONTADO: el efectivo sale de la gaveta, así que exige una
+        // caja abierta. Se resuelve ANTES de la tx (el turno es el mismo que ve
+        // la píldora del POS) y el error DICE que falta abrir caja — antes se
+        // debitaba la billetera fintech y respondía "recarga tu billetera".
+        const { shift: turnoDeContado } = paymentMethod === 'CASH'
+            ? await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!)
+            : { shift: null };
+        if (paymentMethod === 'CASH' && !turnoDeContado) {
+            const sinCaja = new SupplierPaymentError(
+                'SIN_CAJA_ABIERTA',
+                'No hay caja abierta. Abrí una caja para registrar una compra de contado, o registrala a crédito.'
+            );
+            return res.status(sinCaja.httpStatus).json({ error: sinCaja.message, code: sinCaja.code });
+        }
+        // Snapshot de la gaveta para la auditoría (se llena dentro de la tx).
+        let efectivoAntesCompra: Decimal | null = null;
+        let efectivoDespuesCompra: Decimal | null = null;
+
         const result = await prisma.$transaction(async (tx: any) => {
             // Serializar las compras del proveedor antes de cualquier lectura consistente
             // de la transacción. Así, un doble envío concurrente no puede pasar dos veces
             // el chequeo de factura duplicada.
             await tx.$queryRaw`SELECT id FROM \`Supplier\` WHERE id = ${supplierId} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
+
+            // ORDEN DE BLOQUEO — Product ANTES que Shift, a propósito.
+            //
+            // El turno NO se bloquea acá: lo toma `registrarSalidaDeCajaPorCompra`
+            // en el punto 4, DESPUÉS de los locks de Product del punto 3. Ese es
+            // el mismo orden que usa la devolución en efectivo, que es la otra
+            // transacción del sistema que bloquea las dos tablas:
+            //   /api/returns:   Sale → Product (applyStockDelta) → Shift
+            //   /api/purchases: Supplier → Product → Shift
+            // Un intento anterior adelantó el lock del turno hasta acá creyendo
+            // que la devolución era Shift → Product. No lo es (el `FOR UPDATE`
+            // del turno vive dentro del bloque de reembolso CASH, después del
+            // bucle de stock), así que adelantarlo INVERTÍA el orden y abría el
+            // deadlock que pretendía cerrar: una devolución y una compra de
+            // contado del mismo producto, en el mismo turno, se trababan.
+            // Si algún día se cambia este orden, hay que cambiar los DOS lados.
 
             // Verificar propiedad del proveedor: nunca confiar en supplierId del body sin
             // scoping por tenant. Sin esto, el include: { supplier: true } filtraría PII
@@ -8961,8 +9037,9 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                 : null;
             const requestedFromLinkedPO = new Map<string, Decimal>();
 
-            // Snapshot del saldo de billetera para el asiento de auditoría (before/after).
-            const tenantBefore = await tx.tenant.findUnique({
+            // El régimen sale del tenant autenticado y se congela junto con la
+            // compra dentro de esta misma transacción. Nunca se acepta del body.
+            const tenantFiscal = await tx.tenant.findUnique({
                 where: { id: authReq.tenantId! },
                 select: {
                     walletBalance: true,
@@ -9366,7 +9443,14 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                 });
             }
 
-            // 4. Registro financiero
+            // 4. Registro financiero — LA PLATA SALE DE LA GAVETA, no de la
+            //    billetera fintech (`Tenant.walletBalance`, que se fondea con
+            //    /api/loans/request y solo se gasta en el marketplace B2B).
+            //    Antes se debitaba esa billetera y, como ninguna PyME la tiene
+            //    fondeada, TODA compra de contado moría con "SALDO_INSUFICIENTE …
+            //    recarga tu billetera" aunque hubiera efectivo real en la caja.
+            //    El asiento de `recordPurchase` ya acreditaba Caja (1.1.1): la
+            //    billetera nunca fue la contrapartida correcta.
             if (paymentMethod === 'CASH') {
                 // Débito ATÓMICO: decrementa solo si hay saldo suficiente. El guard de
                 // suficiencia y la escritura son el MISMO UPDATE condicional (toma el
@@ -9393,6 +9477,8 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                         category: 'COMPRA_MERCADERIA'
                     }
                 });
+                efectivoAntesCompra = salida.efectivoAntes;
+                efectivoDespuesCompra = salida.efectivoDespues;
             }
             // Si es CREDIT, no se descuenta dinero - queda como cuenta por pagar
 
@@ -9419,8 +9505,8 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
 
             // Asiento inmutable de auditoría (Capa 3): toda compra mueve su efecto
             // financiero; solo una compra directa mueve además inventario valorizado.
-            // Registrar before/after de billetera y los cambios de stock/costo aplicados.
-            const walletAfter = paymentMethod === 'CASH' ? walletBefore.minus(totalAmount) : walletBefore;
+            // Registrar el before/after de la GAVETA (null si fue a crédito: ahí no
+            // sale efectivo) y los cambios de stock/costo aplicados.
             await tx.auditLog.create({
                 data: {
                     tenantId: authReq.tenantId!,
@@ -9497,6 +9583,9 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
         if (error?.message === 'OC_NO_ENCONTRADA') {
             return res.status(404).json({ error: 'Orden de compra no encontrada' });
         }
+        if (error?.message === 'TENANT_NOT_FOUND') {
+            return res.status(404).json({ error: 'Negocio no encontrado' });
+        }
         if (error?.message?.startsWith('LOTE_REQUERIDO|')) {
             const productName = error.message.slice('LOTE_REQUERIDO|'.length);
             return res.status(400).json({ error: `Ingresá el lote y la fecha de vencimiento de ${productName}` });
@@ -9520,9 +9609,13 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
             const status = error.message.split(':')[1];
             return res.status(400).json({ error: status === 'APPROVED' ? 'Recibí la mercadería antes de facturar una orden de compra aprobada' : `No se puede facturar una orden de compra en estado ${status}` });
         }
-        const insufficient = error?.message?.includes('SALDO_INSUFICIENTE');
+        // Caja: sin turno abierto (409) o efectivo insuficiente en la gaveta (400).
+        // El status sale del código tipado, no de un substring del mensaje.
+        if (error instanceof SupplierPaymentError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
         const notFound = error?.message?.includes('no encontrado');
-        res.status(insufficient ? 400 : notFound ? 404 : 500).json({ error: error.message || 'Error al procesar la compra' });
+        res.status(notFound ? 404 : 500).json({ error: error.message || 'Error al procesar la compra' });
     }
 });
 
