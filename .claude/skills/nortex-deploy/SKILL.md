@@ -5,6 +5,9 @@ description: Despliegue y operaciones de Nortex — Docker, variables de entorno
 
 # Deploy y operaciones de Nortex
 
+Para configurar o auditar el respaldo off-site, medir RPO/RTO o ejecutar una prueba
+de restauración, cargar primero `nortex-backup-recovery`; esa skill define la compuerta.
+
 ## Pipeline
 `Dockerfile`: `npm install` → `prisma generate` (URL dummy) →
 `npm run build:seo` (frontend + prerender 70+ rutas + sitemap) → CMD:
@@ -36,9 +39,8 @@ historial → por eso la política de rotación).
 1. `npx tsc --noEmit` + `npm run build:seo` verdes en la rama.
 2. Diff del schema: solo aditivo.
 3. ¿Migración nueva? → verificar su patrón perezoso de backfill si desglosa agregados.
-4. Backup ANTES de desplegar cambios de schema: `scripts/backup-db.sh` (debe correr
-   diario por cron hacia almacenamiento SEPARADO del Droplet — si no está
-   desplegado, alertar al CEO; es la Capa 6 del Security Loop).
+4. Backup ANTES de desplegar cambios de schema: aplicar la compuerta de
+   `nortex-backup-recovery` y exigir evidencia off-site restaurable de la base real.
 
 ## Smoke tests post-deploy
 ```bash

@@ -35,13 +35,19 @@ const RAIZ = resolve(__dirname, '..');
 const POS = readFileSync(join(RAIZ, 'components/POS.tsx'), 'utf8');
 
 /**
- * Presupuesto vigente. Medido el 2026-08-27 sobre `main` (commit 212dd9f), que
- * es el punto de partida del plan de desguace. Cada número es el máximo
- * tolerado, no una meta: la meta está en el plan (POS.tsx < 1.500 líneas,
- * < 30 `useState`).
+ * Presupuesto vigente. Cada número es el máximo tolerado, no una meta: la meta
+ * está en el plan (POS.tsx < 1.500 líneas, < 30 `useState`).
+ *
+ * La marca se puso en 7.452 al medir sobre 212dd9f el 2026-08-27 y hubo que
+ * subirla a 7.497 al día siguiente, al traer `main`: el hub de clientes (#184)
+ * le sumó 45 líneas más al monolito mientras se escribía esta red. Es la ÚNICA
+ * vez que este número sube, y sube porque es la marca INICIAL fijándose sobre
+ * la realidad de `main` — no porque un PR necesitara pasar. De acá en adelante
+ * solo baja. Que hayan entrado 45 líneas en un día, justo mientras medíamos,
+ * es la mejor evidencia de por qué este archivo tiene que existir.
  */
 const PRESUPUESTO = {
-    lineas: 7452,
+    lineas: 7497,
     useState: 122,
 };
 
@@ -93,7 +99,7 @@ describe('presupuesto de POS.tsx', () => {
  * La otra mitad del trinquete: que no crezca la deuda de tests acoplados al
  * TEXTO de POS.tsx.
  *
- * Hoy seis archivos leen `components/POS.tsx` como string y afirman que ciertos
+ * Hoy siete archivos leen `components/POS.tsx` como string y afirman que ciertos
  * fragmentos están adentro de ese archivo. Eso clava el monolito: mover una
  * pieza a otro archivo los rompe aunque la conducta sea idéntica, y a cambio no
  * cubren ni una venta. Se van a ir reubicando a medida que avance el desguace
@@ -112,6 +118,11 @@ const ACOPLADOS_HISTORICOS = [
     'cajaNicaPos.test.ts',
     'noHardcodedCurrency.test.ts',
     'pinCajeroSinFriccion.test.ts',
+    // Llegó con el hub de clientes (#184) mientras se escribía esta red: la
+    // deuda pasó de seis a siete en un día. Entra a la lista porque ya está en
+    // `main`, no porque se acepte el patrón — es justamente el séptimo caso que
+    // este guard existe para que no haya un octavo.
+    'posCustomerCreateAuthorization.test.ts',
     'quotationPosBridge.test.ts',
     'returnEndpointGuards.test.ts',
 ];

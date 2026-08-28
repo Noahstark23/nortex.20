@@ -1,8 +1,8 @@
 import { pathToFileURL } from 'node:url';
 
-const DEFAULT_ATTEMPTS = 48;
-// 48 × 5 s de timeout + 47 × 5 s entre intentos = 475 s como peor caso.
-// La compuerta siempre decide dentro de la ventana operativa de ocho minutos.
+const DEFAULT_ATTEMPTS = 97;
+// Con respuestas inmediatas, 97 intentos dejan 96 pausas × 5 s = 480 s.
+// Así un rollout con 503 rápidos conserva una ventana efectiva de ocho minutos.
 const DEFAULT_INTERVAL_MS = 5_000;
 const DEFAULT_TIMEOUT_MS = 5_000;
 
@@ -62,16 +62,21 @@ export const waitForExpectedRelease = async ({
                 headers: { accept: 'application/json' },
                 signal: AbortSignal.timeout(timeoutMs),
             });
-            const payload = await response.json();
-            const assessment = assessReleaseHealth(payload, expectedCommit);
 
-            if (response.ok && assessment.ready) {
-                return { healthUrl, payload, attemptsUsed: attempt };
-            }
+            if (!response.ok) {
+                lastReason = `HTTP_${response.status}`;
+            } else {
+                const payload = await response.json();
+                const assessment = assessReleaseHealth(payload, expectedCommit);
 
-            lastReason = response.ok ? assessment.reason : `HTTP_${response.status}`;
-            if (assessment.observedCommit) {
-                lastReason += `:${assessment.observedCommit}`;
+                if (assessment.ready) {
+                    return { healthUrl, payload, attemptsUsed: attempt };
+                }
+
+                lastReason = assessment.reason;
+                if (assessment.observedCommit) {
+                    lastReason += `:${assessment.observedCommit}`;
+                }
             }
         } catch (error) {
             lastReason = error instanceof Error ? error.message : 'REQUEST_FAILED';

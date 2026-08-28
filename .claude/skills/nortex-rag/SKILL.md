@@ -1,6 +1,6 @@
 ---
 name: nortex-rag
-description: Avanzar el agente RAG de WhatsApp de Nortex — retrieval del catálogo, tools del agente, cerebro LLM, memoria conversacional y evaluación. Usar al agregar tools, mejorar la búsqueda, cambiar el brain, o depurar por qué el bot responde mal. El tenant viaja SIEMPRE server-side; ese principio es inviolable.
+description: Avanzar o escalar el agente RAG de WhatsApp de Nortex — retrieval, tools, cerebro LLM, memoria, cola, workers y evaluación. Usar al agregar tools, mejorar respuestas, introducir búsqueda vectorial o preparar el subsistema para múltiples instancias. El tenant viaja SIEMPRE server-side; SQL conserva la verdad operativa y RAG solo aporta conocimiento no estructurado.
 ---
 
 # Agente RAG de WhatsApp — método de trabajo
@@ -13,7 +13,7 @@ pipeline. Antes de tocar nada, leé el archivo de la costura que vas a usar.
 
 | Pieza | Archivo | Costura de extensión |
 |---|---|---|
-| Webhook Meta (HMAC, 200 inmediato) | `webhook.ts` | — (no tocar salvo bug) |
+| Webhook Meta (HMAC, 200 inmediato hoy) | `webhook.ts` | No tocar en cambios ordinarios; al escalar, mover el 200 detrás del inbox durable según la ruta de escala |
 | Cola (per-proceso) | `queue.ts` | `InMemoryQueue` → BullMQ/Redis al escalar (SCALING_AUDIT) |
 | Pipeline entrante (dedupe + resume) | `inbound.ts` | — (idempotencia sagrada, ver gotchas) |
 | Identidad/tenant | `identity.ts` | — (principio inviolable, ver abajo) |
@@ -26,6 +26,24 @@ pipeline. Antes de tocar nada, leé el archivo de la costura que vas a usar.
 Flags: `WHATSAPP_LLM=claude` + `ANTHROPIC_API_KEY` activan `ClaudeBrain` (carga
 perezosa); sin ellos corre `MenuBotBrain` (regex determinístico, mismas tools) —
 **toda mejora de tools/retrieval beneficia a ambos cerebros**.
+
+## Elegir la ruta correcta
+
+- Para una tool, intención, prompt, memoria o mejora del retrieval actual, usá las
+  recetas de este archivo.
+- Para cola persistente, worker separado, outbox, pgvector, multi-instancia o una
+  propuesta de microservicios, leé completa la
+  [ruta de escala](references/ruta-de-escala.md) antes de diseñar. Su orden de
+  migración y sus gates evitan distribuir las transacciones de dinero/stock.
+- Para cambios que mezclen ambas rutas, preservá primero los contratos actuales
+  (`AgentBrain`, `AgentTool`, `CatalogRetriever`, idempotencia por `waMessageId`) y
+  hacé la infraestructura intercambiable detrás de esos contratos.
+
+La arquitectura objetivo es un **monolito modular transaccional**, no una
+colección prematura de microservicios: ventas, inventario, caja, cartera y
+contabilidad permanecen en MySQL y en los servicios core. WhatsApp, ingesta de
+documentos, embeddings y despachos externos sí pueden correr como workers
+separados y escalar de forma independiente.
 
 ## Principios inviolables (violar cualquiera = rechazar el diseño)
 
@@ -43,6 +61,14 @@ perezosa); sin ellos corre `MenuBotBrain` (regex determinístico, mismas tools) 
 5. **Dinero en `Decimal`** también en las respuestas del bot (`money()` en tools.ts).
 6. **Toda tool valida args con Zod en runtime** (además del JSON Schema que ve el
    LLM — el modelo puede mandar cualquier cosa; Zod es la frontera real).
+7. **El LLM no consulta tablas ni ejecuta mutaciones directamente.** Datos
+   operativos actuales (precio, stock, deuda, ventas, pedidos) salen de tools SQL
+   determinísticas; RAG se reserva para manuales, políticas, fichas y otro texto
+   no estructurado. Una respuesta híbrida mantiene separadas ambas procedencias.
+8. **No hay dual-write entre bases.** Una mutación core y su `AuditLog`/outbox se
+   confirman atómicamente en MySQL; Redis y pgvector se actualizan después, con
+   consumidores idempotentes. Nunca mantener una transacción abierta durante una
+   llamada al LLM, a Meta, a Redis o al vector store.
 
 ## Recetas
 
@@ -72,8 +98,11 @@ Ideas ya validadas por el dominio (no construidas): `estado_pedido` (tracking de
 - Mejores baratas antes de pensar en vectores: diccionario de **sinónimos nica**
   (ej. "poroplast" → "durapax", "lampazo") expandiendo términos en `tokenize`;
   boost por ventas recientes en el `ORDER BY`; normalizar tildes en ambos lados.
-- Si algún día entra un vector store (Qdrant/pgvector): se implementa OTRO
-  `CatalogRetriever` y se decide por env var — el resto del sistema no se entera.
+- Si entra pgvector: mantenelo en PostgreSQL **auxiliar** y separado; MySQL 8 y el
+  Prisma del core siguen siendo canónicos. Implementá otro `CatalogRetriever`,
+  habilitalo por tenant con fallback léxico y tratá el índice vectorial como
+  reconstruible, nunca como fuente de precio, stock o deuda. Seguí la
+  [ruta de escala](references/ruta-de-escala.md).
 - El ranking va **en SQL**, no en JS (`take: N` + re-rank en JS = top-N arbitrario
   a escala; trampa conocida del repo).
 
@@ -122,6 +151,11 @@ resumen como primer turno — NO inflar `history` sin tope (costo por token).
 4. *(Si tocaste `inbound.ts`)* **Idempotencia:** el mismo `waMessageId` dos veces
    → una sola respuesta; y un fallo post-persist pre-envío → el retry SÍ responde
    (estado `responded` es el guard, no la mera existencia de la fila).
+5. *(Si tocaste cola/outbox/vector)* Corré los escenarios de falla de la
+   [ruta de escala](references/ruta-de-escala.md): entrega duplicada, crash entre
+   commit y publish/send, Redis caído, pgvector caído, índice atrasado e intento
+   cross-tenant. No declarar "exactly once": el contrato es at-least-once con
+   efectos idempotentes.
 
 ## Gotchas reales del subsistema
 
@@ -131,7 +165,8 @@ resumen como primer turno — NO inflar `history` sin tope (costo por token).
 - **Stopwords de MySQL** en FULLTEXT: palabras muy comunes devuelven 0 hits →
   fallback. Mismo motivo.
 - **La cola es per-proceso** (`InMemoryQueue`): con >1 instancia se pierde o
-  duplica trabajo. No asumas multi-instancia sin migrarla (SCALING_AUDIT A).
+  duplica trabajo. No asumas multi-instancia sin inbox/cola persistente, worker e
+  idempotencia probados (SCALING_AUDIT A).
 - **Dedupe P2002 con resume:** el catch en `inbound.ts` NO descarta a ciegas —
   reanuda si el intento previo murió antes de enviar. Si tocás ese catch,
   conservá las dos ramas (descartar respondido / reanudar colgado).
@@ -149,3 +184,6 @@ resumen como primer turno — NO inflar `history` sin tope (costo por token).
 - [ ] Retrieval probado con datos reales (FULLTEXT y fallback)
 - [ ] `docs/WHATSAPP_INFRA.md` actualizado si cambió la arquitectura
 - [ ] MenuBot sigue funcionando sin API key (el default no puede romperse)
+- [ ] Si hay infraestructura nueva: rollout por tenant/flag, métricas, rollback y
+      pruebas de caída documentados según la ruta de escala
+- [ ] Ninguna cifra operativa se responde desde embeddings o texto recuperado

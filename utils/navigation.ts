@@ -95,6 +95,9 @@ const BODEGUERO_ITEMS: NavEntry[] = [
 /** Roles con acceso a cada item gated (mismo gating que existía en Layout). */
 const GATE_MANAGER = ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'];
 const GATE_ADMIN = ['OWNER', 'ADMIN', 'SUPER_ADMIN'];
+// Debe reflejar `customers:read` del backend para el catálogo retail. VENDEDOR
+// conserva su menú dedicado (VENDEDOR_ITEMS) y no pasa por este catálogo.
+const GATE_CUSTOMER_READ = ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'CASHIER', 'VIEWER'];
 
 interface CatalogEntry extends NavEntry {
     /** Si está presente, solo estos roles ven el item (igual que antes). */
@@ -174,8 +177,8 @@ const RETAIL_CATALOG: CatalogEntry[] = [
     // Mercado B2B oculto del nav hasta tener catálogo real (no mock que debite
     // el wallet). La ruta sigue existiendo con un placeholder "próximamente".
     // ── CLIENTES ──
-    { path: '/app/clients', label: 'Clientes', shortLabel: 'Clientes', group: 'CLIENTES', iconKey: 'users' },
-    { path: '/app/receivables', label: 'Fiado y Cobros', shortLabel: 'Fiado', group: 'CLIENTES', iconKey: 'wallet' },
+    { path: '/app/clients', label: 'Clientes', shortLabel: 'Clientes', group: 'CLIENTES', iconKey: 'users', roles: GATE_CUSTOMER_READ },
+    { path: '/app/receivables', label: 'Fiado y Cobros', shortLabel: 'Fiado', group: 'CLIENTES', iconKey: 'wallet', roles: GATE_CUSTOMER_READ },
     // ── DINERO ──
     { path: '/app/dashboard', label: 'Mi Plata', shortLabel: 'Mi Plata', group: 'DINERO', iconKey: 'layoutGrid' },
     { path: '/app/financial-health', label: 'Salud Financiera', shortLabel: 'Salud', group: 'DINERO', iconKey: 'barChart3', roles: GATE_ADMIN },

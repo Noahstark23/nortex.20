@@ -113,6 +113,39 @@ const sanitizeDecimalInput = (raw: string): string => {
     return dot === -1 ? cleaned : cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, '');
 };
 
+const CUSTOMER_CREATE_CONTROL_ROLES = new Set(['OWNER', 'ADMIN', 'SUPER_ADMIN']);
+
+/**
+ * Reflejo de UX del boundary autoritativo del backend. No concede permisos:
+ * únicamente evita ofrecer o enviar controles financieros que la API rechazará.
+ */
+export const canCreateCustomerWithFinancialControls = (role: string): boolean =>
+    CUSTOMER_CREATE_CONTROL_ROLES.has(role.trim().toUpperCase());
+
+export interface InlineCustomerCreatePayloadInput {
+    role: string;
+    name: string;
+    phone?: string;
+    creditLimit?: string;
+}
+
+export interface InlineCustomerCreatePayload {
+    name: string;
+    phone?: string;
+    creditLimit?: string;
+}
+
+/** Allowlist por rol: ocultar el campo no basta para proteger el payload. */
+export const buildInlineCustomerCreatePayload = (
+    input: InlineCustomerCreatePayloadInput,
+): InlineCustomerCreatePayload => ({
+    name: input.name,
+    ...(input.phone ? { phone: input.phone } : {}),
+    ...(canCreateCustomerWithFinancialControls(input.role) && input.creditLimit
+        ? { creditLimit: input.creditLimit }
+        : {}),
+});
+
 // Parser tolerante a string vacío/parcial ("", ".") → Decimal(0). Nunca lanza.
 const toDecimal = (v: string | number): Decimal => {
     try {
@@ -637,6 +670,7 @@ const POS: React.FC = () => {
     const [isOwnerAdmin] = useState<boolean>(() => {
         return ['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(operatorRole);
     });
+    const canManageCustomerCreateControls = canCreateCustomerWithFinancialControls(operatorRole);
 
     // 🔴 FIADO INTELIGENTE STATE
     const [showCreditPanel, setShowCreditPanel] = useState(false);
@@ -2741,7 +2775,9 @@ const POS: React.FC = () => {
         setInlineCustomer({
             name: customerSearch.trim(),
             phone: '',
-            creditLimit: customerPickerForCredit ? grandTotalD.toFixed(2) : '',
+            creditLimit: canManageCustomerCreateControls && customerPickerForCredit
+                ? grandTotalD.toFixed(2)
+                : '',
         });
         setInlineCustomerErrors({});
         setShowCustomerDropdown(false);
@@ -2759,7 +2795,7 @@ const POS: React.FC = () => {
         if (!name) fieldErrors.name = 'Escribí el nombre del cliente.';
         if (phone.length > 40) fieldErrors.phone = 'El teléfono es demasiado largo.';
         let creditLimit: Decimal | null = null;
-        if (creditLimitRaw) {
+        if (canManageCustomerCreateControls && creditLimitRaw) {
             try {
                 creditLimit = new Decimal(creditLimitRaw);
                 if (!creditLimit.isFinite() || creditLimit.isNegative()) {
@@ -2781,11 +2817,12 @@ const POS: React.FC = () => {
             const response = await fetch('/api/customers', {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({
+                body: JSON.stringify(buildInlineCustomerCreatePayload({
+                    role: operatorRole,
                     name,
-                    ...(phone ? { phone } : {}),
-                    ...(creditLimit ? { creditLimit: creditLimit.toString() } : {}),
-                }),
+                    phone,
+                    creditLimit: creditLimit?.toString(),
+                })),
             });
             const body = await response.json().catch(() => ({}));
             if (!response.ok) {
@@ -2823,7 +2860,9 @@ const POS: React.FC = () => {
                 title: 'Cliente creado y seleccionado',
                 message: created.creditLimit > 0
                     ? 'Podés continuar con el cobro.'
-                    : 'Para venderle fiado, definí primero su límite de crédito.',
+                    : canManageCustomerCreateControls
+                        ? 'Para venderle fiado, definí primero su límite de crédito.'
+                        : 'Cliente creado. Un administrador debe asignarle el límite para venderle fiado.',
             });
         } catch {
             setInlineCustomerErrors({
@@ -6055,30 +6094,36 @@ const POS: React.FC = () => {
                                 />
                                 {inlineCustomerErrors.phone && <p id="inline-customer-phone-error" className="text-xs text-red-300 mt-1">{inlineCustomerErrors.phone}</p>}
                             </div>
-                            <div>
-                                <label htmlFor="inline-customer-limit" className="block text-xs font-semibold text-slate-300 mb-1.5">
-                                    Límite de fiado <span className="font-normal text-slate-500">(opcional)</span>
-                                </label>
-                                <div className="relative">
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm font-semibold">C$</span>
-                                    <input
-                                        id="inline-customer-limit"
-                                        type="text"
-                                        inputMode="decimal"
-                                        value={inlineCustomer.creditLimit}
-                                        onChange={(event) => {
-                                            setInlineCustomer(previous => ({ ...previous, creditLimit: sanitizeDecimalInput(event.target.value) }));
-                                            setInlineCustomerErrors(previous => ({ ...previous, creditLimit: undefined, general: undefined }));
-                                        }}
-                                        aria-invalid={Boolean(inlineCustomerErrors.creditLimit)}
-                                        aria-describedby={inlineCustomerErrors.creditLimit ? 'inline-customer-limit-error' : 'inline-customer-limit-help'}
-                                        className={`w-full h-touch pl-9 pr-3 rounded-control bg-surface-900 text-slate-100 border outline-none focus:ring-2 focus:ring-brand/30 font-mono tabular-nums ${inlineCustomerErrors.creditLimit ? 'border-red-500/70' : 'border-white/[0.10]'}`}
-                                        placeholder="0.00"
-                                    />
+                            {canManageCustomerCreateControls ? (
+                                <div>
+                                    <label htmlFor="inline-customer-limit" className="block text-xs font-semibold text-slate-300 mb-1.5">
+                                        Límite de fiado <span className="font-normal text-slate-500">(opcional)</span>
+                                    </label>
+                                    <div className="relative">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm font-semibold">C$</span>
+                                        <input
+                                            id="inline-customer-limit"
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={inlineCustomer.creditLimit}
+                                            onChange={(event) => {
+                                                setInlineCustomer(previous => ({ ...previous, creditLimit: sanitizeDecimalInput(event.target.value) }));
+                                                setInlineCustomerErrors(previous => ({ ...previous, creditLimit: undefined, general: undefined }));
+                                            }}
+                                            aria-invalid={Boolean(inlineCustomerErrors.creditLimit)}
+                                            aria-describedby={inlineCustomerErrors.creditLimit ? 'inline-customer-limit-error' : 'inline-customer-limit-help'}
+                                            className={`w-full h-touch pl-9 pr-3 rounded-control bg-surface-900 text-slate-100 border outline-none focus:ring-2 focus:ring-brand/30 font-mono tabular-nums ${inlineCustomerErrors.creditLimit ? 'border-red-500/70' : 'border-white/[0.10]'}`}
+                                            placeholder="0.00"
+                                        />
+                                    </div>
+                                    <p id="inline-customer-limit-help" className="text-[11px] text-slate-500 mt-1">Solo hace falta si vas a cobrar esta venta fiada.</p>
+                                    {inlineCustomerErrors.creditLimit && <p id="inline-customer-limit-error" className="text-xs text-red-300 mt-1">{inlineCustomerErrors.creditLimit}</p>}
                                 </div>
-                                <p id="inline-customer-limit-help" className="text-[11px] text-slate-500 mt-1">Solo hace falta si vas a cobrar esta venta fiada.</p>
-                                {inlineCustomerErrors.creditLimit && <p id="inline-customer-limit-error" className="text-xs text-red-300 mt-1">{inlineCustomerErrors.creditLimit}</p>}
-                            </div>
+                            ) : customerPickerForCredit ? (
+                                <p role="status" className="rounded-control border border-amber-500/20 bg-warning-soft px-3 py-2 text-xs text-amber-200">
+                                    Podés crear el cliente; un administrador debe asignarle el límite antes de venderle fiado.
+                                </p>
+                            ) : null}
                             {inlineCustomerErrors.general && (
                                 <p role="alert" aria-live="assertive" className="rounded-control bg-red-500/10 border border-red-500/25 px-3 py-2 text-xs text-red-200">
                                     {inlineCustomerErrors.general}

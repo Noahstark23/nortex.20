@@ -12,9 +12,18 @@ import bcrypt from 'bcryptjs';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
 import {
+    CUSTOMER_CREATE_ROLES,
+    CUSTOMER_HUB_READ_ROLES,
+    CUSTOMER_INTERACTION_WRITE_ROLES,
+    CUSTOMER_PAYMENT_ROLES,
+    CUSTOMER_READ_ROLES,
+    CUSTOMER_UPDATE_ROLES,
+    isCustomerCreateAuthorized,
+    isCustomerUpdateAuthorized,
     QUOTATION_READ_ROLES,
     QUOTATION_WRITE_ROLES,
     RETURN_SEARCH_ROLES,
+    resolveCustomerSellerIdForCreate,
 } from './middleware/accessPolicies';
 import { sendPasswordResetEmail, sendWelcomeEmail, sendManualPaymentAlert } from './services/email';
 import { runLifecycleEmails } from './services/lifecycleEmails';
@@ -139,10 +148,16 @@ import {
     QuantityValidationError,
     type SaleMode,
 } from '../utils/quantity.js';
+import {
+    matchesCustomerHubSegment,
+    resolveCustomerHubNextAction,
+    resolveCustomerHubSegment,
+} from '../utils/customerHub.js';
 import { resolvePurchaseLine } from '../utils/purchasePackaging.js';
 import {
     FISCAL_REGIME_CUOTA_FIJA,
     normalizeFiscalRegime,
+    vatCollectedFromSale,
 } from '../utils/fiscalRegime.js';
 import {
     normalizeTenantCapabilities,
@@ -1809,42 +1824,326 @@ app.post('/api/b2b/order', authenticate, checkRole(['OWNER', 'ADMIN']), validate
 // ==========================================
 
 // Schemas Zod inline para clientes (definidos aquí para evitar colisión en schemas.ts).
+const CustomerOptionalText = (maxLength: number) => z.union([
+    z.string().trim().max(maxLength),
+    z.null(),
+]).optional();
+const CustomerOptionalEmail = z.union([
+    z.string().trim().max(160).email('Ingresá un correo válido'),
+    z.literal(''),
+    z.null(),
+]).optional();
 const CustomerCreditLimit = z
     .union([z.string(), z.number()])
-    .transform((v) => String(v))
-    .refine((v) => !isNaN(parseFloat(v)) && parseFloat(v) >= 0, {
-        message: 'El límite de crédito debe ser un número mayor o igual a 0',
+    .transform((value) => String(value).trim())
+    .superRefine((value, ctx) => {
+        if (value === '') {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'El límite de crédito es requerido cuando se envía' });
+            return;
+        }
+        try {
+            const amount = new Decimal(value);
+            if (!amount.isFinite() || amount.isNegative()) {
+                ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'El límite de crédito debe ser un número mayor o igual a 0' });
+            } else if (amount.decimalPlaces() > 2) {
+                ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'El límite de crédito admite como máximo 2 decimales' });
+            } else if (amount.greaterThan('99999999.99')) {
+                ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'El límite de crédito excede el máximo permitido' });
+            }
+        } catch {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'El límite de crédito debe ser un decimal válido' });
+        }
+    });
+
+const CustomerInteractionType = z.enum(['NOTE', 'CALL', 'WHATSAPP', 'VISIT', 'PROMISE']);
+const CustomerInteractionStatus = z.enum(['OPEN', 'COMPLETED', 'CANCELLED']);
+const CustomerInteractionMoney = z.union([z.string(), z.number()])
+    .transform((value) => String(value).trim())
+    .superRefine((value, ctx) => {
+        try {
+            const amount = new Decimal(value);
+            if (!amount.isFinite() || !amount.greaterThan(0)) {
+                ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'La promesa debe ser mayor que cero' });
+            } else if (amount.decimalPlaces() > 2 || amount.greaterThan('99999999.99')) {
+                ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'La promesa no cabe en el rango monetario permitido' });
+            }
+        } catch {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'La promesa debe ser un decimal válido' });
+        }
     });
 
 const CreateCustomerSchema = z.object({
-    name: z.string().min(1, 'El nombre es requerido'),
-    taxId: z.string().optional(),
-    phone: z.string().optional(),
-    address: z.string().optional(),
-    email: z.string().optional(),
+    name: z.string().trim().min(1, 'El nombre es requerido').max(160),
+    taxId: CustomerOptionalText(80),
+    phone: CustomerOptionalText(40),
+    address: CustomerOptionalText(240),
+    email: CustomerOptionalEmail,
     creditLimit: CustomerCreditLimit.optional(),
     isWholesale: z.boolean().optional(),
     sellerId: z.string().min(1).nullable().optional(),
 });
 
 const UpdateCustomerSchema = z.object({
+    name: z.string().trim().min(1, 'El nombre es requerido').max(160).optional(),
+    taxId: CustomerOptionalText(80),
+    phone: CustomerOptionalText(40),
+    email: CustomerOptionalEmail,
+    address: CustomerOptionalText(240),
     creditLimit: CustomerCreditLimit.optional(),
     isBlocked: z.boolean().optional(),
     isWholesale: z.boolean().optional(),
     sellerId: z.string().min(1).nullable().optional(),
+}).refine((value) => Object.values(value).some((field) => field !== undefined), {
+    message: 'Indicá al menos un cambio',
+    path: ['_form'],
 });
 
-// Vendedores: quién puede ASIGNAR cartera. La regla tiene tres ramas para que
-// el POST sin checkRole no sea una puerta lateral:
-//  · OWNER/ADMIN/MANAGER asignan a quien quieran (validado contra el tenant).
-//  · VENDEDOR se auto-asigna SIEMPRE: lo que venga en el body se ignora —
-//    defaultearlo no basta, porque un vendedor podría crear el cliente
-//    apuntado a OTRO vendedor (o una cajera inflarle la cartera a alguien).
-//  · El resto de roles no asigna: sellerId se descarta en silencio.
-function resolverSellerIdAlCrear(role: string | undefined, userId: string, sellerIdDelBody: string | null | undefined): string | null | undefined {
-    if (role === 'VENDEDOR') return userId;
-    if (role === 'OWNER' || role === 'ADMIN' || role === 'MANAGER') return sellerIdDelBody;
-    return undefined;
+const CreateCustomerInteractionSchema = z.object({
+    type: CustomerInteractionType,
+    note: z.string().trim().min(2, 'Escribí el resultado de la gestión').max(2000),
+    promisedAmount: CustomerInteractionMoney.nullable().optional(),
+    promisedAt: z.string().datetime({ offset: true }).nullable().optional(),
+    followUpAt: z.string().datetime({ offset: true }).nullable().optional(),
+}).superRefine((value, ctx) => {
+    if (value.type === 'PROMISE' && !value.promisedAt) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['promisedAt'], message: 'Indicá cuándo prometió pagar' });
+    }
+    if (value.type !== 'PROMISE' && value.promisedAmount != null) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['promisedAmount'], message: 'El monto solo aplica a promesas de pago' });
+    }
+});
+
+const UpdateCustomerInteractionSchema = z.object({
+    status: CustomerInteractionStatus,
+}).refine((value) => value.status !== 'OPEN', {
+    message: 'Una gestión abierta solo puede completarse o cancelarse',
+});
+
+function normalizeOptionalCustomerText(value: unknown): string | null | undefined {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    const text = String(value).trim();
+    return text === '' ? null : text;
+}
+
+function startOfTodayLocal() {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+function formatCustomerMoney(value: Decimal.Value | null | undefined) {
+    return new Decimal(value ?? 0).toDecimalPlaces(2).toNumber();
+}
+
+function customerSearchWhere(searchRaw: unknown) {
+    const search = typeof searchRaw === 'string' ? searchRaw.trim() : '';
+    if (!search) return {};
+    return {
+        OR: [
+            { name: { contains: search } },
+            { taxId: { contains: search } },
+            { phone: { contains: search } },
+            { email: { contains: search } },
+        ],
+    };
+}
+
+function customerSellerWhere(sellerIdRaw: unknown) {
+    if (sellerIdRaw === 'none') return { sellerId: null };
+    if (typeof sellerIdRaw === 'string' && sellerIdRaw.trim()) return { sellerId: sellerIdRaw.trim() };
+    return {};
+}
+
+const CUSTOMER_HUB_SEGMENTS = new Set(['all', 'withDebt', 'overlimit', 'blocked', 'wholesale', 'inactive', 'unassigned']);
+
+function customerHubOrderBy(segment: string) {
+    if (segment === 'inactive') {
+        return [
+            { currentDebt: 'desc' as const },
+            { createdAt: 'asc' as const },
+            { name: 'asc' as const },
+        ];
+    }
+    return [
+        { currentDebt: 'desc' as const },
+        { name: 'asc' as const },
+    ];
+}
+
+function customerHubSegmentWhere(segment: string) {
+    if (segment === 'withDebt') return { currentDebt: { gt: 0 } };
+    if (segment === 'overlimit') {
+        return {
+            creditLimit: { gt: 0 },
+            // Prisma no garantiza esta comparación campo-a-campo dentro de
+            // findMany en todas las versiones/rutas. Traemos el superset
+            // "tiene cupo y tiene deuda" y el hub termina el filtro con las
+            // métricas ya calculadas por cliente.
+            currentDebt: { gt: 0 },
+        };
+    }
+    if (segment === 'blocked') return { isBlocked: true };
+    if (segment === 'wholesale') {
+        return { isWholesale: true, isBlocked: false, currentDebt: 0 };
+    }
+    if (segment === 'inactive') {
+        const cutoff = new Date(Date.now() - 60 * 86400000);
+        return {
+            isBlocked: false,
+            isWholesale: false,
+            currentDebt: 0,
+            createdAt: { lte: cutoff },
+            sales: {
+                none: {
+                    status: { not: ESTADO_ANULADA },
+                    createdAt: { gte: cutoff },
+                },
+            },
+        };
+    }
+    if (segment === 'unassigned') return { sellerId: null };
+    return {};
+}
+
+async function buildCustomerHubList(tenantId: string, customers: any[]) {
+    if (customers.length === 0) return [];
+
+    const customerIds = customers.map((customer) => customer.id);
+    const today = startOfTodayLocal();
+    const baseSaleWhere = {
+        tenantId,
+        customerId: { in: customerIds },
+        status: { not: ESTADO_ANULADA },
+    };
+
+    // El hub puede abrir clientes con años de ventas. Traer cada Sale a Node
+    // agotaba memoria y latencia; cinco groupBy acotados devuelven una fila por
+    // cliente y preservan exactamente los mismos indicadores.
+    const [allSalesRows, creditSalesRows, openCreditRows, overdueRows, overdueLegacyRows] = await Promise.all([
+        prisma.sale.groupBy({
+            by: ['customerId'],
+            where: baseSaleWhere,
+            _count: { _all: true },
+            _sum: { total: true, balance: true },
+            _max: { createdAt: true },
+        }),
+        prisma.sale.groupBy({
+            by: ['customerId'],
+            where: { ...baseSaleWhere, paymentMethod: 'CREDIT' },
+            _count: { _all: true },
+        }),
+        prisma.sale.groupBy({
+            by: ['customerId'],
+            where: { ...baseSaleWhere, paymentMethod: 'CREDIT', balance: { gt: 0 } },
+            _count: { _all: true },
+        }),
+        prisma.sale.groupBy({
+            by: ['customerId'],
+            where: {
+                ...baseSaleWhere,
+                paymentMethod: 'CREDIT',
+                balance: { gt: 0 },
+                dueDate: { not: null, lt: today },
+            },
+            _count: { _all: true },
+        }),
+        prisma.sale.groupBy({
+            by: ['customerId'],
+            where: {
+                ...baseSaleWhere,
+                paymentMethod: 'CREDIT',
+                balance: { gt: 0 },
+                dueDate: null,
+                createdAt: { lt: today },
+            },
+            _count: { _all: true },
+        }),
+    ]);
+
+    const rowsByCustomer = (rows: any[]) => new Map<string, any>(
+        rows.filter((row) => row.customerId).map((row) => [row.customerId, row]),
+    );
+    const allSalesByCustomer = rowsByCustomer(allSalesRows);
+    const creditSalesByCustomer = rowsByCustomer(creditSalesRows);
+    const openCreditByCustomer = rowsByCustomer(openCreditRows);
+    const overdueByCustomer = rowsByCustomer(overdueRows);
+    const overdueLegacyByCustomer = rowsByCustomer(overdueLegacyRows);
+
+    return customers
+        .map((customer) => {
+            const allSales = allSalesByCustomer.get(customer.id);
+            const totalSales = new Decimal(allSales?._sum?.total ?? 0);
+            const totalOutstanding = new Decimal(allSales?._sum?.balance ?? 0);
+            const salesCount = Number(allSales?._count?._all ?? 0);
+            const creditSales = Number(creditSalesByCustomer.get(customer.id)?._count?._all ?? 0);
+            const openInvoices = Number(openCreditByCustomer.get(customer.id)?._count?._all ?? 0);
+            const overdueInvoices = Number(overdueByCustomer.get(customer.id)?._count?._all ?? 0)
+                + Number(overdueLegacyByCustomer.get(customer.id)?._count?._all ?? 0);
+            const lastSaleAt: Date | null = allSales?._max?.createdAt ?? null;
+
+            const segment = resolveCustomerHubSegment({
+                creditLimit: Number(customer.creditLimit),
+                currentDebt: Number(customer.currentDebt),
+                isBlocked: customer.isBlocked,
+                isWholesale: customer.isWholesale,
+                overdueInvoices,
+                openInvoices,
+                lastSaleAt,
+                createdAt: customer.createdAt,
+            });
+
+            return {
+                id: customer.id,
+                name: customer.name,
+                taxId: customer.taxId,
+                phone: customer.phone,
+                email: customer.email,
+                address: customer.address,
+                creditLimit: formatCustomerMoney(customer.creditLimit),
+                currentDebt: formatCustomerMoney(customer.currentDebt),
+                isBlocked: customer.isBlocked,
+                isWholesale: Boolean(customer.isWholesale),
+                sellerId: customer.sellerId,
+                seller: customer.seller,
+                createdAt: customer.createdAt,
+                lastSaleAt,
+                segment,
+                nextAction: resolveCustomerHubNextAction(segment, {
+                    creditLimit: Number(customer.creditLimit),
+                    currentDebt: Number(customer.currentDebt),
+                    isBlocked: customer.isBlocked,
+                    isWholesale: customer.isWholesale,
+                    overdueInvoices,
+                    openInvoices,
+                }),
+                stats: {
+                    salesCount,
+                    creditSalesCount: creditSales,
+                    openInvoices,
+                    overdueInvoices,
+                    totalSales: totalSales.toDecimalPlaces(2).toNumber(),
+                    outstandingBalance: totalOutstanding.toDecimalPlaces(2).toNumber(),
+                },
+            };
+        })
+        .sort((a, b) => {
+            const debtDelta = b.currentDebt - a.currentDebt;
+            if (debtDelta !== 0) return debtDelta;
+            const aDate = a.lastSaleAt ? new Date(a.lastSaleAt).getTime() : 0;
+            const bDate = b.lastSaleAt ? new Date(b.lastSaleAt).getTime() : 0;
+            if (bDate !== aDate) return bDate - aDate;
+            return a.name.localeCompare(b.name, 'es');
+        });
+}
+
+function applySellerCustomerScope(authReq: AuthRequest, whereClause: Record<string, unknown>) {
+    if (authReq.role === 'VENDEDOR') whereClause.sellerId = authReq.userId!;
+    return whereClause;
+}
+
+function receivableCustomerScope(authReq: AuthRequest) {
+    if (authReq.role !== 'VENDEDOR') return {};
+    return { customer: { sellerId: authReq.userId! } };
 }
 
 // Guard cross-tenant de la asignación: el User apuntado tiene que ser del
@@ -1859,29 +2158,82 @@ async function validarSellerDelTenant(sellerId: string, tenantId: string): Promi
     return seller !== null;
 }
 
-app.post('/api/customers', authenticate, validate(CreateCustomerSchema), async (req: any, res: any) => {
+type LockedScopedCustomer = {
+    id: string;
+    sellerId: string | null;
+    currentDebt: Decimal.Value | null;
+};
+
+async function lockCustomerForScopedMutation(
+    tx: any,
+    authReq: AuthRequest,
+    customerId: string,
+): Promise<LockedScopedCustomer | null> {
+    const lockedCustomers: LockedScopedCustomer[] = await tx.$queryRaw`
+        SELECT id, sellerId, currentDebt
+        FROM \`Customer\`
+        WHERE id = ${customerId}
+          AND tenantId = ${authReq.tenantId!}
+        FOR UPDATE`;
+    const customer = lockedCustomers[0] ?? null;
+    if (!customer) return null;
+    if (authReq.role === 'VENDEDOR' && customer.sellerId !== authReq.userId) return null;
+    return customer;
+}
+
+app.post('/api/customers', authenticate, checkRole(CUSTOMER_CREATE_ROLES), validate(CreateCustomerSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { name, taxId, phone, address, creditLimit, email, isWholesale } = req.body;
+    const { name, creditLimit, isWholesale, sellerId: requestedSellerId } = req.body;
 
     try {
-        const sellerId = resolverSellerIdAlCrear(authReq.role, authReq.userId!, req.body.sellerId);
+        if (!isCustomerCreateAuthorized(authReq.role, {
+            financialControls: creditLimit !== undefined || isWholesale !== undefined,
+            sellerAssignment: requestedSellerId !== undefined,
+        })) {
+            return res.status(403).json({ error: 'No tenés permiso para crear clientes con controles administrativos' });
+        }
+
+        const sellerId = resolveCustomerSellerIdForCreate(
+            authReq.role,
+            authReq.userId!,
+            requestedSellerId,
+        );
         if (sellerId != null && authReq.role !== 'VENDEDOR' && !(await validarSellerDelTenant(sellerId, authReq.tenantId!))) {
             return res.status(400).json({ error: 'Vendedor inválido' });
         }
-        const customer = await prisma.customer.create({
-            data: {
-                tenantId: authReq.tenantId,
-                name,
-                taxId,
-                phone,
-                email,
-                address,
-                creditLimit: creditLimit !== undefined ? new Decimal(creditLimit).toDecimalPlaces(2).toString() : 0,
-                currentDebt: 0,
-                isBlocked: false,
-                isWholesale: Boolean(isWholesale),
-                sellerId: sellerId ?? null
-            }
+        const customer = await prisma.$transaction(async (tx: any) => {
+            const created = await tx.customer.create({
+                data: {
+                    tenantId: authReq.tenantId,
+                    name: String(name).trim(),
+                    taxId: normalizeOptionalCustomerText(req.body.taxId),
+                    phone: normalizeOptionalCustomerText(req.body.phone),
+                    email: normalizeOptionalCustomerText(req.body.email),
+                    address: normalizeOptionalCustomerText(req.body.address),
+                    creditLimit: creditLimit !== undefined ? new Decimal(creditLimit).toFixed(2) : 0,
+                    currentDebt: 0,
+                    isBlocked: false,
+                    isWholesale: Boolean(isWholesale),
+                    sellerId: sellerId ?? null,
+                },
+            });
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'CUSTOMER_CREATED',
+                    details: JSON.stringify({
+                        customerId: created.id,
+                        sellerId: created.sellerId,
+                        isWholesale: created.isWholesale,
+                        hasTaxId: created.taxId != null,
+                        hasPhone: created.phone != null,
+                        hasEmail: created.email != null,
+                        hasAddress: created.address != null,
+                    }),
+                },
+            });
+            return created;
         });
         res.json(customer);
     } catch (error) {
@@ -1889,29 +2241,45 @@ app.post('/api/customers', authenticate, validate(CreateCustomerSchema), async (
     }
 });
 
-app.get('/api/customers', authenticate, async (req: any, res: any) => {
+app.get('/api/customers', authenticate, checkRole(CUSTOMER_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { search } = req.query;
     try {
-        const whereClause: any = { tenantId: authReq.tenantId };
-        if (search) {
-            whereClause.OR = [
-                { name: { contains: String(search) } }, // Case insensitive in real DB usually
-                { taxId: { contains: String(search) } }
-            ];
-        }
+        const whereClause: any = applySellerCustomerScope(authReq, {
+            tenantId: authReq.tenantId,
+            ...customerSearchWhere(req.query.search),
+        });
         // Cartera por vendedor: ?sellerId=<id> filtra; ?sellerId=none trae los
         // sin asignar. Un sellerId de otro tenant da lista vacía por el where
         // compuesto con tenantId — no hace falta validarlo acá.
-        const { sellerId } = req.query;
-        if (sellerId === 'none') whereClause.sellerId = null;
-        else if (sellerId) whereClause.sellerId = String(sellerId);
+        if (authReq.role !== 'VENDEDOR') {
+            Object.assign(whereClause, customerSellerWhere(req.query.sellerId));
+        }
+
+        const hasPage = req.query.page !== undefined || req.query.pageSize !== undefined;
+        const take = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize ?? '50'), 10) || 50));
+        const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
+        const skip = (page - 1) * take;
+        const include = { seller: { select: { id: true, name: true, status: true } } };
+
+        if (hasPage) {
+            const [customers, total] = await prisma.$transaction([
+                prisma.customer.findMany({
+                    where: whereClause,
+                    orderBy: { name: 'asc' },
+                    skip,
+                    take,
+                    include,
+                }),
+                prisma.customer.count({ where: whereClause }),
+            ]);
+            return res.json({ customers, total, page, pageSize: take });
+        }
 
         const customers = await prisma.customer.findMany({
             where: whereClause,
             orderBy: { name: 'asc' },
-            take: 50,
-            include: { seller: { select: { id: true, name: true, status: true } } }
+            take,
+            include,
         });
         res.json(customers);
     } catch (error) {
@@ -1919,42 +2287,493 @@ app.get('/api/customers', authenticate, async (req: any, res: any) => {
     }
 });
 
-app.put('/api/customers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), validate(UpdateCustomerSchema), async (req: any, res: any) => {
+app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { id } = req.params;
-    const { creditLimit, isBlocked, isWholesale, sellerId } = req.body;
+    const tenantId = authReq.tenantId!;
+    const segment = typeof req.query.segment === 'string' ? req.query.segment : 'all';
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? '50'), 10) || 50));
+
+    if (!CUSTOMER_HUB_SEGMENTS.has(segment)) {
+        return res.status(400).json({ error: 'Segmento de clientes inválido' });
+    }
 
     try {
-        // La REasignación de cartera es de OWNER/ADMIN (el checkRole de esta
-        // ruta ya lo garantiza). Validar el destino ANTES de la transacción.
+        const whereClause: any = applySellerCustomerScope(authReq, {
+            tenantId,
+            ...customerSearchWhere(req.query.search),
+            ...customerHubSegmentWhere(segment),
+        });
+        if (authReq.role !== 'VENDEDOR') {
+            Object.assign(whereClause, customerSellerWhere(req.query.sellerId));
+        }
+
+        const customers = await prisma.customer.findMany({
+            where: whereClause,
+            orderBy: customerHubOrderBy(segment),
+            take: limit,
+            include: { seller: { select: { id: true, name: true, status: true } } },
+        });
+
+        const hub = await buildCustomerHubList(tenantId, customers);
+        const filtered = hub.filter((customer) => {
+            return matchesCustomerHubSegment(segment, customer.segment, {
+                creditLimit: customer.creditLimit,
+                currentDebt: customer.currentDebt,
+                isBlocked: customer.isBlocked,
+                isWholesale: customer.isWholesale,
+                overdueInvoices: customer.stats.overdueInvoices,
+                openInvoices: customer.stats.openInvoices,
+                lastSaleAt: customer.lastSaleAt,
+                createdAt: customer.createdAt,
+            });
+        });
+
+        res.json(filtered);
+    } catch (error) {
+        console.error('Error construyendo customer hub:', error);
+        res.status(500).json({ error: 'Error obteniendo clientes' });
+    }
+});
+
+app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const { id } = req.params;
+
+    try {
+        const customerWhere: any = applySellerCustomerScope(authReq, { id, tenantId });
+        const customer = await prisma.customer.findFirst({
+            where: customerWhere,
+            include: { seller: { select: { id: true, name: true, status: true } } },
+        });
+        if (!customer) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+        const [profile] = await buildCustomerHubList(tenantId, [customer]);
+        const saleScope = {
+            tenantId,
+            customerId: id,
+            status: { not: ESTADO_ANULADA },
+            ...receivableCustomerScope(authReq),
+        };
+        const today = startOfTodayLocal();
+
+        const [
+            creditSales,
+            recentSales,
+            recentPayments,
+            auditTrail,
+            interactions,
+            creditTotals,
+            overdueDueTotals,
+            overdueLegacyTotals,
+        ] = await Promise.all([
+            prisma.sale.findMany({
+                where: { ...saleScope, paymentMethod: 'CREDIT' },
+                include: {
+                    payments: {
+                        orderBy: { createdAt: 'asc' },
+                        include: { user: { select: { name: true } } },
+                    },
+                    soldBy: { select: { id: true, name: true } },
+                },
+                orderBy: { createdAt: 'desc' },
+                take: 12,
+            }),
+            prisma.sale.findMany({
+                where: saleScope,
+                orderBy: { createdAt: 'desc' },
+                take: 8,
+                include: {
+                    soldBy: { select: { id: true, name: true } },
+                    payments: {
+                        orderBy: { createdAt: 'desc' },
+                        take: 2,
+                        include: { user: { select: { name: true } } },
+                    },
+                },
+            }),
+            prisma.payment.findMany({
+                where: { sale: { tenantId, customerId: id, ...receivableCustomerScope(authReq) } },
+                orderBy: { createdAt: 'desc' },
+                take: 8,
+                include: {
+                    user: { select: { id: true, name: true } },
+                    sale: { select: { id: true, invoiceNumber: true, total: true, balance: true, createdAt: true } },
+                },
+            }),
+            prisma.auditLog.findMany({
+                where: {
+                    tenantId,
+                    action: { in: ['CUSTOMER_CREATED', 'CUSTOMER_UPDATED', 'CREDIT_PAYMENT', 'BAD_DEBT_WRITEOFF'] },
+                    details: { contains: `"customerId":"${id}"` },
+                },
+                orderBy: { createdAt: 'desc' },
+                take: 12,
+                include: { user: { select: { id: true, name: true } } },
+            }),
+            prisma.customerInteraction.findMany({
+                where: { tenantId, customerId: id },
+                orderBy: { createdAt: 'desc' },
+                take: 20,
+                include: { creator: { select: { id: true, name: true } } },
+            }),
+            prisma.sale.aggregate({
+                where: { ...saleScope, paymentMethod: 'CREDIT' },
+                _sum: { total: true, balance: true },
+            }),
+            prisma.sale.aggregate({
+                where: {
+                    ...saleScope,
+                    paymentMethod: 'CREDIT',
+                    balance: { gt: 0 },
+                    dueDate: { not: null, lt: today },
+                },
+                _sum: { balance: true },
+            }),
+            prisma.sale.aggregate({
+                where: {
+                    ...saleScope,
+                    paymentMethod: 'CREDIT',
+                    balance: { gt: 0 },
+                    dueDate: null,
+                    createdAt: { lt: today },
+                },
+                _sum: { balance: true },
+            }),
+        ]);
+
+        const totalBilled = new Decimal(creditTotals._sum.total ?? 0);
+        const totalBalance = new Decimal(creditTotals._sum.balance ?? 0);
+        const totalPaid = totalBilled.minus(totalBalance);
+        const totalOverdue = new Decimal(overdueDueTotals._sum.balance ?? 0)
+            .plus(overdueLegacyTotals._sum.balance ?? 0);
+
+        const invoices = creditSales.map((sale: any) => {
+            const total = new Decimal(sale.total.toString());
+            const balance = new Decimal(sale.balance.toString());
+            const paid = total.minus(balance);
+            const ref = sale.dueDate ?? sale.createdAt;
+            const overdueDays = Math.floor((today.getTime() - new Date(ref.getFullYear(), ref.getMonth(), ref.getDate()).getTime()) / 86400000);
+            const overdue = balance.greaterThan(0) && overdueDays > 0;
+
+            return {
+                id: sale.id,
+                invoiceNumber: sale.invoiceNumber != null ? String(sale.invoiceNumber) : null,
+                total: total.toDecimalPlaces(2).toNumber(),
+                paid: paid.toDecimalPlaces(2).toNumber(),
+                balance: balance.toDecimalPlaces(2).toNumber(),
+                dueDate: sale.dueDate,
+                date: sale.createdAt,
+                status: overdue ? 'OVERDUE' : balance.greaterThan(0) ? 'PENDING' : 'PAID',
+                soldBy: sale.soldBy,
+                payments: sale.payments.map((payment: any) => ({
+                    id: payment.id,
+                    amount: Number(payment.amount),
+                    method: payment.method,
+                    date: payment.createdAt,
+                    collectedBy: payment.user?.name ?? null,
+                })),
+            };
+        });
+
+        const timeline = [
+            ...recentSales.map((sale: any) => ({
+                id: `sale-${sale.id}`,
+                type: 'sale',
+                happenedAt: sale.createdAt,
+                title: sale.paymentMethod === 'CREDIT' ? 'Venta al crédito' : 'Venta registrada',
+                subtitle: sale.invoiceNumber != null ? `Factura #${sale.invoiceNumber}` : 'Venta sin correlativo visible',
+                amount: Number(sale.total),
+                meta: sale.soldBy?.name ? `Vendió ${sale.soldBy.name}` : null,
+            })),
+            ...recentPayments.map((payment: any) => ({
+                id: `payment-${payment.id}`,
+                type: 'payment',
+                happenedAt: payment.createdAt,
+                title: 'Abono registrado',
+                subtitle: payment.sale?.invoiceNumber != null ? `Factura #${payment.sale.invoiceNumber}` : 'Abono sin factura visible',
+                amount: Number(payment.amount),
+                meta: payment.user?.name ? `Cobró ${payment.user.name}` : null,
+            })),
+            ...interactions.map((interaction: any) => ({
+                id: `interaction-${interaction.id}`,
+                type: 'interaction',
+                happenedAt: interaction.createdAt,
+                title: interaction.type === 'PROMISE'
+                    ? 'Promesa de pago'
+                    : interaction.type === 'CALL'
+                        ? 'Llamada registrada'
+                        : interaction.type === 'WHATSAPP'
+                            ? 'Gestión por WhatsApp'
+                            : interaction.type === 'VISIT'
+                                ? 'Visita registrada'
+                                : 'Nota de cliente',
+                subtitle: interaction.note,
+                amount: interaction.promisedAmount == null ? null : Number(interaction.promisedAmount),
+                meta: interaction.creator?.name ? `Registró ${interaction.creator.name}` : null,
+            })),
+            ...auditTrail.map((log: any) => ({
+                id: `audit-${log.id}`,
+                type: log.action.toLowerCase(),
+                happenedAt: log.createdAt,
+                title: log.action === 'BAD_DEBT_WRITEOFF'
+                    ? 'Castigo de incobrable'
+                    : log.action === 'CUSTOMER_CREATED'
+                        ? 'Cliente creado'
+                    : log.action === 'CUSTOMER_UPDATED'
+                        ? 'Cliente actualizado'
+                        : 'Movimiento de crédito auditado',
+                subtitle: log.user?.name ? `Acción de ${log.user.name}` : 'Bitácora del sistema',
+                amount: null,
+                meta: null,
+            })),
+        ].sort((a, b) => new Date(b.happenedAt).getTime() - new Date(a.happenedAt).getTime()).slice(0, 16);
+
+        res.json({
+            profile,
+            receivables: {
+                invoices,
+                totals: {
+                    billed: totalBilled.toDecimalPlaces(2).toNumber(),
+                    paid: totalPaid.toDecimalPlaces(2).toNumber(),
+                    balance: totalBalance.toDecimalPlaces(2).toNumber(),
+                    overdue: totalOverdue.toDecimalPlaces(2).toNumber(),
+                },
+            },
+            recentSales: recentSales.map((sale: any) => ({
+                id: sale.id,
+                createdAt: sale.createdAt,
+                total: Number(sale.total),
+                balance: Number(sale.balance),
+                paymentMethod: sale.paymentMethod,
+                invoiceNumber: sale.invoiceNumber != null ? String(sale.invoiceNumber) : null,
+                soldBy: sale.soldBy,
+            })),
+            recentPayments: recentPayments.map((payment: any) => ({
+                id: payment.id,
+                createdAt: payment.createdAt,
+                amount: Number(payment.amount),
+                method: payment.method,
+                collectedBy: payment.user?.name ?? null,
+                saleId: payment.sale?.id ?? null,
+                invoiceNumber: payment.sale?.invoiceNumber != null ? String(payment.sale.invoiceNumber) : null,
+            })),
+            interactions: interactions.map((interaction: any) => ({
+                id: interaction.id,
+                type: interaction.type,
+                note: interaction.note,
+                status: interaction.status,
+                promisedAmount: interaction.promisedAmount == null ? null : Number(interaction.promisedAmount),
+                promisedAt: interaction.promisedAt,
+                followUpAt: interaction.followUpAt,
+                completedAt: interaction.completedAt,
+                createdAt: interaction.createdAt,
+                creator: interaction.creator,
+            })),
+            timeline,
+        });
+    } catch (error) {
+        console.error('Error construyendo detalle del cliente:', error);
+        res.status(500).json({ error: 'Error obteniendo el detalle del cliente' });
+    }
+});
+
+app.post(
+    '/api/customers/:id/interactions',
+    authenticate,
+    checkRole(CUSTOMER_INTERACTION_WRITE_ROLES),
+    validate(CreateCustomerInteractionSchema),
+    async (req: any, res: any) => {
+        const authReq = req as AuthRequest;
+        const tenantId = authReq.tenantId!;
+        const customerId = req.params.id;
+
+        try {
+            const interaction = await prisma.$transaction(async (tx: any) => {
+                const customer = await lockCustomerForScopedMutation(tx, authReq, customerId);
+                if (!customer) throw new Error('CUSTOMER_NOT_FOUND');
+
+                const interactionStartsOpen = Boolean(req.body.followUpAt) || req.body.type === 'PROMISE';
+                const created = await tx.customerInteraction.create({
+                    data: {
+                        tenantId,
+                        customerId,
+                        type: req.body.type,
+                        note: req.body.note.trim(),
+                        status: interactionStartsOpen ? 'OPEN' : 'COMPLETED',
+                        promisedAmount: req.body.promisedAmount == null ? null : new Decimal(req.body.promisedAmount).toFixed(2),
+                        promisedAt: req.body.promisedAt ? new Date(req.body.promisedAt) : null,
+                        followUpAt: req.body.followUpAt ? new Date(req.body.followUpAt) : null,
+                        completedAt: interactionStartsOpen ? null : new Date(),
+                        createdBy: authReq.userId!,
+                    },
+                    include: { creator: { select: { id: true, name: true } } },
+                });
+
+                await tx.auditLog.create({
+                    data: {
+                        tenantId,
+                        userId: authReq.userId!,
+                        action: 'CUSTOMER_INTERACTION_CREATED',
+                        details: JSON.stringify({
+                            customerId,
+                            interactionId: created.id,
+                            type: created.type,
+                            status: created.status,
+                            hasPromise: created.promisedAt != null,
+                            followUpAt: created.followUpAt,
+                        }),
+                    },
+                });
+
+                return created;
+            });
+
+            res.status(201).json({
+                ...interaction,
+                promisedAmount: interaction.promisedAmount == null ? null : Number(interaction.promisedAmount),
+            });
+        } catch (error: any) {
+            if (error?.message === 'CUSTOMER_NOT_FOUND') return res.status(404).json({ error: 'Cliente no encontrado' });
+            console.error('Error registrando gestión de cliente:', error);
+            res.status(500).json({ error: 'No se pudo registrar la gestión' });
+        }
+    },
+);
+
+app.patch(
+    '/api/customers/:customerId/interactions/:interactionId',
+    authenticate,
+    checkRole(CUSTOMER_INTERACTION_WRITE_ROLES),
+    validate(UpdateCustomerInteractionSchema),
+    async (req: any, res: any) => {
+        const authReq = req as AuthRequest;
+        const tenantId = authReq.tenantId!;
+        const { customerId, interactionId } = req.params;
+
+        try {
+            const result = await prisma.$transaction(async (tx: any) => {
+                const customer = await lockCustomerForScopedMutation(tx, authReq, customerId);
+                if (!customer) throw new Error('INTERACTION_NOT_FOUND');
+
+                const lockedInteractions: Array<{ id: string }> = await tx.$queryRaw`
+                    SELECT id FROM \`CustomerInteraction\`
+                    WHERE id = ${interactionId}
+                      AND tenantId = ${tenantId}
+                      AND customerId = ${customerId}
+                    FOR UPDATE`;
+                if (lockedInteractions.length === 0) throw new Error('INTERACTION_NOT_FOUND');
+
+                const existing = await tx.customerInteraction.findFirst({
+                    where: { id: interactionId, tenantId, customerId },
+                });
+                if (!existing) throw new Error('INTERACTION_NOT_FOUND');
+                if (existing.status !== 'OPEN') return existing;
+
+                const updated = await tx.customerInteraction.update({
+                    where: { id: interactionId },
+                    data: { status: req.body.status, completedAt: new Date() },
+                });
+                await tx.auditLog.create({
+                    data: {
+                        tenantId,
+                        userId: authReq.userId!,
+                        action: 'CUSTOMER_INTERACTION_RESOLVED',
+                        details: JSON.stringify({
+                            customerId,
+                            interactionId,
+                            beforeStatus: existing.status,
+                            afterStatus: updated.status,
+                        }),
+                    },
+                });
+                return updated;
+            });
+
+            res.json({
+                ...result,
+                promisedAmount: result.promisedAmount == null ? null : Number(result.promisedAmount),
+            });
+        } catch (error: any) {
+            if (error?.message === 'INTERACTION_NOT_FOUND') return res.status(404).json({ error: 'Gestión no encontrada' });
+            console.error('Error actualizando gestión de cliente:', error);
+            res.status(500).json({ error: 'No se pudo actualizar la gestión' });
+        }
+    },
+);
+
+app.put('/api/customers/:id', authenticate, checkRole(CUSTOMER_UPDATE_ROLES), validate(UpdateCustomerSchema), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const { id } = req.params;
+    const { name, taxId, phone, email, address, creditLimit, isBlocked, isWholesale, sellerId } = req.body;
+
+    try {
+        const wantsIdentityChange = [name, taxId].some((value) => value !== undefined);
+        const wantsContactChange = [phone, email, address].some((value) => value !== undefined);
+        const wantsControlChange = [creditLimit, isBlocked, isWholesale, sellerId].some((value) => value !== undefined);
+
+        if (!isCustomerUpdateAuthorized(authReq.role, {
+            identity: wantsIdentityChange,
+            contact: wantsContactChange,
+            controls: wantsControlChange,
+        })) {
+            return res.status(403).json({ error: 'No tenés permiso para actualizar este cliente' });
+        }
+
+        // La REasignación de cartera es administrativa (el guard de grupos
+        // anterior ya lo garantiza). Validar el destino ANTES de la transacción.
         if (sellerId != null && !(await validarSellerDelTenant(sellerId, authReq.tenantId!))) {
             return res.status(400).json({ error: 'Vendedor inválido' });
         }
         await prisma.$transaction(async (tx: any) => {
             // Verificar propiedad dentro del tenant (patrón de /api/suppliers PUT).
-            const existing = await tx.customer.findFirst({ where: { id, tenantId: authReq.tenantId } });
+            const existingWhere = applySellerCustomerScope(authReq, { id, tenantId: authReq.tenantId });
+            const existing = await tx.customer.findFirst({ where: existingWhere });
             if (!existing) throw new Error('CUSTOMER_NOT_FOUND');
 
             const data: any = {};
+            if (name !== undefined) data.name = name.trim();
+            if (taxId !== undefined) data.taxId = normalizeOptionalCustomerText(taxId);
+            if (phone !== undefined) data.phone = normalizeOptionalCustomerText(phone);
+            if (email !== undefined) data.email = normalizeOptionalCustomerText(email);
+            if (address !== undefined) data.address = normalizeOptionalCustomerText(address);
             if (creditLimit !== undefined) data.creditLimit = new Decimal(creditLimit).toDecimalPlaces(2).toString();
             if (isBlocked !== undefined) data.isBlocked = Boolean(isBlocked);
             if (isWholesale !== undefined) data.isWholesale = Boolean(isWholesale);
             if (sellerId !== undefined) data.sellerId = sellerId; // null = desasignar
 
-            if (Object.keys(data).length === 0) return;
+            // Repetir tenant/cartera en el sink cierra la ventana entre el
+            // lookup y la escritura si un admin reasigna al cliente en paralelo.
+            const updateResult = await tx.customer.updateMany({ where: existingWhere, data });
+            if (updateResult.count !== 1) throw new Error('CUSTOMER_NOT_FOUND');
+            const updated = await tx.customer.findFirst({
+                where: { id, tenantId: authReq.tenantId },
+            });
+            if (!updated) throw new Error('CUSTOMER_NOT_FOUND');
 
-            const updated = await tx.customer.update({ where: { id }, data });
-
-            // Auditoría de controles de crédito sensibles (límite / bloqueo).
+            // Auditoría sin duplicar PII cruda (teléfono, email, documento o
+            // dirección). La fila Customer conserva el valor vigente; la
+            // bitácora registra qué cambió y los controles financieros.
             await tx.auditLog.create({
                 data: {
                     tenantId: authReq.tenantId,
                     userId: authReq.userId,
-                    action: 'CUSTOMER_CREDIT_UPDATED',
+                    action: 'CUSTOMER_UPDATED',
                     details: JSON.stringify({
                         customerId: id,
-                        before: { creditLimit: existing.creditLimit.toString(), isBlocked: existing.isBlocked, sellerId: existing.sellerId },
-                        after: { creditLimit: updated.creditLimit.toString(), isBlocked: updated.isBlocked, sellerId: updated.sellerId },
+                        changedFields: Object.keys(data),
+                        before: {
+                            creditLimit: existing.creditLimit.toString(),
+                            isBlocked: existing.isBlocked,
+                            isWholesale: existing.isWholesale,
+                            sellerId: existing.sellerId,
+                        },
+                        after: {
+                            creditLimit: updated.creditLimit.toString(),
+                            isBlocked: updated.isBlocked,
+                            isWholesale: updated.isWholesale,
+                            sellerId: updated.sellerId,
+                        },
                     }),
                 },
             });
@@ -3221,109 +4040,15 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
 // El comprobante anulado NO se borra: queda visible, marcado, con motivo y
 // autor. Su número NO se reutiliza — un correlativo con huecos o repetidos es
 // justo lo que la Disposición Técnica 09-2007 prohíbe.
-app.post('/api/payments', authenticate, validate(CreatePaymentSchema), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { saleId, amount, method } = req.body;
-    const paymentAmount = new Decimal(amount).toNumber();
-    try {
-        // Tenant isolation: buscar venta filtrando por tenantId directamente en la query
-        const sale = await prisma.sale.findFirst({
-            where: { id: saleId, tenantId: authReq.tenantId },
-            include: { customer: true }
-        });
-        if (!sale) return res.status(404).json({ error: 'Venta no encontrada' });
-
-        // Solo se cobran ventas a crédito con saldo pendiente. Bloquear ventas
-        // CASH/CARD (aunque tengan customerId) y sobrepagos que dejarían el balance
-        // y la deuda del cliente en negativo. Validación autoritativa se re-hace bajo
-        // lock dentro de la transacción; esta pre-validación da un 400 limpio.
-        if (sale.status !== 'CREDIT_PENDING' || new Decimal(sale.balance.toString()).lessThanOrEqualTo(0)) {
-            return res.status(400).json({ error: 'La venta no tiene saldo de crédito pendiente' });
-        }
-        if (new Decimal(amount).greaterThan(new Decimal(sale.balance.toString()))) {
-            return res.status(400).json({ error: 'El monto excede el saldo pendiente de la venta' });
-        }
-
-        const result = await prisma.$transaction(async (tx: any) => {
-            // Bloqueo pesimista de la fila de venta (FOR UPDATE): el balance autoritativo
-            // se lee bajo lock DENTRO de la transacción para evitar lost-update entre pagos
-            // concurrentes. La consulta va parametrizada (tagged template) contra inyección.
-            const locked: Array<{ balance: any; status: string }> = await tx.$queryRaw`
-                SELECT balance, status FROM \`Sale\`
-                WHERE id = ${saleId} AND \`tenantId\` = ${authReq.tenantId}
-                FOR UPDATE`;
-            if (locked.length === 0) throw new Error('Venta no encontrada');
-            const balanceBefore = new Decimal(locked[0].balance.toString());
-            const statusBefore = locked[0].status;
-            // Re-validación bajo lock (race-safe): solo crédito pendiente y sin sobrepago.
-            if (statusBefore !== 'CREDIT_PENDING' || balanceBefore.lessThanOrEqualTo(0)) {
-                throw new Error('La venta no tiene saldo de crédito pendiente');
-            }
-            if (new Decimal(amount).greaterThan(balanceBefore)) {
-                throw new Error('El monto excede el saldo pendiente de la venta');
-            }
-            const balanceAfter = balanceBefore.minus(paymentAmount).toDecimalPlaces(2);
-            const newStatus = balanceAfter.lessThanOrEqualTo(0.01) ? 'PAID' : 'CREDIT_PENDING';
-
-            const payment = await tx.payment.create({
-                data: { saleId: sale.id, amount: paymentAmount, method: method || 'CASH', collectedBy: authReq.userId }
-            });
-
-            // Decremento relativo atómico del balance; el status se recomputa desde el
-            // balance resultante (calculado sobre la lectura bloqueada), sin escribir absolutos.
-            await tx.sale.update({
-                where: { id: saleId, tenantId: authReq.tenantId },  // tenant isolation en update
-                data: { balance: { decrement: paymentAmount }, status: newStatus }
-            });
-
-            let debtBefore: string | null = null;
-            let debtAfter: string | null = null;
-            if (sale.customerId) {
-                const prevCustomer = await tx.customer.findFirst({
-                    where: { id: sale.customerId, tenantId: authReq.tenantId },
-                    select: { currentDebt: true },
-                });
-                debtBefore = prevCustomer ? String(prevCustomer.currentDebt) : null;
-                const updatedCustomer = await tx.customer.update({
-                    where: { id: sale.customerId, tenantId: authReq.tenantId },  // tenant isolation
-                    data: { currentDebt: { decrement: paymentAmount } }
-                });
-                debtAfter = String(updatedCustomer.currentDebt);
-            }
-
-            // 📊 MOTOR CONTABLE: Debe Caja (1.1.1) / Haber CxC (1.1.3). Antes nunca se invocaba.
-            await recordPayment(tx, authReq.tenantId!, authReq.userId!, payment.id, paymentAmount);
-
-            // 📝 AUDITORÍA INMUTABLE del cobro (Capa 3): before/after de balance/status/deuda.
-            await tx.auditLog.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    userId: authReq.userId!,
-                    action: 'PAYMENT_RECEIVED',
-                    details: JSON.stringify({
-                        saleId,
-                        paymentId: payment.id,
-                        amount: String(paymentAmount),
-                        balanceBefore: String(balanceBefore),
-                        balanceAfter: String(balanceAfter),
-                        statusBefore,
-                        statusAfter: newStatus,
-                        method: method ?? 'CASH',
-                        debtBefore,
-                        debtAfter,
-                    }),
-                },
-            });
-
-            return payment;
-        });
-        res.json(result);
-    } catch (error: any) {
-        console.error('Error procesando pago:', error);
-        res.status(500).json({ error: error.message || 'Error procesando pago' });
-    }
-});
-
+// Alias legacy: comparte exactamente la misma autorización, idempotencia,
+// locks y auditoría que el endpoint canónico de cobranza.
+app.post(
+    '/api/payments',
+    authenticate,
+    checkRole(CUSTOMER_PAYMENT_ROLES),
+    validate(CreatePaymentSchema),
+    registerCreditPayment,
+);
 // --- OPERATIONAL CONTROL (SHIFTS & AUDITS) - Preserved ---
 // (Preserved endpoints for shifts and audits)
 /**
@@ -6713,8 +7438,35 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
         let totalVentas = new Decimal(0);   // Total con IVA
         let totalCOGS   = new Decimal(0);   // Costo de Ventas
 
-        sales.forEach((sale: { total: unknown; items: { costAtSale: unknown; quantity: unknown }[] }) => {
-            totalVentas = totalVentas.plus(new Decimal(sale.total?.toString() ?? '0'));
+        // El IVA se acumula VENTA POR VENTA, leyendo lo que cada venta guardó de
+        // sí misma (`vatCollectedFromSale`), con las mismas reglas que la
+        // declaración mensual.
+        //
+        // Antes acá se hacía `totalVentas / 1.15` sobre el período entero, o sea
+        // se daba por hecho que TODO córdoba vendido trae 15% adentro. Eso le
+        // inventaba al dueño un IVA que nunca cobró en dos casos reales —el
+        // negocio de CUOTA FIJA, que no traslada IVA en ninguna venta, y la venta
+        // exonerada de canasta básica o medicinas— y de paso le recortaba esa
+        // misma plata a la utilidad bruta. Y no era un número escondido: la
+        // pantalla de Reportes lo rotula "IVA RECAUDADO (15%) · Para declarar a
+        // la DGI".
+        let ivaRecaudadoD = new Decimal(0);
+
+        sales.forEach((sale: {
+            total: unknown;
+            exemptTotal: unknown;
+            fiscalRegimeAtSale: unknown;
+            vatAmountAtSale: unknown;
+            items: { costAtSale: unknown; quantity: unknown }[];
+        }) => {
+            const saleTotal = new Decimal(sale.total?.toString() ?? '0');
+            totalVentas = totalVentas.plus(saleTotal);
+            ivaRecaudadoD = ivaRecaudadoD.plus(vatCollectedFromSale({
+                total: saleTotal,
+                exemptTotal: sale.exemptTotal?.toString() ?? 0,
+                fiscalRegimeAtSale: sale.fiscalRegimeAtSale,
+                vatAmountAtSale: sale.vatAmountAtSale?.toString() ?? null,
+            }));
             sale.items.forEach((item) => {
                 totalCOGS = totalCOGS.plus(
                     new Decimal(item.costAtSale?.toString() ?? '0').mul(item.quantity?.toString() ?? '0')
@@ -6722,9 +7474,8 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
             });
         });
 
-        // IVA Nicaragua 15%: total = subtotal * 1.15, subtotal = total / 1.15
-        const ventasNetas   = totalVentas.dividedBy('1.15').toDecimalPlaces(4);
-        const ivaRecaudado  = totalVentas.minus(ventasNetas).toDecimalPlaces(4);
+        const ivaRecaudado  = ivaRecaudadoD.toDecimalPlaces(4);
+        const ventasNetas   = totalVentas.minus(ivaRecaudado).toDecimalPlaces(4);
         const utilidadBruta = ventasNetas.minus(totalCOGS).toDecimalPlaces(4);
 
         // 3. Group sales by day for chart
@@ -9421,7 +10172,7 @@ app.post('/api/quotations', authenticate, checkRole(QUOTATION_WRITE_ROLES), asyn
 // ==========================================
 
 // GET /api/credits/debtors - Clientes con deuda pendiente
-app.get('/api/credits/debtors', authenticate, async (req: any, res: any) => {
+app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         // Buscar ventas a CRÉDITO con saldo pendiente > 0
@@ -9429,7 +10180,8 @@ app.get('/api/credits/debtors', authenticate, async (req: any, res: any) => {
             where: {
                 tenantId: authReq.tenantId,
                 paymentMethod: 'CREDIT',
-                balance: { gt: 0 }
+                balance: { gt: 0 },
+                ...receivableCustomerScope(authReq),
             },
             include: {
                 payments: { orderBy: { createdAt: 'desc' } },
@@ -9463,7 +10215,7 @@ app.get('/api/credits/debtors', authenticate, async (req: any, res: any) => {
 
 // GET /api/collections/worklist - "Cobrar hoy" (Cobranza A1): deudas a crédito por
 // urgencia (vencidas primero) + KPIs de cobranza. dueSoonDays = ventana "por vencer".
-app.get('/api/collections/worklist', authenticate, async (req: any, res: any) => {
+app.get('/api/collections/worklist', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const dueSoonDays = Math.min(60, Math.max(1, parseInt(req.query.dueSoonDays) || 7));
@@ -9480,7 +10232,12 @@ app.get('/api/collections/worklist', authenticate, async (req: any, res: any) =>
         const bucketDe = (d: number) => d <= 0 ? 'corriente' : d <= 30 ? 'b1_30' : d <= 60 ? 'b31_60' : d <= 90 ? 'b61_90' : 'b90';
 
         const sales = await prisma.sale.findMany({
-            where: { tenantId, paymentMethod: 'CREDIT', balance: { gt: 0 } },
+            where: {
+                tenantId,
+                paymentMethod: 'CREDIT',
+                balance: { gt: 0 },
+                ...receivableCustomerScope(authReq),
+            },
             include: { customer: { select: { id: true, name: true, phone: true } } },
         });
 
@@ -9518,7 +10275,13 @@ app.get('/api/collections/worklist', authenticate, async (req: any, res: any) =>
 
         const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const collectedToday = await prisma.payment.aggregate({
-            where: { sale: { tenantId }, createdAt: { gte: startOfDay } },
+            where: {
+                sale: {
+                    tenantId,
+                    ...receivableCustomerScope(authReq),
+                },
+                createdAt: { gte: startOfDay },
+            },
             _sum: { amount: true },
         });
 
@@ -9542,16 +10305,23 @@ app.get('/api/collections/worklist', authenticate, async (req: any, res: any) =>
 
 // GET /api/customers/:id/statement - Estado de cuenta del cliente (Cobranza A2):
 // facturas a crédito con saldo/abonos + aging + totales. Para imprimir/enviar.
-app.get('/api/customers/:id/statement', authenticate, async (req: any, res: any) => {
+app.get('/api/customers/:id/statement', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const { id } = req.params;
     try {
-        const customer = await prisma.customer.findFirst({ where: { id, tenantId } });
+        const customer = await prisma.customer.findFirst({
+            where: applySellerCustomerScope(authReq, { id, tenantId }),
+        });
         if (!customer) return res.status(404).json({ error: 'Cliente no encontrado' });
 
         const sales = await prisma.sale.findMany({
-            where: { tenantId, customerId: id, paymentMethod: 'CREDIT' },
+            where: {
+                tenantId,
+                customerId: id,
+                paymentMethod: 'CREDIT',
+                ...receivableCustomerScope(authReq),
+            },
             include: { payments: { orderBy: { createdAt: 'asc' }, include: { user: { select: { name: true } } } } },
             orderBy: { createdAt: 'desc' },
         });
@@ -9614,69 +10384,112 @@ app.get('/api/customers/:id/statement', authenticate, async (req: any, res: any)
 });
 
 // POST /api/credits/payment - Registrar abono
-app.post('/api/credits/payment', authenticate, validate(CreatePaymentSchema), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { saleId, amount, method } = req.body;
+app.post(
+    '/api/credits/payment',
+    authenticate,
+    checkRole(CUSTOMER_PAYMENT_ROLES),
+    validate(CreatePaymentSchema),
+    registerCreditPayment,
+);
 
-    if (!saleId || !amount) return res.status(400).json({ error: 'Faltan datos' });
-    if (isNaN(Number(amount)) || Number(amount) <= 0) return res.status(400).json({ error: 'Monto de abono inválido' });
+async function registerCreditPayment(req: any, res: any) {
+    const authReq = req as AuthRequest;
+    const { saleId, amount, clientEventId } = req.body;
+    const method = req.body.method || 'CASH';
+    const paymentAmount = new Decimal(amount).toDecimalPlaces(2);
+    const payloadHash = crypto.createHash('sha256').update(JSON.stringify({
+        saleId,
+        amount: paymentAmount.toFixed(2),
+        method,
+    })).digest('hex');
 
     try {
-        await prisma.$transaction(async (tx: any) => {
-            // Aislamiento multi-tenant: la venta debe pertenecer a este negocio.
-            const sale = await tx.sale.findFirst({ where: { id: saleId, tenantId: authReq.tenantId } });
-            if (!sale) throw new Error('Venta no encontrada');
-
-            // Capa 4: dinero con decimal.js (nada de Number). Saldo previo y monto del
-            // abono a escala 2; el saldo nuevo es una resta exacta.
-            const saldoPrevio = new Decimal(sale.balance.toString());
-            const monto = new Decimal(String(amount)).toDecimalPlaces(2);
-            const newBalance = saldoPrevio.minus(monto).toDecimalPlaces(2);
-            // Tolerancia de 1 centavo por redondeo, igual que el hermano /api/payments.
-            if (newBalance.lessThan(new Decimal('-0.01'))) throw new Error('El abono excede el saldo pendiente');
-
-            // 1. Crear Pago (monto persistido como Decimal, sin float).
-            await tx.payment.create({
-                data: {
-                    saleId,
-                    amount: monto,
-                    method: method || 'CASH',
-                    collectedBy: authReq.userId!
-                }
-            });
-
-            // 2. Actualizar Venta con decremento condicionado (anti lost-update): el
-            // where exige que el saldo siga siendo EXACTAMENTE el que leímos, tomando el
-            // row-lock; si count===0 otra transacción concurrente (doble clic/reintento)
-            // ya movió el saldo y abortamos para no aplicar dos veces el mismo abono.
-            const completada = newBalance.lessThanOrEqualTo(new Decimal('0.01'));
-            const applied = await tx.sale.updateMany({
-                where: { id: saleId, tenantId: authReq.tenantId, balance: sale.balance },
-                data: {
-                    balance: { decrement: monto },
-                    status: completada ? 'COMPLETED' : 'PENDING' // Update status if fully paid
-                },
-            });
-            if (applied.count === 0) throw new Error('El saldo de la venta cambió; reintente el abono');
-
-            // 3. Bajar la deuda del cliente (Capa correctitud): sin esto currentDebt
-            // queda inflado y bloquea ventas a crédito legítimas. Clamp a 0 como el
-            // castigo de incobrables (writeoff), con decimal.js.
-            if (sale.customerId) {
-                const cust = await tx.customer.findUnique({ where: { id: sale.customerId }, select: { currentDebt: true } });
-                const newDebt = Decimal.max(new Decimal(0), new Decimal((cust?.currentDebt ?? 0).toString()).minus(monto)).toDecimalPlaces(2);
-                await tx.customer.update({ where: { id: sale.customerId }, data: { currentDebt: newDebt } });
+        const result = await prisma.$transaction(async (tx: any) => {
+            // Sale y Customer quedan bloqueados en orden estable: primero venta,
+            // luego cliente. Así dos cobros de facturas distintas no pisan la
+            // deuda agregada y dos cobros de la misma factura se serializan.
+            const lockedSales: Array<{
+                id: string;
+                customerId: string | null;
+                customerName: string | null;
+                sellerId: string | null;
+                paymentMethod: string;
+                status: string;
+                balance: any;
+            }> = await tx.$queryRaw`
+                SELECT s.id, s.customerId, s.customerName, s.paymentMethod,
+                       s.status, s.balance, c.sellerId
+                FROM \`Sale\` s
+                LEFT JOIN \`Customer\` c ON c.id = s.customerId AND c.tenantId = s.tenantId
+                WHERE s.id = ${saleId} AND s.tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            const lockedSale = lockedSales[0];
+            if (!lockedSale) {
+                throw new Error('PAYMENT_SALE_NOT_FOUND');
             }
 
-            // Releer la venta ya actualizada para armar la respuesta.
-            const updatedSale = await tx.sale.findUnique({
-                where: { id: saleId },
-                include: {
-                    payments: { orderBy: { createdAt: 'desc' } },
-                    customer: { select: { name: true } }
+            const lockedCustomer = lockedSale.customerId
+                ? await lockCustomerForScopedMutation(tx, authReq, lockedSale.customerId)
+                : null;
+            if ((lockedSale.customerId && !lockedCustomer)
+                || (authReq.role === 'VENDEDOR' && !lockedSale.customerId && lockedSale.sellerId !== authReq.userId)) {
+                throw new Error('PAYMENT_SALE_NOT_FOUND');
+            }
+
+            const replay = await tx.payment.findFirst({
+                where: { saleId, clientEventId },
+            });
+            if (replay) {
+                if (!replay.payloadHash || replay.payloadHash !== payloadHash) {
+                    throw new Error('PAYMENT_IDEMPOTENCY_CONFLICT');
                 }
+                return { replayed: true, paymentId: replay.id };
+            }
+
+            if (lockedSale.paymentMethod !== 'CREDIT') throw new Error('PAYMENT_NOT_CREDIT');
+            const balanceBefore = new Decimal(lockedSale.balance.toString());
+            if (!balanceBefore.greaterThan(0)) throw new Error('PAYMENT_ALREADY_SETTLED');
+            if (paymentAmount.greaterThan(balanceBefore)) throw new Error('PAYMENT_EXCEEDS_BALANCE');
+
+            const balanceAfter = balanceBefore.minus(paymentAmount).toDecimalPlaces(2);
+            const payment = await tx.payment.create({
+                data: {
+                    saleId,
+                    amount: paymentAmount.toFixed(2),
+                    method,
+                    collectedBy: authReq.userId!,
+                    clientEventId,
+                    payloadHash,
+                },
             });
 
+            await tx.sale.update({
+                where: { id: saleId },
+                data: {
+                    balance: balanceAfter.toFixed(2),
+                    status: balanceAfter.isZero() ? 'PAID' : 'CREDIT_PENDING',
+                },
+            });
+
+            let debtBefore: Decimal | null = null;
+            let debtAfter: Decimal | null = null;
+            if (lockedSale.customerId && lockedCustomer) {
+                debtBefore = new Decimal(lockedCustomer.currentDebt?.toString() ?? 0);
+                debtAfter = Decimal.max(0, debtBefore.minus(paymentAmount)).toDecimalPlaces(2);
+                await tx.customer.update({
+                    where: { id: lockedSale.customerId },
+                    data: { currentDebt: debtAfter.toFixed(2) },
+                });
+            }
+
+            await recordPayment(
+                tx,
+                authReq.tenantId!,
+                authReq.userId!,
+                payment.id,
+                paymentAmount,
+                method,
+            );
             await tx.auditLog.create({
                 data: {
                     tenantId: authReq.tenantId!,
@@ -9684,39 +10497,71 @@ app.post('/api/credits/payment', authenticate, validate(CreatePaymentSchema), as
                     action: 'CREDIT_PAYMENT',
                     details: JSON.stringify({
                         saleId,
-                        customerId: sale.customerId,
-                        amount: monto.toString(),
-                        balanceBefore: saldoPrevio.toString(),
-                        balanceAfter: newBalance.toString(),
-                        method: method ?? 'CASH',
+                        customerId: lockedSale.customerId,
+                        paymentId: payment.id,
+                        clientEventId,
+                        amount: paymentAmount.toFixed(2),
+                        balanceBefore: balanceBefore.toFixed(2),
+                        balanceAfter: balanceAfter.toFixed(2),
+                        debtBefore: debtBefore?.toFixed(2) ?? null,
+                        debtAfter: debtAfter?.toFixed(2) ?? null,
+                        method,
                     }),
                 },
             });
 
-            // Format response
-            const formatted = {
-                id: updatedSale.id,
-                customerName: updatedSale.customer?.name || updatedSale.customerName,
-                date: updatedSale.createdAt,
-                dueDate: updatedSale.dueDate,
-                total: Number(updatedSale.total),
-                balance: Number(updatedSale.balance),
-                status: Number(updatedSale.balance) > 0 ? 'CREDIT_PENDING' : 'PAID',
-                payments: updatedSale.payments.map((p: any) => ({
-                    id: p.id,
-                    amount: Number(p.amount),
-                    date: p.createdAt,
-                    method: p.method
-                }))
-            };
+            return { replayed: false, paymentId: payment.id };
+        });
 
-            res.json(formatted);
+        const updatedSale = await prisma.sale.findFirst({
+            where: {
+                id: saleId,
+                tenantId: authReq.tenantId!,
+                ...receivableCustomerScope(authReq),
+            },
+            include: {
+                payments: { orderBy: { createdAt: 'desc' } },
+                customer: { select: { name: true } },
+            },
+        });
+        if (!updatedSale) return res.status(404).json({ error: 'Venta no encontrada' });
+
+        res.json({
+            id: updatedSale.id,
+            customerName: updatedSale.customer?.name || updatedSale.customerName,
+            date: updatedSale.createdAt,
+            dueDate: updatedSale.dueDate,
+            total: Number(updatedSale.total),
+            balance: Number(updatedSale.balance),
+            status: Number(updatedSale.balance) > 0 ? 'CREDIT_PENDING' : 'PAID',
+            payments: updatedSale.payments.map((payment: any) => ({
+                id: payment.id,
+                amount: Number(payment.amount),
+                date: payment.createdAt,
+                method: payment.method,
+            })),
+            idempotentReplay: result.replayed,
+            paymentId: result.paymentId,
         });
     } catch (error: any) {
         console.error('Register payment error:', error);
-        res.status(400).json({ error: error.message || 'Error al registrar pago' });
+        if (error?.message === 'PAYMENT_SALE_NOT_FOUND' || error?.message === 'PAYMENT_CUSTOMER_NOT_FOUND') {
+            return res.status(404).json({ error: 'Venta o cliente no encontrado' });
+        }
+        if (error?.message === 'PAYMENT_IDEMPOTENCY_CONFLICT') {
+            return res.status(409).json({ error: 'La misma operación ya se usó con datos distintos', code: error.message });
+        }
+        if (error instanceof PeriodLockedError) {
+            return res.status(423).json({ error: error.message, code: 'PERIOD_LOCKED' });
+        }
+        const messages: Record<string, string> = {
+            PAYMENT_NOT_CREDIT: 'Solo se pueden abonar ventas a crédito',
+            PAYMENT_ALREADY_SETTLED: 'Esta venta ya no tiene saldo pendiente',
+            PAYMENT_EXCEEDS_BALANCE: 'El abono excede el saldo pendiente',
+        };
+        res.status(400).json({ error: messages[error?.message] || 'No se pudo registrar el abono' });
     }
-});
+}
 
 // POST /api/credits/:saleId/writeoff - Castigar una venta a crédito como incobrable
 // (Cobranza B1). Postea el asiento Debe 5.2.7 / Haber 1.1.3, salda la venta y baja

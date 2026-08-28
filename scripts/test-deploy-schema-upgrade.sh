@@ -30,12 +30,14 @@ REPRO_LOG="$(mktemp /tmp/nortex-deploy-repro.XXXXXX)"
 DUPLICATE_LOG="$(mktemp /tmp/nortex-deploy-duplicates.XXXXXX)"
 CROSS_TENANT_LOG="$(mktemp /tmp/nortex-deploy-cross-tenant.XXXXXX)"
 RETURN_DUPLICATE_LOG="$(mktemp /tmp/nortex-deploy-return-duplicates.XXXXXX)"
+PAYMENT_DUPLICATE_LOG="$(mktemp /tmp/nortex-deploy-payment-duplicates.XXXXXX)"
 RACE_ONE_LOG="$(mktemp /tmp/nortex-deploy-race-one.XXXXXX)"
 RACE_TWO_LOG="$(mktemp /tmp/nortex-deploy-race-two.XXXXXX)"
 TIMEOUT_LOG="$(mktemp /tmp/nortex-deploy-timeout.XXXXXX)"
 cleanup_deploy_smoke_logs() {
   rm -f "$REPRO_LOG" "$DUPLICATE_LOG" "$CROSS_TENANT_LOG" \
-    "$RETURN_DUPLICATE_LOG" "$RACE_ONE_LOG" "$RACE_TWO_LOG" "$TIMEOUT_LOG"
+    "$RETURN_DUPLICATE_LOG" "$PAYMENT_DUPLICATE_LOG" \
+    "$RACE_ONE_LOG" "$RACE_TWO_LOG" "$TIMEOUT_LOG"
 }
 trap cleanup_deploy_smoke_logs EXIT HUP INT TERM
 
@@ -105,7 +107,21 @@ echo "Restaurando el fixture de devoluciones y verificando convergencia…"
 run_ci_entrypoint
 "$TSX_CLI" scripts/verify-deploy-schema-smoke.ts success
 
-echo "Verificando estado parcial y dos iniciadores concurrentes…"
+echo "Verificando fallo inmediato ante abonos con clientEventId duplicado…"
+"$PRISMA_CLI" db execute --schema="$CURRENT_SCHEMA" --file=tests/fixtures/deploy-schema-duplicate-payments.sql
+PAYMENT_DUPLICATE_STATUS=0
+run_ci_entrypoint >"$PAYMENT_DUPLICATE_LOG" 2>&1 || PAYMENT_DUPLICATE_STATUS=$?
+sed -n '1,10000p' "$PAYMENT_DUPLICATE_LOG"
+if [ "$PAYMENT_DUPLICATE_STATUS" -eq 0 ] \
+  || ! grep -Fq "Hay abonos con clientEventId duplicado" "$PAYMENT_DUPLICATE_LOG" \
+  || grep -Fq "reintentando" "$PAYMENT_DUPLICATE_LOG"; then
+  echo "❌ El entrypoint no falló inmediatamente ante abonos duplicados."
+  exit 1
+fi
+"$TSX_CLI" scripts/verify-deploy-schema-smoke.ts payment-duplicates
+
+echo "Restaurando los abonos y verificando convergencia concurrente desde estado parcial…"
+"$PRISMA_CLI" db execute --schema="$CURRENT_SCHEMA" --file=tests/fixtures/deploy-schema-reset-payment-duplicates.sql
 "$PRISMA_CLI" db execute --schema="$CURRENT_SCHEMA" --file=tests/fixtures/deploy-schema-drop-seller-index.sql
 RACE_ONE_STATUS=0
 RACE_TWO_STATUS=0
