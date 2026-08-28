@@ -65,6 +65,7 @@ describe('matriz de autorizacion de ventas medidas y operaciones relacionadas', 
 
     it('conecta los guards en las rutas protegidas sin cerrar endpoints publicos', () => {
         expect(sync).toContain("router.post('/', authenticate, checkRole(POS_SALE_ROLES)");
+        expect(server).toContain("app.post('/api/sales', authenticate, checkRole(POS_SALE_ROLES)");
         expect(pedidos).toContain("router.get('/', authenticate, checkRole(PEDIDO_READ_ROLES)");
         expect(pedidos).toContain("router.get('/:id', authenticate, checkRole(PEDIDO_READ_ROLES)");
         expect(pedidos).toContain("router.patch('/:id/estado', authenticate, checkRole(PEDIDO_WRITE_ROLES)");
@@ -79,5 +80,6 @@ describe('matriz de autorizacion de ventas medidas y operaciones relacionadas', 
         expect(server).toContain("app.post('/api/quotations', authenticate, checkRole(QUOTATION_WRITE_ROLES)");
         expect(server).toContain("app.get('/api/public-orders', authenticate, checkRole(QUOTATION_READ_ROLES)");
         expect(server).toContain("app.patch('/api/public-orders/:id/convert', authenticate, checkRole(QUOTATION_WRITE_ROLES)");
+        expect(server).toContain('employeeId: currentShift?.employeeId ?? null');
     });
 });

@@ -7,7 +7,9 @@ const pos = readFileSync(resolve(process.cwd(), 'components/POS.tsx'), 'utf8');
 
 const between = (source: string, start: string, end: string): string => {
     const from = source.indexOf(start);
-    const to = source.indexOf(end, from + start.length);
+    const to = end
+        ? source.indexOf(end, from + start.length)
+        : source.indexOf("\napp.", from + start.length);
     if (from < 0 || to < 0) throw new Error(`No se encontró el bloque ${start}`);
     return source.slice(from, to);
 };
@@ -20,7 +22,7 @@ const searchRoute = between(
 const returnRoute = between(
     server,
     "app.post('/api/returns'",
-    "app.post('/api/payments'",
+    '',
 );
 const returnSubmitFlow = between(
     pos,
@@ -88,7 +90,7 @@ describe('guardas estructurales de devoluciones', () => {
         const replayReadIndex = returnRoute.indexOf('const existingReturn = await tx.productReturn.findFirst');
         const stockIndex = returnRoute.indexOf('applyStockDelta(tx');
         const createIndex = returnRoute.indexOf('tx.productReturn.create');
-        const createEnd = returnRoute.indexOf('// Stock y Kardex', createIndex);
+        const createEnd = returnRoute.indexOf('// OFF queda', createIndex);
 
         expect(hashIndex).toBeGreaterThan(-1);
         expect(fastReplayIndex).toBeGreaterThan(hashIndex);
@@ -206,7 +208,7 @@ describe('guardas estructurales de devoluciones', () => {
         );
         const createIndex = returnRoute.indexOf('tx.productReturn.create', persistenceIndex);
         const persistenceBlock = returnRoute.slice(persistenceIndex, createIndex);
-        const createBlockEnd = returnRoute.indexOf('// Stock y Kardex', createIndex);
+        const createBlockEnd = returnRoute.indexOf('// OFF queda', createIndex);
         const createBlock = returnRoute.slice(createIndex, createBlockEnd);
 
         expect(persistenceIndex).toBeGreaterThan(-1);
@@ -220,24 +222,27 @@ describe('guardas estructurales de devoluciones', () => {
         expect(createBlock).toContain('items: persistItems');
     });
 
-    it('mueve stock agregado una vez y desglosa Kardex por lote más fallback sin batch', () => {
-        expect(returnRoute.match(/applyStockDelta\(tx/g)).toHaveLength(1);
+    it('OFF conserva un delta agregado y 2B restaura cada lote a su bodega exacta', () => {
+        const offBranch = returnRoute.indexOf("if (batchWarehouseLedgerMode === 'OFF')");
+        const exactBranch = returnRoute.indexOf('const exactPlan =', offBranch);
+        const offBlock = returnRoute.slice(offBranch, exactBranch);
+        expect(offBlock.match(/applyStockDelta\(tx/g)).toHaveLength(1);
 
-        const stockIndex = returnRoute.indexOf('const stockResult = await applyStockDelta(tx');
-        const batchKardexIndex = returnRoute.indexOf(
+        const stockIndex = offBlock.indexOf('const stockResult = await applyStockDelta(tx');
+        const batchKardexIndex = offBlock.indexOf(
             'for (const restoration of batchRestoration.batchRestorations)',
             stockIndex,
         );
-        const aggregateKardexIndex = returnRoute.indexOf(
+        const aggregateKardexIndex = offBlock.indexOf(
             'if (batchRestoration.aggregateOnlyQuantity.greaterThan(0))',
             batchKardexIndex,
         );
-        const invariantIndex = returnRoute.indexOf(
+        const invariantIndex = offBlock.indexOf(
             'if (stockCursor.minus(stockResult.stockAfter)',
             aggregateKardexIndex,
         );
-        const batchKardexBlock = returnRoute.slice(batchKardexIndex, aggregateKardexIndex);
-        const aggregateKardexBlock = returnRoute.slice(aggregateKardexIndex, invariantIndex);
+        const batchKardexBlock = offBlock.slice(batchKardexIndex, aggregateKardexIndex);
+        const aggregateKardexBlock = offBlock.slice(aggregateKardexIndex, invariantIndex);
 
         expect(stockIndex).toBeGreaterThan(-1);
         expect(batchKardexIndex).toBeGreaterThan(stockIndex);
@@ -252,6 +257,22 @@ describe('guardas estructurales de devoluciones', () => {
         );
         expect(aggregateKardexBlock).not.toMatch(/\bbatchId\s*:/);
         expect(invariantIndex).toBeGreaterThan(aggregateKardexIndex);
+
+        const exactBlock = returnRoute.slice(exactBranch);
+        const sidecarIndex = exactBlock.indexOf('await applyBatchWarehouseDelta({');
+        const batchUpdateIndex = exactBlock.indexOf('tx.productBatch.updateMany', sidecarIndex);
+        const exactStockIndex = exactBlock.indexOf('applyStockDelta(tx', batchUpdateIndex);
+        const exactKardexIndex = exactBlock.indexOf('tx.kardexMovement.create', exactStockIndex);
+        expect(sidecarIndex).toBeGreaterThan(-1);
+        expect(exactBlock.slice(sidecarIndex, batchUpdateIndex)).toContain(
+            'warehouseId: restoration.warehouseId',
+        );
+        expect(exactBlock.slice(sidecarIndex, batchUpdateIndex)).toContain(
+            'delta: restoration.quantity.toFixed(4)',
+        );
+        expect(batchUpdateIndex).toBeGreaterThan(sidecarIndex);
+        expect(exactStockIndex).toBeGreaterThan(batchUpdateIndex);
+        expect(exactKardexIndex).toBeGreaterThan(exactStockIndex);
     });
 
     it('traduce BatchRestorationError sin ocultar su status ni código', () => {

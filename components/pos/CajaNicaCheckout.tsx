@@ -87,8 +87,9 @@ export const CajaNicaCheckout = ({
                 <button
                     type="button"
                     onClick={() => onCashReceivedChange(total.toFixed(2))}
+                    disabled={disabled || processing}
                     aria-pressed={exactSelected}
-                    className={`min-h-tap shrink-0 rounded-control border px-3 text-xs font-bold transition-colors ${exactSelected
+                    className={`min-h-tap shrink-0 rounded-control border px-3 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${exactSelected
                         ? 'border-brand bg-brand-soft text-brand'
                         : 'border-white/[0.08] bg-white/[0.04] text-slate-200 hover:bg-white/[0.07]'}`}
                 >
@@ -101,8 +102,9 @@ export const CajaNicaCheckout = ({
                             key={amount.toString()}
                             type="button"
                             onClick={() => onCashReceivedChange(amount.toFixed(2))}
+                            disabled={disabled || processing}
                             aria-pressed={selected}
-                            className={`min-h-tap shrink-0 rounded-control border px-3 text-xs font-bold transition-colors ${selected
+                            className={`min-h-tap shrink-0 rounded-control border px-3 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${selected
                                 ? 'border-brand bg-brand-soft text-brand'
                                 : 'border-white/[0.08] bg-white/[0.04] text-slate-200 hover:bg-white/[0.07]'}`}
                         >
@@ -121,13 +123,14 @@ export const CajaNicaCheckout = ({
                         inputMode="decimal"
                         autoFocus
                         value={cashReceived}
+                        disabled={disabled || processing}
                         onChange={event => onCashReceivedChange(sanitizeDecimalInput(event.target.value))}
                         onKeyDown={event => {
-                            if (event.key === 'Enter' && ready && !processing) onConfirmCash();
+                            if (event.key === 'Enter' && ready && !disabled && !processing) onConfirmCash();
                         }}
                         aria-invalid={!ready && cashReceived !== ''}
                         aria-describedby="caja-nica-cash-status"
-                        className="h-14 w-full rounded-control border border-white/[0.10] bg-surface-950 pl-11 pr-4 text-2xl font-black tabular-nums text-slate-100 outline-none transition-colors placeholder:text-slate-600 focus:border-brand focus:ring-2 focus:ring-brand/25"
+                        className="h-14 w-full rounded-control border border-white/[0.10] bg-surface-950 pl-11 pr-4 text-2xl font-black tabular-nums text-slate-100 outline-none transition-colors placeholder:text-slate-600 focus:border-brand focus:ring-2 focus:ring-brand/25 disabled:cursor-not-allowed disabled:opacity-45"
                         placeholder="0.00"
                     />
                 </span>
@@ -162,7 +165,7 @@ export const CajaNicaCheckout = ({
             <button
                 type="button"
                 onClick={onConfirmCash}
-                disabled={!ready || processing}
+                disabled={!ready || disabled || processing}
                 className="flex h-pay w-full items-center justify-center gap-2 rounded-control bg-brand px-5 text-[16px] font-bold text-brand-on transition-colors hover:bg-brand-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
             >
                 {processing ? <Loader2 size={19} className="animate-spin" aria-hidden="true" /> : <Check size={19} aria-hidden="true" />}
@@ -171,7 +174,7 @@ export const CajaNicaCheckout = ({
             <button
                 type="button"
                 onClick={onOtherPayment}
-                disabled={processing}
+                disabled={disabled || processing}
                 className="min-h-tap w-full rounded-control text-sm font-semibold text-slate-400 transition-colors hover:bg-white/[0.04] hover:text-white disabled:opacity-45"
             >
                 Otro pago

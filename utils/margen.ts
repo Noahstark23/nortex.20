@@ -11,6 +11,11 @@
  * valores, para que entre a la red de mutación (Stryker) y no pueda pudrirse.
  */
 import Decimal from 'decimal.js';
+import {
+    FISCAL_REGIME_CUOTA_FIJA,
+    normalizeFiscalRegime,
+    type FiscalRegime,
+} from './fiscalRegime';
 
 /**
  * Factor para desglosar un precio que YA trae IVA incluido: neto = total / 1.15.
@@ -40,8 +45,15 @@ function ivaFactor(): Decimal {
  * Que sea la misma fórmula es lo que garantiza que el KPI del dashboard no
  * discrepe del Estado de Resultados ni de la declaración de la DGI.
  */
-function ingresoNetoDeVenta(total: Decimal.Value, exento: Decimal.Value | null | undefined): Decimal {
+function ingresoNetoDeVenta(
+    total: Decimal.Value,
+    exento: Decimal.Value | null | undefined,
+    fiscalRegime?: FiscalRegime | string | null,
+): Decimal {
     const dTotal = new Decimal(total);
+    if (normalizeFiscalRegime(fiscalRegime) === FISCAL_REGIME_CUOTA_FIJA) {
+        return dTotal.toDecimalPlaces(4);
+    }
     const dExentoCrudo = exento == null ? new Decimal(0) : new Decimal(exento);
     const dExento = Decimal.min(Decimal.max(dExentoCrudo, new Decimal(0)), dTotal);
     const gravado = dTotal.minus(dExento);
@@ -54,6 +66,8 @@ export interface VentaParaMargen {
     total: Decimal.Value;
     /** Porción exonerada (canasta básica). `null`/ausente = venta 100% gravada. */
     exemptTotal?: Decimal.Value | null;
+    /** Foto fiscal de la venta. Ausente = GENERAL para compatibilidad histórica. */
+    fiscalRegimeAtSale?: FiscalRegime | string | null;
     /** Líneas de la venta. `costAtSale` es el costo unitario NETO de IVA. */
     items: Array<{ costAtSale: Decimal.Value | null; quantity: number }>;
 }
@@ -88,7 +102,11 @@ export function calcularMargenBruto(ventas: VentaParaMargen[]): MargenBruto {
     let lineasSinCosto = 0;
 
     for (const venta of ventas) {
-        ingresoNeto = ingresoNeto.plus(ingresoNetoDeVenta(venta.total, venta.exemptTotal));
+        ingresoNeto = ingresoNeto.plus(ingresoNetoDeVenta(
+            venta.total,
+            venta.exemptTotal,
+            venta.fiscalRegimeAtSale,
+        ));
 
         for (const item of venta.items) {
             // Sin costo registrado (producto cargado sin costo, o importación

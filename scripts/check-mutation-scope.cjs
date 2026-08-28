@@ -50,12 +50,12 @@ const PISO_MUTANTES = {
     // no había aserción honesta que los distinguiera porque cualquier valor
     // distinto de 'PACK' se trata como BASE. Menos mutantes, mayor señal.
     'utils/pricing.ts': 51,
-    // margen.ts entró con NX-01/02/03 (ganancia bruta real, retiro seguro y
-    // efectivo del turno): 66 mutantes, score medido 100.00% — sin
-    // sobrevivientes. El 15% de IVA se construye DENTRO de la función a
+    // margen.ts cubre ganancia bruta real, retiro seguro, efectivo del turno y
+    // el ingreso de CUOTA_FIJA: 70/70 mutantes detectados. Los cuatro agregados
+    // por el régimen fiscal mueren. El 15% de IVA se construye DENTRO de la función a
     // propósito: como constante de módulo su mutante sobrevivía siempre
     // (se evalúa al importar, antes de que Stryker active el mutante).
-    'utils/margen.ts': 66,
+    'utils/margen.ts': 70,
     // stockAlert.ts entró con el aviso de existencias del carrito: 110 mutantes,
     // score medido 99.09%. No es dinero, es inventario — pero es la misma clase
     // de número que el dueño verifica a ojo contra la góndola, y un aviso falso
@@ -66,18 +66,24 @@ const PISO_MUTANTES = {
     // motivo que el IVA de margen.ts: como constante de módulo su mutante
     // sobrevivía siempre.
     'utils/stockAlert.ts': 110,
-    // cartPersistence.ts entró con P0-1 (el carrito sobrevive a la navegación):
-    // 142 mutantes, score medido 100.00% — sin sobrevivientes. No es dinero,
-    // pero defiende un invariante que SÍ lo es: una venta a medias jamás se
-    // restaura en un turno que no es el suyo, porque eso descuadra el arqueo de
-    // otro. La ventana de 12 h se construye dentro de una función por el mismo
-    // motivo que el IVA de margen.ts.
-    'utils/cartPersistence.ts': 142,
-    // posSearch.ts entró con P0-2 (la grilla dejó de pintar 1,003 tarjetas):
-    // 46 mutantes, score medido 100.00%. Lo que protege es que el recorte NUNCA
-    // se haga en silencio (visibles + ocultos == total) y que el SKU exacto —el
-    // camino del escáner— le siga ganando a cualquier coincidencia parcial.
-    'utils/posSearch.ts': 46,
+    // cartPersistence.ts creció de 142 a 337 mutantes al incorporar el canal
+    // autenticado cotización → POS y sus fronteras de versión, identidad, TTL y
+    // máximo de líneas. Los 337/337 quedan detectados: una línea inválida no se
+    // cuela por `some`, 500 sigue siendo válido y ninguna identidad/fecha usa
+    // coerción de JavaScript. No es dinero, pero defiende que una venta a medias
+    // jamás aparezca en otro turno o tenant.
+    'utils/cartPersistence.ts': 337,
+    // posSearch.ts entró con P0-2 (la grilla dejó de pintar 1,003 tarjetas) y
+    // creció con la resolución segura de Enter: 62/62 mutantes detectados. El
+    // recorte nunca es silencioso y una búsqueda ambigua jamás adivina producto.
+    'utils/posSearch.ts': 62,
+    // Alta rápida, compatibilidad de cantidades y clasificación de errores del
+    // POS: 221/221. Protege precio/costo/stock, pasos y reintentos idempotentes.
+    'utils/posActivation.ts': 221,
+    // Efectivo recibido, faltante, vuelto y denominaciones NIO: 99/99.
+    'utils/posCash.ts': 99,
+    // Foto de recibido/vuelto para ticket inmediato: 23/23.
+    'utils/postSalePrintCash.ts': 23,
     // Los seis presets operativos se validan completos, sin fiscalidad/precio:
     // 45/45 mutantes detectados.
     'utils/productFamilyPresets.ts': 45,
@@ -98,11 +104,37 @@ const PISO_MUTANTES = {
     'backend/lib/salesQuantityReport.ts': 67,
     // Saldo recibido aún facturable por producto: 16/16.
     'backend/lib/purchaseOrderAvailability.ts': 16,
+    // Redondeo HALF_UP por línea de factura de compra: 21/21. Protege que
+    // C$0.10 gravados produzcan C$0.12 liquidables y no un saldo C$0.1150.
+    'backend/lib/purchaseMoney.ts': 21,
+    // Motor 3-way completo: identidad por PurchaseOrderItem, disponibilidad
+    // recibida-asignada, FIFO, tolerancia 18,6, legacy, CASH fail-closed y
+    // resolución idempotente. Corrida dirigida: 310/310, 0 NoCoverage; la
+    // recarga aislada del módulo también ejecuta sus helpers concisos.
+    'backend/lib/procurementMatch.ts': 310,
+    // Recepción formal completa: UUID/payload canónico, exactitud 18,4/18,6,
+    // lotes, vencimientos y resultado persistido. Dirigida: 269/269.
+    'backend/lib/procurementReceipts.ts': 269,
+    // Libro puro por lote+bodega y source keys bounded: 165/165.
+    'backend/lib/batchWarehouseLedger.ts': 165,
+    // Decisión OFF/SHADOW, reconciliación canónica y replay fail-closed:
+    // 496/496, incluidos primitivos, arrays, JSON corrupto, orden y duplicados.
+    'backend/lib/batchWarehouseReadiness.ts': 496,
+    // Transiciones manuales batch/no-batch y comando persistido: 112/112.
+    'backend/lib/manualBatchMovements.ts': 112,
+    // Cierre corto de OC con cantidades Decimal exactas e idempotencia: 157/157.
+    'backend/lib/purchaseOrderCloseShort.ts': 157,
+    // Comando canónico de transferencia multi-bodega: 160/160.
+    'backend/lib/stockTransferCommand.ts': 160,
     // Telemetría de rechazo sin barcode crudo: 31/31.
     'backend/lib/scaleLabelTelemetry.ts': 31,
-    // Huella canónica del replay offline: 54/54. Incluye identidad económica,
-    // mediciones y privacidad (solo SHA-256 del código; nunca código crudo).
-    'backend/lib/offlineSaleReplay.ts': 54,
+    // Huella canónica del replay offline: 58/58. Incluye identidad económica,
+    // versión fiscal observada, mediciones y privacidad (solo SHA-256 del
+    // código; nunca código crudo).
+    'backend/lib/offlineSaleReplay.ts': 58,
+    // Saldo efectivo, Decimal 4dp, plan de abono e idempotencia de CxP:
+    // 156/156 mutantes detectados en la corrida dirigida, sin sobrevivientes.
+    'backend/lib/supplierPayments.ts': 156,
     // Escape de HTML + CSP con nonce acotado para vistas fiscales: 27/27.
     'backend/lib/htmlSecurity.ts': 27,
     // saleCancellation.ts: las reglas de ANULACIÓN de comprobantes (DGI-5).
@@ -126,8 +158,9 @@ const PISO_MUTANTES = {
     'backend/services/loanMath.ts': 12,
     // DTO público mínimo de tracking: 5/5; descarta notas, GPS y teléfonos.
     'backend/services/pedidoTrackingService.ts': 5,
-    // Decimal finito + huella v1 + conflicto idempotente de devolución: 39/39.
-    'backend/services/returnService.ts': 39,
+    // Decimal/huella/conflicto idempotente (39) y restauración exacta de lotes
+    // por allocation+bodega (219): 258/258 entre los tres rangos actuales.
+    'backend/services/returnService.ts': 258,
     // nicaLabor.ts es el motor de nómina del ERP: lo que de verdad se le paga a un
     // trabajador (planilla, retención de IR, finiquito). Entró sin ninguna red —
     // el 95,59% histórico protegía utils/calc-laborales.ts, que es el ESPEJO
@@ -145,6 +178,10 @@ const PISO_MUTANTES = {
     // calculateLaborLiability (llama `new Date()`) quedan fuera — ver el config.
     'backend/services/nicaLabor.ts': 106,
     'backend/services/nicaTax.ts': 7,
+    // Régimen fiscal puro: normalización, conflicto de versión (incluido el
+    // cliente legacy tras un cambio) y desglose autoritativo GENERAL/CUOTA_FIJA.
+    // 42/42 mutantes detectados.
+    'utils/fiscalRegime.ts': 42,
     // sellerReport.ts: fold puro del reporte por vendedor (cuánto vende y
     // cuánto cobra cada quien — el número con el que el dueño paga o reclama).
     // 59 mutantes, score medido 100.00%.
@@ -158,7 +195,11 @@ const PISO_MUTANTES = {
     // anticipado.
     'backend/services/stripe.ts': 13,
     'backend/services/stockService.ts': 5,
-    'backend/services/accounting.ts': 18,
+    // Asientos puros de venta, abonos, compra+PPV y devolución: 177/177, más
+    // 7/7 del orden canónico de locks contables. La factura ligada a OC deja
+    // Inventario al costo recibido y separa variación favorable/desfavorable
+    // en 5.1.3, incluidos bordes CUOTA_FIJA.
+    'backend/services/accounting.ts': 184,
 };
 
 if (!fs.existsSync(REPORT)) {

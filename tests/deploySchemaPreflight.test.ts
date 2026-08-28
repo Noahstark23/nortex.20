@@ -2,11 +2,27 @@ import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import {
     applyDeploySchemaPreflight,
+    applyPaymentSchemaPreflight,
+    applyProcurementPhaseTwoBSchemaPreflight,
+    applyProcurementPhaseTwoCSchemaPreflight,
     applyProductReturnSchemaPreflight,
+    applyRetencionSufridaSchemaPreflight,
     applyStockCountSchemaPreflight,
+    inspectPaymentClientEventIdColumn,
+    inspectPaymentIdempotencyIndex,
+    inspectPaymentPayloadHashColumn,
+    inspectProcurementPhaseTwoBColumn,
+    inspectProcurementPhaseTwoBForeignKey,
+    inspectProcurementPhaseTwoBIndex,
+    inspectProcurementPhaseTwoCColumn,
+    inspectProcurementPhaseTwoCForeignKey,
+    inspectProcurementPhaseTwoCIndex,
     inspectProductReturnClientEventIdColumn,
     inspectProductReturnIdempotencyIndex,
     inspectProductReturnPayloadHashColumn,
+    inspectRetencionSufridaClientEventIdColumn,
+    inspectRetencionSufridaIdempotencyIndex,
+    inspectRetencionSufridaPayloadHashColumn,
     inspectStockCountNullableIdColumn,
     inspectStockCountOpenWarehouseIndex,
     inspectStockCountTenantWarehouseStatusIndex,
@@ -14,16 +30,36 @@ import {
     inspectStockCountWarehouseIndex,
     inspectWarehouseSellerColumn,
     inspectWarehouseSellerIndex,
+    PAYMENT_IDEMPOTENCY_INDEX,
+    PURCHASE_ITEM_INVENTORY_BATCH_FOREIGN_KEY,
+    PURCHASE_ITEM_INVENTORY_BATCH_INDEX,
+    PURCHASE_ITEM_INVENTORY_WAREHOUSE_FOREIGN_KEY,
+    PURCHASE_ITEM_INVENTORY_WAREHOUSE_INDEX,
+    PRODUCT_BATCH_LEDGER_SOURCE_UNIQUE_INDEX,
+    SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_FOREIGN_KEY,
+    SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_INDEX,
     PRODUCT_RETURN_IDEMPOTENCY_INDEX,
+    RETENCION_SUFRIDA_IDEMPOTENCY_INDEX,
     STOCK_COUNT_OPEN_WAREHOUSE_INDEX,
     STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX,
     STOCK_COUNT_WAREHOUSE_FOREIGN_KEY,
     STOCK_COUNT_WAREHOUSE_INDEX,
+    STOCK_TRANSFER_IDEMPOTENCY_INDEX,
+    SUPPLIER_CREDIT_NOTE_LINE_RETURN_ITEM_UNIQUE_INDEX,
+    SUPPLIER_RETURN_EVENT_UNIQUE_INDEX,
     UnsafeSchemaStateError,
     WAREHOUSE_SELLER_INDEX,
     type DeploySchemaClient,
+    type PaymentColumnRow,
+    type PaymentIndexRow,
+    type ProcurementPhaseTwoBColumnContract,
+    type ProcurementPhaseTwoBColumnRow,
+    type ProcurementPhaseTwoCColumnContract,
+    type ProcurementPhaseTwoCColumnRow,
     type ProductReturnColumnRow,
     type ProductReturnIndexRow,
+    type RetencionSufridaColumnRow,
+    type RetencionSufridaIndexRow,
     type StockCountColumnRow,
     type StockCountForeignKeyRow,
     type StockCountIndexRow,
@@ -88,6 +124,16 @@ type Action =
     | 'foreignKey:warehouseId';
 
 type ProductReturnAction =
+    | 'column:clientEventId'
+    | 'column:payloadHash'
+    | 'index:idempotency';
+
+type PaymentAction =
+    | 'column:clientEventId'
+    | 'column:payloadHash'
+    | 'index:idempotency';
+
+type RetencionSufridaAction =
     | 'column:clientEventId'
     | 'column:payloadHash'
     | 'index:idempotency';
@@ -358,6 +404,226 @@ class ProductReturnSchemaFake implements DeploySchemaClient {
     }
 }
 
+const validPaymentClientEventIdColumn: PaymentColumnRow = {
+    ...validColumn,
+    columnType: 'varchar(128)',
+    characterMaximumLength: 128n,
+};
+
+const validPaymentPayloadHashColumn: PaymentColumnRow = {
+    ...validColumn,
+    columnType: 'varchar(64)',
+    characterMaximumLength: 64n,
+};
+
+class PaymentSchemaFake implements DeploySchemaClient {
+    paymentExists = true;
+    columns: Record<'clientEventId' | 'payloadHash', State> = {
+        clientEventId: 'missing',
+        payloadHash: 'missing',
+    };
+    index: State = 'missing';
+    duplicates: unknown[] = [];
+    raceWins = new Set<PaymentAction>();
+    hardFailures = new Set<PaymentAction>();
+    events: string[] = [];
+
+    makeEverythingValid(): this {
+        this.columns.clientEventId = 'valid';
+        this.columns.payloadHash = 'valid';
+        this.index = 'valid';
+        return this;
+    }
+
+    private columnRows(
+        columnName: 'clientEventId' | 'payloadHash',
+    ): PaymentColumnRow[] {
+        const state = this.columns[columnName];
+        if (state === 'missing') return [];
+        const valid = columnName === 'clientEventId'
+            ? validPaymentClientEventIdColumn
+            : validPaymentPayloadHashColumn;
+        return [{ ...(state === 'valid' ? valid : { ...valid, isNullable: 'NO' }) }];
+    }
+
+    async query<T>(statement: Prisma.Sql): Promise<T> {
+        const text = sqlText(statement);
+        const values = statement.values as unknown[];
+
+        if (text.includes("TABLE_NAME = 'Payment'")
+            && text.includes('information_schema.TABLES')) {
+            return (this.paymentExists ? [{ tableName: 'Payment' }] : []) as T;
+        }
+        if (text.includes("TABLE_NAME = 'Payment'")
+            && text.includes("COLUMN_NAME = 'saleId'")) {
+            return [{ ...validColumn, isNullable: 'NO' }] as T;
+        }
+        if (text.includes('FROM information_schema.COLUMNS')
+            && text.includes("TABLE_NAME = 'Payment'")) {
+            const columnName = values.find(value => (
+                value === 'clientEventId' || value === 'payloadHash'
+            ));
+            if (columnName === 'clientEventId' || columnName === 'payloadHash') {
+                return this.columnRows(columnName) as T;
+            }
+        }
+        if (text.includes('information_schema.STATISTICS')
+            && values.includes(PAYMENT_IDEMPOTENCY_INDEX)) {
+            if (this.index === 'missing') return [] as T;
+            const rows: PaymentIndexRow[] = exactIndexRows(
+                PAYMENT_IDEMPOTENCY_INDEX,
+                ['saleId', 'clientEventId'],
+                true,
+            );
+            return (this.index === 'valid'
+                ? rows
+                : rows.map(row => ({ ...row, nonUnique: 1n }))) as T;
+        }
+        if (text.includes('GROUP BY saleId, clientEventId')) {
+            this.events.push('query:safety:duplicates');
+            return this.duplicates as T;
+        }
+
+        throw new Error(`Query inesperada en fake de Payment: ${text}`);
+    }
+
+    private actionFor(statement: Prisma.Sql): PaymentAction {
+        const text = sqlText(statement);
+        if (text.includes('ADD COLUMN `clientEventId`')) return 'column:clientEventId';
+        if (text.includes('ADD COLUMN `payloadHash`')) return 'column:payloadHash';
+        if (text.includes(`CREATE UNIQUE INDEX \`${PAYMENT_IDEMPOTENCY_INDEX}\``)) {
+            return 'index:idempotency';
+        }
+        throw new Error(`DDL inesperado en fake de Payment: ${text}`);
+    }
+
+    private apply(action: PaymentAction): void {
+        if (action === 'column:clientEventId') this.columns.clientEventId = 'valid';
+        if (action === 'column:payloadHash') this.columns.payloadHash = 'valid';
+        if (action === 'index:idempotency') this.index = 'valid';
+    }
+
+    async execute(statement: Prisma.Sql): Promise<number> {
+        const action = this.actionFor(statement);
+        this.events.push(`execute:${action}`);
+        if (this.hardFailures.has(action)) throw new Error(`fallo ${action}`);
+        this.apply(action);
+        if (this.raceWins.has(action)) throw new Error(`otro iniciador ganó ${action}`);
+        return 0;
+    }
+}
+
+const validRetencionSufridaClientEventIdColumn: RetencionSufridaColumnRow = {
+    ...validColumn,
+    columnType: 'varchar(128)',
+    characterMaximumLength: 128n,
+};
+
+const validRetencionSufridaPayloadHashColumn: RetencionSufridaColumnRow = {
+    ...validColumn,
+    columnType: 'varchar(64)',
+    characterMaximumLength: 64n,
+};
+
+class RetencionSufridaSchemaFake implements DeploySchemaClient {
+    tableExists = true;
+    columns: Record<'clientEventId' | 'payloadHash', State> = {
+        clientEventId: 'missing',
+        payloadHash: 'missing',
+    };
+    index: State = 'missing';
+    duplicates: unknown[] = [];
+    raceWins = new Set<RetencionSufridaAction>();
+    hardFailures = new Set<RetencionSufridaAction>();
+    events: string[] = [];
+    duplicateQueries: string[] = [];
+
+    makeEverythingValid(): this {
+        this.columns.clientEventId = 'valid';
+        this.columns.payloadHash = 'valid';
+        this.index = 'valid';
+        return this;
+    }
+
+    private columnRows(
+        columnName: 'clientEventId' | 'payloadHash',
+    ): RetencionSufridaColumnRow[] {
+        const state = this.columns[columnName];
+        if (state === 'missing') return [];
+        const valid = columnName === 'clientEventId'
+            ? validRetencionSufridaClientEventIdColumn
+            : validRetencionSufridaPayloadHashColumn;
+        return [{ ...(state === 'valid' ? valid : { ...valid, isNullable: 'NO' }) }];
+    }
+
+    async query<T>(statement: Prisma.Sql): Promise<T> {
+        const text = sqlText(statement);
+        const values = statement.values as unknown[];
+
+        if (text.includes("TABLE_NAME = 'RetencionSufrida'")
+            && text.includes('information_schema.TABLES')) {
+            return (this.tableExists ? [{ tableName: 'RetencionSufrida' }] : []) as T;
+        }
+        if (text.includes("TABLE_NAME = 'RetencionSufrida'")
+            && text.includes("COLUMN_NAME = 'tenantId'")) {
+            return [{ ...validColumn, isNullable: 'NO' }] as T;
+        }
+        if (text.includes('FROM information_schema.COLUMNS')
+            && text.includes("TABLE_NAME = 'RetencionSufrida'")) {
+            const columnName = values.find(value => (
+                value === 'clientEventId' || value === 'payloadHash'
+            ));
+            if (columnName === 'clientEventId' || columnName === 'payloadHash') {
+                return this.columnRows(columnName) as T;
+            }
+        }
+        if (text.includes('information_schema.STATISTICS')
+            && values.includes(RETENCION_SUFRIDA_IDEMPOTENCY_INDEX)) {
+            if (this.index === 'missing') return [] as T;
+            const rows: RetencionSufridaIndexRow[] = exactIndexRows(
+                RETENCION_SUFRIDA_IDEMPOTENCY_INDEX,
+                ['tenantId', 'clientEventId'],
+                true,
+            );
+            return (this.index === 'valid'
+                ? rows
+                : rows.map(row => ({ ...row, nonUnique: 1n }))) as T;
+        }
+        if (text.includes('GROUP BY tenantId, clientEventId')) {
+            this.events.push('query:safety:duplicates');
+            this.duplicateQueries.push(text);
+            return this.duplicates as T;
+        }
+
+        throw new Error(`Query inesperada en fake de RetencionSufrida: ${text}`);
+    }
+
+    private actionFor(statement: Prisma.Sql): RetencionSufridaAction {
+        const text = sqlText(statement);
+        if (text.includes('ADD COLUMN `clientEventId`')) return 'column:clientEventId';
+        if (text.includes('ADD COLUMN `payloadHash`')) return 'column:payloadHash';
+        if (text.includes(`CREATE UNIQUE INDEX \`${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX}\``)) {
+            return 'index:idempotency';
+        }
+        throw new Error(`DDL inesperado en fake de RetencionSufrida: ${text}`);
+    }
+
+    private apply(action: RetencionSufridaAction): void {
+        if (action === 'column:clientEventId') this.columns.clientEventId = 'valid';
+        if (action === 'column:payloadHash') this.columns.payloadHash = 'valid';
+        if (action === 'index:idempotency') this.index = 'valid';
+    }
+
+    async execute(statement: Prisma.Sql): Promise<number> {
+        const action = this.actionFor(statement);
+        this.events.push(`execute:${action}`);
+        if (this.hardFailures.has(action)) throw new Error(`fallo ${action}`);
+        this.apply(action);
+        if (this.raceWins.has(action)) throw new Error(`otro iniciador ganó ${action}`);
+        return 0;
+    }
+}
+
 describe('deploy schema preflight', () => {
     it('acepta únicamente Warehouse.sellerId nullable varchar(191)', () => {
         expect(inspectWarehouseSellerColumn([])).toBe('missing');
@@ -389,7 +655,7 @@ describe('deploy schema preflight', () => {
 
         await applyDeploySchemaPreflight({ query, execute }, { info, warn: vi.fn() });
 
-        expect(query).toHaveBeenCalledTimes(3);
+        expect(query).toHaveBeenCalledTimes(6);
         expect(execute).not.toHaveBeenCalled();
         expect(info).toHaveBeenCalledWith(expect.stringContaining('Warehouse aún no existe'));
     });
@@ -398,6 +664,9 @@ describe('deploy schema preflight', () => {
         const query = vi.fn()
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([{ tableName: 'StockCount' }])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
             .mockResolvedValueOnce([]);
 
         await expect(applyDeploySchemaPreflight(
@@ -410,7 +679,40 @@ describe('deploy schema preflight', () => {
         const query = vi.fn()
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([])
-            .mockResolvedValueOnce([{ tableName: 'ProductReturn' }]);
+            .mockResolvedValueOnce([{ tableName: 'ProductReturn' }])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([]);
+
+        await expect(applyDeploySchemaPreflight(
+            { query, execute: vi.fn() },
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(UnsafeSchemaStateError);
+    });
+
+    it('falla cerrado si RetencionSufrida existe sin Warehouse', async () => {
+        const query = vi.fn()
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{ tableName: 'RetencionSufrida' }])
+            .mockResolvedValueOnce([]);
+
+        await expect(applyDeploySchemaPreflight(
+            { query, execute: vi.fn() },
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(UnsafeSchemaStateError);
+    });
+
+    it('falla cerrado si Purchase existe sin Warehouse', async () => {
+        const query = vi.fn()
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{ tableName: 'Purchase' }]);
 
         await expect(applyDeploySchemaPreflight(
             { query, execute: vi.fn() },
@@ -750,5 +1052,983 @@ describe('ProductReturn deploy schema preflight', () => {
             { info: vi.fn(), warn: vi.fn() },
         )).rejects.toThrow('fallo column:clientEventId');
         expect(db.columns.clientEventId).toBe('missing');
+    });
+});
+
+describe('Payment deploy schema preflight', () => {
+    it('valida columnas nullable e índice único con la forma exacta de Prisma', () => {
+        expect(inspectPaymentClientEventIdColumn([])).toBe('missing');
+        expect(inspectPaymentClientEventIdColumn([
+            validPaymentClientEventIdColumn,
+        ])).toBe('valid');
+        expect(inspectPaymentClientEventIdColumn([{
+            ...validPaymentClientEventIdColumn,
+            characterMaximumLength: 191n,
+            columnType: 'varchar(191)',
+        }])).toBe('invalid');
+        expect(inspectPaymentPayloadHashColumn([
+            validPaymentPayloadHashColumn,
+        ])).toBe('valid');
+        expect(inspectPaymentPayloadHashColumn([{
+            ...validPaymentPayloadHashColumn,
+            isNullable: 'NO',
+        }])).toBe('invalid');
+
+        const index = exactIndexRows(
+            PAYMENT_IDEMPOTENCY_INDEX,
+            ['saleId', 'clientEventId'],
+            true,
+        );
+        expect(inspectPaymentIdempotencyIndex([...index].reverse())).toBe('valid');
+        expect(inspectPaymentIdempotencyIndex(
+            index.map(row => ({ ...row, nonUnique: 1n })),
+        )).toBe('invalid');
+        expect(inspectPaymentIdempotencyIndex([
+            { ...index[0], columnName: 'clientEventId' },
+            { ...index[1], columnName: 'saleId' },
+        ])).toBe('invalid');
+    });
+
+    it('deja que db push cree Payment cuando la tabla aún no existe', async () => {
+        const db = new PaymentSchemaFake();
+        db.paymentExists = false;
+        const info = vi.fn();
+
+        await applyPaymentSchemaPreflight(db, { info, warn: vi.fn() });
+
+        expect(db.events).toEqual([]);
+        expect(info).toHaveBeenCalledWith(expect.stringContaining('Payment aún no existe'));
+    });
+
+    it('crea columnas nullable e índice único antes de db push', async () => {
+        const db = new PaymentSchemaFake();
+
+        await applyPaymentSchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+
+        expect(db.columns).toEqual({ clientEventId: 'valid', payloadHash: 'valid' });
+        expect(db.index).toBe('valid');
+        expect(db.events.filter(event => event.startsWith('execute:'))).toEqual([
+            'execute:column:clientEventId',
+            'execute:column:payloadHash',
+            'execute:index:idempotency',
+        ]);
+        expect(db.events.indexOf('query:safety:duplicates')).toBeLessThan(
+            db.events.indexOf('execute:index:idempotency'),
+        );
+    });
+
+    it('es idempotente y converge desde un estado parcial', async () => {
+        const complete = new PaymentSchemaFake().makeEverythingValid();
+        await applyPaymentSchemaPreflight(complete, { info: vi.fn(), warn: vi.fn() });
+        await applyPaymentSchemaPreflight(complete, { info: vi.fn(), warn: vi.fn() });
+        expect(complete.events.some(event => event.startsWith('execute:'))).toBe(false);
+
+        const partial = new PaymentSchemaFake().makeEverythingValid();
+        partial.columns.payloadHash = 'missing';
+        partial.index = 'missing';
+        await applyPaymentSchemaPreflight(partial, { info: vi.fn(), warn: vi.fn() });
+        expect(partial.events.filter(event => event.startsWith('execute:'))).toEqual([
+            'execute:column:payloadHash',
+            'execute:index:idempotency',
+        ]);
+    });
+
+    it.each([
+        [
+            'clientEventId incompatible',
+            (db: PaymentSchemaFake) => { db.columns.clientEventId = 'invalid'; },
+            'Payment.clientEventId',
+        ],
+        [
+            'payloadHash incompatible',
+            (db: PaymentSchemaFake) => { db.columns.payloadHash = 'invalid'; },
+            'Payment.payloadHash',
+        ],
+        [
+            'índice homónimo incompatible',
+            (db: PaymentSchemaFake) => { db.index = 'invalid'; },
+            PAYMENT_IDEMPOTENCY_INDEX,
+        ],
+    ])('falla cerrado ante %s', async (_label, arrange, message) => {
+        const db = new PaymentSchemaFake().makeEverythingValid();
+        arrange(db);
+
+        await expect(applyPaymentSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(message);
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('falla cerrado ante duplicados no-null sin cambiar filas ni crear el índice', async () => {
+        const db = new PaymentSchemaFake().makeEverythingValid();
+        db.index = 'missing';
+        db.duplicates = [{
+            saleId: 'sale-1',
+            clientEventId: 'payment-event-1',
+            duplicateCount: 2n,
+        }];
+
+        await expect(applyPaymentSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('clientEventId duplicado');
+        expect(db.index).toBe('missing');
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('tolera carreras únicamente cuando la relectura confirma cada objeto exacto', async () => {
+        const db = new PaymentSchemaFake();
+        const actions: PaymentAction[] = [
+            'column:clientEventId',
+            'column:payloadHash',
+            'index:idempotency',
+        ];
+        actions.forEach(action => db.raceWins.add(action));
+        const warn = vi.fn();
+
+        await applyPaymentSchemaPreflight(db, { info: vi.fn(), warn });
+
+        expect(db.columns).toEqual({ clientEventId: 'valid', payloadHash: 'valid' });
+        expect(db.index).toBe('valid');
+        expect(warn).toHaveBeenCalledTimes(actions.length);
+    });
+
+    it('propaga un error DDL cuando el estado final sigue ausente', async () => {
+        const db = new PaymentSchemaFake();
+        db.hardFailures.add('column:clientEventId');
+
+        await expect(applyPaymentSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('fallo column:clientEventId');
+        expect(db.columns.clientEventId).toBe('missing');
+    });
+});
+
+describe('RetencionSufrida deploy schema preflight', () => {
+    it('valida columnas nullable e índice único con la forma exacta de Prisma', () => {
+        expect(inspectRetencionSufridaClientEventIdColumn([])).toBe('missing');
+        expect(inspectRetencionSufridaClientEventIdColumn([
+            validRetencionSufridaClientEventIdColumn,
+        ])).toBe('valid');
+        expect(inspectRetencionSufridaClientEventIdColumn([{
+            ...validRetencionSufridaClientEventIdColumn,
+            characterMaximumLength: 191n,
+            columnType: 'varchar(191)',
+        }])).toBe('invalid');
+        expect(inspectRetencionSufridaPayloadHashColumn([
+            validRetencionSufridaPayloadHashColumn,
+        ])).toBe('valid');
+        expect(inspectRetencionSufridaPayloadHashColumn([{
+            ...validRetencionSufridaPayloadHashColumn,
+            isNullable: 'NO',
+        }])).toBe('invalid');
+
+        const index = exactIndexRows(
+            RETENCION_SUFRIDA_IDEMPOTENCY_INDEX,
+            ['tenantId', 'clientEventId'],
+            true,
+        );
+        expect(inspectRetencionSufridaIdempotencyIndex([...index].reverse())).toBe('valid');
+        expect(inspectRetencionSufridaIdempotencyIndex(
+            index.map(row => ({ ...row, nonUnique: 1n })),
+        )).toBe('invalid');
+        expect(inspectRetencionSufridaIdempotencyIndex([
+            { ...index[0], columnName: 'clientEventId' },
+            { ...index[1], columnName: 'tenantId' },
+        ])).toBe('invalid');
+    });
+
+    it('deja que db push cree RetencionSufrida cuando la tabla aún no existe', async () => {
+        const db = new RetencionSufridaSchemaFake();
+        db.tableExists = false;
+        const info = vi.fn();
+
+        await applyRetencionSufridaSchemaPreflight(db, { info, warn: vi.fn() });
+
+        expect(db.events).toEqual([]);
+        expect(info).toHaveBeenCalledWith(expect.stringContaining('RetencionSufrida aún no existe'));
+    });
+
+    it('converge desde el schema legacy con DDL expand-only y conserva históricos null', async () => {
+        const db = new RetencionSufridaSchemaFake();
+
+        await applyRetencionSufridaSchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+
+        expect(db.columns).toEqual({ clientEventId: 'valid', payloadHash: 'valid' });
+        expect(db.index).toBe('valid');
+        expect(db.events.filter(event => event.startsWith('execute:'))).toEqual([
+            'execute:column:clientEventId',
+            'execute:column:payloadHash',
+            'execute:index:idempotency',
+        ]);
+        expect(db.events.indexOf('query:safety:duplicates')).toBeLessThan(
+            db.events.indexOf('execute:index:idempotency'),
+        );
+        expect(db.duplicateQueries.length).toBeGreaterThan(0);
+        expect(db.duplicateQueries.every(query => (
+            query.includes('WHERE clientEventId IS NOT NULL')
+        ))).toBe(true);
+    });
+
+    it('es idempotente con el schema completo y converge desde estados parciales', async () => {
+        const complete = new RetencionSufridaSchemaFake().makeEverythingValid();
+        await applyRetencionSufridaSchemaPreflight(complete, { info: vi.fn(), warn: vi.fn() });
+        await applyRetencionSufridaSchemaPreflight(complete, { info: vi.fn(), warn: vi.fn() });
+        expect(complete.events.some(event => event.startsWith('execute:'))).toBe(false);
+
+        const partial = new RetencionSufridaSchemaFake().makeEverythingValid();
+        partial.columns.payloadHash = 'missing';
+        partial.index = 'missing';
+        await applyRetencionSufridaSchemaPreflight(partial, { info: vi.fn(), warn: vi.fn() });
+        expect(partial.events.filter(event => event.startsWith('execute:'))).toEqual([
+            'execute:column:payloadHash',
+            'execute:index:idempotency',
+        ]);
+    });
+
+    it.each([
+        [
+            'clientEventId incompatible',
+            (db: RetencionSufridaSchemaFake) => { db.columns.clientEventId = 'invalid'; },
+            'RetencionSufrida.clientEventId',
+        ],
+        [
+            'payloadHash incompatible',
+            (db: RetencionSufridaSchemaFake) => { db.columns.payloadHash = 'invalid'; },
+            'RetencionSufrida.payloadHash',
+        ],
+        [
+            'índice homónimo incompatible',
+            (db: RetencionSufridaSchemaFake) => { db.index = 'invalid'; },
+            RETENCION_SUFRIDA_IDEMPOTENCY_INDEX,
+        ],
+    ])('falla cerrado ante %s', async (_label, arrange, message) => {
+        const db = new RetencionSufridaSchemaFake().makeEverythingValid();
+        arrange(db);
+
+        await expect(applyRetencionSufridaSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(message);
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('falla cerrado ante duplicados no-null sin cambiar filas ni crear el índice', async () => {
+        const db = new RetencionSufridaSchemaFake().makeEverythingValid();
+        db.index = 'missing';
+        db.duplicates = [{
+            tenantId: 'tenant-1',
+            clientEventId: 'retencion-event-1',
+            duplicateCount: 2n,
+        }];
+
+        await expect(applyRetencionSufridaSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('clientEventId duplicado');
+        expect(db.index).toBe('missing');
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('tolera carreras únicamente cuando la relectura confirma cada objeto exacto', async () => {
+        const db = new RetencionSufridaSchemaFake();
+        const actions: RetencionSufridaAction[] = [
+            'column:clientEventId',
+            'column:payloadHash',
+            'index:idempotency',
+        ];
+        actions.forEach(action => db.raceWins.add(action));
+        const warn = vi.fn();
+
+        await applyRetencionSufridaSchemaPreflight(db, { info: vi.fn(), warn });
+
+        expect(db.columns).toEqual({ clientEventId: 'valid', payloadHash: 'valid' });
+        expect(db.index).toBe('valid');
+        expect(warn).toHaveBeenCalledTimes(actions.length);
+    });
+
+    it('propaga un error DDL cuando el estado final sigue ausente', async () => {
+        const db = new RetencionSufridaSchemaFake();
+        db.hardFailures.add('column:clientEventId');
+
+        await expect(applyRetencionSufridaSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('fallo column:clientEventId');
+        expect(db.columns.clientEventId).toBe('missing');
+    });
+});
+
+const phaseTwoBTenantContracts: ProcurementPhaseTwoBColumnContract[] = [
+    {
+        columnName: 'batchWarehouseLedgerMode',
+        columnType: 'varchar(16)',
+        nullable: false,
+        defaultValue: 'OFF',
+    },
+    {
+        columnName: 'batchWarehouseLedgerActivatedAt',
+        columnType: 'datetime(3)',
+        nullable: true,
+        defaultValue: null,
+    },
+];
+const phaseTwoBStockTransferContracts: ProcurementPhaseTwoBColumnContract[] = [
+    { columnName: 'clientEventId', columnType: 'varchar(128)', nullable: true, defaultValue: null },
+    { columnName: 'payloadHash', columnType: 'varchar(64)', nullable: true, defaultValue: null },
+    { columnName: 'payloadVersion', columnType: 'int', nullable: false, defaultValue: '1' },
+    { columnName: 'batchLedgerMode', columnType: 'varchar(16)', nullable: false, defaultValue: 'OFF' },
+    { columnName: 'batchTransferStatus', columnType: 'varchar(32)', nullable: false, defaultValue: 'OFF' },
+    { columnName: 'batchSnapshot', columnType: 'json', nullable: true, defaultValue: null },
+];
+const phaseTwoBFakeContracts: ProcurementPhaseTwoBColumnContract[] = [
+    ...phaseTwoBTenantContracts,
+    ...phaseTwoBStockTransferContracts,
+    {
+        columnName: 'warehouseId',
+        columnType: 'varchar(191)',
+        nullable: true,
+        defaultValue: null,
+    },
+];
+
+function phaseTwoBColumnRow(
+    contract: ProcurementPhaseTwoBColumnContract,
+): ProcurementPhaseTwoBColumnRow {
+    const varchar = contract.columnType.match(/^varchar\((\d+)\)$/);
+    return {
+        columnName: contract.columnName,
+        dataType: contract.columnType.split('(')[0],
+        columnType: contract.columnType,
+        isNullable: contract.nullable ? 'YES' : 'NO',
+        characterMaximumLength: varchar ? BigInt(varchar[1]) : null,
+        characterSetName: varchar ? 'utf8mb4' : null,
+        collationName: varchar ? 'utf8mb4_unicode_ci' : null,
+        columnDefault: contract.defaultValue,
+        extra: contract.extra ?? '',
+        generationExpression: '',
+    };
+}
+
+class ProcurementPhaseTwoBSchemaFake implements DeploySchemaClient {
+    tables = new Set<string>(['Tenant']);
+    columns = new Map<string, State>();
+    index: State = 'missing';
+    stockTransferIndex: State = 'missing';
+    foreignKey: State = 'missing';
+    invalidReferences: Array<{
+        allocationId: string;
+        tenantId: string;
+        warehouseId: string;
+        reason: 'MISSING_WAREHOUSE' | 'CROSS_TENANT';
+    }> = [];
+    duplicateStockTransferEvents: Array<{
+        tenantId: string;
+        clientEventId: string;
+        duplicateCount: number | bigint;
+    }> = [];
+    events: string[] = [];
+    raceWins = new Set<string>();
+    hardFailures = new Set<string>();
+
+    constructor() {
+        for (const contract of phaseTwoBTenantContracts) {
+            this.columns.set(`Tenant.${contract.columnName}`, 'missing');
+        }
+    }
+
+    makeTenantValid(): this {
+        for (const contract of phaseTwoBTenantContracts) {
+            this.columns.set(`Tenant.${contract.columnName}`, 'valid');
+        }
+        return this;
+    }
+
+    addStockTransfer(state: State = 'missing'): this {
+        this.tables.add('StockTransfer');
+        for (const contract of phaseTwoBStockTransferContracts) {
+            this.columns.set(`StockTransfer.${contract.columnName}`, state);
+        }
+        return this;
+    }
+
+    async query<T>(statement: Prisma.Sql): Promise<T> {
+        const text = sqlText(statement);
+        const values = statement.values as unknown[];
+        if (text.includes('information_schema.TABLES') && text.includes('TABLE_NAME IN')) {
+            return [...this.tables].map(tableName => ({ tableName })) as T;
+        }
+        if (text.includes('information_schema.COLUMNS')) {
+            const tableName = String(values[0]);
+            const rows: ProcurementPhaseTwoBColumnRow[] = [];
+            for (const contract of phaseTwoBFakeContracts) {
+                const key = `${tableName}.${contract.columnName}`;
+                const state = this.columns.get(key);
+                if (state === 'valid') rows.push(phaseTwoBColumnRow(contract));
+                if (state === 'invalid') {
+                    rows.push(phaseTwoBColumnRow({ ...contract, nullable: !contract.nullable }));
+                }
+            }
+            return rows as T;
+        }
+        if (text.includes('information_schema.STATISTICS')) {
+            const tableName = String(values[0]);
+            if (tableName === 'StockTransfer') {
+                if (this.stockTransferIndex === 'missing') return [] as T;
+                const rows = exactIndexRows(
+                    STOCK_TRANSFER_IDEMPOTENCY_INDEX,
+                    ['tenantId', 'clientEventId'],
+                    true,
+                );
+                return (this.stockTransferIndex === 'valid'
+                    ? rows
+                    : rows.map(row => ({ ...row, nonUnique: 1n }))) as T;
+            }
+            if (tableName !== 'SaleItemBatchAllocation' || this.index === 'missing') {
+                return [] as T;
+            }
+            const rows = exactIndexRows(
+                SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_INDEX,
+                ['tenantId', 'warehouseId'],
+                false,
+            );
+            return (this.index === 'valid'
+                ? rows
+                : [{ ...rows[0], nonUnique: 0n }, rows[1]]) as T;
+        }
+        if (text.includes('information_schema.REFERENTIAL_CONSTRAINTS')) {
+            if (String(values[0]) !== 'SaleItemBatchAllocation' || this.foreignKey === 'missing') {
+                return [] as T;
+            }
+            const row: StockCountForeignKeyRow = {
+                constraintName: SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_FOREIGN_KEY,
+                columnName: 'warehouseId',
+                referencedTableName: 'Warehouse',
+                referencedColumnName: 'id',
+                ordinalPosition: 1n,
+                deleteRule: this.foreignKey === 'valid' ? 'RESTRICT' : 'CASCADE',
+                updateRule: 'CASCADE',
+            };
+            return [row] as T;
+        }
+        if (text.includes('LEFT JOIN `Warehouse` warehouse')) {
+            this.events.push('query:safety:warehouse');
+            return this.invalidReferences as T;
+        }
+        if (text.includes('FROM `StockTransfer`') && text.includes('GROUP BY tenantId, clientEventId')) {
+            this.events.push('query:safety:stockTransferDuplicates');
+            return this.duplicateStockTransferEvents as T;
+        }
+        throw new Error(`Query inesperada en fake 2B: ${text}`);
+    }
+
+    async execute(statement: Prisma.Sql): Promise<number> {
+        const text = sqlText(statement);
+        const tableName = text.match(/ALTER TABLE `([^`]+)`/)?.[1];
+        const columnName = text.match(/ADD COLUMN `([^`]+)`/)?.[1];
+        let action: string;
+        if (tableName && columnName) {
+            action = `column:${tableName}.${columnName}`;
+            this.columns.set(`${tableName}.${columnName}`, 'valid');
+        } else if (text.includes(`CREATE INDEX \`${SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_INDEX}\``)) {
+            action = 'index:warehouse';
+            this.index = 'valid';
+        } else if (text.includes(`CREATE UNIQUE INDEX \`${STOCK_TRANSFER_IDEMPOTENCY_INDEX}\``)) {
+            action = 'index:stockTransferIdempotency';
+            this.stockTransferIndex = 'valid';
+        } else if (text.includes(`ADD CONSTRAINT \`${SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_FOREIGN_KEY}\``)) {
+            action = 'foreignKey:warehouse';
+            this.foreignKey = 'valid';
+        } else {
+            throw new Error(`DDL inesperado en fake 2B: ${text}`);
+        }
+        this.events.push(`execute:${action}`);
+        if (this.hardFailures.has(action)) {
+            if (columnName && tableName) this.columns.set(`${tableName}.${columnName}`, 'missing');
+            throw new Error(`fallo ${action}`);
+        }
+        if (this.raceWins.has(action)) throw new Error(`otro iniciador ganó ${action}`);
+        return 0;
+    }
+}
+
+describe('Procurement Fase 2B deploy schema preflight', () => {
+    it('valida tipos, índices y FKs con la forma exacta de Prisma/MySQL 8', () => {
+        const decimal: ProcurementPhaseTwoBColumnContract = {
+            columnName: 'stock',
+            columnType: 'decimal(18,4)',
+            nullable: false,
+            defaultValue: '0.0000',
+        };
+        const decimalRow = phaseTwoBColumnRow(decimal);
+        expect(inspectProcurementPhaseTwoBColumn([decimalRow], decimal)).toBe('valid');
+        expect(inspectProcurementPhaseTwoBColumn(
+            [{ ...decimalRow, columnType: 'decimal(12,2)' }],
+            decimal,
+        )).toBe('invalid');
+
+        const index = exactIndexRows(
+            PRODUCT_BATCH_LEDGER_SOURCE_UNIQUE_INDEX,
+            ['tenantId', 'sourceKey'],
+            true,
+        );
+        expect(inspectProcurementPhaseTwoBIndex(
+            [...index].reverse(),
+            PRODUCT_BATCH_LEDGER_SOURCE_UNIQUE_INDEX,
+            ['tenantId', 'sourceKey'],
+            true,
+        )).toBe('valid');
+        expect(inspectProcurementPhaseTwoBIndex(
+            index.map(row => ({ ...row, nonUnique: 1n })),
+            PRODUCT_BATCH_LEDGER_SOURCE_UNIQUE_INDEX,
+            ['tenantId', 'sourceKey'],
+            true,
+        )).toBe('invalid');
+
+        expect(inspectProcurementPhaseTwoBForeignKey([{
+            constraintName: SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_FOREIGN_KEY,
+            columnName: 'warehouseId',
+            referencedTableName: 'Warehouse',
+            referencedColumnName: 'id',
+            ordinalPosition: 1n,
+            deleteRule: 'RESTRICT',
+            updateRule: 'CASCADE',
+        }], {
+            constraintName: SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_FOREIGN_KEY,
+            columnName: 'warehouseId',
+            referencedTableName: 'Warehouse',
+            deleteRule: 'RESTRICT',
+        })).toBe('valid');
+    });
+
+    it('converge columnas base desde un estado parcial sin activar el ledger', async () => {
+        const db = new ProcurementPhaseTwoBSchemaFake();
+
+        await applyProcurementPhaseTwoBSchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+
+        expect(db.columns.get('Tenant.batchWarehouseLedgerMode')).toBe('valid');
+        expect(db.columns.get('Tenant.batchWarehouseLedgerActivatedAt')).toBe('valid');
+        expect(db.events.filter(event => event.startsWith('execute:'))).toEqual([
+            'execute:column:Tenant.batchWarehouseLedgerMode',
+            'execute:column:Tenant.batchWarehouseLedgerActivatedAt',
+        ]);
+        expect(db.events.some(event => /SHADOW|ENFORCED/.test(event))).toBe(false);
+    });
+
+    it('converge StockTransfer legacy con columnas nullable/default OFF e índice único', async () => {
+        const db = new ProcurementPhaseTwoBSchemaFake()
+            .makeTenantValid()
+            .addStockTransfer();
+
+        await applyProcurementPhaseTwoBSchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+
+        for (const contract of phaseTwoBStockTransferContracts) {
+            expect(db.columns.get(`StockTransfer.${contract.columnName}`)).toBe('valid');
+        }
+        expect(db.stockTransferIndex).toBe('valid');
+        expect(db.events.filter(event => event.startsWith('execute:'))).toEqual([
+            'execute:column:StockTransfer.clientEventId',
+            'execute:column:StockTransfer.payloadHash',
+            'execute:column:StockTransfer.payloadVersion',
+            'execute:column:StockTransfer.batchLedgerMode',
+            'execute:column:StockTransfer.batchTransferStatus',
+            'execute:column:StockTransfer.batchSnapshot',
+            'execute:index:stockTransferIdempotency',
+        ]);
+        expect(db.events.filter(event => event === 'query:safety:stockTransferDuplicates')).toHaveLength(2);
+    });
+
+    it('falla cerrado ante clientEventId duplicados sin crear el unique', async () => {
+        const db = new ProcurementPhaseTwoBSchemaFake()
+            .makeTenantValid()
+            .addStockTransfer('valid');
+        db.duplicateStockTransferEvents = [{
+            tenantId: 'tenant-a',
+            clientEventId: 'event-duplicado',
+            duplicateCount: 2n,
+        }];
+
+        await expect(applyProcurementPhaseTwoBSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('StockTransfer.clientEventId duplicados');
+        expect(db.stockTransferIndex).toBe('missing');
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('tolera carrera del unique de StockTransfer solo si la relectura es exacta', async () => {
+        const db = new ProcurementPhaseTwoBSchemaFake()
+            .makeTenantValid()
+            .addStockTransfer('valid');
+        db.raceWins.add('index:stockTransferIdempotency');
+        const warn = vi.fn();
+
+        await applyProcurementPhaseTwoBSchemaPreflight(db, { info: vi.fn(), warn });
+
+        expect(db.stockTransferIndex).toBe('valid');
+        expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('falla cerrado ante unique homónimo de StockTransfer no único', async () => {
+        const db = new ProcurementPhaseTwoBSchemaFake()
+            .makeTenantValid()
+            .addStockTransfer('valid');
+        db.stockTransferIndex = 'invalid';
+
+        await expect(applyProcurementPhaseTwoBSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(STOCK_TRANSFER_IDEMPOTENCY_INDEX);
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('es idempotente y tolera una carrera solo tras releer la columna exacta', async () => {
+        const complete = new ProcurementPhaseTwoBSchemaFake().makeTenantValid();
+        await applyProcurementPhaseTwoBSchemaPreflight(complete, { info: vi.fn(), warn: vi.fn() });
+        await applyProcurementPhaseTwoBSchemaPreflight(complete, { info: vi.fn(), warn: vi.fn() });
+        expect(complete.events.some(event => event.startsWith('execute:'))).toBe(false);
+
+        const raced = new ProcurementPhaseTwoBSchemaFake();
+        raced.raceWins.add('column:Tenant.batchWarehouseLedgerMode');
+        const warn = vi.fn();
+        await applyProcurementPhaseTwoBSchemaPreflight(raced, { info: vi.fn(), warn });
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(raced.columns.get('Tenant.batchWarehouseLedgerMode')).toBe('valid');
+    });
+
+    it('falla cerrado ante una columna homónima incompatible sin DDL', async () => {
+        const db = new ProcurementPhaseTwoBSchemaFake().makeTenantValid();
+        db.columns.set('Tenant.batchWarehouseLedgerMode', 'invalid');
+
+        await expect(applyProcurementPhaseTwoBSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('Tenant.batchWarehouseLedgerMode');
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('falla cerrado si una tabla nueva aparece parcial o incompatible', async () => {
+        const db = new ProcurementPhaseTwoBSchemaFake().makeTenantValid();
+        db.tables.add('ProductBatchWarehouseStock');
+
+        await expect(applyProcurementPhaseTwoBSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('ProductBatchWarehouseStock.id');
+    });
+
+    it('no crea la FK de allocation ante una bodega cross-tenant', async () => {
+        const db = new ProcurementPhaseTwoBSchemaFake().makeTenantValid();
+        db.tables.add('SaleItemBatchAllocation');
+        db.columns.set('SaleItemBatchAllocation.warehouseId', 'missing');
+        db.invalidReferences = [{
+            allocationId: 'allocation-1',
+            tenantId: 'tenant-a',
+            warehouseId: 'warehouse-b',
+            reason: 'CROSS_TENANT',
+        }];
+
+        await expect(applyProcurementPhaseTwoBSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('otro tenant');
+        expect(db.foreignKey).toBe('missing');
+        expect(db.events).toContain('execute:column:SaleItemBatchAllocation.warehouseId');
+        expect(db.events).toContain('execute:index:warehouse');
+        expect(db.events).not.toContain('execute:foreignKey:warehouse');
+    });
+});
+
+const phaseTwoCBaseContracts: Array<{
+    tableName: 'Purchase' | 'PurchaseItem';
+    contract: ProcurementPhaseTwoCColumnContract;
+}> = [
+    {
+        tableName: 'Purchase',
+        contract: { columnName: 'settledAt', columnType: 'datetime(3)', nullable: true, defaultValue: null },
+    },
+    {
+        tableName: 'PurchaseItem',
+        contract: { columnName: 'inventoryWarehouseId', columnType: 'varchar(191)', nullable: true, defaultValue: null },
+    },
+    {
+        tableName: 'PurchaseItem',
+        contract: { columnName: 'inventoryBatchId', columnType: 'varchar(191)', nullable: true, defaultValue: null },
+    },
+    {
+        tableName: 'PurchaseItem',
+        contract: { columnName: 'inventoryUnitCostExact', columnType: 'decimal(18,6)', nullable: true, defaultValue: null },
+    },
+];
+
+const phaseTwoCIndexes = [
+    {
+        name: PURCHASE_ITEM_INVENTORY_WAREHOUSE_INDEX,
+        columns: ['inventoryWarehouseId'],
+    },
+    {
+        name: PURCHASE_ITEM_INVENTORY_BATCH_INDEX,
+        columns: ['inventoryBatchId'],
+    },
+] as const;
+
+const phaseTwoCForeignKeys = [
+    {
+        name: PURCHASE_ITEM_INVENTORY_WAREHOUSE_FOREIGN_KEY,
+        columnName: 'inventoryWarehouseId',
+        referencedTableName: 'Warehouse',
+    },
+    {
+        name: PURCHASE_ITEM_INVENTORY_BATCH_FOREIGN_KEY,
+        columnName: 'inventoryBatchId',
+        referencedTableName: 'ProductBatch',
+    },
+] as const;
+
+class ProcurementPhaseTwoCSchemaFake implements DeploySchemaClient {
+    tables = new Set<string>(['Purchase', 'PurchaseItem']);
+    columns = new Map<string, State>();
+    indexes = new Map<string, State>();
+    foreignKeys = new Map<string, State>();
+    invalidReferences: Array<{ purchaseItemId: string; reason: string }> = [];
+    duplicateRows: Array<{ duplicateCount: number | bigint }> = [];
+    events: string[] = [];
+    raceWins = new Set<string>();
+
+    constructor() {
+        for (const definition of phaseTwoCBaseContracts) {
+            this.columns.set(`${definition.tableName}.${definition.contract.columnName}`, 'missing');
+        }
+        for (const index of phaseTwoCIndexes) this.indexes.set(index.name, 'missing');
+        for (const foreignKey of phaseTwoCForeignKeys) this.foreignKeys.set(foreignKey.name, 'missing');
+    }
+
+    makeBaseValid(): this {
+        for (const definition of phaseTwoCBaseContracts) {
+            this.columns.set(`${definition.tableName}.${definition.contract.columnName}`, 'valid');
+        }
+        for (const index of phaseTwoCIndexes) this.indexes.set(index.name, 'valid');
+        for (const foreignKey of phaseTwoCForeignKeys) this.foreignKeys.set(foreignKey.name, 'valid');
+        return this;
+    }
+
+    addAllDocumentTables(): this {
+        for (const table of [
+            'SupplierReturn',
+            'SupplierReturnItem',
+            'SupplierCreditNote',
+            'SupplierCreditNoteLine',
+            'SupplierCreditApplication',
+        ]) this.tables.add(table);
+        return this;
+    }
+
+    async query<T>(statement: Prisma.Sql): Promise<T> {
+        const text = sqlText(statement);
+        const values = statement.values as unknown[];
+        if (text.includes('information_schema.TABLES') && text.includes('SupplierCreditApplication')) {
+            return [...this.tables].map(tableName => ({ tableName })) as T;
+        }
+        if (text.includes('information_schema.COLUMNS')) {
+            const tableName = String(values[0]);
+            const rows: ProcurementPhaseTwoCColumnRow[] = [];
+            for (const definition of phaseTwoCBaseContracts.filter(row => row.tableName === tableName)) {
+                const state = this.columns.get(`${tableName}.${definition.contract.columnName}`);
+                if (state === 'valid') rows.push(phaseTwoBColumnRow(definition.contract));
+                if (state === 'invalid') {
+                    rows.push(phaseTwoBColumnRow({
+                        ...definition.contract,
+                        nullable: !definition.contract.nullable,
+                    }));
+                }
+            }
+            return rows as T;
+        }
+        if (text.includes('information_schema.STATISTICS')) {
+            const rows = phaseTwoCIndexes.flatMap(index => {
+                const state = this.indexes.get(index.name);
+                if (state === 'missing') return [];
+                const exact = exactIndexRows(index.name, [...index.columns], false);
+                return state === 'valid' ? exact : exact.map(row => ({ ...row, nonUnique: 0n }));
+            });
+            return rows as T;
+        }
+        if (text.includes('information_schema.REFERENTIAL_CONSTRAINTS')) {
+            const rows = phaseTwoCForeignKeys.flatMap(foreignKey => {
+                const state = this.foreignKeys.get(foreignKey.name);
+                if (state === 'missing') return [];
+                return [{
+                    constraintName: foreignKey.name,
+                    columnName: foreignKey.columnName,
+                    referencedTableName: foreignKey.referencedTableName,
+                    referencedColumnName: 'id',
+                    ordinalPosition: 1n,
+                    deleteRule: state === 'valid' ? 'RESTRICT' : 'CASCADE',
+                    updateRule: 'CASCADE',
+                }];
+            });
+            return rows as T;
+        }
+        if (text.includes('BATCH_PRODUCT_MISMATCH')) {
+            this.events.push('query:safety:inventoryEvidence');
+            return this.invalidReferences as T;
+        }
+        if (text.includes('HAVING COUNT(*) > 1')) {
+            this.events.push('query:safety:duplicates');
+            return this.duplicateRows as T;
+        }
+        throw new Error(`Query inesperada en fake 2C: ${text}`);
+    }
+
+    async execute(statement: Prisma.Sql): Promise<number> {
+        const text = sqlText(statement);
+        const tableName = text.match(/ALTER TABLE `([^`]+)`/)?.[1];
+        const columnName = text.match(/ADD COLUMN `([^`]+)`/)?.[1];
+        let action: string;
+        if (tableName && columnName) {
+            action = `column:${tableName}.${columnName}`;
+            this.columns.set(`${tableName}.${columnName}`, 'valid');
+        } else {
+            const indexName = text.match(/CREATE INDEX `([^`]+)`/)?.[1];
+            const foreignKeyName = text.match(/ADD CONSTRAINT `([^`]+)`/)?.[1];
+            if (indexName) {
+                action = `index:${indexName}`;
+                this.indexes.set(indexName, 'valid');
+            } else if (foreignKeyName) {
+                action = `foreignKey:${foreignKeyName}`;
+                this.foreignKeys.set(foreignKeyName, 'valid');
+            } else {
+                throw new Error(`DDL inesperado en fake 2C: ${text}`);
+            }
+        }
+        this.events.push(`execute:${action}`);
+        if (this.raceWins.has(action)) throw new Error(`otro iniciador ganó ${action}`);
+        return 0;
+    }
+}
+
+describe('Procurement Fase 2C deploy schema preflight', () => {
+    it('valida columnas, índices y FKs con el contrato exacto', () => {
+        const decimal = phaseTwoCBaseContracts.at(-1)!.contract;
+        const row = phaseTwoBColumnRow(decimal);
+        expect(inspectProcurementPhaseTwoCColumn([row], decimal)).toBe('valid');
+        expect(inspectProcurementPhaseTwoCColumn(
+            [{ ...row, columnType: 'decimal(12,2)' }],
+            decimal,
+        )).toBe('invalid');
+
+        const index = exactIndexRows(PURCHASE_ITEM_INVENTORY_BATCH_INDEX, ['inventoryBatchId'], false);
+        expect(inspectProcurementPhaseTwoCIndex(
+            index,
+            PURCHASE_ITEM_INVENTORY_BATCH_INDEX,
+            ['inventoryBatchId'],
+            false,
+        )).toBe('valid');
+        expect(inspectProcurementPhaseTwoCForeignKey([{
+            constraintName: PURCHASE_ITEM_INVENTORY_BATCH_FOREIGN_KEY,
+            columnName: 'inventoryBatchId',
+            referencedTableName: 'ProductBatch',
+            referencedColumnName: 'id',
+            ordinalPosition: 1n,
+            deleteRule: 'RESTRICT',
+            updateRule: 'CASCADE',
+        }], {
+            constraintName: PURCHASE_ITEM_INVENTORY_BATCH_FOREIGN_KEY,
+            columnName: 'inventoryBatchId',
+            referencedTableName: 'ProductBatch',
+            deleteRule: 'RESTRICT',
+        })).toBe('valid');
+    });
+
+    it('converge el histórico con DDL expand-only y es idempotente', async () => {
+        const db = new ProcurementPhaseTwoCSchemaFake();
+
+        await applyProcurementPhaseTwoCSchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+
+        expect(db.events.filter(event => event.startsWith('execute:'))).toEqual([
+            'execute:column:Purchase.settledAt',
+            'execute:column:PurchaseItem.inventoryWarehouseId',
+            'execute:column:PurchaseItem.inventoryBatchId',
+            'execute:column:PurchaseItem.inventoryUnitCostExact',
+            `execute:index:${PURCHASE_ITEM_INVENTORY_WAREHOUSE_INDEX}`,
+            `execute:index:${PURCHASE_ITEM_INVENTORY_BATCH_INDEX}`,
+            `execute:foreignKey:${PURCHASE_ITEM_INVENTORY_WAREHOUSE_FOREIGN_KEY}`,
+            `execute:foreignKey:${PURCHASE_ITEM_INVENTORY_BATCH_FOREIGN_KEY}`,
+        ]);
+        const before = db.events.length;
+        await applyProcurementPhaseTwoCSchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+        expect(db.events.slice(before).some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('tolera carreras solo cuando la relectura confirma cada objeto exacto', async () => {
+        const db = new ProcurementPhaseTwoCSchemaFake();
+        for (const action of [
+            'column:Purchase.settledAt',
+            'column:PurchaseItem.inventoryWarehouseId',
+            'column:PurchaseItem.inventoryBatchId',
+            'column:PurchaseItem.inventoryUnitCostExact',
+            `index:${PURCHASE_ITEM_INVENTORY_WAREHOUSE_INDEX}`,
+            `index:${PURCHASE_ITEM_INVENTORY_BATCH_INDEX}`,
+            `foreignKey:${PURCHASE_ITEM_INVENTORY_WAREHOUSE_FOREIGN_KEY}`,
+            `foreignKey:${PURCHASE_ITEM_INVENTORY_BATCH_FOREIGN_KEY}`,
+        ]) db.raceWins.add(action);
+        const warn = vi.fn();
+
+        await applyProcurementPhaseTwoCSchemaPreflight(db, { info: vi.fn(), warn });
+
+        expect(warn).toHaveBeenCalledTimes(8);
+    });
+
+    it('falla cerrado ante evidencia cross-tenant antes de crear FKs', async () => {
+        const db = new ProcurementPhaseTwoCSchemaFake().makeBaseValid();
+        db.foreignKeys.set(PURCHASE_ITEM_INVENTORY_WAREHOUSE_FOREIGN_KEY, 'missing');
+        db.foreignKeys.set(PURCHASE_ITEM_INVENTORY_BATCH_FOREIGN_KEY, 'missing');
+        db.invalidReferences = [{ purchaseItemId: 'item-a', reason: 'CROSS_TENANT_WAREHOUSE' }];
+
+        await expect(applyProcurementPhaseTwoCSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('cross-tenant');
+        expect(db.events.some(event => event.startsWith('execute:foreignKey'))).toBe(false);
+    });
+
+    it('falla cerrado ante una tabla documental parcial', async () => {
+        const db = new ProcurementPhaseTwoCSchemaFake().makeBaseValid();
+        db.tables.add('SupplierReturn');
+
+        await expect(applyProcurementPhaseTwoCSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('está parcial');
+    });
+
+    it('falla cerrado ante duplicados antes de validar o reparar tablas documentales', async () => {
+        const db = new ProcurementPhaseTwoCSchemaFake().makeBaseValid().addAllDocumentTables();
+        db.duplicateRows = [{ duplicateCount: 2n }];
+
+        await expect(applyProcurementPhaseTwoCSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('duplicados incompatibles');
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it('deja el CREATE TABLE completo a db push en una instalación vacía', async () => {
+        const db = new ProcurementPhaseTwoCSchemaFake();
+        db.tables.clear();
+        const info = vi.fn();
+
+        await applyProcurementPhaseTwoCSchemaPreflight(db, { info, warn: vi.fn() });
+
+        expect(db.events).toEqual([]);
+        expect(info).toHaveBeenCalledWith(expect.stringContaining('instalación vacía'));
+    });
+
+    it('conserva los nombres congelados de idempotencia y uso físico único', () => {
+        expect(SUPPLIER_RETURN_EVENT_UNIQUE_INDEX).toBe('SupplierReturn_tenantId_clientEventId_key');
+        expect(SUPPLIER_CREDIT_NOTE_LINE_RETURN_ITEM_UNIQUE_INDEX)
+            .toBe('SupplierCreditNoteLine_supplierReturnItemId_key');
     });
 });

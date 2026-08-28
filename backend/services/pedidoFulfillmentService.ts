@@ -5,11 +5,27 @@ import { applyStockDelta } from './stockService.js';
 import {
     allocateSaleItemBatchesFefo,
     BatchAllocationError,
+    consumeProductBatchesByWarehouseFefo,
     consumeProductBatchesFefo,
     type FefoAllocationResult,
 } from './saleBatchAllocationService.js';
+import {
+    buildBoundedBatchWarehouseSourceKey,
+    type BatchWarehouseLedgerMode,
+    type BatchWarehouseMovementType,
+} from '../lib/batchWarehouseLedger.js';
+import {
+    applyBatchWarehouseDelta,
+    BatchWarehouseLedgerError,
+    resolveBatchWarehouseLedgerMode,
+} from './productBatchWarehouseLedgerService.js';
 import { effectiveSaleModeAndStep } from './saleItemMeasurementService.js';
 import { exactPedidoItemQuantity } from './publicOrderItemService.js';
+import { desglosarVentaConExoneracion } from './nicaTax.js';
+import {
+    normalizeFiscalRegime,
+    resolveSaleFiscalAmounts,
+} from '../../utils/fiscalRegime.js';
 
 type PrismaTx = Prisma.TransactionClient;
 
@@ -21,7 +37,10 @@ export type PedidoFulfillmentCode =
     | 'PEDIDO_RESERVATION_MISMATCH'
     | 'PEDIDO_CANCELLATION_RECONCILIATION_REQUIRED'
     | 'PEDIDO_ACCOUNTING_USER_NOT_FOUND'
-    | 'PEDIDO_BATCH_STOCK_INSUFFICIENT';
+    | 'PEDIDO_TENANT_NOT_FOUND'
+    | 'PEDIDO_BATCH_STOCK_INSUFFICIENT'
+    | 'PEDIDO_BATCH_RECONCILIATION_REQUIRED'
+    | 'PEDIDO_BATCH_WAREHOUSE_CONFLICT';
 
 export class PedidoFulfillmentError extends Error {
     constructor(
@@ -51,14 +70,120 @@ const withPedidoBatchError = async <T>(operation: () => Promise<T>): Promise<T> 
     } catch (error) {
         if (error instanceof BatchAllocationError) {
             throw new PedidoFulfillmentError(
-                'PEDIDO_BATCH_STOCK_INSUFFICIENT',
-                422,
+                error.code === 'INSUFFICIENT_ACTIVE_BATCH_STOCK'
+                    ? 'PEDIDO_BATCH_STOCK_INSUFFICIENT'
+                    : 'PEDIDO_BATCH_WAREHOUSE_CONFLICT',
+                error.httpStatus,
+                error.message,
+            );
+        }
+        if (error instanceof BatchWarehouseLedgerError) {
+            const stockConflict = error.code === 'BATCH_WAREHOUSE_INSUFFICIENT_STOCK'
+                || error.code === 'BATCH_WAREHOUSE_CONCURRENT_WRITE';
+            throw new PedidoFulfillmentError(
+                stockConflict
+                    ? 'PEDIDO_BATCH_STOCK_INSUFFICIENT'
+                    : 'PEDIDO_BATCH_WAREHOUSE_CONFLICT',
+                error.httpStatus,
                 error.message,
             );
         }
         throw error;
     }
 };
+
+const isActiveBatchWarehouseMode = (
+    mode: BatchWarehouseLedgerMode | null,
+): mode is Exclude<BatchWarehouseLedgerMode, 'OFF'> => mode === 'SHADOW' || mode === 'ENFORCED';
+
+const resolvePedidoBatchWarehouseMode = async (
+    tx: PrismaTx,
+    tenantId: string,
+    hasBatchTrackedMovement: boolean,
+): Promise<BatchWarehouseLedgerMode | null> => {
+    if (!hasBatchTrackedMovement) return null;
+    return withPedidoBatchError(() => resolveBatchWarehouseLedgerMode(tx, tenantId));
+};
+
+/**
+ * El agregado ProductBatch sigue siendo autoritativo en OFF/SHADOW. ENFORCED
+ * elige FEFO desde el saldo exacto de la bodega; SHADOW conserva FEFO global y
+ * deja que el core registre un gap sin acreditar una ubicación inexistente.
+ */
+const consumePedidoProductBatches = async (
+    tx: PrismaTx,
+    params: {
+        tenantId: string;
+        pedidoId: string;
+        pedidoItemId: string;
+        productId: string;
+        quantity: Decimal;
+        enforceComplete: boolean;
+        warehouseId: string;
+        userId: string;
+        mode: BatchWarehouseLedgerMode;
+        movementType: Extract<BatchWarehouseMovementType, 'PEDIDO_RESERVE' | 'PEDIDO_DELIVERY'>;
+    },
+): Promise<FefoAllocationResult> => withPedidoBatchError(async () => {
+    const sourceKeyPrefix = [
+        'pedido',
+        params.pedidoId,
+        params.movementType === 'PEDIDO_RESERVE' ? 'reserve' : 'delivery',
+        'item',
+        params.pedidoItemId,
+        'product',
+        params.productId,
+    ].join(':');
+    if (params.mode === 'ENFORCED') {
+        return consumeProductBatchesByWarehouseFefo(tx, {
+            tenantId: params.tenantId,
+            productId: params.productId,
+            quantity: params.quantity,
+            context: {
+                mode: 'ENFORCED',
+                warehouseId: params.warehouseId,
+                userId: params.userId,
+                movementType: params.movementType,
+                referenceId: params.pedidoId,
+                referenceType: 'PEDIDO',
+                sourceKeyPrefix,
+                reason: params.movementType === 'PEDIDO_RESERVE'
+                    ? `Reserva del pedido ${params.pedidoId}`
+                    : `Entrega del pedido ${params.pedidoId}`,
+            },
+        });
+    }
+
+    const allocation = await consumeProductBatchesFefo(tx, {
+        tenantId: params.tenantId,
+        productId: params.productId,
+        quantity: params.quantity,
+        enforceComplete: params.enforceComplete,
+    });
+    if (params.mode === 'SHADOW') {
+        for (const batch of allocation.allocations) {
+            await applyBatchWarehouseDelta({
+                tx,
+                mode: 'SHADOW',
+                tenantId: params.tenantId,
+                productId: params.productId,
+                batchId: batch.batchId,
+                warehouseId: params.warehouseId,
+                delta: batch.quantity.negated().toFixed(4),
+                movementType: params.movementType,
+                referenceId: params.pedidoId,
+                referenceType: 'PEDIDO',
+                userId: params.userId,
+                reason: params.movementType === 'PEDIDO_RESERVE'
+                    ? `Reserva del pedido ${params.pedidoId}`
+                    : `Entrega del pedido ${params.pedidoId}`,
+                sourceKey: buildBoundedBatchWarehouseSourceKey(sourceKeyPrefix, batch.batchId),
+                allowNegative: false,
+            });
+        }
+    }
+    return allocation;
+});
 
 const PEDIDO_ITEM_SELECT = {
     id: true,
@@ -102,6 +227,19 @@ const selectorWhere = (selector: PedidoSelector) => ({
 });
 
 type LockedPedidoRow = { id: string };
+type AppliedPedidoReserveLedgerEntry = {
+    id: string;
+    productId: string;
+    batchId: string;
+    warehouseId: string;
+    quantityDelta: Prisma.Decimal;
+    createdAt: Date;
+};
+type LedgerPageCursor = {
+    createdAt: Date;
+    id: string;
+};
+const APPLIED_PEDIDO_RESERVE_LEDGER_PAGE_SIZE = 5_000;
 
 /**
  * Primer lock de toda transición de fulfillment. El orden global es siempre:
@@ -146,6 +284,98 @@ export async function lockPedidoForFulfillment(
         );
     }
 }
+
+const compareLedgerCursor = (
+    left: LedgerPageCursor,
+    right: LedgerPageCursor,
+): number => {
+    const byDate = left.createdAt.getTime() - right.createdAt.getTime();
+    if (byDate !== 0) return byDate;
+    return left.id.localeCompare(right.id);
+};
+
+const assertLedgerPageProgress = (
+    page: readonly AppliedPedidoReserveLedgerEntry[],
+    cursor: LedgerPageCursor | null,
+): void => {
+    const seenIds = new Set<string>();
+    let previous = cursor;
+    for (const entry of page) {
+        const current = { createdAt: entry.createdAt, id: entry.id };
+        if (!entry.id || seenIds.has(entry.id)) {
+            throw new PedidoFulfillmentError(
+                'PEDIDO_CANCELLATION_RECONCILIATION_REQUIRED',
+                409,
+                'El subledger lote-bodega devolvió filas duplicadas o inválidas.',
+            );
+        }
+        seenIds.add(entry.id);
+        if (previous && compareLedgerCursor(current, previous) <= 0) {
+            throw new PedidoFulfillmentError(
+                'PEDIDO_CANCELLATION_RECONCILIATION_REQUIRED',
+                409,
+                'El subledger lote-bodega perdió el orden determinista de la reserva.',
+            );
+        }
+        previous = current;
+    }
+};
+
+const loadAppliedPedidoReserveLedgerEntries = async (
+    tx: Pick<PrismaTx, 'productBatchLedgerEntry'>,
+    params: {
+        tenantId: string;
+        pedidoId: string;
+    },
+): Promise<AppliedPedidoReserveLedgerEntry[]> => {
+    const rows: AppliedPedidoReserveLedgerEntry[] = [];
+    let cursor: LedgerPageCursor | null = null;
+
+    for (;;) {
+        const page = await tx.productBatchLedgerEntry.findMany({
+            where: {
+                tenantId: params.tenantId,
+                referenceId: params.pedidoId,
+                referenceType: 'PEDIDO',
+                movementType: 'PEDIDO_RESERVE',
+                status: 'APPLIED',
+                quantityDelta: { lt: 0 },
+                ...(cursor
+                    ? {
+                        OR: [
+                            { createdAt: { gt: cursor.createdAt } },
+                            {
+                                createdAt: cursor.createdAt,
+                                id: { gt: cursor.id },
+                            },
+                        ],
+                    }
+                    : {}),
+            },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            select: {
+                id: true,
+                productId: true,
+                batchId: true,
+                warehouseId: true,
+                quantityDelta: true,
+                createdAt: true,
+            },
+            take: APPLIED_PEDIDO_RESERVE_LEDGER_PAGE_SIZE,
+        });
+
+        if (page.length === 0) break;
+        assertLedgerPageProgress(page as AppliedPedidoReserveLedgerEntry[], cursor);
+        rows.push(...page as AppliedPedidoReserveLedgerEntry[]);
+        cursor = {
+            createdAt: page[page.length - 1].createdAt,
+            id: page[page.length - 1].id,
+        };
+        if (page.length < APPLIED_PEDIDO_RESERVE_LEDGER_PAGE_SIZE) break;
+    }
+
+    return rows;
+};
 
 export const validatePedidoReservationTotals = (
     items: ReadonlyArray<{ productoId: string; cantidad: number; cantidadExact: { toString(): string } | null }>,
@@ -373,6 +603,11 @@ export async function reservePedidoInTransaction(
         select: { allowNegativeStock: true },
     });
     const enforceStock = !(tenant?.allowNegativeStock ?? false);
+    const batchWarehouseLedgerMode = await resolvePedidoBatchWarehouseMode(
+        tx,
+        params.tenantId,
+        orderedItems.some((item) => products.get(item.productoId)?.requiresBatchTracking === true),
+    );
 
     for (const item of orderedItems) {
         const product = products.get(item.productoId)!;
@@ -381,15 +616,22 @@ export async function reservePedidoInTransaction(
             tenantId: params.tenantId,
             productId: product.id,
             delta: quantity.negated().toNumber(),
-            enforceSufficient: enforceStock,
+            enforceSufficient: enforceStock
+                || (product.requiresBatchTracking && batchWarehouseLedgerMode === 'ENFORCED'),
         });
         const allocation = product.requiresBatchTracking
-            ? await withPedidoBatchError(() => consumeProductBatchesFefo(tx, {
+            ? await consumePedidoProductBatches(tx, {
                 tenantId: params.tenantId,
+                pedidoId: params.pedidoId,
+                pedidoItemId: item.id,
                 productId: product.id,
                 quantity,
                 enforceComplete: enforceStock,
-            }))
+                warehouseId: stock.warehouseId,
+                userId: params.userId,
+                mode: batchWarehouseLedgerMode!,
+                movementType: 'PEDIDO_RESERVE',
+            })
             : { allocations: [], unallocatedQuantity: quantity };
 
         await writePedidoKardex(tx, {
@@ -584,6 +826,30 @@ export async function cancelPedidoInTransaction(
         }
     }
 
+    const batchWarehouseLedgerMode = await resolvePedidoBatchWarehouseMode(
+        tx,
+        params.tenantId,
+        reservations.some((movement) => movement.batchId !== null),
+    );
+    // En SHADOW un egreso pudo quedar como GAP y no bajó el saldo local. La
+    // cancelación restaura solo lo realmente APPLIED; acreditar el gap crearía
+    // stock fantasma en la bodega aunque el ProductBatch global sí se restaura.
+    const locallyAppliedByBatchWarehouse = new Map<string, Decimal>();
+    if (isActiveBatchWarehouseMode(batchWarehouseLedgerMode)) {
+        const appliedReservations = await loadAppliedPedidoReserveLedgerEntries(tx, {
+            tenantId: params.tenantId,
+            pedidoId: params.pedidoId,
+        });
+        for (const entry of appliedReservations) {
+            const key = `${entry.productId}:${entry.warehouseId}:${entry.batchId}`;
+            locallyAppliedByBatchWarehouse.set(
+                key,
+                (locallyAppliedByBatchWarehouse.get(key) ?? new Decimal(0))
+                    .plus(new Decimal(entry.quantityDelta.toString()).abs()),
+            );
+        }
+    }
+
     const claim = await tx.pedido.updateMany({
         where: {
             id: params.pedidoId,
@@ -660,6 +926,33 @@ export async function cancelPedidoInTransaction(
                         'Un lote reservado ya no pertenece al pedido o al negocio; no se alteró inventario.',
                     );
                 }
+                if (isActiveBatchWarehouseMode(batchWarehouseLedgerMode)) {
+                    const localKey = `${productId}:${warehouseId}:${movement.batchId}`;
+                    const locallyApplied = locallyAppliedByBatchWarehouse.get(localKey) ?? new Decimal(0);
+                    const localRestore = Decimal.min(locallyApplied, movementQuantity).toDecimalPlaces(4);
+                    if (localRestore.greaterThan(0)) {
+                        await withPedidoBatchError(() => applyBatchWarehouseDelta({
+                            tx,
+                            mode: batchWarehouseLedgerMode,
+                            tenantId: params.tenantId,
+                            productId,
+                            batchId: movement.batchId!,
+                            warehouseId,
+                            delta: localRestore.toFixed(4),
+                            movementType: 'PEDIDO_CANCEL',
+                            referenceId: params.pedidoId,
+                            referenceType: 'PEDIDO',
+                            userId: params.userId,
+                            reason: `Cancelación del pedido ${params.pedidoId}`,
+                            sourceKey: buildBoundedBatchWarehouseSourceKey(
+                                `pedido:${params.pedidoId}:cancel:movement:${movement.id}`,
+                                movement.batchId!,
+                            ),
+                            allowNegative: false,
+                        }));
+                        locallyAppliedByBatchWarehouse.set(localKey, locallyApplied.minus(localRestore));
+                    }
+                }
                 batches.push({ batchId: movement.batchId, quantity: movementQuantity.toFixed(4) });
             }
             const after = cursor.plus(movementQuantity);
@@ -692,6 +985,13 @@ export async function cancelPedidoInTransaction(
         }
         released.push({ productId, warehouseId, quantity: quantity.toFixed(4), batches });
         releasedTotal = releasedTotal.plus(quantity);
+    }
+    if ([...locallyAppliedByBatchWarehouse.values()].some((quantity) => !quantity.isZero())) {
+        throw new PedidoFulfillmentError(
+            'PEDIDO_CANCELLATION_RECONCILIATION_REQUIRED',
+            409,
+            'El subledger lote-bodega no coincide con la reserva original del pedido.',
+        );
     }
 
     await tx.trackingEvento.create({
@@ -832,31 +1132,77 @@ export async function completePedidoDeliveryInTransaction(
             referenceType: 'PEDIDO_RESERVA',
         },
         orderBy: [{ date: 'asc' }, { id: 'asc' }],
-        select: { productId: true, quantity: true, batchId: true },
+        select: { id: true, productId: true, quantity: true, batchId: true, warehouseId: true },
     });
     const wasReserved = reservations.length > 0;
-    const tenant = wasReserved
-        ? null
-        : await tx.tenant.findUnique({
-            where: { id: pedido.tenantId },
-            select: { allowNegativeStock: true },
-        });
-    const enforceStock = !(tenant?.allowNegativeStock ?? false);
+    // Siempre se carga, incluso si el stock ya estaba reservado: la entrega crea
+    // una venta y debe congelar el régimen autoritativo del tenant en esta tx.
+    const tenant = await tx.tenant.findUnique({
+        where: { id: pedido.tenantId },
+        select: {
+            allowNegativeStock: true,
+            fiscalRegime: true,
+            fiscalRegimeVersion: true,
+        },
+    });
+    if (!tenant) {
+        throw new PedidoFulfillmentError(
+            'PEDIDO_TENANT_NOT_FOUND',
+            409,
+            'El negocio del pedido ya no está disponible para facturar la entrega.',
+        );
+    }
+    const enforceStock = !tenant.allowNegativeStock;
 
     if (wasReserved) {
         validatePedidoReservationTotals(pedido.items, reservations);
     }
+    const hasBatchTrackedItems = orderedItems.some((item) =>
+        products.get(item.productoId)?.requiresBatchTracking === true,
+    ) || reservations.some((movement) => Boolean(movement.batchId?.trim()));
+    const batchWarehouseLedgerMode = await resolvePedidoBatchWarehouseMode(
+        tx,
+        pedido.tenantId,
+        hasBatchTrackedItems,
+    );
+    if (wasReserved && batchWarehouseLedgerMode === 'ENFORCED') {
+        const reservationWithoutExactLocation = reservations.find((movement) => {
+            const requiresExactLocation = products.get(movement.productId)?.requiresBatchTracking === true
+                || Boolean(movement.batchId?.trim());
+            if (!requiresExactLocation) return false;
+            const quantity = new Decimal(movement.quantity);
+            return !quantity.isFinite()
+                || !quantity.lessThan(0)
+                || !movement.batchId?.trim()
+                || !movement.warehouseId?.trim();
+        });
+        if (reservationWithoutExactLocation) {
+            throw new PedidoFulfillmentError(
+                'PEDIDO_BATCH_RECONCILIATION_REQUIRED',
+                409,
+                'La reserva de un producto con lote no identifica exactamente su lote y bodega; requiere conciliación antes de facturar.',
+            );
+        }
+    }
 
     // Pool determinista de los lotes reservados. Si hay dos líneas del mismo
     // SKU (BASE + PACK), cada lote se asigna una sola vez y en orden histórico.
-    const reservedBatchPool = new Map<string, Map<string, Decimal>>();
+    const reservedBatchPool = new Map<string, Map<string, {
+        batchId: string;
+        warehouseId: string | null;
+        quantity: Decimal;
+    }>>();
     for (const movement of reservations) {
         if (!movement.batchId) continue;
-        const productPool = reservedBatchPool.get(movement.productId) ?? new Map<string, Decimal>();
-        productPool.set(
-            movement.batchId,
-            (productPool.get(movement.batchId) ?? new Decimal(0)).plus(new Decimal(movement.quantity).abs()),
-        );
+        const productPool = reservedBatchPool.get(movement.productId) ?? new Map();
+        const warehouseId = movement.warehouseId?.trim() || null;
+        const poolKey = `${movement.batchId}:${warehouseId ?? 'legacy'}`;
+        const current = productPool.get(poolKey);
+        productPool.set(poolKey, {
+            batchId: movement.batchId,
+            warehouseId,
+            quantity: (current?.quantity ?? new Decimal(0)).plus(new Decimal(movement.quantity).abs()),
+        });
         reservedBatchPool.set(movement.productId, productPool);
     }
 
@@ -866,12 +1212,23 @@ export async function completePedidoDeliveryInTransaction(
             ? sum.plus(item.subtotal.toString())
             : sum;
     }, new Decimal(0)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const saleTotal = new Decimal(pedido.total.toString()).toDecimalPlaces(4);
+    const fiscalRegime = normalizeFiscalRegime(tenant.fiscalRegime);
+    const generalBreakdown = desglosarVentaConExoneracion(saleTotal, exemptTotal);
+    const fiscalAmounts = resolveSaleFiscalAmounts(
+        saleTotal,
+        generalBreakdown.iva,
+        fiscalRegime,
+    );
 
     const sale = await tx.sale.create({
         data: {
             tenantId: pedido.tenantId,
-            total: pedido.total,
+            total: saleTotal.toFixed(4),
             exemptTotal: exemptTotal.toFixed(2),
+            fiscalRegimeAtSale: fiscalRegime,
+            fiscalRegimeVersionAtSale: tenant.fiscalRegimeVersion,
+            vatAmountAtSale: fiscalAmounts.vatAmount.toFixed(4),
             status: 'COMPLETED',
             paymentMethod: 'CASH',
             soldById: params.actorUserId ?? null,
@@ -925,24 +1282,36 @@ export async function completePedidoDeliveryInTransaction(
         costTotal = costTotal.plus(persistedCost.mul(quantity));
 
         if (wasReserved) {
-            const productPool = reservedBatchPool.get(product.id) ?? new Map<string, Decimal>();
+            const productPool = reservedBatchPool.get(product.id) ?? new Map<string, {
+                batchId: string;
+                warehouseId: string | null;
+                quantity: Decimal;
+            }>();
             let remainingForLine = quantity;
             let allocatedForLine = new Decimal(0);
-            for (const [batchId, available] of productPool) {
+            let allocatedWithoutWarehouse = new Decimal(0);
+            for (const [poolKey, reservation] of productPool) {
                 if (!remainingForLine.greaterThan(0)) break;
-                const allocated = Decimal.min(available, remainingForLine).toDecimalPlaces(4);
+                const allocated = Decimal.min(reservation.quantity, remainingForLine).toDecimalPlaces(4);
                 if (!allocated.greaterThan(0)) continue;
                 await tx.saleItemBatchAllocation.create({
                     data: {
                         tenantId: pedido.tenantId,
                         saleItemId: saleItem.id,
-                        batchId,
+                        batchId: reservation.batchId,
+                        warehouseId: reservation.warehouseId,
                         quantity: allocated.toFixed(4),
                     },
                 });
-                productPool.set(batchId, available.minus(allocated));
+                productPool.set(poolKey, {
+                    ...reservation,
+                    quantity: reservation.quantity.minus(allocated),
+                });
                 remainingForLine = remainingForLine.minus(allocated);
                 allocatedForLine = allocatedForLine.plus(allocated);
+                if (!reservation.warehouseId) {
+                    allocatedWithoutWarehouse = allocatedWithoutWarehouse.plus(allocated);
+                }
             }
             if (product.requiresBatchTracking) {
                 if (allocatedForLine.lessThan(quantity)) {
@@ -961,6 +1330,23 @@ export async function completePedidoDeliveryInTransaction(
                         },
                     });
                 }
+                if (batchWarehouseLedgerMode === 'SHADOW' && allocatedWithoutWarehouse.greaterThan(0)) {
+                    await tx.auditLog.create({
+                        data: {
+                            tenantId: pedido.tenantId,
+                            userId: auditUserId,
+                            action: 'PEDIDO_BATCH_RECONCILIATION_REQUIRED',
+                            details: JSON.stringify({
+                                pedidoId: pedido.id,
+                                saleId: sale.id,
+                                saleItemId: saleItem.id,
+                                productId: product.id,
+                                missingWarehouseQuantity: allocatedWithoutWarehouse.toFixed(4),
+                                reason: 'RESERVED_BATCH_WITHOUT_WAREHOUSE',
+                            }),
+                        },
+                    });
+                }
             }
             continue;
         }
@@ -969,17 +1355,42 @@ export async function completePedidoDeliveryInTransaction(
             tenantId: pedido.tenantId,
             productId: product.id,
             delta: quantity.negated().toNumber(),
-            enforceSufficient: enforceStock,
+            enforceSufficient: enforceStock
+                || (product.requiresBatchTracking && batchWarehouseLedgerMode === 'ENFORCED'),
         });
         const allocation = product.requiresBatchTracking
-            ? await withPedidoBatchError(() => allocateSaleItemBatchesFefo(tx, {
-                tenantId: pedido.tenantId,
-                productId: product.id,
-                saleItemId: saleItem.id,
-                quantity,
-                enforceComplete: enforceStock,
-            }))
+            ? isActiveBatchWarehouseMode(batchWarehouseLedgerMode)
+                ? await consumePedidoProductBatches(tx, {
+                    tenantId: pedido.tenantId,
+                    pedidoId: pedido.id,
+                    pedidoItemId: item.id,
+                    productId: product.id,
+                    quantity,
+                    enforceComplete: enforceStock,
+                    warehouseId: stock.warehouseId,
+                    userId: financialUserId,
+                    mode: batchWarehouseLedgerMode,
+                    movementType: 'PEDIDO_DELIVERY',
+                })
+                : await withPedidoBatchError(() => allocateSaleItemBatchesFefo(tx, {
+                    tenantId: pedido.tenantId,
+                    productId: product.id,
+                    saleItemId: saleItem.id,
+                    quantity,
+                    enforceComplete: enforceStock,
+                }))
             : { allocations: [], unallocatedQuantity: quantity };
+        if (isActiveBatchWarehouseMode(batchWarehouseLedgerMode) && allocation.allocations.length > 0) {
+            await tx.saleItemBatchAllocation.createMany({
+                data: allocation.allocations.map(batch => ({
+                    tenantId: pedido.tenantId,
+                    saleItemId: saleItem.id,
+                    batchId: batch.batchId,
+                    warehouseId: stock.warehouseId,
+                    quantity: batch.quantity.toFixed(4),
+                })),
+            });
+        }
         await writePedidoKardex(tx, {
             tenantId: pedido.tenantId,
             userId: financialUserId,
@@ -1007,10 +1418,14 @@ export async function completePedidoDeliveryInTransaction(
         pedido.tenantId,
         financialUserId,
         sale.id,
-        Number(pedido.total),
+        saleTotal,
         costTotal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
         'CASH',
         exemptTotal.toNumber(),
+        {
+            fiscalRegime,
+            vatAmount: fiscalAmounts.vatAmount,
+        },
     );
     await tx.pedido.update({ where: { id: pedido.id }, data: { facturaId: sale.id } });
     await tx.auditLog.create({
@@ -1021,7 +1436,10 @@ export async function completePedidoDeliveryInTransaction(
             details: JSON.stringify({
                 pedidoId: pedido.id,
                 saleId: sale.id,
-                total: pedido.total.toString(),
+                total: saleTotal.toFixed(4),
+                fiscalRegime,
+                fiscalRegimeVersion: tenant.fiscalRegimeVersion,
+                vatAmount: fiscalAmounts.vatAmount.toFixed(4),
                 source: params.source,
                 paymentMethod: 'CASH',
                 measuredItemCount: pedido.items.filter((item) => !exactPedidoItemQuantity(item).isInteger()).length,

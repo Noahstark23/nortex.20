@@ -32,6 +32,33 @@ describe('ticket termico 80 mm', () => {
         expect(text).not.toContain('undefined');
     });
 
+    it('mantiene el ticket general cuando el regimen se omite o se explicita', () => {
+        const defaultPayload = build80mmReceiptPayload(venta);
+        const generalPayload = build80mmReceiptPayload({ ...venta, fiscalRegime: 'GENERAL' });
+
+        expect(Array.from(generalPayload)).toEqual(Array.from(defaultPayload));
+        expect(asText(generalPayload)).toContain('IVA incl. 15%: C$ 13.04');
+    });
+
+    it('imprime cuota fija como factura simplificada sin desglose de IVA', () => {
+        const text = asText(build80mmReceiptPayload({
+            ...venta,
+            fiscalRegime: 'CUOTA_FIJA',
+            subtotal: 105,
+            discount: 5,
+            tax: 13.04,
+            grandTotal: 100,
+        }));
+
+        expect(text).toContain('FACTURA SIMPLIFICADA');
+        expect(text).toContain('Regimen de Cuota Fija');
+        expect(text).toContain('Subtotal: C$ 105.00');
+        expect(text).toContain('Descuento: -C$ 5.00');
+        expect(text).toContain('TOTAL: C$ 100.00');
+        expect(text).not.toMatch(/IVA/i);
+        expect(text).not.toMatch(/Base imponible/i);
+    });
+
     it('maqueta el papel de 80 mm a 48 columnas', () => {
         const text = asText(build80mmReceiptPayload(venta));
 

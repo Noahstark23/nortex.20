@@ -34,6 +34,7 @@ export interface ReturnProductAuthority {
     id: string;
     name?: string | null;
     unit?: string | null;
+    requiresBatchTracking?: boolean;
 }
 
 export interface PreviousReturnRecord {
@@ -42,6 +43,8 @@ export interface PreviousReturnRecord {
 
 export interface ReturnSaleKardexLocation {
     warehouseId?: string | null;
+    productId?: string | null;
+    batchId?: string | null;
 }
 
 export type ReturnRefundMethod = 'CASH' | 'CARD' | 'QR' | 'TRANSFER';
@@ -92,6 +95,44 @@ export interface ResolvedReturnItem extends ReturnLineAvailability {
     lineExemptTotal: Decimal;
 }
 
+export type ReturnBatchWarehouseLedgerMode = 'OFF' | 'SHADOW' | 'ENFORCED';
+
+/**
+ * Evidencia inmutable creada al consumir un lote durante la venta. La bodega
+ * es nullable únicamente por compatibilidad con ventas anteriores a 2B.0.
+ */
+export interface ReturnBatchAllocationSnapshot {
+    id: string;
+    saleItemId: string;
+    productId: string;
+    batchId: string;
+    batchNumber: string;
+    warehouseId?: string | null;
+    quantity: Decimal.Value;
+}
+
+export interface PlannedReturnBatchQuantity {
+    allocationId: string;
+    batchId: string;
+    batchNumber: string;
+    warehouseId: string | null;
+    quantity: Decimal;
+}
+
+export interface ReturnBatchReconciliationGap {
+    allocationId: string | null;
+    batchId: string | null;
+    quantity: Decimal;
+    reason: 'MISSING_ALLOCATION_WAREHOUSE' | 'MISSING_BATCH_ALLOCATION';
+}
+
+export interface ReturnBatchRestorationPlan {
+    mode: 'BATCH_RESTORED' | 'PARTIAL_BATCH_RESTORED' | 'LEGACY_AGGREGATE_ONLY';
+    batchRestorations: PlannedReturnBatchQuantity[];
+    aggregateOnlyQuantity: Decimal;
+    reconciliationGaps: ReturnBatchReconciliationGap[];
+}
+
 type UnknownRecord = Record<string, unknown>;
 
 const asRecord = (value: unknown): UnknownRecord | null =>
@@ -110,6 +151,301 @@ const decimal = (value: Decimal.Value, field: string): Decimal => {
         throw new ReturnResolutionError('RETURN_DATA_INVALID', 409, `${field} debe ser finito`);
     }
     return parsed;
+};
+
+const exactPositiveBatchQuantity = (
+    value: Decimal.Value,
+    field: string,
+    code: string,
+): Decimal => {
+    let parsed: Decimal;
+    try {
+        parsed = new Decimal(value);
+    } catch {
+        throw new ReturnResolutionError(code, 409, `${field} no es un decimal válido`);
+    }
+    if (!parsed.isFinite() || !parsed.greaterThan(0) || parsed.decimalPlaces() > 4) {
+        throw new ReturnResolutionError(
+            code,
+            409,
+            `${field} debe ser positiva y tener hasta cuatro decimales`,
+        );
+    }
+    return parsed;
+};
+
+/**
+ * Planea qué porción de una devolución vuelve a cada allocation original.
+ * No escribe nada: el endpoint ejecuta este plan dentro de su transacción,
+ * después del lock de Sale. Así ENFORCED puede fallar antes de tocar stock,
+ * dinero o el documento que se está anulando.
+ *
+ * El orden recibido debe ser el canónico de la venta (createdAt, id). El
+ * historial consume capacidad en ese mismo orden para mantener parciales y
+ * reintentos deterministas, incluso si las devoluciones antiguas no guardaban
+ * desglose por lote.
+ */
+export const planReturnBatchRestoration = (params: {
+    saleItem: Pick<ReturnSaleItemSnapshot, 'id' | 'productId' | 'quantity'>;
+    requestedQuantity: Decimal.Value;
+    sameProductLineCount: number;
+    requiresBatchTracking: boolean;
+    previousReturns: readonly PreviousReturnRecord[];
+    allocations: readonly ReturnBatchAllocationSnapshot[];
+    ledgerMode: ReturnBatchWarehouseLedgerMode;
+}): ReturnBatchRestorationPlan => {
+    const requested = exactPositiveBatchQuantity(
+        params.requestedQuantity,
+        'requestedQuantity',
+        'INVALID_RETURN_QUANTITY',
+    );
+    const soldQuantity = exactPositiveBatchQuantity(
+        params.saleItem.quantity,
+        'saleItem.quantity',
+        'RECONCILIATION_REQUIRED',
+    );
+    if (!Number.isInteger(params.sameProductLineCount) || params.sameProductLineCount < 1) {
+        throw new ReturnResolutionError(
+            'RECONCILIATION_REQUIRED',
+            409,
+            'La identidad de la línea vendida requiere conciliación',
+        );
+    }
+
+    const seenAllocationIds = new Set<string>();
+    const allocationByBatch = new Map<string, {
+        id: string;
+        batchId: string;
+        batchNumber: string;
+        warehouseId: string | null;
+        quantity: Decimal;
+    }>();
+    let allocatedQuantity = new Decimal(0);
+    for (const allocation of params.allocations) {
+        const allocationId = allocation.id.trim();
+        const batchId = allocation.batchId.trim();
+        if (
+            !allocationId
+            || !batchId
+            || allocation.saleItemId !== params.saleItem.id
+            || allocation.productId !== params.saleItem.productId
+            || seenAllocationIds.has(allocationId)
+            || allocationByBatch.has(batchId)
+        ) {
+            throw new ReturnResolutionError(
+                'RECONCILIATION_REQUIRED',
+                409,
+                'La evidencia lote-bodega de la venta es ambigua',
+            );
+        }
+        const quantity = exactPositiveBatchQuantity(
+            allocation.quantity,
+            'SaleItemBatchAllocation.quantity',
+            'RECONCILIATION_REQUIRED',
+        );
+        allocatedQuantity = allocatedQuantity.plus(quantity);
+        if (allocatedQuantity.greaterThan(soldQuantity)) {
+            throw new ReturnResolutionError(
+                'RECONCILIATION_REQUIRED',
+                409,
+                'Las asignaciones por lote superan la cantidad vendida',
+            );
+        }
+        seenAllocationIds.add(allocationId);
+        allocationByBatch.set(batchId, {
+            id: allocationId,
+            batchId,
+            batchNumber: allocation.batchNumber,
+            warehouseId: typeof allocation.warehouseId === 'string'
+                ? allocation.warehouseId.trim() || null
+                : null,
+            quantity,
+        });
+    }
+
+    const consumedByBatch = new Map<string, Decimal>();
+    let priorReturned = new Decimal(0);
+    let priorWithoutBreakdown = new Decimal(0);
+
+    for (const previousReturn of params.previousReturns) {
+        if (!Array.isArray(previousReturn.items)) {
+            throw new ReturnResolutionError(
+                'BATCH_RETURN_HISTORY_INVALID',
+                409,
+                'El historial de devoluciones requiere conciliación',
+            );
+        }
+        for (const rawItem of previousReturn.items) {
+            const item = asRecord(rawItem);
+            if (!item) {
+                throw new ReturnResolutionError(
+                    'BATCH_RETURN_HISTORY_INVALID',
+                    409,
+                    'El historial de devoluciones contiene una línea inválida',
+                );
+            }
+            const historicalSaleItemId = typeof item.saleItemId === 'string' ? item.saleItemId : '';
+            const historicalProductId = typeof item.productId === 'string' ? item.productId : '';
+            const isExactLine = historicalSaleItemId === params.saleItem.id;
+            const isLegacyProductLine = !historicalSaleItemId
+                && historicalProductId === params.saleItem.productId;
+            if (!isExactLine && !isLegacyProductLine) continue;
+            if (isExactLine && historicalProductId && historicalProductId !== params.saleItem.productId) {
+                throw new ReturnResolutionError(
+                    'BATCH_RETURN_HISTORY_INVALID',
+                    409,
+                    'El historial relaciona la línea con otro producto',
+                );
+            }
+            if (isLegacyProductLine && params.sameProductLineCount !== 1) {
+                throw new ReturnResolutionError(
+                    'BATCH_RETURN_HISTORY_AMBIGUOUS',
+                    409,
+                    'Una devolución histórica no identifica la línea exacta de venta',
+                );
+            }
+
+            const returned = exactPositiveBatchQuantity(
+                item.quantity as Decimal.Value,
+                'ProductReturn.items.quantity',
+                'BATCH_RETURN_HISTORY_INVALID',
+            );
+            priorReturned = priorReturned.plus(returned);
+            if (!Array.isArray(item.batchRestorations)) {
+                priorWithoutBreakdown = priorWithoutBreakdown.plus(returned);
+                continue;
+            }
+
+            let detailed = new Decimal(0);
+            for (const rawRestoration of item.batchRestorations) {
+                const restoration = asRecord(rawRestoration);
+                const batchId = typeof restoration?.batchId === 'string' ? restoration.batchId : '';
+                const allocation = allocationByBatch.get(batchId);
+                if (!allocation) {
+                    throw new ReturnResolutionError(
+                        'BATCH_RETURN_HISTORY_INVALID',
+                        409,
+                        'El historial referencia un lote no consumido por la venta',
+                    );
+                }
+                const historicalAllocationId = typeof restoration.allocationId === 'string'
+                    ? restoration.allocationId
+                    : '';
+                const historicalWarehouseId = typeof restoration.warehouseId === 'string'
+                    ? restoration.warehouseId.trim()
+                    : '';
+                if (
+                    (historicalAllocationId && historicalAllocationId !== allocation.id)
+                    || (historicalWarehouseId && historicalWarehouseId !== allocation.warehouseId)
+                ) {
+                    throw new ReturnResolutionError(
+                        'BATCH_RETURN_HISTORY_INVALID',
+                        409,
+                        'El historial lote-bodega no coincide con la asignación original',
+                    );
+                }
+                const quantity = exactPositiveBatchQuantity(
+                    restoration?.quantity as Decimal.Value,
+                    'ProductReturn.items.batchRestorations.quantity',
+                    'BATCH_RETURN_HISTORY_INVALID',
+                );
+                consumedByBatch.set(
+                    batchId,
+                    (consumedByBatch.get(batchId) ?? new Decimal(0)).plus(quantity),
+                );
+                detailed = detailed.plus(quantity);
+            }
+            if (detailed.greaterThan(returned)) {
+                throw new ReturnResolutionError(
+                    'BATCH_RETURN_HISTORY_INVALID',
+                    409,
+                    'El desglose por lote supera la cantidad devuelta',
+                );
+            }
+            // Un registro puede mezclar evidencia por lote y remanente legacy.
+            // Reservar también la diferencia evita acreditar dos veces un lote.
+            priorWithoutBreakdown = priorWithoutBreakdown.plus(returned.minus(detailed));
+        }
+    }
+
+    if (priorReturned.plus(requested).greaterThan(soldQuantity)) {
+        throw new ReturnResolutionError(
+            'BATCH_RETURN_EXCEEDED',
+            409,
+            'La devolución acumulada supera la cantidad vendida de la línea',
+        );
+    }
+
+    for (const allocation of allocationByBatch.values()) {
+        const consumed = consumedByBatch.get(allocation.batchId) ?? new Decimal(0);
+        if (consumed.greaterThan(allocation.quantity)) {
+            throw new ReturnResolutionError(
+                'BATCH_RETURN_HISTORY_INVALID',
+                409,
+                'El historial ya restaura más de lo originalmente consumido en un lote',
+            );
+        }
+    }
+
+    for (const allocation of allocationByBatch.values()) {
+        const consumed = consumedByBatch.get(allocation.batchId) ?? new Decimal(0);
+        const available = Decimal.max(allocation.quantity.minus(consumed), 0);
+        const logicallyConsumed = Decimal.min(available, priorWithoutBreakdown);
+        consumedByBatch.set(allocation.batchId, consumed.plus(logicallyConsumed));
+        priorWithoutBreakdown = priorWithoutBreakdown.minus(logicallyConsumed);
+    }
+
+    let remaining = requested;
+    const batchRestorations: PlannedReturnBatchQuantity[] = [];
+    for (const allocation of allocationByBatch.values()) {
+        const consumed = consumedByBatch.get(allocation.batchId) ?? new Decimal(0);
+        const available = Decimal.max(allocation.quantity.minus(consumed), 0);
+        const quantity = Decimal.min(available, remaining);
+        if (!quantity.greaterThan(0)) continue;
+        batchRestorations.push({
+            allocationId: allocation.id,
+            batchId: allocation.batchId,
+            batchNumber: allocation.batchNumber,
+            warehouseId: allocation.warehouseId,
+            quantity,
+        });
+        remaining = remaining.minus(quantity);
+    }
+
+    const reconciliationGaps: ReturnBatchReconciliationGap[] = batchRestorations
+        .filter((restoration) => restoration.warehouseId === null)
+        .map((restoration) => ({
+            allocationId: restoration.allocationId,
+            batchId: restoration.batchId,
+            quantity: restoration.quantity,
+            reason: 'MISSING_ALLOCATION_WAREHOUSE' as const,
+        }));
+    if (remaining.greaterThan(0) && params.requiresBatchTracking) {
+        reconciliationGaps.push({
+            allocationId: null,
+            batchId: null,
+            quantity: remaining,
+            reason: 'MISSING_BATCH_ALLOCATION',
+        });
+    }
+    if (params.ledgerMode === 'ENFORCED' && reconciliationGaps.length > 0) {
+        throw new ReturnResolutionError(
+            'RECONCILIATION_REQUIRED',
+            409,
+            'La venta no conserva evidencia exacta de lote y bodega para restaurar esta cantidad',
+        );
+    }
+
+    return {
+        mode: allocationByBatch.size === 0
+            ? 'LEGACY_AGGREGATE_ONLY'
+            : remaining.greaterThan(0)
+                ? 'PARTIAL_BATCH_RESTORED'
+                : 'BATCH_RESTORED',
+        batchRestorations,
+        aggregateOnlyQuantity: remaining,
+        reconciliationGaps,
+    };
 };
 
 /**

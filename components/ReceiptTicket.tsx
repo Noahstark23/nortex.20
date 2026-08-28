@@ -2,6 +2,11 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import Decimal from 'decimal.js';
 import { CartItem } from '../types';
+import {
+    FISCAL_REGIME_CUOTA_FIJA,
+    normalizeFiscalRegime,
+    type FiscalRegime,
+} from '../utils/fiscalRegime';
 import { formatQuantityValue } from '../utils/quantity';
 
 export type ReceiptLineItem = Omit<CartItem, 'presentation'> & {
@@ -31,12 +36,12 @@ interface ReceiptTicketProps {
         tax: number;
         total: number;
         paymentMethod: string;
-        // Efectivo recibido y vuelto (solo cobro en efectivo con vuelto). Van en
-        // el ticket porque es el papel que el cliente usa para reclamar si el
-        // cambio no cuadra — y el cajero para defenderse.
+        // Efectivo recibido y vuelto. El recibido queda incluso en pago exacto;
+        // el vuelto solo aparece cuando existió de verdad.
         cashReceived?: number;
         change?: number;
         user: string;
+        fiscalRegime?: FiscalRegime;
     } | null;
 }
 
@@ -101,6 +106,8 @@ const receiptLine = (item: ReceiptLineItem, index: number) => {
 };
 
 export const ReceiptTicket: React.FC<ReceiptTicketProps> = ({ data }) => {
+    const isFixedQuota = data !== null
+        && normalizeFiscalRegime(data.fiscalRegime) === FISCAL_REGIME_CUOTA_FIJA;
     const receipt = (
         <div id="receipt-area" className="fixed top-0 left-0 w-full bg-white text-black font-mono text-[11px] leading-tight p-2 opacity-0 h-0 overflow-hidden pointer-events-none print:opacity-100 print:h-auto print:overflow-visible print:pointer-events-auto print:z-[9999]">
             {!data ? null : <>
@@ -118,7 +125,19 @@ export const ReceiptTicket: React.FC<ReceiptTicketProps> = ({ data }) => {
                     </div>
 
                     {/* ═══ NÚMERO DE FACTURA ═══ */}
-                    {data.invoiceNumber && (
+                    {isFixedQuota ? (
+                        <>
+                            <div className="text-center font-bold text-xs bg-gray-100 py-1 my-1 border border-gray-300">
+                                FACTURA SIMPLIFICADA
+                                {data.invoiceNumber && (
+                                    <span className="block text-[10px]">
+                                        {data.invoiceSeries ? `Serie ${data.invoiceSeries} ` : ''}No. {pad(data.invoiceNumber)}
+                                    </span>
+                                )}
+                            </div>
+                            <p className="text-center text-[10px] font-bold">Régimen de Cuota Fija</p>
+                        </>
+                    ) : data.invoiceNumber && (
                         <div className="text-center font-bold text-xs bg-gray-100 py-1 my-1 border border-gray-300">
                             FACTURA {data.invoiceSeries ? `Serie ${data.invoiceSeries} ` : ''}No. {pad(data.invoiceNumber)}
                         </div>
@@ -204,14 +223,18 @@ export const ReceiptTicket: React.FC<ReceiptTicketProps> = ({ data }) => {
                             </div>
                         </>
                     )}
-                    <div className="flex justify-between">
-                        <span>Base imponible:</span>
-                        <span>C$ {money(new Decimal(data.total).minus(data.tax), 'taxBase')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span>IVA (15%):</span>
-                        <span>C$ {money(data.tax, 'tax')}</span>
-                    </div>
+                    {!isFixedQuota && (
+                        <>
+                            <div className="flex justify-between">
+                                <span>Base imponible:</span>
+                                <span>C$ {money(new Decimal(data.total).minus(data.tax), 'taxBase')}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>IVA (15%):</span>
+                                <span>C$ {money(data.tax, 'tax')}</span>
+                            </div>
+                        </>
+                    )}
                     <div className="flex justify-between font-bold text-sm mt-1">
                         <span>TOTAL:</span>
                         <span>C$ {money(data.total, 'total')}</span>
@@ -224,10 +247,12 @@ export const ReceiptTicket: React.FC<ReceiptTicketProps> = ({ data }) => {
                                 <span>Efectivo recibido:</span>
                                 <span>C$ {money(data.cashReceived, 'cashReceived')}</span>
                             </div>
-                            <div className="flex justify-between font-bold">
-                                <span>Vuelto:</span>
-                                <span>C$ {money(data.change ?? 0, 'change')}</span>
-                            </div>
+                            {typeof data.change === 'number' && data.change > 0 && (
+                                <div className="flex justify-between font-bold">
+                                    <span>Vuelto:</span>
+                                    <span>C$ {money(data.change, 'change')}</span>
+                                </div>
+                            )}
                         </>
                     )}
 

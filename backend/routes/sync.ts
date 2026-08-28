@@ -5,6 +5,7 @@ import { POS_SALE_ROLES } from '../middleware/accessPolicies';
 import { executeSaleWithResult, SaleError } from '../services/salesService.js';
 import {
     normalizeOfflineSalePayload,
+    offlineTransportIdentityIssue,
     offlineSyncFailureStatus,
     syncBodySchema,
 } from './syncPayload';
@@ -31,12 +32,11 @@ router.post('/', authenticate, checkRole(POS_SALE_ROLES), async (req: any, res: 
     }> = [];
 
     for (const sale of parsed.data.sales) {
-        if (sale.tenantId !== tenantId) {
+        const identityIssue = offlineTransportIdentityIssue(sale, { tenantId, userId });
+        if (identityIssue) {
             results.push({
                 offlineId: sale.offlineId,
-                status: 'failed',
-                code: 'TENANT_MISMATCH',
-                error: 'tenant mismatch',
+                ...identityIssue,
             });
             continue;
         }

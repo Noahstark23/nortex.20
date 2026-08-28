@@ -27,9 +27,9 @@ const txWithBatches = (batches: Array<{ id: string; batchNumber: string; stock: 
             }),
         },
         saleItemBatchAllocation: {
-            create: vi.fn(async ({ data }: any) => {
-                created.push(data);
-                return data;
+            createMany: vi.fn(async ({ data }: any) => {
+                created.push(...data);
+                return { count: data.length };
             }),
         },
     } as any;
@@ -49,6 +49,7 @@ describe('asignacion FEFO compartida', () => {
             quantity: '2.5',
             enforceComplete: true,
             capturedAt: new Date('2026-08-22T00:00:00.000Z'),
+            warehouseId: 'warehouse-a',
         });
 
         expect(result.allocations.map((allocation) => allocation.quantity.toString())).toEqual(['1', '1.5']);
@@ -57,10 +58,12 @@ describe('asignacion FEFO compartida', () => {
         expect(current.get('batch-later')).toBe(1.5);
         expect(created).toEqual([
             expect.objectContaining({
-                tenantId: 'tenant-a', saleItemId: 'sale-item-a', batchId: 'batch-early', quantity: '1.0000',
+                tenantId: 'tenant-a', saleItemId: 'sale-item-a', batchId: 'batch-early',
+                warehouseId: 'warehouse-a', quantity: '1.0000',
             }),
             expect.objectContaining({
-                tenantId: 'tenant-a', saleItemId: 'sale-item-a', batchId: 'batch-later', quantity: '1.5000',
+                tenantId: 'tenant-a', saleItemId: 'sale-item-a', batchId: 'batch-later',
+                warehouseId: 'warehouse-a', quantity: '1.5000',
             }),
         ]);
         expect(tx.productBatch.findMany).toHaveBeenCalledWith(expect.objectContaining({

@@ -14,6 +14,7 @@ import { z } from 'zod';
 import type { Request, Response, NextFunction } from 'express';
 import Decimal from 'decimal.js';
 import { MAX_QUANTITY, QUANTITY_DECIMAL_PLACES, validateQuantity } from '../../utils/quantity.js';
+import { fiscalCivilDate } from '../lib/fiscalAccess.js';
 
 // ============================================================
 // HELPERS
@@ -103,6 +104,15 @@ export const positiveQuantity = physicalQuantity.refine((value) => decimalPredic
     message: 'La cantidad debe ser mayor que cero',
 });
 
+/** Frontera nueva: no acepta JSON number; conserva el decimal exacto del cliente. */
+export const exactPositiveQuantity = z.string().trim().superRefine((value, ctx) => {
+    const parsed = positiveQuantity.safeParse(value);
+    if (parsed.success) return;
+    for (const issue of parsed.error.issues) {
+        ctx.addIssue({ code: 'custom', message: issue.message });
+    }
+});
+
 /** Cantidad física mayor o igual a cero; sale como string Decimal-safe. */
 export const nonNegativeQuantity = physicalQuantity.refine((value) => decimalPredicate(value, (decimal) => decimal.greaterThanOrEqualTo(0)), {
     message: 'La cantidad no puede ser negativa',
@@ -121,6 +131,24 @@ const numeric = z
 
 /** Método de pago permitido */
 const paymentMethod = z.enum(['CASH', 'CARD', 'TRANSFER', 'CREDIT', 'QR']);
+const customerPaymentMethod = z.enum(['CASH', 'CARD', 'TRANSFER', 'QR']);
+
+/**
+ * PUT /api/tenant/fiscal
+ *
+ * El régimen es una lista cerrada porque cambia el reconocimiento contable de
+ * ventas futuras. Los demás campos admiten cadena vacía/null para que la pantalla
+ * de configuración pueda limpiar valores previamente guardados.
+ */
+export const UpdateFiscalSettingsSchema = z.object({
+    taxId: z.string().trim().max(80).nullable().optional(),
+    address: z.string().trim().max(500).nullable().optional(),
+    phone: z.string().trim().max(80).nullable().optional(),
+    dgiAuthCode: z.string().trim().max(120).nullable().optional(),
+    fiscalRegime: z.enum(['GENERAL', 'CUOTA_FIJA']).optional(),
+}).strict().refine((value) => Object.values(value).some((field) => field !== undefined), {
+    message: 'Indicá al menos un dato fiscal',
+});
 
 // ============================================================
 // ESQUEMAS POR ENDPOINT
@@ -204,9 +232,39 @@ export const CreateCashMovementSchema = z.object({
 // POST /api/payments
 export const CreatePaymentSchema = z.object({
     saleId: z.string().min(1, 'saleId requerido'),
-    amount: moneyAmountPositive,
-    method: paymentMethod.optional(),
+    amount: moneyAmountPositive
+        .refine((value) => new Decimal(value).decimalPlaces() <= 2, { message: 'El abono admite como máximo 2 decimales' })
+        .refine((value) => new Decimal(value).lessThanOrEqualTo('99999999.99'), { message: 'El abono excede el máximo permitido' }),
+    method: customerPaymentMethod.optional(),
+    // La columna sigue nullable para filas históricas, pero toda mutación nueva
+    // debe poder distinguir un replay de un segundo abono real.
+    clientEventId: z.string().trim().uuid('clientEventId debe ser UUID'),
 });
+
+// POST /api/purchases/:id/pay — body vacío conserva la liquidación total
+// histórica; cualquier abono parcial exige UUID para que el retry sea seguro.
+export const SupplierPaymentRequestSchema = z.object({
+    amount: moneyAmountPositive
+        // JournalLine y Account son Decimal(14,2): no aceptar una precisión
+        // que el mayor redondearía de forma distinta al subledger de CxP.
+        .refine((value) => new Decimal(value).decimalPlaces() <= 2, {
+            message: 'El abono admite como máximo 2 decimales',
+        })
+        .refine((value) => new Decimal(value).lessThanOrEqualTo('9999999999.99'), {
+            message: 'El abono excede el máximo permitido',
+        })
+        .optional(),
+    method: z.enum(['CASH', 'TRANSFER', 'CARD', 'QR']).optional(),
+    clientEventId: z.string().trim().uuid('clientEventId debe ser UUID').optional(),
+    reference: z.preprocess(
+        (value) => value === null || value === '' ? undefined : value,
+        z.string().trim().min(1).max(191).optional(),
+    ),
+    notes: z.preprocess(
+        (value) => value === null || value === '' ? undefined : value,
+        z.string().trim().min(1).max(2000).optional(),
+    ),
+}).strict();
 
 // POST /api/b2b/order — orden del marketplace pagada con el wallet del tenant.
 // El total debe ser positivo y FINITO (parseFloat('Infinity') pasa moneyAmountPositive);
@@ -218,23 +276,29 @@ export const B2BOrderSchema = z.object({
     }),
 });
 
-// POST /api/stock-transfers — transferencia entre bodegas (mueve inventario).
-// Tope de ítems: cada ítem ejecuta ~7 queries dentro de la $transaction; sin
-// límite, un POST grande sostiene row-locks calientes hasta el timeout de la tx.
+// POST /api/stock-transfers — transferencia idempotente entre bodegas.
+// La API nueva exige UUID y cantidades textuales: aceptar Number acá perdería
+// precisión antes de que el servidor consulte modo/paso autoritativos.
 export const StockTransferSchema = z.object({
-    fromWarehouseId: z.string().min(1, 'Bodega de origen requerida'),
-    toWarehouseId:   z.string().min(1, 'Bodega de destino requerida'),
-    notes:           z.string().max(500).optional().nullable(),
-    items: z
-        .array(z.object({
-            productId: z.string().min(1, 'productId requerido'),
-            // Conserva el decimal como texto hasta consultar el modo/paso del
-            // producto dentro de la transacción. Convertir aquí a Number
-            // ocultaba entradas con más precisión de la soportada.
-            quantity:  positiveQuantity,
-        }))
-        .min(1, 'Se requiere al menos un ítem')
-        .max(50, 'Máximo 50 ítems por transferencia'),
+    clientEventId: z.uuid('clientEventId debe ser UUID').transform(value => value.toLowerCase()),
+    fromWarehouseId: z.string().trim().min(1, 'Bodega de origen requerida').max(191),
+    toWarehouseId: z.string().trim().min(1, 'Bodega de destino requerida').max(191),
+    notes: z.string().trim().max(500).optional().nullable(),
+    items: z.array(z.object({
+        productId: z.string().trim().min(1, 'productId requerido').max(191),
+        quantity: z.string().trim().min(1, 'Cantidad requerida').max(64).pipe(exactPositiveQuantity),
+    }).strict()).min(1, 'Se requiere al menos un ítem').max(50, 'Máximo 50 ítems por transferencia'),
+}).strict().superRefine((value, ctx) => {
+    if (value.fromWarehouseId === value.toWarehouseId) {
+        ctx.addIssue({ code: 'custom', path: ['toWarehouseId'], message: 'Origen y destino deben ser diferentes' });
+    }
+    const seen = new Set<string>();
+    value.items.forEach((item, index) => {
+        if (seen.has(item.productId)) {
+            ctx.addIssue({ code: 'custom', path: ['items', index, 'productId'], message: 'Producto repetido' });
+        }
+        seen.add(item.productId);
+    });
 });
 
 // POST /api/purchases
@@ -269,6 +333,9 @@ export const PurchaseUnitSchema = z.enum(['BASE', 'PACK']);
 
 export const PurchaseItemSchema = z.object({
     productId:   z.string().trim().min(1),
+    // Referencia opcional a la línea de OC. El servidor vuelve a comprobar que
+    // pertenezca a la OC y al producto del tenant antes de persistirla.
+    purchaseOrderItemId: historicalOptional(z.string().trim().min(1, 'purchaseOrderItemId inválido')),
     quantity:    positiveQuantity,
     unitCost:    moneyAmountPositive,
     // Compatibilidad: clientes anteriores siempre expresaron cantidad/costo en
@@ -287,6 +354,9 @@ export const CreatePurchaseSchema = z
         // y retenciones. No existe un default seguro: usar "ahora" archivaría
         // facturas retroactivas en el mes DGI equivocado.
         date:            purchaseDateInput,
+        // Fecha del mayor. Si el cliente no la envía, el transform final usa la
+        // fecha de factura para conservar el contrato histórico.
+        postingDate:     historicalOptional(purchaseDateInput),
         paymentMethod:  z.enum(['CASH', 'CREDIT']),
         dueDate:        historicalOptional(purchaseDateInput),
         notes:          historicalOptional(z.string().trim().max(500)),
@@ -303,7 +373,65 @@ export const CreatePurchaseSchema = z
                 message: 'La fecha de vencimiento es obligatoria para compras a crédito',
             });
         }
+    })
+    .transform((purchase) => ({
+        ...purchase,
+        postingDate: purchase.postingDate ?? purchase.date,
+    }));
+
+// POST /api/accounting/retenciones-sufridas
+// La retención es dinero y crédito fiscal real: conserva los decimales como
+// texto hasta el handler y fija la fecha a un día civil de Managua. La BD
+// conserva nullable los identificadores de filas históricas, pero la API
+// actual exige factura + UUID para reconciliar la CxC y hacer seguro el retry.
+const retencionMoney = moneyAmountPositive
+    .refine((value) => decimalPredicate(value, (decimal) => decimal.decimalPlaces() <= 2), {
+        message: 'El monto admite como máximo 2 decimales',
+    })
+    .refine((value) => decimalPredicate(value, (decimal) => decimal.lessThanOrEqualTo('9999999999.99')), {
+        message: 'El monto excede el máximo permitido',
     });
+
+const retencionDateInput = z.string()
+    .refine(
+        (value) => purchaseDateOnly.safeParse(value).success
+            || purchaseDateTimeWithOffset.safeParse(value).success,
+        { message: 'Fecha inválida: usa YYYY-MM-DD o datetime ISO con zona horaria' },
+    )
+    .transform((value) => purchaseDateOnly.safeParse(value).success
+        ? value
+        : fiscalCivilDate(value).isoDay);
+
+const optionalRetencionText = (maxLength: number) => z.preprocess(
+    (value) => value === null || (typeof value === 'string' && value.trim() === '')
+        ? undefined
+        : value,
+    z.string().trim().max(maxLength).optional(),
+);
+
+export const CreateRetencionSufridaSchema = z.object({
+    fecha: retencionDateInput,
+    clienteRetenedor: z.string().trim().min(1, 'El cliente retenedor es requerido').max(160),
+    tipo: z.enum(['IR_2', 'IMI_1']),
+    baseAmount: retencionMoney,
+    amount: retencionMoney,
+    numeroConstancia: optionalRetencionText(60),
+    saleId: z.string().trim().min(1, 'saleId requerido').max(191, 'saleId inválido'),
+    clientEventId: z.preprocess(
+        (value) => value === null ? undefined : value,
+        z.string().trim().uuid('clientEventId debe ser UUID'),
+    ),
+}).strict().superRefine((retencion, ctx) => {
+    const amountExceedsBase = decimalPredicate(retencion.amount, (amount) =>
+        decimalPredicate(retencion.baseAmount, (base) => amount.greaterThan(base)));
+    if (amountExceedsBase) {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['amount'],
+            message: 'El monto retenido no puede exceder la base',
+        });
+    }
+});
 
 // POST /api/inventory/adjust
 export const InventoryAdjustSchema = z.object({
@@ -506,11 +634,21 @@ export const BulkEditProductsSchema = z
 
 // POST /api/inventory/batches  [Bodeguero A4 — alta de lote]
 export const CreateBatchSchema = z.object({
-    productId:   z.string().min(1, 'productId requerido'),
-    batchNumber: z.string().trim().min(1, 'Número de lote requerido').max(100),
-    expiryDate:  z.string().min(1, 'Fecha de vencimiento requerida'),
-    quantity:    positiveQuantity,
-});
+    clientEventId: z.string().trim().uuid('clientEventId debe ser UUID'),
+    productId:     z.string().trim().min(1, 'productId requerido'),
+    warehouseId:   z.string().trim().min(1, 'Bodega requerida'),
+    batchNumber:   z.string().trim().min(1, 'Número de lote requerido').max(100),
+    expiryDate:    z.string().regex(/^\d{4}-\d{2}-\d{2}$/u, 'Fecha de vencimiento inválida'),
+    quantity:      exactPositiveQuantity,
+}).strict();
+
+// POST /api/inventory/batches/:batchId/writeoff  [Bodeguero B3 — merma]
+export const WriteoffBatchSchema = z.object({
+    clientEventId: z.string().trim().uuid('clientEventId debe ser UUID'),
+    warehouseId:   z.string().trim().min(1, 'Bodega requerida'),
+    quantity:      exactPositiveQuantity,
+    reason:        z.string().trim().min(3, 'La justificación es obligatoria (mín. 3 caracteres)').max(500),
+}).strict();
 
 // POST /api/stock-counts  [Bodeguero B1 — toma física]
 export const CreateStockCountSchema = z

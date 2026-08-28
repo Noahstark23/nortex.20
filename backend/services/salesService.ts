@@ -27,10 +27,17 @@ import {
     allocateSaleItemBatchesFefo,
     BatchAllocationError,
 } from './saleBatchAllocationService.js';
+import { resolveBatchWarehouseLedgerMode } from './productBatchWarehouseLedgerService.js';
 import {
     offlineReplayPayloadHash,
     type OfflineReplaySaleInput,
 } from '../lib/offlineSaleReplay.js';
+import { desglosarVentaConExoneracion } from './nicaTax.js';
+import {
+    hasFiscalRegimeVersionConflict,
+    normalizeFiscalRegime,
+    resolveSaleFiscalAmounts,
+} from '../../utils/fiscalRegime.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -67,6 +74,19 @@ export class SaleError extends Error {
         this.name = 'SaleError';
     }
 }
+
+export const assertOfflineFiscalRegimeVersion = (
+    offlineSync: boolean,
+    observedVersion: number | null | undefined,
+    currentVersion: number,
+): void => {
+    if (!offlineSync || !hasFiscalRegimeVersionConflict(observedVersion, currentVersion)) return;
+    throw new SaleError(
+        'RECONCILIATION_REQUIRED',
+        409,
+        'El régimen fiscal cambió desde que se preparó la venta; requiere conciliación',
+    );
+};
 
 const quantityInput = z
     .union([z.string(), z.number()])
@@ -150,6 +170,10 @@ export const CreateSaleSchema = z.object({
     globalDiscount: percentageInput.optional().default('0'),
     source: z.enum(['POS', 'WHATSAPP', 'PUBLIC_ORDER', 'OFFLINE_SYNC']).default('POS'),
     offlineId: z.string().trim().min(1).max(191).optional(),
+    // Solo OFFLINE_SYNC compara esta foto con la versión autoritativa del tenant.
+    // Las ventas online aceptan el campo por compatibilidad, pero nunca deciden
+    // su régimen a partir del cliente.
+    fiscalRegimeVersion: z.number().int().positive().optional(),
 });
 
 type CreateSaleInput = z.output<typeof CreateSaleSchema>;
@@ -266,8 +290,16 @@ const findSaleByOfflineId = async (
  * es seguro declararlas equivalentes por el UUID solamente.
  */
 export const assertOfflineReplayMatches = (
-    existing: { offlinePayloadHash?: string | null },
+    existing: {
+        offlinePayloadHash?: string | null;
+        fiscalRegimeVersionAtSale?: number | null;
+    },
     expectedHash: string,
+    compatibility?: {
+        /** Huella de la solicitud online original, que aún no enviaba versión. */
+        versionlessOnlineHash: string | null;
+        observedFiscalRegimeVersion: number | undefined;
+    },
 ): void => {
     if (!existing.offlinePayloadHash) {
         throw new SaleError(
@@ -276,13 +308,25 @@ export const assertOfflineReplayMatches = (
             'La venta existente no tiene una huella offline verificable y requiere conciliacion',
         );
     }
-    if (existing.offlinePayloadHash !== expectedHash) {
-        throw new SaleError(
-            'OFFLINE_PAYLOAD_MISMATCH',
-            409,
-            'El offlineId ya existe con un contenido diferente y requiere conciliacion',
-        );
-    }
+    if (existing.offlinePayloadHash === expectedHash) return;
+
+    // Compatibilidad segura para respuesta online perdida: /api/sales fijaba
+    // employeeId desde Shift, pero el POS todavía no enviaba fiscalRegimeVersion
+    // en esa solicitud. La fila IndexedDB sí la conserva. Solo aceptamos la
+    // huella online sin versión cuando la foto fiscal persistida de la venta
+    // demuestra exactamente la versión observada por la cola.
+    if (
+        compatibility?.versionlessOnlineHash
+        && existing.offlinePayloadHash === compatibility.versionlessOnlineHash
+        && compatibility.observedFiscalRegimeVersion !== undefined
+        && existing.fiscalRegimeVersionAtSale === compatibility.observedFiscalRegimeVersion
+    ) return;
+
+    throw new SaleError(
+        'OFFLINE_PAYLOAD_MISMATCH',
+        409,
+        'El offlineId ya existe con un contenido diferente y requiere conciliacion',
+    );
 };
 
 const measurementEventIds = (input: CreateSaleInput): string[] => [
@@ -475,6 +519,88 @@ const writeKardex = async (
     }
 };
 
+type OfflineShiftIdentity = {
+    id: string;
+    employeeId: string | null;
+};
+
+/**
+ * Un replay puede llegar después del cierre, por eso no exige status OPEN.
+ * Sí exige que el turno exista hoy bajo el mismo tenant y usuario autenticado:
+ * Shift.userId puede cambiar mediante el traspaso explícito de caja y no es
+ * seguro reatribuir una cola vieja al dueño actual de otra sesión.
+ */
+const findOwnedOfflineShift = async (
+    client: Pick<PrismaTx, 'shift'>,
+    tenantId: string,
+    userId: string,
+    shiftId: string | null,
+): Promise<OfflineShiftIdentity> => {
+    if (!shiftId) {
+        throw new SaleError(
+            'RECONCILIATION_REQUIRED',
+            409,
+            'La venta offline no tiene un turno verificable y requiere conciliación',
+        );
+    }
+    const shift = await client.shift.findFirst({
+        where: { id: shiftId, tenantId, userId },
+        select: { id: true, employeeId: true },
+    });
+    if (!shift) {
+        throw new SaleError(
+            'RECONCILIATION_REQUIRED',
+            409,
+            'El turno offline es ajeno, fue reasignado o no existe; requiere conciliación',
+        );
+    }
+    return shift;
+};
+
+/**
+ * La venta nueva bloquea la fila del turno hasta confirmar. Así un traspaso de
+ * caja no puede cambiar Shift.userId entre la comprobación y el Sale.create.
+ */
+const lockOwnedOfflineShift = async (
+    tx: PrismaTx,
+    tenantId: string,
+    userId: string,
+    shiftId: string,
+): Promise<OfflineShiftIdentity> => {
+    const rows = await tx.$queryRaw<OfflineShiftIdentity[]>(Prisma.sql`
+        SELECT \`id\`, \`employeeId\`
+          FROM \`Shift\`
+         WHERE \`id\` = ${shiftId}
+           AND \`tenantId\` = ${tenantId}
+           AND \`userId\` = ${userId}
+         LIMIT 1
+         FOR UPDATE
+    `);
+    if (rows.length !== 1) {
+        throw new SaleError(
+            'RECONCILIATION_REQUIRED',
+            409,
+            'El turno offline fue reasignado durante la sincronización y requiere conciliación',
+        );
+    }
+    return rows[0];
+};
+
+const assertOfflineEmployeeClaim = (
+    claimedEmployeeId: string | null | undefined,
+    shiftEmployeeId: string | null,
+): void => {
+    // null/undefined son legítimos en clientes legacy: el servidor completa la
+    // identidad desde Shift. Solo una afirmación explícita y divergente se
+    // considera manipulación o estado obsoleto.
+    if (claimedEmployeeId == null || claimedEmployeeId === shiftEmployeeId) return;
+    throw new SaleError(
+        'RECONCILIATION_REQUIRED',
+        409,
+        'La identidad de cajero no coincide con el turno y requiere conciliación',
+    );
+};
+
 export async function executeSaleWithResult(
     tenantId: string,
     userId: string,
@@ -490,12 +616,25 @@ export async function executeSaleWithResult(
         throw new SaleError('INVALID_INPUT', 400, message || 'Datos de entrada invalidos');
     }
 
-    const input = parsed.data;
+    const submittedInput = parsed.data;
     const offlineSync = options.offlineSync === true;
-    const source = offlineSync ? 'OFFLINE_SYNC' : input.source;
+    const source = offlineSync ? 'OFFLINE_SYNC' : submittedInput.source;
     if (!tenantId || !userId) {
         throw new SaleError('INVALID_INPUT', 401, 'Identidad de venta incompleta');
     }
+
+    // Este guard corre ANTES de cualquier early-return idempotente. Una fila
+    // legacy sin turno, de otra sesión o con employeeId forjado nunca puede
+    // aparecer como `skipped` ni tocar dinero/stock.
+    const offlineShift = offlineSync
+        ? await findOwnedOfflineShift(prisma, tenantId, userId, shiftId)
+        : null;
+    if (offlineShift) {
+        assertOfflineEmployeeClaim(submittedInput.employeeId, offlineShift.employeeId);
+    }
+    const input: CreateSaleInput = offlineShift
+        ? { ...submittedInput, employeeId: offlineShift.employeeId }
+        : submittedInput;
 
     const offlinePayloadHash = input.offlineId
         ? offlineReplayPayloadHash({
@@ -505,11 +644,30 @@ export async function executeSaleWithResult(
             input: input as unknown as OfflineReplaySaleInput,
         })
         : null;
+    const versionlessOnlineHash = input.offlineId
+        && offlineSync
+        && input.fiscalRegimeVersion !== undefined
+        ? offlineReplayPayloadHash({
+            tenantId,
+            userId,
+            shiftId,
+            input: {
+                ...input,
+                fiscalRegimeVersion: undefined,
+            } as unknown as OfflineReplaySaleInput,
+        })
+        : null;
+    const assertReplayMatches = (existing: Sale): void => {
+        assertOfflineReplayMatches(existing, offlinePayloadHash!, {
+            versionlessOnlineHash,
+            observedFiscalRegimeVersion: input.fiscalRegimeVersion,
+        });
+    };
 
     if (input.offlineId) {
         const existing = await findSaleByOfflineId(tenantId, input.offlineId);
         if (existing) {
-            assertOfflineReplayMatches(existing, offlinePayloadHash!);
+            assertReplayMatches(existing);
             return { sale: existing, idempotentReplay: true };
         }
     }
@@ -518,7 +676,7 @@ export async function executeSaleWithResult(
     const labelHashes = expectedLabelHashes(input);
     const eventReplay = await findSaleByMeasurementEvents(tenantId, eventIds, labelHashes);
     if (eventReplay.sale) {
-        if (offlinePayloadHash) assertOfflineReplayMatches(eventReplay.sale, offlinePayloadHash);
+        if (offlinePayloadHash) assertReplayMatches(eventReplay.sale);
         return { sale: eventReplay.sale, idempotentReplay: true };
     }
     if (eventReplay.hasConflict) {
@@ -554,15 +712,44 @@ export async function executeSaleWithResult(
                 if (!shift) {
                     throw new SaleError('NO_SHIFT', 400, 'CAJA CERRADA: El turno no esta abierto');
                 }
-            } else if (offlineSync && shiftId) {
-                // Una cola puede llegar despues del cierre; se valida pertenencia,
-                // no estado, para conservar el arqueo historico sin IDOR.
-                const shift = await tx.shift.findFirst({
-                    where: { id: shiftId, tenantId, userId },
-                    select: { id: true },
-                });
-                if (!shift) throw new SaleError('NO_SHIFT', 400, 'Turno offline ajeno, de otro usuario o inexistente');
+            } else if (offlineSync) {
+                // Revalidar dentro de la transacción cierra la carrera con
+                // /api/shifts/:id/tomar entre el guard previo y la escritura.
+                const transactionalShift = await lockOwnedOfflineShift(
+                    tx,
+                    tenantId,
+                    userId,
+                    shiftId!,
+                );
+                if (transactionalShift.employeeId !== offlineShift!.employeeId) {
+                    throw new SaleError(
+                        'RECONCILIATION_REQUIRED',
+                        409,
+                        'La identidad del turno cambió durante la sincronización; requiere conciliación',
+                    );
+                }
             }
+
+            // Una sola lectura autoritativa dentro de la transacción: el régimen
+            // nunca viene del cliente y se congela junto con la venta.
+            const tenantConfig = await tx.tenant.findUnique({
+                where: { id: tenantId },
+                select: {
+                    allowNegativeStock: true,
+                    fiscalRegime: true,
+                    fiscalRegimeVersion: true,
+                },
+            });
+            if (!tenantConfig) {
+                throw new SaleError('INVALID_INPUT', 404, 'Negocio no encontrado');
+            }
+            assertOfflineFiscalRegimeVersion(
+                offlineSync,
+                input.fiscalRegimeVersion,
+                tenantConfig.fiscalRegimeVersion,
+            );
+            const fiscalRegime = normalizeFiscalRegime(tenantConfig.fiscalRegime);
+            const enforceStock = !offlineSync && !tenantConfig.allowNegativeStock;
 
             let customer = null as Awaited<ReturnType<typeof tx.customer.findFirst>>;
             if (input.customerId) {
@@ -579,7 +766,13 @@ export async function executeSaleWithResult(
                     select: { id: true },
                 });
                 if (!employee) {
-                    throw new SaleError('EMPLOYEE_NOT_FOUND', 404, 'Empleado no encontrado');
+                    throw offlineSync
+                        ? new SaleError(
+                            'RECONCILIATION_REQUIRED',
+                            409,
+                            'El cajero autoritativo del turno ya no es verificable; requiere conciliación',
+                        )
+                        : new SaleError('EMPLOYEE_NOT_FOUND', 404, 'Empleado no encontrado');
                 }
             }
 
@@ -600,6 +793,10 @@ export async function executeSaleWithResult(
                 if (error instanceof SaleItemNormalizationError) throw mapNormalizationError(error);
                 throw error;
             }
+            const requiresBatchWarehouseLedger = normalizedItems.some(item => item.requiresBatchTracking);
+            const batchWarehouseLedgerMode = requiresBatchWarehouseLedger
+                ? await resolveBatchWarehouseLedgerMode(tx, tenantId)
+                : 'OFF' as const;
 
             const quotationId = authoritativeQuotationId(normalizedItems, globalDiscount);
             if (quotationId) {
@@ -650,6 +847,12 @@ export async function executeSaleWithResult(
                 new Decimal(0),
             );
             const exemptTotal = exemptSubtotal.mul(globalFactor).toDecimalPlaces(2);
+            const generalBreakdown = desglosarVentaConExoneracion(finalTotal, exemptTotal);
+            const fiscalAmounts = resolveSaleFiscalAmounts(
+                finalTotal,
+                generalBreakdown.iva,
+                fiscalRegime,
+            );
 
             let finalStatus = 'COMPLETED';
             let creditBalance = new Decimal(0);
@@ -694,6 +897,9 @@ export async function executeSaleWithResult(
                     tenantId,
                     total: finalTotal.toNumber(),
                     exemptTotal: exemptTotal.toNumber(),
+                    fiscalRegimeAtSale: fiscalRegime,
+                    fiscalRegimeVersionAtSale: tenantConfig.fiscalRegimeVersion,
+                    vatAmountAtSale: fiscalAmounts.vatAmount.toFixed(4),
                     status: finalStatus,
                     paymentMethod: input.paymentMethod,
                     customerName: input.customerName ?? '',
@@ -718,11 +924,6 @@ export async function executeSaleWithResult(
                 where: { tenantId, sellerId: userId, isActive: true },
                 select: { id: true },
             });
-            const tenantConfig = await tx.tenant.findUnique({
-                where: { id: tenantId },
-                select: { allowNegativeStock: true },
-            });
-            const enforceStock = !offlineSync && !(tenantConfig?.allowNegativeStock ?? false);
             let costTotal = new Decimal(0);
 
             for (const item of normalizedItems) {
@@ -799,10 +1000,14 @@ export async function executeSaleWithResult(
                             quantity: item.quantity,
                             enforceComplete: enforceStock,
                             capturedAt: saleCreatedAt,
+                            batchWarehouseLedgerMode,
+                            warehouseId: stock.warehouseId,
+                            userId,
+                            saleId: created.id,
                         });
                     } catch (error) {
                         if (error instanceof BatchAllocationError) {
-                            throw new SaleError('INSUFFICIENT_STOCK', 422, error.message);
+                            throw new SaleError('INSUFFICIENT_STOCK', error.httpStatus, error.message);
                         }
                         throw error;
                     }
@@ -873,7 +1078,11 @@ export async function executeSaleWithResult(
                 costTotal.toDecimalPlaces(2).toNumber(),
                 input.paymentMethod,
                 exemptTotal.toNumber(),
-                { date: saleCreatedAt },
+                {
+                    date: saleCreatedAt,
+                    fiscalRegime,
+                    vatAmount: fiscalAmounts.vatAmount,
+                },
             );
 
             await tx.auditLog.create({
@@ -885,6 +1094,9 @@ export async function executeSaleWithResult(
                         saleId: created.id,
                         offlineId: input.offlineId ?? null,
                         total: finalTotal.toFixed(2),
+                        fiscalRegime,
+                        fiscalRegimeVersion: tenantConfig.fiscalRegimeVersion,
+                        vatAmount: fiscalAmounts.vatAmount.toFixed(4),
                         source,
                         quotationId,
                         itemCount: normalizedItems.length,
@@ -909,13 +1121,13 @@ export async function executeSaleWithResult(
             if (input.offlineId) {
                 const existing = await findSaleByOfflineId(tenantId, input.offlineId);
                 if (existing) {
-                    assertOfflineReplayMatches(existing, offlinePayloadHash!);
+                    assertReplayMatches(existing);
                     return { sale: existing, idempotentReplay: true };
                 }
             }
             const replay = await findSaleByMeasurementEvents(tenantId, eventIds, labelHashes);
             if (replay.sale) {
-                if (offlinePayloadHash) assertOfflineReplayMatches(replay.sale, offlinePayloadHash);
+                if (offlinePayloadHash) assertReplayMatches(replay.sale);
                 return { sale: replay.sale, idempotentReplay: true };
             }
         }

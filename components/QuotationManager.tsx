@@ -5,6 +5,48 @@ import { useNavigate } from 'react-router-dom';
 import { formatMoney } from '../utils/money';
 import Decimal from 'decimal.js';
 import { formatQuantityValue, validateQuantity } from '../utils/quantity';
+import {
+    FISCAL_REGIME_CUOTA_FIJA,
+    includedVatFromGross,
+    normalizeFiscalRegime,
+    resolveSaleFiscalAmounts,
+    type FiscalRegime,
+} from '../utils/fiscalRegime';
+import {
+    normalizeFiscalSettingsSnapshot,
+    type FiscalSettingsSnapshot,
+} from '../utils/fiscalSettingsSnapshot';
+import {
+    claveTraspasoCarrito,
+    resolverIdentidadPersistencia,
+    serializarTraspasoCarrito,
+} from '../utils/cartPersistence';
+
+type FiscalQuotation = Quotation & {
+    fiscalRegimeAtQuote?: FiscalRegime;
+};
+
+const fiscalSettingsFromTenantCache = (): FiscalSettingsSnapshot => {
+    try {
+        return normalizeFiscalSettingsSnapshot(
+            JSON.parse(localStorage.getItem('nortex_tenant_data') || '{}'),
+        );
+    } catch {
+        return normalizeFiscalSettingsSnapshot(undefined);
+    }
+};
+
+const cacheFiscalSettings = (settings: FiscalSettingsSnapshot): void => {
+    try {
+        const raw = localStorage.getItem('nortex_tenant_data');
+        if (!raw) return;
+        const tenant = JSON.parse(raw);
+        if (!tenant || typeof tenant !== 'object' || Array.isArray(tenant) || typeof tenant.id !== 'string') return;
+        localStorage.setItem('nortex_tenant_data', JSON.stringify({ ...tenant, ...settings }));
+    } catch {
+        // El cache es un fallback; una entrada ilegible no bloquea cotizaciones.
+    }
+};
 
 const sanitizeDecimalInput = (raw: string): string => {
     const cleaned = raw.replace(/[^\d.]/g, '');
@@ -35,10 +77,19 @@ const publicOrderLineTotal = (item: Record<string, unknown>): Decimal => {
 
 const QuotationManager: React.FC = () => {
     const navigate = useNavigate();
+    // La cotización visible queda ligada a la sesión que montó la pantalla.
+    // Otra pestaña puede cerrar sesión e iniciar con otro cajero mientras esta
+    // sigue abierta; en ese caso no debemos escribir datos viejos bajo la
+    // identidad nueva que apareció en localStorage.
+    const [identidadSesion] = useState(() => resolverIdentidadPersistencia(
+        localStorage.getItem('nortex_tenant_data'),
+        localStorage.getItem('nortex_user'),
+    ));
     const [activeTab, setActiveTab] = useState<'NEW' | 'HISTORY' | 'WEB_ORDERS'>('NEW');
 
     const [products, setProducts] = useState<Product[]>([]);
     const [cart, setCart] = useState<CartItem[]>([]);
+    const [fiscalSettings, setFiscalSettings] = useState<FiscalSettingsSnapshot>(fiscalSettingsFromTenantCache);
 
     useEffect(() => {
         fetchProducts();
@@ -58,13 +109,31 @@ const QuotationManager: React.FC = () => {
             console.error('Error fetching products:', error);
         }
     };
+
+    const fetchFiscalSettings = async () => {
+        try {
+            const token = localStorage.getItem('nortex_token');
+            const res = await fetch('/api/tenant/fiscal-settings', {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!res.ok) return;
+            const payload = await res.json();
+            setFiscalSettings(previous => {
+                const normalized = normalizeFiscalSettingsSnapshot(payload, previous);
+                cacheFiscalSettings(normalized);
+                return normalized;
+            });
+        } catch {
+            // Sin red se conserva el régimen/version del tenant cacheado.
+        }
+    };
     const [searchTerm, setSearchTerm] = useState('');
     const [customerName, setCustomerName] = useState('');
     const [customerRuc, setCustomerRuc] = useState('');
     const [quantityErrors, setQuantityErrors] = useState<Record<string, string>>({});
 
     // Persistence for history
-    const [history, setHistory] = useState<Quotation[]>([]);
+    const [history, setHistory] = useState<FiscalQuotation[]>([]);
 
     // Web Orders (Public Orders)
     const [webOrders, setWebOrders] = useState<PublicOrder[]>([]);
@@ -171,6 +240,7 @@ const QuotationManager: React.FC = () => {
         fetchQuotations();
         fetchWebOrders();
         fetchTenantInfo();
+        fetchFiscalSettings();
     }, []);
 
     // --- LOGIC ---
@@ -243,14 +313,22 @@ const QuotationManager: React.FC = () => {
             acc.subtotal = acc.subtotal.plus(lineTotal);
             return acc;
         }
-        const net = lineTotal.div('1.15').toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        const iva = includedVatFromGross(lineTotal).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        const net = lineTotal.minus(iva);
         acc.subtotal = acc.subtotal.plus(net);
-        acc.tax = acc.tax.plus(lineTotal.minus(net));
+        acc.tax = acc.tax.plus(iva);
         return acc;
     }, { subtotal: new Decimal(0), tax: new Decimal(0), grand: new Decimal(0) });
     const grandTotal = quoteTotals.grand.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-    const total = quoteTotals.subtotal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-    const tax = quoteTotals.tax.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const generalTax = quoteTotals.tax.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const quoteFiscalAmounts = resolveSaleFiscalAmounts(
+        grandTotal,
+        generalTax,
+        fiscalSettings.fiscalRegime,
+    );
+    const total = quoteFiscalAmounts.netRevenue.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const tax = quoteFiscalAmounts.vatAmount.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const isFixedQuota = quoteFiscalAmounts.fiscalRegime === FISCAL_REGIME_CUOTA_FIJA;
 
     const handleSaveQuotation = async () => {
         if (cart.length === 0) return alert("Agrega productos primero.");
@@ -277,7 +355,18 @@ const QuotationManager: React.FC = () => {
             });
 
             if (res.ok) {
-                const savedQuote = await res.json();
+                const response = await res.json();
+                // El POST recalcula importes y régimen desde el tenant del JWT.
+                // Si los devuelve, esos snapshots reemplazan la proyección local.
+                const savedQuote: FiscalQuotation = {
+                    ...response,
+                    tax: response.tax ?? tax.toNumber(),
+                    subtotal: response.subtotal ?? total.toNumber(),
+                    total: response.total ?? grandTotal.toNumber(),
+                    fiscalRegimeAtQuote: normalizeFiscalRegime(
+                        response.fiscalRegimeAtQuote ?? fiscalSettings.fiscalRegime,
+                    ),
+                };
                 setHistory(prev => [savedQuote, ...prev]);
 
                 // Reset
@@ -295,10 +384,36 @@ const QuotationManager: React.FC = () => {
         }
     };
 
-    const convertToSale = (quote: Quotation) => {
+    const convertToSale = (quote: FiscalQuotation) => {
         if (confirm(`¿Convertir Cotización ${quote.id} en una Venta Activa?`)) {
-            // WE USE THE EXISTING HOOK IN POS.TSX
-            localStorage.setItem('nortex_pending_cart', JSON.stringify(quote.items));
+            const identidadActual = resolverIdentidadPersistencia(
+                localStorage.getItem('nortex_tenant_data'),
+                localStorage.getItem('nortex_user'),
+            );
+            if (
+                !identidadSesion
+                || !identidadActual
+                || identidadSesion.tenantId !== identidadActual.tenantId
+                || identidadSesion.userId !== identidadActual.userId
+            ) {
+                alert('No se pudo verificar tu sesión. Volvé a iniciar sesión antes de convertir la cotización.');
+                return;
+            }
+            const identidad = identidadSesion;
+            const traspaso = serializarTraspasoCarrito({
+                identidad,
+                referenciaId: quote.id,
+                lineas: quote.items,
+                ahoraMs: Date.now(),
+            });
+            if (!traspaso) {
+                alert('La cotización tiene datos incompletos y no se puede enviar a caja. Actualizá la página e intentá de nuevo.');
+                return;
+            }
+            localStorage.setItem(
+                claveTraspasoCarrito(identidad.tenantId, identidad.userId),
+                traspaso,
+            );
 
             // Mark as converted
             const updated = history.map(q => q.id === quote.id ? { ...q, status: 'CONVERTED' as const } : q);
@@ -717,8 +832,12 @@ const QuotationManager: React.FC = () => {
 
                     <div className="p-6 bg-surface-900 border-t border-white/[0.06] text-slate-100">
                         <div className="space-y-2 text-sm mb-4">
-                            <div className="flex justify-between text-slate-500"><span>Subtotal</span><span className="font-mono tabular-nums">{formatMoney(total.toNumber())}</span></div>
-                            <div className="flex justify-between text-slate-500"><span>IVA (15%)</span><span className="font-mono tabular-nums">{formatMoney(tax.toNumber())}</span></div>
+                            {!isFixedQuota && (
+                                <>
+                                    <div className="flex justify-between text-slate-500"><span>Subtotal</span><span className="font-mono tabular-nums">{formatMoney(total.toNumber())}</span></div>
+                                    <div className="flex justify-between text-slate-500"><span>IVA (15%)</span><span className="font-mono tabular-nums">{formatMoney(tax.toNumber())}</span></div>
+                                </>
+                            )}
                             <div className="flex justify-between font-bold text-slate-100 text-lg pt-2 border-t border-white/[0.04]"><span>Total</span><span className="font-mono tabular-nums">{formatMoney(grandTotal.toNumber())}</span></div>
                         </div>
 

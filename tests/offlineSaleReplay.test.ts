@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const saleFindFirst = vi.hoisted(() => vi.fn());
+const shiftFindFirst = vi.hoisted(() => vi.fn());
 const transaction = vi.hoisted(() => vi.fn());
 
 vi.mock('../backend/lib/prisma.js', () => {
     const mockedPrisma = {
         sale: { findFirst: saleFindFirst },
+        shift: { findFirst: shiftFindFirst },
         $transaction: transaction,
     };
     return { default: mockedPrisma, prisma: mockedPrisma };
@@ -17,6 +19,7 @@ import {
     type OfflineReplaySaleInput,
 } from '../backend/lib/offlineSaleReplay';
 import {
+    assertOfflineFiscalRegimeVersion,
     CreateSaleSchema,
     executeSaleWithResult,
 } from '../backend/services/salesService';
@@ -52,7 +55,30 @@ const fingerprint = (raw: ReturnType<typeof rawSale>): string => {
 describe('idempotencia fuerte de ventas offline', () => {
     beforeEach(() => {
         saleFindFirst.mockReset();
+        shiftFindFirst.mockReset();
+        shiftFindFirst.mockResolvedValue({ id: 'shift-a', employeeId: null });
         transaction.mockReset();
+    });
+
+    it('valida una versión fiscal positiva y entera cuando el cliente la observa', () => {
+        expect(CreateSaleSchema.parse(rawSale({ fiscalRegimeVersion: 3 })).fiscalRegimeVersion).toBe(3);
+        for (const fiscalRegimeVersion of [0, -1, 1.5, '3']) {
+            expect(CreateSaleSchema.safeParse(rawSale({ fiscalRegimeVersion })).success).toBe(false);
+        }
+    });
+
+    it('manda a conciliación solo el sync offline con versión fiscal divergente', () => {
+        expect(() => assertOfflineFiscalRegimeVersion(true, 2, 2)).not.toThrow();
+        expect(() => assertOfflineFiscalRegimeVersion(true, undefined, 1)).not.toThrow();
+        expect(() => assertOfflineFiscalRegimeVersion(false, 1, 2)).not.toThrow();
+        for (const observedVersion of [undefined, 1]) {
+            expect(() => assertOfflineFiscalRegimeVersion(true, observedVersion, 2)).toThrowError(
+                expect.objectContaining({
+                    code: 'RECONCILIATION_REQUIRED',
+                    httpStatus: 409,
+                }),
+            );
+        }
     });
 
     it('misma tenant, offlineId y payload devuelve la venta como replay omitido', async () => {
@@ -77,6 +103,177 @@ describe('idempotencia fuerte de ventas offline', () => {
         expect(saleFindFirst).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ tenantId: 'tenant-a' }),
         }));
+        expect(shiftFindFirst).toHaveBeenCalledWith({
+            where: { id: 'shift-a', tenantId: 'tenant-a', userId: 'user-a' },
+            select: { id: true, employeeId: true },
+        });
+    });
+
+    it('rechaza una fila sin turno antes de declararla replay idempotente', async () => {
+        const payload = rawSale();
+        saleFindFirst.mockResolvedValue({
+            id: 'sale-existing',
+            offlinePayloadHash: fingerprint(payload),
+        });
+
+        await expect(executeSaleWithResult(
+            'tenant-a',
+            'user-a',
+            null,
+            payload,
+            { offlineSync: true },
+        )).rejects.toMatchObject({
+            code: 'RECONCILIATION_REQUIRED',
+            httpStatus: 409,
+        });
+        expect(saleFindFirst).not.toHaveBeenCalled();
+        expect(transaction).not.toHaveBeenCalled();
+    });
+
+    it('rechaza turno ajeno o reasignado antes de tocar idempotencia', async () => {
+        shiftFindFirst.mockResolvedValue(null);
+
+        await expect(executeSaleWithResult(
+            'tenant-a',
+            'user-atacante',
+            'shift-a',
+            rawSale(),
+            { offlineSync: true },
+        )).rejects.toMatchObject({
+            code: 'RECONCILIATION_REQUIRED',
+            httpStatus: 409,
+        });
+        expect(shiftFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: 'shift-a', tenantId: 'tenant-a', userId: 'user-atacante' },
+        }));
+        expect(saleFindFirst).not.toHaveBeenCalled();
+    });
+
+    it('acepta un turno legítimo cerrado y completa employeeId desde el turno', async () => {
+        shiftFindFirst.mockResolvedValue({
+            id: 'shift-a',
+            employeeId: 'employee-authoritative',
+            status: 'CLOSED',
+        });
+        // Simula la venta online aceptada cuya respuesta se perdió: el endpoint
+        // online ya había fijado employeeId desde el turno y source POS.
+        const authoritativePayload = rawSale({
+            employeeId: 'employee-authoritative',
+            source: 'POS',
+        });
+        const existing = {
+            id: 'sale-existing',
+            offlinePayloadHash: fingerprint(authoritativePayload),
+        };
+        saleFindFirst.mockResolvedValue(existing);
+
+        const result = await executeSaleWithResult(
+            'tenant-a',
+            'user-a',
+            'shift-a',
+            rawSale({ employeeId: null }),
+            { offlineSync: true },
+        );
+
+        expect(result).toEqual({ sale: existing, idempotentReplay: true });
+        const lookup = shiftFindFirst.mock.calls[0]?.[0];
+        expect(lookup.where).toEqual({ id: 'shift-a', tenantId: 'tenant-a', userId: 'user-a' });
+        expect(lookup.where).not.toHaveProperty('status');
+    });
+
+    it('manda a conciliación un employeeId cliente divergente del turno', async () => {
+        shiftFindFirst.mockResolvedValue({ id: 'shift-a', employeeId: 'employee-authoritative' });
+
+        await expect(executeSaleWithResult(
+            'tenant-a',
+            'user-a',
+            'shift-a',
+            rawSale({ employeeId: 'employee-forged' }),
+            { offlineSync: true },
+        )).rejects.toMatchObject({
+            code: 'RECONCILIATION_REQUIRED',
+            httpStatus: 409,
+        });
+        expect(saleFindFirst).not.toHaveBeenCalled();
+        expect(transaction).not.toHaveBeenCalled();
+    });
+
+    it('conserva compatibilidad cuando employeeId explícito coincide con el turno', async () => {
+        shiftFindFirst.mockResolvedValue({ id: 'shift-a', employeeId: 'employee-authoritative' });
+        const payload = rawSale({ employeeId: 'employee-authoritative' });
+        const existing = {
+            id: 'sale-existing',
+            offlinePayloadHash: fingerprint(payload),
+        };
+        saleFindFirst.mockResolvedValue(existing);
+
+        await expect(executeSaleWithResult(
+            'tenant-a',
+            'user-a',
+            'shift-a',
+            payload,
+            { offlineSync: true },
+        )).resolves.toEqual({ sale: existing, idempotentReplay: true });
+    });
+
+    it('omite el replay tras respuesta online perdida cuando coincide la foto fiscal persistida', async () => {
+        shiftFindFirst.mockResolvedValue({ id: 'shift-a', employeeId: 'employee-authoritative' });
+        const onlineAccepted = rawSale({
+            source: 'POS',
+            employeeId: 'employee-authoritative',
+            // El POST online actual no manda este campo.
+            fiscalRegimeVersion: undefined,
+        });
+        const deferredReplay = rawSale({
+            source: 'OFFLINE_SYNC',
+            employeeId: 'employee-authoritative',
+            fiscalRegimeVersion: 7,
+        });
+        const existing = {
+            id: 'sale-online-existing',
+            offlinePayloadHash: fingerprint(onlineAccepted),
+            fiscalRegimeVersionAtSale: 7,
+        };
+        saleFindFirst.mockResolvedValue(existing);
+
+        await expect(executeSaleWithResult(
+            'tenant-a',
+            'user-a',
+            'shift-a',
+            deferredReplay,
+            { offlineSync: true },
+        )).resolves.toEqual({ sale: existing, idempotentReplay: true });
+        expect(transaction).not.toHaveBeenCalled();
+    });
+
+    it('no usa la compatibilidad online si la foto fiscal persistida diverge', async () => {
+        shiftFindFirst.mockResolvedValue({ id: 'shift-a', employeeId: 'employee-authoritative' });
+        const onlineAccepted = rawSale({
+            source: 'POS',
+            employeeId: 'employee-authoritative',
+            fiscalRegimeVersion: undefined,
+        });
+        saleFindFirst.mockResolvedValue({
+            id: 'sale-online-existing',
+            offlinePayloadHash: fingerprint(onlineAccepted),
+            fiscalRegimeVersionAtSale: 8,
+        });
+
+        await expect(executeSaleWithResult(
+            'tenant-a',
+            'user-a',
+            'shift-a',
+            rawSale({
+                source: 'OFFLINE_SYNC',
+                employeeId: 'employee-authoritative',
+                fiscalRegimeVersion: 7,
+            }),
+            { offlineSync: true },
+        )).rejects.toMatchObject({
+            code: 'OFFLINE_PAYLOAD_MISMATCH',
+            httpStatus: 409,
+        });
+        expect(transaction).not.toHaveBeenCalled();
     });
 
     it('el camino online también deduplica antes de tocar stock, caja o contabilidad', async () => {
@@ -257,6 +454,7 @@ describe('idempotencia fuerte de ventas offline', () => {
             { ...context, input: { ...input, customerId: 'customer-2' } },
             { ...context, input: { ...input, customerName: 'Cliente Dos' } },
             { ...context, input: { ...input, employeeId: 'employee-2' } },
+            { ...context, input: { ...input, fiscalRegimeVersion: 2 } },
             { ...context, input: { ...input, globalDiscount: '4' } },
             { ...context, input: { ...input, items: [{ ...measuredItem, id: 'product-x' }, input.items[1]] } },
             { ...context, input: { ...input, items: [{ ...measuredItem, quotationItemId: 'quote-line-2' }, input.items[1]] } },

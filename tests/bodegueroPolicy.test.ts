@@ -19,6 +19,8 @@ describe('isBodegueroRouteAllowed', () => {
         expect(isBodegueroRouteAllowed('GET', '/api/purchase-orders')).toBe(true);
         expect(isBodegueroRouteAllowed('GET', '/api/purchase-orders/po_1')).toBe(true);
         expect(isBodegueroRouteAllowed('POST', '/api/purchase-orders/po_1/receive')).toBe(true);
+        expect(isBodegueroRouteAllowed('GET', '/api/suppliers/supplier_1/returns')).toBe(true);
+        expect(isBodegueroRouteAllowed('POST', '/api/suppliers/supplier_1/returns')).toBe(true);
         expect(isBodegueroRouteAllowed('GET', '/api/products?search=aceite')).toBe(true);
         expect(isBodegueroRouteAllowed('GET', '/api/products/categories')).toBe(true);
         expect(isBodegueroRouteAllowed('GET', '/api/kardex/prod_1?from=2026-08-01&to=2026-08-22')).toBe(true);
@@ -30,6 +32,7 @@ describe('isBodegueroRouteAllowed', () => {
         expect(isBodegueroRouteAllowed('GET', '/api/purchases')).toBe(false);
         expect(isBodegueroRouteAllowed('GET', '/api/purchases/pending')).toBe(false);
         expect(isBodegueroRouteAllowed('GET', '/api/suppliers')).toBe(false);
+        expect(isBodegueroRouteAllowed('POST', '/api/suppliers/supplier_1/credit-notes')).toBe(false);
         expect(isBodegueroRouteAllowed('GET', '/api/reports/inventory')).toBe(false);
         expect(isBodegueroRouteAllowed('GET', '/api/dashboard/stats')).toBe(false);
         expect(isBodegueroRouteAllowed('GET', '/api/public-orders')).toBe(false);
@@ -80,7 +83,7 @@ describe('redacción de datos para BODEGUERO', () => {
         const visible = redactBodegueroPurchaseOrder({
             id: 'po_1', orderNumber: 'OC-0001', status: 'APPROVED', notes: 'Entregar atrás',
             expectedDate: new Date('2026-08-23'), createdAt: new Date('2026-08-22'), updatedAt: new Date('2026-08-22'),
-            supplier: { name: 'Proveedor', ruc: 'J031', phone: '8888-8888', email: 'ventas@example.com' },
+            supplier: { id: 'supplier_1', name: 'Proveedor', ruc: 'J031', phone: '8888-8888', email: 'ventas@example.com' },
             receipts: [{ invoiceNumber: 'FAC-1', total: 5000 }],
             items: [{
                 id: 'item_1', productId: 'prod_1', productName: 'Aceite',
@@ -89,7 +92,7 @@ describe('redacción de datos para BODEGUERO', () => {
             }],
         });
 
-        expect(visible.supplier).toEqual({ name: 'Proveedor' });
+        expect(visible.supplier).toEqual({ id: 'supplier_1', name: 'Proveedor' });
         expect(visible).not.toHaveProperty('receipts');
         expect(visible.items[0]).toEqual({
             id: 'item_1', productId: 'prod_1', productName: 'Aceite',

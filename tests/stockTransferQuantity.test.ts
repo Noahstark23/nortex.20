@@ -5,6 +5,7 @@ import { validateStockTransferQuantity } from '../utils/stockTransferQuantity';
 describe('transferencias medidas entre bodegas', () => {
     it('conserva el decimal textual en la frontera HTTP', () => {
         const parsed = StockTransferSchema.parse({
+            clientEventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
             fromWarehouseId: 'origen',
             toWarehouseId: 'destino',
             items: [{ productId: 'pollo', quantity: '37.5000' }],
@@ -39,6 +40,7 @@ describe('transferencias medidas entre bodegas', () => {
 
     it('rechaza precisión y valores no finitos antes de la transacción', () => {
         const base = {
+            clientEventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
             fromWarehouseId: 'origen',
             toWarehouseId: 'destino',
         };
@@ -49,6 +51,10 @@ describe('transferencias medidas entre bodegas', () => {
         expect(StockTransferSchema.safeParse({
             ...base,
             items: [{ productId: 'pollo', quantity: 'Infinity' }],
+        }).success).toBe(false);
+        expect(StockTransferSchema.safeParse({
+            ...base,
+            items: [{ productId: 'pollo', quantity: 1.25 }],
         }).success).toBe(false);
     });
 });

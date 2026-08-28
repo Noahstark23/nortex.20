@@ -28,6 +28,39 @@ const receiptData = (items: ReceiptLineItem[]) => ({
 });
 
 describe('ticket visual del POS', () => {
+    it('mantiene el desglose general cuando el regimen se omite o se explicita', () => {
+        const data = receiptData([product({ name: 'Clavo' })]);
+        const defaultHtml = renderToStaticMarkup(<ReceiptTicket data={data} />);
+        const generalHtml = renderToStaticMarkup(<ReceiptTicket data={{
+            ...data,
+            fiscalRegime: 'GENERAL',
+        }} />);
+
+        expect(generalHtml).toBe(defaultHtml);
+        expect(generalHtml).toContain('Base imponible:');
+        expect(generalHtml).toContain('IVA (15%):');
+    });
+
+    it('imprime cuota fija como factura simplificada sin desglose de IVA', () => {
+        const html = renderToStaticMarkup(<ReceiptTicket data={{
+            ...receiptData([product({ name: 'Clavo', price: 140.1 })]),
+            invoiceNumber: 42,
+            invoiceSeries: 'A',
+            fiscalRegime: 'CUOTA_FIJA',
+            subtotal: 145.1,
+            discount: 5,
+        }} />);
+
+        expect(html).toContain('FACTURA SIMPLIFICADA');
+        expect(html).toContain('Régimen de Cuota Fija');
+        expect(html).toContain('Subtotal:');
+        expect(html).toContain('Descuento:');
+        expect(html).toContain('TOTAL:');
+        expect(html).toContain('C$ 140.10');
+        expect(html).not.toMatch(/IVA/i);
+        expect(html).not.toContain('Base imponible:');
+    });
+
     it('muestra medidos, precision minima, legacy y empaque sin confundir stock base', () => {
         const html = renderToStaticMarkup(<ReceiptTicket data={receiptData([
             product({
@@ -80,5 +113,17 @@ describe('ticket visual del POS', () => {
 
         expect(html).not.toContain('<script>alert(1)</script>');
         expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    });
+
+    it('con pago exacto conserva el efectivo recibido sin inventar vuelto', () => {
+        const html = renderToStaticMarkup(<ReceiptTicket data={{
+            ...receiptData([product({ name: 'Clavo' })]),
+            cashReceived: 140.1,
+            change: 0,
+        }} />);
+
+        expect(html).toContain('Efectivo recibido:');
+        expect(html).toContain('C$ 140.10');
+        expect(html).not.toContain('Vuelto:');
     });
 });

@@ -1,15 +1,30 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const applyStockDeltaMock = vi.hoisted(() => vi.fn());
+const recordSaleMock = vi.hoisted(() => vi.fn());
+const resolveBatchWarehouseLedgerModeMock = vi.hoisted(() => vi.fn(async () => 'OFF'));
+const applyBatchWarehouseDeltaMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../backend/services/stockService.js', async (importOriginal) => ({
     ...(await importOriginal<typeof import('../backend/services/stockService.js')>()),
     applyStockDelta: applyStockDeltaMock,
 }));
 
+vi.mock('../backend/services/accounting.js', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../backend/services/accounting.js')>()),
+    recordSale: recordSaleMock,
+}));
+
+vi.mock('../backend/services/productBatchWarehouseLedgerService.js', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../backend/services/productBatchWarehouseLedgerService.js')>()),
+    resolveBatchWarehouseLedgerMode: resolveBatchWarehouseLedgerModeMock,
+    applyBatchWarehouseDelta: applyBatchWarehouseDeltaMock,
+}));
+
 import {
     cancelPedidoInTransaction,
     claimPedidoDelivery,
+    completePedidoDeliveryInTransaction,
     isCompletePedidoReservationRelease,
     lockPedidoForFulfillment,
     validatePedidoReservationTotals,
@@ -18,6 +33,110 @@ import {
 const pedidoLockMock = () => vi.fn().mockResolvedValue([{ id: 'pedido-a' }]);
 
 describe('fulfillment autoritativo de Pedido', () => {
+    it('congela CUOTA_FIJA y registra cero IVA al facturar una entrega', async () => {
+        applyStockDeltaMock.mockReset();
+        recordSaleMock.mockReset();
+        applyStockDeltaMock.mockResolvedValue({
+            stockBefore: 10,
+            stockAfter: 9,
+            warehouseId: 'warehouse-a',
+        });
+        recordSaleMock.mockResolvedValue(undefined);
+        const pedido = {
+            id: 'pedido-a',
+            tenantId: 'tenant-a',
+            clienteNombre: 'Cliente Uno',
+            total: { toString: () => '115' },
+            costoEntrega: { toString: () => '0' },
+            items: [{
+                id: 'item-a',
+                pedidoId: 'pedido-a',
+                productoId: 'product-a',
+                cantidad: 1,
+                cantidadExact: { toString: () => '1' },
+                presentationAtSale: 'BASE',
+                presentationQuantityAtSale: { toString: () => '1' },
+                productNameAtOrder: 'Producto Uno',
+                unitAtOrder: 'unidad',
+                saleModeAtOrder: 'COUNTED',
+                quantityStepAtOrder: { toString: () => '1' },
+                unitPriceExactAtOrder: { toString: () => '115' },
+                ivaExentoAtOrder: false,
+                precioUnitario: { toString: () => '115' },
+                subtotal: { toString: () => '115' },
+            }],
+        };
+        const tx = {
+            $queryRaw: pedidoLockMock(),
+            pedido: {
+                updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+                findFirst: vi.fn().mockResolvedValue(pedido),
+                update: vi.fn().mockResolvedValue({}),
+                findFirstOrThrow: vi.fn().mockResolvedValue({ ...pedido, facturaId: 'sale-a' }),
+            },
+            user: { findFirst: vi.fn().mockResolvedValue({ id: 'user-a' }) },
+            trackingEvento: { create: vi.fn().mockResolvedValue({}) },
+            auditLog: { create: vi.fn().mockResolvedValue({}) },
+            product: { findMany: vi.fn().mockResolvedValue([{
+                id: 'product-a',
+                name: 'Producto Uno',
+                unit: 'unidad',
+                cost: 60,
+                ivaExento: false,
+                saleMode: 'COUNTED',
+                quantityStep: { toString: () => '1' },
+                requiresBatchTracking: false,
+            }]) },
+            kardexMovement: {
+                findMany: vi.fn().mockResolvedValue([]),
+                create: vi.fn().mockResolvedValue({}),
+            },
+            tenant: { findUnique: vi.fn().mockResolvedValue({
+                allowNegativeStock: false,
+                fiscalRegime: 'CUOTA_FIJA',
+                fiscalRegimeVersion: 4,
+            }) },
+            sale: { create: vi.fn().mockResolvedValue({ id: 'sale-a' }) },
+            saleItem: { create: vi.fn().mockResolvedValue({ id: 'sale-item-a' }) },
+            payment: { create: vi.fn().mockResolvedValue({}) },
+        } as any;
+
+        await completePedidoDeliveryInTransaction(tx, {
+            pedidoId: 'pedido-a',
+            tenantId: 'tenant-a',
+            actorUserId: 'user-a',
+            auditUserId: 'user-a',
+            source: 'DELIVERY_DASHBOARD',
+        });
+
+        expect(tx.tenant.findUnique).toHaveBeenCalledWith({
+            where: { id: 'tenant-a' },
+            select: {
+                allowNegativeStock: true,
+                fiscalRegime: true,
+                fiscalRegimeVersion: true,
+            },
+        });
+        expect(tx.sale.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                tenantId: 'tenant-a',
+                total: '115.0000',
+                exemptTotal: '0.00',
+                fiscalRegimeAtSale: 'CUOTA_FIJA',
+                fiscalRegimeVersionAtSale: 4,
+                vatAmountAtSale: '0.0000',
+            }),
+        });
+        const recordArgs = recordSaleMock.mock.calls[0];
+        expect(recordArgs.slice(0, 4)).toEqual([tx, 'tenant-a', 'user-a', 'sale-a']);
+        expect(recordArgs[4].toString()).toBe('115');
+        expect(recordArgs[5]).toBe(60);
+        expect(recordArgs[6]).toBe('CASH');
+        expect(recordArgs[7]).toBe(0);
+        expect(recordArgs[8].fiscalRegime).toBe('CUOTA_FIJA');
+        expect(recordArgs[8].vatAmount.toFixed(4)).toBe('0.0000');
+    });
+
     it('un reintento de entrega no puede reclamar ni facturar el pedido dos veces', async () => {
         const updateMany = vi.fn()
             .mockResolvedValueOnce({ count: 1 })

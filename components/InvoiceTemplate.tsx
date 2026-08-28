@@ -2,6 +2,11 @@
 // Opens a new window with formatted HTML and triggers window.print()
 
 import Decimal from 'decimal.js';
+import {
+    FISCAL_REGIME_CUOTA_FIJA,
+    normalizeFiscalRegime,
+    type FiscalRegime,
+} from '../utils/fiscalRegime';
 import { formatQuantityValue } from '../utils/quantity';
 
 export type PrintablePresentation =
@@ -47,6 +52,7 @@ export interface InvoiceData {
     cashReceived?: number;
     change?: number;
     user?: string;
+    fiscalRegime?: FiscalRegime;
 }
 
 const SHARED_STYLES = `
@@ -159,6 +165,7 @@ const escapeHtml = (value: unknown): string => String(value ?? '')
 
 /** HTML aislado del ticket: es testeable y no depende del DOM de la app. */
 export function buildTicket80mmHtml(data: InvoiceData): string {
+    const isFixedQuota = normalizeFiscalRegime(data.fiscalRegime) === FISCAL_REGIME_CUOTA_FIJA;
     const itemsHTML = data.items.map((item, index) => {
         const line = printableLine(item, index);
         return `<tr>
@@ -178,6 +185,13 @@ export function buildTicket80mmHtml(data: InvoiceData): string {
     const invoiceLabel = data.invoiceNumber
         ? `FACTURA ${data.invoiceSeries ? `${escapeHtml(data.invoiceSeries)}-` : ''}${escapeHtml(String(data.invoiceNumber).padStart(6, '0'))}`
         : '';
+    const simplifiedInvoiceNumber = data.invoiceNumber
+        ? `No. ${data.invoiceSeries ? `${escapeHtml(data.invoiceSeries)}-` : ''}${escapeHtml(String(data.invoiceNumber).padStart(6, '0'))}`
+        : '';
+    const documentHeading = isFixedQuota
+        ? `<div class="center invoice">FACTURA SIMPLIFICADA${simplifiedInvoiceNumber ? `<br><span style="font-size:10px">${simplifiedInvoiceNumber}</span>` : ''}</div>
+<div class="center" style="font-size:10px;font-weight:bold">Régimen de Cuota Fija</div>`
+        : invoiceLabel ? `<div class="center invoice">${invoiceLabel}</div>` : '';
 
     return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Ticket 80 mm</title>
@@ -210,7 +224,7 @@ export function buildTicket80mmHtml(data: InvoiceData): string {
     <div style="font-size:9px;color:#666">Sistema Nortex</div>
 </div>
 
-${invoiceLabel ? `<div class="center invoice">${invoiceLabel}</div>` : ''}
+${documentHeading}
 
 <div class="divider"></div>
 
@@ -229,7 +243,7 @@ ${data.customerRuc ? `<div style="font-size:10px"><strong>RUC/Cédula:</strong> 
 <table>
     <tr><td>Subtotal</td><td class="right">C$ ${formatMoney(data.subtotal, 'subtotal')}</td></tr>
     ${data.discount && data.discount > 0 ? `<tr><td>Descuento</td><td class="right">-C$ ${formatMoney(data.discount, 'discount')}</td></tr>` : ''}
-    <tr><td>IVA incluido (15%)</td><td class="right">C$ ${formatMoney(data.tax, 'tax')}</td></tr>
+    ${isFixedQuota ? '' : `<tr><td>IVA incluido (15%)</td><td class="right">C$ ${formatMoney(data.tax, 'tax')}</td></tr>`}
 </table>
 
 <div class="divider"></div>
@@ -242,8 +256,8 @@ ${data.customerRuc ? `<div style="font-size:10px"><strong>RUC/Cédula:</strong> 
     <strong>Pago:</strong> ${escapeHtml(payLabel)}
     ${data.paymentMethod === 'CREDIT' ? ' | Estado: PENDIENTE' : ' | Estado: PAGADO'}
 </div>
-${typeof data.cashReceived === 'number' ? `<div style="font-size:10px"><strong>Recibido:</strong> C$ ${formatMoney(data.cashReceived, 'cashReceived')}</div>` : ''}
-${typeof data.change === 'number' ? `<div style="font-size:10px"><strong>Vuelto:</strong> C$ ${formatMoney(data.change, 'change')}</div>` : ''}
+${typeof data.cashReceived === 'number' && data.cashReceived > 0 ? `<div style="font-size:10px"><strong>Recibido:</strong> C$ ${formatMoney(data.cashReceived, 'cashReceived')}</div>` : ''}
+${typeof data.change === 'number' && data.change > 0 ? `<div style="font-size:10px"><strong>Vuelto:</strong> C$ ${formatMoney(data.change, 'change')}</div>` : ''}
 
 <div class="divider"></div>
 
@@ -259,9 +273,51 @@ ${typeof data.change === 'number' ? `<div style="font-size:10px"><strong>Vuelto:
 }
 
 export function printTicket(data: InvoiceData): boolean {
+    const prefersPopup = detectThermalTicketPopupMode();
+    if (prefersPopup) {
+        return openPrintWindow(buildTicket80mmHtml(data), { width: 420, height: 720, thermal: true })
+            || printTicketFromCurrentDocument(data);
+    }
+    return printTicketFromCurrentDocument(data)
+        || openPrintWindow(buildTicket80mmHtml(data), { width: 420, height: 720, thermal: true });
+}
+
+type TicketPrintEnvironment = {
+    userAgent?: string;
+    capacitor?: unknown;
+};
+
+export function detectThermalTicketPopupMode(environment: TicketPrintEnvironment = {}): boolean {
+    const userAgent = environment.userAgent
+        ?? (typeof navigator === 'undefined' ? '' : navigator.userAgent ?? '');
+    const androidWebView = /Android/i.test(userAgent)
+        && /(?:;\s*wv\)|\bwv\b|Version\/\d+\.\d+.*Chrome)/i.test(userAgent);
+    if (androidWebView) return true;
+
+    const capacitor = environment.capacitor
+        ?? (typeof window === 'undefined' ? undefined : (window as typeof window & { Capacitor?: unknown }).Capacitor);
+    if (!capacitor || typeof capacitor !== 'object') return false;
+    const maybeCapacitor = capacitor as {
+        isNativePlatform?: (() => boolean) | boolean;
+        platform?: string;
+    };
+    if (typeof maybeCapacitor.isNativePlatform === 'function') {
+        try {
+            if (maybeCapacitor.isNativePlatform()) return true;
+        } catch {
+            return true;
+        }
+    } else if (maybeCapacitor.isNativePlatform === true) {
+        return true;
+    }
+    return typeof maybeCapacitor.platform === 'string'
+        && maybeCapacitor.platform.toLowerCase() !== 'web';
+}
+
+function printTicketFromCurrentDocument(data: InvoiceData): boolean {
     // El ticket 80 mm del POS ya está montado en el DOM actual mediante
     // <ReceiptTicket />. Imprimir desde la misma página evita depender de
-    // popups, que fallan en varios WebViews/PWAs aunque el click sea real.
+    // popups, que fallan en navegadores móviles aunque el click sea real.
     if (typeof document === 'undefined' || typeof window.print !== 'function') return false;
     const receipt = document.getElementById('receipt-area');
     const content = receipt?.firstElementChild as HTMLElement | null;
@@ -296,6 +352,7 @@ export function printTicket(data: InvoiceData): boolean {
 // FACTURA A4 (Corporate Invoice)
 // =============================
 export function buildA4Html(data: InvoiceData): string {
+    const isFixedQuota = normalizeFiscalRegime(data.fiscalRegime) === FISCAL_REGIME_CUOTA_FIJA;
     const itemsHTML = data.items.map((item, i) => {
         const line = printableLine(item, i);
         const unitPrice = line.unit
@@ -340,10 +397,11 @@ export function buildA4Html(data: InvoiceData): string {
 <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px">
     <div>
         <div style="font-size:28px;font-weight:800;color:#0f172a;letter-spacing:-0.5px">${escapeHtml(data.tenantName)}</div>
-        <div style="color:#64748b;font-size:12px;margin-top:4px">Sistema Nortex | Factura Comercial</div>
+        <div style="color:#64748b;font-size:12px;margin-top:4px">Sistema Nortex | ${isFixedQuota ? 'Factura Simplificada' : 'Factura Comercial'}</div>
+        ${isFixedQuota ? '<div style="color:#475569;font-size:11px;font-weight:700;margin-top:3px">Régimen de Cuota Fija</div>' : ''}
     </div>
     <div style="text-align:right">
-        <div style="font-size:20px;font-weight:700;color:#0f172a">FACTURA</div>
+        <div style="font-size:20px;font-weight:700;color:#0f172a">${isFixedQuota ? 'FACTURA SIMPLIFICADA' : 'FACTURA'}</div>
         <div style="color:#64748b;font-size:11px;margin-top:4px">${escapeHtml(data.date)}</div>
         ${data.saleId ? `<div style="color:#94a3b8;font-size:10px;font-family:monospace;margin-top:2px">#${escapeHtml(data.saleId.slice(0, 12))}</div>` : ''}
     </div>
@@ -388,10 +446,10 @@ export function buildA4Html(data: InvoiceData): string {
             <span style="color:#64748b">Descuento</span>
             <span style="font-family:monospace;font-weight:500">-C$ ${formatMoney(data.discount, 'discount')}</span>
         </div>` : ''}
-        <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e2e8f0">
+        ${isFixedQuota ? '' : `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e2e8f0">
             <span style="color:#64748b">IVA incluido (15%)</span>
             <span style="font-family:monospace;font-weight:500">C$ ${formatMoney(data.tax, 'tax')}</span>
-        </div>
+        </div>`}
         <div style="display:flex;justify-content:space-between;padding:12px 0;font-size:18px;font-weight:800;color:#0f172a;border-top:2px solid #0f172a;margin-top:4px">
             <span>TOTAL</span>
             <span style="font-family:monospace">C$ ${formatMoney(data.grandTotal, 'grandTotal')}</span>
@@ -410,14 +468,20 @@ export function buildA4Html(data: InvoiceData): string {
 }
 
 export function printA4(data: InvoiceData) {
-    openPrintWindow(buildA4Html(data));
+    openPrintWindow(buildA4Html(data), { width: 800, height: 600, thermal: false });
 }
 
 // =============================
 // Helper: Open Print Window
 // =============================
-function openPrintWindow(html: string): boolean {
-    const printWindow = window.open('', '_blank', 'width=800,height=600');
+type OpenPrintWindowOptions = {
+    width: number;
+    height: number;
+    thermal: boolean;
+};
+
+function openPrintWindow(html: string, options: OpenPrintWindowOptions): boolean {
+    const printWindow = window.open('', '_blank', `width=${options.width},height=${options.height}`);
     if (!printWindow) {
         alert('Permite ventanas emergentes para imprimir.');
         return false;
@@ -427,14 +491,16 @@ function openPrintWindow(html: string): boolean {
         if (printScheduled) return;
         printScheduled = true;
         setTimeout(() => {
-            // Un rollo térmico no tiene alto fijo. Medimos el contenido ya
-            // renderizado y generamos un par <ancho> <alto> válido para @page.
-            const ticket = printWindow.document.getElementById('ticket-content');
-            const pageStyle = printWindow.document.getElementById('ticket-page-size');
-            if (ticket && pageStyle) {
-                const heightPx = Math.max(ticket.scrollHeight, ticket.getBoundingClientRect().height);
-                const heightMm = Math.max(60, Math.ceil(heightPx * 25.4 / 96) + 10);
-                pageStyle.textContent = `@page { size: 80mm ${heightMm}mm; margin: 0; }`;
+            if (options.thermal) {
+                // Un rollo térmico no tiene alto fijo. Medimos el contenido ya
+                // renderizado y generamos un par <ancho> <alto> válido para @page.
+                const ticket = printWindow.document.getElementById('ticket-content');
+                const pageStyle = printWindow.document.getElementById('ticket-page-size');
+                if (ticket && pageStyle) {
+                    const heightPx = Math.max(ticket.scrollHeight, ticket.getBoundingClientRect().height);
+                    const heightMm = Math.max(60, Math.ceil(heightPx * 25.4 / 96) + 10);
+                    pageStyle.textContent = `@page { size: 80mm ${heightMm}mm; margin: 0; }`;
+                }
             }
             printWindow.print();
         }, 300);
@@ -456,6 +522,7 @@ const plainText = (value: unknown): string => String(value ?? '')
     .trim();
 
 export function buildWhatsAppReceiptMessage(data: InvoiceData): string {
+    const isFixedQuota = normalizeFiscalRegime(data.fiscalRegime) === FISCAL_REGIME_CUOTA_FIJA;
     const itemLines = data.items.map((item, index) => {
         const line = printableLine(item, index);
         return `${plainText(line.name)}\n${plainText(line.equation)} = C$ ${line.total}`;
@@ -464,7 +531,8 @@ export function buildWhatsAppReceiptMessage(data: InvoiceData): string {
     const payLabel = data.paymentMethod === 'CREDIT' ? 'PENDIENTE' : 'PAGADO';
 
     return [
-        `*RECIBO NORTEX*`,
+        isFixedQuota ? `*FACTURA SIMPLIFICADA*` : `*RECIBO NORTEX*`,
+        ...(isFixedQuota ? [`Régimen de Cuota Fija`] : []),
         `Fecha: ${plainText(data.date)}`,
         `*${plainText(data.tenantName)}*`,
         `--------------------------------`,
@@ -474,7 +542,7 @@ export function buildWhatsAppReceiptMessage(data: InvoiceData): string {
         `--------------------------------`,
         `   Subtotal: C$ ${formatMoney(data.subtotal, 'subtotal')}`,
         ...(data.discount && data.discount > 0 ? [`   Descuento: -C$ ${formatMoney(data.discount, 'discount')}`] : []),
-        `   IVA incl.: C$ ${formatMoney(data.tax, 'tax')}`,
+        ...(!isFixedQuota ? [`   IVA incl.: C$ ${formatMoney(data.tax, 'tax')}`] : []),
         `*TOTAL: C$ ${formatMoney(data.grandTotal, 'grandTotal')}*`,
         `Estado: ${payLabel}`,
         `--------------------------------`,

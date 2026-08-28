@@ -6,6 +6,36 @@ import {
 } from '../backend/lib/offlineSaleReplay';
 
 describe('huella canónica de replay offline (red de mutación)', () => {
+    it('incluye la versión fiscal observada sin invalidar huellas legacy ausentes', () => {
+        const base: OfflineReplaySaleInput = {
+            offlineId: 'offline-fiscal',
+            paymentMethod: 'CASH',
+            globalDiscount: 0,
+            source: 'OFFLINE_SYNC',
+            items: [{ id: 'product-1', quantity: 1 }],
+        };
+        const context = { tenantId: 'tenant-1', userId: 'user-1', shiftId: 'shift-1', input: base };
+        const legacy = canonicalOfflineReplayPayload(context);
+        const observed = canonicalOfflineReplayPayload({
+            ...context,
+            input: { ...base, fiscalRegimeVersion: 7 },
+        });
+
+        expect(legacy).not.toHaveProperty('fiscalRegimeVersion');
+        expect(observed).toHaveProperty('fiscalRegimeVersion', 7);
+        expect(offlineReplayPayloadHash(context)).not.toBe(offlineReplayPayloadHash({
+            ...context,
+            input: { ...base, fiscalRegimeVersion: 7 },
+        }));
+        expect(offlineReplayPayloadHash({
+            ...context,
+            input: { ...base, fiscalRegimeVersion: 7 },
+        })).not.toBe(offlineReplayPayloadHash({
+            ...context,
+            input: { ...base, fiscalRegimeVersion: 8 },
+        }));
+    });
+
     it('fija literalmente todos los campos económicos y la identidad de una medición', () => {
         const input: OfflineReplaySaleInput = {
             offlineId: 'offline-1',

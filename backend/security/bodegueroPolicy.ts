@@ -28,6 +28,10 @@ const ALLOWED_PATTERNS: Array<{ method: string; pattern: RegExp }> = [
     { method: 'GET', pattern: /^\/api\/purchase-orders$/ },
     { method: 'GET', pattern: /^\/api\/purchase-orders\/[^/]+$/ },
     { method: 'POST', pattern: /^\/api\/purchase-orders\/[^/]+\/receive$/ },
+    // Salida fisica puntual. No habilita listar/consultar el expediente del
+    // proveedor ni ninguna nota de credito/CxP bajo el mismo prefijo.
+    { method: 'GET', pattern: /^\/api\/suppliers\/[^/]+\/returns$/ },
+    { method: 'POST', pattern: /^\/api\/suppliers\/[^/]+\/returns$/ },
 ];
 
 function normalizePath(url: string): string {
@@ -75,7 +79,7 @@ export function redactBodegueroPurchaseOrder<T extends Record<string, any>>(orde
         expectedDate: order.expectedDate ?? null,
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
-        supplier: order.supplier ? { name: order.supplier.name } : null,
+        supplier: order.supplier ? { id: order.supplier.id, name: order.supplier.name } : null,
         items: Array.isArray(order.items)
             ? order.items.map((item: Record<string, any>) => ({
                 id: item.id,

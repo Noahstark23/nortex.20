@@ -29,17 +29,17 @@ export interface CashReceivedError {
 
 export type CashReceivedValidation = CashReceivedSuccess | CashReceivedError;
 
-export const isCashReceivedError = (
+export function isCashReceivedError(
     validation: CashReceivedValidation,
-): validation is CashReceivedError => validation.ok === false;
+): validation is CashReceivedError {
+    return validation.ok === false;
+}
 
 const parseFiniteDecimal = (input: unknown): Decimal | null => {
     if (input instanceof Decimal) {
         return input.isFinite() ? new Decimal(input) : null;
     }
     if (typeof input !== 'string' && typeof input !== 'number') return null;
-    if (typeof input === 'string' && input.trim() === '') return null;
-
     try {
         const value = new Decimal(input);
         return value.isFinite() ? value : null;
@@ -69,7 +69,7 @@ export const validateCashReceived = (receivedInput: unknown, totalInput: unknown
     }
 
     const total = parseFiniteDecimal(totalInput);
-    if (!total || !total.greaterThan(0)) {
+    if (total === null || !total.greaterThan(0)) {
         return {
             ok: false,
             code: 'INVALID_TOTAL',
@@ -78,7 +78,7 @@ export const validateCashReceived = (receivedInput: unknown, totalInput: unknown
     }
 
     const received = parseFiniteDecimal(receivedInput);
-    if (!received || received.isNegative()) {
+    if (received === null || received.isNegative()) {
         return {
             ok: false,
             code: 'INVALID_RECEIVED',
@@ -106,8 +106,9 @@ export const validateCashReceived = (receivedInput: unknown, totalInput: unknown
 const NIO_DENOMINATIONS = ['20', '50', '100', '200', '500', '1000'] as const;
 const PRACTICAL_ROUNDING_STEPS = ['50', '100', '500', '1000'] as const;
 
-const nextStrictMultiple = (total: Decimal, step: Decimal): Decimal =>
-    total.div(step).floor().plus(1).times(step);
+function nextStrictMultiple(total: Decimal, step: Decimal): Decimal {
+    return total.div(step).floor().plus(1).times(step);
+}
 
 /**
  * Sugiere montos practicos para cobrar en cordobas, sin incluir el total exacto.
@@ -123,9 +124,10 @@ const nextStrictMultiple = (total: Decimal, step: Decimal): Decimal =>
  */
 export const suggestNioCashAmounts = (totalInput: unknown, maxSuggestions = 3): Decimal[] => {
     const total = parseFiniteDecimal(totalInput);
-    if (!total || !total.greaterThan(0) || !Number.isFinite(maxSuggestions) || maxSuggestions <= 0) {
+    if (total === null || !total.greaterThan(0) || !Number.isFinite(maxSuggestions)) {
         return [];
     }
+    const suggestionLimit = Math.max(0, Math.floor(maxSuggestions));
 
     const candidates = [
         ...NIO_DENOMINATIONS.map(value => new Decimal(value)),
@@ -142,5 +144,5 @@ export const suggestNioCashAmounts = (totalInput: unknown, maxSuggestions = 3): 
 
     return [...unique.values()]
         .sort((left, right) => left.comparedTo(right))
-        .slice(0, Math.floor(maxSuggestions));
+        .slice(0, suggestionLimit);
 };

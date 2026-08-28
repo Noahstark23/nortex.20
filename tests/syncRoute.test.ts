@@ -1,11 +1,40 @@
 import { describe, expect, it } from 'vitest';
 import {
     normalizeOfflineSalePayload,
+    offlineTransportIdentityIssue,
     offlineSyncFailureStatus,
     syncBodySchema,
 } from '../backend/routes/syncPayload';
 
 describe('normalizeOfflineSalePayload', () => {
+    it('conserva filas legacy del mismo tenant y manda userId divergente a conciliación', () => {
+        const principal = { tenantId: 'tenant-a', userId: 'user-a' };
+
+        expect(offlineTransportIdentityIssue(
+            { tenantId: 'tenant-a' },
+            principal,
+        )).toBeNull();
+        expect(offlineTransportIdentityIssue(
+            { tenantId: 'tenant-a', userId: 'user-a' },
+            principal,
+        )).toBeNull();
+        expect(offlineTransportIdentityIssue(
+            { tenantId: 'tenant-a', userId: 'user-atacante' },
+            principal,
+        )).toEqual({
+            status: 'reconciliation_required',
+            code: 'RECONCILIATION_REQUIRED',
+            error: expect.stringContaining('otra sesión'),
+        });
+        expect(offlineTransportIdentityIssue(
+            { tenantId: 'tenant-b', userId: 'user-a' },
+            principal,
+        )).toEqual(expect.objectContaining({
+            status: 'failed',
+            code: 'TENANT_MISMATCH',
+        }));
+    });
+
     it('envía divergencias y filas históricas no verificables a conciliación durable', () => {
         expect(offlineSyncFailureStatus('OFFLINE_PAYLOAD_MISMATCH')).toBe('reconciliation_required');
         expect(offlineSyncFailureStatus('RECONCILIATION_REQUIRED')).toBe('reconciliation_required');
@@ -26,6 +55,7 @@ describe('normalizeOfflineSalePayload', () => {
                 paymentMethod: 'CASH',
                 total: '10.00',
                 globalDiscount: '0',
+                fiscalRegimeVersion: 4,
                 createdAt: '2026-08-22T12:00:00.000Z',
                 items: [{
                     id: 'product-1',
@@ -45,8 +75,21 @@ describe('normalizeOfflineSalePayload', () => {
         expect(payload).toMatchObject({
             offlineId: 'offline-indexeddb',
             source: 'OFFLINE_SYNC',
+            fiscalRegimeVersion: 4,
             items: [{ quotationItemId: 'quote-item-1' }],
         });
+    });
+
+    it('rechaza versiones fiscales offline no positivas', () => {
+        const base = {
+            offlineId: 'offline-invalid-version',
+            tenantId: 'tenant-a',
+            paymentMethod: 'CASH' as const,
+            createdAt: '2026-08-22T12:00:00.000Z',
+            items: [{ id: 'product-1', quantity: '1' }],
+        };
+        expect(syncBodySchema.safeParse({ sales: [{ ...base, fiscalRegimeVersion: 0 }] }).success).toBe(false);
+        expect(syncBodySchema.safeParse({ sales: [{ ...base, fiscalRegimeVersion: 1 }] }).success).toBe(true);
     });
 
     it('preserva el contrato v3 de medicion offline para reparseo server-side', () => {

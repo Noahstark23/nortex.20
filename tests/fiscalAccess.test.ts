@@ -137,6 +137,19 @@ describe('acceso a documentos fiscales', () => {
         expect(constancia).toContain("new Decimal(purchase.tax.toString()).greaterThan(0)");
     });
 
+    it('recorta retenciones sufridas por mes fiscal sin depender del timezone del proceso', () => {
+        const retenciones = sourceBetween(
+            "app.get('/api/accounting/retenciones-sufridas'",
+            '// ── B2 — Activos fijos + depreciación',
+        );
+        expect(retenciones).toContain('const fiscalPeriod = parseFiscalPeriod(req.query.month, req.query.year);');
+        expect(retenciones).toContain("return res.status(400).json({ error: 'Periodo inválido. Usa month=1-12 y year=YYYY.' });");
+        expect(retenciones).toContain('const start = normalizeCalendarDateInput(');
+        expect(retenciones).toContain("where.fecha = { gte: start, lt: endExclusive }");
+        expect(retenciones).not.toContain('new Date(parseInt(year), parseInt(month) - 1, 1)');
+        expect(retenciones).not.toContain('new Date(parseInt(year), parseInt(month), 0, 23, 59, 59)');
+    });
+
     it.each([
         [undefined, '2026'],
         ['8', undefined],

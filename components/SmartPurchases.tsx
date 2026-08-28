@@ -268,7 +268,7 @@ export default function SmartPurchases() {
                                         const subtotal = decimalOrZero(e.qty).times(decimalOrZero(e.cost)).toNumber();
                                         const badQty = e.selected && !validReorderQuantity(it, e.qty);
                                         const parsedCost = decimalOrZero(e.cost);
-                                        const badCost = e.selected && (!parsedCost.greaterThan(0) || parsedCost.decimalPlaces() > 2);
+                                        const badCost = e.selected && (!parsedCost.greaterThan(0) || parsedCost.decimalPlaces() > 6);
                                         const noSupplier = e.selected && !e.supplierId;
                                         return (
                                             <tr key={it.productId} className={`transition-colors ${e.selected ? 'bg-slate-800/40' : 'opacity-60'} hover:bg-slate-700/20`}>

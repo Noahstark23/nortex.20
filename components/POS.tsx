@@ -13,11 +13,13 @@ import { resolvePosSimple, UI_MODE_KEY } from '../utils/navigation';
 import { ToastViewport, useToast } from './ui/Toast';
 import { parseWorkbookRows, importInChunks } from '../utils/importProducts';
 import { evaluarCarrito, textoAviso, textoResumen, AvisoStock } from '../utils/stockAlert';
-import { indexarProductos, buscarProductos } from '../utils/posSearch';
+import { indexarProductos, buscarProductos, resolverEnterBusqueda } from '../utils/posSearch';
 import {
     claveCarrito, claveAparcados, leerCarritoGuardado, serializarCarrito,
-    decidirRestauracion, resumenGuardado, leerAparcados, serializarAparcados,
+    decidirRestauracion, decidirRestauracionAparcado, decidirRecuperacionPendiente,
+    resumenGuardado, leerAparcados, serializarAparcados,
     claveCarritoLegacy, claveAparcadosLegacy, claveLineaCarrito,
+    claveTraspasoCarrito, leerTraspasoCarrito, resolverIdentidadPersistencia,
     CarritoGuardado, LineaGuardada, AparcadoGuardado,
 } from '../utils/cartPersistence';
 import { useReportarVenta } from './VentaEnCursoContext';
@@ -26,6 +28,19 @@ import { CajaNicaCatalog } from './pos/CajaNicaCatalog';
 import { CajaNicaCheckout } from './pos/CajaNicaCheckout';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import { buildPostSalePrintOptions } from '../utils/postSalePrintOptions';
+import { buildPostSalePrintCash } from '../utils/postSalePrintCash';
+import {
+    FISCAL_REGIME_CUOTA_FIJA,
+    includedVatFromGross,
+    normalizeFiscalRegime,
+    resolveSaleFiscalAmounts,
+    type FiscalRegime,
+} from '../utils/fiscalRegime';
+import {
+    normalizeFiscalRegimeVersion,
+    normalizeFiscalSettingsSnapshot,
+    type FiscalSettingsSnapshot,
+} from '../utils/fiscalSettingsSnapshot';
 // xlsx (~430 KB) se importa dinámicamente en handleFileUpload — fuera del bundle inicial.
 import {
     generateOfflineId, saveSaleOffline, getPendingSales, markSalesSynced, recordOfflineSyncResults,
@@ -42,10 +57,12 @@ import {
     decideScalePreviewAcceptance,
 } from '../utils/scaleLabelAcceptance';
 import {
+    customerCreditUsagePct,
     checkoutAttemptFor,
     effectivePosQuantityStep,
     effectivePosSaleMode,
     normalizeApiFailure,
+    repeatedCatalogAddIncrement,
     requestErrorCategory,
     validateQuickProductDraft,
     type CheckoutAttempt,
@@ -65,6 +82,60 @@ const effectiveSaleMode = effectivePosSaleMode;
 const effectiveQuantityStep = effectivePosQuantityStep;
 
 const lineKey = (item: CartItem): string => claveLineaCarrito(item as unknown as LineaGuardada);
+
+const PRODUCT_TILE_GRADIENTS = [
+    'from-indigo-500/25 to-cyan-500/15',
+    'from-emerald-500/25 to-teal-500/15',
+    'from-rose-500/25 to-fuchsia-500/15',
+    'from-amber-500/25 to-orange-500/15',
+    'from-sky-500/25 to-blue-500/15',
+];
+
+const productoIniciales = (name: string): string => {
+    const words = name.trim().toUpperCase().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return '??';
+    if (words.length === 1) return words[0].slice(0, 2);
+    return `${words[0][0]}${words[1][0]}`;
+};
+
+const productoPaleta = (seed: string): string =>
+    PRODUCT_TILE_GRADIENTS[
+        Math.abs(
+            seed.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0),
+        ) % PRODUCT_TILE_GRADIENTS.length
+    ];
+
+const ProductoMiniatura = ({
+    name,
+    imageUrl,
+    className,
+}: {
+    name: string;
+    imageUrl?: string | null;
+    className: string;
+}) => {
+    const [imgError, setImgError] = useState(false);
+
+    if (!imageUrl || imgError) {
+        return (
+            <div className={`${className} grid place-items-center rounded-control border border-white/[0.12] bg-gradient-to-br ${productoPaleta(name)}`}>
+                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-white">
+                    {productoIniciales(name)}
+                </span>
+            </div>
+        );
+    }
+
+    return (
+        <img
+            src={imageUrl}
+            alt={name}
+            loading="lazy"
+            onError={() => setImgError(true)}
+            className={`${className} rounded-control object-cover`}
+        />
+    );
+};
 
 const isQuotationCartLine = (item: Pick<CartItem, 'quotationItemId'>): boolean =>
     typeof item.quotationItemId === 'string' && item.quotationItemId.trim() !== '';
@@ -101,6 +172,39 @@ const sanitizeDecimalInput = (raw: string): string => {
     return dot === -1 ? cleaned : cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, '');
 };
 
+const CUSTOMER_CREATE_CONTROL_ROLES = new Set(['OWNER', 'ADMIN', 'SUPER_ADMIN']);
+
+/**
+ * Reflejo de UX del boundary autoritativo del backend. No concede permisos:
+ * únicamente evita ofrecer o enviar controles financieros que la API rechazará.
+ */
+export const canCreateCustomerWithFinancialControls = (role: string): boolean =>
+    CUSTOMER_CREATE_CONTROL_ROLES.has(role.trim().toUpperCase());
+
+export interface InlineCustomerCreatePayloadInput {
+    role: string;
+    name: string;
+    phone?: string;
+    creditLimit?: string;
+}
+
+export interface InlineCustomerCreatePayload {
+    name: string;
+    phone?: string;
+    creditLimit?: string;
+}
+
+/** Allowlist por rol: ocultar el campo no basta para proteger el payload. */
+export const buildInlineCustomerCreatePayload = (
+    input: InlineCustomerCreatePayloadInput,
+): InlineCustomerCreatePayload => ({
+    name: input.name,
+    ...(input.phone ? { phone: input.phone } : {}),
+    ...(canCreateCustomerWithFinancialControls(input.role) && input.creditLimit
+        ? { creditLimit: input.creditLimit }
+        : {}),
+});
+
 // Parser tolerante a string vacío/parcial ("", ".") → Decimal(0). Nunca lanza.
 const toDecimal = (v: string | number): Decimal => {
     try {
@@ -108,6 +212,15 @@ const toDecimal = (v: string | number): Decimal => {
         return d.isFinite() ? d : new Decimal(0);
     } catch {
         return new Decimal(0);
+    }
+};
+
+const nonNegativeDecimalOrNull = (value: unknown): Decimal | null => {
+    try {
+        const parsed = new Decimal(value as Decimal.Value);
+        return parsed.isFinite() && !parsed.isNegative() ? parsed : null;
+    } catch {
+        return null;
     }
 };
 
@@ -139,21 +252,26 @@ const TarjetaProducto = React.memo<{
         onClick={() => onAgregar(product)}
         aria-disabled={bloqueada || undefined}
         title={bloqueada ? 'Sin existencia. Tocá para cargar stock.' : undefined}
-        className={`h-24 bg-surface-900 border rounded-card px-3 py-2 transition-colors text-left flex flex-col justify-between text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand/40 ${bloqueada
+        className={`h-32 bg-surface-900 border rounded-card px-3 py-2 transition-colors text-left flex flex-col justify-between text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand/40 ${bloqueada
             ? 'border-danger/25 opacity-70 hover:border-danger/50 hover:bg-danger-soft cursor-pointer'
             : 'border-white/[0.06] hover:bg-surface-800 hover:border-brand/50 active:scale-[0.98]'}`}
     >
-        <div className="min-w-0 flex items-start gap-2">
-            {/* Miniatura solo si el producto TIENE foto: nunca un hueco vacío. */}
-            {product.imageUrl && (
-                <img
-                    src={product.imageUrl}
-                    alt=""
-                    loading="lazy"
-                    className="w-10 h-10 rounded-control object-cover border border-white/[0.06] shrink-0"
+        <div className="min-w-0 flex items-center gap-2">
+            <div className="h-14 w-14 shrink-0">
+                <ProductoMiniatura
+                    name={product.name}
+                    imageUrl={product.imageUrl}
+                    className="h-full w-full"
                 />
-            )}
-            <h3 className="font-semibold text-sm text-slate-100 leading-tight line-clamp-2 min-w-0">{product.name}</h3>
+            </div>
+            <div className="min-w-0">
+                <h3 className="font-semibold text-sm text-slate-100 leading-tight line-clamp-2 min-w-0">{product.name}</h3>
+                {product.sku ? (
+                    <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400 truncate">
+                        SKU: {product.sku}
+                    </p>
+                ) : null}
+            </div>
         </div>
         <div className="flex justify-between items-end gap-1">
             <span className="text-[15px] sm:text-[17px] font-bold text-brand nx-num whitespace-nowrap">{formatMoney(product.price)}</span>
@@ -182,14 +300,36 @@ TarjetaProducto.displayName = 'TarjetaProducto';
  * nada, antes que arriesgar mezclar los carritos de dos cajeros.
  */
 const identidadLocal = (): { tenantId: string; userId: string } | null => {
+    return resolverIdentidadPersistencia(
+        localStorage.getItem('nortex_tenant_data'),
+        localStorage.getItem('nortex_user'),
+    );
+};
+
+const fiscalSettingsFromTenantCache = (): FiscalSettingsSnapshot => {
     try {
-        const tenantId = JSON.parse(localStorage.getItem('nortex_tenant_data') || '{}')?.id;
-        const userId = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.id;
-        if (typeof tenantId === 'string' && tenantId && typeof userId === 'string' && userId) {
-            return { tenantId, userId };
-        }
-    } catch { /* storage ilegible → no se persiste */ }
-    return null;
+        return normalizeFiscalSettingsSnapshot(
+            JSON.parse(localStorage.getItem('nortex_tenant_data') || '{}'),
+        );
+    } catch {
+        return normalizeFiscalSettingsSnapshot(undefined);
+    }
+};
+
+const cacheFiscalSettingsForTenant = (
+    tenantId: string | undefined,
+    settings: FiscalSettingsSnapshot,
+): void => {
+    if (!tenantId) return;
+    try {
+        const raw = localStorage.getItem('nortex_tenant_data');
+        if (!raw) return;
+        const tenant = JSON.parse(raw);
+        if (!tenant || typeof tenant !== 'object' || Array.isArray(tenant) || tenant.id !== tenantId) return;
+        localStorage.setItem('nortex_tenant_data', JSON.stringify({ ...tenant, ...settings }));
+    } catch {
+        // Una caché ilegible no debe bloquear el POS; el estado en memoria sigue vigente.
+    }
 };
 
 /** Línea del carrito → forma serializable. Se conserva TODO (mayoreo, empaque,
@@ -314,6 +454,10 @@ interface CompletedSale {
     date: string;
     invoiceNumber?: number;
     invoiceSeries?: string;
+    /** Foto fiscal usada para este comprobante; nunca se re-deriva de Settings. */
+    fiscalRegimeAtSale: FiscalRegime;
+    fiscalRegimeVersionAtSale: number;
+    vatAmountAtSale: number;
     // Efectivo recibido AL MOMENTO del cobro (string decimal crudo, sin float).
     // Va en la venta y no en un estado suelto porque el estado se limpia apenas
     // termina el cobro: por eso la pantalla de éxito nunca mostraba el vuelto.
@@ -495,6 +639,7 @@ const POS: React.FC = () => {
     // La cura de fondo es que el carrito sea durable: si vuelve intacto, el bug
     // deja de existir sin tocar el router. Ver utils/cartPersistence.ts.
     const [identidad] = useState(identidadLocal);
+    const [fiscalSettings, setFiscalSettings] = useState<FiscalSettingsSnapshot>(fiscalSettingsFromTenantCache);
     const [rescate] = useState<CarritoGuardado | null>(() => {
         if (!identidad) return null;
         const actual = localStorage.getItem(claveCarrito(identidad.tenantId, identidad.userId));
@@ -560,6 +705,9 @@ const POS: React.FC = () => {
     const [showHeldCarts, setShowHeldCarts] = useState(false);
     const [parkingNotice, setParkingNotice] = useState<ParkingNotice | null>(null);
     const [heldCartToDiscard, setHeldCartToDiscard] = useState<string | null>(null);
+    // Una venta de otro turno (o demasiado vieja) nunca entra por un botón
+    // lateral ni por el aviso flotante sin pasar por la misma confirmación.
+    const [heldCartToRestore, setHeldCartToRestore] = useState<string | null>(null);
     // Evita que un doble toque aparque dos copias antes de que React pinte el
     // carrito vacío. En un mostrador, 200 ms bastan para que esto ocurra.
     const parkingLockRef = useRef(false);
@@ -580,10 +728,7 @@ const POS: React.FC = () => {
     const [operatorRole] = useState<string>(() => currentOperatorRole());
     const canApproveScaleLabelTotal = canApproveExceptionalScaleLabel(operatorRole);
     const { toast, showToast, dismissToast } = useToast();
-    // Solo Dueño/Admin ven el hint del PIN inicial en la apertura de caja.
-    const [isOwnerAdmin] = useState<boolean>(() => {
-        return ['OWNER', 'ADMIN', 'SUPER_ADMIN'].includes(operatorRole);
-    });
+    const canManageCustomerCreateControls = canCreateCustomerWithFinancialControls(operatorRole);
 
     // 🔴 FIADO INTELIGENTE STATE
     const [showCreditPanel, setShowCreditPanel] = useState(false);
@@ -603,6 +748,7 @@ const POS: React.FC = () => {
     const [usdAmount, setUsdAmount] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const [cajaCategory, setCajaCategory] = useState('Todos');
+    const [cajaVisibleLimit, setCajaVisibleLimit] = useState(24);
     const [processing, setProcessing] = useState(false);
 
     // 🖨️ THERMAL PRINTER STATE
@@ -834,6 +980,39 @@ const POS: React.FC = () => {
         'Authorization': `Bearer ${token}`
     }), [token]);
 
+    const fetchCustomerSuggestions = useCallback(async (query: string) => {
+        if (!token) return;
+        try {
+            const params = new URLSearchParams({
+                page: '1',
+                pageSize: '20',
+            });
+            if (query.trim()) params.set('search', query.trim());
+            const response = await fetch(`/api/customers?${params.toString()}`, { headers });
+            if (!response.ok) return;
+            const payload = await response.json();
+            setCustomerList(Array.isArray(payload) ? payload : (payload.customers ?? []));
+        } catch (error) {
+            console.error('Failed to fetch customers', error);
+        }
+    }, [headers, token]);
+
+    const refreshFiscalSettings = useCallback(async () => {
+        if (!identidad?.tenantId || !token || !navigator.onLine) return;
+        try {
+            const response = await fetch('/api/tenant/fiscal-settings', { headers });
+            if (!response.ok) return;
+            const payload = await response.json();
+            setFiscalSettings(previous => {
+                const normalized = normalizeFiscalSettingsSnapshot(payload, previous);
+                cacheFiscalSettingsForTenant(identidad.tenantId, normalized);
+                return normalized;
+            });
+        } catch {
+            // Offline/lie-fi: se conserva exactamente el snapshot cacheado.
+        }
+    }, [headers, identidad?.tenantId, token]);
+
     // ==========================================
     // FETCH PRODUCTS FROM DB
     // ==========================================
@@ -863,6 +1042,7 @@ const POS: React.FC = () => {
                     packPrice: p.packPrice ?? null,
                     saleMode: p.saleMode ?? null,
                     quantityStep: p.quantityStep == null ? null : Number(p.quantityStep),
+                    ivaExento: p.ivaExento === true,
                     productFamily: p.productFamily ?? null,
                 }));
                 setProducts(mapped);
@@ -910,7 +1090,7 @@ const POS: React.FC = () => {
                 );
                 if (reconciliationCount > 0) {
                     setLastScanFeedback({
-                        message: `${reconciliationCount} venta${reconciliationCount === 1 ? '' : 's'} offline requiere${reconciliationCount === 1 ? '' : 'n'} revisión; no se reinterpretó la etiqueta`,
+                        message: `${reconciliationCount} venta${reconciliationCount === 1 ? '' : 's'} offline requiere${reconciliationCount === 1 ? '' : 'n'} revisión; no se modificó el comprobante`,
                         type: 'error',
                     });
                     window.setTimeout(() => setLastScanFeedback(null), 8000);
@@ -1087,7 +1267,9 @@ const POS: React.FC = () => {
         const payload = serializarAparcados(heldCarts.map((h): AparcadoGuardado => ({
             id: h.id,
             label: h.label,
-            shiftId: h.shiftId || currentShift?.id || '',
+            // Nunca completar un turno faltante con el actual: eso convertiría
+            // una fila legacy ambigua en una atribución silenciosa.
+            shiftId: h.shiftId || '',
             heldAt: h.heldAt instanceof Date ? h.heldAt.getTime() : Date.now(),
             lineas: h.items.map(aLineaGuardada),
             clienteId: h.customer?.id ?? h.clienteId ?? null,
@@ -1100,7 +1282,100 @@ const POS: React.FC = () => {
             localStorage.removeItem(clave);
             localStorage.removeItem(claveLegacy);
         }
-    }, [heldCarts, currentShift?.id, persistenciaLista, identidad]);
+    }, [heldCarts, persistenciaLista, identidad]);
+
+    // Cotización → POS: se consume una sola vez y únicamente desde la clave
+    // del tenant + cajero autenticados. El canal global legacy no se consulta.
+    // Esperamos a validar el rescate contra /shifts/current para que el efecto
+    // no pise la venta recuperada ni compita con la decisión de otro turno.
+    useEffect(() => {
+        if (!persistenciaLista || !identidad) return;
+        // Migración de privacidad: el canal global anterior se elimina sin
+        // parsearlo ni hidratarlo. Podría pertenecer a otro cajero del equipo.
+        localStorage.removeItem('nortex_pending_cart');
+        const clave = claveTraspasoCarrito(identidad.tenantId, identidad.userId);
+        const crudo = localStorage.getItem(clave);
+        if (crudo === null) return;
+
+        // Una venta recuperable de otro turno se resuelve primero. Consumir la
+        // cotización ahora dejaría dos entradas capaces de llamar setCart y el
+        // botón "Recuperar" podría pisar el traspaso recién cargado.
+        if (ventaPendiente) {
+            setShowMobileCart(true);
+            setParkingNotice({
+                tone: 'warning',
+                message: 'Resolvé primero la venta sin terminar. La cotización seguirá esperando sin perderse.',
+            });
+            return;
+        }
+
+        const traspaso = leerTraspasoCarrito(crudo, identidad, Date.now());
+        if (!traspaso) {
+            // One-shot también para basura/vencidos: nunca reintentar un payload
+            // que ya falló su contrato estructural o su identidad.
+            localStorage.removeItem(clave);
+            setParkingNotice({
+                tone: 'warning',
+                message: 'La cotización pendiente venció o no pertenece a esta sesión. Volvé a abrirla desde Cotizaciones.',
+            });
+            return;
+        }
+
+        // Si hay una venta activa, solo se sustituye cuando podemos conservarla
+        // como aparcada dentro de un turno real. Sin turno o sin cupo, el
+        // traspaso permanece sin consumir y se reintenta al resolver el bloqueo.
+        if (cart.length > 0 && !currentShift) {
+            setParkingNotice({
+                tone: 'warning',
+                message: 'Hay una cotización esperando. Abrí la caja para guardar la venta actual antes de cargarla.',
+            });
+            return;
+        }
+        if (cart.length > 0 && heldCarts.length >= 5) {
+            setParkingNotice({
+                tone: 'warning',
+                message: 'Hay una cotización esperando. Continuá o descartá una venta aparcada para liberar espacio.',
+            });
+            setShowHeldCarts(true);
+            return;
+        }
+
+        // El borrado ocurre antes de hidratar: aunque un render posterior falle,
+        // otra sesión/pestaña no puede reproducir el mismo traspaso.
+        localStorage.removeItem(clave);
+        if (cart.length > 0 && currentShift) {
+            setHeldCarts(prev => [...prev, {
+                id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+                    ? crypto.randomUUID()
+                    : `traspaso-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                label: selectedCustomer?.name || 'Venta que estabas haciendo',
+                items: [...cart],
+                customer: selectedCustomer,
+                clienteId: selectedCustomer?.id ?? clienteARestaurar ?? null,
+                globalDiscount,
+                shiftId: currentShift.id,
+                heldAt: new Date(),
+            }]);
+        }
+        setCart(traspaso.lineas as unknown as CartItem[]);
+        setSelectedCustomer(null);
+        setClienteARestaurar(null);
+        setCustomerSearch('');
+        setGlobalDiscount('');
+        setCreditOverrideAuthorized(false);
+        setCreditOverridePin('');
+        setResumePaymentAfterShift(null);
+    }, [
+        persistenciaLista,
+        identidad,
+        ventaPendiente,
+        cart,
+        currentShift,
+        heldCarts.length,
+        selectedCustomer,
+        clienteARestaurar,
+        globalDiscount,
+    ]);
 
     // Cerrar la pestaña con una venta a medias: el navegador pregunta. El texto
     // lo decide el navegador (ya no se puede personalizar), pero el freno sí es
@@ -1138,6 +1413,7 @@ const POS: React.FC = () => {
         const handleOnline = () => {
             setIsOnline(true);
             void refreshScaleContext();
+            void refreshFiscalSettings();
             void syncOfflineSales();
         };
         const handleOffline = () => setIsOnline(false);
@@ -1147,7 +1423,11 @@ const POS: React.FC = () => {
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
         };
-    }, [syncOfflineSales, refreshOfflineCount, refreshScaleContext]);
+    }, [syncOfflineSales, refreshOfflineCount, refreshScaleContext, refreshFiscalSettings]);
+
+    useEffect(() => {
+        void refreshFiscalSettings();
+    }, [refreshFiscalSettings]);
 
     // ==========================================
     // INIT POS
@@ -1155,7 +1435,6 @@ const POS: React.FC = () => {
     useEffect(() => {
         const initPOS = async () => {
             const token = localStorage.getItem('nortex_token');
-            let hasOpenShift = false;
 
             // 1. Check Shift (Cache busting to avoid stale 'not found' after navigating)
             try {
@@ -1166,7 +1445,6 @@ const POS: React.FC = () => {
                 if (res.ok && data) {
                     setCurrentShift(data);
                     setShowOpenShift(false);
-                    hasOpenShift = true;
                 } else {
                     setCurrentShift(null);
                     // La caja se abre al cobrar, no al entrar. El usuario puede
@@ -1182,60 +1460,23 @@ const POS: React.FC = () => {
             }
 
             // 2. Fetch Customers for Dropdown
-            try {
-                const custRes = await fetch('/api/customers', {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (custRes.ok) {
-                    setCustomerList(await custRes.json());
-                }
-            } catch (e) {
-                console.error("Failed to fetch customers", e);
-            }
+            await fetchCustomerSuggestions('');
 
-            // 3. Check for Ghost Cart
-            try {
-                const pendingCart = localStorage.getItem('nortex_pending_cart');
-                if (pendingCart && pendingCart !== 'undefined') {
-                    const lineasTraspaso = JSON.parse(pendingCart);
-                    // El traspaso (demo o cotización convertida) GANA: es una
-                    // acción explícita del usuario. Pero desde que el carrito
-                    // sobrevive a la navegación puede haber una venta restaurada
-                    // debajo, y pisarla en silencio sería reintroducir el mismo
-                    // bug que este cambio viene a matar. Se aparca primero: los
-                    // aparcados ahora también son durables, así que no se pierde.
-                    // `cart` acá es el del primer render, o sea lo restaurado.
-                    if (cart.length > 0) {
-                        setHeldCarts(prev => [...prev, {
-                            id: `traspaso-${Date.now()}`,
-                            label: 'Venta que estabas haciendo',
-                            items: [...cart],
-                            customer: null,
-                            clienteId: null,
-                            heldAt: new Date(),
-                        }]);
-                    }
-                    setCart(lineasTraspaso);
-                    if (Array.isArray(lineasTraspaso) && lineasTraspaso.some(isQuotationCartLine)) {
-                        // Una cotización es un snapshot autoritativo: no hereda
-                        // descuentos de la venta que acabamos de aparcar.
-                        setGlobalDiscount('');
-                    }
-                    localStorage.removeItem('nortex_pending_cart');
-                    if (!hasOpenShift) setResumePaymentAfterShift(null);
-                }
-            } catch (e) {
-                console.error("Failed to parse ghost cart", e);
-                localStorage.removeItem('nortex_pending_cart');
-            }
-
-            // 4. Autoconnect thermal printer
+            // 3. Autoconnect thermal printer
             thermalPrinter.autoConnect().then(setThermalConnected);
         };
         initPOS();
         fetchProducts();
         fetchPulso();
-    }, []);
+    }, [fetchCustomerSuggestions]);
+
+    useEffect(() => {
+        if (selectedCustomer || !showCustomerDropdown || showInlineCustomerCreate) return;
+        const timer = window.setTimeout(() => {
+            fetchCustomerSuggestions(customerSearch);
+        }, customerSearch.trim() ? 180 : 0);
+        return () => window.clearTimeout(timer);
+    }, [customerSearch, fetchCustomerSuggestions, selectedCustomer, showCustomerDropdown, showInlineCustomerCreate]);
 
     /**
      * Traspaso de caja. El caso real: el dueño abre a las 7 y a las 2 entra el
@@ -1418,7 +1659,6 @@ const POS: React.FC = () => {
     ];
     const outCategories = [
         { value: 'GASTO_OPERATIVO', label: 'Gasto Operativo' },
-        { value: 'PAGO_PROVEEDOR', label: 'Pago a Proveedor' },
         { value: 'RETIRO_PERSONAL', label: 'Retiro Personal' },
         { value: 'CAMBIO', label: 'Cambio' },
         { value: 'AJUSTE', label: 'Ajuste' },
@@ -1584,6 +1824,7 @@ const POS: React.FC = () => {
             if (!res.ok) throw new Error(data.error);
             setCurrentShift(data);
             setShowOpenShift(false);
+            if (heldCartToRestore) setShowHeldCarts(true);
             setEmployeePin('');
             setErrorApertura({});
             if (resumePaymentAfterShift) {
@@ -1721,6 +1962,10 @@ const POS: React.FC = () => {
 
         signalCartAddition(product.id);
         const wholesaleCustomer = Boolean(selectedCustomer?.isWholesale);
+        // Un producto contado puede venderse únicamente en múltiplos (p. ej.
+        // paquetes de 6). La primera pulsación también debe respetar ese paso;
+        // iniciar en 1 y luego sumar 6 producía cantidades inválidas 1, 7, 13…
+        const initialQuantity = repeatedCatalogAddIncrement(product);
         setCart(prev => {
             const existing = prev.find(item => (
                 item.id === product.id
@@ -1733,7 +1978,9 @@ const POS: React.FC = () => {
                 return prev.map(item => {
                     if (lineKey(item) !== lineKey(existing)) return item;
                     const line = item as CartLine;
-                    const newQty = new Decimal(item.quantity).plus(1).toNumber();
+                    const newQty = new Decimal(item.quantity)
+                        .plus(repeatedCatalogAddIncrement(item))
+                        .toNumber();
                     const base = line.basePrice ?? item.price;
                     return {
                         ...item,
@@ -1743,8 +1990,8 @@ const POS: React.FC = () => {
                     };
                 });
             }
-            const price = effectiveUnitPrice({ basePrice: product.price, wholesalePrice: product.wholesalePrice, wholesaleMinQty: product.wholesaleMinQty, packSize: product.packSize, packPrice: product.packPrice }, 1, wholesaleCustomer, 'BASE');
-            return [...prev, { ...product, quantity: 1, cartLineId: product.id, basePrice: product.price, price }];
+            const price = effectiveUnitPrice({ basePrice: product.price, wholesalePrice: product.wholesalePrice, wholesaleMinQty: product.wholesaleMinQty, packSize: product.packSize, packPrice: product.packPrice }, initialQuantity, wholesaleCustomer, 'BASE');
+            return [...prev, { ...product, quantity: initialQuantity, cartLineId: product.id, basePrice: product.price, price }];
         });
     }, [selectedCustomer?.isWholesale, signalCartAddition]);
 
@@ -2369,9 +2616,47 @@ const POS: React.FC = () => {
         window.setTimeout(() => { parkingLockRef.current = false; }, 0);
     }, [cart, heldCarts, selectedCustomer, currentShift?.id, globalDiscount]);
 
-    const handleRestoreCart = useCallback((heldId: string) => {
+    const handleRestoreCart = useCallback((heldId: string, reatribucionConfirmada = false) => {
         const toRestore = heldCarts.find(h => h.id === heldId);
         if (!toRestore) return;
+        const decision = decidirRestauracionAparcado({
+            aparcado: {
+                id: toRestore.id,
+                label: toRestore.label,
+                shiftId: toRestore.shiftId || '',
+                heldAt: new Date(toRestore.heldAt).getTime(),
+                lineas: toRestore.items.map(aLineaGuardada),
+                clienteId: toRestore.customer?.id ?? toRestore.clienteId ?? null,
+                descuentoGlobal: toRestore.globalDiscount ?? '',
+            },
+            shiftIdActual: currentShift?.id ?? null,
+            ahoraMs: Date.now(),
+        });
+        if (decision === 'DESCARTAR') {
+            setParkingNotice({ tone: 'warning', message: 'Esta venta aparcada está dañada y no se puede recuperar.' });
+            return;
+        }
+        if (decision === 'OFRECER' && !reatribucionConfirmada) {
+            // Este estado abre una confirmación dentro del mismo panel. Como
+            // TODAS las entradas llaman este handler, también cubre el botón
+            // rápido del aviso de parqueo.
+            setHeldCartToRestore(heldId);
+            setHeldCartToDiscard(null);
+            setParkingNotice(null);
+            setShowHeldCarts(true);
+            return;
+        }
+        if (!currentShift) {
+            // Sin turno no existe un destino seguro para reatribuir ni un lugar
+            // durable donde aparcar el carrito actual. No se muta ningún carro.
+            setShowHeldCarts(false);
+            setErrorApertura({});
+            setResumePaymentAfterShift(null);
+            setShowOpenShift(true);
+            return;
+        }
+
+        setHeldCartToRestore(null);
         const swappedCurrentCart = cart.length > 0;
         // Si ya había una venta en curso, se intercambian atómicamente: sale
         // una aparcada y entra la actual. Incluso con 5 aparcadas el cupo no
@@ -2386,7 +2671,7 @@ const POS: React.FC = () => {
                 customer: selectedCustomer,
                 clienteId: selectedCustomer?.id ?? null,
                 globalDiscount,
-                shiftId: currentShift?.id,
+                shiftId: currentShift.id,
                 heldAt: new Date(),
             };
             setHeldCarts(prev => [...prev.filter(h => h.id !== heldId), currentHeld]);
@@ -2415,17 +2700,25 @@ const POS: React.FC = () => {
             swapped_current_cart: swappedCurrentCart,
             parked_count: swappedCurrentCart ? heldCarts.length : heldCarts.length - 1,
         });
-    }, [cart, heldCarts, selectedCustomer, currentShift?.id, customerList, globalDiscount]);
+    }, [cart, heldCarts, selectedCustomer, currentShift, customerList, globalDiscount]);
 
     // ── P0-1 · Venta a medias de otro turno ────────────────────────────────
     const recuperarVentaPendiente = useCallback(() => {
         if (!ventaPendiente) return;
+        if (decidirRecuperacionPendiente(cart) === 'CONSERVAR_ACTUAL') {
+            setShowMobileCart(true);
+            setParkingNotice({
+                tone: 'warning',
+                message: 'Terminá o aparcá la venta actual antes de recuperar la anterior. Ningún carrito se modificó.',
+            });
+            return;
+        }
         const restoredLines = ventaPendiente.lineas as unknown as CartItem[];
         setCart(restoredLines);
         setGlobalDiscount(restoredLines.some(isQuotationCartLine) ? '' : ventaPendiente.descuentoGlobal);
         setClienteARestaurar(ventaPendiente.clienteId);
         setVentaPendiente(null);
-    }, [ventaPendiente]);
+    }, [ventaPendiente, cart]);
 
     const descartarVentaPendiente = useCallback(() => {
         setVentaPendiente(null);
@@ -2478,6 +2771,7 @@ const POS: React.FC = () => {
     const handleRemoveHeldCart = useCallback((heldId: string) => {
         setHeldCarts(prev => prev.filter(h => h.id !== heldId));
         setHeldCartToDiscard(null);
+        setHeldCartToRestore(null);
         if (heldCarts.length <= 1) setShowHeldCarts(false);
         setParkingNotice({ tone: 'success', message: 'Venta aparcada descartada.' });
         trackEvent('parked_sale_discarded', { parked_count: Math.max(0, heldCarts.length - 1) });
@@ -2488,6 +2782,7 @@ const POS: React.FC = () => {
         // selector evita dos superficies interactivas superpuestas.
         setShowMobileCart(false);
         setHeldCartToDiscard(null);
+        setHeldCartToRestore(null);
         setShowHeldCarts(true);
     }, []);
 
@@ -2666,7 +2961,9 @@ const POS: React.FC = () => {
         setInlineCustomer({
             name: customerSearch.trim(),
             phone: '',
-            creditLimit: customerPickerForCredit ? grandTotalD.toFixed(2) : '',
+            creditLimit: canManageCustomerCreateControls && customerPickerForCredit
+                ? grandTotalD.toFixed(2)
+                : '',
         });
         setInlineCustomerErrors({});
         setShowCustomerDropdown(false);
@@ -2684,7 +2981,7 @@ const POS: React.FC = () => {
         if (!name) fieldErrors.name = 'Escribí el nombre del cliente.';
         if (phone.length > 40) fieldErrors.phone = 'El teléfono es demasiado largo.';
         let creditLimit: Decimal | null = null;
-        if (creditLimitRaw) {
+        if (canManageCustomerCreateControls && creditLimitRaw) {
             try {
                 creditLimit = new Decimal(creditLimitRaw);
                 if (!creditLimit.isFinite() || creditLimit.isNegative()) {
@@ -2706,11 +3003,12 @@ const POS: React.FC = () => {
             const response = await fetch('/api/customers', {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({
+                body: JSON.stringify(buildInlineCustomerCreatePayload({
+                    role: operatorRole,
                     name,
-                    ...(phone ? { phone } : {}),
-                    ...(creditLimit ? { creditLimit: creditLimit.toString() } : {}),
-                }),
+                    phone,
+                    creditLimit: creditLimit?.toString(),
+                })),
             });
             const body = await response.json().catch(() => ({}));
             if (!response.ok) {
@@ -2748,7 +3046,9 @@ const POS: React.FC = () => {
                 title: 'Cliente creado y seleccionado',
                 message: created.creditLimit > 0
                     ? 'Podés continuar con el cobro.'
-                    : 'Para venderle fiado, definí primero su límite de crédito.',
+                    : canManageCustomerCreateControls
+                        ? 'Para venderle fiado, definí primero su límite de crédito.'
+                        : 'Cliente creado. Un administrador debe asignarle el límite para venderle fiado.',
             });
         } catch {
             setInlineCustomerErrors({
@@ -3014,7 +3314,7 @@ const POS: React.FC = () => {
     const globalDiscountD = hasQuotationLines
         ? new Decimal(0)
         : Decimal.min(100, Decimal.max(0, toDecimal(globalDiscount)));
-    const totalD = cart.reduce((acc, item) => {
+    const cartTotalsD = cart.reduce((acc, item) => {
         const lineDiscount = isQuotationCartLine(item)
             ? new Decimal(0)
             : toDecimal((item as CartLine).discount ?? 0);
@@ -3022,8 +3322,13 @@ const POS: React.FC = () => {
         const quantity = isQuotationCartLine(item) && item.quantityExact
             ? toDecimal(item.quantityExact)
             : toDecimal(item.quantity);
-        return acc.plus(toDecimal(item.price).mul(quantity).mul(factor));
-    }, new Decimal(0));
+        const lineTotal = toDecimal(item.price).mul(quantity).mul(factor);
+        return {
+            gross: acc.gross.plus(lineTotal),
+            taxableGross: item.ivaExento ? acc.taxableGross : acc.taxableGross.plus(lineTotal),
+        };
+    }, { gross: new Decimal(0), taxableGross: new Decimal(0) });
+    const totalD = cartTotalsD.gross;
     const discountedTotalD = totalD.mul(new Decimal(1).minus(globalDiscountD.div(100)));
     // IVA 15% Nicaragua — DESGLOSE, no recargo. El precio de mostrador ya
     // incluye el IVA (convención nica) y el backend registra exactamente
@@ -3032,7 +3337,22 @@ const POS: React.FC = () => {
     // 15% encima: el cliente pagaba C$115 y la BD guardaba C$100 → sobrante
     // fantasma en todos los arqueos y fiado registrado 15% por debajo.
     const grandTotalD = discountedTotalD;
-    const taxD = grandTotalD.minus(grandTotalD.div('1.15')); // informativo (incluido)
+    // El backend redondea total y exento a centavos antes del desglose. Este
+    // espejo evita que una venta medida offline imprima un IVA distinto por un
+    // centavo cuando finalmente sincronice.
+    const fiscalTotalD = grandTotalD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const exemptGrandTotalD = cartTotalsD.gross.minus(cartTotalsD.taxableGross)
+        .mul(new Decimal(1).minus(globalDiscountD.div(100)))
+        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const taxableGrandTotalD = fiscalTotalD.minus(exemptGrandTotalD);
+    const generalTaxD = includedVatFromGross(taxableGrandTotalD);
+    const fiscalAmounts = resolveSaleFiscalAmounts(
+        fiscalTotalD,
+        generalTaxD,
+        fiscalSettings.fiscalRegime,
+    );
+    const taxD = fiscalAmounts.vatAmount; // informativo (incluido); cero en cuota fija
+    const isFixedQuota = fiscalAmounts.fiscalRegime === FISCAL_REGIME_CUOTA_FIJA;
 
     // Proyecciones numéricas (2 decimales) para UI y payload; la verdad es Decimal.
     const total = totalD.toDecimalPlaces(2).toNumber();
@@ -3189,6 +3509,7 @@ const POS: React.FC = () => {
             customerId: selectedCustomer?.id ?? null,
             employeeId: currentShift.employeeId ?? currentShift.employee?.id ?? null,
             globalDiscount: globalDiscountD.toString(),
+            fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
             items: saleItems.map(({ name: _name, ...item }) => item),
         });
         const attempt = checkoutAttemptFor(
@@ -3198,6 +3519,19 @@ const POS: React.FC = () => {
         );
         checkoutAttemptRef.current = attempt;
         const offlineId = attempt.offlineId;
+        // Identidad canónica del intento: el POST online y el replay diferido
+        // comparten este objeto. Si la respuesta online se pierde, IndexedDB
+        // reenvía la misma versión fiscal y conserva la misma huella idempotente.
+        const saleTransportPayload = {
+            offlineId,
+            paymentMethod: method,
+            customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
+            customerId: selectedCustomer?.id ?? null,
+            total: grandTotal,
+            globalDiscount: globalDiscountNum,
+            employeeId: currentShift.employeeId ?? currentShift.employee?.id ?? null,
+            fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
+        };
         trackEvent('real_sale_submit_attempted', {
             source: firstSaleMode ? 'first_sale' : 'pos',
             onboarding_step: 'checkout',
@@ -3226,16 +3560,10 @@ const POS: React.FC = () => {
             const userId = userRaw ? JSON.parse(userRaw).id : '';
 
             await saveSaleOffline({
-                offlineId,
+                ...saleTransportPayload,
                 tenantId,
                 userId,
                 shiftId: currentShift?.id ?? null,
-                employeeId: currentShift?.employeeId ?? currentShift?.employee?.id ?? null,
-                customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
-                customerId: selectedCustomer?.id ?? null,
-                paymentMethod: method,
-                total: grandTotal,
-                globalDiscount: globalDiscountNum,
                 items: saleItems,
                 createdAt: new Date().toISOString(),
             });
@@ -3264,6 +3592,9 @@ const POS: React.FC = () => {
                 customerPhone: selectedCustomer?.phone,
                 saleId: offlineId,
                 date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                fiscalRegimeAtSale: fiscalAmounts.fiscalRegime,
+                fiscalRegimeVersionAtSale: fiscalSettings.fiscalRegimeVersion,
+                vatAmountAtSale: tax,
                 // Foto del efectivo recibido: el estado se limpia en la línea
                 // siguiente, así que el vuelto tiene que quedar en la venta.
                 cashReceived: method === 'CASH' ? cashReceived : undefined,
@@ -3298,14 +3629,8 @@ const POS: React.FC = () => {
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 signal: AbortSignal.timeout(8000),
                 body: JSON.stringify({
-                    offlineId,
+                    ...saleTransportPayload,
                     items: saleItems.map(({ name: _name, ...item }) => item),
-                    paymentMethod: method,
-                    customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
-                    customerId: selectedCustomer?.id,
-                    total: grandTotal,
-                    globalDiscount: globalDiscountNum,
-                    employeeId: currentShift?.employeeId || currentShift?.employee?.id || null
                 })
             });
 
@@ -3331,6 +3656,31 @@ const POS: React.FC = () => {
                 );
             }
 
+            // La factura online usa la foto AUTORITATIVA de la venta creada, no
+            // el Settings que pudo quedar viejo mientras el cajero cobraba.
+            const authoritativeFiscalRegime = Object.prototype.hasOwnProperty.call(data, 'fiscalRegimeAtSale')
+                ? normalizeFiscalRegime(data.fiscalRegimeAtSale)
+                : fiscalAmounts.fiscalRegime;
+            const fallbackFiscalAmounts = resolveSaleFiscalAmounts(
+                fiscalTotalD,
+                generalTaxD,
+                authoritativeFiscalRegime,
+            );
+            const responseVat = nonNegativeDecimalOrNull(data.vatAmountAtSale);
+            const authoritativeVat = responseVat && responseVat.lessThanOrEqualTo(fiscalTotalD)
+                ? responseVat
+                : fallbackFiscalAmounts.vatAmount;
+            const authoritativeFiscalVersion = normalizeFiscalRegimeVersion(
+                data.fiscalRegimeVersionAtSale,
+                fiscalSettings.fiscalRegimeVersion,
+            );
+            const authoritativeFiscalSettings = {
+                fiscalRegime: authoritativeFiscalRegime,
+                fiscalRegimeVersion: authoritativeFiscalVersion,
+            };
+            setFiscalSettings(authoritativeFiscalSettings);
+            cacheFiscalSettingsForTenant(identidad?.tenantId, authoritativeFiscalSettings);
+
             fetchProducts();
             fetchPulso();
             // Aviso global (retención R2): el checklist de primeros pasos se
@@ -3341,7 +3691,7 @@ const POS: React.FC = () => {
                 items: [...cart],
                 subtotal: total,
                 discount: discountAmount,
-                tax,
+                tax: authoritativeVat.toDecimalPlaces(2).toNumber(),
                 grandTotal,
                 paymentMethod: method,
                 customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
@@ -3350,6 +3700,9 @@ const POS: React.FC = () => {
                 date: new Date().toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
                 invoiceNumber: data.invoiceNumber,
                 invoiceSeries: data.invoiceSeries,
+                fiscalRegimeAtSale: authoritativeFiscalRegime,
+                fiscalRegimeVersionAtSale: authoritativeFiscalVersion,
+                vatAmountAtSale: authoritativeVat.toDecimalPlaces(2).toNumber(),
                 cashReceived: method === 'CASH' ? cashReceived : undefined,
                 usdReceived: method === 'CASH' && payingInUSD ? usdAmount : undefined,
             });
@@ -3395,6 +3748,10 @@ const POS: React.FC = () => {
                 title: 'No pudimos procesar la venta',
                 message: error?.message || 'Intentá de nuevo. La clave del cobro se conservará para no duplicarlo.',
             });
+            // En móvil, el ticket se cerró al empezar el POST. Si un rechazo
+            // de negocio falla, el efectivo ingresado sigue vivo y debe volver
+            // a quedar visible para corregirlo o reintentar.
+            if (guidedSimpleMode && method === 'CASH') setShowMobileCart(true);
         } finally {
             checkoutLockRef.current = false;
             setProcessing(false);
@@ -3452,6 +3809,12 @@ const POS: React.FC = () => {
         return { tenantName: 'Nortex' };
     };
 
+    const postSalePrintCash = useMemo(() => buildPostSalePrintCash({
+        paymentMethod: completedSale?.paymentMethod ?? '',
+        cashReceived: efectivoRecibidoDeLaVenta,
+        change: vueltoDeLaVenta?.vuelto,
+    }), [completedSale?.paymentMethod, efectivoRecibidoDeLaVenta, vueltoDeLaVenta]);
+
     const buildInvoiceData = useCallback((): InvoiceData | null => {
         if (!completedSale) return null;
         const tenant = getTenantPrintDetails();
@@ -3477,13 +3840,13 @@ const POS: React.FC = () => {
             saleId: completedSale.saleId,
             invoiceNumber: completedSale.invoiceNumber,
             invoiceSeries: completedSale.invoiceSeries,
-            cashReceived: vueltoDeLaVenta ? Number(vueltoDeLaVenta.recibido.toFixed(2)) : undefined,
-            change: vueltoDeLaVenta ? Number(vueltoDeLaVenta.vuelto.toFixed(2)) : undefined,
+            fiscalRegime: completedSale.fiscalRegimeAtSale,
+            ...postSalePrintCash,
             user: currentShift?.employee
                 ? `${currentShift.employee.firstName} ${currentShift.employee.lastName}`
                 : 'Cajero',
         };
-    }, [completedSale, currentShift?.employee, vueltoDeLaVenta]);
+    }, [completedSale, currentShift?.employee, postSalePrintCash]);
 
     const handleWhatsApp = () => {
         const inv = buildInvoiceData();
@@ -3647,18 +4010,31 @@ const POS: React.FC = () => {
                 .map(product => product.category?.trim())
                 .filter((category): category is string => Boolean(category)),
         ));
-        return ['Todos', ...categories.slice(0, 4)];
+        return ['Todos', ...categories];
     }, [products]);
 
-    const cajaProducts = useMemo(() => {
-        const searching = searchTerm.trim() !== '';
-        const base = searching ? filteredProducts : products;
+    useEffect(() => {
+        setCajaVisibleLimit(TOPE_SIN_BUSQUEDA);
+    }, [cajaCategory, searchTerm]);
+
+    const cajaCatalogResult = useMemo(() => {
+        const term = searchTerm.trim();
+        if (term !== '') return buscarProductos(indiceProductos, term, cajaVisibleLimit);
+
         const activeCategory = cajaCategories.includes(cajaCategory) ? cajaCategory : 'Todos';
-        const byCategory = !searching && activeCategory !== 'Todos'
-            ? base.filter(product => product.category?.trim() === activeCategory)
-            : base;
-        return byCategory.slice(0, searching ? TOPE_BUSCANDO : 12);
-    }, [cajaCategories, cajaCategory, filteredProducts, products, searchTerm]);
+        const byCategory = activeCategory === 'Todos'
+            ? products
+            : products.filter(product => product.category?.trim() === activeCategory);
+        const visibles = byCategory.slice(0, cajaVisibleLimit);
+        return {
+            visibles,
+            total: byCategory.length,
+            ocultos: byCategory.length - visibles.length,
+            coincidenciaExacta: false,
+        };
+    }, [cajaCategories, cajaCategory, cajaVisibleLimit, indiceProductos, products, searchTerm]);
+
+    const cajaProducts = cajaCatalogResult.visibles;
 
     const cajaBlockedProductIds = useMemo(() => new Set(
         permiteStockNegativo === true
@@ -3678,25 +4054,31 @@ const POS: React.FC = () => {
         if (product.stock <= 0) playErrorBeep(); else playBeep();
     }, [addToCart, avisarProductoAgotado, permiteStockNegativo]);
 
-    const filteredCustomers = customerList.filter(c => c.name.toLowerCase().includes(customerSearch.toLowerCase()));
+    const filteredCustomers = customerList;
     const firstSaleStage = completedSale ? 3 : cart.length > 0 ? 2 : 1;
 
-    // Enter expresa intención de agregar lo que la búsqueda ya mostró. El SKU
-    // exacto conserva prioridad; si no existe, se agrega el primer resultado
-    // visible. El listener global del escáner sigue siendo una ruta separada.
+    // Enter solo agrega cuando la intención es inequívoca: SKU exacto o una
+    // única coincidencia. Con varias opciones, el cajero elige la correcta.
     const handleSearchKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && searchTerm.trim()) {
             e.preventDefault();
             const term = searchTerm.trim();
-            const exactSku = products.find(product => product.sku.toUpperCase() === term.toUpperCase());
-            const firstVisible = buscarProductos(indiceProductos, term, 1).visibles[0];
-            const selected = exactSku ?? firstVisible;
-            if (!selected) {
+            const resolution = resolverEnterBusqueda(indiceProductos, term);
+            if (resolution.kind === 'none') {
                 setLastScanFeedback({ message: `No encontramos "${term}". Revisá el nombre o creá el producto.`, type: 'error' });
                 playErrorBeep();
                 window.setTimeout(() => setLastScanFeedback(null), 3500);
                 return;
             }
+            if (resolution.kind === 'ambiguous') {
+                setLastScanFeedback({
+                    message: `Hay ${resolution.total} coincidencias. Tocá el producto correcto.`,
+                    type: 'error',
+                });
+                window.setTimeout(() => setLastScanFeedback(null), 3500);
+                return;
+            }
+            const selected = resolution.product;
             agregarDesdeGrilla(selected);
             setLastScanFeedback({ message: `${selected.name} agregado`, type: 'success' });
             window.setTimeout(() => setLastScanFeedback(null), 1800);
@@ -4729,7 +5111,7 @@ const POS: React.FC = () => {
             {showHeldCarts && (
                 <div
                     className="fixed inset-0 z-modal bg-black/65 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
-                    onClick={() => { setShowHeldCarts(false); setHeldCartToDiscard(null); }}
+                    onClick={() => { setShowHeldCarts(false); setHeldCartToDiscard(null); setHeldCartToRestore(null); }}
                 >
                     <section
                         role="dialog"
@@ -4749,7 +5131,7 @@ const POS: React.FC = () => {
                         <IconButton
                             icon={<X size={17} />}
                             label="Cerrar ventas aparcadas"
-                            onClick={() => { setShowHeldCarts(false); setHeldCartToDiscard(null); }}
+                            onClick={() => { setShowHeldCarts(false); setHeldCartToDiscard(null); setHeldCartToRestore(null); }}
                         />
                     </div>
                     {heldCarts.length === 0 ? (
@@ -4787,7 +5169,10 @@ const POS: React.FC = () => {
                                                     <RotateCcw size={15} /> Continuar
                                                 </button>
                                                 <button
-                                                    onClick={() => setHeldCartToDiscard(heldCartToDiscard === held.id ? null : held.id)}
+                                                    onClick={() => {
+                                                        setHeldCartToRestore(null);
+                                                        setHeldCartToDiscard(heldCartToDiscard === held.id ? null : held.id);
+                                                    }}
                                                     aria-label={`Descartar ${held.label}`}
                                                     aria-expanded={heldCartToDiscard === held.id}
                                                     className="w-touch h-touch flex items-center justify-center text-slate-400 hover:text-danger hover:bg-danger-soft rounded-control transition-colors"
@@ -4807,6 +5192,31 @@ const POS: React.FC = () => {
                                                 <span className="text-[11px] text-slate-400 px-1 py-1">+{held.items.length - 3} más</span>
                                             )}
                                         </div>
+                                        {heldCartToRestore === held.id && (
+                                            <div role="alert" className="mt-3 p-3 rounded-control bg-warning-soft border border-amber-500/20 space-y-2.5">
+                                                <p className="text-xs text-slate-200">
+                                                    {currentShift
+                                                        ? 'Esta venta pertenece a otro turno o lleva más de 12 horas. Si continuás, quedará atribuida a la caja actual.'
+                                                        : 'Esta venta necesita una caja abierta antes de reatribuirla. La venta actual y la aparcada seguirán intactas.'}
+                                                </p>
+                                                <div className="flex justify-end gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setHeldCartToRestore(null)}
+                                                        className="h-9 px-3 rounded-control text-xs font-semibold text-slate-200 hover:bg-white/[0.06]"
+                                                    >
+                                                        Cancelar
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRestoreCart(held.id, true)}
+                                                        className="h-9 px-3 rounded-control bg-warning text-white text-xs font-bold hover:opacity-90"
+                                                    >
+                                                        {currentShift ? 'Reatribuir y continuar' : 'Abrir caja'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
                                         {heldCartToDiscard === held.id && (
                                             <div role="alert" className="mt-3 p-3 rounded-control bg-danger-soft border border-danger/20 flex flex-col sm:flex-row sm:items-center gap-2">
                                                 <p className="text-xs text-slate-200 flex-1">Esta venta se eliminará del dispositivo.</p>
@@ -5560,12 +5970,15 @@ const POS: React.FC = () => {
                         <div className="flex-1 min-h-0 overflow-y-auto pb-4 custom-scrollbar">
                             <CajaNicaCatalog
                                 products={cajaProducts}
+                                totalProducts={cajaCatalogResult.total}
                                 categories={searchTerm.trim() ? [] : cajaCategories}
                                 selectedCategory={cajaCategories.includes(cajaCategory) ? cajaCategory : 'Todos'}
                                 searchTerm={searchTerm}
                                 blockedProductIds={cajaBlockedProductIds}
                                 onCategoryChange={setCajaCategory}
                                 onAdd={agregarDesdeGrilla}
+                                onBlocked={avisarProductoAgotado}
+                                onShowMore={() => setCajaVisibleLimit(limit => limit + TOPE_SIN_BUSQUEDA)}
                             />
                         </div>
                     )
@@ -5883,30 +6296,36 @@ const POS: React.FC = () => {
                                 />
                                 {inlineCustomerErrors.phone && <p id="inline-customer-phone-error" className="text-xs text-red-300 mt-1">{inlineCustomerErrors.phone}</p>}
                             </div>
-                            <div>
-                                <label htmlFor="inline-customer-limit" className="block text-xs font-semibold text-slate-300 mb-1.5">
-                                    Límite de fiado <span className="font-normal text-slate-500">(opcional)</span>
-                                </label>
-                                <div className="relative">
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm font-semibold">C$</span>
-                                    <input
-                                        id="inline-customer-limit"
-                                        type="text"
-                                        inputMode="decimal"
-                                        value={inlineCustomer.creditLimit}
-                                        onChange={(event) => {
-                                            setInlineCustomer(previous => ({ ...previous, creditLimit: sanitizeDecimalInput(event.target.value) }));
-                                            setInlineCustomerErrors(previous => ({ ...previous, creditLimit: undefined, general: undefined }));
-                                        }}
-                                        aria-invalid={Boolean(inlineCustomerErrors.creditLimit)}
-                                        aria-describedby={inlineCustomerErrors.creditLimit ? 'inline-customer-limit-error' : 'inline-customer-limit-help'}
-                                        className={`w-full h-touch pl-9 pr-3 rounded-control bg-surface-900 text-slate-100 border outline-none focus:ring-2 focus:ring-brand/30 font-mono tabular-nums ${inlineCustomerErrors.creditLimit ? 'border-red-500/70' : 'border-white/[0.10]'}`}
-                                        placeholder="0.00"
-                                    />
+                            {canManageCustomerCreateControls ? (
+                                <div>
+                                    <label htmlFor="inline-customer-limit" className="block text-xs font-semibold text-slate-300 mb-1.5">
+                                        Límite de fiado <span className="font-normal text-slate-500">(opcional)</span>
+                                    </label>
+                                    <div className="relative">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm font-semibold">C$</span>
+                                        <input
+                                            id="inline-customer-limit"
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={inlineCustomer.creditLimit}
+                                            onChange={(event) => {
+                                                setInlineCustomer(previous => ({ ...previous, creditLimit: sanitizeDecimalInput(event.target.value) }));
+                                                setInlineCustomerErrors(previous => ({ ...previous, creditLimit: undefined, general: undefined }));
+                                            }}
+                                            aria-invalid={Boolean(inlineCustomerErrors.creditLimit)}
+                                            aria-describedby={inlineCustomerErrors.creditLimit ? 'inline-customer-limit-error' : 'inline-customer-limit-help'}
+                                            className={`w-full h-touch pl-9 pr-3 rounded-control bg-surface-900 text-slate-100 border outline-none focus:ring-2 focus:ring-brand/30 font-mono tabular-nums ${inlineCustomerErrors.creditLimit ? 'border-red-500/70' : 'border-white/[0.10]'}`}
+                                            placeholder="0.00"
+                                        />
+                                    </div>
+                                    <p id="inline-customer-limit-help" className="text-[11px] text-slate-500 mt-1">Solo hace falta si vas a cobrar esta venta fiada.</p>
+                                    {inlineCustomerErrors.creditLimit && <p id="inline-customer-limit-error" className="text-xs text-red-300 mt-1">{inlineCustomerErrors.creditLimit}</p>}
                                 </div>
-                                <p id="inline-customer-limit-help" className="text-[11px] text-slate-500 mt-1">Solo hace falta si vas a cobrar esta venta fiada.</p>
-                                {inlineCustomerErrors.creditLimit && <p id="inline-customer-limit-error" className="text-xs text-red-300 mt-1">{inlineCustomerErrors.creditLimit}</p>}
-                            </div>
+                            ) : customerPickerForCredit ? (
+                                <p role="status" className="rounded-control border border-amber-500/20 bg-warning-soft px-3 py-2 text-xs text-amber-200">
+                                    Podés crear el cliente; un administrador debe asignarle el límite antes de venderle fiado.
+                                </p>
+                            ) : null}
                             {inlineCustomerErrors.general && (
                                 <p role="alert" aria-live="assertive" className="rounded-control bg-red-500/10 border border-red-500/25 px-3 py-2 text-xs text-red-200">
                                     {inlineCustomerErrors.general}
@@ -5932,7 +6351,10 @@ const POS: React.FC = () => {
                             </div>
                             {!selectedCustomer.isBlocked && (
                                 <div className="w-full bg-blue-200 h-2 rounded-full overflow-hidden">
-                                    <div className="bg-blue-500 h-full transition-all" style={{ width: `${Math.min((selectedCustomer.currentDebt / selectedCustomer.creditLimit) * 100, 100)}%` }}></div>
+                                    <div
+                                        className="bg-blue-500 h-full transition-all"
+                                        style={{ width: `${customerCreditUsagePct(selectedCustomer.creditLimit, selectedCustomer.currentDebt)}%` }}
+                                    />
                                 </div>
                             )}
                         </div>
@@ -6272,7 +6694,14 @@ const POS: React.FC = () => {
                         entre sí y con la declaración.
                         Subtotal y Descuento solo aparecen cuando hubo descuento;
                         sin él eran una cifra repetida. */}
-                    {(!guidedSimpleMode || showSaleDetails) ? (
+                    {isFixedQuota ? (
+                        globalDiscountD.greaterThan(0) ? (
+                            <div className="mb-2">
+                                <div className="flex justify-between text-sm text-slate-400 mb-1"><span>Subtotal</span><span className="nx-num">{formatMoney(total)}</span></div>
+                                <div className="flex justify-between text-sm text-danger"><span>Descuento ({globalDiscountNum}%)</span><span className="nx-num">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span></div>
+                            </div>
+                        ) : null
+                    ) : (!guidedSimpleMode || showSaleDetails) ? (
                         <div className="mb-2">
                             {globalDiscountD.greaterThan(0) && (
                                 <>
@@ -6830,6 +7259,7 @@ const POS: React.FC = () => {
                             <p className="text-sm font-semibold text-slate-300 px-1 pb-1">{guidedSimpleMode ? 'Otros medios de pago' : '¿Cómo pagó?'}</p>
                             {!guidedSimpleMode && <button
                                 type="button"
+                                autoFocus
                                 onClick={openCashCheckout}
                                 disabled={processing}
                                 className="w-full h-pay px-4 rounded-control bg-brand text-brand-on font-bold flex items-center gap-3 hover:bg-brand-hover transition-colors disabled:opacity-50"
@@ -6838,6 +7268,7 @@ const POS: React.FC = () => {
                             </button>}
                             <button
                                 type="button"
+                                autoFocus={guidedSimpleMode}
                                 onClick={() => handleCheckout('TRANSFER')}
                                 disabled={processing}
                                 className="w-full h-pay px-4 rounded-control border border-white/[0.08] text-slate-100 font-bold flex items-center gap-3 hover:bg-white/[0.05] transition-colors disabled:opacity-50"
@@ -7242,10 +7673,8 @@ const POS: React.FC = () => {
                 tax: completedSale.tax,
                 total: completedSale.grandTotal,
                 paymentMethod: completedSale.paymentMethod,
-                // Solo si hubo vuelto real (efectivo > total): el ticket no
-                // imprime un vuelto inventado en pagos justos ni a crédito.
-                cashReceived: vueltoDeLaVenta ? Number(vueltoDeLaVenta.recibido.toFixed(2)) : undefined,
-                change: vueltoDeLaVenta ? Number(vueltoDeLaVenta.vuelto.toFixed(2)) : undefined,
+                fiscalRegime: completedSale.fiscalRegimeAtSale,
+                ...postSalePrintCash,
                 user: currentShift?.employee ? `${currentShift.employee.firstName} ${currentShift.employee.lastName}` : 'Cajero',
             } : null} />
 

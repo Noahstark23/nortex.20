@@ -1,3 +1,6 @@
+import type { FiscalRegime } from './utils/fiscalRegime';
+
+export type { FiscalRegime } from './utils/fiscalRegime';
 
 export type SaleMode = 'COUNTED' | 'MEASURED';
 export type MeasurementSource = 'MANUAL' | 'SCALE_LABEL' | 'LIVE_SCALE';
@@ -100,7 +103,14 @@ export interface Tenant {
   // el banner de prueba del Dashboard nunca matcheaba el estado real.
   subscriptionStatus: 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
   plan: string;
-  trialEndsAt: string; 
+  trialEndsAt: string;
+  /** Configuración fiscal opcional para tolerar tenants/respuestas anteriores. */
+  fiscalRegime?: FiscalRegime;
+  fiscalRegimeVersion?: number;
+  taxId?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  dgiAuthCode?: string | null;
 }
 
 export interface Shift {

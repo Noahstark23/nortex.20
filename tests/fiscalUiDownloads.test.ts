@@ -48,7 +48,8 @@ describe('contrato UI de documentos fiscales protegidos', () => {
         expect(reports).not.toMatch(/FISCAL_REPORT_ROLES[^\n]+SELLER/);
 
         expect(purchases).toContain("new Set(['OWNER', 'ADMIN', 'ACCOUNTANT'])");
-        expect(purchases).toContain('FISCAL_DOCUMENT_ROLES.has(currentSessionRole())');
+        expect(purchases).toContain('const currentRole = currentSessionRole()');
+        expect(purchases).toContain('FISCAL_DOCUMENT_ROLES.has(currentRole)');
         expect(purchases.match(/\{canAccessFiscalDocuments && \(/g)?.length).toBeGreaterThanOrEqual(3);
 
         expect(audit).toContain("new Set(['OWNER', 'ADMIN', 'ACCOUNTANT'])");

@@ -1,6 +1,16 @@
 import Decimal from 'decimal.js';
 import { Prisma } from '@prisma/client';
 import { parseQuantity } from '../../utils/quantity.js';
+import {
+    buildBoundedBatchWarehouseSourceKey,
+    normalizeBatchWarehouseLedgerMode,
+    type BatchWarehouseLedgerMode,
+    type BatchWarehouseMovementType,
+} from '../lib/batchWarehouseLedger.js';
+import {
+    applyBatchWarehouseDelta,
+    BatchWarehouseLedgerError,
+} from './productBatchWarehouseLedgerService.js';
 
 type PrismaTx = Prisma.TransactionClient;
 
@@ -17,8 +27,12 @@ export interface FefoAllocationResult {
 
 export class BatchAllocationError extends Error {
     constructor(
-        public readonly code: 'INSUFFICIENT_ACTIVE_BATCH_STOCK',
+        public readonly code:
+            | 'INSUFFICIENT_ACTIVE_BATCH_STOCK'
+            | 'BATCH_WAREHOUSE_CONTEXT_REQUIRED'
+            | 'BATCH_WAREHOUSE_CONFLICT',
         message: string,
+        public readonly httpStatus: number = 422,
     ) {
         super(message);
         this.name = 'BatchAllocationError';
@@ -58,6 +72,31 @@ export interface BatchRestorationResult {
     mode: 'BATCH_RESTORED' | 'PARTIAL_BATCH_RESTORED' | 'LEGACY_AGGREGATE_ONLY';
     batchRestorations: RestoredBatchQuantity[];
     aggregateOnlyQuantity: Decimal;
+}
+
+/**
+ * Contrato reusable para egresos FEFO por bodega (venta, transferencia, pedido).
+ * `sourceKeyPrefix` debe identificar el evento de negocio; el helper agrega el
+ * batchId y garantiza un sourceKey distinto y repetible por lote.
+ */
+export interface BatchWarehouseConsumptionContext {
+    mode: Exclude<BatchWarehouseLedgerMode, 'OFF'>;
+    warehouseId: string;
+    userId: string;
+    movementType: BatchWarehouseMovementType;
+    referenceId: string;
+    referenceType: string;
+    sourceKeyPrefix: string;
+    reason?: string | null;
+}
+
+interface WarehouseBatchCandidate {
+    batchId: string;
+    stock: Decimal.Value;
+    batch: {
+        id: string;
+        batchNumber: string;
+    };
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -396,7 +435,192 @@ export async function consumeProductBatchesFefo(
     return { allocations, unallocatedQuantity: remaining };
 }
 
-/** Consume FEFO y enlaza la evidencia histórica con una línea de venta. */
+const requireBatchWarehouseEgressContext = (params: {
+    batchWarehouseLedgerMode?: BatchWarehouseLedgerMode;
+    warehouseId?: string;
+    userId?: string;
+    saleId?: string;
+    saleItemId: string;
+}): BatchWarehouseConsumptionContext | null => {
+    const mode = normalizeBatchWarehouseLedgerMode(params.batchWarehouseLedgerMode ?? 'OFF');
+    if (mode === 'OFF') return null;
+    if (!params.warehouseId || !params.userId || !params.saleId) {
+        throw new BatchAllocationError(
+            'BATCH_WAREHOUSE_CONTEXT_REQUIRED',
+            'La venta no tiene contexto autoritativo de bodega para consumir lotes',
+            409,
+        );
+    }
+    return {
+        mode,
+        warehouseId: params.warehouseId,
+        userId: params.userId,
+        movementType: 'SALE',
+        referenceId: params.saleItemId,
+        referenceType: 'SALE_ITEM',
+        sourceKeyPrefix: `sale:${params.saleItemId}`,
+        reason: `Venta ${params.saleId}`,
+    };
+};
+
+const applyBatchWarehouseAllocationDelta = async (
+    tx: PrismaTx,
+    params: {
+        tenantId: string;
+        productId: string;
+        allocation: FefoAllocation;
+        context: BatchWarehouseConsumptionContext;
+    },
+): Promise<Awaited<ReturnType<typeof applyBatchWarehouseDelta>>> => {
+    try {
+        return await applyBatchWarehouseDelta({
+            tx,
+            mode: params.context.mode,
+            tenantId: params.tenantId,
+            productId: params.productId,
+            batchId: params.allocation.batchId,
+            warehouseId: params.context.warehouseId,
+            delta: params.allocation.quantity.negated().toFixed(4),
+            movementType: params.context.movementType,
+            referenceId: params.context.referenceId,
+            referenceType: params.context.referenceType,
+            userId: params.context.userId,
+            reason: params.context.reason ?? null,
+            sourceKey: buildBoundedBatchWarehouseSourceKey(
+                params.context.sourceKeyPrefix,
+                params.allocation.batchId,
+            ),
+            allowNegative: false,
+        });
+    } catch (error) {
+        if (!(error instanceof BatchWarehouseLedgerError)) throw error;
+        const isStockConflict = error.code === 'BATCH_WAREHOUSE_INSUFFICIENT_STOCK'
+            || error.code === 'BATCH_WAREHOUSE_CONCURRENT_WRITE';
+        throw new BatchAllocationError(
+            isStockConflict ? 'INSUFFICIENT_ACTIVE_BATCH_STOCK' : 'BATCH_WAREHOUSE_CONFLICT',
+            error.message,
+            isStockConflict ? 409 : error.httpStatus,
+        );
+    }
+};
+
+/**
+ * FEFO estricto sobre la bodega operativa. La consulta trae todos los candidatos
+ * en una sola ronda; cada delta exacto usa el core auditado y el agregado legacy
+ * ProductBatch se decrementa condicionalmente en la misma transacción.
+ */
+export const consumeProductBatchesByWarehouseFefo = async (
+    tx: PrismaTx,
+    params: {
+        tenantId: string;
+        productId: string;
+        quantity: Decimal.Value;
+        capturedAt?: Date;
+        context: BatchWarehouseConsumptionContext;
+    },
+): Promise<FefoAllocationResult> => {
+    const requested = parseQuantity(params.quantity);
+    const cutoff = params.capturedAt ?? new Date();
+    const candidates = await tx.productBatchWarehouseStock.findMany({
+        where: {
+            tenantId: params.tenantId,
+            productId: params.productId,
+            warehouseId: params.context.warehouseId,
+            stock: { gt: 0 },
+            batch: {
+                tenantId: params.tenantId,
+                productId: params.productId,
+                expiryDate: { gte: cutoff },
+            },
+        },
+        orderBy: [
+            { batch: { expiryDate: 'asc' } },
+            { batch: { id: 'asc' } },
+        ],
+        select: {
+            batchId: true,
+            stock: true,
+            batch: { select: { id: true, batchNumber: true } },
+        },
+    }) as WarehouseBatchCandidate[];
+
+    const available = candidates.reduce(
+        (sum, candidate) => sum.plus(candidate.stock.toString()),
+        new Decimal(0),
+    );
+    if (available.lessThan(requested)) {
+        throw new BatchAllocationError(
+            'INSUFFICIENT_ACTIVE_BATCH_STOCK',
+            `Lotes vigentes insuficientes en la bodega: faltan ${requested.minus(available).toString()} de ${requested.toString()}`,
+            409,
+        );
+    }
+
+    let remaining = requested;
+    const allocations: FefoAllocation[] = [];
+    for (const candidate of candidates) {
+        if (!remaining.greaterThan(0)) break;
+        const quantity = Decimal.min(new Decimal(candidate.stock.toString()), remaining).toDecimalPlaces(4);
+        if (!quantity.greaterThan(0)) continue;
+        const allocation: FefoAllocation = {
+            batchId: candidate.batchId,
+            batchNumber: candidate.batch.batchNumber,
+            quantity,
+        };
+
+        // El core serializa y guarda el saldo local antes del agregado de lote.
+        // Si ProductBatch perdió una carrera, el throw revierte ambos cambios.
+        const localDelta = await applyBatchWarehouseAllocationDelta(tx, {
+            tenantId: params.tenantId,
+            productId: params.productId,
+            allocation,
+            context: params.context,
+        });
+        // Un traslado/pedido nunca puede crear stock destino desde un origen
+        // ausente. En SHADOW una carrera se registra como GAP en el core, pero
+        // este throw revierte ese evento junto con todo el documento.
+        if (localDelta.status === 'SHADOW_GAP') {
+            throw new BatchAllocationError(
+                'INSUFFICIENT_ACTIVE_BATCH_STOCK',
+                'El stock lote-bodega cambió; intentá nuevamente',
+                409,
+            );
+        }
+        const globalBatch = await tx.productBatch.updateMany({
+            where: {
+                id: candidate.batchId,
+                tenantId: params.tenantId,
+                productId: params.productId,
+                stock: { gte: quantity.toNumber() },
+            },
+            data: { stock: { decrement: quantity.toNumber() } },
+        });
+        if (globalBatch.count !== 1) {
+            throw new BatchAllocationError(
+                'INSUFFICIENT_ACTIVE_BATCH_STOCK',
+                'El stock global del lote cambió; intentá nuevamente',
+                409,
+            );
+        }
+        allocations.push(allocation);
+        remaining = remaining.minus(quantity);
+    }
+
+    if (remaining.greaterThan(0)) {
+        throw new BatchAllocationError(
+            'INSUFFICIENT_ACTIVE_BATCH_STOCK',
+            'El stock lote-bodega cambió; intentá nuevamente',
+            409,
+        );
+    }
+    return { allocations, unallocatedQuantity: new Decimal(0) };
+};
+
+/**
+ * Consume FEFO y enlaza evidencia de lote+bodega con una línea de venta.
+ * Los callers legacy que no pasan modo conservan OFF; SHADOW/ENFORCED fallan
+ * cerrado si falta el contexto de bodega resuelto por el servidor.
+ */
 export async function allocateSaleItemBatchesFefo(
     tx: PrismaTx,
     params: {
@@ -407,17 +631,43 @@ export async function allocateSaleItemBatchesFefo(
         /** Online exige cobertura completa; offline deja visible el faltante. */
         enforceComplete: boolean;
         capturedAt?: Date;
+        batchWarehouseLedgerMode?: BatchWarehouseLedgerMode;
+        warehouseId?: string;
+        userId?: string;
+        saleId?: string;
     },
 ): Promise<FefoAllocationResult> {
-    const result = await consumeProductBatchesFefo(tx, params);
-    for (const allocation of result.allocations) {
-        await tx.saleItemBatchAllocation.create({
-            data: {
+    const context = requireBatchWarehouseEgressContext(params);
+    const result = context?.mode === 'ENFORCED'
+        ? await consumeProductBatchesByWarehouseFefo(tx, {
+            tenantId: params.tenantId,
+            productId: params.productId,
+            quantity: params.quantity,
+            capturedAt: params.capturedAt,
+            context,
+        })
+        : await consumeProductBatchesFefo(tx, params);
+
+    if (context?.mode === 'SHADOW') {
+        for (const allocation of result.allocations) {
+            await applyBatchWarehouseAllocationDelta(tx, {
+                tenantId: params.tenantId,
+                productId: params.productId,
+                allocation,
+                context,
+            });
+        }
+    }
+
+    if (result.allocations.length > 0) {
+        await tx.saleItemBatchAllocation.createMany({
+            data: result.allocations.map(allocation => ({
                 tenantId: params.tenantId,
                 saleItemId: params.saleItemId,
                 batchId: allocation.batchId,
+                warehouseId: params.warehouseId ?? null,
                 quantity: allocation.quantity.toFixed(4),
-            },
+            })),
         });
     }
     return result;

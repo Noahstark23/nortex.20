@@ -31,6 +31,7 @@ interface OfflineReplayItem {
 
 export interface OfflineReplaySaleInput {
     offlineId?: string;
+    fiscalRegimeVersion?: number;
     paymentMethod: 'CASH' | 'CARD' | 'QR' | 'CREDIT' | 'TRANSFER';
     customerId?: string | null;
     customerName?: string;
@@ -98,6 +99,11 @@ export function canonicalOfflineReplayPayload(
         customerId: context.input.customerId ?? null,
         customerName: context.input.customerName ?? '',
         employeeId: context.input.employeeId ?? null,
+        // Omitirlo cuando no existe conserva exactamente las huellas de clientes
+        // legacy; cuando viene, forma parte de la identidad fiscal del intento.
+        ...(context.input.fiscalRegimeVersion === undefined
+            ? {}
+            : { fiscalRegimeVersion: context.input.fiscalRegimeVersion }),
         globalDiscount: decimal(context.input.globalDiscount),
         items: context.input.items.map((item) => {
             const presentation = item.presentation ?? (

@@ -1,6 +1,7 @@
 import Decimal from 'decimal.js';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
+    isCashReceivedError,
     suggestNioCashAmounts,
     validateCashReceived,
     type CashReceivedValidation,
@@ -9,6 +10,14 @@ import {
 const values = (amounts: Decimal[]): string[] => amounts.map(amount => amount.toString());
 
 describe('validateCashReceived', () => {
+    it('identifica de forma estricta solo los resultados de error', () => {
+        const error = validateCashReceived('99', '100');
+        const success = validateCashReceived('100', '100');
+
+        expect(isCashReceivedError(error)).toBe(true);
+        expect(isCashReceivedError(success)).toBe(false);
+    });
+
     it('mantiene un resultado discriminado y montos Decimal en TypeScript', () => {
         const result = validateCashReceived('120', new Decimal('100'));
 
@@ -38,6 +47,19 @@ describe('validateCashReceived', () => {
         },
     );
 
+    it('rechaza bigint aunque Decimal.js pueda convertirlo implicitamente', () => {
+        expect(validateCashReceived(100n, '100')).toEqual({
+            ok: false,
+            code: 'INVALID_RECEIVED',
+            message: 'El efectivo recibido no es válido',
+        });
+        expect(validateCashReceived('100', 100n)).toEqual({
+            ok: false,
+            code: 'INVALID_TOTAL',
+            message: 'El total de la venta no es válido',
+        });
+    });
+
     it.each([[''], ['0'], ['-1'], ['venta'], [NaN], [Infinity], [null]])(
         'rechaza un total invalido: %p',
         total => {
@@ -50,9 +72,12 @@ describe('validateCashReceived', () => {
     it('rechaza efectivo menor al total y calcula el faltante con Decimal', () => {
         const result = validateCashReceived('84.90', '85.10');
 
-        expect(result.ok).toBe(false);
+        expect(result).toMatchObject({
+            ok: false,
+            code: 'INSUFFICIENT_RECEIVED',
+            message: 'El efectivo recibido es menor que el total',
+        });
         if (result.ok === false) {
-            expect(result.code).toBe('INSUFFICIENT_RECEIVED');
             expect(result.shortfall?.toString()).toBe('0.2');
         }
     });
@@ -73,6 +98,17 @@ describe('validateCashReceived', () => {
         expect(result.ok).toBe(true);
         if (result.ok) expect(result.change.toString()).toBe('0.2');
     });
+
+    it('acepta entradas numéricas finitas sin confundirlas con tipos no permitidos', () => {
+        const result = validateCashReceived(120, 100);
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+            expect(result.received.toString()).toBe('120');
+            expect(result.total.toString()).toBe('100');
+            expect(result.change.toString()).toBe('20');
+        }
+    });
 });
 
 describe('suggestNioCashAmounts', () => {
@@ -85,6 +121,7 @@ describe('suggestNioCashAmounts', () => {
 
     it('ofrece C$20 para una venta de C$19', () => {
         expect(values(suggestNioCashAmounts('19'))).toEqual(['20', '50', '100']);
+        expect(values(suggestNioCashAmounts(19))).toEqual(['20', '50', '100']);
     });
 
     it('ofrece C$100 y C$200 para una venta de C$85', () => {
@@ -112,7 +149,11 @@ describe('suggestNioCashAmounts', () => {
 
     it('respeta un maximo configurable', () => {
         expect(values(suggestNioCashAmounts('19', 2))).toEqual(['20', '50']);
+        expect(values(suggestNioCashAmounts('19', 1))).toEqual(['20']);
         expect(suggestNioCashAmounts('19', 0)).toEqual([]);
+        expect(suggestNioCashAmounts('19', -1)).toEqual([]);
+        expect(suggestNioCashAmounts('19', 0.9)).toEqual([]);
+        expect(suggestNioCashAmounts('19', Infinity)).toEqual([]);
     });
 
     it.each([[''], ['.'], ['venta'], ['0'], ['-1'], [NaN], [Infinity], [null], [undefined]])(

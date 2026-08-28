@@ -7,6 +7,28 @@ export const STOCK_COUNT_WAREHOUSE_INDEX = 'StockCount_warehouseId_idx';
 export const STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX = 'StockCount_tenantId_warehouseId_status_idx';
 export const STOCK_COUNT_WAREHOUSE_FOREIGN_KEY = 'StockCount_warehouseId_fkey';
 export const PRODUCT_RETURN_IDEMPOTENCY_INDEX = 'ProductReturn_tenantId_clientEventId_key';
+export const PAYMENT_IDEMPOTENCY_INDEX = 'Payment_saleId_clientEventId_key';
+export const RETENCION_SUFRIDA_IDEMPOTENCY_INDEX = 'RetencionSufrida_tenantId_clientEventId_key';
+export const PURCHASE_INVOICE_UNIQUE_INDEX = 'Purchase_tenantId_supplierId_invoiceNumber_key';
+export const PURCHASE_MATCH_RESOLUTION_IDEMPOTENCY_INDEX = 'Purchase_tenantId_matchResolutionClientEventId_key';
+export const SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_INDEX = 'SaleItemBatchAllocation_tenantId_warehouseId_idx';
+export const SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_FOREIGN_KEY = 'SaleItemBatchAllocation_warehouseId_fkey';
+export const PRODUCT_BATCH_WAREHOUSE_STOCK_UNIQUE_INDEX = 'ProductBatchWarehouseStock_tenantId_batchId_warehouseId_key';
+export const PRODUCT_BATCH_LEDGER_SOURCE_UNIQUE_INDEX = 'ProductBatchLedgerEntry_tenantId_sourceKey_key';
+export const PURCHASE_ORDER_CLOSE_SHORT_EVENT_UNIQUE_INDEX = 'PurchaseOrderCloseShort_tenantId_clientEventId_key';
+export const STOCK_TRANSFER_IDEMPOTENCY_INDEX = 'StockTransfer_tenantId_clientEventId_key';
+export const PURCHASE_ITEM_INVENTORY_WAREHOUSE_INDEX = 'PurchaseItem_inventoryWarehouseId_idx';
+export const PURCHASE_ITEM_INVENTORY_BATCH_INDEX = 'PurchaseItem_inventoryBatchId_idx';
+export const PURCHASE_ITEM_INVENTORY_WAREHOUSE_FOREIGN_KEY = 'PurchaseItem_inventoryWarehouseId_fkey';
+export const PURCHASE_ITEM_INVENTORY_BATCH_FOREIGN_KEY = 'PurchaseItem_inventoryBatchId_fkey';
+export const SUPPLIER_RETURN_NUMBER_UNIQUE_INDEX = 'SupplierReturn_tenantId_returnNumber_key';
+export const SUPPLIER_RETURN_EVENT_UNIQUE_INDEX = 'SupplierReturn_tenantId_clientEventId_key';
+export const SUPPLIER_RETURN_ITEM_SOURCE_UNIQUE_INDEX = 'SupplierReturnItem_supplierReturnId_sourceHash_key';
+export const SUPPLIER_CREDIT_NOTE_NUMBER_UNIQUE_INDEX = 'SupplierCreditNote_tenantId_supplierId_creditNoteNumber_key';
+export const SUPPLIER_CREDIT_NOTE_EVENT_UNIQUE_INDEX = 'SupplierCreditNote_tenantId_clientEventId_key';
+export const SUPPLIER_CREDIT_NOTE_LINE_RETURN_ITEM_UNIQUE_INDEX = 'SupplierCreditNoteLine_supplierReturnItemId_key';
+export const SUPPLIER_CREDIT_NOTE_LINE_DOCUMENT_ITEM_UNIQUE_INDEX = 'SupplierCreditNoteLine_creditNoteId_supplierReturnItemId_key';
+export const SUPPLIER_CREDIT_APPLICATION_PURCHASE_UNIQUE_INDEX = 'SupplierCreditApplication_creditNoteId_purchaseId_key';
 
 // Identificadores internos y constantes: nunca contienen entrada del usuario.
 const WAREHOUSE_TABLE_SQL = Prisma.raw('`Warehouse`');
@@ -24,9 +46,21 @@ const STOCK_COUNT_WAREHOUSE_INDEX_SQL = Prisma.raw('`StockCount_warehouseId_idx`
 const STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX_SQL = Prisma.raw('`StockCount_tenantId_warehouseId_status_idx`');
 const STOCK_COUNT_WAREHOUSE_FOREIGN_KEY_SQL = Prisma.raw('`StockCount_warehouseId_fkey`');
 const PRODUCT_RETURN_TABLE_SQL = Prisma.raw('`ProductReturn`');
+const PAYMENT_TABLE_SQL = Prisma.raw('`Payment`');
+const RETENCION_SUFRIDA_TABLE_SQL = Prisma.raw('`RetencionSufrida`');
+const PURCHASE_TABLE_SQL = Prisma.raw('`Purchase`');
 const CLIENT_EVENT_ID_COLUMN_SQL = Prisma.raw('`clientEventId`');
 const PAYLOAD_HASH_COLUMN_SQL = Prisma.raw('`payloadHash`');
 const PRODUCT_RETURN_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`ProductReturn_tenantId_clientEventId_key`');
+const PAYMENT_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`Payment_saleId_clientEventId_key`');
+const RETENCION_SUFRIDA_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`RetencionSufrida_tenantId_clientEventId_key`');
+const PURCHASE_INVOICE_UNIQUE_INDEX_SQL = Prisma.raw('`Purchase_tenantId_supplierId_invoiceNumber_key`');
+const PURCHASE_MATCH_RESOLUTION_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`Purchase_tenantId_matchResolutionClientEventId_key`');
+const SALE_ID_COLUMN_SQL = Prisma.raw('`saleId`');
+const SUPPLIER_ID_COLUMN_SQL = Prisma.raw('`supplierId`');
+const INVOICE_NUMBER_COLUMN_SQL = Prisma.raw('`invoiceNumber`');
+const MATCH_RESOLUTION_CLIENT_EVENT_ID_COLUMN_SQL = Prisma.raw('`matchResolutionClientEventId`');
+const MATCH_RESOLUTION_PAYLOAD_HASH_COLUMN_SQL = Prisma.raw('`matchResolutionPayloadHash`');
 
 export class UnsafeSchemaStateError extends Error {
     constructor(message: string) {
@@ -73,6 +107,29 @@ export type StockCountColumnRow = WarehouseSellerColumnRow;
 export type StockCountIndexRow = WarehouseSellerIndexRow;
 export type ProductReturnColumnRow = WarehouseSellerColumnRow;
 export type ProductReturnIndexRow = WarehouseSellerIndexRow;
+export type PaymentColumnRow = WarehouseSellerColumnRow;
+export type PaymentIndexRow = WarehouseSellerIndexRow;
+export type RetencionSufridaColumnRow = WarehouseSellerColumnRow;
+export type RetencionSufridaIndexRow = WarehouseSellerIndexRow;
+export type PurchaseInvoiceIndexRow = WarehouseSellerIndexRow;
+export type PurchaseMatchResolutionColumnRow = WarehouseSellerColumnRow;
+export type PurchaseMatchResolutionIndexRow = WarehouseSellerIndexRow;
+export type ProcurementPhaseTwoBColumnRow = WarehouseSellerColumnRow & { columnName: string };
+export type ProcurementPhaseTwoBIndexRow = WarehouseSellerIndexRow;
+export type ProcurementPhaseTwoBForeignKeyRow = StockCountForeignKeyRow;
+export type ProcurementPhaseTwoCColumnRow = ProcurementPhaseTwoBColumnRow;
+export type ProcurementPhaseTwoCIndexRow = ProcurementPhaseTwoBIndexRow;
+export type ProcurementPhaseTwoCForeignKeyRow = ProcurementPhaseTwoBForeignKeyRow;
+
+export interface ProcurementPhaseTwoBColumnContract {
+    columnName: string;
+    columnType: string;
+    nullable: boolean;
+    defaultValue: string | null;
+    extra?: string;
+}
+
+export type ProcurementPhaseTwoCColumnContract = ProcurementPhaseTwoBColumnContract;
 
 export interface StockCountForeignKeyRow {
     constraintName: string;
@@ -123,7 +180,62 @@ interface DuplicateProductReturnEventRow {
     duplicateCount: number | bigint;
 }
 
+interface DuplicatePaymentEventRow {
+    saleId: string;
+    clientEventId: string;
+    duplicateCount: number | bigint;
+}
+
+interface DuplicateRetencionSufridaEventRow {
+    tenantId: string;
+    clientEventId: string;
+    duplicateCount: number | bigint;
+}
+
+interface DuplicatePurchaseInvoiceRow {
+    tenantId: string;
+    supplierId: string;
+    invoiceNumber: string;
+    duplicateCount: number | bigint;
+}
+
+interface DuplicatePurchaseMatchResolutionEventRow {
+    tenantId: string;
+    matchResolutionClientEventId: string;
+    duplicateCount: number | bigint;
+}
+
 export type SchemaObjectState = 'missing' | 'valid' | 'invalid';
+
+function normalizedSchemaDefault(value: string | null): string | null {
+    if (value === null) return null;
+    return value.toLowerCase().replace(/^'(.*)'$/, '$1');
+}
+
+export function inspectProcurementPhaseTwoBColumn(
+    rows: ProcurementPhaseTwoBColumnRow[],
+    expected: ProcurementPhaseTwoBColumnContract,
+): SchemaObjectState {
+    const matches = rows.filter(row => row.columnName === expected.columnName);
+    if (matches.length === 0) return 'missing';
+    if (matches.length !== 1) return 'invalid';
+
+    const [column] = matches;
+    const expectedType = expected.columnType.toLowerCase();
+    const expectedLengthMatch = expectedType.match(/^varchar\((\d+)\)$/);
+    const expectedLength = expectedLengthMatch ? Number(expectedLengthMatch[1]) : null;
+    const defaultMatches = normalizedSchemaDefault(column.columnDefault)
+        === normalizedSchemaDefault(expected.defaultValue);
+
+    return column.columnType.toLowerCase() === expectedType
+        && column.isNullable.toUpperCase() === (expected.nullable ? 'YES' : 'NO')
+        && (expectedLength === null || Number(column.characterMaximumLength) === expectedLength)
+        && defaultMatches
+        && column.extra.toUpperCase() === (expected.extra ?? '').toUpperCase()
+        && column.generationExpression === ''
+        ? 'valid'
+        : 'invalid';
+}
 
 export function inspectWarehouseSellerColumn(rows: WarehouseSellerColumnRow[]): SchemaObjectState {
     if (rows.length === 0) return 'missing';
@@ -170,6 +282,30 @@ export function inspectProductReturnClientEventIdColumn(
 
 export function inspectProductReturnPayloadHashColumn(
     rows: ProductReturnColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 64);
+}
+
+export function inspectPaymentClientEventIdColumn(
+    rows: PaymentColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 128);
+}
+
+export function inspectPaymentPayloadHashColumn(
+    rows: PaymentColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 64);
+}
+
+export function inspectRetencionSufridaClientEventIdColumn(
+    rows: RetencionSufridaColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 128);
+}
+
+export function inspectRetencionSufridaPayloadHashColumn(
+    rows: RetencionSufridaColumnRow[],
 ): SchemaObjectState {
     return inspectNullableVarcharColumn(rows, 64);
 }
@@ -273,6 +409,126 @@ export function inspectProductReturnIdempotencyIndex(
     );
 }
 
+export function inspectPaymentIdempotencyIndex(
+    rows: PaymentIndexRow[],
+): SchemaObjectState {
+    return inspectExactIndex(
+        rows,
+        PAYMENT_IDEMPOTENCY_INDEX,
+        ['saleId', 'clientEventId'],
+        true,
+    );
+}
+
+export function inspectRetencionSufridaIdempotencyIndex(
+    rows: RetencionSufridaIndexRow[],
+): SchemaObjectState {
+    return inspectExactIndex(
+        rows,
+        RETENCION_SUFRIDA_IDEMPOTENCY_INDEX,
+        ['tenantId', 'clientEventId'],
+        true,
+    );
+}
+
+export function inspectPurchaseInvoiceUniqueIndex(
+    rows: PurchaseInvoiceIndexRow[],
+): SchemaObjectState {
+    return inspectExactIndex(
+        rows,
+        PURCHASE_INVOICE_UNIQUE_INDEX,
+        ['tenantId', 'supplierId', 'invoiceNumber'],
+        true,
+    );
+}
+
+export function inspectPurchaseMatchResolutionClientEventIdColumn(
+    rows: PurchaseMatchResolutionColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 128);
+}
+
+export function inspectPurchaseMatchResolutionPayloadHashColumn(
+    rows: PurchaseMatchResolutionColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 64);
+}
+
+export function inspectPurchaseMatchResolutionIdempotencyIndex(
+    rows: PurchaseMatchResolutionIndexRow[],
+): SchemaObjectState {
+    return inspectExactIndex(
+        rows,
+        PURCHASE_MATCH_RESOLUTION_IDEMPOTENCY_INDEX,
+        ['tenantId', 'matchResolutionClientEventId'],
+        true,
+    );
+}
+
+export function inspectProcurementPhaseTwoBIndex(
+    rows: ProcurementPhaseTwoBIndexRow[],
+    expectedName: string,
+    expectedColumns: string[],
+    unique: boolean,
+): SchemaObjectState {
+    return inspectExactIndex(rows, expectedName, expectedColumns, unique);
+}
+
+export function inspectProcurementPhaseTwoBForeignKey(
+    rows: ProcurementPhaseTwoBForeignKeyRow[],
+    expected: {
+        constraintName: string;
+        columnName: string;
+        referencedTableName: string;
+        deleteRule: 'CASCADE' | 'RESTRICT';
+    },
+): SchemaObjectState {
+    const matches = rows.filter(row => (
+        row.constraintName === expected.constraintName || row.columnName === expected.columnName
+    ));
+    if (matches.length === 0) return 'missing';
+    if (matches.length !== 1) return 'invalid';
+
+    const [row] = matches;
+    return row.constraintName === expected.constraintName
+        && row.columnName === expected.columnName
+        && row.referencedTableName === expected.referencedTableName
+        && row.referencedColumnName === 'id'
+        && Number(row.ordinalPosition) === 1
+        && row.deleteRule.toUpperCase() === expected.deleteRule
+        && row.updateRule.toUpperCase() === 'CASCADE'
+        ? 'valid'
+        : 'invalid';
+}
+
+export function inspectProcurementPhaseTwoCColumn(
+    rows: ProcurementPhaseTwoCColumnRow[],
+    expected: ProcurementPhaseTwoCColumnContract,
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBColumn(rows, expected);
+}
+
+export function inspectProcurementPhaseTwoCIndex(
+    rows: ProcurementPhaseTwoCIndexRow[],
+    expectedName: string,
+    expectedColumns: string[],
+    unique: boolean,
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBIndex(rows, expectedName, expectedColumns, unique);
+}
+
+export function inspectProcurementPhaseTwoCForeignKey(
+    rows: ProcurementPhaseTwoCForeignKeyRow[],
+    expected: {
+        constraintName: string;
+        columnName: string;
+        referencedTableName: string;
+        deleteRule: 'CASCADE' | 'RESTRICT';
+    },
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBForeignKey(rows, expected);
+}
+
 async function readSellerColumn(db: DeploySchemaClient): Promise<WarehouseSellerColumnRow[]> {
     return db.query<WarehouseSellerColumnRow[]>(Prisma.sql`
         SELECT
@@ -339,6 +595,39 @@ async function productReturnTableExists(db: DeploySchemaClient): Promise<boolean
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'ProductReturn'
+        LIMIT 1
+    `);
+    return rows.length === 1;
+}
+
+async function paymentTableExists(db: DeploySchemaClient): Promise<boolean> {
+    const rows = await db.query<Array<{ tableName: string }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Payment'
+        LIMIT 1
+    `);
+    return rows.length === 1;
+}
+
+async function retencionSufridaTableExists(db: DeploySchemaClient): Promise<boolean> {
+    const rows = await db.query<Array<{ tableName: string }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'RetencionSufrida'
+        LIMIT 1
+    `);
+    return rows.length === 1;
+}
+
+async function purchaseTableExists(db: DeploySchemaClient): Promise<boolean> {
+    const rows = await db.query<Array<{ tableName: string }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Purchase'
         LIMIT 1
     `);
     return rows.length === 1;
@@ -537,6 +826,223 @@ async function readProductReturnIdempotencyIndex(
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'ProductReturn'
           AND INDEX_NAME = ${PRODUCT_RETURN_IDEMPOTENCY_INDEX}
+        ORDER BY SEQ_IN_INDEX
+    `);
+}
+
+async function readPaymentColumn(
+    db: DeploySchemaClient,
+    columnName: 'clientEventId' | 'payloadHash',
+): Promise<PaymentColumnRow[]> {
+    return db.query<PaymentColumnRow[]>(Prisma.sql`
+        SELECT
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Payment'
+          AND COLUMN_NAME = ${columnName}
+    `);
+}
+
+async function readPaymentSaleIdColumn(
+    db: DeploySchemaClient,
+): Promise<PaymentColumnRow[]> {
+    return db.query<PaymentColumnRow[]>(Prisma.sql`
+        SELECT
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Payment'
+          AND COLUMN_NAME = 'saleId'
+    `);
+}
+
+async function readPaymentIdempotencyIndex(
+    db: DeploySchemaClient,
+): Promise<PaymentIndexRow[]> {
+    return db.query<PaymentIndexRow[]>(Prisma.sql`
+        SELECT
+            INDEX_NAME AS indexName,
+            NON_UNIQUE AS nonUnique,
+            SEQ_IN_INDEX AS seqInIndex,
+            COLUMN_NAME AS columnName,
+            SUB_PART AS subPart,
+            INDEX_TYPE AS indexType,
+            IS_VISIBLE AS isVisible,
+            COLLATION AS collation,
+            EXPRESSION AS expression
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Payment'
+          AND INDEX_NAME = ${PAYMENT_IDEMPOTENCY_INDEX}
+        ORDER BY SEQ_IN_INDEX
+    `);
+}
+
+async function readRetencionSufridaColumn(
+    db: DeploySchemaClient,
+    columnName: 'clientEventId' | 'payloadHash',
+): Promise<RetencionSufridaColumnRow[]> {
+    return db.query<RetencionSufridaColumnRow[]>(Prisma.sql`
+        SELECT
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'RetencionSufrida'
+          AND COLUMN_NAME = ${columnName}
+    `);
+}
+
+async function readRetencionSufridaTenantIdColumn(
+    db: DeploySchemaClient,
+): Promise<RetencionSufridaColumnRow[]> {
+    return db.query<RetencionSufridaColumnRow[]>(Prisma.sql`
+        SELECT
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'RetencionSufrida'
+          AND COLUMN_NAME = 'tenantId'
+    `);
+}
+
+async function readRetencionSufridaIdempotencyIndex(
+    db: DeploySchemaClient,
+): Promise<RetencionSufridaIndexRow[]> {
+    return db.query<RetencionSufridaIndexRow[]>(Prisma.sql`
+        SELECT
+            INDEX_NAME AS indexName,
+            NON_UNIQUE AS nonUnique,
+            SEQ_IN_INDEX AS seqInIndex,
+            COLUMN_NAME AS columnName,
+            SUB_PART AS subPart,
+            INDEX_TYPE AS indexType,
+            IS_VISIBLE AS isVisible,
+            COLLATION AS collation,
+            EXPRESSION AS expression
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'RetencionSufrida'
+          AND INDEX_NAME = ${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX}
+        ORDER BY SEQ_IN_INDEX
+    `);
+}
+
+async function readPurchaseInvoiceUniqueIndex(
+    db: DeploySchemaClient,
+): Promise<PurchaseInvoiceIndexRow[]> {
+    return db.query<PurchaseInvoiceIndexRow[]>(Prisma.sql`
+        SELECT
+            INDEX_NAME AS indexName,
+            NON_UNIQUE AS nonUnique,
+            SEQ_IN_INDEX AS seqInIndex,
+            COLUMN_NAME AS columnName,
+            SUB_PART AS subPart,
+            INDEX_TYPE AS indexType,
+            IS_VISIBLE AS isVisible,
+            COLLATION AS collation,
+            EXPRESSION AS expression
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Purchase'
+          AND INDEX_NAME = ${PURCHASE_INVOICE_UNIQUE_INDEX}
+        ORDER BY SEQ_IN_INDEX
+    `);
+}
+
+async function readPurchaseMatchResolutionColumn(
+    db: DeploySchemaClient,
+    columnName: 'matchResolutionClientEventId' | 'matchResolutionPayloadHash',
+): Promise<PurchaseMatchResolutionColumnRow[]> {
+    return db.query<PurchaseMatchResolutionColumnRow[]>(Prisma.sql`
+        SELECT
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Purchase'
+          AND COLUMN_NAME = ${columnName}
+    `);
+}
+
+async function readPurchaseTenantIdColumn(
+    db: DeploySchemaClient,
+): Promise<PurchaseMatchResolutionColumnRow[]> {
+    return db.query<PurchaseMatchResolutionColumnRow[]>(Prisma.sql`
+        SELECT
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Purchase'
+          AND COLUMN_NAME = 'tenantId'
+    `);
+}
+
+async function readPurchaseMatchResolutionIdempotencyIndex(
+    db: DeploySchemaClient,
+): Promise<PurchaseMatchResolutionIndexRow[]> {
+    return db.query<PurchaseMatchResolutionIndexRow[]>(Prisma.sql`
+        SELECT
+            INDEX_NAME AS indexName,
+            NON_UNIQUE AS nonUnique,
+            SEQ_IN_INDEX AS seqInIndex,
+            COLUMN_NAME AS columnName,
+            SUB_PART AS subPart,
+            INDEX_TYPE AS indexType,
+            IS_VISIBLE AS isVisible,
+            COLLATION AS collation,
+            EXPRESSION AS expression
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Purchase'
+          AND INDEX_NAME = ${PURCHASE_MATCH_RESOLUTION_IDEMPOTENCY_INDEX}
         ORDER BY SEQ_IN_INDEX
     `);
 }
@@ -1049,6 +1555,2118 @@ export async function applyProductReturnSchemaPreflight(
     logger.info('Preflight DDL verificado: idempotencia de ProductReturn lista sin alterar históricos.');
 }
 
+async function assertPaymentEventsAreUnique(db: DeploySchemaClient): Promise<void> {
+    const duplicates = await db.query<DuplicatePaymentEventRow[]>(Prisma.sql`
+        SELECT saleId, clientEventId, COUNT(*) AS duplicateCount
+        FROM ${PAYMENT_TABLE_SQL}
+        WHERE clientEventId IS NOT NULL
+        GROUP BY saleId, clientEventId
+        HAVING COUNT(*) > 1
+        LIMIT 10
+    `);
+
+    if (duplicates.length === 0) return;
+
+    const detail = duplicates
+        .map(row => `${row.saleId}/${row.clientEventId} (${String(row.duplicateCount)})`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `Hay abonos con clientEventId duplicado; no se creará el índice único: ${detail}`,
+    );
+}
+
+type PaymentNullableColumn = 'clientEventId' | 'payloadHash';
+
+function inspectPaymentColumn(
+    columnName: PaymentNullableColumn,
+    rows: PaymentColumnRow[],
+): SchemaObjectState {
+    return columnName === 'clientEventId'
+        ? inspectPaymentClientEventIdColumn(rows)
+        : inspectPaymentPayloadHashColumn(rows);
+}
+
+async function ensurePaymentColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    columnName: PaymentNullableColumn,
+): Promise<void> {
+    const initialState = inspectPaymentColumn(
+        columnName,
+        await readPaymentColumn(db, columnName),
+    );
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `Payment.${columnName} existe con una definición incompatible; se requiere intervención manual.`,
+        );
+    }
+
+    if (initialState === 'missing') {
+        const length = columnName === 'clientEventId' ? 128 : 64;
+        logger.info(`Aplicando DDL seguro: Payment.${columnName} VARCHAR(${length}) NULL.`);
+        try {
+            if (columnName === 'clientEventId') {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${PAYMENT_TABLE_SQL}
+                    ADD COLUMN ${CLIENT_EVENT_ID_COLUMN_SQL} VARCHAR(128) NULL
+                `);
+            } else {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${PAYMENT_TABLE_SQL}
+                    ADD COLUMN ${PAYLOAD_HASH_COLUMN_SQL} VARCHAR(64) NULL
+                `);
+            }
+        } catch (error) {
+            const concurrentState = inspectPaymentColumn(
+                columnName,
+                await readPaymentColumn(db, columnName),
+            );
+            if (concurrentState !== 'valid') throw error;
+            logger.warn(`Payment.${columnName} fue creada concurrentemente; definición verificada.`);
+        }
+    }
+
+    const finalColumn = await readPaymentColumn(db, columnName);
+    if (inspectPaymentColumn(columnName, finalColumn) !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de Payment.${columnName}.`,
+        );
+    }
+
+    const saleIdColumn = await readPaymentSaleIdColumn(db);
+    if (!columnsUseSameEncoding(finalColumn, saleIdColumn)) {
+        throw new UnsafeSchemaStateError(
+            `Payment.${columnName} no usa el mismo charset/collation que Payment.saleId.`,
+        );
+    }
+}
+
+async function ensurePaymentIdempotencyIndex(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+): Promise<void> {
+    const initialState = inspectPaymentIdempotencyIndex(
+        await readPaymentIdempotencyIndex(db),
+    );
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${PAYMENT_IDEMPOTENCY_INDEX} existe con columnas u opciones incompatibles.`,
+        );
+    }
+
+    if (initialState === 'missing') {
+        logger.info(`Aplicando DDL seguro: índice único ${PAYMENT_IDEMPOTENCY_INDEX}.`);
+        try {
+            await db.execute(Prisma.sql`
+                CREATE UNIQUE INDEX ${PAYMENT_IDEMPOTENCY_INDEX_SQL}
+                ON ${PAYMENT_TABLE_SQL}(${SALE_ID_COLUMN_SQL}, ${CLIENT_EVENT_ID_COLUMN_SQL})
+            `);
+        } catch (error) {
+            if (inspectPaymentIdempotencyIndex(
+                await readPaymentIdempotencyIndex(db),
+            ) !== 'valid') {
+                await assertPaymentEventsAreUnique(db);
+                throw error;
+            }
+            logger.warn(`${PAYMENT_IDEMPOTENCY_INDEX} fue creado concurrentemente; definición verificada.`);
+        }
+    }
+
+    if (inspectPaymentIdempotencyIndex(
+        await readPaymentIdempotencyIndex(db),
+    ) !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${PAYMENT_IDEMPOTENCY_INDEX}.`,
+        );
+    }
+}
+
+export async function applyPaymentSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    if (!await paymentTableExists(db)) {
+        logger.info('Preflight DDL: Payment aún no existe; db push creará su schema completo.');
+        return;
+    }
+
+    await ensurePaymentColumn(db, logger, 'clientEventId');
+    await ensurePaymentColumn(db, logger, 'payloadHash');
+    await assertPaymentEventsAreUnique(db);
+    await ensurePaymentIdempotencyIndex(db, logger);
+    await assertPaymentEventsAreUnique(db);
+    logger.info('Preflight DDL verificado: idempotencia de Payment lista sin alterar históricos.');
+}
+
+async function assertRetencionSufridaEventsAreUnique(db: DeploySchemaClient): Promise<void> {
+    const duplicates = await db.query<DuplicateRetencionSufridaEventRow[]>(Prisma.sql`
+        SELECT tenantId, clientEventId, COUNT(*) AS duplicateCount
+        FROM ${RETENCION_SUFRIDA_TABLE_SQL}
+        WHERE clientEventId IS NOT NULL
+        GROUP BY tenantId, clientEventId
+        HAVING COUNT(*) > 1
+        LIMIT 10
+    `);
+
+    if (duplicates.length === 0) return;
+
+    const detail = duplicates
+        .map(row => `${row.tenantId}/${row.clientEventId} (${String(row.duplicateCount)})`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `Hay retenciones sufridas con clientEventId duplicado; no se creará el índice único: ${detail}`,
+    );
+}
+
+type RetencionSufridaNullableColumn = 'clientEventId' | 'payloadHash';
+
+function inspectRetencionSufridaColumn(
+    columnName: RetencionSufridaNullableColumn,
+    rows: RetencionSufridaColumnRow[],
+): SchemaObjectState {
+    return columnName === 'clientEventId'
+        ? inspectRetencionSufridaClientEventIdColumn(rows)
+        : inspectRetencionSufridaPayloadHashColumn(rows);
+}
+
+async function ensureRetencionSufridaColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    columnName: RetencionSufridaNullableColumn,
+): Promise<void> {
+    const initialState = inspectRetencionSufridaColumn(
+        columnName,
+        await readRetencionSufridaColumn(db, columnName),
+    );
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `RetencionSufrida.${columnName} existe con una definición incompatible; se requiere intervención manual.`,
+        );
+    }
+
+    if (initialState === 'missing') {
+        const length = columnName === 'clientEventId' ? 128 : 64;
+        logger.info(`Aplicando DDL seguro: RetencionSufrida.${columnName} VARCHAR(${length}) NULL.`);
+        try {
+            if (columnName === 'clientEventId') {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${RETENCION_SUFRIDA_TABLE_SQL}
+                    ADD COLUMN ${CLIENT_EVENT_ID_COLUMN_SQL} VARCHAR(128) NULL
+                `);
+            } else {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${RETENCION_SUFRIDA_TABLE_SQL}
+                    ADD COLUMN ${PAYLOAD_HASH_COLUMN_SQL} VARCHAR(64) NULL
+                `);
+            }
+        } catch (error) {
+            const concurrentState = inspectRetencionSufridaColumn(
+                columnName,
+                await readRetencionSufridaColumn(db, columnName),
+            );
+            if (concurrentState !== 'valid') throw error;
+            logger.warn(`RetencionSufrida.${columnName} fue creada concurrentemente; definición verificada.`);
+        }
+    }
+
+    const finalColumn = await readRetencionSufridaColumn(db, columnName);
+    if (inspectRetencionSufridaColumn(columnName, finalColumn) !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de RetencionSufrida.${columnName}.`,
+        );
+    }
+
+    const tenantIdColumn = await readRetencionSufridaTenantIdColumn(db);
+    if (!columnsUseSameEncoding(finalColumn, tenantIdColumn)) {
+        throw new UnsafeSchemaStateError(
+            `RetencionSufrida.${columnName} no usa el mismo charset/collation que RetencionSufrida.tenantId.`,
+        );
+    }
+}
+
+async function ensureRetencionSufridaIdempotencyIndex(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+): Promise<void> {
+    const initialState = inspectRetencionSufridaIdempotencyIndex(
+        await readRetencionSufridaIdempotencyIndex(db),
+    );
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX} existe con columnas u opciones incompatibles.`,
+        );
+    }
+
+    if (initialState === 'missing') {
+        logger.info(`Aplicando DDL seguro: índice único ${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX}.`);
+        try {
+            await db.execute(Prisma.sql`
+                CREATE UNIQUE INDEX ${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX_SQL}
+                ON ${RETENCION_SUFRIDA_TABLE_SQL}(${TENANT_ID_COLUMN_SQL}, ${CLIENT_EVENT_ID_COLUMN_SQL})
+            `);
+        } catch (error) {
+            if (inspectRetencionSufridaIdempotencyIndex(
+                await readRetencionSufridaIdempotencyIndex(db),
+            ) !== 'valid') {
+                await assertRetencionSufridaEventsAreUnique(db);
+                throw error;
+            }
+            logger.warn(`${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX} fue creado concurrentemente; definición verificada.`);
+        }
+    }
+
+    if (inspectRetencionSufridaIdempotencyIndex(
+        await readRetencionSufridaIdempotencyIndex(db),
+    ) !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${RETENCION_SUFRIDA_IDEMPOTENCY_INDEX}.`,
+        );
+    }
+}
+
+export async function applyRetencionSufridaSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    if (!await retencionSufridaTableExists(db)) {
+        logger.info('Preflight DDL: RetencionSufrida aún no existe; db push creará su schema completo.');
+        return;
+    }
+
+    await ensureRetencionSufridaColumn(db, logger, 'clientEventId');
+    await ensureRetencionSufridaColumn(db, logger, 'payloadHash');
+    await assertRetencionSufridaEventsAreUnique(db);
+    await ensureRetencionSufridaIdempotencyIndex(db, logger);
+    await assertRetencionSufridaEventsAreUnique(db);
+    logger.info('Preflight DDL verificado: idempotencia de RetencionSufrida lista sin alterar históricos.');
+}
+
+async function assertPurchaseInvoicesAreUnique(db: DeploySchemaClient): Promise<void> {
+    const duplicates = await db.query<DuplicatePurchaseInvoiceRow[]>(Prisma.sql`
+        SELECT tenantId, supplierId, invoiceNumber, COUNT(*) AS duplicateCount
+        FROM ${PURCHASE_TABLE_SQL}
+        GROUP BY tenantId, supplierId, invoiceNumber
+        HAVING COUNT(*) > 1
+        LIMIT 10
+    `);
+
+    if (duplicates.length === 0) return;
+
+    const rows = duplicates.reduce(
+        (total, row) => total + BigInt(row.duplicateCount),
+        0n,
+    );
+    throw new UnsafeSchemaStateError(
+        `Hay ${duplicates.length} grupo(s) de facturas de proveedor duplicadas (${String(rows)} filas); `
+        + 'no se creará el índice único ni se alterarán datos.',
+    );
+}
+
+async function ensurePurchaseInvoiceUniqueIndex(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+): Promise<void> {
+    const initialState = inspectPurchaseInvoiceUniqueIndex(
+        await readPurchaseInvoiceUniqueIndex(db),
+    );
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${PURCHASE_INVOICE_UNIQUE_INDEX} existe con columnas u opciones incompatibles.`,
+        );
+    }
+
+    if (initialState === 'missing') {
+        // La validación previa evita intentar un DDL que sabemos inseguro. El
+        // propio UNIQUE protege la carrera entre esta lectura y CREATE INDEX.
+        await assertPurchaseInvoicesAreUnique(db);
+        logger.info(`Aplicando DDL seguro: índice único ${PURCHASE_INVOICE_UNIQUE_INDEX}.`);
+        try {
+            await db.execute(Prisma.sql`
+                CREATE UNIQUE INDEX ${PURCHASE_INVOICE_UNIQUE_INDEX_SQL}
+                ON ${PURCHASE_TABLE_SQL}(
+                    ${TENANT_ID_COLUMN_SQL},
+                    ${SUPPLIER_ID_COLUMN_SQL},
+                    ${INVOICE_NUMBER_COLUMN_SQL}
+                )
+            `);
+        } catch (error) {
+            if (inspectPurchaseInvoiceUniqueIndex(
+                await readPurchaseInvoiceUniqueIndex(db),
+            ) !== 'valid') {
+                await assertPurchaseInvoicesAreUnique(db);
+                throw error;
+            }
+            logger.warn(`${PURCHASE_INVOICE_UNIQUE_INDEX} fue creado concurrentemente; definición verificada.`);
+        }
+    }
+
+    if (inspectPurchaseInvoiceUniqueIndex(
+        await readPurchaseInvoiceUniqueIndex(db),
+    ) !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${PURCHASE_INVOICE_UNIQUE_INDEX}.`,
+        );
+    }
+}
+
+export async function applyPurchaseInvoiceSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    if (!await purchaseTableExists(db)) {
+        logger.info('Preflight DDL: Purchase aún no existe; db push creará su schema completo.');
+        return;
+    }
+
+    await assertPurchaseInvoicesAreUnique(db);
+    await ensurePurchaseInvoiceUniqueIndex(db, logger);
+    await assertPurchaseInvoicesAreUnique(db);
+    logger.info('Preflight DDL verificado: unicidad de facturas de proveedor lista sin alterar históricos.');
+}
+
+type PurchaseMatchResolutionNullableColumn =
+    | 'matchResolutionClientEventId'
+    | 'matchResolutionPayloadHash';
+
+function inspectPurchaseMatchResolutionColumn(
+    columnName: PurchaseMatchResolutionNullableColumn,
+    rows: PurchaseMatchResolutionColumnRow[],
+): SchemaObjectState {
+    return columnName === 'matchResolutionClientEventId'
+        ? inspectPurchaseMatchResolutionClientEventIdColumn(rows)
+        : inspectPurchaseMatchResolutionPayloadHashColumn(rows);
+}
+
+async function ensurePurchaseMatchResolutionColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    columnName: PurchaseMatchResolutionNullableColumn,
+): Promise<void> {
+    const initialState = inspectPurchaseMatchResolutionColumn(
+        columnName,
+        await readPurchaseMatchResolutionColumn(db, columnName),
+    );
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `Purchase.${columnName} existe con una definición incompatible; se requiere intervención manual.`,
+        );
+    }
+
+    if (initialState === 'missing') {
+        const length = columnName === 'matchResolutionClientEventId' ? 128 : 64;
+        logger.info(`Aplicando DDL seguro: Purchase.${columnName} VARCHAR(${length}) NULL.`);
+        try {
+            if (columnName === 'matchResolutionClientEventId') {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${PURCHASE_TABLE_SQL}
+                    ADD COLUMN ${MATCH_RESOLUTION_CLIENT_EVENT_ID_COLUMN_SQL} VARCHAR(128) NULL
+                `);
+            } else {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${PURCHASE_TABLE_SQL}
+                    ADD COLUMN ${MATCH_RESOLUTION_PAYLOAD_HASH_COLUMN_SQL} VARCHAR(64) NULL
+                `);
+            }
+        } catch (error) {
+            const concurrentState = inspectPurchaseMatchResolutionColumn(
+                columnName,
+                await readPurchaseMatchResolutionColumn(db, columnName),
+            );
+            if (concurrentState !== 'valid') throw error;
+            logger.warn(`Purchase.${columnName} fue creada concurrentemente; definición verificada.`);
+        }
+    }
+
+    const finalColumn = await readPurchaseMatchResolutionColumn(db, columnName);
+    if (inspectPurchaseMatchResolutionColumn(columnName, finalColumn) !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de Purchase.${columnName}.`,
+        );
+    }
+
+    const tenantIdColumn = await readPurchaseTenantIdColumn(db);
+    if (!columnsUseSameEncoding(finalColumn, tenantIdColumn)) {
+        throw new UnsafeSchemaStateError(
+            `Purchase.${columnName} no usa el mismo charset/collation que Purchase.tenantId.`,
+        );
+    }
+}
+
+async function assertPurchaseMatchResolutionEventsAreUnique(
+    db: DeploySchemaClient,
+): Promise<void> {
+    const duplicates = await db.query<DuplicatePurchaseMatchResolutionEventRow[]>(Prisma.sql`
+        SELECT tenantId, matchResolutionClientEventId, COUNT(*) AS duplicateCount
+        FROM ${PURCHASE_TABLE_SQL}
+        WHERE matchResolutionClientEventId IS NOT NULL
+        GROUP BY tenantId, matchResolutionClientEventId
+        HAVING COUNT(*) > 1
+        LIMIT 10
+    `);
+
+    if (duplicates.length === 0) return;
+
+    const rows = duplicates.reduce(
+        (total, row) => total + BigInt(row.duplicateCount),
+        0n,
+    );
+    throw new UnsafeSchemaStateError(
+        `Hay ${duplicates.length} grupo(s) de resoluciones de matching duplicadas (${String(rows)} filas); `
+        + 'no se creará el índice único ni se alterarán datos.',
+    );
+}
+
+async function ensurePurchaseMatchResolutionIdempotencyIndex(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+): Promise<void> {
+    const initialState = inspectPurchaseMatchResolutionIdempotencyIndex(
+        await readPurchaseMatchResolutionIdempotencyIndex(db),
+    );
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${PURCHASE_MATCH_RESOLUTION_IDEMPOTENCY_INDEX} existe con columnas u opciones incompatibles.`,
+        );
+    }
+
+    if (initialState === 'missing') {
+        await assertPurchaseMatchResolutionEventsAreUnique(db);
+        logger.info(`Aplicando DDL seguro: índice único ${PURCHASE_MATCH_RESOLUTION_IDEMPOTENCY_INDEX}.`);
+        try {
+            await db.execute(Prisma.sql`
+                CREATE UNIQUE INDEX ${PURCHASE_MATCH_RESOLUTION_IDEMPOTENCY_INDEX_SQL}
+                ON ${PURCHASE_TABLE_SQL}(
+                    ${TENANT_ID_COLUMN_SQL},
+                    ${MATCH_RESOLUTION_CLIENT_EVENT_ID_COLUMN_SQL}
+                )
+            `);
+        } catch (error) {
+            if (inspectPurchaseMatchResolutionIdempotencyIndex(
+                await readPurchaseMatchResolutionIdempotencyIndex(db),
+            ) !== 'valid') {
+                await assertPurchaseMatchResolutionEventsAreUnique(db);
+                throw error;
+            }
+            logger.warn(`${PURCHASE_MATCH_RESOLUTION_IDEMPOTENCY_INDEX} fue creado concurrentemente; definición verificada.`);
+        }
+    }
+
+    if (inspectPurchaseMatchResolutionIdempotencyIndex(
+        await readPurchaseMatchResolutionIdempotencyIndex(db),
+    ) !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${PURCHASE_MATCH_RESOLUTION_IDEMPOTENCY_INDEX}.`,
+        );
+    }
+}
+
+export async function applyPurchaseMatchResolutionSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    if (!await purchaseTableExists(db)) {
+        logger.info('Preflight DDL: Purchase aún no existe; db push creará la idempotencia de matching.');
+        return;
+    }
+
+    await ensurePurchaseMatchResolutionColumn(db, logger, 'matchResolutionClientEventId');
+    await ensurePurchaseMatchResolutionColumn(db, logger, 'matchResolutionPayloadHash');
+    await assertPurchaseMatchResolutionEventsAreUnique(db);
+    await ensurePurchaseMatchResolutionIdempotencyIndex(db, logger);
+    await assertPurchaseMatchResolutionEventsAreUnique(db);
+    logger.info('Preflight DDL verificado: resolución idempotente de matching lista sin alterar históricos.');
+}
+
+type ProcurementPhaseTwoBBaseTable =
+    | 'Tenant'
+    | 'StockTransfer'
+    | 'PurchaseOrderItem'
+    | 'GoodsReceipt'
+    | 'GoodsReceiptItem'
+    | 'SaleItemBatchAllocation';
+
+interface ProcurementPhaseTwoBColumnDefinition {
+    tableName: ProcurementPhaseTwoBBaseTable;
+    contract: ProcurementPhaseTwoBColumnContract;
+    ddl: Prisma.Sql;
+}
+
+interface ProcurementPhaseTwoBIndexContract {
+    name: string;
+    columns: string[];
+    unique: boolean;
+}
+
+interface ProcurementPhaseTwoBForeignKeyContract {
+    constraintName: string;
+    columnName: string;
+    referencedTableName: string;
+    deleteRule: 'CASCADE' | 'RESTRICT';
+}
+
+interface ProcurementPhaseTwoBTableContract {
+    tableName:
+        | 'ProductBatchWarehouseStock'
+        | 'ProductBatchLedgerEntry'
+        | 'PurchaseOrderCloseShort'
+        | 'PurchaseOrderCloseShortItem';
+    columns: ProcurementPhaseTwoBColumnContract[];
+    indexes: ProcurementPhaseTwoBIndexContract[];
+    foreignKeys: ProcurementPhaseTwoBForeignKeyContract[];
+}
+
+const PHASE_TWO_B_BASE_COLUMNS: ProcurementPhaseTwoBColumnDefinition[] = [
+    {
+        tableName: 'Tenant',
+        contract: {
+            columnName: 'batchWarehouseLedgerMode',
+            columnType: 'varchar(16)',
+            nullable: false,
+            defaultValue: 'OFF',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`Tenant\`
+            ADD COLUMN \`batchWarehouseLedgerMode\` VARCHAR(16) NOT NULL DEFAULT 'OFF'
+        `,
+    },
+    {
+        tableName: 'StockTransfer',
+        contract: {
+            columnName: 'clientEventId',
+            columnType: 'varchar(128)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`StockTransfer\`
+            ADD COLUMN \`clientEventId\` VARCHAR(128) NULL
+        `,
+    },
+    {
+        tableName: 'StockTransfer',
+        contract: {
+            columnName: 'payloadHash',
+            columnType: 'varchar(64)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`StockTransfer\`
+            ADD COLUMN \`payloadHash\` VARCHAR(64) NULL
+        `,
+    },
+    {
+        tableName: 'StockTransfer',
+        contract: {
+            columnName: 'payloadVersion',
+            columnType: 'int',
+            nullable: false,
+            defaultValue: '1',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`StockTransfer\`
+            ADD COLUMN \`payloadVersion\` INTEGER NOT NULL DEFAULT 1
+        `,
+    },
+    {
+        tableName: 'StockTransfer',
+        contract: {
+            columnName: 'batchLedgerMode',
+            columnType: 'varchar(16)',
+            nullable: false,
+            defaultValue: 'OFF',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`StockTransfer\`
+            ADD COLUMN \`batchLedgerMode\` VARCHAR(16) NOT NULL DEFAULT 'OFF'
+        `,
+    },
+    {
+        tableName: 'StockTransfer',
+        contract: {
+            columnName: 'batchTransferStatus',
+            columnType: 'varchar(32)',
+            nullable: false,
+            defaultValue: 'OFF',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`StockTransfer\`
+            ADD COLUMN \`batchTransferStatus\` VARCHAR(32) NOT NULL DEFAULT 'OFF'
+        `,
+    },
+    {
+        tableName: 'StockTransfer',
+        contract: {
+            columnName: 'batchSnapshot',
+            columnType: 'json',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`StockTransfer\`
+            ADD COLUMN \`batchSnapshot\` JSON NULL
+        `,
+    },
+    {
+        tableName: 'Tenant',
+        contract: {
+            columnName: 'batchWarehouseLedgerActivatedAt',
+            columnType: 'datetime(3)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`Tenant\`
+            ADD COLUMN \`batchWarehouseLedgerActivatedAt\` DATETIME(3) NULL
+        `,
+    },
+    ...([
+        'quantityRejectedExact',
+        'quantityClosedShortExact',
+    ] as const).map(columnName => ({
+        tableName: 'PurchaseOrderItem' as const,
+        contract: {
+            columnName,
+            columnType: 'decimal(18,4)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: columnName === 'quantityRejectedExact'
+            ? Prisma.sql`
+                ALTER TABLE \`PurchaseOrderItem\`
+                ADD COLUMN \`quantityRejectedExact\` DECIMAL(18, 4) NULL
+            `
+            : Prisma.sql`
+                ALTER TABLE \`PurchaseOrderItem\`
+                ADD COLUMN \`quantityClosedShortExact\` DECIMAL(18, 4) NULL
+            `,
+    })),
+    {
+        tableName: 'GoodsReceipt',
+        contract: {
+            columnName: 'payloadVersion',
+            columnType: 'int',
+            nullable: false,
+            defaultValue: '1',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`GoodsReceipt\`
+            ADD COLUMN \`payloadVersion\` INTEGER NOT NULL DEFAULT 1
+        `,
+    },
+    {
+        tableName: 'GoodsReceipt',
+        contract: {
+            columnName: 'inspectionOutcome',
+            columnType: 'varchar(32)',
+            nullable: false,
+            defaultValue: 'FULL_ACCEPT',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`GoodsReceipt\`
+            ADD COLUMN \`inspectionOutcome\` VARCHAR(32) NOT NULL DEFAULT 'FULL_ACCEPT'
+        `,
+    },
+    ...([
+        'inspectedLineCount',
+        'rejectedLineCount',
+    ] as const).map(columnName => ({
+        tableName: 'GoodsReceipt' as const,
+        contract: {
+            columnName,
+            columnType: 'int',
+            nullable: false,
+            defaultValue: '0',
+        },
+        ddl: columnName === 'inspectedLineCount'
+            ? Prisma.sql`
+                ALTER TABLE \`GoodsReceipt\`
+                ADD COLUMN \`inspectedLineCount\` INTEGER NOT NULL DEFAULT 0
+            `
+            : Prisma.sql`
+                ALTER TABLE \`GoodsReceipt\`
+                ADD COLUMN \`rejectedLineCount\` INTEGER NOT NULL DEFAULT 0
+            `,
+    })),
+    {
+        tableName: 'GoodsReceipt',
+        contract: {
+            columnName: 'hasSupplierFault',
+            columnType: 'tinyint(1)',
+            nullable: false,
+            defaultValue: '0',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`GoodsReceipt\`
+            ADD COLUMN \`hasSupplierFault\` BOOLEAN NOT NULL DEFAULT false
+        `,
+    },
+    ...([
+        'deliveredQuantityExact',
+        'rejectedQuantityExact',
+    ] as const).map(columnName => ({
+        tableName: 'GoodsReceiptItem' as const,
+        contract: {
+            columnName,
+            columnType: 'decimal(18,4)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: columnName === 'deliveredQuantityExact'
+            ? Prisma.sql`
+                ALTER TABLE \`GoodsReceiptItem\`
+                ADD COLUMN \`deliveredQuantityExact\` DECIMAL(18, 4) NULL
+            `
+            : Prisma.sql`
+                ALTER TABLE \`GoodsReceiptItem\`
+                ADD COLUMN \`rejectedQuantityExact\` DECIMAL(18, 4) NULL
+            `,
+    })),
+    {
+        tableName: 'GoodsReceiptItem',
+        contract: {
+            columnName: 'rejectionReasonCode',
+            columnType: 'varchar(32)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`GoodsReceiptItem\`
+            ADD COLUMN \`rejectionReasonCode\` VARCHAR(32) NULL
+        `,
+    },
+    {
+        tableName: 'GoodsReceiptItem',
+        contract: {
+            columnName: 'rejectionNotes',
+            columnType: 'text',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`GoodsReceiptItem\`
+            ADD COLUMN \`rejectionNotes\` TEXT NULL
+        `,
+    },
+    {
+        tableName: 'GoodsReceiptItem',
+        contract: {
+            columnName: 'supplierFault',
+            columnType: 'tinyint(1)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`GoodsReceiptItem\`
+            ADD COLUMN \`supplierFault\` BOOLEAN NULL
+        `,
+    },
+    {
+        tableName: 'SaleItemBatchAllocation',
+        contract: {
+            columnName: 'warehouseId',
+            columnType: 'varchar(191)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`SaleItemBatchAllocation\`
+            ADD COLUMN \`warehouseId\` VARCHAR(191) NULL
+        `,
+    },
+];
+
+const idColumn = (columnName: string): ProcurementPhaseTwoBColumnContract => ({
+    columnName,
+    columnType: 'varchar(191)',
+    nullable: false,
+    defaultValue: null,
+});
+const requiredDecimal = (columnName: string): ProcurementPhaseTwoBColumnContract => ({
+    columnName,
+    columnType: 'decimal(18,4)',
+    nullable: false,
+    defaultValue: null,
+});
+const createdAtColumn = (): ProcurementPhaseTwoBColumnContract => ({
+    columnName: 'createdAt',
+    columnType: 'datetime(3)',
+    nullable: false,
+    defaultValue: 'current_timestamp(3)',
+    extra: 'DEFAULT_GENERATED',
+});
+
+const PHASE_TWO_B_NEW_TABLES: ProcurementPhaseTwoBTableContract[] = [
+    {
+        tableName: 'ProductBatchWarehouseStock',
+        columns: [
+            idColumn('id'),
+            idColumn('tenantId'),
+            idColumn('productId'),
+            idColumn('batchId'),
+            idColumn('warehouseId'),
+            {
+                columnName: 'stock',
+                columnType: 'decimal(18,4)',
+                nullable: false,
+                defaultValue: '0.0000',
+            },
+            createdAtColumn(),
+            {
+                columnName: 'updatedAt',
+                columnType: 'datetime(3)',
+                nullable: false,
+                defaultValue: null,
+            },
+        ],
+        indexes: [
+            { name: 'PRIMARY', columns: ['id'], unique: true },
+            {
+                name: 'ProductBatchWarehouseStock_tenantId_batchId_idx',
+                columns: ['tenantId', 'batchId'],
+                unique: false,
+            },
+            {
+                name: 'ProductBatchWarehouseStock_tenantId_productId_warehouseId_idx',
+                columns: ['tenantId', 'productId', 'warehouseId'],
+                unique: false,
+            },
+            {
+                name: 'ProductBatchWarehouseStock_tenantId_warehouseId_productId_idx',
+                columns: ['tenantId', 'warehouseId', 'productId'],
+                unique: false,
+            },
+            {
+                name: PRODUCT_BATCH_WAREHOUSE_STOCK_UNIQUE_INDEX,
+                columns: ['tenantId', 'batchId', 'warehouseId'],
+                unique: true,
+            },
+        ],
+        foreignKeys: [
+            { constraintName: 'ProductBatchWarehouseStock_tenantId_fkey', columnName: 'tenantId', referencedTableName: 'Tenant', deleteRule: 'CASCADE' },
+            { constraintName: 'ProductBatchWarehouseStock_productId_fkey', columnName: 'productId', referencedTableName: 'Product', deleteRule: 'RESTRICT' },
+            { constraintName: 'ProductBatchWarehouseStock_batchId_fkey', columnName: 'batchId', referencedTableName: 'ProductBatch', deleteRule: 'RESTRICT' },
+            { constraintName: 'ProductBatchWarehouseStock_warehouseId_fkey', columnName: 'warehouseId', referencedTableName: 'Warehouse', deleteRule: 'RESTRICT' },
+        ],
+    },
+    {
+        tableName: 'ProductBatchLedgerEntry',
+        columns: [
+            idColumn('id'),
+            idColumn('tenantId'),
+            idColumn('productId'),
+            idColumn('batchId'),
+            idColumn('warehouseId'),
+            requiredDecimal('quantityDelta'),
+            requiredDecimal('stockBefore'),
+            requiredDecimal('stockAfter'),
+            { columnName: 'movementType', columnType: 'varchar(32)', nullable: false, defaultValue: null },
+            { columnName: 'status', columnType: 'varchar(32)', nullable: false, defaultValue: 'APPLIED' },
+            { columnName: 'referenceId', columnType: 'varchar(191)', nullable: true, defaultValue: null },
+            { columnName: 'referenceType', columnType: 'varchar(64)', nullable: true, defaultValue: null },
+            { columnName: 'sourceKey', columnType: 'varchar(191)', nullable: false, defaultValue: null },
+            { columnName: 'payloadHash', columnType: 'varchar(64)', nullable: false, defaultValue: null },
+            { columnName: 'reason', columnType: 'text', nullable: true, defaultValue: null },
+            idColumn('userId'),
+            createdAtColumn(),
+        ],
+        indexes: [
+            { name: 'PRIMARY', columns: ['id'], unique: true },
+            { name: 'ProductBatchLedgerEntry_tenantId_batchId_createdAt_idx', columns: ['tenantId', 'batchId', 'createdAt'], unique: false },
+            { name: 'ProductBatchLedgerEntry_tenantId_warehouseId_createdAt_idx', columns: ['tenantId', 'warehouseId', 'createdAt'], unique: false },
+            { name: 'ProductBatchLedgerEntry_tenantId_productId_warehouseId_creat_idx', columns: ['tenantId', 'productId', 'warehouseId', 'createdAt'], unique: false },
+            { name: 'ProductBatchLedgerEntry_tenantId_referenceType_referenceId_idx', columns: ['tenantId', 'referenceType', 'referenceId'], unique: false },
+            { name: 'ProductBatchLedgerEntry_userId_idx', columns: ['userId'], unique: false },
+            { name: PRODUCT_BATCH_LEDGER_SOURCE_UNIQUE_INDEX, columns: ['tenantId', 'sourceKey'], unique: true },
+        ],
+        foreignKeys: [
+            { constraintName: 'ProductBatchLedgerEntry_tenantId_fkey', columnName: 'tenantId', referencedTableName: 'Tenant', deleteRule: 'CASCADE' },
+            { constraintName: 'ProductBatchLedgerEntry_productId_fkey', columnName: 'productId', referencedTableName: 'Product', deleteRule: 'RESTRICT' },
+            { constraintName: 'ProductBatchLedgerEntry_batchId_fkey', columnName: 'batchId', referencedTableName: 'ProductBatch', deleteRule: 'RESTRICT' },
+            { constraintName: 'ProductBatchLedgerEntry_warehouseId_fkey', columnName: 'warehouseId', referencedTableName: 'Warehouse', deleteRule: 'RESTRICT' },
+            { constraintName: 'ProductBatchLedgerEntry_userId_fkey', columnName: 'userId', referencedTableName: 'User', deleteRule: 'RESTRICT' },
+        ],
+    },
+    {
+        tableName: 'PurchaseOrderCloseShort',
+        columns: [
+            idColumn('id'),
+            idColumn('tenantId'),
+            idColumn('purchaseOrderId'),
+            { columnName: 'status', columnType: 'varchar(32)', nullable: false, defaultValue: 'POSTED' },
+            { columnName: 'clientEventId', columnType: 'varchar(128)', nullable: false, defaultValue: null },
+            { columnName: 'payloadHash', columnType: 'varchar(64)', nullable: false, defaultValue: null },
+            idColumn('closedBy'),
+            { ...createdAtColumn(), columnName: 'closedAt' },
+            createdAtColumn(),
+            { columnName: 'lineCount', columnType: 'int', nullable: false, defaultValue: '0' },
+            { columnName: 'closedLineCount', columnType: 'int', nullable: false, defaultValue: '0' },
+            { columnName: 'hasSupplierFault', columnType: 'tinyint(1)', nullable: false, defaultValue: '0' },
+            { columnName: 'reasonSummaryCode', columnType: 'varchar(32)', nullable: true, defaultValue: null },
+            { columnName: 'note', columnType: 'text', nullable: true, defaultValue: null },
+        ],
+        indexes: [
+            { name: 'PRIMARY', columns: ['id'], unique: true },
+            { name: 'PurchaseOrderCloseShort_tenantId_purchaseOrderId_closedAt_idx', columns: ['tenantId', 'purchaseOrderId', 'closedAt'], unique: false },
+            { name: 'PurchaseOrderCloseShort_closedBy_idx', columns: ['closedBy'], unique: false },
+            { name: PURCHASE_ORDER_CLOSE_SHORT_EVENT_UNIQUE_INDEX, columns: ['tenantId', 'clientEventId'], unique: true },
+        ],
+        foreignKeys: [
+            { constraintName: 'PurchaseOrderCloseShort_tenantId_fkey', columnName: 'tenantId', referencedTableName: 'Tenant', deleteRule: 'RESTRICT' },
+            { constraintName: 'PurchaseOrderCloseShort_purchaseOrderId_fkey', columnName: 'purchaseOrderId', referencedTableName: 'PurchaseOrder', deleteRule: 'RESTRICT' },
+            { constraintName: 'PurchaseOrderCloseShort_closedBy_fkey', columnName: 'closedBy', referencedTableName: 'User', deleteRule: 'RESTRICT' },
+        ],
+    },
+    {
+        tableName: 'PurchaseOrderCloseShortItem',
+        columns: [
+            idColumn('id'),
+            idColumn('tenantId'),
+            idColumn('closeShortId'),
+            idColumn('purchaseOrderItemId'),
+            requiredDecimal('quantityExact'),
+            { columnName: 'reasonCode', columnType: 'varchar(32)', nullable: false, defaultValue: null },
+            { columnName: 'supplierFault', columnType: 'tinyint(1)', nullable: true, defaultValue: null },
+            { columnName: 'note', columnType: 'text', nullable: true, defaultValue: null },
+            requiredDecimal('orderedQuantitySnapshotExact'),
+            requiredDecimal('acceptedQuantitySnapshotExact'),
+            requiredDecimal('rejectedQuantitySnapshotExact'),
+            requiredDecimal('remainingBeforeExact'),
+            requiredDecimal('remainingAfterExact'),
+            { columnName: 'unitSnapshot', columnType: 'varchar(32)', nullable: false, defaultValue: null },
+            { columnName: 'saleModeSnapshot', columnType: 'varchar(32)', nullable: true, defaultValue: null },
+            { columnName: 'quantityStepSnapshot', columnType: 'decimal(18,4)', nullable: true, defaultValue: null },
+            createdAtColumn(),
+        ],
+        indexes: [
+            { name: 'PRIMARY', columns: ['id'], unique: true },
+            { name: 'PurchaseOrderCloseShortItem_tenantId_closeShortId_idx', columns: ['tenantId', 'closeShortId'], unique: false },
+            { name: 'PurchaseOrderCloseShortItem_tenantId_purchaseOrderItemId_idx', columns: ['tenantId', 'purchaseOrderItemId'], unique: false },
+        ],
+        foreignKeys: [
+            { constraintName: 'PurchaseOrderCloseShortItem_tenantId_fkey', columnName: 'tenantId', referencedTableName: 'Tenant', deleteRule: 'RESTRICT' },
+            { constraintName: 'PurchaseOrderCloseShortItem_closeShortId_fkey', columnName: 'closeShortId', referencedTableName: 'PurchaseOrderCloseShort', deleteRule: 'CASCADE' },
+            { constraintName: 'PurchaseOrderCloseShortItem_purchaseOrderItemId_fkey', columnName: 'purchaseOrderItemId', referencedTableName: 'PurchaseOrderItem', deleteRule: 'RESTRICT' },
+        ],
+    },
+];
+
+async function readProcurementPhaseTwoBTables(
+    db: DeploySchemaClient,
+): Promise<Set<string>> {
+    const rows = await db.query<Array<{ tableName: string }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN (
+            'Tenant',
+            'StockTransfer',
+            'PurchaseOrderItem',
+            'GoodsReceipt',
+            'GoodsReceiptItem',
+            'SaleItemBatchAllocation',
+            'ProductBatchWarehouseStock',
+            'ProductBatchLedgerEntry',
+            'PurchaseOrderCloseShort',
+            'PurchaseOrderCloseShortItem'
+          )
+    `);
+    return new Set(rows.map(row => row.tableName));
+}
+
+async function readProcurementPhaseTwoBColumns(
+    db: DeploySchemaClient,
+    tableName: string,
+): Promise<ProcurementPhaseTwoBColumnRow[]> {
+    return db.query<ProcurementPhaseTwoBColumnRow[]>(Prisma.sql`
+        SELECT
+            COLUMN_NAME AS columnName,
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ${tableName}
+        ORDER BY ORDINAL_POSITION
+    `);
+}
+
+async function readProcurementPhaseTwoBIndexes(
+    db: DeploySchemaClient,
+    tableName: string,
+): Promise<ProcurementPhaseTwoBIndexRow[]> {
+    return db.query<ProcurementPhaseTwoBIndexRow[]>(Prisma.sql`
+        SELECT
+            INDEX_NAME AS indexName,
+            NON_UNIQUE AS nonUnique,
+            SEQ_IN_INDEX AS seqInIndex,
+            COLUMN_NAME AS columnName,
+            SUB_PART AS subPart,
+            INDEX_TYPE AS indexType,
+            IS_VISIBLE AS isVisible,
+            COLLATION AS collation,
+            EXPRESSION AS expression
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ${tableName}
+        ORDER BY INDEX_NAME, SEQ_IN_INDEX
+    `);
+}
+
+async function readProcurementPhaseTwoBForeignKeys(
+    db: DeploySchemaClient,
+    tableName: string,
+): Promise<ProcurementPhaseTwoBForeignKeyRow[]> {
+    return db.query<ProcurementPhaseTwoBForeignKeyRow[]>(Prisma.sql`
+        SELECT
+            rc.CONSTRAINT_NAME AS constraintName,
+            kcu.COLUMN_NAME AS columnName,
+            kcu.REFERENCED_TABLE_NAME AS referencedTableName,
+            kcu.REFERENCED_COLUMN_NAME AS referencedColumnName,
+            kcu.ORDINAL_POSITION AS ordinalPosition,
+            rc.DELETE_RULE AS deleteRule,
+            rc.UPDATE_RULE AS updateRule
+        FROM information_schema.REFERENTIAL_CONSTRAINTS rc
+        INNER JOIN information_schema.KEY_COLUMN_USAGE kcu
+          ON kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+         AND kcu.TABLE_NAME = rc.TABLE_NAME
+         AND kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+        WHERE rc.CONSTRAINT_SCHEMA = DATABASE()
+          AND rc.TABLE_NAME = ${tableName}
+        ORDER BY rc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
+    `);
+}
+
+async function ensureProcurementPhaseTwoBColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    definition: ProcurementPhaseTwoBColumnDefinition,
+): Promise<void> {
+    const read = async () => inspectProcurementPhaseTwoBColumn(
+        await readProcurementPhaseTwoBColumns(db, definition.tableName),
+        definition.contract,
+    );
+    const initial = await read();
+    const label = `${definition.tableName}.${definition.contract.columnName}`;
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(`${label} existe con tipo, nullabilidad o default incompatible.`);
+    }
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: columna ${label}.`);
+        try {
+            await db.execute(definition.ddl);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${label} fue creada concurrentemente; definición exacta verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(`No se pudo verificar la definición final de ${label}.`);
+    }
+}
+
+async function assertSaleItemBatchAllocationWarehouseReferencesAreSafe(
+    db: DeploySchemaClient,
+): Promise<void> {
+    const invalid = await db.query<Array<{
+        allocationId: string;
+        tenantId: string;
+        warehouseId: string;
+        reason: 'MISSING_WAREHOUSE' | 'CROSS_TENANT';
+    }>>(Prisma.sql`
+        SELECT
+            allocation.id AS allocationId,
+            allocation.tenantId,
+            allocation.warehouseId,
+            CASE WHEN warehouse.id IS NULL THEN 'MISSING_WAREHOUSE' ELSE 'CROSS_TENANT' END AS reason
+        FROM \`SaleItemBatchAllocation\` allocation
+        LEFT JOIN \`Warehouse\` warehouse ON warehouse.id = allocation.warehouseId
+        WHERE allocation.warehouseId IS NOT NULL
+          AND (warehouse.id IS NULL OR warehouse.tenantId <> allocation.tenantId)
+        LIMIT 10
+    `);
+    if (invalid.length > 0) {
+        const detail = invalid
+            .map(row => `${row.allocationId}/${row.warehouseId} (${row.reason})`)
+            .join(', ');
+        throw new UnsafeSchemaStateError(
+            `Hay allocations de lote con bodega inexistente o de otro tenant: ${detail}`,
+        );
+    }
+}
+
+async function ensureSaleItemBatchAllocationWarehouseIndex(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+): Promise<void> {
+    const read = async () => {
+        const rows = await readProcurementPhaseTwoBIndexes(db, 'SaleItemBatchAllocation');
+        return inspectProcurementPhaseTwoBIndex(
+            rows.filter(row => row.indexName === SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_INDEX),
+            SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_INDEX,
+            ['tenantId', 'warehouseId'],
+            false,
+        );
+    };
+    const initial = await read();
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_INDEX} existe con columnas u opciones incompatibles.`,
+        );
+    }
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: índice ${SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_INDEX}.`);
+        try {
+            await db.execute(Prisma.sql`
+                CREATE INDEX \`SaleItemBatchAllocation_tenantId_warehouseId_idx\`
+                ON \`SaleItemBatchAllocation\`(\`tenantId\`, \`warehouseId\`)
+            `);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_INDEX} fue creado concurrentemente; definición verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_INDEX}.`,
+        );
+    }
+}
+
+async function assertStockTransferClientEventsAreUnique(
+    db: DeploySchemaClient,
+): Promise<void> {
+    const duplicates = await db.query<Array<{
+        tenantId: string;
+        clientEventId: string;
+        duplicateCount: number | bigint;
+    }>>(Prisma.sql`
+        SELECT tenantId, clientEventId, COUNT(*) AS duplicateCount
+        FROM \`StockTransfer\`
+        WHERE clientEventId IS NOT NULL
+        GROUP BY tenantId, clientEventId
+        HAVING COUNT(*) > 1
+        LIMIT 10
+    `);
+    if (duplicates.length > 0) {
+        const detail = duplicates
+            .map(row => `${row.tenantId}/${row.clientEventId} (${String(row.duplicateCount)})`)
+            .join(', ');
+        throw new UnsafeSchemaStateError(
+            `Hay StockTransfer.clientEventId duplicados; no se creará el índice único: ${detail}`,
+        );
+    }
+}
+
+async function ensureStockTransferIdempotencyIndex(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+): Promise<void> {
+    const read = async () => {
+        const rows = await readProcurementPhaseTwoBIndexes(db, 'StockTransfer');
+        return inspectProcurementPhaseTwoBIndex(
+            rows.filter(row => row.indexName === STOCK_TRANSFER_IDEMPOTENCY_INDEX),
+            STOCK_TRANSFER_IDEMPOTENCY_INDEX,
+            ['tenantId', 'clientEventId'],
+            true,
+        );
+    };
+    const initial = await read();
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${STOCK_TRANSFER_IDEMPOTENCY_INDEX} existe con columnas u opciones incompatibles.`,
+        );
+    }
+    await assertStockTransferClientEventsAreUnique(db);
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: índice único ${STOCK_TRANSFER_IDEMPOTENCY_INDEX}.`);
+        try {
+            await db.execute(Prisma.sql`
+                CREATE UNIQUE INDEX \`StockTransfer_tenantId_clientEventId_key\`
+                ON \`StockTransfer\`(\`tenantId\`, \`clientEventId\`)
+            `);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${STOCK_TRANSFER_IDEMPOTENCY_INDEX} fue creado concurrentemente; definición verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${STOCK_TRANSFER_IDEMPOTENCY_INDEX}.`,
+        );
+    }
+    await assertStockTransferClientEventsAreUnique(db);
+}
+
+const saleItemAllocationWarehouseForeignKey: ProcurementPhaseTwoBForeignKeyContract = {
+    constraintName: SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_FOREIGN_KEY,
+    columnName: 'warehouseId',
+    referencedTableName: 'Warehouse',
+    deleteRule: 'RESTRICT',
+};
+
+async function ensureSaleItemBatchAllocationWarehouseForeignKey(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+): Promise<void> {
+    const read = async () => inspectProcurementPhaseTwoBForeignKey(
+        await readProcurementPhaseTwoBForeignKeys(db, 'SaleItemBatchAllocation'),
+        saleItemAllocationWarehouseForeignKey,
+    );
+    const initial = await read();
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_FOREIGN_KEY} existe con definición incompatible.`,
+        );
+    }
+    await assertSaleItemBatchAllocationWarehouseReferencesAreSafe(db);
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: FK ${SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_FOREIGN_KEY}.`);
+        try {
+            await db.execute(Prisma.sql`
+                ALTER TABLE \`SaleItemBatchAllocation\`
+                ADD CONSTRAINT \`SaleItemBatchAllocation_warehouseId_fkey\`
+                FOREIGN KEY (\`warehouseId\`) REFERENCES \`Warehouse\`(\`id\`)
+                ON DELETE RESTRICT ON UPDATE CASCADE
+            `);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_FOREIGN_KEY} fue creada concurrentemente; definición verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_FOREIGN_KEY}.`,
+        );
+    }
+    await assertSaleItemBatchAllocationWarehouseReferencesAreSafe(db);
+}
+
+async function assertProcurementPhaseTwoBTable(
+    db: DeploySchemaClient,
+    contract: ProcurementPhaseTwoBTableContract,
+): Promise<void> {
+    const [columns, indexes, foreignKeys] = await Promise.all([
+        readProcurementPhaseTwoBColumns(db, contract.tableName),
+        readProcurementPhaseTwoBIndexes(db, contract.tableName),
+        readProcurementPhaseTwoBForeignKeys(db, contract.tableName),
+    ]);
+
+    for (const column of contract.columns) {
+        if (inspectProcurementPhaseTwoBColumn(columns, column) !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${contract.tableName}.${column.columnName} falta o tiene una definición incompatible.`,
+            );
+        }
+    }
+    for (const index of contract.indexes) {
+        const rows = indexes.filter(row => row.indexName === index.name);
+        if (inspectProcurementPhaseTwoBIndex(rows, index.name, index.columns, index.unique) !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${index.name} falta o tiene columnas u opciones incompatibles.`,
+            );
+        }
+    }
+    for (const foreignKey of contract.foreignKeys) {
+        if (inspectProcurementPhaseTwoBForeignKey(foreignKeys, foreignKey) !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${foreignKey.constraintName} falta o tiene una definición incompatible.`,
+            );
+        }
+    }
+}
+
+/**
+ * Convergencia expand-only de Fase 2B sobre tablas ya pobladas. Las tablas
+ * completamente nuevas quedan a cargo de db push (CREATE TABLE es atómico),
+ * pero si ya existen se validan completas y se falla cerrado ante drift.
+ */
+export async function applyProcurementPhaseTwoBSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    const existingTables = await readProcurementPhaseTwoBTables(db);
+    if (existingTables.size === 0) {
+        logger.info('Preflight DDL 2B: instalación vacía; db push creará el contrato completo.');
+        return;
+    }
+    if (!existingTables.has('Tenant')) {
+        throw new UnsafeSchemaStateError(
+            'Hay estructuras de Procurement Fase 2B sin Tenant; se requiere intervención manual.',
+        );
+    }
+
+    for (const definition of PHASE_TWO_B_BASE_COLUMNS) {
+        if (existingTables.has(definition.tableName)) {
+            await ensureProcurementPhaseTwoBColumn(db, logger, definition);
+        }
+    }
+
+    if (existingTables.has('StockTransfer')) {
+        await ensureStockTransferIdempotencyIndex(db, logger);
+    }
+
+    if (existingTables.has('SaleItemBatchAllocation')) {
+        await ensureSaleItemBatchAllocationWarehouseIndex(db, logger);
+        await ensureSaleItemBatchAllocationWarehouseForeignKey(db, logger);
+    }
+
+    for (const contract of PHASE_TWO_B_NEW_TABLES) {
+        if (existingTables.has(contract.tableName)) {
+            await assertProcurementPhaseTwoBTable(db, contract);
+        }
+    }
+
+    logger.info(
+        'Preflight DDL 2B verificado: schema expandido sin repartir stock ni activar el ledger.',
+    );
+}
+
+type ProcurementPhaseTwoCBaseTable = 'Purchase' | 'PurchaseItem';
+type ProcurementPhaseTwoCNewTable =
+    | 'SupplierReturn'
+    | 'SupplierReturnItem'
+    | 'SupplierCreditNote'
+    | 'SupplierCreditNoteLine'
+    | 'SupplierCreditApplication';
+
+interface ProcurementPhaseTwoCColumnDefinition {
+    tableName: ProcurementPhaseTwoCBaseTable;
+    contract: ProcurementPhaseTwoCColumnContract;
+    ddl: Prisma.Sql;
+}
+
+interface ProcurementPhaseTwoCIndexContract {
+    name: string;
+    columns: string[];
+    unique: boolean;
+}
+
+interface ProcurementPhaseTwoCForeignKeyContract {
+    constraintName: string;
+    columnName: string;
+    referencedTableName: string;
+    deleteRule: 'CASCADE' | 'RESTRICT';
+}
+
+interface ProcurementPhaseTwoCTableContract {
+    tableName: ProcurementPhaseTwoCNewTable;
+    columns: ProcurementPhaseTwoCColumnContract[];
+    indexes: ProcurementPhaseTwoCIndexContract[];
+    foreignKeys: ProcurementPhaseTwoCForeignKeyContract[];
+}
+
+const PHASE_TWO_C_NEW_TABLE_NAMES: ProcurementPhaseTwoCNewTable[] = [
+    'SupplierReturn',
+    'SupplierReturnItem',
+    'SupplierCreditNote',
+    'SupplierCreditNoteLine',
+    'SupplierCreditApplication',
+];
+
+const PHASE_TWO_C_BASE_COLUMNS: ProcurementPhaseTwoCColumnDefinition[] = [
+    {
+        tableName: 'Purchase',
+        contract: {
+            columnName: 'settledAt',
+            columnType: 'datetime(3)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`Purchase\`
+            ADD COLUMN \`settledAt\` DATETIME(3) NULL
+        `,
+    },
+    {
+        tableName: 'PurchaseItem',
+        contract: {
+            columnName: 'inventoryWarehouseId',
+            columnType: 'varchar(191)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`PurchaseItem\`
+            ADD COLUMN \`inventoryWarehouseId\` VARCHAR(191) NULL
+        `,
+    },
+    {
+        tableName: 'PurchaseItem',
+        contract: {
+            columnName: 'inventoryBatchId',
+            columnType: 'varchar(191)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`PurchaseItem\`
+            ADD COLUMN \`inventoryBatchId\` VARCHAR(191) NULL
+        `,
+    },
+    {
+        tableName: 'PurchaseItem',
+        contract: {
+            columnName: 'inventoryUnitCostExact',
+            columnType: 'decimal(18,6)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`PurchaseItem\`
+            ADD COLUMN \`inventoryUnitCostExact\` DECIMAL(18, 6) NULL
+        `,
+    },
+];
+
+const phaseTwoCIdColumn = (
+    columnName: string,
+    nullable = false,
+): ProcurementPhaseTwoCColumnContract => ({
+    columnName,
+    columnType: 'varchar(191)',
+    nullable,
+    defaultValue: null,
+});
+
+const phaseTwoCVarcharColumn = (
+    columnName: string,
+    length: number,
+    options: { nullable?: boolean; defaultValue?: string | null } = {},
+): ProcurementPhaseTwoCColumnContract => ({
+    columnName,
+    columnType: `varchar(${length})`,
+    nullable: options.nullable ?? false,
+    defaultValue: options.defaultValue ?? null,
+});
+
+const phaseTwoCDecimalColumn = (
+    columnName: string,
+    scale: 4 | 6 = 4,
+    options: { nullable?: boolean; defaultValue?: string | null } = {},
+): ProcurementPhaseTwoCColumnContract => ({
+    columnName,
+    columnType: `decimal(18,${scale})`,
+    nullable: options.nullable ?? false,
+    defaultValue: options.defaultValue ?? null,
+});
+
+const phaseTwoCDateColumn = (
+    columnName: string,
+    nullable = false,
+): ProcurementPhaseTwoCColumnContract => ({
+    columnName,
+    columnType: 'datetime(3)',
+    nullable,
+    defaultValue: null,
+});
+
+const phaseTwoCCreatedAtColumn = (): ProcurementPhaseTwoCColumnContract => ({
+    columnName: 'createdAt',
+    columnType: 'datetime(3)',
+    nullable: false,
+    defaultValue: 'current_timestamp(3)',
+    extra: 'DEFAULT_GENERATED',
+});
+
+const PHASE_TWO_C_NEW_TABLES: ProcurementPhaseTwoCTableContract[] = [
+    {
+        tableName: 'SupplierReturn',
+        columns: [
+            phaseTwoCIdColumn('id'),
+            phaseTwoCIdColumn('tenantId'),
+            phaseTwoCIdColumn('supplierId'),
+            phaseTwoCIdColumn('returnNumber'),
+            phaseTwoCVarcharColumn('status', 32, { defaultValue: 'POSTED' }),
+            phaseTwoCVarcharColumn('reasonCode', 32),
+            { columnName: 'reason', columnType: 'text', nullable: true, defaultValue: null },
+            phaseTwoCIdColumn('supplierReference', true),
+            phaseTwoCVarcharColumn('clientEventId', 128),
+            { columnName: 'payloadVersion', columnType: 'int', nullable: false, defaultValue: '1' },
+            phaseTwoCVarcharColumn('payloadHash', 64),
+            phaseTwoCVarcharColumn('batchLedgerMode', 16),
+            phaseTwoCIdColumn('returnedBy'),
+            phaseTwoCDateColumn('returnedAt'),
+            phaseTwoCCreatedAtColumn(),
+        ],
+        indexes: [
+            { name: 'PRIMARY', columns: ['id'], unique: true },
+            { name: SUPPLIER_RETURN_NUMBER_UNIQUE_INDEX, columns: ['tenantId', 'returnNumber'], unique: true },
+            { name: SUPPLIER_RETURN_EVENT_UNIQUE_INDEX, columns: ['tenantId', 'clientEventId'], unique: true },
+            { name: 'SupplierReturn_tenantId_supplierId_returnedAt_idx', columns: ['tenantId', 'supplierId', 'returnedAt'], unique: false },
+            { name: 'SupplierReturn_returnedBy_idx', columns: ['returnedBy'], unique: false },
+        ],
+        foreignKeys: [
+            { constraintName: 'SupplierReturn_tenantId_fkey', columnName: 'tenantId', referencedTableName: 'Tenant', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierReturn_supplierId_fkey', columnName: 'supplierId', referencedTableName: 'Supplier', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierReturn_returnedBy_fkey', columnName: 'returnedBy', referencedTableName: 'User', deleteRule: 'RESTRICT' },
+        ],
+    },
+    {
+        tableName: 'SupplierReturnItem',
+        columns: [
+            phaseTwoCIdColumn('id'),
+            phaseTwoCIdColumn('tenantId'),
+            phaseTwoCIdColumn('supplierReturnId'),
+            phaseTwoCVarcharColumn('sourceType', 32),
+            phaseTwoCIdColumn('purchaseItemId', true),
+            phaseTwoCIdColumn('goodsReceiptItemId', true),
+            phaseTwoCIdColumn('purchaseMatchAllocationId', true),
+            phaseTwoCIdColumn('productId'),
+            phaseTwoCIdColumn('productNameAtReturn'),
+            phaseTwoCIdColumn('warehouseId'),
+            phaseTwoCIdColumn('batchId', true),
+            phaseTwoCDecimalColumn('quantityExact'),
+            phaseTwoCDecimalColumn('bookUnitCostExact', 6),
+            phaseTwoCDecimalColumn('bookValueExact'),
+            phaseTwoCVarcharColumn('unitAtReturn', 32),
+            phaseTwoCVarcharColumn('saleModeAtReturn', 32, { nullable: true }),
+            phaseTwoCDecimalColumn('quantityStepAtReturn', 4, { nullable: true }),
+            phaseTwoCIdColumn('batchNumberAtReturn', true),
+            phaseTwoCDateColumn('expiryDateAtReturn', true),
+            phaseTwoCVarcharColumn('sourceHash', 64),
+            phaseTwoCVarcharColumn('batchLedgerStatus', 32),
+            phaseTwoCCreatedAtColumn(),
+        ],
+        indexes: [
+            { name: 'PRIMARY', columns: ['id'], unique: true },
+            { name: SUPPLIER_RETURN_ITEM_SOURCE_UNIQUE_INDEX, columns: ['supplierReturnId', 'sourceHash'], unique: true },
+            { name: 'SupplierReturnItem_tenantId_supplierReturnId_idx', columns: ['tenantId', 'supplierReturnId'], unique: false },
+            { name: 'SupplierReturnItem_tenantId_productId_warehouseId_idx', columns: ['tenantId', 'productId', 'warehouseId'], unique: false },
+            { name: 'SupplierReturnItem_tenantId_purchaseItemId_idx', columns: ['tenantId', 'purchaseItemId'], unique: false },
+            { name: 'SupplierReturnItem_tenantId_goodsReceiptItemId_idx', columns: ['tenantId', 'goodsReceiptItemId'], unique: false },
+            { name: 'SupplierReturnItem_tenantId_purchaseMatchAllocationId_idx', columns: ['tenantId', 'purchaseMatchAllocationId'], unique: false },
+            { name: 'SupplierReturnItem_tenantId_batchId_idx', columns: ['tenantId', 'batchId'], unique: false },
+        ],
+        foreignKeys: [
+            { constraintName: 'SupplierReturnItem_tenantId_fkey', columnName: 'tenantId', referencedTableName: 'Tenant', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierReturnItem_supplierReturnId_fkey', columnName: 'supplierReturnId', referencedTableName: 'SupplierReturn', deleteRule: 'CASCADE' },
+            { constraintName: 'SupplierReturnItem_purchaseItemId_fkey', columnName: 'purchaseItemId', referencedTableName: 'PurchaseItem', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierReturnItem_goodsReceiptItemId_fkey', columnName: 'goodsReceiptItemId', referencedTableName: 'GoodsReceiptItem', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierReturnItem_purchaseMatchAllocationId_fkey', columnName: 'purchaseMatchAllocationId', referencedTableName: 'PurchaseMatchAllocation', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierReturnItem_productId_fkey', columnName: 'productId', referencedTableName: 'Product', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierReturnItem_warehouseId_fkey', columnName: 'warehouseId', referencedTableName: 'Warehouse', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierReturnItem_batchId_fkey', columnName: 'batchId', referencedTableName: 'ProductBatch', deleteRule: 'RESTRICT' },
+        ],
+    },
+    {
+        tableName: 'SupplierCreditNote',
+        columns: [
+            phaseTwoCIdColumn('id'),
+            phaseTwoCIdColumn('tenantId'),
+            phaseTwoCIdColumn('supplierId'),
+            phaseTwoCIdColumn('creditNoteNumber'),
+            phaseTwoCVarcharColumn('type', 32, { defaultValue: 'RETURN' }),
+            phaseTwoCVarcharColumn('status', 32, { defaultValue: 'POSTED' }),
+            phaseTwoCDateColumn('invoiceDate'),
+            phaseTwoCDateColumn('creditNoteDate'),
+            phaseTwoCDateColumn('devolutionDate'),
+            phaseTwoCDateColumn('postingDate'),
+            phaseTwoCVarcharColumn('fiscalRegimeAtCredit', 32),
+            phaseTwoCVarcharColumn('currencyAtIssue', 3),
+            phaseTwoCDecimalColumn('subtotal'),
+            phaseTwoCDecimalColumn('tax'),
+            phaseTwoCDecimalColumn('creditableTax'),
+            phaseTwoCDecimalColumn('total'),
+            phaseTwoCDecimalColumn('inventoryReversalExact'),
+            phaseTwoCDecimalColumn('priceVarianceReversalExact'),
+            phaseTwoCDecimalColumn('remainingCredit', 4, { defaultValue: '0.0000' }),
+            { columnName: 'reason', columnType: 'text', nullable: true, defaultValue: null },
+            phaseTwoCIdColumn('supplierReference', true),
+            phaseTwoCVarcharColumn('clientEventId', 128),
+            { columnName: 'payloadVersion', columnType: 'int', nullable: false, defaultValue: '1' },
+            phaseTwoCVarcharColumn('payloadHash', 64),
+            phaseTwoCIdColumn('createdBy'),
+            phaseTwoCCreatedAtColumn(),
+        ],
+        indexes: [
+            { name: 'PRIMARY', columns: ['id'], unique: true },
+            { name: SUPPLIER_CREDIT_NOTE_NUMBER_UNIQUE_INDEX, columns: ['tenantId', 'supplierId', 'creditNoteNumber'], unique: true },
+            { name: SUPPLIER_CREDIT_NOTE_EVENT_UNIQUE_INDEX, columns: ['tenantId', 'clientEventId'], unique: true },
+            { name: 'SupplierCreditNote_tenantId_supplierId_creditNoteDate_idx', columns: ['tenantId', 'supplierId', 'creditNoteDate'], unique: false },
+            { name: 'SupplierCreditNote_tenantId_postingDate_idx', columns: ['tenantId', 'postingDate'], unique: false },
+            { name: 'SupplierCreditNote_createdBy_idx', columns: ['createdBy'], unique: false },
+        ],
+        foreignKeys: [
+            { constraintName: 'SupplierCreditNote_tenantId_fkey', columnName: 'tenantId', referencedTableName: 'Tenant', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierCreditNote_supplierId_fkey', columnName: 'supplierId', referencedTableName: 'Supplier', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierCreditNote_createdBy_fkey', columnName: 'createdBy', referencedTableName: 'User', deleteRule: 'RESTRICT' },
+        ],
+    },
+    {
+        tableName: 'SupplierCreditNoteLine',
+        columns: [
+            phaseTwoCIdColumn('id'),
+            phaseTwoCIdColumn('tenantId'),
+            phaseTwoCIdColumn('creditNoteId'),
+            phaseTwoCIdColumn('supplierReturnItemId'),
+            phaseTwoCIdColumn('sourcePurchaseItemId', true),
+            phaseTwoCIdColumn('purchaseMatchAllocationId', true),
+            phaseTwoCVarcharColumn('sourceHash', 64),
+            phaseTwoCDecimalColumn('quantityExact'),
+            phaseTwoCDecimalColumn('bookUnitCostExact', 6),
+            phaseTwoCDecimalColumn('bookValueExact'),
+            phaseTwoCDecimalColumn('subtotal'),
+            phaseTwoCDecimalColumn('tax'),
+            phaseTwoCDecimalColumn('creditableTax'),
+            phaseTwoCDecimalColumn('total'),
+            phaseTwoCDecimalColumn('inventoryReversalExact'),
+            phaseTwoCDecimalColumn('priceVarianceReversalExact'),
+            phaseTwoCIdColumn('descriptionAtCredit'),
+            phaseTwoCVarcharColumn('unitAtCredit', 32),
+            phaseTwoCCreatedAtColumn(),
+        ],
+        indexes: [
+            { name: 'PRIMARY', columns: ['id'], unique: true },
+            { name: SUPPLIER_CREDIT_NOTE_LINE_RETURN_ITEM_UNIQUE_INDEX, columns: ['supplierReturnItemId'], unique: true },
+            { name: SUPPLIER_CREDIT_NOTE_LINE_DOCUMENT_ITEM_UNIQUE_INDEX, columns: ['creditNoteId', 'supplierReturnItemId'], unique: true },
+            { name: 'SupplierCreditNoteLine_tenantId_creditNoteId_idx', columns: ['tenantId', 'creditNoteId'], unique: false },
+            { name: 'SupplierCreditNoteLine_tenantId_sourcePurchaseItemId_idx', columns: ['tenantId', 'sourcePurchaseItemId'], unique: false },
+            { name: 'SupplierCreditNoteLine_tenantId_purchaseMatchAllocationId_idx', columns: ['tenantId', 'purchaseMatchAllocationId'], unique: false },
+        ],
+        foreignKeys: [
+            { constraintName: 'SupplierCreditNoteLine_tenantId_fkey', columnName: 'tenantId', referencedTableName: 'Tenant', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierCreditNoteLine_creditNoteId_fkey', columnName: 'creditNoteId', referencedTableName: 'SupplierCreditNote', deleteRule: 'CASCADE' },
+            { constraintName: 'SupplierCreditNoteLine_supplierReturnItemId_fkey', columnName: 'supplierReturnItemId', referencedTableName: 'SupplierReturnItem', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierCreditNoteLine_sourcePurchaseItemId_fkey', columnName: 'sourcePurchaseItemId', referencedTableName: 'PurchaseItem', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierCreditNoteLine_purchaseMatchAllocationId_fkey', columnName: 'purchaseMatchAllocationId', referencedTableName: 'PurchaseMatchAllocation', deleteRule: 'RESTRICT' },
+        ],
+    },
+    {
+        tableName: 'SupplierCreditApplication',
+        columns: [
+            phaseTwoCIdColumn('id'),
+            phaseTwoCIdColumn('tenantId'),
+            phaseTwoCIdColumn('supplierId'),
+            phaseTwoCIdColumn('creditNoteId'),
+            phaseTwoCIdColumn('purchaseId'),
+            phaseTwoCDecimalColumn('amount'),
+            phaseTwoCIdColumn('createdBy'),
+            phaseTwoCDateColumn('appliedAt'),
+            phaseTwoCCreatedAtColumn(),
+        ],
+        indexes: [
+            { name: 'PRIMARY', columns: ['id'], unique: true },
+            { name: SUPPLIER_CREDIT_APPLICATION_PURCHASE_UNIQUE_INDEX, columns: ['creditNoteId', 'purchaseId'], unique: true },
+            { name: 'SupplierCreditApplication_tenantId_supplierId_appliedAt_idx', columns: ['tenantId', 'supplierId', 'appliedAt'], unique: false },
+            { name: 'SupplierCreditApplication_tenantId_purchaseId_appliedAt_idx', columns: ['tenantId', 'purchaseId', 'appliedAt'], unique: false },
+            { name: 'SupplierCreditApplication_createdBy_idx', columns: ['createdBy'], unique: false },
+        ],
+        foreignKeys: [
+            { constraintName: 'SupplierCreditApplication_tenantId_fkey', columnName: 'tenantId', referencedTableName: 'Tenant', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierCreditApplication_supplierId_fkey', columnName: 'supplierId', referencedTableName: 'Supplier', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierCreditApplication_creditNoteId_fkey', columnName: 'creditNoteId', referencedTableName: 'SupplierCreditNote', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierCreditApplication_purchaseId_fkey', columnName: 'purchaseId', referencedTableName: 'Purchase', deleteRule: 'RESTRICT' },
+            { constraintName: 'SupplierCreditApplication_createdBy_fkey', columnName: 'createdBy', referencedTableName: 'User', deleteRule: 'RESTRICT' },
+        ],
+    },
+];
+
+async function readProcurementPhaseTwoCTables(
+    db: DeploySchemaClient,
+): Promise<Set<string>> {
+    const rows = await db.query<Array<{ tableName: string }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN (
+            'Purchase',
+            'PurchaseItem',
+            'SupplierReturn',
+            'SupplierReturnItem',
+            'SupplierCreditNote',
+            'SupplierCreditNoteLine',
+            'SupplierCreditApplication'
+          )
+    `);
+    return new Set(rows.map(row => row.tableName));
+}
+
+async function ensureProcurementPhaseTwoCColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    definition: ProcurementPhaseTwoCColumnDefinition,
+): Promise<void> {
+    const read = async () => inspectProcurementPhaseTwoCColumn(
+        await readProcurementPhaseTwoBColumns(db, definition.tableName),
+        definition.contract,
+    );
+    const initial = await read();
+    const label = `${definition.tableName}.${definition.contract.columnName}`;
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(`${label} existe con tipo, nullabilidad o default incompatible.`);
+    }
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: columna ${label}.`);
+        try {
+            await db.execute(definition.ddl);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${label} fue creada concurrentemente; definición exacta verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(`No se pudo verificar la definición final de ${label}.`);
+    }
+}
+
+const PHASE_TWO_C_BASE_INDEXES: Array<{
+    tableName: 'PurchaseItem';
+    contract: ProcurementPhaseTwoCIndexContract;
+    ddl: Prisma.Sql;
+}> = [
+    {
+        tableName: 'PurchaseItem',
+        contract: {
+            name: PURCHASE_ITEM_INVENTORY_WAREHOUSE_INDEX,
+            columns: ['inventoryWarehouseId'],
+            unique: false,
+        },
+        ddl: Prisma.sql`
+            CREATE INDEX \`PurchaseItem_inventoryWarehouseId_idx\`
+            ON \`PurchaseItem\`(\`inventoryWarehouseId\`)
+        `,
+    },
+    {
+        tableName: 'PurchaseItem',
+        contract: {
+            name: PURCHASE_ITEM_INVENTORY_BATCH_INDEX,
+            columns: ['inventoryBatchId'],
+            unique: false,
+        },
+        ddl: Prisma.sql`
+            CREATE INDEX \`PurchaseItem_inventoryBatchId_idx\`
+            ON \`PurchaseItem\`(\`inventoryBatchId\`)
+        `,
+    },
+];
+
+async function ensureProcurementPhaseTwoCIndex(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    definition: typeof PHASE_TWO_C_BASE_INDEXES[number],
+): Promise<void> {
+    const read = async () => {
+        const rows = await readProcurementPhaseTwoBIndexes(db, definition.tableName);
+        return inspectProcurementPhaseTwoCIndex(
+            rows.filter(row => row.indexName === definition.contract.name),
+            definition.contract.name,
+            definition.contract.columns,
+            definition.contract.unique,
+        );
+    };
+    const initial = await read();
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${definition.contract.name} existe con columnas u opciones incompatibles.`,
+        );
+    }
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: índice ${definition.contract.name}.`);
+        try {
+            await db.execute(definition.ddl);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${definition.contract.name} fue creado concurrentemente; definición exacta verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${definition.contract.name}.`,
+        );
+    }
+}
+
+async function assertPurchaseItemInventoryReferencesAreSafe(
+    db: DeploySchemaClient,
+): Promise<void> {
+    const invalid = await db.query<Array<{
+        purchaseItemId: string;
+        reason: 'MISSING_PURCHASE' | 'MISSING_WAREHOUSE' | 'CROSS_TENANT_WAREHOUSE'
+            | 'MISSING_BATCH' | 'CROSS_TENANT_BATCH' | 'BATCH_PRODUCT_MISMATCH';
+    }>>(Prisma.sql`
+        SELECT
+            item.id AS purchaseItemId,
+            CASE
+                WHEN purchase.id IS NULL THEN 'MISSING_PURCHASE'
+                WHEN item.inventoryWarehouseId IS NOT NULL AND warehouse.id IS NULL THEN 'MISSING_WAREHOUSE'
+                WHEN item.inventoryWarehouseId IS NOT NULL AND warehouse.tenantId <> purchase.tenantId THEN 'CROSS_TENANT_WAREHOUSE'
+                WHEN item.inventoryBatchId IS NOT NULL AND batch.id IS NULL THEN 'MISSING_BATCH'
+                WHEN item.inventoryBatchId IS NOT NULL AND batch.tenantId <> purchase.tenantId THEN 'CROSS_TENANT_BATCH'
+                ELSE 'BATCH_PRODUCT_MISMATCH'
+            END AS reason
+        FROM \`PurchaseItem\` item
+        LEFT JOIN \`Purchase\` purchase ON purchase.id = item.purchaseId
+        LEFT JOIN \`Warehouse\` warehouse ON warehouse.id = item.inventoryWarehouseId
+        LEFT JOIN \`ProductBatch\` batch ON batch.id = item.inventoryBatchId
+        WHERE purchase.id IS NULL
+           OR (item.inventoryWarehouseId IS NOT NULL
+               AND (warehouse.id IS NULL OR warehouse.tenantId <> purchase.tenantId))
+           OR (item.inventoryBatchId IS NOT NULL
+               AND (batch.id IS NULL
+                    OR batch.tenantId <> purchase.tenantId
+                    OR batch.productId <> item.productId))
+        LIMIT 10
+    `);
+    if (invalid.length > 0) {
+        const detail = invalid.map(row => `${row.purchaseItemId} (${row.reason})`).join(', ');
+        throw new UnsafeSchemaStateError(
+            `PurchaseItem tiene evidencia de inventario inexistente, cross-tenant o de otro producto: ${detail}`,
+        );
+    }
+}
+
+const PHASE_TWO_C_BASE_FOREIGN_KEYS: Array<{
+    tableName: 'PurchaseItem';
+    contract: ProcurementPhaseTwoCForeignKeyContract;
+    ddl: Prisma.Sql;
+}> = [
+    {
+        tableName: 'PurchaseItem',
+        contract: {
+            constraintName: PURCHASE_ITEM_INVENTORY_WAREHOUSE_FOREIGN_KEY,
+            columnName: 'inventoryWarehouseId',
+            referencedTableName: 'Warehouse',
+            deleteRule: 'RESTRICT',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`PurchaseItem\`
+            ADD CONSTRAINT \`PurchaseItem_inventoryWarehouseId_fkey\`
+            FOREIGN KEY (\`inventoryWarehouseId\`) REFERENCES \`Warehouse\`(\`id\`)
+            ON DELETE RESTRICT ON UPDATE CASCADE
+        `,
+    },
+    {
+        tableName: 'PurchaseItem',
+        contract: {
+            constraintName: PURCHASE_ITEM_INVENTORY_BATCH_FOREIGN_KEY,
+            columnName: 'inventoryBatchId',
+            referencedTableName: 'ProductBatch',
+            deleteRule: 'RESTRICT',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`PurchaseItem\`
+            ADD CONSTRAINT \`PurchaseItem_inventoryBatchId_fkey\`
+            FOREIGN KEY (\`inventoryBatchId\`) REFERENCES \`ProductBatch\`(\`id\`)
+            ON DELETE RESTRICT ON UPDATE CASCADE
+        `,
+    },
+];
+
+async function ensureProcurementPhaseTwoCForeignKey(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    definition: typeof PHASE_TWO_C_BASE_FOREIGN_KEYS[number],
+): Promise<void> {
+    const read = async () => inspectProcurementPhaseTwoCForeignKey(
+        await readProcurementPhaseTwoBForeignKeys(db, definition.tableName),
+        definition.contract,
+    );
+    const initial = await read();
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${definition.contract.constraintName} existe con definición incompatible.`,
+        );
+    }
+    await assertPurchaseItemInventoryReferencesAreSafe(db);
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: FK ${definition.contract.constraintName}.`);
+        try {
+            await db.execute(definition.ddl);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${definition.contract.constraintName} fue creada concurrentemente; definición exacta verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${definition.contract.constraintName}.`,
+        );
+    }
+    await assertPurchaseItemInventoryReferencesAreSafe(db);
+}
+
+async function assertProcurementPhaseTwoCUniquesAreSafe(
+    db: DeploySchemaClient,
+): Promise<void> {
+    const checks: Array<{ label: string; statement: Prisma.Sql }> = [
+        {
+            label: 'SupplierReturn returnNumber por tenant',
+            statement: Prisma.sql`
+                SELECT tenantId, returnNumber, COUNT(*) AS duplicateCount
+                FROM \`SupplierReturn\`
+                GROUP BY tenantId, returnNumber
+                HAVING COUNT(*) > 1
+                LIMIT 10
+            `,
+        },
+        {
+            label: 'SupplierReturn clientEventId por tenant',
+            statement: Prisma.sql`
+                SELECT tenantId, clientEventId, COUNT(*) AS duplicateCount
+                FROM \`SupplierReturn\`
+                GROUP BY tenantId, clientEventId
+                HAVING COUNT(*) > 1
+                LIMIT 10
+            `,
+        },
+        {
+            label: 'SupplierReturnItem sourceHash dentro de la devolución',
+            statement: Prisma.sql`
+                SELECT supplierReturnId, sourceHash, COUNT(*) AS duplicateCount
+                FROM \`SupplierReturnItem\`
+                GROUP BY supplierReturnId, sourceHash
+                HAVING COUNT(*) > 1
+                LIMIT 10
+            `,
+        },
+        {
+            label: 'SupplierCreditNote número por tenant y proveedor',
+            statement: Prisma.sql`
+                SELECT tenantId, supplierId, creditNoteNumber, COUNT(*) AS duplicateCount
+                FROM \`SupplierCreditNote\`
+                GROUP BY tenantId, supplierId, creditNoteNumber
+                HAVING COUNT(*) > 1
+                LIMIT 10
+            `,
+        },
+        {
+            label: 'SupplierCreditNote clientEventId por tenant',
+            statement: Prisma.sql`
+                SELECT tenantId, clientEventId, COUNT(*) AS duplicateCount
+                FROM \`SupplierCreditNote\`
+                GROUP BY tenantId, clientEventId
+                HAVING COUNT(*) > 1
+                LIMIT 10
+            `,
+        },
+        {
+            label: 'SupplierCreditNoteLine uso global de SupplierReturnItem',
+            statement: Prisma.sql`
+                SELECT supplierReturnItemId, COUNT(*) AS duplicateCount
+                FROM \`SupplierCreditNoteLine\`
+                GROUP BY supplierReturnItemId
+                HAVING COUNT(*) > 1
+                LIMIT 10
+            `,
+        },
+        {
+            label: 'SupplierCreditApplication nota y factura',
+            statement: Prisma.sql`
+                SELECT creditNoteId, purchaseId, COUNT(*) AS duplicateCount
+                FROM \`SupplierCreditApplication\`
+                GROUP BY creditNoteId, purchaseId
+                HAVING COUNT(*) > 1
+                LIMIT 10
+            `,
+        },
+    ];
+    for (const check of checks) {
+        const duplicates = await db.query<Array<{ duplicateCount: number | bigint }>>(check.statement);
+        if (duplicates.length > 0) {
+            throw new UnsafeSchemaStateError(
+                `Hay duplicados incompatibles con ${check.label}; no se continuará el despliegue.`,
+            );
+        }
+    }
+}
+
+async function assertProcurementPhaseTwoCTable(
+    db: DeploySchemaClient,
+    contract: ProcurementPhaseTwoCTableContract,
+): Promise<void> {
+    const [columns, indexes, foreignKeys] = await Promise.all([
+        readProcurementPhaseTwoBColumns(db, contract.tableName),
+        readProcurementPhaseTwoBIndexes(db, contract.tableName),
+        readProcurementPhaseTwoBForeignKeys(db, contract.tableName),
+    ]);
+    for (const column of contract.columns) {
+        if (inspectProcurementPhaseTwoCColumn(columns, column) !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${contract.tableName}.${column.columnName} falta o tiene una definición incompatible.`,
+            );
+        }
+    }
+    for (const index of contract.indexes) {
+        const rows = indexes.filter(row => row.indexName === index.name);
+        if (inspectProcurementPhaseTwoCIndex(rows, index.name, index.columns, index.unique) !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${index.name} falta o tiene columnas u opciones incompatibles.`,
+            );
+        }
+    }
+    for (const foreignKey of contract.foreignKeys) {
+        if (inspectProcurementPhaseTwoCForeignKey(foreignKeys, foreignKey) !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${foreignKey.constraintName} falta o tiene una definición incompatible.`,
+            );
+        }
+    }
+}
+
+/**
+ * Expansión 2C: converge solo columnas/FKs nullable sobre tablas históricas.
+ * Las cinco tablas documentales nuevas se crean atómicamente por db push; si
+ * alguna ya existe, el conjunto completo debe coincidir exactamente o se falla
+ * cerrado. Nunca se reparan filas, se activan modos ni se acepta data loss.
+ */
+export async function applyProcurementPhaseTwoCSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    let existingTables = await readProcurementPhaseTwoCTables(db);
+    if (existingTables.size === 0) {
+        // Relectura para detectar un rollout concurrente que dejó un conjunto
+        // parcial antes de delegar el CREATE TABLE a Prisma db push.
+        existingTables = await readProcurementPhaseTwoCTables(db);
+        if (existingTables.size === 0) {
+            logger.info('Preflight DDL 2C: instalación vacía; db push creará el contrato completo.');
+            return;
+        }
+    }
+    if (!existingTables.has('Purchase') || !existingTables.has('PurchaseItem')) {
+        throw new UnsafeSchemaStateError(
+            'Procurement Fase 2C requiere Purchase y PurchaseItem completos; el schema parcial necesita intervención manual.',
+        );
+    }
+
+    for (const definition of PHASE_TWO_C_BASE_COLUMNS) {
+        await ensureProcurementPhaseTwoCColumn(db, logger, definition);
+    }
+    for (const definition of PHASE_TWO_C_BASE_INDEXES) {
+        await ensureProcurementPhaseTwoCIndex(db, logger, definition);
+    }
+    await assertPurchaseItemInventoryReferencesAreSafe(db);
+    for (const definition of PHASE_TWO_C_BASE_FOREIGN_KEYS) {
+        await ensureProcurementPhaseTwoCForeignKey(db, logger, definition);
+    }
+
+    // Releer después del DDL base: una instancia concurrente pudo crear alguna
+    // tabla documental mientras verificábamos columnas e índices históricos.
+    existingTables = await readProcurementPhaseTwoCTables(db);
+    const presentNewTables = PHASE_TWO_C_NEW_TABLE_NAMES.filter(table => existingTables.has(table));
+    if (presentNewTables.length > 0 && presentNewTables.length !== PHASE_TWO_C_NEW_TABLE_NAMES.length) {
+        throw new UnsafeSchemaStateError(
+            `Procurement Fase 2C está parcial: existen ${presentNewTables.join(', ')}; se requieren las cinco tablas exactas.`,
+        );
+    }
+    if (presentNewTables.length === PHASE_TWO_C_NEW_TABLE_NAMES.length) {
+        await assertProcurementPhaseTwoCUniquesAreSafe(db);
+        for (const contract of PHASE_TWO_C_NEW_TABLES) {
+            await assertProcurementPhaseTwoCTable(db, contract);
+        }
+        await assertProcurementPhaseTwoCUniquesAreSafe(db);
+    }
+
+    logger.info('Preflight DDL 2C verificado: devoluciones y créditos listos sin DML ni activaciones.');
+}
+
 /**
  * DDL expand-only que Prisma db push considera "data loss" aunque no borra filas.
  * Se ejecuta antes del db push normal y converge desde estados parciales.
@@ -1062,7 +3680,14 @@ export async function applyDeploySchemaPreflight(
     if (!await warehouseTableExists(db)) {
         const stockCountExists = await stockCountTableExists(db);
         const productReturnExists = await productReturnTableExists(db);
-        if (stockCountExists || productReturnExists) {
+        const paymentExists = await paymentTableExists(db);
+        const retencionSufridaExists = await retencionSufridaTableExists(db);
+        const purchaseExists = await purchaseTableExists(db);
+        if (stockCountExists
+            || productReturnExists
+            || paymentExists
+            || retencionSufridaExists
+            || purchaseExists) {
             throw new UnsafeSchemaStateError(
                 'Hay tablas de negocio sin Warehouse; el schema parcial requiere intervención manual.',
             );
@@ -1078,4 +3703,10 @@ export async function applyDeploySchemaPreflight(
     logger.info('Preflight DDL verificado: Warehouse.sellerId e índice único listos.');
     await applyStockCountSchemaPreflight(db, logger);
     await applyProductReturnSchemaPreflight(db, logger);
+    await applyPaymentSchemaPreflight(db, logger);
+    await applyRetencionSufridaSchemaPreflight(db, logger);
+    await applyPurchaseInvoiceSchemaPreflight(db, logger);
+    await applyPurchaseMatchResolutionSchemaPreflight(db, logger);
+    await applyProcurementPhaseTwoBSchemaPreflight(db, logger);
+    await applyProcurementPhaseTwoCSchemaPreflight(db, logger);
 }

@@ -9,8 +9,20 @@
  */
 
 import Decimal from 'decimal.js';
+import { Prisma } from '@prisma/client';
 import { generateMonthlyReport, desglosarVentaConExoneracion, fiscalMonthRange } from './nicaTax';
 import prisma from '../lib/prisma';
+import {
+    FISCAL_REGIME_GENERAL,
+    resolveSaleFiscalAmounts,
+    type FiscalRegime,
+} from '../../utils/fiscalRegime';
+import {
+    PURCHASE_FISCAL_STATUSES,
+    normalizeSupplierPaymentAmount,
+    normalizeSupplierPaymentMethod,
+    type SupplierPaymentMethod,
+} from '../lib/supplierPayments';
 
 // Configuración global: 20 dígitos significativos, redondeo HALF_UP (DGI)
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
@@ -63,6 +75,7 @@ const CHART_OF_ACCOUNTS = [
     // GASTOS (5.x.x)
     { code: '5.1.1', name: 'Costo de Ventas', type: 'EXPENSE', subtype: null },
     { code: '5.1.2', name: 'Pérdida por Merma de Inventario', type: 'EXPENSE', subtype: null },
+    { code: '5.1.3', name: 'Variación de Precio/Costo de Compra', type: 'EXPENSE', subtype: null },
     { code: '5.2.1', name: 'Gastos Operativos', type: 'EXPENSE', subtype: null },
     { code: '5.2.2', name: 'Gastos de Nómina', type: 'EXPENSE', subtype: null },
     { code: '5.2.3', name: 'INSS Patronal (Gasto)', type: 'EXPENSE', subtype: null },
@@ -125,6 +138,21 @@ export class PeriodLockedError extends Error {
         super(`PERÍODO CERRADO: el período ${period} ya fue cerrado fiscalmente. Reábrelo para registrar movimientos con esa fecha.`);
         this.name = 'PeriodLockedError';
     }
+}
+
+/**
+ * Orden único de locks del mayor. Los callers conservan el orden visual de sus
+ * JournalLine, pero ninguna transacción puede tomar Caja→Inventario mientras
+ * otra toma Inventario→Caja. Se deduplica por id porque una cuenta puede
+ * aparecer más de una vez dentro del mismo asiento.
+ */
+export function canonicalJournalAccountLockOrder<T extends { id: string; code: string }>(
+    accounts: readonly T[],
+): T[] {
+    const uniqueById = new Map<string, T>();
+    for (const account of accounts) uniqueById.set(account.id, account);
+    return [...uniqueById.values()].sort((left, right) =>
+        left.code.localeCompare(right.code) || left.id.localeCompare(right.id));
 }
 
 /**
@@ -199,6 +227,26 @@ export async function createJournalEntry(
         throw new Error(`CUENTA_INEXISTENTE: ${[...new Set(codigosInexistentes)].join(', ')} no existe(n) en el catálogo — asiento abortado.`);
     }
 
+    // Prebloquear todas las cuentas en el mismo orden antes de insertar líneas
+    // o actualizar saldos. Los SELECT son individuales para que el optimizador
+    // de MySQL no pueda elegir un orden distinto para un IN (...).
+    const resolvedAccounts = accounts.filter(
+        (account): account is NonNullable<typeof account> => account !== null,
+    );
+    for (const account of canonicalJournalAccountLockOrder(resolvedAccounts)) {
+        const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT \`id\`
+            FROM \`Account\`
+            WHERE \`tenantId\` = ${tenantId}
+              AND \`id\` = ${account.id}
+            LIMIT 1
+            FOR UPDATE
+        `);
+        if (locked.length !== 1) {
+            throw new Error(`CUENTA_INEXISTENTE: ${account.code} no existe en el tenant — asiento abortado.`);
+        }
+    }
+
     const entry = await tx.journalEntry.create({
         data: {
             tenantId,
@@ -253,36 +301,57 @@ export async function createJournalEntry(
  * la parte NO exonerada (canasta básica/medicinas quedan sin IVA que separar).
  */
 export function buildSaleJournalLines(
-    saleTotal: number,
-    costTotal: number,
+    saleTotal: Decimal.Value,
+    costTotal: Decimal.Value,
     paymentMethod: string,
-    exemptTotal?: number | null
+    exemptTotal?: Decimal.Value | null,
+    fiscalSnapshot: {
+        fiscalRegime?: FiscalRegime | string | null;
+        vatAmount?: Decimal.Value | null;
+    } = {},
 ): { accountCode: string; debit: number; credit: number }[] {
     const desglose = desglosarVentaConExoneracion(saleTotal, exemptTotal ?? 0);
+    const fiscalAmounts = resolveSaleFiscalAmounts(
+        saleTotal,
+        fiscalSnapshot.vatAmount ?? desglose.iva,
+        fiscalSnapshot.fiscalRegime ?? FISCAL_REGIME_GENERAL,
+    );
+    const normalizedTotal = fiscalAmounts.netRevenue.plus(fiscalAmounts.vatAmount);
+    const normalizedCost = new Decimal(costTotal).toDecimalPlaces(4);
+    if (!normalizedCost.isFinite() || normalizedCost.isNegative()) {
+        throw new Error('El costo de venta debe ser finito y no negativo');
+    }
     const cashAccount = paymentMethod === 'CREDIT' ? '1.1.3' : '1.1.1'; // CxC vs Caja
     return [
-        { accountCode: cashAccount, debit: saleTotal, credit: 0 },
-        { accountCode: '4.1.1', debit: 0, credit: desglose.ingresoNeto.toNumber() },
-        { accountCode: '2.1.2', debit: 0, credit: desglose.iva.toNumber() },
-        { accountCode: '5.1.1', debit: costTotal, credit: 0 },
-        { accountCode: '1.1.4', debit: 0, credit: costTotal },
+        { accountCode: cashAccount, debit: normalizedTotal.toNumber(), credit: 0 },
+        { accountCode: '4.1.1', debit: 0, credit: fiscalAmounts.netRevenue.toNumber() },
+        { accountCode: '2.1.2', debit: 0, credit: fiscalAmounts.vatAmount.toNumber() },
+        { accountCode: '5.1.1', debit: normalizedCost.toNumber(), credit: 0 },
+        { accountCode: '1.1.4', debit: 0, credit: normalizedCost.toNumber() },
     ];
 }
 
 /** Contrato puro usado por recordSale; mantiene fecha economica online/offline. */
 export function buildSaleJournalRequest(
     saleId: string,
-    saleTotal: number,
-    costTotal: number,
+    saleTotal: Decimal.Value,
+    costTotal: Decimal.Value,
     paymentMethod: string,
-    exemptTotal?: number | null,
-    opts?: { date?: Date },
+    exemptTotal?: Decimal.Value | null,
+    opts?: {
+        date?: Date;
+        fiscalRegime?: FiscalRegime | string | null;
+        vatAmount?: Decimal.Value | null;
+    },
 ) {
     return {
         description: paymentMethod === 'CREDIT'
             ? `Venta a crédito #${saleId.slice(0, 8)}`
             : `Venta de contado #${saleId.slice(0, 8)}`,
-        lines: buildSaleJournalLines(saleTotal, costTotal, paymentMethod, exemptTotal),
+        lines: buildSaleJournalLines(saleTotal, costTotal, paymentMethod, exemptTotal, {
+            fiscalRegime: opts?.fiscalRegime,
+            vatAmount: opts?.vatAmount,
+        }),
         entryOptions: opts?.date ? { date: opts.date } : undefined,
     };
 }
@@ -297,14 +366,18 @@ export async function recordSale(
     tenantId: string,
     userId: string,
     saleId: string,
-    saleTotal: number,
-    costTotal: number,
+    saleTotal: Decimal.Value,
+    costTotal: Decimal.Value,
     paymentMethod: string,
     // T2 — porción EXONERADA del total (canasta básica, medicamentos…). Opcional:
     // si no viene (o es null), la venta se trata como 100% GRAVADA, que es el
     // comportamiento histórico. Así las llamadas viejas siguen funcionando igual.
-    exemptTotal?: number | null,
-    opts?: { date?: Date },
+    exemptTotal?: Decimal.Value | null,
+    opts?: {
+        date?: Date;
+        fiscalRegime?: FiscalRegime | string | null;
+        vatAmount?: Decimal.Value | null;
+    },
 ) {
     // IVA Nicaragua 15% SOLO sobre la parte gravada (misma función pura que usa
     // la declaración mensual → el mayor y el VET no pueden discrepar). Antes se
@@ -326,9 +399,32 @@ export async function recordSale(
     );
 }
 
+export type CustomerPaymentMethod = 'CASH' | 'CARD' | 'TRANSFER' | 'QR';
+
+/** Construye el asiento del abono sin confundir cobros bancarios con efectivo. */
+export function buildPaymentJournalLines(amount: Decimal.Value, paymentMethod: CustomerPaymentMethod = 'CASH') {
+    let normalizedAmount: Decimal;
+    try {
+        normalizedAmount = new Decimal(amount);
+    } catch {
+        throw new Error('amount no es un monto decimal válido');
+    }
+    if (!normalizedAmount.isFinite() || !normalizedAmount.greaterThan(0)) {
+        throw new Error('amount debe ser finito y mayor que cero');
+    }
+    if (normalizedAmount.decimalPlaces() > 2 || normalizedAmount.greaterThan('99999999.99')) {
+        throw new Error('amount no cabe en el rango monetario permitido');
+    }
+    const settlementAccount = paymentMethod === 'CASH' ? '1.1.1' : '1.1.2';
+    return [
+        { accountCode: settlementAccount, debit: normalizedAmount.toNumber(), credit: 0 },
+        { accountCode: '1.1.3', debit: 0, credit: normalizedAmount.toNumber() },
+    ];
+}
+
 /**
  * PAGO DE CLIENTE (abono a crédito):
- *   Debe: Caja (1.1.1)
+ *   Debe: Caja (1.1.1) si es efectivo; Bancos (1.1.2) para tarjeta/transferencia/QR.
  *   Haber: Cuentas por Cobrar (1.1.3)
  */
 export async function recordPayment(
@@ -336,12 +432,105 @@ export async function recordPayment(
     tenantId: string,
     userId: string,
     paymentId: string,
-    amount: number
+    amount: number,
+    paymentMethod: CustomerPaymentMethod = 'CASH',
 ) {
     await createJournalEntry(tx, tenantId, `Abono a crédito #${paymentId.slice(0, 8)}`, paymentId, 'PAYMENT', userId, [
-        { accountCode: '1.1.1', debit: amount, credit: 0 },
-        { accountCode: '1.1.3', debit: 0, credit: amount },
+        ...buildPaymentJournalLines(amount, paymentMethod),
     ]);
+}
+
+/**
+ * PAGO A PROVEEDOR:
+ *   Debe: Cuentas por Pagar Proveedores (2.1.1)
+ *   Haber: Caja (1.1.1) si es efectivo; Bancos (1.1.2) para los demás canales.
+ */
+export function buildSupplierPaymentJournalLines(
+    amount: Decimal.Value,
+    paymentMethod: SupplierPaymentMethod = 'CASH',
+): { accountCode: string; debit: number; credit: number }[] {
+    const normalizedAmount = normalizeSupplierPaymentAmount(amount);
+    const normalizedMethod = normalizeSupplierPaymentMethod(paymentMethod);
+    const settlementAccount = normalizedMethod === 'CASH' ? '1.1.1' : '1.1.2';
+    return [
+        { accountCode: '2.1.1', debit: normalizedAmount.toNumber(), credit: 0 },
+        { accountCode: settlementAccount, debit: 0, credit: normalizedAmount.toNumber() },
+    ];
+}
+
+export async function recordSupplierPayment(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    paymentId: string,
+    amount: Decimal.Value,
+    paymentMethod: SupplierPaymentMethod = 'CASH',
+    date: Date = new Date(),
+): Promise<void> {
+    await createJournalEntry(
+        tx,
+        tenantId,
+        `Pago a proveedor #${paymentId.slice(0, 8)}`,
+        paymentId,
+        'SUPPLIER_PAYMENT',
+        userId,
+        buildSupplierPaymentJournalLines(amount, paymentMethod),
+        { date },
+    );
+}
+
+function normalizeSupplierCreditNoteJournalAmount(
+    value: Decimal.Value,
+    field: string,
+): Decimal {
+    const amount = new Decimal(value);
+    if (
+        !amount.isFinite()
+        || amount.isNegative()
+        || amount.decimalPlaces() > 2
+        || amount.greaterThan('999999999999.99')
+    ) {
+        throw new Error(`${field} de la nota de crédito excede Decimal(14,2)`);
+    }
+    return amount;
+}
+
+export function buildSupplierCreditNoteJournalLines(
+    lines: ReadonlyArray<{
+        accountCode: '1.1.4' | '1.1.5' | '2.1.1' | '5.1.3';
+        debit: Decimal.Value;
+        credit: Decimal.Value;
+    }>,
+): { accountCode: string; debit: number; credit: number }[] {
+    return lines.map((line) => ({
+        accountCode: line.accountCode,
+        debit: normalizeSupplierCreditNoteJournalAmount(line.debit, 'debit').toNumber(),
+        credit: normalizeSupplierCreditNoteJournalAmount(line.credit, 'credit').toNumber(),
+    }));
+}
+
+export async function recordSupplierCreditNote(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    creditNoteId: string,
+    journalLines: ReadonlyArray<{
+        accountCode: '1.1.4' | '1.1.5' | '2.1.1' | '5.1.3';
+        debit: Decimal.Value;
+        credit: Decimal.Value;
+    }>,
+    date: Date = new Date(),
+): Promise<void> {
+    await createJournalEntry(
+        tx,
+        tenantId,
+        `Nota crédito proveedor #${creditNoteId.slice(0, 8)}`,
+        creditNoteId,
+        'SUPPLIER_CREDIT_NOTE',
+        userId,
+        buildSupplierCreditNoteJournalLines(journalLines),
+        { date },
+    );
 }
 
 /**
@@ -354,21 +543,126 @@ export async function recordPurchase(
     tenantId: string,
     userId: string,
     purchaseId: string,
-    total: number,
-    tax: number,
-    paymentMethod: string
+    total: Decimal.Value,
+    tax: Decimal.Value,
+    paymentMethod: string,
+    creditableTax?: Decimal.Value | null,
+    postingDate: Date = new Date(),
+    expectedInventoryCost?: Decimal.Value | null,
 ) {
-    const subtotal = new Decimal(total).minus(tax).toDecimalPlaces(4).toNumber();
-    const creditAccount = paymentMethod === 'CREDIT' ? '2.1.1' : '1.1.1';
     const description = paymentMethod === 'CREDIT'
         ? `Compra a crédito #${purchaseId.slice(0, 8)}`
         : `Compra de contado #${purchaseId.slice(0, 8)}`;
 
-    await createJournalEntry(tx, tenantId, description, purchaseId, 'PURCHASE', userId, [
-        { accountCode: '1.1.4', debit: subtotal, credit: 0 },       // Inventario ↑
-        { accountCode: '1.1.5', debit: tax, credit: 0 },            // IVA Crédito ↑
-        { accountCode: creditAccount, debit: 0, credit: total },     // Caja ↓ o CxP ↑
-    ]);
+    await createJournalEntry(
+        tx,
+        tenantId,
+        description,
+        purchaseId,
+        'PURCHASE',
+        userId,
+        buildPurchaseJournalLines(
+            total,
+            tax,
+            paymentMethod,
+            creditableTax,
+            expectedInventoryCost,
+        ),
+        { date: postingDate },
+    );
+}
+
+/**
+ * Líneas puras de compra. `creditableTax == null` conserva el contrato legacy:
+ * todo `tax` es crédito fiscal. En compra directa, CUOTA_FIJA pasa cero y el
+ * impuesto se capitaliza en Inventario. Con OC, `expectedInventoryCost` fija el
+ * costo estándar recibido y toda diferencia queda separada como PPV.
+ */
+export function buildPurchaseJournalLines(
+    total: Decimal.Value,
+    tax: Decimal.Value,
+    paymentMethod: string,
+    creditableTax?: Decimal.Value | null,
+    expectedInventoryCost?: Decimal.Value | null,
+): { accountCode: string; debit: number; credit: number }[] {
+    const rawTotal = new Decimal(total);
+    const rawTax = new Decimal(tax);
+    const rawCreditableTax = new Decimal(creditableTax == null ? rawTax : creditableTax);
+    if (!rawTotal.isFinite() || rawTotal.isNegative()) {
+        throw new Error('El total de compra debe ser finito y no negativo');
+    }
+    if (
+        !rawTax.isFinite()
+        || rawTax.isNegative()
+        || rawTax.greaterThan(rawTotal)
+    ) {
+        throw new Error('El IVA de compra debe estar entre cero y el total de compra');
+    }
+    if (
+        !rawCreditableTax.isFinite()
+        || rawCreditableTax.isNegative()
+        || rawCreditableTax.greaterThan(rawTax)
+    ) {
+        throw new Error('El crédito fiscal debe estar entre cero y el IVA de compra');
+    }
+
+    // JournalLine/Account y la factura se liquidan a centavos. No permitir que
+    // una entrada 4dp cree un subledger distinto al valor que MySQL posteará.
+    const normalizedTotal = rawTotal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const normalizedTax = rawTax.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const effectiveCreditableTax = rawCreditableTax.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+
+    const inventoryCost = normalizedTotal.minus(effectiveCreditableTax);
+    const creditAccount = paymentMethod === 'CREDIT' ? '2.1.1' : '1.1.1';
+    if (expectedInventoryCost != null) {
+        const rawExpectedInventoryCost = new Decimal(expectedInventoryCost);
+        if (!rawExpectedInventoryCost.isFinite() || rawExpectedInventoryCost.isNegative()) {
+            throw new Error('El costo esperado de inventario debe ser finito y no negativo');
+        }
+        const normalizedExpectedInventoryCost = rawExpectedInventoryCost
+            .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        const purchasePriceVariance = inventoryCost.minus(normalizedExpectedInventoryCost);
+        const lines = [
+            {
+                accountCode: '1.1.4',
+                debit: normalizedExpectedInventoryCost.toNumber(),
+                credit: 0,
+            },
+            {
+                accountCode: '1.1.5',
+                debit: effectiveCreditableTax.toNumber(),
+                credit: 0,
+            },
+        ];
+        // PPV desfavorable aumenta gasto; una variación favorable lo acredita.
+        // En CUOTA_FIJA el IVA no acreditable forma parte de `inventoryCost` y,
+        // por decisión de F2, queda visible en PPV para que Inventario coincida
+        // exactamente con la valoración física a costo estándar de la OC.
+        if (purchasePriceVariance.greaterThan(0)) {
+            lines.push({
+                accountCode: '5.1.3',
+                debit: purchasePriceVariance.toNumber(),
+                credit: 0,
+            });
+        } else if (purchasePriceVariance.lessThan(0)) {
+            lines.push({
+                accountCode: '5.1.3',
+                debit: 0,
+                credit: purchasePriceVariance.abs().toNumber(),
+            });
+        }
+        lines.push({
+            accountCode: creditAccount,
+            debit: 0,
+            credit: normalizedTotal.toNumber(),
+        });
+        return lines;
+    }
+    return [
+        { accountCode: '1.1.4', debit: inventoryCost.toNumber(), credit: 0 },
+        { accountCode: '1.1.5', debit: effectiveCreditableTax.toNumber(), credit: 0 },
+        { accountCode: creditAccount, debit: 0, credit: normalizedTotal.toNumber() },
+    ];
 }
 
 /**
@@ -618,6 +912,8 @@ export interface ReturnJournalInput {
     costTotal: Decimal.Value;
     /** Porción del reembolso correspondiente a líneas exoneradas de IVA. */
     exemptTotal?: Decimal.Value | null;
+    /** Foto del régimen de la venta original; ausente = GENERAL legacy. */
+    fiscalRegime?: FiscalRegime | string | null;
     /** Saldo pendiente que se cancela contra Cuentas por Cobrar. */
     creditReduction: Decimal.Value;
     /** Importe ya cobrado que se devuelve por el canal de liquidación. */
@@ -665,10 +961,15 @@ export function buildReturnJournalLines(input: ReturnJournalInput): ReturnJourna
     }
 
     const desglose = desglosarVentaConExoneracion(total, exemptTotal);
+    const fiscalAmounts = resolveSaleFiscalAmounts(
+        total,
+        desglose.iva,
+        input.fiscalRegime ?? FISCAL_REGIME_GENERAL,
+    );
     const settlementAccount = input.refundMethod === 'CASH' ? '1.1.1' : '1.1.2';
     return [
-        { accountCode: '4.1.2', debit: desglose.ingresoNeto.toNumber(), credit: 0 },
-        { accountCode: '2.1.2', debit: desglose.iva.toNumber(), credit: 0 },
+        { accountCode: '4.1.2', debit: fiscalAmounts.netRevenue.toNumber(), credit: 0 },
+        { accountCode: '2.1.2', debit: fiscalAmounts.vatAmount.toNumber(), credit: 0 },
         { accountCode: '1.1.4', debit: costTotal.toNumber(), credit: 0 },
         { accountCode: '1.1.3', debit: 0, credit: creditReduction.toNumber() },
         { accountCode: settlementAccount, debit: 0, credit: settledRefund.toNumber() },
@@ -693,6 +994,7 @@ export async function recordReturn(
     costTotal: number,
     options: {
         exemptTotal?: Decimal.Value | null;
+        fiscalRegime?: FiscalRegime | string | null;
         creditReduction?: Decimal.Value;
         settledRefund?: Decimal.Value;
         refundMethod?: 'CASH' | 'CARD' | 'QR' | 'TRANSFER';
@@ -710,6 +1012,7 @@ export async function recordReturn(
         total: dTotal,
         costTotal,
         exemptTotal: options.exemptTotal,
+        fiscalRegime: options.fiscalRegime,
         creditReduction,
         settledRefund,
         refundMethod,
@@ -737,7 +1040,7 @@ export async function recordBadDebt(
     tenantId: string,
     userId: string,
     saleId: string,
-    amount: number
+    amount: Decimal.Value
 ) {
     const amt = new Decimal(amount).toDecimalPlaces(2);
     if (amt.lessThanOrEqualTo(0)) return;
@@ -1036,23 +1339,37 @@ const IVA_RETENTION_RATE = 0.15;  // 15% IVA retenido (gran contribuyente)
  * Genera retenciones fiscales del periodo desde las compras registradas.
  * Crea registros en FiscalRetention para cada tipo.
  */
-export async function generateRetentions(tenantId: string, month: number, year: number, db: AnyTx = prisma) {
+export async function generateRetentions(tenantId: string, month: number, year: number, tx: AnyTx) {
     const period = `${year}-${String(month).padStart(2, '0')}`;
     const { start: startDate, end: endDate } = fiscalMonthRange(month, year);
 
-    // Verificar si ya se generaron para este periodo
-    const existing = await db.fiscalRetention.count({
-        where: { tenantId, period }
-    });
-    if (existing > 0) {
-        return { message: `Retenciones ya generadas para ${period}`, existing: true };
+    // Todas las regeneraciones del tenant se serializan sobre una fila estable.
+    // El template tag de Prisma parametriza tenantId; no se concatena SQL.
+    const lockedTenant = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id
+        FROM \`Tenant\`
+        WHERE id = ${tenantId}
+        FOR UPDATE
+    `;
+    if (lockedTenant.length !== 1) {
+        throw new Error('Tenant no encontrado al generar retenciones');
     }
 
+    // FiscalRetention no pasa por createJournalEntry, por lo que debe aplicar
+    // explicitamente la misma frontera de periodos cerrados antes de borrar o
+    // recrear filas. El primer dia evita ambiguedad de zona y conserva el mes.
+    await assertPeriodOpen(tx, tenantId, new Date(Date.UTC(year, month - 1, 1, 12)));
+
     // Obtener compras del periodo
-    const purchases = await db.purchase.findMany({
+    const purchases = await tx.purchase.findMany({
         where: {
             tenantId,
             date: { gte: startDate, lt: endDate },
+            documentStatus: 'POSTED',
+            // Mantener el mismo universo fiscal que nicaTax/Libro de Compras:
+            // contado completado y crédito pendiente de pago. Cualquier estado
+            // operativo/anulado queda fuera de las retenciones DGI.
+            status: { in: [...PURCHASE_FISCAL_STATUSES] },
         },
         include: {
             supplier: { select: { id: true, name: true } },
@@ -1118,14 +1435,20 @@ export async function generateRetentions(tenantId: string, month: number, year: 
         }
     }
 
-    // Guardar todas las retenciones
+    // Reemplazo determinista dentro de la transacción del caller. El lock evita
+    // que dos generadores intercalen delete/create y el delete autocura cualquier
+    // conjunto parcial previo del periodo.
+    const replaced = await tx.fiscalRetention.deleteMany({
+        where: { tenantId, period },
+    });
     if (retentions.length > 0) {
-        await db.fiscalRetention.createMany({ data: retentions });
+        await tx.fiscalRetention.createMany({ data: retentions });
     }
 
     return {
         period,
         existing: false,
+        replacedRetentions: replaced.count,
         purchasesProcessed: purchases.length,
         retentions: {
             ir2pct: { count: purchases.length, total: totalIR.toNumber() },

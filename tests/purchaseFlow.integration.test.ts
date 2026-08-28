@@ -286,6 +286,26 @@ qaDescribe('QA integración: compras y órdenes de compra', () => {
     expect(Number(kardex.at(-1)?.quantity)).toBe(200);
   }, 120_000);
 
+  it('cancela DRAFT o APPROVED sin recepción y no mueve inventario', async () => {
+    const draft = await post('/api/purchase-orders', {
+      supplierId,
+      items: [{ productId: concurrencyProductId, quantity: 2, unitCost: 5 }],
+    });
+    expectStatus(draft, 201);
+
+    const cancelledDraft = await post(`/api/purchase-orders/${draft.body.data.id}/cancel`, {});
+    expectStatus(cancelledDraft, 200);
+    expect(cancelledDraft.body.data.status).toBe('CANCELLED');
+
+    const approved = await createApprovedPurchaseOrder(concurrencyProductId, 2, 5);
+    const cancelledApproved = await post(`/api/purchase-orders/${approved.id}/cancel`, {});
+    expectStatus(cancelledApproved, 200);
+    expect(cancelledApproved.body.data.status).toBe('CANCELLED');
+
+    expect(Number((await getProduct(concurrencyProductId)).stock)).toBe(0);
+    expect(await getKardex(concurrencyProductId)).toHaveLength(0);
+  }, 120_000);
+
   it('separa recepción física de factura y limita lo facturable al saldo recibido', async () => {
     const po = await createApprovedPurchaseOrder(receivedProductId, 12, 13.5);
     const poItemId = po.items[0].id;
@@ -303,6 +323,7 @@ qaDescribe('QA integración: compras y órdenes de compra', () => {
     expectStatus(invoiceBeforeReceipt, 400);
 
     const partialReceipt = await post(`/api/purchase-orders/${po.id}/receive`, {
+      clientEventId: crypto.randomUUID(),
       warehouseId: secondaryWarehouseId,
       items: [{
         itemId: poItemId,
@@ -313,6 +334,18 @@ qaDescribe('QA integración: compras y órdenes de compra', () => {
     });
     expectStatus(partialReceipt, 200);
     expect(partialReceipt.body.data.status).toBe('PARTIALLY_RECEIVED');
+    expect(partialReceipt.body.replay).toBe(false);
+    expect(partialReceipt.body.receipt).toMatchObject({
+      purchaseOrderId: po.id,
+      warehouseId: secondaryWarehouseId,
+      status: 'POSTED',
+    });
+    expect(partialReceipt.body.receipt.items[0]).toMatchObject({
+      purchaseOrderItemId: poItemId,
+      productId: receivedProductId,
+      quantityExact: '5',
+      batchNumber: 'PO-BATCH-1',
+    });
 
     const stockAfterReceipt = await getProduct(receivedProductId);
     const batchesAfterReceipt = await getBatches(receivedProductId);
@@ -321,6 +354,19 @@ qaDescribe('QA integración: compras y órdenes de compra', () => {
     expect(Number(batchesAfterReceipt[0].stock)).toBe(5);
     expect(kardexAfterReceipt).toHaveLength(1);
     expect(kardexAfterReceipt[0].warehouseId).toBe(secondaryWarehouseId);
+
+    const cancelAfterPartialReceipt = await post(`/api/purchase-orders/${po.id}/cancel`, {});
+    expectStatus(cancelAfterPartialReceipt, 409);
+    expect(cancelAfterPartialReceipt.body.code).toBe('PO_HAS_RECEIPTS');
+
+    const orderAfterRejectedCancel = await api(`/api/purchase-orders/${po.id}`);
+    expectStatus(orderAfterRejectedCancel, 200);
+    expect(orderAfterRejectedCancel.body.data.status).toBe('PARTIALLY_RECEIVED');
+    expect(Number((await getProduct(receivedProductId)).stock)).toBe(5);
+    expect(await getKardex(receivedProductId)).toHaveLength(1);
+    expect(orderAfterRejectedCancel.body.data.goodsReceipts).toHaveLength(1);
+    expect(orderAfterRejectedCancel.body.data.goodsReceipts[0].receiptNumber)
+      .toBe(partialReceipt.body.receipt.receiptNumber);
 
     const firstInvoice = await post('/api/purchases', {
       supplierId,
@@ -363,6 +409,7 @@ qaDescribe('QA integración: compras y órdenes de compra', () => {
     expect(kardexAfterInvoices).toHaveLength(1);
 
     const finalReceipt = await post(`/api/purchase-orders/${po.id}/receive`, {
+      clientEventId: crypto.randomUUID(),
       warehouseId: secondaryWarehouseId,
       items: [{
         itemId: poItemId,
@@ -409,6 +456,7 @@ qaDescribe('QA integración: compras y órdenes de compra', () => {
     const itemId = po.items[0].id;
 
     const duplicateLines = await post(`/api/purchase-orders/${po.id}/receive`, {
+      clientEventId: crypto.randomUUID(),
       warehouseId: secondaryWarehouseId,
       items: [
         { itemId, quantityReceived: 1 },
@@ -418,6 +466,7 @@ qaDescribe('QA integración: compras y órdenes de compra', () => {
     expectStatus(duplicateLines, 400);
 
     const overReceipt = await post(`/api/purchase-orders/${po.id}/receive`, {
+      clientEventId: crypto.randomUUID(),
       warehouseId: secondaryWarehouseId,
       items: [{ itemId, quantityReceived: 11 }],
     });
@@ -432,12 +481,14 @@ qaDescribe('QA integración: compras y órdenes de compra', () => {
     const itemId = po.items[0].id;
 
     const missingWarehouse = await post(`/api/purchase-orders/${po.id}/receive`, {
+      clientEventId: crypto.randomUUID(),
       items: [{ itemId, quantityReceived: 2 }],
     });
     expectStatus(missingWarehouse, 400);
     expect(String(missingWarehouse.body.error ?? '')).toContain('bodega');
 
     const invalidWarehouse = await post(`/api/purchase-orders/${po.id}/receive`, {
+      clientEventId: crypto.randomUUID(),
       warehouseId: 'bodega-que-no-pertenece-al-tenant',
       items: [{ itemId, quantityReceived: 2 }],
     });
@@ -452,6 +503,7 @@ qaDescribe('QA integración: compras y órdenes de compra', () => {
     const po = await createApprovedPurchaseOrder(concurrencyProductId, 10, 5);
     const itemId = po.items[0].id;
     const body = {
+      clientEventId: crypto.randomUUID(),
       warehouseId: secondaryWarehouseId,
       items: [{ itemId, quantityReceived: 10 }],
     };
@@ -461,7 +513,9 @@ qaDescribe('QA integración: compras y órdenes de compra', () => {
       post(`/api/purchase-orders/${po.id}/receive`, body),
     ]);
 
-    expect(results.map((result) => result.status).sort()).toEqual([200, 400]);
+    expect(results.map((result) => result.status).sort()).toEqual([200, 200]);
+    expect(results.map((result) => result.body.replay).sort()).toEqual([false, true]);
+    expect(new Set(results.map((result) => result.body.receipt.id)).size).toBe(1);
     expect(Number((await getProduct(concurrencyProductId)).stock)).toBe(10);
     expect(await getKardex(concurrencyProductId)).toHaveLength(1);
 
@@ -469,6 +523,16 @@ qaDescribe('QA integración: compras y órdenes de compra', () => {
     expectStatus(detail, 200);
     expect(detail.body.data.status).toBe('RECEIVED');
     expect(Number(detail.body.data.items[0].quantityReceived)).toBe(10);
+    expect(detail.body.data.goodsReceipts).toHaveLength(1);
+
+    const conflict = await post(`/api/purchase-orders/${po.id}/receive`, {
+      ...body,
+      items: [{ itemId, quantityReceived: 9 }],
+    });
+    expectStatus(conflict, 409);
+    expect(conflict.body.code).toBe('RECEIPT_IDEMPOTENCY_CONFLICT');
+    expect(Number((await getProduct(concurrencyProductId)).stock)).toBe(10);
+    expect(await getKardex(concurrencyProductId)).toHaveLength(1);
   }, 120_000);
 
   it('serializa dos facturas idénticas concurrentes sin duplicar inventario', async () => {
@@ -493,5 +557,87 @@ qaDescribe('QA integración: compras y órdenes de compra', () => {
     expect(createdPurchase.date).toBe('2026-08-21T12:00:00.000Z');
     expect(Number((await getProduct(duplicateInvoiceProductId)).stock)).toBe(1);
     expect(await getKardex(duplicateInvoiceProductId)).toHaveLength(1);
+  }, 120_000);
+
+  it('evita ciclos de locks con dos compras directas en orden inverso', async () => {
+    const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    const secondSupplier = await post('/api/suppliers', {
+      name: `Proveedor lock B ${runId}`,
+      category: 'QA concurrencia',
+    });
+    expectStatus(secondSupplier, 200);
+    const productA = await createProduct('QA Lock producto A', `QA-LOCK-A-${runId}`, false);
+    const productB = await createProduct('QA Lock producto B', `QA-LOCK-B-${runId}`, false);
+    const rounds = 6;
+
+    for (let round = 0; round < rounds; round += 1) {
+      const common = {
+        warehouseId: secondaryWarehouseId,
+        date: '2026-08-21',
+        dueDate: '2026-08-25',
+        paymentMethod: 'CREDIT',
+      };
+      const results = await Promise.all([
+        post('/api/purchases', {
+          ...common,
+          supplierId,
+          invoiceNumber: `FAC-LOCK-A-${runId}-${round}`,
+          items: [
+            { productId: productA, quantity: 1, unitCost: 5 },
+            { productId: productB, quantity: 1, unitCost: 5 },
+          ],
+        }),
+        post('/api/purchases', {
+          ...common,
+          supplierId: secondSupplier.body.id,
+          invoiceNumber: `FAC-LOCK-B-${runId}-${round}`,
+          items: [
+            { productId: productB, quantity: 1, unitCost: 7 },
+            { productId: productA, quantity: 1, unitCost: 7 },
+          ],
+        }),
+      ]);
+
+      expect(results.map((result) => result.status)).toEqual([200, 200]);
+    }
+
+    expect(Number((await getProduct(productA)).stock)).toBe(rounds * 2);
+    expect(Number((await getProduct(productB)).stock)).toBe(rounds * 2);
+    expect(Number((await getProduct(productA)).cost)).toBe(6);
+    expect(Number((await getProduct(productB)).cost)).toBe(6);
+    expect(await getKardex(productA)).toHaveLength(rounds * 2);
+    expect(await getKardex(productB)).toHaveLength(rounds * 2);
+  }, 120_000);
+
+  it('oculta la OC y su recepción cuando otro tenant intenta usar el id', async () => {
+    const primaryToken = token;
+    const po = await createApprovedPurchaseOrder(concurrencyProductId, 2, 5);
+    const stockBefore = Number((await getProduct(concurrencyProductId)).stock);
+    const kardexBefore = (await getKardex(concurrencyProductId)).length;
+    const runId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+
+    try {
+      const foreignRegistration = await post('/api/auth/register', {
+        companyName: `QA Compras ajeno ${runId}`,
+        email: `qa-compras-ajeno-${runId}@example.invalid`,
+        password: `Qa-${runId}-Seguro!`,
+        type: 'RETAIL',
+      });
+      expectStatus(foreignRegistration, 200);
+      token = foreignRegistration.body.token;
+
+      const foreignReceipt = await post(`/api/purchase-orders/${po.id}/receive`, {
+        clientEventId: crypto.randomUUID(),
+        warehouseId: secondaryWarehouseId,
+        items: [{ itemId: po.items[0].id, quantityReceived: 2 }],
+      });
+      expectStatus(foreignReceipt, 404);
+      expect(foreignReceipt.body.code).toBe('PURCHASE_ORDER_NOT_FOUND');
+    } finally {
+      token = primaryToken;
+    }
+
+    expect(Number((await getProduct(concurrencyProductId)).stock)).toBe(stockBefore);
+    expect(await getKardex(concurrencyProductId)).toHaveLength(kardexBefore);
   }, 120_000);
 });

@@ -3,19 +3,27 @@ import Decimal from 'decimal.js';
 import {
     VERSION_CARRITO,
     VERSION_CARRITO_LEGACY,
+    VERSION_TRASPASO_CARRITO,
     claveCarrito,
     claveAparcados,
     claveCarritoLegacy,
     claveAparcadosLegacy,
+    claveTraspasoCarrito,
     claveLineaCarrito,
     esReescaneoRapido,
+    resolverIdentidadPersistencia,
+    serializarTraspasoCarrito,
+    leerTraspasoCarrito,
     leerCarritoGuardado,
     serializarCarrito,
     decidirRestauracion,
+    decidirRestauracionAparcado,
+    decidirRecuperacionPendiente,
     resumenGuardado,
     leerAparcados,
     serializarAparcados,
     CarritoGuardado,
+    AparcadoGuardado,
 } from '../utils/cartPersistence';
 
 /**
@@ -45,6 +53,17 @@ const guardado = (p: Partial<CarritoGuardado> = {}): CarritoGuardado => ({
     ...p,
 });
 
+const lineaCotizada = (cambios: Record<string, unknown> = {}) => ({
+    id: 'producto-1',
+    name: 'Cemento',
+    price: 420,
+    quantity: 2,
+    quotationItemId: 'cot-linea-1',
+    quantityExact: '2',
+    unitPriceExact: '420.0000',
+    ...cambios,
+});
+
 describe('claves de storage', () => {
     it('namespacea por tenant Y usuario (dos cajeros, una sola máquina)', () => {
         expect(claveCarrito('t1', 'u1')).not.toBe(claveCarrito('t1', 'u2'));
@@ -60,9 +79,9 @@ describe('claves de storage', () => {
         expect(claveAparcados('t1', 'u1')).toBe(`nortex_held_v${VERSION_CARRITO}:t1:u1`);
     });
 
-    it('jamás colisiona con nortex_pending_cart, que es otro mecanismo', () => {
-        // Esa clave es un traspaso de un solo uso (demo y cotizaciones) que el
-        // POS consume y borra al montar. Pisarla rompería convertir cotizaciones.
+    it('jamás reutiliza el canal global legacy nortex_pending_cart', () => {
+        // Esa clave no tiene identidad y solo se elimina durante la migración;
+        // ningún carrito autenticado puede leerla ni escribirla.
         expect(claveCarrito('t1', 'u1')).not.toContain('nortex_pending_cart');
         expect(claveAparcados('t1', 'u1')).not.toContain('nortex_pending_cart');
     });
@@ -72,6 +91,303 @@ describe('claves de storage', () => {
         expect(claveCarritoLegacy('t1', 'u1')).toBe('nortex_cart_v1:t1:u1');
         expect(claveAparcadosLegacy('t1', 'u1')).toBe('nortex_held_v1:t1:u1');
         expect(claveCarritoLegacy('t1', 'u1')).not.toBe(claveCarrito('t1', 'u1'));
+    });
+});
+
+describe('traspaso autenticado cotización → POS', () => {
+    it('resuelve tenant y usuario solo cuando ambos documentos son legibles', () => {
+        expect(resolverIdentidadPersistencia('{"id":"tenant-1"}', '{"id":"user-1"}')).toEqual({
+            tenantId: 'tenant-1',
+            userId: 'user-1',
+        });
+    });
+
+    it.each([
+        [null, '{"id":"user-1"}'],
+        ['{roto', '{"id":"user-1"}'],
+        ['{}', '{"id":"user-1"}'],
+        ['{"id":""}', '{"id":"user-1"}'],
+        ['{"id":7}', '{"id":"user-1"}'],
+        ['{"id":"tenant-1"}', null],
+        ['{"id":"tenant-1"}', '{roto'],
+        ['{"id":"tenant-1"}', '{}'],
+        ['{"id":"tenant-1"}', '{"id":"  "}'],
+        ['{"id":"tenant-1"}', '{"id":7}'],
+    ])('rechaza identidad incompleta o ilegible (%s / %s)', (tenant, usuario) => {
+        expect(resolverIdentidadPersistencia(tenant, usuario)).toBeNull();
+    });
+
+    it('usa una clave versionada y namespaceada por tenant + usuario', () => {
+        expect(VERSION_TRASPASO_CARRITO).toBe(1);
+        expect(claveTraspasoCarrito('tenant-1', 'user-1')).toBe('nortex_cart_transfer_v1:tenant-1:user-1');
+        expect(claveTraspasoCarrito('tenant-1', 'user-1')).not.toBe(claveTraspasoCarrito('tenant-1', 'user-2'));
+        expect(claveTraspasoCarrito('tenant-1', 'user-1')).not.toBe(claveTraspasoCarrito('tenant-2', 'user-1'));
+        expect(claveTraspasoCarrito('tenant-1', 'user-1')).not.toContain('nortex_pending_cart');
+    });
+
+    it('serializa versión, identidad, referencia y un TTL exacto de diez minutos', () => {
+        const crudo = serializarTraspasoCarrito({
+            identidad: { tenantId: 'tenant-1', userId: 'user-1' },
+            referenciaId: 'cot-99',
+            lineas: [lineaCotizada()],
+            ahoraMs: AHORA,
+        });
+        expect(JSON.parse(crudo as string)).toEqual({
+            v: 1,
+            tenantId: 'tenant-1',
+            userId: 'user-1',
+            origen: 'COTIZACION',
+            referenciaId: 'cot-99',
+            creadoEn: AHORA,
+            expiraEn: AHORA + 600_000,
+            lineas: [lineaCotizada()],
+        });
+    });
+
+    it.each([
+        ['identidad ausente', { identidad: null }],
+        ['tenant vacío', { identidad: { tenantId: '', userId: 'user-1' } }],
+        ['usuario vacío', { identidad: { tenantId: 'tenant-1', userId: '' } }],
+        ['referencia vacía', { referenciaId: ' ' }],
+        ['reloj NaN', { ahoraMs: Number.NaN }],
+        ['sin líneas', { lineas: [] }],
+        ['líneas que no son array', { lineas: 'x' }],
+    ])('no construye un traspaso con %s', (_caso, cambio) => {
+        const entrada = {
+            identidad: { tenantId: 'tenant-1', userId: 'user-1' },
+            referenciaId: 'cot-99',
+            lineas: [lineaCotizada()] as unknown,
+            ahoraMs: AHORA,
+            ...cambio,
+        };
+        expect(serializarTraspasoCarrito(entrada as never)).toBeNull();
+    });
+
+    it.each([
+        ['id', { id: '' }],
+        ['nombre', { name: ' ' }],
+        ['precio', { price: Number.NaN }],
+        ['cantidad', { quantity: 0 }],
+        ['referencia de línea', { quotationItemId: '' }],
+    ])('rechaza una línea cotizada con %s inválido', (_campo, cambio) => {
+        expect(serializarTraspasoCarrito({
+            identidad: { tenantId: 'tenant-1', userId: 'user-1' },
+            referenciaId: 'cot-99',
+            lineas: [lineaCotizada(cambio)],
+            ahoraMs: AHORA,
+        })).toBeNull();
+    });
+
+    it('trata una línea undefined como dato inválido en vez de lanzar', () => {
+        expect(serializarTraspasoCarrito({
+            identidad: { tenantId: 'tenant-1', userId: 'user-1' },
+            referenciaId: 'cot-99',
+            lineas: [undefined],
+            ahoraMs: AHORA,
+        })).toBeNull();
+    });
+
+    it('rechaza el conjunto completo si una sola línea del traspaso está dañada', () => {
+        const entrada = {
+            identidad: { tenantId: 'tenant-1', userId: 'user-1' },
+            referenciaId: 'cot-99',
+            ahoraMs: AHORA,
+        };
+        expect(serializarTraspasoCarrito({
+            ...entrada,
+            lineas: [lineaCotizada(), lineaCotizada({ quotationItemId: '' })],
+        })).toBeNull();
+        expect(serializarTraspasoCarrito({
+            ...entrada,
+            lineas: [lineaCotizada({ quotationItemId: '' }), lineaCotizada()],
+        })).toBeNull();
+    });
+
+    it('acota el contrato al máximo de 500 líneas de la API', () => {
+        const comunes = {
+            identidad: { tenantId: 'tenant-1', userId: 'user-1' },
+            referenciaId: 'cot-99',
+            ahoraMs: AHORA,
+        };
+        expect(serializarTraspasoCarrito({
+            ...comunes,
+            lineas: Array.from({ length: 500 }, (_, i) => lineaCotizada({ id: `p-${i}`, quotationItemId: `q-${i}` })),
+        })).not.toBeNull();
+        expect(serializarTraspasoCarrito({
+            ...comunes,
+            lineas: Array.from({ length: 501 }, (_, i) => lineaCotizada({ id: `p-${i}`, quotationItemId: `q-${i}` })),
+        })).toBeNull();
+    });
+
+    it('nunca lanza si una propiedad extra hace imposible JSON.stringify', () => {
+        const linea = lineaCotizada() as Record<string, unknown>;
+        linea.circular = linea;
+        expect(serializarTraspasoCarrito({
+            identidad: { tenantId: 'tenant-1', userId: 'user-1' },
+            referenciaId: 'cot-99',
+            lineas: [linea],
+            ahoraMs: AHORA,
+        })).toBeNull();
+    });
+
+    it('lee el payload únicamente para la misma identidad y conserva la línea completa', () => {
+        const crudo = serializarTraspasoCarrito({
+            identidad: { tenantId: 'tenant-1', userId: 'user-1' },
+            referenciaId: 'cot-99',
+            lineas: [lineaCotizada({ presentationAtQuote: 'PACK' })],
+            ahoraMs: AHORA,
+        });
+        expect(leerTraspasoCarrito(crudo, { tenantId: 'tenant-1', userId: 'user-1' }, AHORA + 1)).toEqual({
+            v: 1,
+            tenantId: 'tenant-1',
+            userId: 'user-1',
+            origen: 'COTIZACION',
+            referenciaId: 'cot-99',
+            creadoEn: AHORA,
+            expiraEn: AHORA + 600_000,
+            lineas: [lineaCotizada({ presentationAtQuote: 'PACK' })],
+        });
+    });
+
+    it('acepta el instante de creación y vence exactamente al llegar al límite', () => {
+        const crudo = serializarTraspasoCarrito({
+            identidad: { tenantId: 'tenant-1', userId: 'user-1' },
+            referenciaId: 'cot-99',
+            lineas: [lineaCotizada()],
+            ahoraMs: AHORA,
+        });
+        expect(leerTraspasoCarrito(crudo, { tenantId: 'tenant-1', userId: 'user-1' }, AHORA)).not.toBeNull();
+        expect(leerTraspasoCarrito(crudo, { tenantId: 'tenant-1', userId: 'user-1' }, AHORA + 599_999)).not.toBeNull();
+        expect(leerTraspasoCarrito(crudo, { tenantId: 'tenant-1', userId: 'user-1' }, AHORA + 600_000)).toBeNull();
+        expect(leerTraspasoCarrito(crudo, { tenantId: 'tenant-1', userId: 'user-1' }, AHORA - 1)).toBeNull();
+    });
+
+    it.each([
+        ['JSON roto', '{roto'],
+        ['null', 'null'],
+        ['versión', JSON.stringify({ v: 2 })],
+        ['primitivo', '7'],
+    ])('descarta %s sin lanzar', (_caso, crudo) => {
+        expect(leerTraspasoCarrito(crudo, { tenantId: 'tenant-1', userId: 'user-1' }, AHORA)).toBeNull();
+    });
+
+    it('rechaza tenant o usuario distintos aunque la clave haya sido copiada', () => {
+        const crudo = serializarTraspasoCarrito({
+            identidad: { tenantId: 'tenant-1', userId: 'user-1' },
+            referenciaId: 'cot-99',
+            lineas: [lineaCotizada()],
+            ahoraMs: AHORA,
+        });
+        expect(leerTraspasoCarrito(crudo, { tenantId: 'tenant-2', userId: 'user-1' }, AHORA)).toBeNull();
+        expect(leerTraspasoCarrito(crudo, { tenantId: 'tenant-1', userId: 'user-2' }, AHORA)).toBeNull();
+        expect(leerTraspasoCarrito(crudo, null, AHORA)).toBeNull();
+    });
+
+    it('rechaza una identidad de lectura vacía aunque coincida con un payload manipulado', () => {
+        const payload = {
+            v: 1,
+            tenantId: '',
+            userId: 'user-1',
+            origen: 'COTIZACION',
+            referenciaId: 'cot-99',
+            creadoEn: AHORA,
+            expiraEn: AHORA + 600_000,
+            lineas: [lineaCotizada()],
+        };
+        expect(leerTraspasoCarrito(
+            JSON.stringify(payload),
+            { tenantId: '', userId: 'user-1' },
+            AHORA,
+        )).toBeNull();
+        expect(leerTraspasoCarrito(
+            JSON.stringify({ ...payload, tenantId: 'tenant-1', userId: '' }),
+            { tenantId: 'tenant-1', userId: '' },
+            AHORA,
+        )).toBeNull();
+    });
+
+    it.each([
+        ['origen', { origen: 'DEMO' }],
+        ['tenant vacío', { tenantId: '' }],
+        ['usuario vacío', { userId: '' }],
+        ['referencia vacía', { referenciaId: '' }],
+        ['creado no numérico', { creadoEn: 'ahora' }],
+        ['expiración no numérica', { expiraEn: 'después' }],
+        ['TTL extendido', { expiraEn: AHORA + 600_001 }],
+        ['líneas vacías', { lineas: [] }],
+        ['líneas no-array', { lineas: {} }],
+        ['línea corrupta', { lineas: [lineaCotizada({ quotationItemId: '' })] }],
+    ])('descarta payload manipulado en %s', (_caso, cambio) => {
+        const crudo = serializarTraspasoCarrito({
+            identidad: { tenantId: 'tenant-1', userId: 'user-1' },
+            referenciaId: 'cot-99',
+            lineas: [lineaCotizada()],
+            ahoraMs: AHORA,
+        });
+        const manipulado = JSON.stringify({ ...JSON.parse(crudo as string), ...cambio });
+        expect(leerTraspasoCarrito(manipulado, { tenantId: 'tenant-1', userId: 'user-1' }, AHORA)).toBeNull();
+    });
+
+    it('rechaza un reloj de lectura no finito y más de 500 líneas aun con forma válida', () => {
+        const crudo = serializarTraspasoCarrito({
+            identidad: { tenantId: 'tenant-1', userId: 'user-1' },
+            referenciaId: 'cot-99',
+            lineas: [lineaCotizada()],
+            ahoraMs: AHORA,
+        });
+        expect(leerTraspasoCarrito(crudo, { tenantId: 'tenant-1', userId: 'user-1' }, Number.NaN)).toBeNull();
+        const base = JSON.parse(crudo as string);
+        base.lineas = Array.from({ length: 501 }, (_, i) => lineaCotizada({ id: `p-${i}`, quotationItemId: `q-${i}` }));
+        expect(leerTraspasoCarrito(JSON.stringify(base), { tenantId: 'tenant-1', userId: 'user-1' }, AHORA)).toBeNull();
+    });
+
+    it('valida cada frontera del payload leído con casos que pasarían las guardas posteriores', () => {
+        const identidad = { tenantId: 'tenant-1', userId: 'user-1' };
+        const payload = {
+            v: 1,
+            tenantId: identidad.tenantId,
+            userId: identidad.userId,
+            origen: 'COTIZACION',
+            referenciaId: 'cot-99',
+            creadoEn: AHORA,
+            expiraEn: AHORA + 600_000,
+            lineas: [lineaCotizada()],
+        };
+
+        expect(leerTraspasoCarrito(JSON.stringify({ ...payload, v: 2 }), identidad, AHORA)).toBeNull();
+        expect(leerTraspasoCarrito(JSON.stringify({ ...payload, origen: 'DEMO' }), identidad, AHORA)).toBeNull();
+        expect(leerTraspasoCarrito(JSON.stringify({ ...payload, referenciaId: '' }), identidad, AHORA)).toBeNull();
+
+        // Sin el chequeo de tipo, `null + 600_000` produciría 600_000 y las
+        // comparaciones de tiempo aceptarían este payload por coerción.
+        expect(leerTraspasoCarrito(JSON.stringify({
+            ...payload,
+            creadoEn: null,
+            expiraEn: 600_000,
+        }), identidad, 0)).toBeNull();
+    });
+
+    it('acepta exactamente 500 líneas al leer y exige que todas sean válidas', () => {
+        const identidad = { tenantId: 'tenant-1', userId: 'user-1' };
+        const payload = {
+            v: 1,
+            tenantId: identidad.tenantId,
+            userId: identidad.userId,
+            origen: 'COTIZACION',
+            referenciaId: 'cot-99',
+            creadoEn: AHORA,
+            expiraEn: AHORA + 600_000,
+            lineas: Array.from(
+                { length: 500 },
+                (_, i) => lineaCotizada({ id: `p-${i}`, quotationItemId: `q-${i}` }),
+            ),
+        };
+
+        expect(leerTraspasoCarrito(JSON.stringify(payload), identidad, AHORA)).not.toBeNull();
+        expect(leerTraspasoCarrito(JSON.stringify({
+            ...payload,
+            lineas: [lineaCotizada(), lineaCotizada({ quotationItemId: '' })],
+        }), identidad, AHORA)).toBeNull();
     });
 });
 
@@ -404,6 +720,17 @@ describe('decidirRestauracion — nunca en el turno equivocado', () => {
     });
 });
 
+describe('decidirRecuperacionPendiente — nunca pisa el carrito activo', () => {
+    it('permite recuperar cuando el ticket está realmente vacío', () => {
+        expect(decidirRecuperacionPendiente([])).toBe('RECUPERAR');
+    });
+
+    it('conserva la venta actual con una o varias líneas', () => {
+        expect(decidirRecuperacionPendiente([{ id: 'actual-1' }])).toBe('CONSERVAR_ACTUAL');
+        expect(decidirRecuperacionPendiente([{ id: 'actual-1' }, { id: 'actual-2' }])).toBe('CONSERVAR_ACTUAL');
+    });
+});
+
 describe('resumenGuardado — el número del aviso es el número que va a ver', () => {
     it('suma precio × cantidad', () => {
         const r = resumenGuardado(guardado({
@@ -554,5 +881,52 @@ describe('aparcados (F4) — la promesa de "Aparcar y salir" tiene que ser ciert
     it('un aparcado sin etiqueta igual se recupera con un nombre por defecto', () => {
         const crudo = JSON.stringify({ v: VERSION_CARRITO, aparcados: [aparcado({ label: '' })] });
         expect(leerAparcados(crudo)[0].label).toBe('Carrito');
+    });
+});
+
+describe('decidirRestauracionAparcado — una sola política para todas las entradas', () => {
+    const crearAparcado = (cambios: Partial<AparcadoGuardado> = {}): AparcadoGuardado => ({
+        id: 'held-1',
+        label: 'Venta de María',
+        shiftId: 'turno-1',
+        heldAt: AHORA,
+        lineas: [{ id: 'p1', name: 'Cemento', price: 420, quantity: 1 }],
+        clienteId: 'cliente-1',
+        descuentoGlobal: '5',
+        ...cambios,
+    });
+
+    it('mantiene a un clic el aparcado reciente del turno actual', () => {
+        expect(decidirRestauracionAparcado({
+            aparcado: crearAparcado(),
+            shiftIdActual: 'turno-1',
+            ahoraMs: AHORA + 1,
+        })).toBe('RESTAURAR');
+    });
+
+    it('exige ofrecer confirmación para otro turno, sin turno o una venta vieja', () => {
+        expect(decidirRestauracionAparcado({
+            aparcado: crearAparcado({ shiftId: 'turno-anterior' }),
+            shiftIdActual: 'turno-1',
+            ahoraMs: AHORA,
+        })).toBe('OFRECER');
+        expect(decidirRestauracionAparcado({
+            aparcado: crearAparcado(),
+            shiftIdActual: null,
+            ahoraMs: AHORA,
+        })).toBe('OFRECER');
+        expect(decidirRestauracionAparcado({
+            aparcado: crearAparcado(),
+            shiftIdActual: 'turno-1',
+            ahoraMs: AHORA + 12 * HORA + 1,
+        })).toBe('OFRECER');
+    });
+
+    it('un id inexistente no produce una restauración fantasma', () => {
+        expect(decidirRestauracionAparcado({
+            aparcado: null,
+            shiftIdActual: 'turno-1',
+            ahoraMs: AHORA,
+        })).toBe('DESCARTAR');
     });
 });

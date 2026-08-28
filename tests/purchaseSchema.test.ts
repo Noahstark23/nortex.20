@@ -41,6 +41,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
         expect(result.success).toBe(true);
         if (!result.success) return;
         expect(result.data.date).toBe('2026-08-21T12:00:00.000Z');
+        expect(result.data.postingDate).toBe('2026-08-21T12:00:00.000Z');
         expect(result.data.dueDate).toBe('2026-08-25T12:00:00.000Z');
         expect(result.data.items[0].expiryDate).toBe('2027-01-09T12:00:00.000Z');
         expect(result.data.items[0].unitCost).toBe('13.5');
@@ -72,10 +73,23 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
         expect(result.success).toBe(true);
     });
 
+    it('acepta una fecha contable distinta y la normaliza sin cambiar la factura', () => {
+        const result = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            postingDate: '2026-09-01',
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+        expect(result.data.date).toBe('2026-08-21T12:00:00.000Z');
+        expect(result.data.postingDate).toBe('2026-09-01T12:00:00.000Z');
+    });
+
     it('acepta null históricos únicamente en campos realmente opcionales', () => {
         const result = CreatePurchaseSchema.safeParse({
             ...cashPurchase,
             warehouseId: null,
+            postingDate: null,
             dueDate: null,
             notes: null,
             purchaseOrderId: null,
@@ -90,6 +104,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
         if (!result.success) return;
         expect(result.data.warehouseId).toBeUndefined();
         expect(result.data.date).toBe('2026-08-21T12:00:00.000Z');
+        expect(result.data.postingDate).toBe('2026-08-21T12:00:00.000Z');
         expect(result.data.dueDate).toBeUndefined();
         expect(result.data.notes).toBeUndefined();
         expect(result.data.purchaseOrderId).toBeUndefined();
@@ -174,6 +189,18 @@ describe('CreatePurchaseSchema — rechazos que protegen la persistencia', () =>
     });
 
     it.each([
+        ['día inexistente', '2026-02-30'],
+        ['año no bisiesto', '2025-02-29'],
+        ['mes inexistente', '2026-13-01'],
+        ['datetime sin offset', '2026-08-25T07:49:00'],
+    ])('rechaza %s en postingDate (%s)', (_label, postingDate) => {
+        expect(CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            postingDate,
+        }).success).toBe(false);
+    });
+
+    it.each([
         '2027-02-29',
         '2027-04-31',
         '2027-01-09T00:00:00',
@@ -222,6 +249,23 @@ describe('CreatePurchaseSchema — rechazos que protegen la persistencia', () =>
 
         expect(linked.success).toBe(true);
         if (linked.success) expect(linked.data.purchaseOrderId).toBe('po-approved-123');
+        expect(empty.success).toBe(false);
+    });
+
+    it('acepta purchaseOrderItemId opcional, lo recorta y rechaza uno vacío', () => {
+        const linked = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            purchaseOrderId: 'po-approved-123',
+            items: [{ ...basicItem, purchaseOrderItemId: '  po-item-123  ' }],
+        });
+        const empty = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            purchaseOrderId: 'po-approved-123',
+            items: [{ ...basicItem, purchaseOrderItemId: '' }],
+        });
+
+        expect(linked.success).toBe(true);
+        if (linked.success) expect(linked.data.items[0].purchaseOrderItemId).toBe('po-item-123');
         expect(empty.success).toBe(false);
     });
 
