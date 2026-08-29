@@ -85,7 +85,12 @@ export interface NormalizedReceiptLine<TItem extends PurchaseOrderItemAuthority 
     unitAtOrder: string;
 }
 
+// PurchaseOrderItem.unitCostExact conserva 6 decimales, pero la sombra legacy
+// obligatoria `unitCost Decimal(10,2)` sigue limitando el entero a 8 dígitos.
+// Aceptar un valor mayor aquí haría fallar la persistencia aunque cupiera en el
+// snapshot exacto.
 const MAX_UNIT_COST = new Decimal('99999999.99');
+const MAX_UNIT_COST_DECIMAL_PLACES = 6;
 
 const parseIdentifier = (value: unknown, field: 'productId' | 'itemId'): string => {
     if (typeof value !== 'string' || value.trim() === '') {
@@ -108,10 +113,15 @@ const parseUnitCost = (value: unknown): Decimal => {
     } catch {
         throw new PurchaseOrderQuantityError('INVALID_UNIT_COST', 'El costo unitario no es válido');
     }
-    if (!cost.isFinite() || cost.isNegative() || cost.decimalPlaces() > 2 || cost.greaterThan(MAX_UNIT_COST)) {
+    if (
+        !cost.isFinite()
+        || cost.isNegative()
+        || cost.decimalPlaces() > MAX_UNIT_COST_DECIMAL_PLACES
+        || cost.greaterThan(MAX_UNIT_COST)
+    ) {
         throw new PurchaseOrderQuantityError(
             'INVALID_UNIT_COST',
-            'El costo unitario debe ser finito, no negativo y tener hasta 2 decimales',
+            `El costo unitario debe ser finito, no negativo y tener hasta ${MAX_UNIT_COST_DECIMAL_PLACES} decimales`,
         );
     }
     return cost;

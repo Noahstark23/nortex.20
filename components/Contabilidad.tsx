@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     BookOpen, Plus, Trash2, Lock, Unlock, Loader2, Scale, FileText,
     CalendarDays, CheckCircle2, AlertTriangle, ArrowLeft, ListTree, Percent, Coins, Receipt,
     Landmark, FileBarChart, Play, ListChecks, Clock, ShieldCheck, ChevronLeft, ChevronRight,
-    Hourglass, Phone, ChevronDown, Wallet, TrendingUp, TrendingDown
+    Hourglass, Phone, ChevronDown, Wallet, TrendingUp, TrendingDown, X
 } from 'lucide-react';
 import { sanitizeDecimalInput, toDecimal, formatMoney } from '../utils/money';
+import { ToastViewport, useToast } from './ui/Toast';
 
 /**
  * FASE A — Contabilidad del contador.
@@ -25,6 +26,7 @@ interface FiscalPeriodRow { id: string; year: number; month: number; status: str
 type Tab = 'cierre' | 'aging' | 'flujo' | 'asiento' | 'diario' | 'balanza' | 'periodos' | 'fiscal' | 'retenciones' | 'activos' | 'renta';
 
 interface RetencionRow { id: string; fecha: string; clienteRetenedor: string; tipo: string; baseAmount: number; amount: number; numeroConstancia?: string | null; }
+interface OpenCreditSale { saleId: string; customerName: string; invoiceNumber: string | null; date: string; dueDate: string | null; total: number; balance: number; }
 interface AssetRow { id: string; nombre: string; categoria: string; costo: number; fechaAdquisicion: string; vidaUtilMeses: number; depreciacionAcumulada: number; mesesDepreciados: number; valorEnLibros: number; estado: string; }
 interface AnnualIR { year: number; ingresosNetos: number; costoVentas: number; gastos: number; utilidadFiscal: number; irSobreRenta: number; pmdRate: number; pagoMinimoDefinitivo: number; impuestoDelEjercicio: number; anticiposEnterados: number; retencionesSufridasIR: number; creditosTotales: number; saldoAPagar: number; saldoAFavor: number; resumen: string; }
 interface ObligacionRow { key: string; label: string; entidad: string; monto: number; vence: string; dataLista: boolean; declarado: boolean; nota?: string; }
@@ -36,6 +38,10 @@ interface AgingData { asOf: string; cxc: AgingSide; cxp: AgingSide; }
 interface FlujoConcepto { label: string; entrada: number; salida: number; neto: number; }
 interface FlujoSeccion { entradas: number; salidas: number; neto: number; conceptos: FlujoConcepto[]; }
 interface FlujoData { period: string; saldoInicial: number; saldoFinal: number; flujoNeto: number; entradasTotal: number; salidasTotal: number; secciones: { operacion: FlujoSeccion; inversion: FlujoSeccion; financiamiento: FlujoSeccion }; }
+type DecisionDialog =
+    | { kind: 'close-period'; month: number; year: number }
+    | { kind: 'reopen-period'; period: FiscalPeriodRow }
+    | { kind: 'retire-asset'; asset: AssetRow };
 const FLUJO_SECCIONES: { key: 'operacion' | 'inversion' | 'financiamiento'; label: string }[] = [
     { key: 'operacion', label: 'Actividades de operación' },
     { key: 'inversion', label: 'Actividades de inversión' },
@@ -51,29 +57,147 @@ const BUCKET_META: { key: 'corriente' | 'b1_30' | 'b31_60' | 'b61_90' | 'b90'; l
 
 const C = (n: number) => formatMoney(n);
 const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+const ACCOUNTING_ACCESS_ROLES = new Set(['OWNER', 'ADMIN', 'SUPER_ADMIN', 'ACCOUNTANT']);
+const ACCOUNTING_PERIOD_ROLES = new Set(['OWNER', 'ADMIN', 'SUPER_ADMIN']);
+
+function managuaCivilToday(date = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Managua',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    }).formatToParts(date);
+    const value = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value ?? '';
+    const year = Number(value('year'));
+    const month = Number(value('month'));
+    const day = Number(value('day'));
+    return { year, month, day, isoDay: `${value('year')}-${value('month')}-${value('day')}` };
+}
 
 const Contabilidad: React.FC = () => {
     const token = localStorage.getItem('nortex_token');
     const role = useMemo(() => {
         try { return token ? JSON.parse(atob(token.split('.')[1])).role || '' : ''; } catch { return ''; }
     }, [token]);
-    const isOwner = role === 'OWNER' || role === 'SUPER_ADMIN';
+    const canAccessAccounting = ACCOUNTING_ACCESS_ROLES.has(role);
+    // `checkRole` trata estos tres roles como superusuarios antes de evaluar la
+    // lista puntual del endpoint. La UI debe reflejar ese contrato efectivo:
+    // ACCOUNTANT puede operar la contabilidad diaria, pero no cerrar/reabrir.
+    const canManagePeriods = ACCOUNTING_PERIOD_ROLES.has(role);
 
     const auth = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
     const today = new Date();
+    const todayCivil = managuaCivilToday(today);
+    const { toast, showToast, dismissToast } = useToast();
+
+    const [decisionDialog, setDecisionDialog] = useState<DecisionDialog | null>(null);
+    const [decisionBusy, setDecisionBusy] = useState(false);
+    const [decisionError, setDecisionError] = useState('');
+    const [reopenReason, setReopenReason] = useState('');
+    const decisionDialogRef = useRef<HTMLDivElement | null>(null);
+    const decisionSafeActionRef = useRef<HTMLButtonElement | null>(null);
+    const reopenReasonRef = useRef<HTMLTextAreaElement | null>(null);
+    const decisionReturnFocusRef = useRef<HTMLElement | null>(null);
+    const decisionBusyRef = useRef(false);
+
+    const resetDecisionDialog = useCallback(() => {
+        setDecisionDialog(null);
+        setDecisionError('');
+        setReopenReason('');
+    }, []);
+
+    const dismissDecisionDialog = useCallback(() => {
+        if (decisionBusyRef.current) return;
+        resetDecisionDialog();
+    }, [resetDecisionDialog]);
+
+    const openDecisionDialog = (dialog: DecisionDialog, trigger: HTMLElement) => {
+        decisionReturnFocusRef.current = trigger;
+        setDecisionError('');
+        setReopenReason('');
+        setDecisionDialog(dialog);
+    };
+
+    useEffect(() => {
+        if (!decisionDialog) return;
+
+        const dialog = decisionDialogRef.current;
+        const returnFocus = decisionReturnFocusRef.current
+            ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+        const focusFrame = window.requestAnimationFrame(() => {
+            (decisionDialog.kind === 'reopen-period'
+                ? reopenReasonRef.current
+                : decisionSafeActionRef.current)?.focus();
+        });
+
+        const keepFocusInside = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                dismissDecisionDialog();
+                return;
+            }
+            if (event.key !== 'Tab' || !dialog) return;
+
+            const focusable = (Array.from(dialog.querySelectorAll(
+                'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+            )) as HTMLElement[]).filter(element => element.getAttribute('aria-hidden') !== 'true');
+
+            if (focusable.length === 0) {
+                event.preventDefault();
+                dialog.focus();
+                return;
+            }
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const active = document.activeElement;
+            if (event.shiftKey && (active === first || !dialog.contains(active))) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+
+        document.addEventListener('keydown', keepFocusInside);
+        return () => {
+            window.cancelAnimationFrame(focusFrame);
+            document.removeEventListener('keydown', keepFocusInside);
+            if (returnFocus?.isConnected && !returnFocus.hasAttribute('disabled')) returnFocus.focus();
+            decisionReturnFocusRef.current = null;
+        };
+    }, [decisionDialog, dismissDecisionDialog]);
 
     const [tab, setTab] = useState<Tab>('cierre');
     const [accounts, setAccounts] = useState<Account[]>([]);
+    const [accountsBusy, setAccountsBusy] = useState(true);
+    const [accountsError, setAccountsError] = useState('');
 
     useEffect(() => {
+        if (!canAccessAccounting) return;
+        let active = true;
+        setAccountsBusy(true);
+        setAccountsError('');
         fetch('/api/accounting/chart', { headers: auth })
-            .then(r => r.ok ? r.json() : [])
-            .then((data) => setAccounts(Array.isArray(data) ? data : []))
-            .catch(() => { /* sin catálogo aún */ });
-    }, [auth]);
+            .then(async (response) => {
+                if (!response.ok) throw new Error('No pudimos cargar el catálogo de cuentas.');
+                return response.json();
+            })
+            .then((data) => {
+                if (active) setAccounts(Array.isArray(data) ? data : []);
+            })
+            .catch(() => {
+                if (active) setAccountsError('No pudimos cargar el catálogo de cuentas. Intentá de nuevo.');
+            })
+            .finally(() => {
+                if (active) setAccountsBusy(false);
+            });
+        return () => { active = false; };
+    }, [auth, canAccessAccounting]);
 
     // ── Asiento manual (A1/A2) ──────────────────────────────────────────────
-    const [entryDate, setEntryDate] = useState(today.toISOString().slice(0, 10));
+    const [entryDate, setEntryDate] = useState(todayCivil.isoDay);
     const [descripcion, setDescripcion] = useState('');
     const [tipo, setTipo] = useState<'MANUAL' | 'OPENING'>('MANUAL');
     const [lines, setLines] = useState<DraftLine[]>([
@@ -116,8 +240,8 @@ const Contabilidad: React.FC = () => {
     };
 
     // ── Libro diario / balanza (A4) ─────────────────────────────────────────
-    const [y, setY] = useState(today.getFullYear());
-    const [m, setM] = useState(today.getMonth() + 1);
+    const [y, setY] = useState(todayCivil.year);
+    const [m, setM] = useState(todayCivil.month);
     const [diario, setDiario] = useState<{ locked: boolean; totalDebe: number; totalHaber: number; asientos: DiarioAsiento[] } | null>(null);
     const [balanza, setBalanza] = useState<{ balanza: BalanzaRow[]; totales: { debe: number; haber: number } } | null>(null);
     const [mayor, setMayor] = useState<{ cuenta: string; nombre: string; saldoInicial: number; saldoFinal: number; movimientos: MayorMov[] } | null>(null);
@@ -156,13 +280,14 @@ const Contabilidad: React.FC = () => {
     const [marking, setMarking] = useState<string | null>(null);
 
     const loadCierre = useCallback(async () => {
+        if (!canAccessAccounting) return;
         setCierreBusy(true);
         try {
             const res = await fetch(`/api/accounting/cierre-mensual/${y}/${m}`, { headers: auth });
             setCierre(res.ok ? await res.json() : null);
         } catch { setCierre(null); }
         finally { setCierreBusy(false); }
-    }, [y, m, auth]);
+    }, [y, m, auth, canAccessAccounting]);
 
     useEffect(() => { if (tab === 'cierre') loadCierre(); }, [tab, loadCierre]);
 
@@ -175,9 +300,22 @@ const Contabilidad: React.FC = () => {
                 method: 'PUT', headers: { ...auth, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ declarado }),
             });
-            if (!res.ok) throw new Error();
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'No pudimos actualizar la obligación.');
             await loadCierre();
-        } catch { await loadCierre(); }
+            showToast({
+                tone: 'success',
+                title: declarado ? 'Obligación declarada' : 'Obligación reabierta',
+                message: 'El panel mensual quedó actualizado.',
+            });
+        } catch (error) {
+            await loadCierre();
+            showToast({
+                tone: 'error',
+                title: 'No se guardó el cambio',
+                message: error instanceof Error ? error.message : 'Intentá de nuevo.',
+            });
+        }
         finally { setMarking(null); }
     };
 
@@ -229,152 +367,395 @@ const Contabilidad: React.FC = () => {
 
     // ── Períodos (A3) ───────────────────────────────────────────────────────
     const [periods, setPeriods] = useState<FiscalPeriodRow[]>([]);
+    const [periodsBusy, setPeriodsBusy] = useState(false);
+    const [periodsError, setPeriodsError] = useState('');
     const loadPeriods = useCallback(async () => {
-        const res = await fetch('/api/accounting/periods', { headers: auth });
-        if (res.ok) { const d = await res.json(); setPeriods(d.periods ?? []); }
+        setPeriodsBusy(true);
+        setPeriodsError('');
+        try {
+            const res = await fetch('/api/accounting/periods', { headers: auth });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No pudimos cargar los períodos.');
+            setPeriods(d.periods ?? []);
+        } catch (error) {
+            setPeriodsError(error instanceof Error ? error.message : 'No pudimos cargar los períodos.');
+        } finally {
+            setPeriodsBusy(false);
+        }
     }, [auth]);
     useEffect(() => { if (tab === 'periodos') loadPeriods(); }, [tab, loadPeriods]);
 
-    const closeMonth = async () => {
-        if (!confirm(`¿Cerrar el período ${m}/${y}? Después NO se podrán registrar movimientos con esa fecha (salvo reapertura).`)) return;
-        const res = await fetch('/api/accounting/fiscal-close', {
-            method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
-            body: JSON.stringify({ month: m, year: y }),
-        });
-        const d = await res.json();
-        alert(res.ok ? `${d.message}` : (d.error || 'Error al cerrar'));
-        if (res.ok) loadPeriods();
-    };
-
-    const reopen = async (p: FiscalPeriodRow) => {
-        const reason = prompt(`Reabrir ${p.month}/${p.year}. Motivo (queda auditado):`);
-        if (!reason?.trim()) return;
-        const res = await fetch(`/api/accounting/periods/${p.year}/${p.month}/reopen`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
-            body: JSON.stringify({ reason }),
-        });
-        const d = await res.json();
-        alert(res.ok ? `${d.message}` : (d.error || 'Error'));
-        if (res.ok) loadPeriods();
-    };
-
     // ── Config fiscal + tipo de cambio (B4/B6) ──────────────────────────────
     const [cfg, setCfg] = useState({ inssPatronalRate: '', anticipoIrRate: '', imiRate: '', salarioMinimo: '' });
-    const [cfgMsg, setCfgMsg] = useState('');
+    const [cfgMsg, setCfgMsg] = useState<{ ok: boolean; text: string } | null>(null);
+    const [fiscalBusy, setFiscalBusy] = useState(false);
+    const [fiscalError, setFiscalError] = useState('');
+    const [savingCfg, setSavingCfg] = useState(false);
     const [exLatest, setExLatest] = useState<{ rate: number | null; fecha?: string }>({ rate: null });
-    const [exDate, setExDate] = useState(today.toISOString().slice(0, 10));
+    const [exDate, setExDate] = useState(todayCivil.isoDay);
     const [exRate, setExRate] = useState('');
+    const [exRateError, setExRateError] = useState('');
+    const [savingRate, setSavingRate] = useState(false);
 
     const loadFiscal = useCallback(async () => {
-        const [c, e] = await Promise.all([
-            fetch('/api/accounting/tax-config', { headers: auth }).then(r => r.ok ? r.json() : null),
-            fetch('/api/accounting/exchange-rate/latest', { headers: auth }).then(r => r.ok ? r.json() : null),
-        ]);
-        if (c) setCfg({
-            inssPatronalRate: String((Number(c.inssPatronalRate) * 100).toFixed(2)),
-            anticipoIrRate: String((Number(c.anticipoIrRate) * 100).toFixed(2)),
-            imiRate: String((Number(c.imiRate) * 100).toFixed(2)),
-            salarioMinimo: c.salarioMinimo ? String(Number(c.salarioMinimo)) : '',
-        });
-        if (e) setExLatest(e);
+        setFiscalBusy(true);
+        setFiscalError('');
+        try {
+            const [configResponse, exchangeResponse] = await Promise.all([
+                fetch('/api/accounting/tax-config', { headers: auth }),
+                fetch('/api/accounting/exchange-rate/latest', { headers: auth }),
+            ]);
+            if (!configResponse.ok || !exchangeResponse.ok) throw new Error('No pudimos cargar la configuración fiscal.');
+            const [c, e] = await Promise.all([configResponse.json(), exchangeResponse.json()]);
+            setCfg({
+                inssPatronalRate: String((Number(c.inssPatronalRate) * 100).toFixed(2)),
+                anticipoIrRate: String((Number(c.anticipoIrRate) * 100).toFixed(2)),
+                imiRate: String((Number(c.imiRate) * 100).toFixed(2)),
+                salarioMinimo: c.salarioMinimo ? String(Number(c.salarioMinimo)) : '',
+            });
+            setExLatest(e);
+        } catch {
+            setFiscalError('No pudimos cargar la configuración fiscal. Intentá de nuevo.');
+        } finally {
+            setFiscalBusy(false);
+        }
     }, [auth]);
     useEffect(() => { if (tab === 'fiscal') loadFiscal(); }, [tab, loadFiscal]);
 
     const saveCfg = async () => {
-        setCfgMsg('');
+        setCfgMsg(null);
         const pct = (s: string) => toDecimal(s).div(100).toNumber();
-        const res = await fetch('/api/accounting/tax-config', {
-            method: 'PUT', headers: { 'Content-Type': 'application/json', ...auth },
-            body: JSON.stringify({
-                inssPatronalRate: pct(cfg.inssPatronalRate), anticipoIrRate: pct(cfg.anticipoIrRate),
-                imiRate: pct(cfg.imiRate), salarioMinimo: toDecimal(cfg.salarioMinimo).toNumber(),
-            }),
-        });
-        const d = await res.json();
-        setCfgMsg(res.ok ? 'Configuración guardada.' : (d.error || 'Error'));
+        setSavingCfg(true);
+        try {
+            const res = await fetch('/api/accounting/tax-config', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json', ...auth },
+                body: JSON.stringify({
+                    inssPatronalRate: pct(cfg.inssPatronalRate), anticipoIrRate: pct(cfg.anticipoIrRate),
+                    imiRate: pct(cfg.imiRate), salarioMinimo: toDecimal(cfg.salarioMinimo).toNumber(),
+                }),
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No pudimos guardar las tasas.');
+            setCfgMsg({ ok: true, text: 'Configuración guardada.' });
+            showToast({ tone: 'success', title: 'Tasas actualizadas', message: 'La nueva configuración fiscal ya está vigente.' });
+        } catch (error) {
+            setCfgMsg({ ok: false, text: error instanceof Error ? error.message : 'No pudimos guardar las tasas.' });
+        } finally {
+            setSavingCfg(false);
+        }
     };
 
     const saveRate = async () => {
-        if (toDecimal(exRate).lessThanOrEqualTo(0)) return;
-        const res = await fetch('/api/accounting/exchange-rate', {
-            method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
-            body: JSON.stringify({ fecha: exDate, rate: toDecimal(exRate).toNumber() }),
-        });
-        if (res.ok) { setExRate(''); loadFiscal(); }
-        else alert((await res.json()).error || 'Error');
+        setExRateError('');
+        if (!exDate) {
+            setExRateError('Seleccioná la fecha de vigencia.');
+            return;
+        }
+        if (toDecimal(exRate).lessThanOrEqualTo(0)) {
+            setExRateError('Ingresá una tasa mayor a cero.');
+            return;
+        }
+        setSavingRate(true);
+        try {
+            const res = await fetch('/api/accounting/exchange-rate', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
+                body: JSON.stringify({ fecha: exDate, rate: toDecimal(exRate).toNumber() }),
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No pudimos registrar la tasa.');
+            setExRate('');
+            await loadFiscal();
+            showToast({ tone: 'success', title: 'Tipo de cambio registrado', message: `La tasa del ${new Date(`${exDate}T12:00:00`).toLocaleDateString('es-NI')} ya está disponible en el POS.` });
+        } catch (error) {
+            setExRateError(error instanceof Error ? error.message : 'No pudimos registrar la tasa.');
+        } finally {
+            setSavingRate(false);
+        }
     };
 
     // ── Retenciones sufridas (B1) ────────────────────────────────────────────
     const [retList, setRetList] = useState<RetencionRow[]>([]);
-    const [ret, setRet] = useState({ fecha: today.toISOString().slice(0, 10), clienteRetenedor: '', tipo: 'IR_2', baseAmount: '', amount: '', numeroConstancia: '' });
+    const [ret, setRet] = useState({ saleId: '', fecha: todayCivil.isoDay, clienteRetenedor: '', tipo: 'IR_2', baseAmount: '', amount: '', numeroConstancia: '' });
     const [retMsg, setRetMsg] = useState<{ ok: boolean; text: string } | null>(null);
+    const [retBusy, setRetBusy] = useState(false);
+    const [retError, setRetError] = useState('');
+    const [openCreditSales, setOpenCreditSales] = useState<OpenCreditSale[]>([]);
+    const [openCreditSalesBusy, setOpenCreditSalesBusy] = useState(false);
+    const [openCreditSalesError, setOpenCreditSalesError] = useState('');
+    const [savingRet, setSavingRet] = useState(false);
+    const [retClientEventId, setRetClientEventId] = useState('');
 
     const loadRet = useCallback(async () => {
-        const res = await fetch('/api/accounting/retenciones-sufridas', { headers: auth });
-        if (res.ok) { const d = await res.json(); setRetList(d.retenciones ?? []); }
+        setRetBusy(true);
+        setRetError('');
+        try {
+            const res = await fetch('/api/accounting/retenciones-sufridas', { headers: auth });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No pudimos cargar las retenciones.');
+            setRetList(d.retenciones ?? []);
+        } catch (error) {
+            setRetError(error instanceof Error ? error.message : 'No pudimos cargar las retenciones.');
+        } finally {
+            setRetBusy(false);
+        }
     }, [auth]);
-    useEffect(() => { if (tab === 'retenciones') loadRet(); }, [tab, loadRet]);
+
+    const loadOpenCreditSales = useCallback(async () => {
+        setOpenCreditSalesBusy(true);
+        setOpenCreditSalesError('');
+        try {
+            const res = await fetch('/api/collections/worklist', { headers: auth });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No pudimos cargar las facturas abiertas.');
+            setOpenCreditSales(Array.isArray(d.items) ? d.items : []);
+        } catch (error) {
+            setOpenCreditSalesError(error instanceof Error ? error.message : 'No pudimos cargar las facturas abiertas.');
+        } finally {
+            setOpenCreditSalesBusy(false);
+        }
+    }, [auth]);
+
+    useEffect(() => {
+        if (tab !== 'retenciones') return;
+        void loadRet();
+        void loadOpenCreditSales();
+    }, [tab, loadRet, loadOpenCreditSales]);
 
     // Auto-calcular el monto retenido según el tipo y la base.
     const retAmountAuto = useMemo(() => {
         const base = toDecimal(ret.baseAmount);
         const rate = ret.tipo === 'IR_2' ? 0.02 : 0.01;
-        return base.mul(rate).toDecimalPlaces(2).toNumber();
-    }, [ret.baseAmount, ret.tipo]);
+        const calculated = base.mul(rate).toDecimalPlaces(2);
+        const selectedSale = openCreditSales.find(sale => sale.saleId === ret.saleId);
+        const balance = selectedSale ? toDecimal(selectedSale.balance) : null;
+        return balance && calculated.greaterThan(balance)
+            ? balance.toDecimalPlaces(2).toNumber()
+            : calculated.toNumber();
+    }, [openCreditSales, ret.baseAmount, ret.saleId, ret.tipo]);
+
+    const selectRetentionSale = (saleId: string) => {
+        const selected = openCreditSales.find(sale => sale.saleId === saleId);
+        setRetClientEventId('');
+        setRet(current => selected ? {
+            ...current,
+            saleId: selected.saleId,
+            clienteRetenedor: selected.customerName,
+            baseAmount: toDecimal(selected.total).toFixed(2),
+            amount: '',
+        } : {
+            ...current,
+            saleId: '',
+            clienteRetenedor: '',
+            baseAmount: '',
+            amount: '',
+        });
+    };
 
     const submitRet = async () => {
         setRetMsg(null);
+        if (!ret.saleId) return setRetMsg({ ok: false, text: 'Seleccioná la factura a crédito que recibió la retención.' });
         if (!ret.clienteRetenedor.trim()) return setRetMsg({ ok: false, text: 'Indica quién te retuvo.' });
-        const amount = toDecimal(ret.amount).greaterThan(0) ? toDecimal(ret.amount).toNumber() : retAmountAuto;
-        if (amount <= 0) return setRetMsg({ ok: false, text: 'El monto retenido debe ser mayor a cero.' });
-        const res = await fetch('/api/accounting/retenciones-sufridas', {
-            method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
-            body: JSON.stringify({
-                fecha: ret.fecha, clienteRetenedor: ret.clienteRetenedor.trim(), tipo: ret.tipo,
-                baseAmount: toDecimal(ret.baseAmount).toNumber(), amount, numeroConstancia: ret.numeroConstancia.trim() || undefined,
-            }),
-        });
-        const d = await res.json();
-        if (!res.ok) return setRetMsg({ ok: false, text: d.error || 'Error' });
-        setRetMsg({ ok: true, text: d.message });
-        setRet(r => ({ ...r, clienteRetenedor: '', baseAmount: '', amount: '', numeroConstancia: '' }));
-        loadRet();
+        const baseAmount = toDecimal(ret.baseAmount);
+        if (!baseAmount.greaterThan(0)) return setRetMsg({ ok: false, text: 'La base facturada debe ser mayor a cero.' });
+        const amount = toDecimal(ret.amount).greaterThan(0) ? toDecimal(ret.amount) : toDecimal(retAmountAuto);
+        if (!amount.greaterThan(0)) return setRetMsg({ ok: false, text: 'El monto retenido debe ser mayor a cero.' });
+        const clientEventId = retClientEventId || crypto.randomUUID();
+        if (!retClientEventId) setRetClientEventId(clientEventId);
+        setSavingRet(true);
+        try {
+            const res = await fetch('/api/accounting/retenciones-sufridas', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
+                body: JSON.stringify({
+                    saleId: ret.saleId,
+                    fecha: ret.fecha, clienteRetenedor: ret.clienteRetenedor.trim(), tipo: ret.tipo,
+                    baseAmount: baseAmount.toFixed(2), amount: amount.toFixed(2),
+                    numeroConstancia: ret.numeroConstancia.trim() || undefined, clientEventId,
+                }),
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No pudimos registrar la retención.');
+            setRetMsg({ ok: true, text: d.message || 'Retención registrada.' });
+            setRet(r => ({ ...r, saleId: '', clienteRetenedor: '', baseAmount: '', amount: '', numeroConstancia: '' }));
+            setRetClientEventId('');
+            await Promise.all([loadRet(), loadOpenCreditSales()]);
+            showToast({ tone: 'success', title: 'Retención registrada', message: 'El crédito fiscal quedó incluido en la contabilidad.' });
+        } catch (error) {
+            setRetMsg({ ok: false, text: error instanceof Error ? error.message : 'No pudimos registrar la retención.' });
+        } finally {
+            setSavingRet(false);
+        }
     };
 
     // ── Activos fijos + depreciación (B2) ───────────────────────────────────
     const [assets, setAssets] = useState<AssetRow[]>([]);
-    const [newAsset, setNewAsset] = useState({ nombre: '', categoria: 'COMPUTO', costo: '', fechaAdquisicion: today.toISOString().slice(0, 10) });
-    const [depMsg, setDepMsg] = useState('');
+    const [newAsset, setNewAsset] = useState({ nombre: '', categoria: 'COMPUTO', costo: '', fechaAdquisicion: todayCivil.isoDay });
+    const [depMsg, setDepMsg] = useState<{ ok: boolean; text: string } | null>(null);
+    const [assetsBusy, setAssetsBusy] = useState(false);
+    const [assetsError, setAssetsError] = useState('');
+    const [assetFormError, setAssetFormError] = useState('');
+    const [addingAsset, setAddingAsset] = useState(false);
+    const [depreciationBusy, setDepreciationBusy] = useState(false);
     const loadAssets = useCallback(async () => {
-        const res = await fetch('/api/accounting/fixed-assets', { headers: auth });
-        if (res.ok) { const d = await res.json(); setAssets(d.assets ?? []); }
+        setAssetsBusy(true);
+        setAssetsError('');
+        try {
+            const res = await fetch('/api/accounting/fixed-assets', { headers: auth });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No pudimos cargar los activos.');
+            setAssets(d.assets ?? []);
+        } catch (error) {
+            setAssetsError(error instanceof Error ? error.message : 'No pudimos cargar los activos.');
+        } finally {
+            setAssetsBusy(false);
+        }
     }, [auth]);
     useEffect(() => { if (tab === 'activos') loadAssets(); }, [tab, loadAssets]);
 
     const addAsset = async () => {
-        if (!newAsset.nombre.trim() || toDecimal(newAsset.costo).lessThanOrEqualTo(0)) return;
-        const res = await fetch('/api/accounting/fixed-assets', {
-            method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
-            body: JSON.stringify({ ...newAsset, costo: toDecimal(newAsset.costo).toNumber() }),
-        });
-        if (res.ok) { setNewAsset(a => ({ ...a, nombre: '', costo: '' })); loadAssets(); }
-        else alert((await res.json()).error || 'Error');
-    };
-    const bajaAsset = async (id: string) => {
-        if (!confirm('¿Dar de baja este activo? Dejará de depreciarse.')) return;
-        const res = await fetch(`/api/accounting/fixed-assets/${id}/baja`, { method: 'PATCH', headers: auth });
-        if (res.ok) loadAssets();
+        setAssetFormError('');
+        if (!newAsset.nombre.trim()) {
+            setAssetFormError('Escribí el nombre del activo.');
+            return;
+        }
+        if (toDecimal(newAsset.costo).lessThanOrEqualTo(0)) {
+            setAssetFormError('Ingresá un costo mayor a cero.');
+            return;
+        }
+        setAddingAsset(true);
+        try {
+            const res = await fetch('/api/accounting/fixed-assets', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
+                body: JSON.stringify({ ...newAsset, costo: toDecimal(newAsset.costo).toNumber() }),
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No pudimos registrar el activo.');
+            setNewAsset(a => ({ ...a, nombre: '', costo: '' }));
+            await loadAssets();
+            showToast({ tone: 'success', title: 'Activo registrado', message: 'La adquisición y su asiento contable quedaron guardados.' });
+        } catch (error) {
+            setAssetFormError(error instanceof Error ? error.message : 'No pudimos registrar el activo.');
+        } finally {
+            setAddingAsset(false);
+        }
     };
     const runDep = async () => {
-        setDepMsg('Corriendo...');
-        const res = await fetch('/api/accounting/depreciacion/run', { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth }, body: JSON.stringify({}) });
-        const d = await res.json();
-        setDepMsg(res.ok ? `${d.message}` : (d.error || 'Error'));
-        loadAssets();
+        setDepMsg(null);
+        setDepreciationBusy(true);
+        try {
+            const res = await fetch('/api/accounting/depreciacion/run', { method: 'POST', headers: { 'Content-Type': 'application/json', ...auth }, body: JSON.stringify({}) });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No pudimos correr la depreciación.');
+            setDepMsg({ ok: true, text: d.message || 'Depreciación completada.' });
+            await loadAssets();
+            showToast({ tone: 'success', title: 'Depreciación completada', message: d.message || 'Los valores en libros quedaron actualizados.' });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'No pudimos correr la depreciación.';
+            setDepMsg({ ok: false, text: message });
+            showToast({ tone: 'error', title: 'No se pudo depreciar', message });
+        } finally {
+            setDepreciationBusy(false);
+        }
+    };
+
+    const completeDecision = () => {
+        decisionBusyRef.current = false;
+        setDecisionBusy(false);
+        resetDecisionDialog();
+    };
+
+    const confirmClosePeriod = async () => {
+        if (!canManagePeriods || decisionDialog?.kind !== 'close-period') return;
+        const { month, year } = decisionDialog;
+        setDecisionError('');
+        decisionBusyRef.current = true;
+        setDecisionBusy(true);
+        try {
+            const res = await fetch('/api/accounting/fiscal-close', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
+                body: JSON.stringify({ month, year }),
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No pudimos cerrar el período.');
+            await loadPeriods();
+            showToast({
+                tone: 'success',
+                title: 'Período cerrado',
+                message: d.message || `${MESES[month - 1]} ${year} quedó bloqueado para nuevos movimientos.`,
+            });
+            completeDecision();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'No pudimos cerrar el período.';
+            setDecisionError(message);
+            showToast({ tone: 'error', title: 'No se pudo cerrar', message });
+            decisionBusyRef.current = false;
+            setDecisionBusy(false);
+        }
+    };
+
+    const confirmReopenPeriod = async () => {
+        if (!canManagePeriods || decisionDialog?.kind !== 'reopen-period') return;
+        const reason = reopenReason.trim();
+        if (reason.length < 3) {
+            setDecisionError('Escribí un motivo de al menos 3 caracteres. Quedará en la auditoría.');
+            reopenReasonRef.current?.focus();
+            return;
+        }
+
+        const { period } = decisionDialog;
+        setDecisionError('');
+        decisionBusyRef.current = true;
+        setDecisionBusy(true);
+        try {
+            const res = await fetch(`/api/accounting/periods/${period.year}/${period.month}/reopen`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
+                body: JSON.stringify({ reason }),
+            });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No pudimos reabrir el período.');
+            await loadPeriods();
+            showToast({
+                tone: 'success',
+                title: 'Período reabierto',
+                message: d.message || `${MESES[period.month - 1]} ${period.year} admite movimientos nuevamente.`,
+            });
+            completeDecision();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'No pudimos reabrir el período.';
+            setDecisionError(message);
+            showToast({ tone: 'error', title: 'No se pudo reabrir', message });
+            decisionBusyRef.current = false;
+            setDecisionBusy(false);
+        }
+    };
+
+    const confirmAssetRetirement = async () => {
+        if (decisionDialog?.kind !== 'retire-asset') return;
+        const { asset } = decisionDialog;
+        setDecisionError('');
+        decisionBusyRef.current = true;
+        setDecisionBusy(true);
+        try {
+            const res = await fetch(`/api/accounting/fixed-assets/${asset.id}/baja`, { method: 'PATCH', headers: auth });
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(d.error || 'No pudimos dar de baja el activo.');
+            await loadAssets();
+            showToast({
+                tone: 'success',
+                title: 'Activo dado de baja',
+                message: `${asset.nombre} dejó de depreciarse y se registró su salida contable.`,
+            });
+            completeDecision();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'No pudimos dar de baja el activo.';
+            setDecisionError(message);
+            showToast({ tone: 'error', title: 'No se pudo dar de baja', message });
+            decisionBusyRef.current = false;
+            setDecisionBusy(false);
+        }
     };
 
     // ── Renta anual (B3) ─────────────────────────────────────────────────────
-    const [rentaYear, setRentaYear] = useState(today.getFullYear());
+    const [rentaYear, setRentaYear] = useState(todayCivil.year);
     const [renta, setRenta] = useState<AnnualIR | null>(null);
     const loadRenta = useCallback(async () => {
         setBusy(true);
@@ -385,11 +766,29 @@ const Contabilidad: React.FC = () => {
     }, [rentaYear, auth]);
     useEffect(() => { if (tab === 'renta') loadRenta(); }, [tab, loadRenta]);
 
+    if (!canAccessAccounting) {
+        return (
+            <div className="h-full overflow-y-auto bg-surface-950 p-4 sm:p-6 custom-scrollbar">
+                <div className="mx-auto flex min-h-[50vh] max-w-2xl items-center justify-center">
+                    <div role="alert" className="panel-premium w-full p-6 text-center sm:p-8">
+                        <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-500/25 bg-amber-500/10 text-amber-300">
+                            <ShieldCheck size={22} aria-hidden="true" />
+                        </span>
+                        <h1 className="mt-4 text-xl font-bold text-white">Contabilidad restringida</h1>
+                        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-400">
+                            Tu rol no tiene acceso a los libros, cierres ni operaciones contables de este negocio.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     const inputCls = 'w-full bg-white/[0.03] border border-white/[0.08] text-white px-3 py-2.5 rounded-xl focus:outline-none focus:border-brand placeholder:text-slate-600';
 
     const tabBtn = (t: Tab, label: string, Icon: React.ComponentType<{ size?: number }>) => (
-        <button onClick={() => setTab(t)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${tab === t ? 'bg-brand text-white shadow-glow shadow-brand/25' : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'}`}>
+        <button type="button" onClick={() => setTab(t)} aria-current={tab === t ? 'page' : undefined}
+            className={`shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/70 ${tab === t ? 'bg-brand text-white shadow-glow shadow-brand/25' : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'}`}>
             <Icon size={16} /> {label}
         </button>
     );
@@ -397,7 +796,8 @@ const Contabilidad: React.FC = () => {
     const accountLabel = (code: string) => { const a = accounts.find(x => x.code === code); return a ? `${a.code} · ${a.name}` : code; };
 
     return (
-        <div className="h-full overflow-y-auto bg-surface-950 p-6 custom-scrollbar">
+        <div className="h-full overflow-y-auto bg-surface-950 p-4 sm:p-6 custom-scrollbar">
+            <ToastViewport toast={toast} onDismiss={dismissToast} />
             <div className="max-w-5xl mx-auto">
                 <header className="mb-6">
                     <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
@@ -406,7 +806,7 @@ const Contabilidad: React.FC = () => {
                     <p className="text-slate-400 text-sm mt-1">Asientos manuales, libros oficiales y cierre de períodos.</p>
                 </header>
 
-                <div className="flex flex-wrap gap-2 mb-6">
+                <nav aria-label="Secciones de contabilidad" className="flex gap-2 mb-6 overflow-x-auto pb-2 custom-scrollbar">
                     {tabBtn('cierre', 'Cierre Mensual', ListChecks)}
                     {tabBtn('aging', 'Antigüedad', Hourglass)}
                     {tabBtn('flujo', 'Flujo de Caja', Wallet)}
@@ -418,7 +818,7 @@ const Contabilidad: React.FC = () => {
                     {tabBtn('activos', 'Activos Fijos', Landmark)}
                     {tabBtn('renta', 'Renta Anual', FileBarChart)}
                     {tabBtn('fiscal', 'Config Fiscal', Percent)}
-                </div>
+                </nav>
 
                 {/* ── CIERRE MENSUAL (Panel del contador, Fase C) ── */}
                 {tab === 'cierre' && (
@@ -713,6 +1113,16 @@ const Contabilidad: React.FC = () => {
                 {/* ── ASIENTO MANUAL ── */}
                 {tab === 'asiento' && (
                     <div className="panel-premium p-6">
+                        {accountsBusy && (
+                            <div role="status" className="mb-4 flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-3 text-sm text-slate-300">
+                                <Loader2 size={16} className="animate-spin text-brand-300" aria-hidden="true" /> Cargando catálogo de cuentas…
+                            </div>
+                        )}
+                        {accountsError && (
+                            <div role="alert" className="mb-4 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+                                {accountsError}
+                            </div>
+                        )}
                         <div className="grid sm:grid-cols-3 gap-4 mb-4">
                             <div>
                                 <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Fecha</label>
@@ -792,7 +1202,7 @@ const Contabilidad: React.FC = () => {
                             {MESES.map((mes, i) => <option key={i} value={i + 1}>{mes}</option>)}
                         </select>
                         <select value={y} onChange={e => setY(Number(e.target.value))} className="bg-surface-900 border border-white/[0.08] text-white px-3 py-2 rounded-xl text-sm font-mono">
-                            {[0, 1, 2, 3].map(d => { const yr = today.getFullYear() - d; return <option key={yr} value={yr}>{yr}</option>; })}
+                            {[0, 1, 2, 3].map(d => { const yr = todayCivil.year - d; return <option key={yr} value={yr}>{yr}</option>; })}
                         </select>
                         {busy && <Loader2 className="animate-spin text-brand-300" size={18} />}
                     </div>
@@ -885,24 +1295,47 @@ const Contabilidad: React.FC = () => {
 
                 {/* ── PERÍODOS ── */}
                 {tab === 'periodos' && (
-                    <div className="panel-premium p-6">
+                    <div className="panel-premium p-4 sm:p-6">
                         <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
                             <div className="flex items-center gap-2">
                                 <select value={m} onChange={e => setM(Number(e.target.value))} className="bg-surface-900 border border-white/[0.08] text-white px-3 py-2 rounded-xl text-sm">
                                     {MESES.map((mes, i) => <option key={i} value={i + 1}>{mes}</option>)}
                                 </select>
                                 <select value={y} onChange={e => setY(Number(e.target.value))} className="bg-surface-900 border border-white/[0.08] text-white px-3 py-2 rounded-xl text-sm font-mono">
-                                    {[0, 1, 2].map(d => { const yr = today.getFullYear() - d; return <option key={yr} value={yr}>{yr}</option>; })}
+                                    {[0, 1, 2].map(d => { const yr = todayCivil.year - d; return <option key={yr} value={yr}>{yr}</option>; })}
                                 </select>
                             </div>
-                            <button onClick={closeMonth} className="btn-primary inline-flex items-center gap-2"><Lock size={16} /> Cerrar {MESES[m - 1]} {y}</button>
+                            {canManagePeriods ? (
+                                <button
+                                    type="button"
+                                    onClick={(event) => openDecisionDialog({ kind: 'close-period', month: m, year: y }, event.currentTarget)}
+                                    className="btn-primary inline-flex items-center gap-2"
+                                >
+                                    <Lock size={16} /> Cerrar {MESES[m - 1]} {y}
+                                </button>
+                            ) : (
+                                <span className="inline-flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-xs text-slate-400">
+                                    <ShieldCheck size={14} className="text-brand-300" /> Solo el propietario o la administración pueden cerrar períodos
+                                </span>
+                            )}
                         </div>
-                        {periods.length === 0 ? (
+                        {periodsBusy && (
+                            <div role="status" className="flex items-center justify-center gap-2 py-8 text-sm text-slate-400">
+                                <Loader2 size={17} className="animate-spin text-brand-300" aria-hidden="true" /> Cargando períodos…
+                            </div>
+                        )}
+                        {periodsError && (
+                            <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+                                <span>{periodsError}</span>
+                                <button type="button" onClick={() => void loadPeriods()} className="font-semibold text-white underline underline-offset-4">Reintentar</button>
+                            </div>
+                        )}
+                        {!periodsBusy && !periodsError && periods.length === 0 ? (
                             <p className="text-slate-500 text-sm text-center py-6">Ningún período cerrado todavía. Al cerrar un mes, las cifras de la DGI quedan congeladas.</p>
-                        ) : (
+                        ) : !periodsBusy && !periodsError ? (
                             <div className="space-y-2">
                                 {periods.map(p => (
-                                    <div key={p.id} className="flex items-center justify-between bg-white/[0.02] border border-white/[0.06] rounded-xl px-4 py-3">
+                                    <div key={p.id} className="flex flex-wrap items-center justify-between gap-3 bg-white/[0.02] border border-white/[0.06] rounded-xl px-4 py-3">
                                         <div className="flex items-center gap-3">
                                             {p.status === 'CLOSED'
                                                 ? <span className="w-9 h-9 bg-amber-500/15 border border-amber-500/25 rounded-lg flex items-center justify-center"><Lock size={16} className="text-amber-400" /></span>
@@ -912,47 +1345,106 @@ const Contabilidad: React.FC = () => {
                                                 <p className="text-[11px] text-slate-500">{p.status === 'CLOSED' ? `Cerrado${p.closedAt ? ' · ' + new Date(p.closedAt).toLocaleDateString('es-NI') : ''}` : `Reabierto — ${p.reopenReason || 's/motivo'}`}</p>
                                             </div>
                                         </div>
-                                        {p.status === 'CLOSED' && isOwner && (
-                                            <button onClick={() => reopen(p)} className="btn-ghost text-xs py-1.5 inline-flex items-center gap-1.5"><Unlock size={13} /> Reabrir</button>
+                                        {p.status === 'CLOSED' && canManagePeriods && (
+                                            <button
+                                                type="button"
+                                                onClick={(event) => openDecisionDialog({ kind: 'reopen-period', period: p }, event.currentTarget)}
+                                                className="btn-ghost text-xs py-1.5 inline-flex items-center gap-1.5"
+                                            >
+                                                <Unlock size={13} /> Reabrir
+                                            </button>
                                         )}
                                     </div>
                                 ))}
                             </div>
-                        )}
+                        ) : null}
                     </div>
                 )}
 
                 {/* ── RETENCIONES SUFRIDAS (B1) ── */}
                 {tab === 'retenciones' && (
                     <div className="space-y-6">
-                        <div className="panel-premium p-6">
+                        <div className="panel-premium p-4 sm:p-6">
                             <h3 className="text-white font-bold mb-1 flex items-center gap-2"><Receipt size={18} className="text-brand-300" /> Registrar retención sufrida</h3>
                             <p className="text-slate-400 text-xs mb-4">Cuando una empresa o el Estado te retiene IR 2% / IMI 1% al pagarte, es <strong className="text-emerald-400">crédito contra tu anticipo del mes</strong>. Regístralo aquí para no pagar de más.</p>
                             <div className="grid sm:grid-cols-2 gap-3">
-                                <input type="date" value={ret.fecha} onChange={e => setRet({ ...ret, fecha: e.target.value })} className={`${inputCls} font-mono`} />
-                                <select value={ret.tipo} onChange={e => setRet({ ...ret, tipo: e.target.value })} className={inputCls}>
-                                    <option value="IR_2">IR 2% (renta)</option>
-                                    <option value="IMI_1">IMI 1% (alcaldía)</option>
-                                </select>
-                                <input value={ret.clienteRetenedor} onChange={e => setRet({ ...ret, clienteRetenedor: e.target.value })} placeholder="Cliente que retuvo (ej: SINSA S.A.)" className={`${inputCls} sm:col-span-2`} />
-                                <div>
-                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5">Base (monto facturado)</label>
-                                    <input inputMode="decimal" value={ret.baseAmount} onChange={e => setRet({ ...ret, baseAmount: sanitizeDecimalInput(e.target.value) })} placeholder="0.00" className={`${inputCls} text-right font-mono tabular-nums`} />
-                                </div>
-                                <div>
-                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5">Retenido {ret.amount ? '' : <span className="text-slate-600">(auto {C(retAmountAuto)})</span>}</label>
-                                    <input inputMode="decimal" value={ret.amount} onChange={e => setRet({ ...ret, amount: sanitizeDecimalInput(e.target.value) })} placeholder={retAmountAuto.toFixed(2)} className={`${inputCls} text-right font-mono tabular-nums`} />
-                                </div>
-                                <input value={ret.numeroConstancia} onChange={e => setRet({ ...ret, numeroConstancia: e.target.value })} placeholder="N° de constancia (opcional)" className={`${inputCls} sm:col-span-2 font-mono`} />
+                                <label className="block text-[11px] uppercase tracking-wider text-slate-400 sm:col-span-2">
+                                    Factura a crédito abierta
+                                    <select
+                                        value={ret.saleId}
+                                        onChange={event => selectRetentionSale(event.target.value)}
+                                        disabled={openCreditSalesBusy}
+                                        className={`${inputCls} mt-1.5 normal-case disabled:cursor-wait disabled:opacity-60`}
+                                    >
+                                        <option value="">
+                                            {openCreditSalesBusy
+                                                ? 'Cargando facturas abiertas…'
+                                                : openCreditSales.length === 0
+                                                    ? 'No hay facturas con saldo pendiente'
+                                                    : 'Seleccioná una factura abierta'}
+                                        </option>
+                                        {openCreditSales.map(sale => (
+                                            <option key={sale.saleId} value={sale.saleId}>
+                                                {sale.invoiceNumber ? `Factura #${sale.invoiceNumber}` : `Venta del ${new Date(sale.date).toLocaleDateString('es-NI')}`} · {sale.customerName} · saldo {C(sale.balance)}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                                {openCreditSalesError && (
+                                    <div role="alert" className="sm:col-span-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                                        <span>{openCreditSalesError}</span>
+                                        <button type="button" onClick={() => void loadOpenCreditSales()} className="font-semibold text-white underline underline-offset-4">Reintentar</button>
+                                    </div>
+                                )}
+                                <label className="block text-[11px] uppercase tracking-wider text-slate-400">
+                                    Fecha de retención
+                                    <input type="date" value={ret.fecha} onChange={e => setRet({ ...ret, fecha: e.target.value })} className={`${inputCls} mt-1.5 font-mono`} />
+                                </label>
+                                <label className="block text-[11px] uppercase tracking-wider text-slate-400">
+                                    Tipo de retención
+                                    <select value={ret.tipo} onChange={e => setRet({ ...ret, tipo: e.target.value })} className={`${inputCls} mt-1.5`}>
+                                        <option value="IR_2">IR 2% (renta)</option>
+                                        <option value="IMI_1">IMI 1% (alcaldía)</option>
+                                    </select>
+                                </label>
+                                <label className="block text-[11px] uppercase tracking-wider text-slate-400 sm:col-span-2">
+                                    Cliente retenedor
+                                    <input value={ret.clienteRetenedor} onChange={e => setRet({ ...ret, clienteRetenedor: e.target.value })} placeholder="Ej: SINSA S.A." className={`${inputCls} mt-1.5 normal-case`} />
+                                </label>
+                                <label className="block text-[11px] text-slate-400 uppercase tracking-wider">
+                                    Base (monto facturado)
+                                    <input inputMode="decimal" value={ret.baseAmount} onChange={e => setRet({ ...ret, baseAmount: sanitizeDecimalInput(e.target.value) })} placeholder="0.00" className={`${inputCls} mt-1.5 text-right font-mono tabular-nums`} />
+                                </label>
+                                <label className="block text-[11px] text-slate-400 uppercase tracking-wider">
+                                    Retenido {ret.amount ? '' : <span className="text-slate-600">(auto {C(retAmountAuto)})</span>}
+                                    <input inputMode="decimal" value={ret.amount} onChange={e => setRet({ ...ret, amount: sanitizeDecimalInput(e.target.value) })} placeholder={retAmountAuto.toFixed(2)} className={`${inputCls} mt-1.5 text-right font-mono tabular-nums`} />
+                                </label>
+                                <label className="block text-[11px] uppercase tracking-wider text-slate-400 sm:col-span-2">
+                                    N° de constancia <span className="normal-case text-slate-600">(opcional)</span>
+                                    <input value={ret.numeroConstancia} onChange={e => setRet({ ...ret, numeroConstancia: e.target.value })} className={`${inputCls} mt-1.5 font-mono`} />
+                                </label>
                             </div>
                             {retMsg && <div className={`mt-3 px-4 py-2.5 rounded-xl text-sm ${retMsg.ok ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>{retMsg.text}</div>}
-                            <button onClick={submitRet} className="btn-primary mt-4 inline-flex items-center gap-2"><Plus size={16} /> Registrar retención</button>
+                            <button type="button" onClick={() => void submitRet()} disabled={savingRet} className="btn-primary mt-4 inline-flex items-center gap-2 disabled:opacity-50">
+                                {savingRet ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Plus size={16} />}
+                                {savingRet ? 'Registrando…' : 'Registrar retención'}
+                            </button>
                         </div>
 
-                        <div className="panel-premium p-6">
+                        <div className="panel-premium p-4 sm:p-6">
                             <h3 className="text-white font-bold mb-3 text-sm uppercase tracking-wider">Retenciones registradas</h3>
-                            {retList.length === 0 ? <p className="text-slate-500 text-sm text-center py-4">Aún no hay retenciones registradas.</p> : (
-                                <table className="w-full table-premium">
+                            {retBusy ? (
+                                <div role="status" className="flex items-center justify-center gap-2 py-8 text-sm text-slate-400">
+                                    <Loader2 size={17} className="animate-spin text-brand-300" aria-hidden="true" /> Cargando retenciones…
+                                </div>
+                            ) : retError ? (
+                                <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+                                    <span>{retError}</span>
+                                    <button type="button" onClick={() => void loadRet()} className="font-semibold text-white underline underline-offset-4">Reintentar</button>
+                                </div>
+                            ) : retList.length === 0 ? <p className="text-slate-500 text-sm text-center py-4">Aún no hay retenciones registradas.</p> : (
+                                <div className="overflow-x-auto">
+                                <table className="w-full min-w-[620px] table-premium">
                                     <thead><tr><th>Fecha</th><th>Cliente</th><th>Tipo</th><th className="text-right">Base</th><th className="text-right">Retenido</th></tr></thead>
                                     <tbody>
                                         {retList.map(r => (
@@ -966,6 +1458,7 @@ const Contabilidad: React.FC = () => {
                                         ))}
                                     </tbody>
                                 </table>
+                                </div>
                             )}
                         </div>
                     </div>
@@ -974,7 +1467,18 @@ const Contabilidad: React.FC = () => {
                 {/* ── CONFIG FISCAL + TIPO DE CAMBIO (B4/B6) ── */}
                 {tab === 'fiscal' && (
                     <div className="space-y-6">
-                        <div className="panel-premium p-6">
+                        {fiscalBusy && (
+                            <div role="status" className="panel-premium flex items-center justify-center gap-2 p-8 text-sm text-slate-400">
+                                <Loader2 size={17} className="animate-spin text-brand-300" aria-hidden="true" /> Cargando configuración fiscal…
+                            </div>
+                        )}
+                        {fiscalError && (
+                            <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+                                <span>{fiscalError}</span>
+                                <button type="button" onClick={() => void loadFiscal()} className="font-semibold text-white underline underline-offset-4">Reintentar</button>
+                            </div>
+                        )}
+                        <div className="panel-premium p-4 sm:p-6">
                             <h3 className="text-white font-bold mb-1 flex items-center gap-2"><Percent size={18} className="text-brand-300" /> Tasas fiscales del negocio</h3>
                             <p className="text-slate-400 text-xs mb-4">Ajusta según tu contribuyente. Reemplazan los valores por defecto en la declaración mensual y la planilla.</p>
                             <div className="grid sm:grid-cols-2 gap-4">
@@ -992,34 +1496,49 @@ const Contabilidad: React.FC = () => {
                                     </div>
                                 ))}
                             </div>
-                            {cfgMsg && <p className="mt-3 text-sm text-emerald-400">{cfgMsg}</p>}
-                            <button onClick={saveCfg} className="btn-primary mt-4 inline-flex items-center gap-2"><CheckCircle2 size={16} /> Guardar tasas</button>
+                            {cfgMsg && <p role={cfgMsg.ok ? 'status' : 'alert'} className={`mt-3 text-sm ${cfgMsg.ok ? 'text-emerald-400' : 'text-rose-400'}`}>{cfgMsg.text}</p>}
+                            <button type="button" onClick={() => void saveCfg()} disabled={savingCfg} className="btn-primary mt-4 inline-flex items-center gap-2 disabled:opacity-50">
+                                {savingCfg ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <CheckCircle2 size={16} />}
+                                {savingCfg ? 'Guardando…' : 'Guardar tasas'}
+                            </button>
                         </div>
 
-                        <div className="panel-premium p-6">
+                        <div className="panel-premium p-4 sm:p-6">
                             <h3 className="text-white font-bold mb-1 flex items-center gap-2"><Coins size={18} className="text-emerald-400" /> Tipo de cambio (C$/US$)</h3>
                             <p className="text-slate-400 text-xs mb-4">
                                 Vigente: <span className="font-mono text-white font-bold">{exLatest.rate ? `${formatMoney(exLatest.rate, 'NIO', { decimals: 4 })}` : '— sin registrar —'}</span>
                                 {exLatest.fecha ? <span className="text-slate-500"> (del {new Date(exLatest.fecha).toLocaleDateString('es-NI')})</span> : ''}. El POS lo usa para pagos en dólares.
                             </p>
-                            <div className="flex flex-wrap items-end gap-3">
-                                <div>
+                            <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-3">
+                                <div className="w-full sm:w-auto">
                                     <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5">Fecha</label>
                                     <input type="date" value={exDate} onChange={e => setExDate(e.target.value)} className={`${inputCls} font-mono`} />
                                 </div>
-                                <div>
+                                <div className="w-full sm:w-auto">
                                     <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5">Tasa</label>
-                                    <input inputMode="decimal" value={exRate} onChange={e => setExRate(sanitizeDecimalInput(e.target.value))} placeholder="36.6234" className={`${inputCls} text-right font-mono tabular-nums w-36`} />
+                                    <input
+                                        inputMode="decimal"
+                                        value={exRate}
+                                        onChange={e => { setExRate(sanitizeDecimalInput(e.target.value)); setExRateError(''); }}
+                                        placeholder="36.6234"
+                                        aria-invalid={Boolean(exRateError)}
+                                        aria-describedby={exRateError ? 'exchange-rate-error' : undefined}
+                                        className={`${inputCls} text-right font-mono tabular-nums sm:w-36 ${exRateError ? 'border-rose-500/60' : ''}`}
+                                    />
                                 </div>
-                                <button onClick={saveRate} className="btn-primary inline-flex items-center gap-2"><Plus size={16} /> Registrar</button>
+                                <button type="button" onClick={() => void saveRate()} disabled={savingRate} className="btn-primary w-full sm:w-auto justify-center inline-flex items-center gap-2 disabled:opacity-50">
+                                    {savingRate ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Plus size={16} />}
+                                    {savingRate ? 'Registrando…' : 'Registrar'}
+                                </button>
                             </div>
+                            {exRateError && <p id="exchange-rate-error" role="alert" className="mt-3 text-sm text-rose-400">{exRateError}</p>}
                         </div>
                     </div>
                 )}
                 {/* ── ACTIVOS FIJOS (B2) ── */}
                 {tab === 'activos' && (
                     <div className="space-y-6">
-                        <div className="panel-premium p-6">
+                        <div className="panel-premium p-4 sm:p-6">
                             <h3 className="text-white font-bold mb-1 flex items-center gap-2"><Landmark size={18} className="text-brand-300" /> Registrar activo fijo</h3>
                             <p className="text-slate-400 text-xs mb-4">Se deprecia solo cada mes (línea recta, Ley 822). La cuota baja la utilidad → menos IR.</p>
                             <div className="grid sm:grid-cols-4 gap-3">
@@ -1029,18 +1548,35 @@ const Contabilidad: React.FC = () => {
                                 </select>
                                 <input type="date" value={newAsset.fechaAdquisicion} onChange={e => setNewAsset({ ...newAsset, fechaAdquisicion: e.target.value })} className={`${inputCls} font-mono`} />
                                 <input inputMode="decimal" value={newAsset.costo} onChange={e => setNewAsset({ ...newAsset, costo: sanitizeDecimalInput(e.target.value) })} placeholder="Costo C$" className={`${inputCls} text-right font-mono tabular-nums`} />
-                                <button onClick={addAsset} className="btn-primary sm:col-span-3 inline-flex items-center justify-center gap-2"><Plus size={16} /> Agregar activo</button>
+                                <button type="button" onClick={() => void addAsset()} disabled={addingAsset} className="btn-primary sm:col-span-3 inline-flex items-center justify-center gap-2 disabled:opacity-50">
+                                    {addingAsset ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Plus size={16} />}
+                                    {addingAsset ? 'Registrando…' : 'Agregar activo'}
+                                </button>
                             </div>
+                            {assetFormError && <p role="alert" className="mt-3 text-sm text-rose-400">{assetFormError}</p>}
                         </div>
 
-                        <div className="panel-premium p-6">
-                            <div className="flex items-center justify-between mb-3">
+                        <div className="panel-premium p-4 sm:p-6">
+                            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                                 <h3 className="text-white font-bold text-sm uppercase tracking-wider">Activos registrados</h3>
-                                <button onClick={runDep} className="btn-ghost text-xs py-1.5 inline-flex items-center gap-1.5"><Play size={13} /> Correr depreciación del mes</button>
+                                <button type="button" onClick={() => void runDep()} disabled={depreciationBusy} className="btn-ghost text-xs py-1.5 inline-flex items-center gap-1.5 disabled:opacity-50">
+                                    {depreciationBusy ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Play size={13} />}
+                                    {depreciationBusy ? 'Corriendo…' : 'Correr depreciación del mes'}
+                                </button>
                             </div>
-                            {depMsg && <p className="text-xs text-emerald-400 mb-2">{depMsg}</p>}
-                            {assets.length === 0 ? <p className="text-slate-500 text-sm text-center py-4">Sin activos registrados.</p> : (
-                                <table className="w-full table-premium">
+                            {depMsg && <p role={depMsg.ok ? 'status' : 'alert'} className={`text-xs mb-2 ${depMsg.ok ? 'text-emerald-400' : 'text-rose-400'}`}>{depMsg.text}</p>}
+                            {assetsBusy ? (
+                                <div role="status" className="flex items-center justify-center gap-2 py-8 text-sm text-slate-400">
+                                    <Loader2 size={17} className="animate-spin text-brand-300" aria-hidden="true" /> Cargando activos…
+                                </div>
+                            ) : assetsError ? (
+                                <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+                                    <span>{assetsError}</span>
+                                    <button type="button" onClick={() => void loadAssets()} className="font-semibold text-white underline underline-offset-4">Reintentar</button>
+                                </div>
+                            ) : assets.length === 0 ? <p className="text-slate-500 text-sm text-center py-4">Sin activos registrados.</p> : (
+                                <div className="overflow-x-auto">
+                                <table className="w-full min-w-[720px] table-premium">
                                     <thead><tr><th>Activo</th><th>Categoría</th><th className="text-right">Costo</th><th className="text-right">Deprec. acum.</th><th className="text-right">Valor libros</th><th /></tr></thead>
                                     <tbody>
                                         {assets.map(a => (
@@ -1050,11 +1586,21 @@ const Contabilidad: React.FC = () => {
                                                 <td className="text-right num text-slate-300">{C(a.costo)}</td>
                                                 <td className="text-right num text-amber-400">{C(a.depreciacionAcumulada)}</td>
                                                 <td className="text-right num text-white font-bold">{C(a.valorEnLibros)}</td>
-                                                <td className="text-right">{a.estado === 'ACTIVO' && <button onClick={() => bajaAsset(a.id)} className="text-slate-500 hover:text-red-400" title="Dar de baja"><Trash2 size={14} /></button>}</td>
+                                                <td className="text-right">{a.estado === 'ACTIVO' && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={(event) => openDecisionDialog({ kind: 'retire-asset', asset: a }, event.currentTarget)}
+                                                        className="rounded-lg p-2 text-slate-500 hover:bg-rose-500/10 hover:text-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/60"
+                                                        aria-label={`Dar de baja ${a.nombre}`}
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                )}</td>
                                             </tr>
                                         ))}
                                     </tbody>
                                 </table>
+                                </div>
                             )}
                         </div>
                     </div>
@@ -1065,7 +1611,7 @@ const Contabilidad: React.FC = () => {
                     <div className="space-y-4">
                         <div className="flex items-center gap-2">
                             <select value={rentaYear} onChange={e => setRentaYear(Number(e.target.value))} className="bg-surface-900 border border-white/[0.08] text-white px-3 py-2 rounded-xl text-sm font-mono">
-                                {[0, 1, 2, 3].map(d => { const yr = today.getFullYear() - d; return <option key={yr} value={yr}>{yr}</option>; })}
+                                {[0, 1, 2, 3].map(d => { const yr = todayCivil.year - d; return <option key={yr} value={yr}>{yr}</option>; })}
                             </select>
                             {busy && <Loader2 className="animate-spin text-brand-300" size={18} />}
                         </div>
@@ -1092,6 +1638,127 @@ const Contabilidad: React.FC = () => {
                                 <p className="text-[11px] text-slate-500 mt-4">IR-1 — vence el 31 de marzo de {renta.year + 1}. Revisar con el contador antes de presentar.</p>
                             </div>
                         )}
+                    </div>
+                )}
+
+                {decisionDialog && (
+                    <div
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+                        onMouseDown={(event) => {
+                            if (event.target === event.currentTarget) dismissDecisionDialog();
+                        }}
+                    >
+                        <div
+                            ref={decisionDialogRef}
+                            role="alertdialog"
+                            aria-modal="true"
+                            aria-labelledby="accounting-decision-title"
+                            aria-describedby="accounting-decision-description"
+                            tabIndex={-1}
+                            className="w-full max-w-lg overflow-hidden rounded-2xl border border-white/[0.1] bg-surface-900 shadow-2xl"
+                        >
+                            <div className="flex items-start justify-between gap-4 border-b border-white/[0.08] px-5 py-4 sm:px-6">
+                                <div className="flex items-start gap-3">
+                                    <span className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${decisionDialog.kind === 'retire-asset' ? 'border-rose-500/30 bg-rose-500/10 text-rose-300' : decisionDialog.kind === 'reopen-period' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300'}`}>
+                                        {decisionDialog.kind === 'retire-asset' ? <Trash2 size={19} aria-hidden="true" /> : decisionDialog.kind === 'reopen-period' ? <Unlock size={19} aria-hidden="true" /> : <Lock size={19} aria-hidden="true" />}
+                                    </span>
+                                    <div>
+                                        <h2 id="accounting-decision-title" className="text-lg font-bold text-white">
+                                            {decisionDialog.kind === 'close-period'
+                                                ? `Cerrar ${MESES[decisionDialog.month - 1]} ${decisionDialog.year}`
+                                                : decisionDialog.kind === 'reopen-period'
+                                                    ? `Reabrir ${MESES[decisionDialog.period.month - 1]} ${decisionDialog.period.year}`
+                                                    : `Dar de baja ${decisionDialog.asset.nombre}`}
+                                        </h2>
+                                        <p className="mt-1 text-xs text-slate-500">Esta decisión quedará registrada en la auditoría.</p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={dismissDecisionDialog}
+                                    disabled={decisionBusy}
+                                    className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
+                                    aria-label="Cerrar confirmación"
+                                >
+                                    <X size={18} />
+                                </button>
+                            </div>
+
+                            <div className="space-y-4 px-5 py-5 sm:px-6">
+                                <p id="accounting-decision-description" className="text-sm leading-6 text-slate-300">
+                                    {decisionDialog.kind === 'close-period' ? (
+                                        <>Los libros y cifras DGI del período quedarán congelados. No se podrán registrar movimientos con esas fechas hasta una reapertura autorizada.</>
+                                    ) : decisionDialog.kind === 'reopen-period' ? (
+                                        <>El período volverá a admitir movimientos. Indicá por qué se necesita reabrirlo para conservar una trazabilidad clara.</>
+                                    ) : (
+                                        <>El activo dejará de depreciarse y se registrará su salida contable por un valor en libros de <strong className="text-white">{C(decisionDialog.asset.valorEnLibros)}</strong>. Esta acción no se puede deshacer desde esta pantalla.</>
+                                    )}
+                                </p>
+
+                                {decisionDialog.kind === 'reopen-period' && (
+                                    <div>
+                                        <label htmlFor="reopen-period-reason" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                                            Motivo de reapertura
+                                        </label>
+                                        <textarea
+                                            ref={reopenReasonRef}
+                                            id="reopen-period-reason"
+                                            value={reopenReason}
+                                            onChange={(event) => { setReopenReason(event.target.value); setDecisionError(''); }}
+                                            rows={4}
+                                            maxLength={500}
+                                            required
+                                            aria-invalid={Boolean(decisionError)}
+                                            aria-describedby={`reopen-period-help${decisionError ? ' accounting-decision-error' : ''}`}
+                                            placeholder="Ej: corregir una factura contabilizada en el mes equivocado"
+                                            className={`${inputCls} resize-none ${decisionError ? 'border-rose-500/60' : ''}`}
+                                        />
+                                        <div id="reopen-period-help" className="mt-1.5 flex items-center justify-between gap-3 text-[11px] text-slate-500">
+                                            <span>Mínimo 3 caracteres · queda auditado</span>
+                                            <span>{reopenReason.length}/500</span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {decisionError && (
+                                    <div id="accounting-decision-error" role="alert" className="flex items-start gap-2 rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2.5 text-sm text-rose-300">
+                                        <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                                        <span>{decisionError}</span>
+                                    </div>
+                                )}
+
+                                <div className="flex flex-col-reverse gap-3 pt-1 sm:flex-row sm:justify-end">
+                                    <button
+                                        ref={decisionSafeActionRef}
+                                        type="button"
+                                        onClick={dismissDecisionDialog}
+                                        disabled={decisionBusy}
+                                        className="btn-ghost justify-center disabled:opacity-40 sm:min-w-28"
+                                    >
+                                        Volver
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (decisionDialog.kind === 'close-period') void confirmClosePeriod();
+                                            else if (decisionDialog.kind === 'reopen-period') void confirmReopenPeriod();
+                                            else void confirmAssetRetirement();
+                                        }}
+                                        disabled={decisionBusy}
+                                        className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:min-w-40 ${decisionDialog.kind === 'retire-asset' ? 'bg-rose-600 hover:bg-rose-500' : 'bg-brand hover:bg-brand-400'}`}
+                                    >
+                                        {decisionBusy ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : decisionDialog.kind === 'retire-asset' ? <Trash2 size={16} aria-hidden="true" /> : decisionDialog.kind === 'reopen-period' ? <Unlock size={16} aria-hidden="true" /> : <Lock size={16} aria-hidden="true" />}
+                                        {decisionBusy
+                                            ? 'Procesando…'
+                                            : decisionDialog.kind === 'close-period'
+                                                ? 'Confirmar cierre'
+                                                : decisionDialog.kind === 'reopen-period'
+                                                    ? 'Reabrir período'
+                                                    : 'Dar de baja'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 )}
             </div>

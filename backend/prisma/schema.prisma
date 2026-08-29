@@ -50,6 +50,10 @@ model Tenant {
   // MISMA CUENTA: ahí el PIN es lo único que le pone nombre a un faltante del
   // arqueo. Si cada quien entra con su usuario, `Shift.userId` ya lo resuelve.
   requireCashierPin    Boolean   @default(false)
+  // Desglose de lotes por bodega: OFF preserva el comportamiento legado.
+  // La activación se hará explícitamente por tenant, nunca desde una migración.
+  batchWarehouseLedgerMode        String    @default("OFF") @db.VarChar(16)
+  batchWarehouseLedgerActivatedAt DateTime?
   // Campos Fiscales DGI
   // GENERAL preserva el cálculo y desglose fiscal de todos los tenants
   // existentes; la versión permite congelar qué configuración usó cada documento.
@@ -61,37 +65,37 @@ model Tenant {
   dgiAuthDate          DateTime? // Fecha de autorización DGI
   createdAt            DateTime  @default(now())
 
-  users            User[]
-  customers        Customer[]
-  suppliers        Supplier[]
-  employees        Employee[]
-  sales            Sale[]
-  shifts           Shift[]
-  auditLogs        AuditLog[]
-  expenses         Expense[]
-  b2bOrders        B2BOrder[]
-  products         Product[]
-  productBatches   ProductBatch[]
-  kardexMovements  KardexMovement[]
-  stockCounts      StockCount[]
-  purchases        Purchase[]
-  purchaseOrders   PurchaseOrder[]
-  manualPayments   ManualPayment[]
-  quotations       Quotation[]
-  invitations      Invitation[]
-  cashMovements    CashMovement[]
-  productReturns   ProductReturn[]
-  serialNumbers    SerialNumber[]
-  warehouses       Warehouse[]
-  productStocks    ProductStock[]
-  stockTransfers   StockTransfer[]
-  sellerProducts   SellerProduct[]
-  accounts         Account[]
-  journalEntries   JournalEntry[]
-  fiscalRetentions FiscalRetention[]
-  invoiceSeries    InvoiceSeries[]
-  publicOrders     PublicOrder[]
-  capitalLoans     CapitalLoan[]
+  users                     User[]
+  customers                 Customer[]
+  suppliers                 Supplier[]
+  employees                 Employee[]
+  sales                     Sale[]
+  shifts                    Shift[]
+  auditLogs                 AuditLog[]
+  expenses                  Expense[]
+  b2bOrders                 B2BOrder[]
+  products                  Product[]
+  productBatches            ProductBatch[]
+  kardexMovements           KardexMovement[]
+  stockCounts               StockCount[]
+  purchases                 Purchase[]
+  purchaseOrders            PurchaseOrder[]
+  manualPayments            ManualPayment[]
+  quotations                Quotation[]
+  invitations               Invitation[]
+  cashMovements             CashMovement[]
+  productReturns            ProductReturn[]
+  serialNumbers             SerialNumber[]
+  warehouses                Warehouse[]
+  productStocks             ProductStock[]
+  stockTransfers            StockTransfer[]
+  sellerProducts            SellerProduct[]
+  accounts                  Account[]
+  journalEntries            JournalEntry[]
+  fiscalRetentions          FiscalRetention[]
+  invoiceSeries             InvoiceSeries[]
+  publicOrders              PublicOrder[]
+  capitalLoans              CapitalLoan[]
   tenantCapabilities        TenantCapability[]
   scaleLabelProfiles        ScaleLabelProfile[]
   scaleLabelProfileVersions ScaleLabelProfileVersion[]
@@ -100,6 +104,23 @@ model Tenant {
   saleMeasurements          SaleMeasurement[]
   saleItemBatchAllocations  SaleItemBatchAllocation[]
   customerInteractions      CustomerInteraction[]
+  supplierContacts          SupplierContact[]
+  supplierDocuments         SupplierDocument[]
+  supplierPayments          SupplierPayment[]
+  goodsReceipts             GoodsReceipt[]
+  goodsReceiptItems         GoodsReceiptItem[]
+  purchaseMatchAllocations  PurchaseMatchAllocation[]
+  purchaseMatchExceptions   PurchaseMatchException[]
+  procurementPolicy         ProcurementPolicy?
+  productBatchWarehouseStocks ProductBatchWarehouseStock[]
+  productBatchLedgerEntries   ProductBatchLedgerEntry[]
+  purchaseOrderCloseShorts    PurchaseOrderCloseShort[]
+  purchaseOrderCloseShortItems PurchaseOrderCloseShortItem[]
+  supplierReturns              SupplierReturn[]
+  supplierReturnItems          SupplierReturnItem[]
+  supplierCreditNotes          SupplierCreditNote[]
+  supplierCreditNoteLines      SupplierCreditNoteLine[]
+  supplierCreditApplications   SupplierCreditApplication[]
 
   // HR Module
   leaveRequests          LeaveRequest[]
@@ -129,29 +150,41 @@ model User {
   invitedBy String?
   createdAt DateTime  @default(now())
 
-  tenant          Tenant           @relation(fields: [tenantId], references: [id])
-  shifts          Shift[]
-  payments        Payment[]
-  salesSold         Sale[]     @relation("SaleSeller")
+  tenant                           Tenant                     @relation(fields: [tenantId], references: [id])
+  shifts                           Shift[]
+  payments                         Payment[]
+  salesSold                        Sale[]                     @relation("SaleSeller")
   // Ventas que este usuario ANULÓ (DGI-5): la anulación siempre tiene autor.
-  salesCancelled    Sale[]     @relation("SaleCanceller")
-  customersAssigned Customer[] @relation("CustomerSeller")
-  loadWarehouses    Warehouse[]     @relation("SellerLoadWarehouse")
-  catalogAssigned   SellerProduct[] @relation("SellerCatalog")
-  auditLogs       AuditLog[]
-  productsCreated Product[]
-  kardexMovements KardexMovement[]
-  stockCounts     StockCount[]
-  passwordResets  PasswordReset[]
-  cashMovements   CashMovement[]
-  employeeProfile Employee?
-  loansAssigned   Loan[]           @relation("LoanCollector")
-  whatsappNumber  String?          @unique @db.VarChar(20)
-  whatsappSession WhatsappSession?
+  salesCancelled                   Sale[]                     @relation("SaleCanceller")
+  customersAssigned                Customer[]                 @relation("CustomerSeller")
+  loadWarehouses                   Warehouse[]                @relation("SellerLoadWarehouse")
+  catalogAssigned                  SellerProduct[]            @relation("SellerCatalog")
+  auditLogs                        AuditLog[]
+  productsCreated                  Product[]
+  kardexMovements                  KardexMovement[]
+  stockCounts                      StockCount[]
+  passwordResets                   PasswordReset[]
+  cashMovements                    CashMovement[]
+  employeeProfile                  Employee?
+  loansAssigned                    Loan[]                     @relation("LoanCollector")
+  whatsappNumber                   String?                    @unique @db.VarChar(20)
+  whatsappSession                  WhatsappSession?
   scaleLabelProfileVersionsCreated ScaleLabelProfileVersion[] @relation("ScaleLabelProfileVersionCreator")
   scaleDevicesCreated              ScaleDevice[]              @relation("ScaleDeviceCreator")
   saleMeasurements                 SaleMeasurement[]          @relation("SaleMeasurementUser")
   customerInteractionsCreated      CustomerInteraction[]      @relation("CustomerInteractionCreator")
+  supplierContactsCreated          SupplierContact[]           @relation("SupplierContactCreator")
+  supplierDocumentsUploaded        SupplierDocument[]          @relation("SupplierDocumentUploader")
+  supplierPaymentsCreated          SupplierPayment[]           @relation("SupplierPaymentCreator")
+  goodsReceiptsReceived            GoodsReceipt[]               @relation("GoodsReceiptReceiver")
+  purchasesMatchResolved           Purchase[]                   @relation("PurchaseMatchResolver")
+  purchaseMatchExceptionsResolved  PurchaseMatchException[]     @relation("PurchaseMatchExceptionResolver")
+  procurementPoliciesUpdated       ProcurementPolicy[]          @relation("ProcurementPolicyUpdater")
+  productBatchLedgerEntriesCreated ProductBatchLedgerEntry[]     @relation("ProductBatchLedgerEntryCreator")
+  purchaseOrderCloseShortsCreated  PurchaseOrderCloseShort[]     @relation("PurchaseOrderCloseShortCreator")
+  supplierReturnsCreated            SupplierReturn[]              @relation("SupplierReturnCreator")
+  supplierCreditNotesCreated        SupplierCreditNote[]          @relation("SupplierCreditNoteCreator")
+  supplierCreditApplicationsCreated SupplierCreditApplication[]   @relation("SupplierCreditApplicationCreator")
 
   @@index([tenantId])
   // Retención: escaneo de usuarios activos por recencia de login (métricas admin
@@ -218,9 +251,9 @@ model Customer {
   sellerId    String?
   createdAt   DateTime @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id])
-  seller User?  @relation("CustomerSeller", fields: [sellerId], references: [id])
-  sales  Sale[]
+  tenant       Tenant                @relation(fields: [tenantId], references: [id])
+  seller       User?                 @relation("CustomerSeller", fields: [sellerId], references: [id])
+  sales        Sale[]
   interactions CustomerInteraction[]
 
   loans Loan[]
@@ -239,7 +272,7 @@ model CustomerInteraction {
   type           String // NOTE | CALL | WHATSAPP | VISIT | PROMISE
   note           String    @db.Text
   status         String    @default("OPEN") // OPEN | COMPLETED | CANCELLED
-  promisedAmount Decimal?  @db.Decimal(18, 4)
+  promisedAmount Decimal?  @db.Decimal(10, 2)
   promisedAt     DateTime?
   followUpAt     DateTime?
   completedAt    DateTime?
@@ -257,23 +290,94 @@ model CustomerInteraction {
 }
 
 model Supplier {
-  id          String   @id @default(cuid())
-  tenantId    String
-  name        String
-  ruc         String?
-  contactName String?
-  phone       String?
-  email       String?
-  address     String?  @db.Text
-  category    String?
-  createdAt   DateTime @default(now())
+  id                 String    @id @default(cuid())
+  tenantId           String
+  name               String
+  ruc                String?
+  contactName        String?
+  phone              String?
+  email              String?
+  address            String?   @db.Text
+  category           String?
+  status             String    @default("ACTIVE") @db.VarChar(32) // ACTIVE | SUSPENDED | BLOCKED
+  legalType          String?   @db.VarChar(32) // NATURAL | JURIDICAL
+  fiscalCategory     String?   @db.VarChar(64)
+  currency           String    @default("NIO") @db.VarChar(3)
+  paymentTermsDays   Int?
+  creditLimit        Decimal?  @db.Decimal(18, 4)
+  leadTimeDays       Int?
+  minimumOrderAmount Decimal?  @db.Decimal(18, 4)
+  notes              String?   @db.Text
+  deletedAt          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now()) @updatedAt
 
-  tenant             Tenant     @relation(fields: [tenantId], references: [id])
+  tenant             Tenant          @relation(fields: [tenantId], references: [id])
   purchases          Purchase[]
   purchaseOrders     PurchaseOrder[]
-  defaultForProducts Product[]  @relation("DefaultSupplier")
+  defaultForProducts Product[]       @relation("DefaultSupplier")
+  contacts           SupplierContact[]
+  documents          SupplierDocument[]
+  payments           SupplierPayment[]
+  supplierReturns    SupplierReturn[]
+  creditNotes        SupplierCreditNote[]
+  creditApplications SupplierCreditApplication[]
 
   @@index([tenantId])
+  @@index([tenantId, deletedAt, name])
+  @@index([tenantId, status, name])
+  @@index([tenantId, ruc])
+}
+
+/// Personas de contacto del proveedor. Cada registro conserva tenantId para que
+/// las consultas y autorizaciones no dependan solo de la relación indirecta.
+model SupplierContact {
+  id         String   @id @default(cuid())
+  tenantId   String
+  supplierId String
+  name       String
+  title      String?
+  phone      String?
+  email      String?
+  isPrimary  Boolean  @default(false)
+  notes      String?  @db.Text
+  createdBy  String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  creator  User     @relation("SupplierContactCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, supplierId])
+  @@index([tenantId, email])
+  @@index([createdBy])
+}
+
+/// Metadatos de documentos privados. El archivo vive fuera de la base de datos;
+/// storageKey es una referencia opaca y nunca una URL pública.
+model SupplierDocument {
+  id         String    @id @default(cuid())
+  tenantId   String
+  supplierId String
+  kind       String    @db.VarChar(64)
+  fileName   String    @db.VarChar(255)
+  storageKey String    @db.VarChar(512)
+  mimeType   String?   @db.VarChar(127)
+  sizeBytes  Int?
+  sha256     String?   @db.VarChar(64)
+  expiresAt  DateTime?
+  uploadedBy String
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @default(now()) @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  uploader User     @relation("SupplierDocumentUploader", fields: [uploadedBy], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, supplierId, createdAt])
+  @@index([tenantId, kind, expiresAt])
+  @@index([uploadedBy])
 }
 
 // ==========================================
@@ -281,33 +385,54 @@ model Supplier {
 // ==========================================
 
 model Purchase {
-  id            String    @id @default(cuid())
-  tenantId      String
-  supplierId    String
-  invoiceNumber String // # Factura del proveedor
-  date          DateTime  @default(now())
-  dueDate       DateTime? // Fecha de vencimiento (para crédito)
-  subtotal      Decimal   @db.Decimal(12, 2)
-  tax           Decimal   @default(0) @db.Decimal(12, 2)
+  id                     String    @id @default(cuid())
+  tenantId               String
+  supplierId             String
+  invoiceNumber          String // # Factura del proveedor
+  date                   DateTime  @default(now())
+  postingDate            DateTime?
+  dueDate                DateTime? // Fecha de vencimiento (para crédito)
+  subtotal               Decimal   @db.Decimal(12, 2)
+  tax                    Decimal   @default(0) @db.Decimal(12, 2)
   // Foto fiscal de la compra: los defaults conservan el régimen general en el
   // histórico y NULL distingue el crédito fiscal que nunca se persistió.
-  fiscalRegimeAtPurchase String  @default("GENERAL") @db.VarChar(32)
-  creditableTax          Decimal? @db.Decimal(18, 4)
-  total         Decimal   @db.Decimal(12, 2)
-  status        String    @default("COMPLETED") // COMPLETED | PENDING_PAYMENT
-  paymentMethod String // CASH | CREDIT
-  notes         String?   @db.Text
-  createdBy     String
-  createdAt     DateTime  @default(now())
+  fiscalRegimeAtPurchase String    @default("GENERAL") @db.VarChar(32)
+  creditableTax          Decimal?  @db.Decimal(18, 4)
+  total                  Decimal   @db.Decimal(12, 2)
+  status                 String    @default("COMPLETED") // COMPLETED | PENDING_PAYMENT | PARTIALLY_PAID
+  paymentMethod          String // CASH | CREDIT
+  notes                  String?   @db.Text
+  createdBy              String
+  createdAt              DateTime  @default(now())
   // Recepción de una Orden de Compra (null = compra directa sin OC previa)
-  purchaseOrderId String?
+  purchaseOrderId        String?
+  // NULL en históricos = saldo aún no materializado por el subledger de CxP.
+  balanceDue             Decimal?  @db.Decimal(18, 4)
+  paidAt                 DateTime?
+  // Fecha de liquidación total; paidAt conserva por separado el hecho de pago.
+  // Es nullable para no reinterpretar compras históricas.
+  settledAt              DateTime?
+  // Estado documental y conciliación de tres vías. Los defaults preservan las
+  // compras históricas, que nacieron contabilizadas y sin matching requerido.
+  documentStatus                  String    @default("POSTED") @db.VarChar(32) // POSTED | VOIDED
+  matchStatus                     String    @default("NOT_REQUIRED") @db.VarChar(32) // NOT_REQUIRED | MATCHED | EXCEPTION | RESOLVED
+  paymentHold                     Boolean   @default(false)
+  matchResolvedBy                 String?
+  matchResolvedAt                 DateTime?
+  matchResolutionNote             String?   @db.Text
+  matchResolutionClientEventId    String?   @db.VarChar(128)
+  matchResolutionPayloadHash      String?   @db.VarChar(64)
 
-  tenant        Tenant         @relation(fields: [tenantId], references: [id])
-  supplier      Supplier       @relation(fields: [supplierId], references: [id])
-  items         PurchaseItem[]
-  capitalLoan   CapitalLoan?
-  serialNumbers SerialNumber[]
-  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  tenant          Tenant                   @relation(fields: [tenantId], references: [id])
+  supplier        Supplier                 @relation(fields: [supplierId], references: [id])
+  items           PurchaseItem[]
+  capitalLoan     CapitalLoan?
+  serialNumbers   SerialNumber[]
+  purchaseOrder   PurchaseOrder?           @relation(fields: [purchaseOrderId], references: [id])
+  supplierPayments SupplierPayment[]
+  matchResolver   User?                    @relation("PurchaseMatchResolver", fields: [matchResolvedBy], references: [id], onDelete: Restrict)
+  matchExceptions PurchaseMatchException[]
+  creditApplications SupplierCreditApplication[]
 
   @@index([tenantId])
   @@index([purchaseOrderId])
@@ -317,23 +442,256 @@ model Purchase {
   @@index([tenantId, date])
   // Libros fiscales por régimen sin cruzar datos entre tenants.
   @@index([tenantId, fiscalRegimeAtPurchase, date])
+  @@index([tenantId, supplierId, date])
+  @@index([tenantId, documentStatus, postingDate])
+  @@index([tenantId, matchStatus, paymentHold, date])
+  @@index([matchResolvedBy])
+  @@unique([tenantId, supplierId, invoiceNumber])
+  @@unique([tenantId, matchResolutionClientEventId])
+}
+
+/// Subledger inmutable de pagos a proveedores. clientEventId + payloadHash
+/// permiten reintentos seguros sin duplicar dinero.
+model SupplierPayment {
+  id            String   @id @default(cuid())
+  tenantId      String
+  purchaseId    String
+  supplierId    String
+  clientEventId String   @db.VarChar(128)
+  payloadHash   String   @db.VarChar(64)
+  amount        Decimal  @db.Decimal(18, 4)
+  method        String   @db.VarChar(32)
+  reference     String?
+  notes         String?  @db.Text
+  paidAt        DateTime @default(now())
+  createdBy     String
+  createdAt     DateTime @default(now())
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  creator  User     @relation("SupplierPaymentCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, clientEventId])
+  @@index([tenantId, supplierId, paidAt])
+  @@index([tenantId, purchaseId, paidAt])
+  @@index([createdBy])
+}
+
+/// Salida física e inmutable de mercancía hacia el proveedor. Este documento
+/// mueve inventario, pero no contabiliza la nota de crédito del proveedor.
+model SupplierReturn {
+  id                String   @id @default(cuid())
+  tenantId          String
+  supplierId        String
+  returnNumber      String
+  status            String   @default("POSTED") @db.VarChar(32) // POSTED
+  reasonCode        String   @db.VarChar(32)
+  reason            String?  @db.Text
+  supplierReference String?
+  clientEventId     String   @db.VarChar(128)
+  payloadVersion    Int      @default(1)
+  payloadHash       String   @db.VarChar(64)
+  batchLedgerMode   String   @db.VarChar(16)
+  returnedBy        String
+  returnedAt        DateTime
+  createdAt         DateTime @default(now())
+
+  tenant   Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  supplier Supplier             @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  creator  User                 @relation("SupplierReturnCreator", fields: [returnedBy], references: [id], onDelete: Restrict)
+  items    SupplierReturnItem[]
+
+  @@unique([tenantId, returnNumber])
+  @@unique([tenantId, clientEventId])
+  @@index([tenantId, supplierId, returnedAt])
+  @@index([returnedBy])
+}
+
+/// Evidencia exacta de cada salida física. sourceType discrimina una y solo una
+/// de las tres FKs de origen; el servicio valida esa unión antes de escribir.
+model SupplierReturnItem {
+  id                        String   @id @default(cuid())
+  tenantId                  String
+  supplierReturnId          String
+  sourceType                String   @db.VarChar(32) // DIRECT_PURCHASE_ITEM | GOODS_RECEIPT_UNMATCHED | PURCHASE_MATCH_ALLOCATION
+  purchaseItemId            String?
+  goodsReceiptItemId        String?
+  purchaseMatchAllocationId String?
+  productId                 String
+  productNameAtReturn       String   @db.VarChar(191)
+  warehouseId               String
+  batchId                   String?
+  quantityExact             Decimal  @db.Decimal(18, 4)
+  bookUnitCostExact         Decimal  @db.Decimal(18, 6)
+  bookValueExact            Decimal  @db.Decimal(18, 4)
+  unitAtReturn              String   @db.VarChar(32)
+  saleModeAtReturn          String?  @db.VarChar(32)
+  quantityStepAtReturn      Decimal? @db.Decimal(18, 4)
+  batchNumberAtReturn       String?
+  expiryDateAtReturn        DateTime?
+  sourceHash                String   @db.VarChar(64)
+  batchLedgerStatus         String   @db.VarChar(32) // NOT_APPLICABLE | APPLIED
+  createdAt                 DateTime @default(now())
+
+  tenant                  Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  supplierReturn          SupplierReturn           @relation(fields: [supplierReturnId], references: [id], onDelete: Cascade)
+  purchaseItem            PurchaseItem?            @relation(fields: [purchaseItemId], references: [id], onDelete: Restrict)
+  goodsReceiptItem        GoodsReceiptItem?        @relation(fields: [goodsReceiptItemId], references: [id], onDelete: Restrict)
+  purchaseMatchAllocation PurchaseMatchAllocation? @relation(fields: [purchaseMatchAllocationId], references: [id], onDelete: Restrict)
+  product                 Product                  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  warehouse               Warehouse                @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  batch                   ProductBatch?            @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  creditNoteLine          SupplierCreditNoteLine?
+
+  @@unique([supplierReturnId, sourceHash])
+  @@index([tenantId, supplierReturnId])
+  @@index([tenantId, productId, warehouseId])
+  @@index([tenantId, purchaseItemId])
+  @@index([tenantId, goodsReceiptItemId])
+  @@index([tenantId, purchaseMatchAllocationId])
+  @@index([tenantId, batchId])
+}
+
+/// Documento financiero/fiscal inmutable emitido por el proveedor. Una nota
+/// puede cubrir múltiples devoluciones únicamente a través de sus líneas.
+model SupplierCreditNote {
+  id                         String   @id @default(cuid())
+  tenantId                   String
+  supplierId                 String
+  creditNoteNumber           String
+  type                       String   @default("RETURN") @db.VarChar(32) // RETURN
+  status                     String   @default("POSTED") @db.VarChar(32) // POSTED
+  invoiceDate                DateTime
+  creditNoteDate             DateTime
+  devolutionDate             DateTime
+  postingDate                DateTime
+  fiscalRegimeAtCredit       String   @db.VarChar(32)
+  currencyAtIssue            String   @db.VarChar(3)
+  subtotal                   Decimal  @db.Decimal(18, 4)
+  tax                        Decimal  @db.Decimal(18, 4)
+  creditableTax              Decimal  @db.Decimal(18, 4)
+  total                      Decimal  @db.Decimal(18, 4)
+  inventoryReversalExact     Decimal  @db.Decimal(18, 4)
+  priceVarianceReversalExact Decimal  @db.Decimal(18, 4)
+  remainingCredit            Decimal  @default(0) @db.Decimal(18, 4)
+  reason                     String?  @db.Text
+  supplierReference          String?
+  clientEventId              String   @db.VarChar(128)
+  payloadVersion             Int      @default(1)
+  payloadHash                String   @db.VarChar(64)
+  createdBy                  String
+  createdAt                  DateTime @default(now())
+
+  tenant       Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  supplier     Supplier                    @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  creator      User                        @relation("SupplierCreditNoteCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  lines        SupplierCreditNoteLine[]
+  applications SupplierCreditApplication[]
+
+  @@unique([tenantId, supplierId, creditNoteNumber])
+  @@unique([tenantId, clientEventId])
+  @@index([tenantId, supplierId, creditNoteDate])
+  @@index([tenantId, postingDate])
+  @@index([createdBy])
+}
+
+/// Línea fiscal ligada de forma obligatoria y única a una línea física ya
+/// posteada. Los snapshots permiten explicar costo, IVA y PPV sin re-derivarlos.
+model SupplierCreditNoteLine {
+  id                         String   @id @default(cuid())
+  tenantId                   String
+  creditNoteId               String
+  supplierReturnItemId       String   @unique
+  sourcePurchaseItemId       String?
+  purchaseMatchAllocationId  String?
+  sourceHash                 String   @db.VarChar(64)
+  quantityExact              Decimal  @db.Decimal(18, 4)
+  bookUnitCostExact          Decimal  @db.Decimal(18, 6)
+  bookValueExact             Decimal  @db.Decimal(18, 4)
+  subtotal                   Decimal  @db.Decimal(18, 4)
+  tax                        Decimal  @db.Decimal(18, 4)
+  creditableTax              Decimal  @db.Decimal(18, 4)
+  total                      Decimal  @db.Decimal(18, 4)
+  inventoryReversalExact     Decimal  @db.Decimal(18, 4)
+  priceVarianceReversalExact Decimal  @db.Decimal(18, 4)
+  descriptionAtCredit        String   @db.VarChar(191)
+  unitAtCredit               String   @db.VarChar(32)
+  createdAt                  DateTime @default(now())
+
+  tenant                  Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  creditNote              SupplierCreditNote       @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+  supplierReturnItem      SupplierReturnItem       @relation(fields: [supplierReturnItemId], references: [id], onDelete: Restrict)
+  sourcePurchaseItem      PurchaseItem?            @relation(fields: [sourcePurchaseItemId], references: [id], onDelete: Restrict)
+  purchaseMatchAllocation PurchaseMatchAllocation? @relation(fields: [purchaseMatchAllocationId], references: [id], onDelete: Restrict)
+
+  @@unique([creditNoteId, supplierReturnItemId])
+  @@index([tenantId, creditNoteId])
+  @@index([tenantId, sourcePurchaseItemId])
+  @@index([tenantId, purchaseMatchAllocationId])
+}
+
+/// Aplicación explícita de una nota contra una factura abierta. En v1 la suma
+/// de aplicaciones debe agotar exactamente la nota al postearse.
+model SupplierCreditApplication {
+  id           String   @id @default(cuid())
+  tenantId     String
+  supplierId   String
+  creditNoteId String
+  purchaseId   String
+  amount       Decimal  @db.Decimal(18, 4)
+  createdBy    String
+  appliedAt    DateTime
+  createdAt    DateTime @default(now())
+
+  tenant     Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  supplier   Supplier           @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  creditNote SupplierCreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Restrict)
+  purchase   Purchase           @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  creator    User               @relation("SupplierCreditApplicationCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@unique([creditNoteId, purchaseId])
+  @@index([tenantId, supplierId, appliedAt])
+  @@index([tenantId, purchaseId, appliedAt])
+  @@index([createdBy])
 }
 
 model PurchaseItem {
-  id          String    @id @default(cuid())
-  purchaseId  String
-  productId   String
-  productName String // Snapshot del nombre al momento de compra
-  quantity    Int
-  quantityExact Decimal? @db.Decimal(18, 4)
-  unitCost    Decimal   @db.Decimal(10, 2)
-  totalCost   Decimal   @db.Decimal(10, 2)
-  batchNumber String? // Número de lote ingresado en la compra
-  expiryDate  DateTime? // Fecha de vencimiento ingresada en la compra
+  id                     String    @id @default(cuid())
+  purchaseId             String
+  productId              String
+  productName            String // Snapshot del nombre al momento de compra
+  quantity               Int
+  quantityExact          Decimal?  @db.Decimal(18, 4)
+  unitCost               Decimal   @db.Decimal(10, 2)
+  totalCost              Decimal   @db.Decimal(10, 2)
+  batchNumber            String? // Número de lote ingresado en la compra
+  expiryDate             DateTime? // Fecha de vencimiento ingresada en la compra
+  purchaseOrderItemId    String?
+  unitCostExact          Decimal?  @db.Decimal(18, 6)
+  expectedUnitCostExact  Decimal?  @db.Decimal(18, 6)
+  taxAmountExact         Decimal?  @db.Decimal(18, 4)
+  creditableTaxExact     Decimal?  @db.Decimal(18, 4)
+  priceVarianceExact     Decimal?  @db.Decimal(18, 4)
+  // Evidencia exacta de la entrada física para devoluciones futuras. Nullable
+  // mantiene las compras históricas ambiguas en modo fail-closed.
+  inventoryWarehouseId   String?
+  inventoryBatchId       String?
+  inventoryUnitCostExact Decimal?  @db.Decimal(18, 6)
 
-  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  purchase          Purchase                  @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  purchaseOrderItem PurchaseOrderItem?        @relation(fields: [purchaseOrderItemId], references: [id], onDelete: Restrict)
+  matchAllocations  PurchaseMatchAllocation[]
+  matchExceptions   PurchaseMatchException[]
+  inventoryWarehouse Warehouse?               @relation("PurchaseItemInventoryWarehouse", fields: [inventoryWarehouseId], references: [id], onDelete: Restrict)
+  inventoryBatch     ProductBatch?            @relation("PurchaseItemInventoryBatch", fields: [inventoryBatchId], references: [id], onDelete: Restrict)
+  supplierReturnItems SupplierReturnItem[]
+  supplierCreditNoteLines SupplierCreditNoteLine[]
 
   @@index([purchaseId])
+  @@index([purchaseOrderItemId])
+  @@index([inventoryWarehouseId])
+  @@index([inventoryBatchId])
 }
 
 // ==========================================
@@ -341,23 +699,25 @@ model PurchaseItem {
 // ==========================================
 
 model PurchaseOrder {
-  id          String    @id @default(cuid())
-  tenantId    String
-  supplierId  String
-  orderNumber String // correlativo legible por tenant (OC-0001)
-  status      String    @default("DRAFT") // DRAFT | APPROVED | PARTIALLY_RECEIVED | RECEIVED | CANCELLED
-  notes       String?   @db.Text
+  id           String    @id @default(cuid())
+  tenantId     String
+  supplierId   String
+  orderNumber  String // correlativo legible por tenant (OC-0001)
+  status       String    @default("DRAFT") // DRAFT | APPROVED | PARTIALLY_RECEIVED | RECEIVED | CLOSED_SHORT | CANCELLED
+  notes        String?   @db.Text
   expectedDate DateTime? // fecha esperada de entrega
-  createdBy   String
-  approvedBy  String? // userId que aprobó (traza, sin relación)
-  approvedAt  DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdBy    String
+  approvedBy   String? // userId que aprobó (traza, sin relación)
+  approvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   tenant   Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   supplier Supplier            @relation(fields: [supplierId], references: [id])
   items    PurchaseOrderItem[]
   receipts Purchase[] // recepciones (parciales o total) generadas contra esta OC
+  goodsReceipts GoodsReceipt[]
+  closeShorts PurchaseOrderCloseShort[]
 
   @@unique([tenantId, orderNumber])
   @@index([tenantId])
@@ -366,26 +726,234 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderItem {
-  id               String  @id @default(cuid())
-  purchaseOrderId  String
-  productId        String
-  productName      String // snapshot del nombre al crear la OC
-  quantityOrdered  Float
-  quantityReceived Float   @default(0)
+  id                    String   @id @default(cuid())
+  purchaseOrderId       String
+  productId             String
+  productName           String // snapshot del nombre al crear la OC
+  quantityOrdered       Float
+  quantityReceived      Float    @default(0)
   // Autoridad decimal y reglas congeladas de la OC. Los Float anteriores se
   // conservan como sombras para compatibilidad con filas/clientes históricos.
   quantityOrderedExact  Decimal? @db.Decimal(18, 4)
   quantityReceivedExact Decimal? @db.Decimal(18, 4)
+  quantityRejectedExact Decimal? @db.Decimal(18, 4)
+  quantityClosedShortExact Decimal? @db.Decimal(18, 4)
   unitAtOrder           String?
   saleModeAtOrder       String?
   quantityStepAtOrder   Decimal? @db.Decimal(18, 4)
-  unitCost         Decimal @db.Decimal(10, 2)
+  unitCost              Decimal  @db.Decimal(10, 2)
+  unitCostExact         Decimal? @db.Decimal(18, 6)
 
   purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   product       Product       @relation(fields: [productId], references: [id])
+  purchaseItems PurchaseItem[]
+  goodsReceiptItems GoodsReceiptItem[]
+  matchAllocations PurchaseMatchAllocation[]
+  closeShortItems PurchaseOrderCloseShortItem[]
 
   @@index([purchaseOrderId])
   @@index([productId])
+}
+
+/// Comprobante físico e idempotente de recepción contra una orden de compra.
+/// No contabiliza dinero: congela qué llegó, dónde y quién lo recibió.
+model GoodsReceipt {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  purchaseOrderId     String
+  warehouseId         String
+  receiptNumber       String
+  status              String   @default("POSTED") @db.VarChar(32) // POSTED
+  supplierDeliveryRef String?
+  clientEventId       String   @db.VarChar(128)
+  payloadHash         String   @db.VarChar(64)
+  payloadVersion      Int      @default(1)
+  inspectionOutcome   String   @default("FULL_ACCEPT") @db.VarChar(32)
+  inspectedLineCount  Int      @default(0)
+  rejectedLineCount   Int      @default(0)
+  hasSupplierFault    Boolean  @default(false)
+  receivedBy          String
+  receivedAt          DateTime @default(now())
+  createdAt           DateTime @default(now())
+
+  tenant        Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  purchaseOrder PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  warehouse     Warehouse          @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  receiver      User               @relation("GoodsReceiptReceiver", fields: [receivedBy], references: [id], onDelete: Restrict)
+  items         GoodsReceiptItem[]
+
+  @@unique([tenantId, receiptNumber])
+  @@unique([tenantId, clientEventId])
+  @@index([tenantId, purchaseOrderId, receivedAt])
+  @@index([tenantId, warehouseId, receivedAt])
+  @@index([receivedBy])
+}
+
+/// Línea inmutable de una recepción. Los snapshots preservan unidad, costo y
+/// lote aun si el catálogo o la orden cambian posteriormente.
+model GoodsReceiptItem {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  goodsReceiptId      String
+  purchaseOrderItemId String
+  productId           String
+  quantityExact       Decimal  @db.Decimal(18, 4)
+  deliveredQuantityExact Decimal? @db.Decimal(18, 4)
+  rejectedQuantityExact  Decimal? @db.Decimal(18, 4)
+  rejectionReasonCode    String?  @db.VarChar(32)
+  rejectionNotes         String?  @db.Text
+  supplierFault          Boolean?
+  unitSnapshot        String   @db.VarChar(32)
+  saleModeSnapshot    String?  @db.VarChar(32)
+  unitCostExact       Decimal  @db.Decimal(18, 6)
+  batchId             String?
+  batchNumber         String?
+  expiryDate          DateTime?
+  createdAt           DateTime @default(now())
+
+  tenant            Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  receipt           GoodsReceipt              @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  purchaseOrderItem PurchaseOrderItem         @relation(fields: [purchaseOrderItemId], references: [id], onDelete: Restrict)
+  product           Product                   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch             ProductBatch?             @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  matchAllocations  PurchaseMatchAllocation[]
+  supplierReturnItems SupplierReturnItem[]
+
+  @@index([tenantId, goodsReceiptId])
+  @@index([tenantId, purchaseOrderItemId])
+  @@index([tenantId, productId])
+  @@index([batchId])
+}
+
+/// Cierre inmutable e idempotente del remanente que el proveedor ya no entregará.
+/// No mueve stock ni dinero; conserva el estado físico conocido al cerrar la OC.
+model PurchaseOrderCloseShort {
+  id                String   @id @default(cuid())
+  tenantId          String
+  purchaseOrderId   String
+  status            String   @default("POSTED") @db.VarChar(32)
+  clientEventId     String   @db.VarChar(128)
+  payloadHash       String   @db.VarChar(64)
+  closedBy          String
+  closedAt          DateTime @default(now())
+  createdAt         DateTime @default(now())
+  lineCount         Int      @default(0)
+  closedLineCount   Int      @default(0)
+  hasSupplierFault  Boolean  @default(false)
+  reasonSummaryCode String?  @db.VarChar(32)
+  note              String?  @db.Text
+
+  tenant        Tenant                        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  purchaseOrder PurchaseOrder                 @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  creator       User                          @relation("PurchaseOrderCloseShortCreator", fields: [closedBy], references: [id], onDelete: Restrict)
+  items         PurchaseOrderCloseShortItem[]
+
+  @@unique([tenantId, clientEventId])
+  @@index([tenantId, purchaseOrderId, closedAt])
+  @@index([closedBy])
+}
+
+/// Foto por línea del remanente cerrado. La cascada se limita al encabezado;
+/// las referencias históricas a tenant y línea de OC quedan protegidas.
+model PurchaseOrderCloseShortItem {
+  id                            String   @id @default(cuid())
+  tenantId                      String
+  closeShortId                  String
+  purchaseOrderItemId           String
+  quantityExact                 Decimal  @db.Decimal(18, 4)
+  reasonCode                    String   @db.VarChar(32)
+  supplierFault                 Boolean?
+  note                          String?  @db.Text
+  orderedQuantitySnapshotExact  Decimal  @db.Decimal(18, 4)
+  acceptedQuantitySnapshotExact Decimal  @db.Decimal(18, 4)
+  rejectedQuantitySnapshotExact Decimal  @db.Decimal(18, 4)
+  remainingBeforeExact          Decimal  @db.Decimal(18, 4)
+  remainingAfterExact           Decimal  @db.Decimal(18, 4)
+  unitSnapshot                  String   @db.VarChar(32)
+  saleModeSnapshot              String?  @db.VarChar(32)
+  quantityStepSnapshot          Decimal? @db.Decimal(18, 4)
+  createdAt                     DateTime @default(now())
+
+  tenant            Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  closeShort        PurchaseOrderCloseShort @relation(fields: [closeShortId], references: [id], onDelete: Cascade)
+  purchaseOrderItem PurchaseOrderItem       @relation(fields: [purchaseOrderItemId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, closeShortId])
+  @@index([tenantId, purchaseOrderItemId])
+}
+
+/// Asignación determinista entre factura, orden y recepción. El costo esperado
+/// y el real quedan congelados para explicar cualquier variación posterior.
+model PurchaseMatchAllocation {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  purchaseItemId        String
+  purchaseOrderItemId   String
+  goodsReceiptItemId    String?
+  source                String   @default("FORMAL_RECEIPT") @db.VarChar(32) // FORMAL_RECEIPT | LEGACY_PROJECTION
+  quantityExact         Decimal  @db.Decimal(18, 4)
+  expectedUnitCostExact Decimal  @db.Decimal(18, 6)
+  actualUnitCostExact   Decimal  @db.Decimal(18, 6)
+  priceVarianceExact    Decimal  @db.Decimal(18, 4)
+  createdAt             DateTime @default(now())
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  purchaseItem      PurchaseItem      @relation(fields: [purchaseItemId], references: [id], onDelete: Cascade)
+  purchaseOrderItem PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id], onDelete: Restrict)
+  goodsReceiptItem  GoodsReceiptItem? @relation(fields: [goodsReceiptItemId], references: [id], onDelete: Restrict)
+  supplierReturnItems SupplierReturnItem[]
+  supplierCreditNoteLines SupplierCreditNoteLine[]
+
+  @@unique([purchaseItemId, goodsReceiptItemId])
+  @@index([tenantId, purchaseItemId])
+  @@index([tenantId, purchaseOrderItemId])
+  @@index([tenantId, goodsReceiptItemId])
+}
+
+/// Excepción persistente del matching. La resolución nunca borra el hallazgo:
+/// conserva valores comparados, tolerancia, motivo y autor.
+model PurchaseMatchException {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  purchaseId         String
+  purchaseItemId     String?
+  type               String    @db.VarChar(32)
+  status             String    @default("OPEN") @db.VarChar(16) // OPEN | RESOLVED
+  expectedValueExact Decimal?  @db.Decimal(18, 6)
+  actualValueExact   Decimal?  @db.Decimal(18, 6)
+  varianceExact      Decimal?  @db.Decimal(18, 6)
+  toleranceExact     Decimal?  @db.Decimal(18, 6)
+  resolutionNote     String?   @db.Text
+  resolvedBy         String?
+  resolvedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now()) @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  purchase     Purchase      @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  purchaseItem PurchaseItem? @relation(fields: [purchaseItemId], references: [id], onDelete: Cascade)
+  resolver     User?         @relation("PurchaseMatchExceptionResolver", fields: [resolvedBy], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, purchaseId, status])
+  @@index([purchaseItemId])
+  @@index([resolvedBy])
+}
+
+/// Política por tenant para matching de precio y retención automática de pago.
+model ProcurementPolicy {
+  id                String   @id @default(cuid())
+  tenantId          String   @unique
+  priceTolerancePct Decimal  @default(0) @db.Decimal(9, 4)
+  autoHold          Boolean  @default(true)
+  updatedBy         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+
+  tenant  Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  updater User?  @relation("ProcurementPolicyUpdater", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@index([updatedBy])
 }
 
 model Employee {
@@ -591,27 +1159,27 @@ model TaxReport {
 }
 
 model Sale {
-  id             String    @id @default(cuid())
-  tenantId       String
-  total          Decimal   @db.Decimal(18, 4)
+  id                        String    @id @default(cuid())
+  tenantId                  String
+  total                     Decimal   @db.Decimal(18, 4)
   // T2 — porción del total que corresponde a productos EXONERADOS de IVA.
   // NULLABLE a propósito (backfill perezoso): `null` = venta anterior a T2 →
   // se trata como 100% GRAVADA, exactamente el comportamiento histórico. Solo
   // las ventas nuevas escriben un valor (0 cuando todo es gravado).
-  exemptTotal    Decimal?  @db.Decimal(18, 4)
+  exemptTotal               Decimal?  @db.Decimal(18, 4)
   // Foto inmutable del régimen aplicado. GENERAL/1 preserva el comportamiento
   // de ventas históricas; IVA NULL significa que el monto no quedó persistido.
-  fiscalRegimeAtSale        String   @default("GENERAL") @db.VarChar(32)
-  fiscalRegimeVersionAtSale Int      @default(1)
-  vatAmountAtSale           Decimal? @db.Decimal(18, 4)
-  status         String
-  paymentMethod  String
-  customerName   String?
-  customerId     String?
-  employeeId     String?
-  balance        Decimal   @default(0) @db.Decimal(10, 2)
-  dueDate        DateTime?
-  shiftId        String?
+  fiscalRegimeAtSale        String    @default("GENERAL") @db.VarChar(32)
+  fiscalRegimeVersionAtSale Int       @default(1)
+  vatAmountAtSale           Decimal?  @db.Decimal(18, 4)
+  status                    String
+  paymentMethod             String
+  customerName              String?
+  customerId                String?
+  employeeId                String?
+  balance                   Decimal   @default(0) @db.Decimal(10, 2)
+  dueDate                   DateTime?
+  shiftId                   String?
   // Vendedores (cartera de ruta): QUIÉN vendió, tomado SIEMPRE de req.userId
   // (JWT) server-side. Nullable a propósito: (a) aditivo para db push, (b) las
   // filas históricas quedan null = "Sin vendedor" — NO backfillear desde
@@ -620,17 +1188,17 @@ model Sale {
   // fuente honesta de backfill es KardexMovement.userId (Fase B, opcional).
   // No confundir con employeeId (Employee de RRHH por PIN = quién tiene la
   // gaveta) ni con shiftId (la caja): esto es la persona que FACTURÓ.
-  soldById       String?
-  createdAt      DateTime  @default(now())
-  globalDiscount Float     @default(0)
+  soldById                  String?
+  createdAt                 DateTime  @default(now())
+  globalDiscount            Float     @default(0)
   // Facturación DGI
-  invoiceNumber  Int? // Consecutivo controlado (1, 2, 3...)
-  invoiceSeries  String? // Serie: "A", "B" (por sucursal)
+  invoiceNumber             Int? // Consecutivo controlado (1, 2, 3...)
+  invoiceSeries             String? // Serie: "A", "B" (por sucursal)
   // PWA Offline Sync — UUID generado en el cliente para idempotencia
-  offlineId      String?   @unique
+  offlineId                 String?   @unique
   // Hash canónico del payload offline. Nullable solo para ventas históricas;
   // permite distinguir un replay real de la reutilización conflictiva del ID.
-  offlinePayloadHash String? @db.VarChar(64)
+  offlinePayloadHash        String?   @db.VarChar(64)
 
   // ── ANULACIÓN FISCAL (DGI-5, Disposición Técnica 09-2007) ──────────────────
   // Una factura mal emitida NO se borra ni se edita: se ANULA, y el comprobante
@@ -642,9 +1210,9 @@ model Sale {
   // Distinto de una DEVOLUCIÓN (ProductReturn): devolver mercadería es una
   // operación nueva sobre una venta que SÍ ocurrió; anular es declarar que el
   // documento no debió emitirse.
-  cancelledAt    DateTime?
-  cancelledById  String?
-  cancelReason   String?   @db.Text
+  cancelledAt   DateTime?
+  cancelledById String?
+  cancelReason  String?   @db.Text
 
   tenant         Tenant          @relation(fields: [tenantId], references: [id])
   customer       Customer?       @relation(fields: [customerId], references: [id])
@@ -676,17 +1244,17 @@ model Sale {
 }
 
 model SaleItem {
-  id          String  @id @default(cuid())
-  saleId      String
-  productId   String
-  quantity    Float
-  priceAtSale Decimal @db.Decimal(10, 2)
+  id                         String   @id @default(cuid())
+  saleId                     String
+  productId                  String
+  quantity                   Float
+  priceAtSale                Decimal  @db.Decimal(10, 2)
   // Precio unitario autoritativo antes de redondear a centavos. Permite que
   // presentaciones como C$10 / 3 unidades totalicen C$10.00 y se devuelvan
   // con el mismo valor histórico; priceAtSale queda como shadow legado.
-  unitPriceExactAtSale Decimal? @db.Decimal(18, 4)
-  costAtSale  Decimal @db.Decimal(10, 2)
-  discount    Float   @default(0) // Item discount percentage (0-100)
+  unitPriceExactAtSale       Decimal? @db.Decimal(18, 4)
+  costAtSale                 Decimal  @db.Decimal(10, 2)
+  discount                   Float    @default(0) // Item discount percentage (0-100)
   productNameAtSale          String?
   unitAtSale                 String?
   saleModeAtSale             String?
@@ -695,9 +1263,9 @@ model SaleItem {
   presentationQuantityAtSale Decimal? @db.Decimal(18, 4)
   // T2: foto del trato fiscal AL MOMENTO de vender (igual que costAtSale).
   // Si el dueño reclasifica el producto después, las ventas viejas no cambian.
-  ivaExento   Boolean @default(false)
+  ivaExento                  Boolean  @default(false)
 
-  sale Sale @relation(fields: [saleId], references: [id])
+  sale             Sale                      @relation(fields: [saleId], references: [id])
   measurement      SaleMeasurement?
   batchAllocations SaleItemBatchAllocation[]
 
@@ -856,29 +1424,32 @@ model SaleItemBatchAllocation {
   tenantId   String
   saleItemId String
   batchId    String
+  warehouseId String?
   quantity   Decimal  @db.Decimal(18, 4)
   createdAt  DateTime @default(now())
 
   tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   saleItem SaleItem     @relation(fields: [saleItemId], references: [id], onDelete: Restrict)
   batch    ProductBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  warehouse Warehouse?  @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
 
   @@unique([saleItemId, batchId])
   @@index([tenantId, saleItemId])
   @@index([tenantId, batchId])
+  @@index([tenantId, warehouseId])
 }
 
 model Payment {
-  id          String   @id @default(cuid())
-  saleId      String
-  amount      Decimal  @db.Decimal(10, 2)
-  method      String
-  collectedBy String
+  id            String   @id @default(cuid())
+  saleId        String
+  amount        Decimal  @db.Decimal(10, 2)
+  method        String
+  collectedBy   String
   // Opcional por compatibilidad histórica. Clientes nuevos lo envían y el
   // índice evita cobrar dos veces ante retry/doble clic.
   clientEventId String?  @db.VarChar(128)
   payloadHash   String?  @db.VarChar(64)
-  createdAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
 
   sale Sale @relation(fields: [saleId], references: [id])
   user User @relation(fields: [collectedBy], references: [id])
@@ -894,26 +1465,26 @@ model Payment {
 }
 
 model Shift {
-  id                 String    @id @default(cuid())
-  tenantId           String
-  userId             String
-  employeeId         String? // Empleado que abrió la caja (PIN)
-  initialCash        Decimal   @db.Decimal(10, 2)
-  finalCashDeclared  Decimal?  @db.Decimal(10, 2)
-  systemExpectedCash Decimal?  @db.Decimal(10, 2)
-  difference         Decimal?  @db.Decimal(10, 2)
+  id                   String    @id @default(cuid())
+  tenantId             String
+  userId               String
+  employeeId           String? // Empleado que abrió la caja (PIN)
+  initialCash          Decimal   @db.Decimal(10, 2)
+  finalCashDeclared    Decimal?  @db.Decimal(10, 2)
+  systemExpectedCash   Decimal?  @db.Decimal(10, 2)
+  difference           Decimal?  @db.Decimal(10, 2)
   // Gaveta multi-moneda (Fase D agente bancario): conteo físico de DÓLARES
   // separado del de córdobas. Los campos NIO de arriba quedan intactos.
-  initialCashUsd        Decimal  @default(0) @db.Decimal(18, 4)
-  finalCashDeclaredUsd  Decimal? @db.Decimal(18, 4)
-  systemExpectedUsd     Decimal? @db.Decimal(18, 4)
-  differenceUsd         Decimal? @db.Decimal(18, 4)
-  regularHours       Float     @default(0)
-  overtimeHours      Float     @default(0)
-  nightHours         Float     @default(0)
-  status             String
-  startTime          DateTime  @default(now())
-  endTime            DateTime?
+  initialCashUsd       Decimal   @default(0) @db.Decimal(18, 4)
+  finalCashDeclaredUsd Decimal?  @db.Decimal(18, 4)
+  systemExpectedUsd    Decimal?  @db.Decimal(18, 4)
+  differenceUsd        Decimal?  @db.Decimal(18, 4)
+  regularHours         Float     @default(0)
+  overtimeHours        Float     @default(0)
+  nightHours           Float     @default(0)
+  status               String
+  startTime            DateTime  @default(now())
+  endTime              DateTime?
 
   tenant        Tenant         @relation(fields: [tenantId], references: [id])
   user          User           @relation(fields: [userId], references: [id])
@@ -1036,27 +1607,27 @@ model AgentAgreement {
 }
 
 model AgentTransaction {
-  id          String @id @default(cuid())
-  tenantId    String
-  agreementId String
+  id             String @id @default(cuid())
+  tenantId       String
+  agreementId    String
   // 1:1 con el movimiento de caja firmado que la respalda (libro encadenado).
   cashMovementId String @unique
-  shiftId     String
-  userId      String
+  shiftId        String
+  userId         String
 
   // DEPOSITO | RETIRO | PAGO_TARJETA | PAGO_PRESTAMO | PAGO_SERVICIO |
   // RECARGA | REMESA_ENVIO | REMESA_COBRO
-  operation String
-  direction String // IN | OUT (espejo del CashMovement.type)
-  amount    Decimal @db.Decimal(18, 4)
-  currency  String  @default("NIO") // NIO | USD
+  operation    String
+  direction    String // IN | OUT (espejo del CashMovement.type)
+  amount       Decimal  @db.Decimal(18, 4)
+  currency     String   @default("NIO") // NIO | USD
   // Multi-moneda (Fase D): tipo de cambio de la transacción (solo USD) y
   // valor contable en córdobas (USD: amount×rate; NIO: = amount). La
   // contabilidad, el settlementBalance y los límites diarios usan amountNio.
   exchangeRate Decimal? @db.Decimal(12, 6)
   amountNio    Decimal? @db.Decimal(18, 4)
   // Comisión devengada en C$ (NO es efectivo: el banco la liquida después a cuenta).
-  commission Decimal @default(0) @db.Decimal(18, 4)
+  commission   Decimal  @default(0) @db.Decimal(18, 4)
 
   // Folio/voucher del dispositivo del banco — el comprobante válido y la
   // clave de conciliación contra el reporte del banco/red.
@@ -1182,8 +1753,8 @@ model Product {
   category    String?
 
   // Precios
-  price Float // Precio de venta (detalle)
-  cost  Float // Costo de compra
+  price           Float // Precio de venta (detalle)
+  cost            Float // Costo de compra
   // Venta por mayor (distribuidora/miscelánea): precio de mayoreo y cantidad
   // mínima a partir de la cual aplica. Float para calzar con price/cost — los
   // tres migran juntos a Decimal(18,4) en el sweep de precisión pendiente.
@@ -1192,12 +1763,12 @@ model Product {
   // Unidad de empaque (Fase B): "caja de 12 a C$90". El POS vende el empaque
   // como atajo de cantidad (unidades base) y packPrice actúa como tercer nivel
   // de precio a partir de packSize. El stock/Kardex siguen en unidades base.
-  packUnit  String? // nombre del empaque (caja, fardo, docena)
-  packSize  Float? // unidades base por empaque (ej: 12)
-  packPrice Float? // precio del empaque completo (null = solo atajo de cantidad)
-  saleMode     String? // COUNTED | MEASURED; null = producto legado
-  quantityStep Decimal? @db.Decimal(18, 4)
-  productFamily String? // GENERAL | MEAT | POULTRY | ANIMAL_FEED | AGRO_INPUT | VETERINARY
+  packUnit        String? // nombre del empaque (caja, fardo, docena)
+  packSize        Float? // unidades base por empaque (ej: 12)
+  packPrice       Float? // precio del empaque completo (null = solo atajo de cantidad)
+  saleMode        String? // COUNTED | MEASURED; null = producto legado
+  quantityStep    Decimal? @db.Decimal(18, 4)
+  productFamily   String? // GENERAL | MEAT | POULTRY | ANIMAL_FEED | AGRO_INPUT | VETERINARY
 
   // Inventario
   stock    Float  @default(0)
@@ -1219,10 +1790,10 @@ model Product {
   // comportamiento histórico: ningún producto existente cambia de trato.
   // La clasificación legal la hace el dueño del negocio, no el sistema.
   ivaExento Boolean @default(false)
-  imageUrl    String? // URL de imagen del producto
+  imageUrl  String? // URL de imagen del producto
 
   // Control de Lotes
-  requiresBatchTracking Boolean @default(false)
+  requiresBatchTracking  Boolean @default(false)
   // Control de Series (números de serie / IMEI / VIN, por unidad)
   requiresSerialTracking Boolean @default(false)
 
@@ -1232,18 +1803,22 @@ model Product {
   createdBy String
 
   // Relaciones
-  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  creator         User             @relation(fields: [createdBy], references: [id])
-  kardexMovements KardexMovement[]
-  pedidoItems     PedidoItem[]
-  batches         ProductBatch[]
-  stockCountItems StockCountItem[]
-  purchaseOrderItems PurchaseOrderItem[]
-  serialNumbers   SerialNumber[]
-  productStocks   ProductStock[]
-  sellerCatalog   SellerProduct[]
-  defaultSupplier Supplier?        @relation("DefaultSupplier", fields: [defaultSupplierId], references: [id], onDelete: SetNull)
+  tenant               Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  creator              User                  @relation(fields: [createdBy], references: [id])
+  kardexMovements      KardexMovement[]
+  pedidoItems          PedidoItem[]
+  batches              ProductBatch[]
+  stockCountItems      StockCountItem[]
+  purchaseOrderItems   PurchaseOrderItem[]
+  goodsReceiptItems    GoodsReceiptItem[]
+  serialNumbers        SerialNumber[]
+  productStocks        ProductStock[]
+  sellerCatalog        SellerProduct[]
+  defaultSupplier      Supplier?             @relation("DefaultSupplier", fields: [defaultSupplierId], references: [id], onDelete: SetNull)
   scaleProductMappings ScaleProductMapping[]
+  batchWarehouseStocks ProductBatchWarehouseStock[]
+  batchLedgerEntries   ProductBatchLedgerEntry[]
+  supplierReturnItems  SupplierReturnItem[]
 
   @@unique([tenantId, sku])
   @@index([defaultSupplierId])
@@ -1277,14 +1852,14 @@ model KardexMovement {
   userId String
 
   // Relaciones
-  tenant  Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  product Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
-  user    User          @relation(fields: [userId], references: [id])
-  batchId String?
-  batch   ProductBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product     Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id])
+  batchId     String?
+  batch       ProductBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
   // Bodega del movimiento (null = anterior a multi-bodega / no especificada)
   warehouseId String?
-  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  warehouse   Warehouse?    @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
 
   @@index([productId])
   @@index([tenantId])
@@ -1350,6 +1925,12 @@ model Warehouse {
   transfersFrom   StockTransfer[]  @relation("TransferFrom")
   transfersTo     StockTransfer[]  @relation("TransferTo")
   stockCounts     StockCount[]
+  goodsReceipts   GoodsReceipt[]
+  batchWarehouseStocks ProductBatchWarehouseStock[]
+  batchLedgerEntries ProductBatchLedgerEntry[]
+  saleItemBatchAllocations SaleItemBatchAllocation[]
+  purchaseItemsWithInventoryEvidence PurchaseItem[] @relation("PurchaseItemInventoryWarehouse")
+  supplierReturnItems SupplierReturnItem[]
 
   @@unique([tenantId, name])
   @@unique([tenantId, sellerId])
@@ -1381,6 +1962,13 @@ model StockTransfer {
   tenantId        String
   fromWarehouseId String
   toWarehouseId   String
+  // Nullable para transferencias históricas; nuevos comandos usan UUID + hash.
+  clientEventId      String? @db.VarChar(128)
+  payloadHash        String? @db.VarChar(64)
+  payloadVersion     Int     @default(1)
+  batchLedgerMode    String  @default("OFF") @db.VarChar(16)
+  batchTransferStatus String @default("OFF") @db.VarChar(32)
+  batchSnapshot      Json?
   notes           String?  @db.Text
   items           Json // [{productId, name, quantity}]
   createdBy       String
@@ -1393,6 +1981,7 @@ model StockTransfer {
   @@index([tenantId])
   @@index([fromWarehouseId])
   @@index([toWarehouseId])
+  @@unique([tenantId, clientEventId])
   // El listado ordena por tenant+createdAt desc (guardrail 3: índice con la query).
   @@index([tenantId, createdAt])
 }
@@ -1410,15 +1999,78 @@ model ProductBatch {
   stock       Float    @default(0) // Stock restante del lote
   createdAt   DateTime @default(now())
 
-  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  product         Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
-  kardexMovements KardexMovement[]
+  tenant              Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product             Product                   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  kardexMovements     KardexMovement[]
   saleItemAllocations SaleItemBatchAllocation[]
+  goodsReceiptItems   GoodsReceiptItem[]
+  warehouseStocks     ProductBatchWarehouseStock[]
+  ledgerEntries       ProductBatchLedgerEntry[]
+  purchaseItemsWithInventoryEvidence PurchaseItem[] @relation("PurchaseItemInventoryBatch")
+  supplierReturnItems SupplierReturnItem[]
 
   @@unique([productId, batchNumber])
   @@index([tenantId])
   @@index([productId])
   @@index([expiryDate])
+}
+
+/// Desglose autoritativo de un lote por bodega cuando el tenant activa el ledger.
+/// No se reparten existencias históricas desde DDL; el servicio hará shadow lazy.
+model ProductBatchWarehouseStock {
+  id          String   @id @default(cuid())
+  tenantId    String
+  productId   String
+  batchId     String
+  warehouseId String
+  stock       Decimal  @default(0) @db.Decimal(18, 4)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch     ProductBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  warehouse Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, batchId, warehouseId])
+  @@index([tenantId, batchId])
+  @@index([tenantId, productId, warehouseId])
+  @@index([tenantId, warehouseId, productId])
+}
+
+/// Libro inmutable del stock de lote por bodega. sourceKey y payloadHash hacen
+/// seguros los reintentos; stockBefore/After permiten auditar cada transición.
+model ProductBatchLedgerEntry {
+  id            String   @id @default(cuid())
+  tenantId      String
+  productId     String
+  batchId       String
+  warehouseId   String
+  quantityDelta Decimal  @db.Decimal(18, 4)
+  stockBefore   Decimal  @db.Decimal(18, 4)
+  stockAfter    Decimal  @db.Decimal(18, 4)
+  movementType  String   @db.VarChar(32)
+  status        String   @default("APPLIED") @db.VarChar(32) // APPLIED | SHADOW_GAP
+  referenceId   String?
+  referenceType String?  @db.VarChar(64)
+  sourceKey     String   @db.VarChar(191)
+  payloadHash   String   @db.VarChar(64)
+  reason        String?  @db.Text
+  userId        String
+  createdAt     DateTime @default(now())
+
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch     ProductBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  warehouse Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  creator   User         @relation("ProductBatchLedgerEntryCreator", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, sourceKey])
+  @@index([tenantId, batchId, createdAt])
+  @@index([tenantId, warehouseId, createdAt])
+  @@index([tenantId, productId, warehouseId, createdAt])
+  @@index([tenantId, referenceType, referenceId])
+  @@index([userId])
 }
 
 // ==========================================
@@ -1527,18 +2179,18 @@ model ManualPayment {
 // ==========================================
 
 model Quotation {
-  id           String   @id @default(cuid())
-  tenantId     String
-  customerName String
-  customerRuc  String?
-  subtotal     Decimal  @db.Decimal(10, 2)
-  tax          Decimal  @db.Decimal(10, 2)
+  id                  String   @id @default(cuid())
+  tenantId            String
+  customerName        String
+  customerRuc         String?
+  subtotal            Decimal  @db.Decimal(10, 2)
+  tax                 Decimal  @db.Decimal(10, 2)
   // Snapshot fiscal de la cotización; GENERAL conserva el formato histórico.
-  fiscalRegimeAtQuote String @default("GENERAL") @db.VarChar(32)
-  total        Decimal  @db.Decimal(10, 2)
-  status       String   @default("SENT") // SENT | CONVERTED | EXPIRED
-  createdAt    DateTime @default(now())
-  expiresAt    DateTime
+  fiscalRegimeAtQuote String   @default("GENERAL") @db.VarChar(32)
+  total               Decimal  @db.Decimal(10, 2)
+  status              String   @default("SENT") // SENT | CONVERTED | EXPIRED
+  createdAt           DateTime @default(now())
+  expiresAt           DateTime
 
   tenant Tenant          @relation(fields: [tenantId], references: [id])
   items  QuotationItem[]
@@ -1547,20 +2199,20 @@ model Quotation {
 }
 
 model QuotationItem {
-  id          String  @id @default(cuid())
-  quotationId String
-  productId   String
-  quantity    Int
-  quantityExact Decimal? @db.Decimal(18, 4)
-  price       Decimal @db.Decimal(10, 2)
-  unitPriceExact             Decimal? @db.Decimal(18, 4)
-  unitAtQuote                String?
-  saleModeAtQuote            String?
-  quantityStepAtQuote        Decimal? @db.Decimal(18, 4)
-  presentationAtQuote        String?  // BASE | PACK
+  id                          String   @id @default(cuid())
+  quotationId                 String
+  productId                   String
+  quantity                    Int
+  quantityExact               Decimal? @db.Decimal(18, 4)
+  price                       Decimal  @db.Decimal(10, 2)
+  unitPriceExact              Decimal? @db.Decimal(18, 4)
+  unitAtQuote                 String?
+  saleModeAtQuote             String?
+  quantityStepAtQuote         Decimal? @db.Decimal(18, 4)
+  presentationAtQuote         String? // BASE | PACK
   presentationQuantityAtQuote Decimal? @db.Decimal(18, 4)
-  ivaExentoAtQuote           Boolean?
-  name        String // Snapshot name
+  ivaExentoAtQuote            Boolean?
+  name                        String // Snapshot name
 
   quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
 
@@ -1581,16 +2233,16 @@ model ProductReturn {
   createdBy     String
   // Nullable solo para filas históricas. La API actual exige clientEventId y
   // escribe siempre su huella SHA-256 canónica en la misma transacción.
-  clientEventId String?   @db.VarChar(128)
-  payloadHash   String?   @db.VarChar(64)
+  clientEventId String?  @db.VarChar(128)
+  payloadHash   String?  @db.VarChar(64)
   createdAt     DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
   sale   Sale   @relation(fields: [saleId], references: [id])
 
+  @@unique([tenantId, clientEventId])
   @@index([tenantId])
   @@index([saleId])
-  @@unique([tenantId, clientEventId])
 }
 
 // ==========================================
@@ -1928,9 +2580,14 @@ model RetencionSufrida {
   amount           Decimal  @db.Decimal(12, 2)
   numeroConstancia String?  @db.VarChar(60)
   saleId           String?
+  // Nullable solo para históricos y clientes legacy. Los clientes nuevos
+  // conservan este UUID entre reintentos de la misma operación lógica.
+  clientEventId    String?  @db.VarChar(128)
+  payloadHash      String?  @db.VarChar(64)
   createdBy        String
   createdAt        DateTime @default(now())
 
+  @@unique([tenantId, clientEventId])
   @@index([tenantId, fecha])
 }
 
@@ -2057,12 +2714,12 @@ model Pedido {
 }
 
 model PedidoItem {
-  id             String  @id @default(uuid())
-  pedidoId       String
-  productoId     String
-  cantidad       Int
+  id                         String   @id @default(uuid())
+  pedidoId                   String
+  productoId                 String
+  cantidad                   Int
   cantidadExact              Decimal? @db.Decimal(18, 4)
-  presentationAtSale         String?  // BASE | PACK, snapshot desde el pedido
+  presentationAtSale         String? // BASE | PACK, snapshot desde el pedido
   presentationQuantityAtSale Decimal? @db.Decimal(18, 4)
   productNameAtOrder         String?
   unitAtOrder                String?
@@ -2070,8 +2727,8 @@ model PedidoItem {
   quantityStepAtOrder        Decimal? @db.Decimal(18, 4)
   unitPriceExactAtOrder      Decimal? @db.Decimal(18, 4)
   ivaExentoAtOrder           Boolean?
-  precioUnitario Decimal @db.Decimal(10, 2)
-  subtotal       Decimal @db.Decimal(10, 2)
+  precioUnitario             Decimal  @db.Decimal(10, 2)
+  subtotal                   Decimal  @db.Decimal(10, 2)
 
   pedido   Pedido  @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
   producto Product @relation(fields: [productoId], references: [id])

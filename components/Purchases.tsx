@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { maybeAutostartTour } from '../utils/tours';
 import {
     Truck, Plus, Search, FileText, CreditCard, DollarSign, Package,
     Calendar, X, Check, AlertTriangle, Clock, Trash2,
-    ShoppingCart, Wallet, Printer, Eye, Stamp, Loader2
+    ShoppingCart, Wallet, Printer, Eye, Stamp, Loader2, GitCompareArrows,
+    LockKeyhole, RotateCcw, SlidersHorizontal
 } from 'lucide-react';
-import { formatMoney } from '../utils/money';
+import { formatMoney, sanitizeDecimalInput } from '../utils/money';
 import Decimal from 'decimal.js';
 import { formatQuantityValue } from '../utils/quantity';
 import {
@@ -46,12 +47,14 @@ interface Product {
 }
 
 interface CartItem {
+    cartKey: string;
     productId: string;
+    purchaseOrderItemId?: string;
     productName: string;
     sku: string;
-    quantity: number;
-    unitCost: number;
-    totalCost: number;
+    quantity: number | string;
+    unitCost: number | string;
+    totalCost: number | string;
     currentStock: number;
     unit: string;
     saleMode?: 'COUNTED' | 'MEASURED' | null;
@@ -63,6 +66,10 @@ interface CartItem {
     requiresBatchTracking?: boolean;
     batchNumber?: string;
     expiryDate?: string;
+    orderedQuantity?: string;
+    receivedQuantity?: string;
+    invoicedQuantity?: string;
+    availableQuantity?: string;
 }
 
 interface PurchaseOrderItemLite {
@@ -74,6 +81,7 @@ interface PurchaseOrderItemLite {
     quantityOrderedExact?: number | string | null;
     quantityReceivedExact?: number | string | null;
     unitCost: number | string;
+    unitAtOrder?: string | null;
 }
 
 interface PurchaseOrderLite {
@@ -85,6 +93,7 @@ interface PurchaseOrderLite {
     receipts?: {
         items: {
             productId: string;
+            purchaseOrderItemId?: string | null;
             quantity: number | string;
             quantityExact?: number | string | null;
         }[];
@@ -98,21 +107,31 @@ interface Purchase {
     invoiceNumber: string;
     date: string;
     dueDate?: string;
-    subtotal: number;
-    tax: number;
-    total: number;
+    postingDate?: string | null;
+    subtotal: number | string;
+    tax: number | string;
+    total: number | string;
+    balanceDue?: number | string | null;
+    paidAt?: string | null;
     status: string;
     paymentMethod: string;
+    documentStatus?: 'DRAFT' | 'POSTED' | 'VOID' | string;
+    matchStatus?: 'NOT_REQUIRED' | 'MATCHED' | 'EXCEPTION' | 'RESOLVED' | string;
+    paymentHold?: boolean;
+    matchResolvedBy?: string | null;
+    matchResolvedAt?: string | null;
+    matchResolutionNote?: string | null;
     notes?: string;
     items: {
         id: string;
         productId: string;
         productName: string;
+        purchaseOrderItemId?: string | null;
         quantity: number;
         quantityExact?: number | string | null;
         unit?: string;
-        unitCost: number;
-        totalCost: number;
+        unitCost: number | string;
+        totalCost: number | string;
     }[];
     createdAt: string;
 }
@@ -134,11 +153,113 @@ interface WarehouseOption {
     isActive: boolean;
 }
 
+type SupplierPaymentMethod = 'CASH' | 'TRANSFER' | 'CARD' | 'QR';
+
+interface PaymentDialogState {
+    id: string;
+    invoiceNumber: string;
+    clientEventId: string;
+}
+
+interface SupplierPaymentForm {
+    amount: string;
+    method: SupplierPaymentMethod;
+    reference: string;
+    notes: string;
+}
+
+type MatchStatus = 'NOT_REQUIRED' | 'MATCHED' | 'EXCEPTION' | 'RESOLVED';
+
+interface ProcurementMatchSummary {
+    id: string;
+    invoiceNumber: string;
+    date: string;
+    postingDate?: string | null;
+    documentStatus: string;
+    matchStatus: MatchStatus;
+    paymentHold: boolean;
+    total: string;
+    balanceDue: string | null;
+    supplier: { id: string; name: string };
+    purchaseOrder: { id: string; orderNumber: string } | null;
+    openExceptionCount: number;
+    varianceAmount: string;
+}
+
+interface ProcurementMatchPurchaseHeader {
+    id: string;
+    invoiceNumber: string;
+    date: string;
+    postingDate?: string | null;
+    documentStatus: string;
+    matchStatus: MatchStatus;
+    paymentHold: boolean;
+    total: string;
+    balanceDue: string | null;
+    supplier: { id: string; name: string };
+    purchaseOrder: { id: string; orderNumber: string } | null;
+    matchResolvedBy?: string | null;
+    matchResolvedAt?: string | null;
+    matchResolutionNote?: string | null;
+}
+
+interface ProcurementMatchDetail {
+    purchase: ProcurementMatchPurchaseHeader;
+    lines: Array<{
+        id: string;
+        productId: string;
+        productName: string;
+        purchaseOrderItemId: string | null;
+        quantityExact: string;
+        unitCostExact: string;
+        expectedUnitCostExact: string | null;
+        priceVarianceExact: string | null;
+        allocations: Array<{
+            id: string;
+            goodsReceiptItemId: string;
+            quantityExact: string;
+        }>;
+    }>;
+    exceptions: Array<{
+        id: string;
+        purchaseItemId: string | null;
+        type: string;
+        status: string;
+        expectedValueExact: string | null;
+        actualValueExact: string | null;
+        varianceExact: string | null;
+        toleranceExact: string | null;
+        resolutionNote: string | null;
+        resolvedBy: string | null;
+        resolvedAt: string | null;
+        createdAt: string;
+    }>;
+    totals: {
+        expectedAmount: string;
+        invoiceAmount: string;
+        varianceAmount: string;
+    };
+}
+
+interface MatchResolutionState {
+    purchaseId: string;
+    invoiceNumber: string;
+    clientEventId: string;
+    reason: string;
+}
+
+const EMPTY_SUPPLIER_PAYMENT_FORM: SupplierPaymentForm = {
+    amount: '',
+    method: 'CASH',
+    reference: '',
+    notes: '',
+};
+
 // ==========================================
 // HELPERS
 // ==========================================
 
-const formatCurrency = (n: number) => formatMoney(n);
+const formatCurrency = (n: Decimal.Value) => formatMoney(n);
 const hasPackConfiguration = (
     product: Pick<Product, 'packUnit' | 'packSize'>,
 ): boolean => Boolean(
@@ -156,6 +277,9 @@ const resolveCartLine = (item: CartItem) => resolvePurchaseLine({
 const exactPurchaseQuantity = (item: Pick<Purchase['items'][number], 'quantity' | 'quantityExact'>) =>
     item.quantityExact ?? item.quantity;
 const FISCAL_DOCUMENT_ROLES = new Set(['OWNER', 'ADMIN', 'ACCOUNTANT']);
+const PURCHASE_CREATE_ROLES = new Set(['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER']);
+const SUPPLIER_PAYMENT_ROLES = new Set(['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'ACCOUNTANT']);
+const MATCH_RESOLVE_ROLES = new Set(['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'ACCOUNTANT']);
 const escapeHtml = (value: unknown) => String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -200,6 +324,61 @@ export const formatCalendarDateLong = (d: string) => new Date(d).toLocaleDateStr
     timeZone: 'America/Managua',
 });
 
+/**
+ * Las compras históricas no tienen balanceDue. Solo en ese caso se conserva el
+ * contrato legacy: una compra abierta debe el total y una completada debe cero.
+ */
+export const effectivePurchaseBalance = (
+    purchase: Pick<Purchase, 'balanceDue' | 'status' | 'total'>,
+): Decimal => {
+    if (purchase.balanceDue !== null && purchase.balanceDue !== undefined) {
+        try {
+            return Decimal.max(0, new Decimal(purchase.balanceDue));
+        } catch {
+            return new Decimal(0);
+        }
+    }
+    if (purchase.status === 'COMPLETED') return new Decimal(0);
+    try {
+        return Decimal.max(0, new Decimal(purchase.total));
+    } catch {
+        return new Decimal(0);
+    }
+};
+
+export const purchaseStatusLabel = (status: string): string => {
+    if (status === 'COMPLETED') return 'Pagado';
+    if (status === 'PARTIALLY_PAID') return 'Abono parcial';
+    return 'Pendiente';
+};
+
+const isNortexCapitalPurchase = (purchase: Pick<Purchase, 'paymentMethod'>) =>
+    purchase.paymentMethod === 'NORTEX_CAPITAL';
+
+const purchaseMethodLabel = (method: string) => {
+    if (method === 'CASH') return 'Contado';
+    if (method === 'NORTEX_CAPITAL') return 'Financiamiento Nortex';
+    return 'Crédito';
+};
+
+const newClientEventId = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    const bytes = new Uint8Array(16);
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+        crypto.getRandomValues(bytes);
+    } else {
+        for (let index = 0; index < bytes.length; index += 1) {
+            bytes[index] = Math.floor(Math.random() * 256);
+        }
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
+
 const firstValidationMessage = (data: any): string | undefined => {
     if (!data?.details || typeof data.details !== 'object') return undefined;
     for (const value of Object.values(data.details)) {
@@ -208,51 +387,88 @@ const firstValidationMessage = (data: any): string | undefined => {
     return undefined;
 };
 
-const availablePurchaseOrderItems = (purchaseOrder: PurchaseOrderLite) => {
-    const billedByProduct = new Map<string, Decimal>();
+export const purchaseOrderLineAvailability = (purchaseOrder: PurchaseOrderLite) => {
+    const invoicedByItemId = new Map<string, Decimal>();
+    const legacyInvoicedByProduct = new Map<string, Decimal>();
     for (const receipt of purchaseOrder.receipts ?? []) {
         for (const item of receipt.items) {
-            billedByProduct.set(
+            if (item.purchaseOrderItemId) {
+                invoicedByItemId.set(
+                    item.purchaseOrderItemId,
+                    (invoicedByItemId.get(item.purchaseOrderItemId) ?? new Decimal(0)).plus(
+                        item.quantityExact ?? item.quantity,
+                    ),
+                );
+                continue;
+            }
+            legacyInvoicedByProduct.set(
                 item.productId,
-                (billedByProduct.get(item.productId) ?? new Decimal(0)).plus(
+                (legacyInvoicedByProduct.get(item.productId) ?? new Decimal(0)).plus(
                     item.quantityExact ?? item.quantity,
                 ),
             );
         }
     }
 
-    const receivedByProduct = new Map<string, PurchaseOrderItemLite & { availableQuantity: Decimal }>();
-    for (const item of purchaseOrder.items) {
+    return purchaseOrder.items.map(item => {
+        const ordered = new Decimal(item.quantityOrderedExact ?? item.quantityOrdered);
         const received = new Decimal(item.quantityReceivedExact ?? item.quantityReceived);
-        const current = receivedByProduct.get(item.productId);
-        if (current) {
-            current.availableQuantity = current.availableQuantity.plus(received);
-        } else {
-            receivedByProduct.set(item.productId, {
-                ...item,
-                availableQuantity: received,
-            });
-        }
-    }
-
-    return [...receivedByProduct.values()]
-        .map(item => ({
+        const explicitInvoiced = invoicedByItemId.get(item.id) ?? new Decimal(0);
+        const legacyPool = legacyInvoicedByProduct.get(item.productId) ?? new Decimal(0);
+        const legacyAllocated = Decimal.min(
+            legacyPool,
+            Decimal.max(0, received.minus(explicitInvoiced)),
+        );
+        legacyInvoicedByProduct.set(item.productId, Decimal.max(0, legacyPool.minus(legacyAllocated)));
+        const invoiced = explicitInvoiced.plus(legacyAllocated);
+        return {
             ...item,
-            availableQuantity: Decimal.max(
-                0,
-                item.availableQuantity.minus(billedByProduct.get(item.productId) ?? 0),
-            ).toString(),
-        }))
-        .filter(item => new Decimal(item.availableQuantity).greaterThan(0));
+            orderedQuantity: ordered.toString(),
+            receivedQuantity: received.toString(),
+            invoicedQuantity: invoiced.toString(),
+            availableQuantity: Decimal.max(0, received.minus(invoiced)).toString(),
+        };
+    });
 };
+
+const availablePurchaseOrderItems = (purchaseOrder: PurchaseOrderLite) =>
+    purchaseOrderLineAvailability(purchaseOrder)
+        .filter(item => new Decimal(item.availableQuantity).greaterThan(0));
+
+const matchStatusLabel = (status: string): string => ({
+    NOT_REQUIRED: 'No requiere conciliación',
+    MATCHED: 'Conciliada',
+    EXCEPTION: 'Con diferencias',
+    RESOLVED: 'Resuelta',
+}[status] ?? status);
+
+const matchStatusClass = (status: string): string => ({
+    NOT_REQUIRED: 'border-slate-600 bg-slate-700/50 text-slate-300',
+    MATCHED: 'border-emerald-700 bg-emerald-950/40 text-emerald-300',
+    EXCEPTION: 'border-amber-700 bg-amber-950/40 text-amber-300',
+    RESOLVED: 'border-sky-700 bg-sky-950/40 text-sky-300',
+}[status] ?? 'border-slate-600 bg-slate-700/50 text-slate-300');
+
+const exceptionTypeLabel = (type: string): string => ({
+    QUANTITY: 'Cantidad',
+    PRICE: 'Precio',
+    MISSING_RECEIPT: 'Sin recepción',
+    UNORDERED_ITEM: 'Fuera de la OC',
+    OVER_INVOICED: 'Cantidad excedida',
+}[type] ?? type.replaceAll('_', ' '));
 
 // ==========================================
 // MAIN COMPONENT
 // ==========================================
 
 export default function Purchases() {
+    const currentRole = currentSessionRole();
+    const canCreatePurchase = PURCHASE_CREATE_ROLES.has(currentRole);
+    const canPaySuppliers = SUPPLIER_PAYMENT_ROLES.has(currentRole);
+    const canResolveMatches = MATCH_RESOLVE_ROLES.has(currentRole);
+
     // Tab state
-    const [activeTab, setActiveTab] = useState<'new' | 'history'>('new');
+    const [activeTab, setActiveTab] = useState<'new' | 'history' | 'matches'>(canCreatePurchase ? 'new' : 'history');
 
     // Data
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -275,9 +491,25 @@ export default function Purchases() {
     const [productSearch, setProductSearch] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [formErrors, setFormErrors] = useState<PurchaseFormErrors>({});
-    const [paymentToConfirm, setPaymentToConfirm] = useState<{ id: string; invoiceNumber: string } | null>(null);
+    const [paymentToConfirm, setPaymentToConfirm] = useState<PaymentDialogState | null>(null);
+    const [supplierPaymentForm, setSupplierPaymentForm] = useState<SupplierPaymentForm>(EMPTY_SUPPLIER_PAYMENT_FORM);
+    const [supplierPaymentError, setSupplierPaymentError] = useState('');
     const [paying, setPaying] = useState(false);
     const [openingRetentionId, setOpeningRetentionId] = useState<string | null>(null);
+    const [matches, setMatches] = useState<ProcurementMatchSummary[]>([]);
+    const [matchStatusFilter, setMatchStatusFilter] = useState<MatchStatus | 'ALL'>('EXCEPTION');
+    const [matchHoldFilter, setMatchHoldFilter] = useState<'ALL' | 'true' | 'false'>('true');
+    const [matchSupplierFilter, setMatchSupplierFilter] = useState('');
+    const [matchesLoading, setMatchesLoading] = useState(false);
+    const [matchesError, setMatchesError] = useState('');
+    const [matchesNextCursor, setMatchesNextCursor] = useState<string | null>(null);
+    const [selectedMatch, setSelectedMatch] = useState<ProcurementMatchDetail | null>(null);
+    const [matchDetailLoadingId, setMatchDetailLoadingId] = useState<string | null>(null);
+    const [matchDetailError, setMatchDetailError] = useState('');
+    const [matchResolution, setMatchResolution] = useState<MatchResolutionState | null>(null);
+    const [resolvingMatch, setResolvingMatch] = useState(false);
+    const [matchResolutionError, setMatchResolutionError] = useState('');
+    const matchRequestIdRef = useRef(0);
     const { toast, showToast, dismissToast } = useToast();
 
     // Invoice modal
@@ -286,7 +518,7 @@ export default function Purchases() {
 
     // Auth
     const token = localStorage.getItem('nortex_token');
-    const canAccessFiscalDocuments = FISCAL_DOCUMENT_ROLES.has(currentSessionRole());
+    const canAccessFiscalDocuments = FISCAL_DOCUMENT_ROLES.has(currentRole);
     const headers = useMemo(() => ({
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
@@ -390,6 +622,184 @@ export default function Purchases() {
     // Tutorial guiado: si entran con ?tour=compras (desde Ayuda).
     useEffect(() => { maybeAutostartTour(); }, []);
 
+    const loadMatches = useCallback(async (cursor?: string, append = false) => {
+        const requestId = matchRequestIdRef.current + 1;
+        matchRequestIdRef.current = requestId;
+        setMatchesLoading(true);
+        setMatchesError('');
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
+        try {
+            const query = new URLSearchParams({ limit: '50' });
+            if (matchStatusFilter !== 'ALL') query.set('status', matchStatusFilter);
+            if (matchHoldFilter !== 'ALL') query.set('paymentHold', matchHoldFilter);
+            if (matchSupplierFilter) query.set('supplierId', matchSupplierFilter);
+            if (cursor) query.set('cursor', cursor);
+
+            const response = await fetch(`/api/procurement/matches?${query.toString()}`, {
+                headers,
+                signal: controller.signal,
+            });
+            const payload = await response.json().catch(() => ({})) as {
+                data?: ProcurementMatchSummary[];
+                pageInfo?: { nextCursor?: string | null };
+                error?: string;
+            };
+            if (!response.ok) {
+                if (matchRequestIdRef.current !== requestId) return;
+                setMatchesError(payload.error || 'No se pudo cargar la bandeja de conciliación.');
+                return;
+            }
+            if (matchRequestIdRef.current !== requestId) return;
+            const nextMatches = Array.isArray(payload.data) ? payload.data : [];
+            setMatches(current => append ? [...current, ...nextMatches] : nextMatches);
+            setMatchesNextCursor(payload.pageInfo?.nextCursor ?? null);
+        } catch (error) {
+            if (matchRequestIdRef.current !== requestId) return;
+            setMatchesError((error as { name?: string })?.name === 'AbortError'
+                ? 'La bandeja tardó demasiado en responder. Reintentá.'
+                : 'No pudimos conectar con la bandeja de conciliación.');
+        } finally {
+            window.clearTimeout(timeoutId);
+            if (matchRequestIdRef.current === requestId) setMatchesLoading(false);
+        }
+    }, [headers, matchHoldFilter, matchStatusFilter, matchSupplierFilter]);
+
+    useEffect(() => {
+        if (activeTab === 'matches') void loadMatches();
+    }, [activeTab, loadMatches]);
+
+    const openMatchDetail = async (purchaseId: string) => {
+        if (matchDetailLoadingId) return;
+        setSelectedMatch(null);
+        setMatchDetailError('');
+        setMatchDetailLoadingId(purchaseId);
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
+        try {
+            const response = await fetch(`/api/procurement/matches/${purchaseId}`, {
+                headers,
+                signal: controller.signal,
+            });
+            const payload = await response.json().catch(() => ({})) as {
+                data?: ProcurementMatchDetail;
+                error?: string;
+            };
+            if (!response.ok || !payload.data) {
+                setMatchDetailError(payload.error || 'No se pudo cargar el detalle de conciliación.');
+                return;
+            }
+            setSelectedMatch(payload.data);
+        } catch (error) {
+            setMatchDetailError((error as { name?: string })?.name === 'AbortError'
+                ? 'El detalle tardó demasiado en responder.'
+                : 'No pudimos cargar el detalle de conciliación.');
+        } finally {
+            window.clearTimeout(timeoutId);
+            setMatchDetailLoadingId(null);
+        }
+    };
+
+    const openMatchResolution = (match: ProcurementMatchSummary | ProcurementMatchPurchaseHeader) => {
+        if (!canResolveMatches || match.matchStatus !== 'EXCEPTION') return;
+        setSelectedMatch(null);
+        setMatchResolution({
+            purchaseId: match.id,
+            invoiceNumber: match.invoiceNumber,
+            clientEventId: newClientEventId(),
+            reason: '',
+        });
+        setMatchResolutionError('');
+    };
+
+    const closeMatchResolution = () => {
+        if (resolvingMatch) return;
+        setMatchResolution(null);
+        setMatchResolutionError('');
+    };
+
+    const resolveMatch = async () => {
+        if (!canResolveMatches || !matchResolution || resolvingMatch) return;
+        const reason = matchResolution.reason.trim();
+        if (reason.length < 3) {
+            setMatchResolutionError('Explicá la decisión con al menos 3 caracteres.');
+            return;
+        }
+        if (reason.length > 1000) {
+            setMatchResolutionError('La explicación no puede superar 1000 caracteres.');
+            return;
+        }
+
+        setResolvingMatch(true);
+        setMatchResolutionError('');
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
+        try {
+            const response = await fetch(`/api/procurement/matches/${matchResolution.purchaseId}/resolve`, {
+                method: 'POST',
+                headers,
+                signal: controller.signal,
+                body: JSON.stringify({
+                    clientEventId: matchResolution.clientEventId,
+                    reason,
+                }),
+            });
+            const payload = await response.json().catch(() => ({})) as {
+                data?: {
+                    purchaseId: string;
+                    matchStatus: MatchStatus;
+                    paymentHold: boolean;
+                    matchResolvedBy: string | null;
+                    matchResolvedAt: string | null;
+                    matchResolutionNote: string | null;
+                };
+                replay?: boolean;
+                error?: string;
+            };
+            if (!response.ok || !payload.data) {
+                setMatchResolutionError(payload.error || 'No se pudo resolver la conciliación.');
+                return;
+            }
+
+            setMatches(current => current.map(match => match.id === payload.data?.purchaseId
+                ? { ...match, matchStatus: 'RESOLVED', paymentHold: false, openExceptionCount: 0 }
+                : match));
+            setPurchases(current => current.map(purchase => purchase.id === payload.data?.purchaseId
+                ? {
+                    ...purchase,
+                    matchStatus: payload.data.matchStatus,
+                    paymentHold: payload.data.paymentHold,
+                    matchResolvedBy: payload.data.matchResolvedBy,
+                    matchResolvedAt: payload.data.matchResolvedAt,
+                    matchResolutionNote: payload.data.matchResolutionNote,
+                }
+                : purchase));
+            if (selectedMatch?.purchase.id === payload.data.purchaseId) {
+                setSelectedMatch(current => current ? {
+                    ...current,
+                    purchase: { ...current.purchase, matchStatus: 'RESOLVED', paymentHold: false },
+                } : current);
+            }
+            showToast({
+                tone: 'success',
+                title: payload.replay ? 'Resolución ya confirmada' : 'Diferencia resuelta',
+                message: payload.replay
+                    ? 'El servidor reconoció el mismo intento y no duplicó la resolución.'
+                    : `La factura #${matchResolution.invoiceNumber} quedó liberada para pago.`,
+            });
+            setMatchResolution(null);
+            setMatchResolutionError('');
+            void loadMatches();
+        } catch (error) {
+            setMatchResolutionError((error as { name?: string })?.name === 'AbortError'
+                ? 'No se confirmó la resolución. Reintentá con este mismo diálogo para no duplicarla.'
+                : 'No pudimos confirmar la resolución. El intento se conserva para reintentar.');
+        } finally {
+            window.clearTimeout(timeoutId);
+            setResolvingMatch(false);
+        }
+    };
+
     // ==========================================
     // CART LOGIC
     // ==========================================
@@ -413,25 +823,26 @@ export default function Purchases() {
                             const increment = c.purchaseUnit === 'PACK'
                                 ? new Decimal(1)
                                 : new Decimal(product.quantityStep || 1);
-                            const quantity = new Decimal(c.quantity).plus(increment).toNumber();
+                            const quantity = new Decimal(c.quantity).plus(increment).toString();
                             return {
                                 ...c,
                                 quantity,
-                                totalCost: new Decimal(quantity).mul(c.unitCost).toDecimalPlaces(2).toNumber(),
+                                totalCost: new Decimal(quantity).mul(c.unitCost).toDecimalPlaces(2).toString(),
                             };
                         })()
                         : c
                 );
             }
 
-            const initialQuantity = new Decimal(product.quantityStep || 1).toNumber();
+            const initialQuantity = new Decimal(product.quantityStep || 1).toString();
             return [...currentCart, {
+                cartKey: product.id,
                 productId: product.id,
                 productName: product.name,
                 sku: product.sku,
                 quantity: initialQuantity,
-                unitCost: product.cost,
-                totalCost: new Decimal(initialQuantity).mul(product.cost).toDecimalPlaces(2).toNumber(),
+                unitCost: new Decimal(product.cost).toDecimalPlaces(2).toString(),
+                totalCost: new Decimal(initialQuantity).mul(product.cost).toDecimalPlaces(2).toString(),
                 currentStock: product.stock,
                 unit: product.unit || 'unidad',
                 saleMode: product.saleMode,
@@ -449,22 +860,22 @@ export default function Purchases() {
         setProductSearch('');
     };
 
-    const updateCartItem = (productId: string, field: 'quantity' | 'unitCost' | 'batchNumber' | 'expiryDate', value: any) => {
+    const updateCartItem = (cartKey: string, field: 'quantity' | 'unitCost' | 'batchNumber' | 'expiryDate', value: string | number) => {
         setCart(currentCart => currentCart.map(c => {
-            if (c.productId !== productId) return c;
+            if (c.cartKey !== cartKey) return c;
             const updated = { ...c, [field]: value };
             updated.totalCost = new Decimal(updated.quantity || 0)
                 .mul(updated.unitCost || 0)
                 .toDecimalPlaces(2)
-                .toNumber();
+                .toString();
             return updated;
         }));
         setFormErrors(current => ({ ...current, items: undefined }));
     };
 
-    const updatePurchaseUnit = (productId: string, purchaseUnit: PurchaseUnit) => {
+    const updatePurchaseUnit = (cartKey: string, purchaseUnit: PurchaseUnit) => {
         setCart(currentCart => currentCart.map(item => {
-            if (item.productId !== productId || item.purchaseUnit === purchaseUnit) return item;
+            if (item.cartKey !== cartKey || item.purchaseUnit === purchaseUnit) return item;
             if (!hasPackConfiguration(item)) return item;
 
             const factor = new Decimal(item.packSize!);
@@ -474,7 +885,7 @@ export default function Purchases() {
             const nextUnitCost = purchaseUnit === 'PACK'
                 ? new Decimal(item.unitCost).mul(factor)
                 : new Decimal(item.unitCost).div(factor);
-            const unitCost = nextUnitCost.toDecimalPlaces(4).toNumber();
+            const unitCost = nextUnitCost.toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toString();
             return {
                 ...item,
                 purchaseUnit,
@@ -482,14 +893,14 @@ export default function Purchases() {
                 totalCost: new Decimal(item.quantity || 0)
                     .mul(unitCost)
                     .toDecimalPlaces(2)
-                    .toNumber(),
+                    .toString(),
             };
         }));
         setFormErrors(current => ({ ...current, items: undefined }));
     };
 
-    const removeFromCart = (productId: string) => {
-        setCart(currentCart => currentCart.filter(c => c.productId !== productId));
+    const removeFromCart = (cartKey: string) => {
+        setCart(currentCart => currentCart.filter(c => c.cartKey !== cartKey));
     };
 
     // Una factura vinculada a una OC registra el dinero, no vuelve a ingresar
@@ -525,15 +936,17 @@ export default function Purchases() {
         setSelectedPO(poId);
         setCart(receivedItems.map(item => {
             const product = products.find(candidate => candidate.id === item.productId);
-            const quantity = new Decimal(item.availableQuantity).toNumber();
-            const unitCost = Number(item.unitCost);
+            const quantity = new Decimal(item.availableQuantity).toString();
+            const unitCost = new Decimal(item.unitCost).toString();
             return {
+                cartKey: item.id,
                 productId: item.productId,
+                purchaseOrderItemId: item.id,
                 productName: item.productName,
                 sku: product?.sku ?? '',
                 quantity,
                 unitCost,
-                totalCost: new Decimal(quantity).mul(unitCost).toDecimalPlaces(2).toNumber(),
+                totalCost: new Decimal(quantity).mul(unitCost).toDecimalPlaces(2).toString(),
                 currentStock: product?.stock ?? 0,
                 unit: product?.unit || 'unidad',
                 saleMode: product?.saleMode,
@@ -547,6 +960,10 @@ export default function Purchases() {
                 requiresBatchTracking: false,
                 batchNumber: '',
                 expiryDate: '',
+                orderedQuantity: item.orderedQuantity,
+                receivedQuantity: item.receivedQuantity,
+                invoicedQuantity: item.invoicedQuantity,
+                availableQuantity: item.availableQuantity,
             };
         }));
         setFormErrors(current => ({ ...current, items: undefined }));
@@ -605,6 +1022,29 @@ export default function Purchases() {
             errors.items = `Revisá cantidad y costo de ${invalidItem.productName}.`;
         }
 
+        const invalidPrecision = cart.find(item => {
+            try {
+                return new Decimal(item.quantity).decimalPlaces() > 4
+                    || new Decimal(item.unitCost).decimalPlaces() > 6;
+            } catch {
+                return false;
+            }
+        });
+        if (invalidPrecision) {
+            errors.items = `${invalidPrecision.productName}: la cantidad admite 4 decimales y el costo 6.`;
+        }
+
+        const overAvailable = cart.find(item => item.purchaseOrderItemId && item.availableQuantity && (() => {
+            try {
+                return new Decimal(item.quantity).greaterThan(item.availableQuantity);
+            } catch {
+                return false;
+            }
+        })());
+        if (overAvailable) {
+            errors.items = `${overAvailable.productName}: la factura supera lo recibido disponible (${formatQuantityValue(overAvailable.availableQuantity!)}).`;
+        }
+
         const incompleteBatch = cart.find(item =>
             item.requiresBatchTracking && (!item.batchNumber?.trim() || !item.expiryDate)
         );
@@ -639,6 +1079,7 @@ export default function Purchases() {
                     warehouseId: selectedPO ? undefined : selectedWarehouseId || undefined,
                     invoiceNumber: invoiceNumber.trim(),
                     date: purchaseDate,
+                    postingDate: purchaseDate,
                     purchaseOrderId: selectedPO || undefined,
                     paymentMethod,
                     // JSON.stringify omite undefined: los opcionales no viajan como null.
@@ -647,8 +1088,9 @@ export default function Purchases() {
                     items: cart.map(c => {
                         return {
                             productId: c.productId,
-                            quantity: c.quantity,
-                            unitCost: c.unitCost,
+                            purchaseOrderItemId: c.purchaseOrderItemId,
+                            quantity: new Decimal(c.quantity).toString(),
+                            unitCost: new Decimal(c.unitCost).toString(),
                             purchaseUnit: c.purchaseUnit,
                             batchNumber: c.batchNumber?.trim() || undefined,
                             expiryDate: c.expiryDate || undefined
@@ -713,44 +1155,131 @@ export default function Purchases() {
     // PAY PENDING
     // ==========================================
 
-    const handlePay = (purchaseId: string, invoiceNum: string) => {
-        setPaymentToConfirm({ id: purchaseId, invoiceNumber: invoiceNum });
+    const handlePay = (purchase: Purchase) => {
+        if (!canPaySuppliers) return;
+        if (purchase.paymentHold) {
+            showToast({
+                tone: 'warning',
+                title: 'Pago retenido por conciliación',
+                message: 'Revisá y resolvé las diferencias entre la OC, la recepción y la factura antes de pagar.',
+            });
+            return;
+        }
+        if (isNortexCapitalPurchase(purchase)) {
+            showToast({
+                tone: 'warning',
+                title: 'Financiamiento Nortex',
+                message: 'Esta obligación no se paga desde Cuentas por Pagar a proveedores.',
+            });
+            return;
+        }
+        setSupplierPaymentForm(EMPTY_SUPPLIER_PAYMENT_FORM);
+        setSupplierPaymentError('');
+        setPaymentToConfirm({
+            id: purchase.id,
+            invoiceNumber: purchase.invoiceNumber,
+            clientEventId: newClientEventId(),
+        });
     };
 
-    const confirmPayment = async () => {
-        if (!paymentToConfirm || paying) return;
+    const closePaymentDialog = () => {
+        if (paying) return;
+        setPaymentToConfirm(null);
+        setSupplierPaymentForm(EMPTY_SUPPLIER_PAYMENT_FORM);
+        setSupplierPaymentError('');
+    };
+
+    const confirmPayment = async (settleAll = false) => {
+        if (!canPaySuppliers || !paymentToConfirm || paying) return;
+        const purchase = purchases.find(candidate => candidate.id === paymentToConfirm.id);
+        if (!purchase || isNortexCapitalPurchase(purchase) || purchase.paymentHold) {
+            setSupplierPaymentError(purchase?.paymentHold
+                ? 'El pago sigue retenido por una diferencia de conciliación.'
+                : 'Esta compra no admite pagos desde este flujo.');
+            return;
+        }
+
+        let normalizedAmount: string | undefined;
+        if (!settleAll) {
+            try {
+                const amount = new Decimal(supplierPaymentForm.amount.trim());
+                const balance = effectivePurchaseBalance(purchase);
+                if (!amount.isFinite() || amount.lessThanOrEqualTo(0)) {
+                    setSupplierPaymentError('Ingresá un monto mayor que cero.');
+                    return;
+                }
+                if (amount.decimalPlaces() > 2) {
+                    setSupplierPaymentError('El abono admite máximo dos decimales.');
+                    return;
+                }
+                if (amount.greaterThan(balance)) {
+                    setSupplierPaymentError(`El abono no puede superar el saldo de ${formatCurrency(balance)}.`);
+                    return;
+                }
+                normalizedAmount = amount.toFixed(amount.decimalPlaces());
+            } catch {
+                setSupplierPaymentError('Ingresá un monto válido.');
+                return;
+            }
+        }
+        if (supplierPaymentForm.reference.trim().length > 191) {
+            setSupplierPaymentError('La referencia no puede superar 191 caracteres.');
+            return;
+        }
+        if (supplierPaymentForm.notes.trim().length > 2000) {
+            setSupplierPaymentError('Las notas no pueden superar 2000 caracteres.');
+            return;
+        }
 
         setPaying(true);
+        setSupplierPaymentError('');
         const controller = new AbortController();
         const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
         try {
+            const body = {
+                clientEventId: paymentToConfirm.clientEventId,
+                method: supplierPaymentForm.method,
+                ...(normalizedAmount === undefined ? {} : { amount: normalizedAmount }),
+                ...(supplierPaymentForm.reference.trim() ? { reference: supplierPaymentForm.reference.trim() } : {}),
+                ...(supplierPaymentForm.notes.trim() ? { notes: supplierPaymentForm.notes.trim() } : {}),
+            };
             const res = await fetch(`/api/purchases/${paymentToConfirm.id}/pay`, {
                 method: 'POST',
                 headers,
                 signal: controller.signal,
+                body: JSON.stringify(body),
             });
             const data = await res.json().catch(() => ({}));
 
             if (res.ok) {
+                if (data.purchase?.id) {
+                    setPurchases(current => current.map(candidate => (
+                        candidate.id === data.purchase.id ? { ...candidate, ...data.purchase } : candidate
+                    )));
+                }
                 showToast({
                     tone: 'success',
-                    title: 'Factura pagada',
-                    message: data.message || `La factura #${paymentToConfirm.invoiceNumber} quedó pagada.`,
+                    title: data.replay ? 'Pago ya confirmado' : settleAll ? 'Factura liquidada' : 'Abono registrado',
+                    message: data.replay
+                        ? 'El servidor reconoció el mismo intento y no duplicó el pago.'
+                        : `La factura #${paymentToConfirm.invoiceNumber} quedó actualizada.`,
                 });
                 setPaymentToConfirm(null);
+                setSupplierPaymentForm(EMPTY_SUPPLIER_PAYMENT_FORM);
+                setSupplierPaymentError('');
                 void fetchAll();
             } else {
-                showToast({
-                    tone: 'error',
-                    title: 'No se pudo pagar la factura',
-                    message: data.error || `El servidor respondió ${res.status}.`,
-                });
+                const message = data.error || `El servidor respondió ${res.status}.`;
+                setSupplierPaymentError(message);
+                showToast({ tone: 'error', title: 'No se pudo registrar el pago', message });
             }
         } catch (e: any) {
+            const message = 'No se confirmó el pago. Revisá el historial antes de volver a intentar con el mismo botón.';
+            setSupplierPaymentError(message);
             showToast({
                 tone: 'error',
                 title: e?.name === 'AbortError' ? 'La conexión tardó demasiado' : 'Error de conexión',
-                message: 'No se confirmó el pago. Revisá el historial antes de volver a intentar.',
+                message,
             });
         } finally {
             window.clearTimeout(timeoutId);
@@ -777,6 +1306,7 @@ export default function Purchases() {
     const printInvoice = (format: 'ticket' | 'a4') => {
         if (!selectedPurchase) return;
         const p = selectedPurchase;
+        const printedBalance = effectivePurchaseBalance(p);
 
         const itemsHTML = p.items.map(item => `
             <tr>
@@ -809,6 +1339,7 @@ export default function Purchases() {
     .status { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: ${isTicket ? '10px' : '12px'}; font-weight: bold; }
     .paid { background: #d4edda; color: #155724; }
     .pending { background: #fff3cd; color: #856404; }
+    .partial { background: #dbeafe; color: #1e40af; }
     .footer { text-align: center; margin-top: 15px; padding-top: 8px; border-top: ${isTicket ? '1px dashed #000' : '1px solid #ddd'}; font-size: ${isTicket ? '9px' : '11px'}; color: #999; }
     @media print { body { margin: 0; } }
 </style></head><body>
@@ -823,8 +1354,8 @@ export default function Purchases() {
         <div class="info-row"><span><strong>Proveedor:</strong></span><span>${escapeHtml(p.supplier.name)}</span></div>
         <div class="info-row"><span><strong>Fecha:</strong></span><span>${formatCalendarDateLong(p.date)}</span></div>
         ${p.dueDate ? `<div class="info-row"><span><strong>Vencimiento:</strong></span><span>${formatCalendarDateLong(p.dueDate)}</span></div>` : ''}
-        <div class="info-row"><span><strong>Metodo:</strong></span><span>${p.paymentMethod === 'CASH' ? 'Contado' : 'Credito'}</span></div>
-        <div class="info-row"><span><strong>Estado:</strong></span><span class="status ${p.status === 'COMPLETED' ? 'paid' : 'pending'}">${p.status === 'COMPLETED' ? 'PAGADO' : 'PENDIENTE'}</span></div>
+        <div class="info-row"><span><strong>Metodo:</strong></span><span>${escapeHtml(purchaseMethodLabel(p.paymentMethod))}</span></div>
+        <div class="info-row"><span><strong>Estado:</strong></span><span class="status ${p.status === 'COMPLETED' ? 'paid' : p.status === 'PARTIALLY_PAID' ? 'partial' : 'pending'}">${escapeHtml(purchaseStatusLabel(p.status).toUpperCase())}</span></div>
     </div>
 
     <table>
@@ -843,6 +1374,7 @@ export default function Purchases() {
         <div class="total-row"><span>Subtotal:</span><span>${formatMoney(parseFloat(p.subtotal as any))}</span></div>
         <div class="total-row"><span>IVA (15%):</span><span>${formatMoney(parseFloat(p.tax as any))}</span></div>
         <div class="total-row grand-total"><span>TOTAL:</span><span>${formatMoney(parseFloat(p.total as any))}</span></div>
+        ${!isNortexCapitalPurchase(p) && printedBalance.greaterThan(0) ? `<div class="total-row"><span>SALDO:</span><span>${formatMoney(printedBalance)}</span></div>` : ''}
     </div>
 
     ${p.notes ? `<div style="margin-top:10px;font-size:${isTicket ? '10px' : '12px'};color:#666"><strong>Notas:</strong> ${escapeHtml(p.notes)}</div>` : ''}
@@ -870,10 +1402,19 @@ export default function Purchases() {
     // COMPUTED
     // ==========================================
 
-    const pendingPurchases = purchases.filter(p => p.status === 'PENDING_PAYMENT');
-    const completedPurchases = purchases.filter(p => p.status === 'COMPLETED');
-    const totalDebt = pendingPurchases.reduce((sum, p) => sum + parseFloat(p.total as any), 0);
-    const totalPurchasesMonth = purchases.reduce((sum, p) => sum + parseFloat(p.total as any), 0);
+    const pendingPurchases = purchases.filter(p =>
+        ['PENDING_PAYMENT', 'PARTIALLY_PAID'].includes(p.status)
+        && !isNortexCapitalPurchase(p)
+        && effectivePurchaseBalance(p).greaterThan(0)
+    );
+    const totalDebt = pendingPurchases.reduce(
+        (sum, purchase) => sum.plus(effectivePurchaseBalance(purchase)),
+        new Decimal(0),
+    );
+    const totalPurchasesMonth = purchases.reduce(
+        (sum, purchase) => sum.plus(purchase.total),
+        new Decimal(0),
+    );
     const paymentPurchase = paymentToConfirm
         ? purchases.find(p => p.id === paymentToConfirm.id)
         : undefined;
@@ -887,7 +1428,7 @@ export default function Purchases() {
             <ToastViewport toast={toast} onDismiss={dismissToast} />
             {/* HEADER */}
             <div className="bg-slate-800/80 border-b border-slate-700 px-6 py-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                     <div className="flex items-center gap-3">
                         <div className="w-12 h-12 bg-gradient-to-br from-orange-600 to-red-500 rounded-xl flex items-center justify-center shadow-lg">
                             <Truck size={24} className="text-white" />
@@ -900,28 +1441,34 @@ export default function Purchases() {
                     </div>
 
                     {/* KPI Cards */}
-                    <div className="flex gap-3">
+                    <div className="grid w-full grid-cols-2 gap-3 sm:w-auto">
                         <div className="bg-slate-900/60 border border-slate-700 rounded-lg px-4 py-2 text-center">
                             <p className="text-xs text-slate-400">Compras del Mes</p>
-                            <p className="text-lg font-bold text-white">{formatCurrency(totalPurchasesMonth)}</p>
+                            <p className="text-lg font-bold text-white">{loading ? '…' : formatCurrency(totalPurchasesMonth)}</p>
                         </div>
-                        <div className={`border rounded-lg px-4 py-2 text-center ${totalDebt > 0 ? 'bg-red-950/40 border-red-800' : 'bg-slate-900/60 border-slate-700'}`}>
+                        <div className={`border rounded-lg px-4 py-2 text-center ${totalDebt.greaterThan(0) ? 'bg-red-950/40 border-red-800' : 'bg-slate-900/60 border-slate-700'}`}>
                             <p className="text-xs text-slate-400">Cuentas por Pagar</p>
-                            <p className={`text-lg font-bold ${totalDebt > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{formatCurrency(totalDebt)}</p>
+                            <p className={`text-lg font-bold ${totalDebt.greaterThan(0) ? 'text-red-400' : 'text-emerald-400'}`}>{loading ? '…' : formatCurrency(totalDebt)}</p>
                         </div>
                     </div>
                 </div>
 
                 {/* TABS */}
-                <div className="flex gap-1 mt-4 bg-slate-900/60 p-1 rounded-lg w-fit">
+                <div className="mt-4 flex max-w-full w-fit gap-1 overflow-x-auto rounded-lg bg-slate-900/60 p-1">
+                    {canCreatePurchase && (
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab('new')}
+                            aria-pressed={activeTab === 'new'}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'new' ? 'bg-orange-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                        >
+                            <Plus size={16} /> Nueva Compra
+                        </button>
+                    )}
                     <button
-                        onClick={() => setActiveTab('new')}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'new' ? 'bg-orange-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
-                    >
-                        <Plus size={16} /> Nueva Compra
-                    </button>
-                    <button
+                        type="button"
                         onClick={() => setActiveTab('history')}
+                        aria-pressed={activeTab === 'history'}
                         className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'history' ? 'bg-orange-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
                     >
                         <FileText size={16} /> Historial
@@ -929,11 +1476,24 @@ export default function Purchases() {
                             <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingPurchases.length}</span>
                         )}
                     </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab('matches')}
+                        aria-pressed={activeTab === 'matches'}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'matches' ? 'bg-orange-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                    >
+                        <GitCompareArrows size={16} /> Conciliación
+                        {purchases.some(purchase => purchase.paymentHold) && (
+                            <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-xs font-bold text-slate-950">
+                                {purchases.filter(purchase => purchase.paymentHold).length}
+                            </span>
+                        )}
+                    </button>
                 </div>
             </div>
 
             {/* CONTENT */}
-            <div className="p-6">
+            <div className="p-4 sm:p-6">
                 {activeTab === 'new' && Object.values(formErrors).some(Boolean) && (
                     <div role="alert" className="mb-4 flex items-start gap-3 rounded-xl border border-red-700/70 bg-red-950/40 px-4 py-3 text-red-100">
                         <AlertTriangle size={19} className="mt-0.5 shrink-0 text-red-300" />
@@ -947,7 +1507,166 @@ export default function Purchases() {
                         </div>
                     </div>
                 )}
-                {activeTab === 'new' ? (
+                {activeTab === 'matches' ? (
+                    <section className="space-y-5" aria-labelledby="procurement-match-title">
+                        <div className="flex flex-col gap-4 rounded-2xl border border-slate-700 bg-slate-800/70 p-5 lg:flex-row lg:items-end lg:justify-between">
+                            <div>
+                                <h2 id="procurement-match-title" className="flex items-center gap-2 text-lg font-bold text-white">
+                                    <GitCompareArrows className="text-orange-300" size={21} /> Conciliación de compras
+                                </h2>
+                                <p className="mt-1 max-w-2xl text-sm text-slate-400">
+                                    Compará orden, recepción física y factura. Las diferencias abiertas retienen el pago hasta que una persona autorizada documente la decisión.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => void loadMatches()}
+                                disabled={matchesLoading}
+                                className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-600 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-700 disabled:opacity-60"
+                            >
+                                <RotateCcw size={15} className={matchesLoading ? 'animate-spin' : ''} /> Actualizar
+                            </button>
+                        </div>
+
+                        <div className="grid gap-3 rounded-xl border border-slate-700 bg-slate-800/50 p-4 sm:grid-cols-2 lg:grid-cols-4">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-slate-300 sm:col-span-2 lg:col-span-1">
+                                <SlidersHorizontal size={17} className="text-slate-500" /> Filtros
+                            </div>
+                            <label className="space-y-1 text-xs font-semibold text-slate-400">
+                                Estado
+                                <select
+                                    aria-label="Filtrar conciliaciones por estado"
+                                    value={matchStatusFilter}
+                                    onChange={event => setMatchStatusFilter(event.target.value as MatchStatus | 'ALL')}
+                                    className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white"
+                                >
+                                    <option value="ALL">Todos</option>
+                                    <option value="EXCEPTION">Con diferencias</option>
+                                    <option value="MATCHED">Conciliadas</option>
+                                    <option value="RESOLVED">Resueltas</option>
+                                    <option value="NOT_REQUIRED">No requeridas</option>
+                                </select>
+                            </label>
+                            <label className="space-y-1 text-xs font-semibold text-slate-400">
+                                Pago
+                                <select
+                                    aria-label="Filtrar conciliaciones por retención"
+                                    value={matchHoldFilter}
+                                    onChange={event => setMatchHoldFilter(event.target.value as 'ALL' | 'true' | 'false')}
+                                    className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white"
+                                >
+                                    <option value="ALL">Todos</option>
+                                    <option value="true">Retenido</option>
+                                    <option value="false">Liberado</option>
+                                </select>
+                            </label>
+                            <label className="space-y-1 text-xs font-semibold text-slate-400">
+                                Proveedor
+                                <select
+                                    aria-label="Filtrar conciliaciones por proveedor"
+                                    value={matchSupplierFilter}
+                                    onChange={event => setMatchSupplierFilter(event.target.value)}
+                                    className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white"
+                                >
+                                    <option value="">Todos</option>
+                                    {suppliers.map(supplier => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+                                </select>
+                            </label>
+                        </div>
+
+                        {matchDetailError && (
+                            <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                                <span>{matchDetailError}</span>
+                                <button type="button" onClick={() => setMatchDetailError('')} className="rounded p-1 hover:bg-red-500/10" aria-label="Cerrar error"><X size={15} /></button>
+                            </div>
+                        )}
+
+                        {matchesLoading && matches.length === 0 ? (
+                            <div aria-label="Cargando conciliaciones" className="grid gap-3 lg:grid-cols-2">
+                                {[0, 1, 2, 3].map(index => <div key={index} className="h-40 animate-pulse rounded-xl border border-slate-700 bg-slate-800/60" />)}
+                            </div>
+                        ) : matchesError ? (
+                            <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-7 text-center text-red-100">
+                                <AlertTriangle className="mx-auto text-red-300" size={30} />
+                                <p className="mt-2 font-semibold">No pudimos cargar la conciliación</p>
+                                <p className="mt-1 text-sm text-red-200">{matchesError}</p>
+                                <button type="button" onClick={() => void loadMatches()} className="mt-4 rounded-lg border border-red-400/40 px-4 py-2 text-sm font-semibold hover:bg-red-500/10">Reintentar</button>
+                            </div>
+                        ) : matches.length === 0 ? (
+                            <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-12 text-center">
+                                <Check className="mx-auto text-emerald-400" size={38} />
+                                <p className="mt-3 font-semibold text-white">No hay compras con estos filtros</p>
+                                <p className="mt-1 text-sm text-slate-400">Probá otro estado o revisá las facturas nuevas más tarde.</p>
+                            </div>
+                        ) : (
+                            <div className="grid gap-4 lg:grid-cols-2">
+                                {matches.map(match => (
+                                    <article key={match.id} className="rounded-xl border border-slate-700 bg-slate-800/65 p-4 shadow-sm">
+                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                            <div>
+                                                <p className="text-sm font-semibold text-white">{match.supplier.name}</p>
+                                                <p className="mt-0.5 text-xs text-slate-400">
+                                                    Factura <span className="font-mono text-slate-300">#{match.invoiceNumber}</span>
+                                                    {match.purchaseOrder ? ` · ${match.purchaseOrder.orderNumber}` : ' · Compra directa'}
+                                                </p>
+                                            </div>
+                                            <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${matchStatusClass(match.matchStatus)}`}>
+                                                {matchStatusLabel(match.matchStatus)}
+                                            </span>
+                                        </div>
+                                        <div className="mt-4 grid grid-cols-3 gap-3 rounded-lg bg-slate-900/55 p-3 text-sm">
+                                            <div>
+                                                <p className="text-[11px] text-slate-500">Factura</p>
+                                                <p className="font-bold text-slate-100">{formatCurrency(match.total)}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[11px] text-slate-500">Variación</p>
+                                                <p className={`font-bold ${new Decimal(match.varianceAmount || 0).isZero() ? 'text-emerald-300' : 'text-amber-300'}`}>{formatCurrency(match.varianceAmount || 0)}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[11px] text-slate-500">Diferencias</p>
+                                                <p className="font-bold text-slate-100">{match.openExceptionCount}</p>
+                                            </div>
+                                        </div>
+                                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                                            <div className={`flex items-center gap-1.5 text-xs font-semibold ${match.paymentHold ? 'text-amber-300' : 'text-emerald-300'}`}>
+                                                {match.paymentHold ? <LockKeyhole size={14} /> : <Check size={14} />}
+                                                {match.paymentHold ? 'Pago retenido' : 'Pago liberado'}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => void openMatchDetail(match.id)}
+                                                    disabled={matchDetailLoadingId !== null}
+                                                    className="rounded-lg border border-slate-600 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 disabled:opacity-60"
+                                                >
+                                                    {matchDetailLoadingId === match.id ? 'Cargando…' : 'Ver diferencias'}
+                                                </button>
+                                                {canResolveMatches && match.matchStatus === 'EXCEPTION' && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openMatchResolution(match)}
+                                                        className="rounded-lg bg-orange-600 px-3 py-2 text-xs font-bold text-white hover:bg-orange-500"
+                                                    >
+                                                        Resolver
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </article>
+                                ))}
+                            </div>
+                        )}
+
+                        {matchesNextCursor && !matchesError && (
+                            <div className="text-center">
+                                <button type="button" onClick={() => void loadMatches(matchesNextCursor, true)} disabled={matchesLoading} className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-60">
+                                    {matchesLoading ? 'Cargando…' : 'Cargar más'}
+                                </button>
+                            </div>
+                        )}
+                    </section>
+                ) : activeTab === 'new' ? (
                     /* ==========================================
                        TAB: NUEVA COMPRA
                        ========================================== */
@@ -962,20 +1681,21 @@ export default function Purchases() {
                                 </h3>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div>
-                                        <label className="block text-sm text-slate-300 mb-1.5">Proveedor *</label>
+                                        <label htmlFor="purchase-supplier" className="block text-sm text-slate-300 mb-1.5">Proveedor *</label>
                                         <select
+                                            id="purchase-supplier"
                                             value={selectedSupplier}
                                             onChange={(e) => changeSupplier(e.target.value)}
                                             aria-invalid={Boolean(formErrors.supplierId)}
                                             className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white focus:ring-1 ${formErrors.supplierId ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
                                         >
-                                            <option value="">{suppliers.length === 0 ? 'Todavía no hay proveedores' : 'Seleccionar proveedor…'}</option>
+                                            <option value="">{loading ? 'Cargando proveedores…' : suppliers.length === 0 ? 'Todavía no hay proveedores' : 'Seleccionar proveedor…'}</option>
                                             {suppliers.map(s => (
                                                 <option key={s.id} value={s.id}>{s.name}</option>
                                             ))}
                                         </select>
                                         {formErrors.supplierId && <p className="mt-1 text-xs text-red-300">{formErrors.supplierId}</p>}
-                                        {suppliers.length === 0 && (
+                                        {!loading && suppliers.length === 0 && (
                                             <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-amber-800/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-100">
                                                 <span>Primero agregá a quien te vende.</span>
                                                 <a href="/app/suppliers" className="shrink-0 font-bold text-amber-300 underline decoration-amber-500/60 underline-offset-2 hover:text-amber-200">
@@ -998,7 +1718,7 @@ export default function Purchases() {
                                                 required
                                                 className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white focus:ring-1 ${formErrors.warehouseId ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
                                             >
-                                                <option value="">Seleccionar bodega destino…</option>
+                                                <option value="">{loading ? 'Cargando bodegas…' : 'Seleccionar bodega destino…'}</option>
                                                 {warehouses.map(warehouse => (
                                                     <option key={warehouse.id} value={warehouse.id}>
                                                         {warehouse.name}{warehouse.isDefault ? ' · Principal' : ''}
@@ -1007,15 +1727,16 @@ export default function Purchases() {
                                             </select>
                                             <p className="mt-1 text-xs text-slate-500">El stock se sumará solo en esta ubicación.</p>
                                             {formErrors.warehouseId && <p className="mt-1 text-xs text-red-300">{formErrors.warehouseId}</p>}
-                                            {warehouses.length === 0 && (
+                                            {!loading && warehouses.length === 0 && (
                                                 <p role="alert" className="mt-1 text-xs text-red-300">No hay una bodega activa disponible. Reintentá la carga antes de procesar el ingreso.</p>
                                             )}
                                         </div>
                                     )}
                                     {purchaseOrdersForSupplier.length > 0 && (
                                         <div>
-                                            <label className="block text-sm text-slate-300 mb-1.5">Orden de compra (opcional)</label>
+                                            <label htmlFor="purchase-order-link" className="block text-sm text-slate-300 mb-1.5">Orden de compra (opcional)</label>
                                             <select
+                                                id="purchase-order-link"
                                                 value={selectedPO}
                                                 onChange={(event) => linkPurchaseOrder(event.target.value)}
                                                 className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
@@ -1030,8 +1751,9 @@ export default function Purchases() {
                                         </div>
                                     )}
                                     <div>
-                                        <label className="block text-sm text-slate-300 mb-1.5"># Factura Proveedor *</label>
+                                        <label htmlFor="purchase-invoice-number" className="block text-sm text-slate-300 mb-1.5"># Factura Proveedor *</label>
                                         <input
+                                            id="purchase-invoice-number"
                                             value={invoiceNumber}
                                             onChange={(e) => {
                                                 setInvoiceNumber(e.target.value);
@@ -1196,7 +1918,7 @@ export default function Purchases() {
                                                     }
                                                     const inputStep = purchaseQuantityInputStep(item, item.purchaseUnit);
                                                     return (
-                                                    <React.Fragment key={item.productId}>
+                                                    <React.Fragment key={item.cartKey}>
                                                         <tr className="border-b border-slate-700/50">
                                                             <td className="py-3 px-2">
                                                                 <div>
@@ -1205,10 +1927,18 @@ export default function Purchases() {
                                                                         <span className="text-xs text-slate-500 font-mono">{item.sku}</span>
                                                                         <span className="text-xs text-slate-600">Stock actual: {formatQuantityValue(item.currentStock)} {item.unit}</span>
                                                                     </div>
+                                                                    {item.purchaseOrderItemId && (
+                                                                        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-400 sm:grid-cols-4">
+                                                                            <div><dt className="inline">Ordenado </dt><dd className="inline font-mono text-slate-200">{formatQuantityValue(item.orderedQuantity ?? '0')}</dd></div>
+                                                                            <div><dt className="inline">Recibido </dt><dd className="inline font-mono text-slate-200">{formatQuantityValue(item.receivedQuantity ?? '0')}</dd></div>
+                                                                            <div><dt className="inline">Facturado </dt><dd className="inline font-mono text-slate-200">{formatQuantityValue(item.invoicedQuantity ?? '0')}</dd></div>
+                                                                            <div><dt className="inline">Disponible </dt><dd className="inline font-mono font-bold text-emerald-300">{formatQuantityValue(item.availableQuantity ?? '0')}</dd></div>
+                                                                        </dl>
+                                                                    )}
                                                                     {hasPackConfiguration(item) && (
                                                                         <select
                                                                             value={item.purchaseUnit}
-                                                                            onChange={(event) => updatePurchaseUnit(item.productId, event.target.value as PurchaseUnit)}
+                                                                            onChange={(event) => updatePurchaseUnit(item.cartKey, event.target.value as PurchaseUnit)}
                                                                             disabled={Boolean(selectedPO)}
                                                                             aria-label={`Unidad de compra de ${item.productName}`}
                                                                             className="mt-2 max-w-full rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs font-semibold text-slate-200 focus:border-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
@@ -1221,11 +1951,11 @@ export default function Purchases() {
                                                             </td>
                                                             <td className="py-3 px-2">
                                                                 <input
-                                                                    type="number"
-                                                                    min={inputStep}
-                                                                    step={inputStep}
+                                                                    type="text"
+                                                                    inputMode="decimal"
                                                                     value={item.quantity}
-                                                                    onChange={(e) => updateCartItem(item.productId, 'quantity', Number(e.target.value))}
+                                                                    onChange={(e) => updateCartItem(item.cartKey, 'quantity', sanitizeDecimalInput(e.target.value))}
+                                                                    aria-label={`Cantidad a facturar de ${item.productName}${item.purchaseOrderItemId ? ` · línea ${item.purchaseOrderItemId}` : ''}`}
                                                                     aria-invalid={Boolean(formErrors.items)}
                                                                     className="w-full text-center bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-sm focus:border-orange-500"
                                                                 />
@@ -1234,16 +1964,16 @@ export default function Purchases() {
                                                                         ? preview
                                                                             ? `${formatQuantityValue(item.quantity)} ${item.packUnit} = ${formatQuantityValue(preview.baseQuantity)} ${item.unit}`
                                                                             : `${item.packUnit} de ${formatQuantityValue(item.packSize!)} ${item.unit}`
-                                                                        : `en ${item.unit}`}
+                                                                        : `en ${item.unit} · paso ${inputStep}`}
                                                                 </p>
                                                             </td>
                                                             <td className="py-3 px-2">
                                                                 <input
-                                                                    type="number"
-                                                                    min="0.01"
-                                                                    step="0.01"
+                                                                    type="text"
+                                                                    inputMode="decimal"
                                                                     value={item.unitCost}
-                                                                    onChange={(e) => updateCartItem(item.productId, 'unitCost', Number(e.target.value))}
+                                                                    onChange={(e) => updateCartItem(item.cartKey, 'unitCost', sanitizeDecimalInput(e.target.value))}
+                                                                    aria-label={`Costo de ${item.productName}${item.purchaseOrderItemId ? ` · línea ${item.purchaseOrderItemId}` : ''}`}
                                                                     aria-invalid={Boolean(formErrors.items)}
                                                                     className="w-full text-center bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-sm focus:border-orange-500"
                                                                 />
@@ -1260,7 +1990,8 @@ export default function Purchases() {
                                                             </td>
                                                             <td className="py-3 px-1">
                                                                 <button
-                                                                    onClick={() => removeFromCart(item.productId)}
+                                                                    onClick={() => removeFromCart(item.cartKey)}
+                                                                    aria-label={`Quitar ${item.productName}`}
                                                                     className="p-1.5 hover:bg-red-500/20 rounded text-red-400 transition-colors"
                                                                 >
                                                                     <Trash2 size={15} />
@@ -1279,14 +2010,14 @@ export default function Purchases() {
                                                                                 type="text"
                                                                                 placeholder="Nº Lote"
                                                                                 value={item.batchNumber || ''}
-                                                                                onChange={(e) => updateCartItem(item.productId, 'batchNumber', e.target.value)}
+                                                                                onChange={(e) => updateCartItem(item.cartKey, 'batchNumber', e.target.value)}
                                                                                 aria-invalid={Boolean(formErrors.items)}
                                                                                 className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-xs focus:border-orange-500"
                                                                             />
                                                                             <input
                                                                                 type="date"
                                                                                 value={item.expiryDate || ''}
-                                                                                onChange={(e) => updateCartItem(item.productId, 'expiryDate', e.target.value)}
+                                                                                onChange={(e) => updateCartItem(item.cartKey, 'expiryDate', e.target.value)}
                                                                                 aria-invalid={Boolean(formErrors.items)}
                                                                                 className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-xs focus:border-orange-500"
                                                                             />
@@ -1402,6 +2133,11 @@ export default function Purchases() {
                             </div>
                         </div>
                     </div>
+                ) : loading ? (
+                    <div aria-label="Cargando historial de compras" className="space-y-4">
+                        <div className="h-28 animate-pulse rounded-xl border border-slate-700 bg-slate-800/60" />
+                        <div className="h-72 animate-pulse rounded-xl border border-slate-700 bg-slate-800/60" />
+                    </div>
                 ) : (
                     /* ==========================================
                        TAB: HISTORIAL / CUENTAS POR PAGAR
@@ -1419,7 +2155,7 @@ export default function Purchases() {
                                 </h3>
                                 <div className="grid gap-3">
                                     {pendingPurchases.map(p => (
-                                        <div key={p.id} className="bg-amber-950/20 border border-amber-800/50 rounded-xl p-4 flex items-center justify-between">
+                                        <div key={p.id} className="flex flex-col gap-4 rounded-xl border border-amber-800/50 bg-amber-950/20 p-4 lg:flex-row lg:items-center lg:justify-between">
                                             <div className="flex items-center gap-4">
                                                 <div className="w-10 h-10 bg-amber-900/40 rounded-lg flex items-center justify-center">
                                                     <Clock size={20} className="text-amber-400" />
@@ -1432,10 +2168,20 @@ export default function Purchases() {
                                                             <span className="text-amber-400 ml-2">Vence: {formatCalendarDate(p.dueDate)}</span>
                                                         )}
                                                     </p>
+                                                    {p.status === 'PARTIALLY_PAID' && <p className="mt-1 text-xs font-bold text-sky-300">Ya tiene abonos registrados</p>}
+                                                    {p.paymentHold && (
+                                                        <p className="mt-1 flex items-center gap-1 text-xs font-bold text-amber-300">
+                                                            <LockKeyhole size={12} /> Pago retenido hasta resolver la conciliación
+                                                        </p>
+                                                    )}
                                                 </div>
                                             </div>
-                                            <div className="flex items-center gap-3">
-                                                <span className="text-xl font-bold text-amber-400">{formatCurrency(parseFloat(p.total as any))}</span>
+                                            <div className="flex flex-wrap items-center gap-3">
+                                                <div className="mr-1 text-right">
+                                                    <p className="text-xs text-slate-500">Saldo pendiente</p>
+                                                    <span className="text-xl font-bold text-amber-400">{formatCurrency(effectivePurchaseBalance(p))}</span>
+                                                    <p className="text-xs text-slate-500">de {formatCurrency(p.total)}</p>
+                                                </div>
                                                 <button
                                                     onClick={() => viewInvoice(p)}
                                                     className="flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-slate-300 text-sm transition-colors"
@@ -1457,12 +2203,23 @@ export default function Purchases() {
                                                         {openingRetentionId === p.id ? 'Generando…' : 'Retención'}
                                                     </button>
                                                 )}
-                                                <button
-                                                    onClick={() => handlePay(p.id, p.invoiceNumber)}
-                                                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-lg text-white font-semibold text-sm transition-colors"
-                                                >
-                                                    <DollarSign size={16} /> Pagar
-                                                </button>
+                                                {canPaySuppliers && !p.paymentHold && (
+                                                    <button
+                                                        onClick={() => handlePay(p)}
+                                                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-lg text-white font-semibold text-sm transition-colors"
+                                                    >
+                                                        <DollarSign size={16} /> Abonar
+                                                    </button>
+                                                )}
+                                                {canPaySuppliers && p.paymentHold && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setActiveTab('matches')}
+                                                        className="flex items-center gap-2 rounded-lg border border-amber-600/60 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-200 hover:bg-amber-500/15"
+                                                    >
+                                                        <GitCompareArrows size={16} /> Revisar diferencia
+                                                    </button>
+                                                )}
                                             </div>
                                         </div>
                                     ))}
@@ -1508,19 +2265,28 @@ export default function Purchases() {
                                                     <td className="px-4 py-3 text-center">
                                                         <span className={`text-xs px-2 py-1 rounded-full ${p.paymentMethod === 'CASH'
                                                             ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700'
-                                                            : 'bg-amber-900/40 text-amber-300 border border-amber-700'}`}>
-                                                            {p.paymentMethod === 'CASH' ? 'Contado' : 'Credito'}
+                                                            : p.paymentMethod === 'NORTEX_CAPITAL'
+                                                                ? 'bg-sky-900/40 text-sky-300 border border-sky-700'
+                                                                : 'bg-amber-900/40 text-amber-300 border border-amber-700'}`}>
+                                                            {p.paymentMethod === 'CASH' ? 'Contado' : p.paymentMethod === 'NORTEX_CAPITAL' ? 'Financiamiento Nortex' : 'Crédito'}
                                                         </span>
                                                     </td>
                                                     <td className="px-4 py-3 text-center">
                                                         <span className={`text-xs px-2 py-1 rounded-full ${p.status === 'COMPLETED'
                                                             ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700'
-                                                            : 'bg-red-900/40 text-red-300 border border-red-700'}`}>
-                                                            {p.status === 'COMPLETED' ? 'Pagado' : 'Pendiente'}
+                                                            : p.status === 'PARTIALLY_PAID'
+                                                                ? 'bg-sky-900/40 text-sky-300 border border-sky-700'
+                                                                : 'bg-red-900/40 text-red-300 border border-red-700'}`}>
+                                                            {purchaseStatusLabel(p.status)}
                                                         </span>
+                                                        {p.paymentHold && (
+                                                            <span className="ml-1 inline-flex items-center gap-1 rounded-full border border-amber-700 bg-amber-950/40 px-2 py-1 text-xs text-amber-300">
+                                                                <LockKeyhole size={11} /> Retenido
+                                                            </span>
+                                                        )}
                                                     </td>
                                                     <td className="px-4 py-3 text-right font-bold text-emerald-400">
-                                                        {formatCurrency(parseFloat(p.total as any))}
+                                                        {formatCurrency(p.total)}
                                                     </td>
                                                     <td className="px-4 py-3 text-center">
                                                         <div className="flex items-center justify-center gap-1">
@@ -1557,19 +2323,166 @@ export default function Purchases() {
                 )}
             </div>
 
+            {selectedMatch && (
+                <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm" onClick={() => setSelectedMatch(null)}>
+                    <div role="dialog" aria-modal="true" aria-labelledby="match-detail-title" className="max-h-[calc(100dvh-2rem)] w-full max-w-4xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl" onClick={event => event.stopPropagation()}>
+                        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-700 bg-slate-900/95 px-5 py-4 backdrop-blur">
+                            <div>
+                                <h2 id="match-detail-title" className="flex items-center gap-2 font-bold text-white">
+                                    <GitCompareArrows size={20} className="text-orange-300" /> Conciliación #{selectedMatch.purchase.invoiceNumber}
+                                </h2>
+                                <p className="mt-1 text-sm text-slate-400">
+                                    {selectedMatch.purchase.supplier.name}{selectedMatch.purchase.purchaseOrder ? ` · ${selectedMatch.purchase.purchaseOrder.orderNumber}` : ''}
+                                </p>
+                            </div>
+                            <button type="button" onClick={() => setSelectedMatch(null)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Cerrar detalle de conciliación"><X size={18} /></button>
+                        </div>
+
+                        <div className="space-y-5 p-5">
+                            <div className="grid gap-3 sm:grid-cols-3">
+                                <div className="rounded-xl border border-slate-700 bg-slate-800/60 p-3">
+                                    <p className="text-xs text-slate-500">Esperado según OC</p>
+                                    <p className="mt-1 text-lg font-bold text-white">{formatCurrency(selectedMatch.totals.expectedAmount)}</p>
+                                </div>
+                                <div className="rounded-xl border border-slate-700 bg-slate-800/60 p-3">
+                                    <p className="text-xs text-slate-500">Factura recibida</p>
+                                    <p className="mt-1 text-lg font-bold text-white">{formatCurrency(selectedMatch.totals.invoiceAmount)}</p>
+                                </div>
+                                <div className="rounded-xl border border-amber-800/60 bg-amber-950/25 p-3">
+                                    <p className="text-xs text-amber-300/80">Variación</p>
+                                    <p className="mt-1 text-lg font-bold text-amber-300">{formatCurrency(selectedMatch.totals.varianceAmount)}</p>
+                                </div>
+                            </div>
+
+                            <section aria-labelledby="match-exceptions-title">
+                                <h3 id="match-exceptions-title" className="text-sm font-bold uppercase tracking-wide text-slate-300">Diferencias detectadas</h3>
+                                {selectedMatch.exceptions.length === 0 ? (
+                                    <p className="mt-2 rounded-lg border border-emerald-800/50 bg-emerald-950/20 p-3 text-sm text-emerald-300">No quedan diferencias abiertas.</p>
+                                ) : (
+                                    <ul className="mt-2 space-y-2">
+                                        {selectedMatch.exceptions.map(exception => (
+                                            <li key={exception.id} className="rounded-lg border border-amber-800/50 bg-amber-950/20 p-3">
+                                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                                    <span className="text-sm font-semibold text-amber-200">{exceptionTypeLabel(exception.type)}</span>
+                                                    <span className="rounded bg-amber-900/50 px-2 py-0.5 text-[11px] font-bold text-amber-300">{exception.status}</span>
+                                                </div>
+                                                <p className="mt-2 break-words font-mono text-xs text-slate-300">
+                                                    Esperado: {exception.expectedValueExact ?? '—'} · Factura: {exception.actualValueExact ?? '—'} · Variación: {exception.varianceExact ?? '—'}
+                                                </p>
+                                                {exception.resolutionNote && <p className="mt-2 text-xs text-sky-300">Resolución: {exception.resolutionNote}</p>}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </section>
+
+                            <section aria-labelledby="match-lines-title">
+                                <h3 id="match-lines-title" className="text-sm font-bold uppercase tracking-wide text-slate-300">Líneas de factura</h3>
+                                <div className="mt-2 overflow-x-auto rounded-lg border border-slate-700">
+                                    <table className="min-w-[680px] w-full text-sm">
+                                        <thead className="bg-slate-800/90 text-xs uppercase text-slate-400">
+                                            <tr>
+                                                <th className="px-3 py-2 text-left">Producto</th>
+                                                <th className="px-3 py-2 text-right">Cantidad</th>
+                                                <th className="px-3 py-2 text-right">Costo OC</th>
+                                                <th className="px-3 py-2 text-right">Costo factura</th>
+                                                <th className="px-3 py-2 text-right">Variación</th>
+                                                <th className="px-3 py-2 text-center">Recepciones</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-700">
+                                            {selectedMatch.lines.map(line => (
+                                                <tr key={line.id} className="text-slate-300">
+                                                    <td className="px-3 py-2 text-white">{line.productName}</td>
+                                                    <td className="px-3 py-2 text-right font-mono">{formatQuantityValue(line.quantityExact)}</td>
+                                                    <td className="px-3 py-2 text-right font-mono">{line.expectedUnitCostExact === null ? '—' : formatCurrency(line.expectedUnitCostExact)}</td>
+                                                    <td className="px-3 py-2 text-right font-mono">{formatCurrency(line.unitCostExact)}</td>
+                                                    <td className="px-3 py-2 text-right font-mono text-amber-300">{formatCurrency(line.priceVarianceExact ?? 0)}</td>
+                                                    <td className="px-3 py-2 text-center">{line.allocations.length}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-700 bg-slate-800/40 px-5 py-4">
+                            <p className={`flex items-center gap-1.5 text-sm font-semibold ${selectedMatch.purchase.paymentHold ? 'text-amber-300' : 'text-emerald-300'}`}>
+                                {selectedMatch.purchase.paymentHold ? <LockKeyhole size={15} /> : <Check size={15} />}
+                                {selectedMatch.purchase.paymentHold ? 'Pago retenido' : 'Pago liberado'}
+                            </p>
+                            <div className="flex gap-2">
+                                <button type="button" onClick={() => setSelectedMatch(null)} className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800">Cerrar</button>
+                                {canResolveMatches && selectedMatch.purchase.matchStatus === 'EXCEPTION' && (
+                                    <button type="button" onClick={() => openMatchResolution(selectedMatch.purchase)} className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-bold text-white hover:bg-orange-500">Resolver diferencia</button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {matchResolution && (
+                <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm" onClick={closeMatchResolution}>
+                    <div role="dialog" aria-modal="true" aria-labelledby="match-resolution-title" aria-describedby="match-resolution-description" aria-busy={resolvingMatch} className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl" onClick={event => event.stopPropagation()}>
+                        <div className="flex items-start justify-between gap-3 border-b border-slate-700 px-5 py-4">
+                            <div>
+                                <h2 id="match-resolution-title" className="font-bold text-white">Resolver diferencia</h2>
+                                <p className="mt-1 text-sm text-slate-400">Factura #{matchResolution.invoiceNumber}</p>
+                            </div>
+                            <button type="button" onClick={closeMatchResolution} disabled={resolvingMatch} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 disabled:opacity-50" aria-label="Cancelar resolución"><X size={18} /></button>
+                        </div>
+                        <div className="space-y-4 p-5">
+                            <p id="match-resolution-description" className="text-sm leading-6 text-slate-300">
+                                Documentá por qué la diferencia es aceptable. Al confirmar se libera la retención de pago y queda evidencia auditable.
+                            </p>
+                            <label className="block space-y-1.5 text-sm font-semibold text-slate-300">
+                                Motivo de la resolución
+                                <textarea
+                                    aria-label="Motivo de la resolución"
+                                    rows={5}
+                                    maxLength={1000}
+                                    value={matchResolution.reason}
+                                    onChange={event => {
+                                        setMatchResolution(current => current ? { ...current, reason: event.target.value } : current);
+                                        setMatchResolutionError('');
+                                    }}
+                                    placeholder="Ej: El proveedor notificó un ajuste de precio aprobado por gerencia…"
+                                    className="w-full resize-y rounded-xl border border-slate-600 bg-slate-800 px-3 py-2.5 font-normal text-white outline-none focus:border-orange-500"
+                                />
+                            </label>
+                            <p className="text-right text-xs text-slate-500">{matchResolution.reason.length}/1000</p>
+                            {matchResolutionError && (
+                                <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{matchResolutionError}</p>
+                            )}
+                        </div>
+                        <div className="flex justify-end gap-3 border-t border-slate-700 px-5 py-4">
+                            <button type="button" onClick={closeMatchResolution} disabled={resolvingMatch} className="rounded-lg border border-slate-600 px-4 py-2.5 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">Volver</button>
+                            <button type="button" onClick={() => void resolveMatch()} disabled={resolvingMatch} className="inline-flex min-w-36 items-center justify-center gap-2 rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-orange-500 disabled:cursor-wait disabled:opacity-60">
+                                {resolvingMatch && <Loader2 size={16} className="animate-spin" />}
+                                {resolvingMatch ? 'Confirmando…' : 'Resolver y liberar'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* ==========================================
                 MODAL: CONFIRMAR PAGO
                ========================================== */}
             {paymentToConfirm && (
                 <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
-                    onClick={() => { if (!paying) setPaymentToConfirm(null); }}
+                    className="fixed inset-0 z-modal flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+                    onClick={closePaymentDialog}
                 >
                     <div
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="confirm-payment-title"
-                        className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-800 shadow-2xl"
+                        aria-describedby="confirm-payment-description"
+                        aria-busy={paying}
+                        className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-700 bg-slate-800 shadow-2xl"
                         onClick={(event) => event.stopPropagation()}
                     >
                         <div className="flex items-start justify-between border-b border-slate-700 px-5 py-4">
@@ -1578,13 +2491,13 @@ export default function Purchases() {
                                     <DollarSign size={21} />
                                 </div>
                                 <div>
-                                    <h2 id="confirm-payment-title" className="font-semibold text-white">Confirmar pago</h2>
+                                    <h2 id="confirm-payment-title" className="font-semibold text-white">Registrar abono</h2>
                                     <p className="text-sm text-slate-400">Factura #{paymentToConfirm.invoiceNumber}</p>
                                 </div>
                             </div>
                             <button
                                 type="button"
-                                onClick={() => setPaymentToConfirm(null)}
+                                onClick={closePaymentDialog}
                                 disabled={paying}
                                 className="rounded-lg p-2 text-slate-400 hover:bg-slate-700 hover:text-white disabled:opacity-50"
                                 aria-label="Cancelar pago"
@@ -1592,21 +2505,84 @@ export default function Purchases() {
                                 <X size={18} />
                             </button>
                         </div>
-                        <div className="px-5 py-5">
-                            <p className="text-sm leading-6 text-slate-300">
-                                Este pago se descontará de tu caja y la cuenta quedará marcada como pagada.
+                        <div className="space-y-4 px-5 py-5">
+                            <p id="confirm-payment-description" className="text-sm leading-6 text-slate-300">
+                                Registrá un abono parcial o liquidá todo el saldo. El mismo intento se puede reintentar sin duplicar el pago.
                             </p>
                             {paymentPurchase && (
-                                <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-800/60 bg-emerald-950/30 px-4 py-3">
-                                    <span className="text-sm text-slate-300">Monto a pagar</span>
-                                    <span className="text-xl font-bold text-emerald-300">{formatCurrency(Number(paymentPurchase.total))}</span>
+                                <div className="flex items-center justify-between rounded-xl border border-amber-800/60 bg-amber-950/30 px-4 py-3">
+                                    <div>
+                                        <p className="text-xs text-slate-400">Saldo pendiente</p>
+                                        <p className="mt-0.5 text-xs text-slate-500">Total factura: {formatCurrency(paymentPurchase.total)}</p>
+                                    </div>
+                                    <span className="text-xl font-bold text-amber-300">{formatCurrency(effectivePurchaseBalance(paymentPurchase))}</span>
                                 </div>
                             )}
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                <label className="space-y-1.5 text-sm text-slate-300">
+                                    Monto del abono
+                                    <input
+                                        aria-label="Monto del abono"
+                                        inputMode="decimal"
+                                        placeholder="0.00"
+                                        value={supplierPaymentForm.amount}
+                                        onChange={(event) => {
+                                            setSupplierPaymentForm(current => ({ ...current, amount: sanitizeDecimalInput(event.target.value) }));
+                                            setSupplierPaymentError('');
+                                        }}
+                                        className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500"
+                                    />
+                                </label>
+                                <label className="space-y-1.5 text-sm text-slate-300">
+                                    Método
+                                    <select
+                                        aria-label="Método del pago"
+                                        value={supplierPaymentForm.method}
+                                        onChange={(event) => setSupplierPaymentForm(current => ({ ...current, method: event.target.value as SupplierPaymentMethod }))}
+                                        className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500"
+                                    >
+                                        <option value="CASH">Efectivo</option>
+                                        <option value="TRANSFER">Transferencia</option>
+                                        <option value="CARD">Tarjeta</option>
+                                        <option value="QR">QR</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <label className="block space-y-1.5 text-sm text-slate-300">
+                                Referencia (opcional)
+                                <input
+                                    aria-label="Referencia del pago"
+                                    value={supplierPaymentForm.reference}
+                                    onChange={(event) => setSupplierPaymentForm(current => ({ ...current, reference: event.target.value }))}
+                                    placeholder="Número de transferencia o comprobante"
+                                    className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500"
+                                />
+                            </label>
+                            <label className="block space-y-1.5 text-sm text-slate-300">
+                                Notas (opcional)
+                                <textarea
+                                    aria-label="Notas del pago"
+                                    rows={2}
+                                    value={supplierPaymentForm.notes}
+                                    onChange={(event) => setSupplierPaymentForm(current => ({ ...current, notes: event.target.value }))}
+                                    className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500"
+                                />
+                            </label>
+                            <p className="text-xs text-slate-500">
+                                {supplierPaymentForm.method === 'CASH'
+                                    ? 'El efectivo se descontará de caja.'
+                                    : 'El pago se registrará contra la cuenta bancaria, sin descontar efectivo de caja.'}
+                            </p>
+                            {supplierPaymentError && (
+                                <p role="alert" className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2.5 text-sm text-red-200">
+                                    {supplierPaymentError}
+                                </p>
+                            )}
                         </div>
-                        <div className="flex justify-end gap-3 border-t border-slate-700 px-5 py-4">
+                        <div className="flex flex-wrap justify-end gap-3 border-t border-slate-700 px-5 py-4">
                             <button
                                 type="button"
-                                onClick={() => setPaymentToConfirm(null)}
+                                onClick={closePaymentDialog}
                                 disabled={paying}
                                 className="rounded-lg border border-slate-600 px-4 py-2.5 text-sm font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-50"
                             >
@@ -1614,13 +2590,21 @@ export default function Purchases() {
                             </button>
                             <button
                                 type="button"
-                                onClick={confirmPayment}
+                                onClick={() => void confirmPayment(true)}
+                                disabled={paying}
+                                className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-200 hover:bg-emerald-500/15 disabled:cursor-wait disabled:opacity-60"
+                            >
+                                Liquidar todo
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void confirmPayment(false)}
                                 disabled={paying}
                                 aria-busy={paying}
                                 className="flex min-w-32 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-60"
                             >
                                 {paying && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
-                                {paying ? 'Pagando…' : 'Confirmar pago'}
+                                {paying ? 'Registrando…' : 'Registrar abono'}
                             </button>
                         </div>
                     </div>
@@ -1675,18 +2659,41 @@ export default function Purchases() {
                                 </div>
                                 <div>
                                     <p className="text-xs text-slate-500">Metodo</p>
-                                    <p className={selectedPurchase.paymentMethod === 'CASH' ? 'text-emerald-400' : 'text-amber-400'}>
-                                        {selectedPurchase.paymentMethod === 'CASH' ? 'Contado' : 'Credito'}
+                                    <p className={selectedPurchase.paymentMethod === 'CASH' ? 'text-emerald-400' : selectedPurchase.paymentMethod === 'NORTEX_CAPITAL' ? 'text-sky-400' : 'text-amber-400'}>
+                                        {purchaseMethodLabel(selectedPurchase.paymentMethod)}
                                     </p>
                                 </div>
                                 <div>
                                     <p className="text-xs text-slate-500">Estado</p>
                                     <span className={`text-xs px-2 py-1 rounded-full font-bold ${selectedPurchase.status === 'COMPLETED'
                                         ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700'
+                                        : selectedPurchase.status === 'PARTIALLY_PAID'
+                                            ? 'bg-sky-900/40 text-sky-300 border border-sky-700'
                                         : 'bg-red-900/40 text-red-300 border border-red-700'}`}>
-                                        {selectedPurchase.status === 'COMPLETED' ? 'PAGADO' : 'PENDIENTE'}
+                                        {purchaseStatusLabel(selectedPurchase.status).toUpperCase()}
                                     </span>
                                 </div>
+                            </div>
+
+                            <div className="mb-6 flex flex-wrap items-center gap-2">
+                                <span className="rounded-full border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs text-slate-300">
+                                    Documento: {selectedPurchase.documentStatus === 'POSTED' ? 'Contabilizado' : selectedPurchase.documentStatus || 'Histórico'}
+                                </span>
+                                {selectedPurchase.matchStatus && (
+                                    <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${matchStatusClass(selectedPurchase.matchStatus)}`}>
+                                        {matchStatusLabel(selectedPurchase.matchStatus)}
+                                    </span>
+                                )}
+                                {selectedPurchase.paymentHold && (
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-700 bg-amber-950/40 px-2.5 py-1 text-xs font-semibold text-amber-300">
+                                        <LockKeyhole size={12} /> Pago retenido
+                                    </span>
+                                )}
+                                {selectedPurchase.postingDate && selectedPurchase.postingDate !== selectedPurchase.date && (
+                                    <span className="rounded-full border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs text-slate-300">
+                                        Fecha contable: {formatCalendarDate(selectedPurchase.postingDate)}
+                                    </span>
+                                )}
                             </div>
 
                             {selectedPurchase.dueDate && (
@@ -1734,6 +2741,12 @@ export default function Purchases() {
                                     <span className="text-white">TOTAL</span>
                                     <span className="text-emerald-400">{formatCurrency(parseFloat(selectedPurchase.total as any))}</span>
                                 </div>
+                                {!isNortexCapitalPurchase(selectedPurchase) && effectivePurchaseBalance(selectedPurchase).greaterThan(0) && (
+                                    <div className="flex justify-between text-base font-bold text-amber-300">
+                                        <span>SALDO PENDIENTE</span>
+                                        <span>{formatCurrency(effectivePurchaseBalance(selectedPurchase))}</span>
+                                    </div>
+                                )}
                             </div>
 
                             {selectedPurchase.notes && (

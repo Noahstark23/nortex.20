@@ -16,6 +16,11 @@ import {
     normalizeFiscalSettingsSnapshot,
     type FiscalSettingsSnapshot,
 } from '../utils/fiscalSettingsSnapshot';
+import {
+    claveTraspasoCarrito,
+    resolverIdentidadPersistencia,
+    serializarTraspasoCarrito,
+} from '../utils/cartPersistence';
 
 type FiscalQuotation = Quotation & {
     fiscalRegimeAtQuote?: FiscalRegime;
@@ -72,6 +77,14 @@ const publicOrderLineTotal = (item: Record<string, unknown>): Decimal => {
 
 const QuotationManager: React.FC = () => {
     const navigate = useNavigate();
+    // La cotización visible queda ligada a la sesión que montó la pantalla.
+    // Otra pestaña puede cerrar sesión e iniciar con otro cajero mientras esta
+    // sigue abierta; en ese caso no debemos escribir datos viejos bajo la
+    // identidad nueva que apareció en localStorage.
+    const [identidadSesion] = useState(() => resolverIdentidadPersistencia(
+        localStorage.getItem('nortex_tenant_data'),
+        localStorage.getItem('nortex_user'),
+    ));
     const [activeTab, setActiveTab] = useState<'NEW' | 'HISTORY' | 'WEB_ORDERS'>('NEW');
 
     const [products, setProducts] = useState<Product[]>([]);
@@ -373,8 +386,34 @@ const QuotationManager: React.FC = () => {
 
     const convertToSale = (quote: FiscalQuotation) => {
         if (confirm(`¿Convertir Cotización ${quote.id} en una Venta Activa?`)) {
-            // WE USE THE EXISTING HOOK IN POS.TSX
-            localStorage.setItem('nortex_pending_cart', JSON.stringify(quote.items));
+            const identidadActual = resolverIdentidadPersistencia(
+                localStorage.getItem('nortex_tenant_data'),
+                localStorage.getItem('nortex_user'),
+            );
+            if (
+                !identidadSesion
+                || !identidadActual
+                || identidadSesion.tenantId !== identidadActual.tenantId
+                || identidadSesion.userId !== identidadActual.userId
+            ) {
+                alert('No se pudo verificar tu sesión. Volvé a iniciar sesión antes de convertir la cotización.');
+                return;
+            }
+            const identidad = identidadSesion;
+            const traspaso = serializarTraspasoCarrito({
+                identidad,
+                referenciaId: quote.id,
+                lineas: quote.items,
+                ahoraMs: Date.now(),
+            });
+            if (!traspaso) {
+                alert('La cotización tiene datos incompletos y no se puede enviar a caja. Actualizá la página e intentá de nuevo.');
+                return;
+            }
+            localStorage.setItem(
+                claveTraspasoCarrito(identidad.tenantId, identidad.userId),
+                traspaso,
+            );
 
             // Mark as converted
             const updated = history.map(q => q.id === quote.id ? { ...q, status: 'CONVERTED' as const } : q);

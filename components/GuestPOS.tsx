@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { formatMoney } from '../utils/money';
+import { validateCashReceived } from '../utils/posCash';
 import { trackEvent } from '../utils/analytics';
 import {
   buildPublicRegistrationPath,
@@ -91,6 +92,8 @@ const GuestPOS: React.FC = () => {
   const location = useLocation();
   const searchRef = useRef<HTMLInputElement>(null);
   const cartRef = useRef<HTMLElement>(null);
+  const paymentStartRef = useRef<HTMLButtonElement>(null);
+  const completedCtaRef = useRef<HTMLAnchorElement>(null);
   const trackedStartRef = useRef(false);
   const trackedFirstProductRef = useRef(false);
   const practiceStartedAtRef = useRef(Date.now());
@@ -100,6 +103,7 @@ const GuestPOS: React.FC = () => {
   const [choosingPayment, setChoosingPayment] = useState(false);
   const [confirmingCash, setConfirmingCash] = useState(false);
   const [practiceCashReceived, setPracticeCashReceived] = useState('');
+  const [cartInView, setCartInView] = useState(false);
   const [missingImages, setMissingImages] = useState<Record<string, boolean>>({});
   const [completedSale, setCompletedSale] = useState<{
     total: number;
@@ -164,6 +168,29 @@ const GuestPOS: React.FC = () => {
   );
   const total = subtotal;
   const cartQuantity = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const practiceCashValidation = useMemo(
+    () => validateCashReceived(practiceCashReceived, total),
+    [practiceCashReceived, total],
+  );
+
+  useEffect(() => {
+    if (completedSale) {
+      completedCtaRef.current?.focus();
+      return;
+    }
+    if (choosingPayment && !confirmingCash) paymentStartRef.current?.focus();
+  }, [choosingPayment, completedSale, confirmingCash]);
+
+  useEffect(() => {
+    const cartNode = cartRef.current;
+    if (!cartNode || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setCartInView(entry.isIntersecting),
+      { threshold: 0.15 },
+    );
+    observer.observe(cartNode);
+    return () => observer.disconnect();
+  }, []);
 
   const addToCart = (product: MockProduct) => {
     trackFirstProduct();
@@ -214,7 +241,9 @@ const GuestPOS: React.FC = () => {
     setChoosingPayment(false);
     setConfirmingCash(false);
     setPracticeCashReceived('');
-    setCart([{ product: MOCK_ITEMS[0], quantity: 1 }]);
+    const product = filteredProducts.length === 1 ? filteredProducts[0] : MOCK_ITEMS[0];
+    setCart([{ product, quantity: 1 }]);
+    setQuery('');
   };
 
   const checkout = () => {
@@ -226,14 +255,14 @@ const GuestPOS: React.FC = () => {
 
   const completePracticeSale = (paymentType: 'CASH' | 'CARD' | 'TRANSFER') => {
     if (cart.length === 0) return;
-    const cashReceived = Number(practiceCashReceived);
-    if (paymentType === 'CASH' && (!Number.isFinite(cashReceived) || cashReceived < total)) return;
+    const cashPayment = paymentType === 'CASH' ? practiceCashValidation : null;
+    if (cashPayment?.ok === false) return;
 
     setCompletedSale({
       total,
       itemCount: cartQuantity,
       paymentType,
-      ...(paymentType === 'CASH' ? { change: cashReceived - total } : {}),
+      ...(cashPayment?.ok === true ? { change: cashPayment.change.toNumber() } : {}),
     });
     setChoosingPayment(false);
     setConfirmingCash(false);
@@ -490,7 +519,9 @@ const GuestPOS: React.FC = () => {
                     </p>
                     <p className="mt-2 text-sm text-slate-400">
                       {completedSale.paymentType === 'CASH' ? 'Efectivo' : completedSale.paymentType === 'CARD' ? 'Tarjeta' : 'Transferencia'}
-                      {completedSale.paymentType === 'CASH' && completedSale.change !== undefined
+                      {completedSale.paymentType === 'CASH' &&
+                      completedSale.change !== undefined &&
+                      completedSale.change > 0
                         ? ` · Vuelto ${formatMoney(completedSale.change)}`
                         : ''}
                     </p>
@@ -503,6 +534,7 @@ const GuestPOS: React.FC = () => {
                       </p>
                     </div>
                     <Link
+                      ref={completedCtaRef}
                       to={completedCtaPath}
                       onClick={() => {
                         if (!isAuthenticated) trackEvent('register_cta_click', { source: demoSource, onboarding_step: 'completed' });
@@ -638,10 +670,26 @@ const GuestPOS: React.FC = () => {
                                 const next = event.target.value.replace(',', '.');
                                 if (/^\d*(?:\.\d{0,2})?$/.test(next)) setPracticeCashReceived(next);
                               }}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' && practiceCashValidation.ok) {
+                                  event.preventDefault();
+                                  completePracticeSale('CASH');
+                                }
+                              }}
                               aria-label="Efectivo recibido en la práctica"
+                              aria-describedby="practice-cash-status"
                               className="h-pay w-full rounded-control border border-white/[0.10] bg-surface-900 pl-10 pr-3 text-xl font-bold text-slate-100 outline-none focus:border-brand focus:ring-2 focus:ring-brand/30 nx-num"
                               placeholder="0.00"
                             />
+                          </div>
+                          <div id="practice-cash-status" aria-live="polite">
+                            {practiceCashReceived !== '' && practiceCashValidation.ok === false && (
+                              <p className="rounded-control border border-amber-500/20 bg-warning-soft px-3 py-2 text-sm font-semibold text-amber-300">
+                                {practiceCashValidation.shortfall
+                                  ? `Falta ${formatMoney(practiceCashValidation.shortfall)}`
+                                  : practiceCashValidation.message}
+                              </p>
+                            )}
                           </div>
                           <button
                             type="button"
@@ -659,7 +707,7 @@ const GuestPOS: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => completePracticeSale('CASH')}
-                            disabled={!Number.isFinite(Number(practiceCashReceived)) || Number(practiceCashReceived) < total}
+                            disabled={!practiceCashValidation.ok}
                             className="flex h-pay w-full items-center justify-center gap-2 rounded-control bg-brand px-4 text-base font-bold text-surface-950 transition-colors hover:bg-brand-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
                           >
                             Confirmar cobro <ArrowRight aria-hidden="true" size={19} />
@@ -676,6 +724,7 @@ const GuestPOS: React.FC = () => {
                         <div className="mt-5 space-y-2" role="group" aria-labelledby="practice-payment-title">
                           <p id="practice-payment-title" className="pb-1 text-sm font-semibold text-slate-200">¿Cómo pagó?</p>
                           <button
+                            ref={paymentStartRef}
                             type="button"
                             onClick={() => setConfirmingCash(true)}
                             className="flex h-pay w-full items-center gap-3 rounded-control bg-brand px-4 text-base font-bold text-surface-950 transition-colors hover:bg-brand-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
@@ -725,7 +774,7 @@ const GuestPOS: React.FC = () => {
             </div>
           </main>
 
-          {cartQuantity > 0 && !completedSale && (
+          {cartQuantity > 0 && !completedSale && !choosingPayment && !cartInView && (
             <button
               type="button"
               onClick={() => cartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}

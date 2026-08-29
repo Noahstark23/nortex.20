@@ -248,6 +248,71 @@ describe('asientos por régimen fiscal', () => {
         expect(Math.abs(journalBalance(lines))).toBeLessThan(0.0001);
     });
 
+    it('postea en centavos el caso mínimo que antes dejaba CxP en 0.1150', () => {
+        const lines = buildPurchaseJournalLines('0.115', '0.015', 'CREDIT', '0.015');
+
+        expect(lines).toEqual([
+            { accountCode: '1.1.4', debit: 0.1, credit: 0 },
+            { accountCode: '1.1.5', debit: 0.02, credit: 0 },
+            { accountCode: '2.1.1', debit: 0, credit: 0.12 },
+        ]);
+        expect(Math.abs(journalBalance(lines))).toBeLessThan(0.0001);
+    });
+
+    it('postea una PPV desfavorable sin inflar Inventario sobre el costo de la OC', () => {
+        const lines = buildPurchaseJournalLines(125, 15, 'CREDIT', 15, 100);
+
+        expect(lines).toEqual([
+            { accountCode: '1.1.4', debit: 100, credit: 0 },
+            { accountCode: '1.1.5', debit: 15, credit: 0 },
+            { accountCode: '5.1.3', debit: 10, credit: 0 },
+            { accountCode: '2.1.1', debit: 0, credit: 125 },
+        ]);
+        expect(Math.abs(journalBalance(lines))).toBeLessThan(0.0001);
+    });
+
+    it('acredita una PPV favorable y conserva el costo estándar en Inventario', () => {
+        const lines = buildPurchaseJournalLines(105, 15, 'CASH', 15, 100);
+
+        expect(lines).toEqual([
+            { accountCode: '1.1.4', debit: 100, credit: 0 },
+            { accountCode: '1.1.5', debit: 15, credit: 0 },
+            { accountCode: '5.1.3', debit: 0, credit: 10 },
+            { accountCode: '1.1.1', debit: 0, credit: 105 },
+        ]);
+        expect(Math.abs(journalBalance(lines))).toBeLessThan(0.0001);
+    });
+
+    it('omite PPV cuando costo factura y costo esperado coinciden a centavos', () => {
+        const lines = buildPurchaseJournalLines('115.004', 15, 'CREDIT', 15, '100.004');
+
+        expect(lines).toEqual([
+            { accountCode: '1.1.4', debit: 100, credit: 0 },
+            { accountCode: '1.1.5', debit: 15, credit: 0 },
+            { accountCode: '2.1.1', debit: 0, credit: 115 },
+        ]);
+    });
+
+    it('en CUOTA_FIJA deja IVA no acreditable visible en PPV y no en Inventario', () => {
+        const lines = buildPurchaseJournalLines(115, 15, 'CREDIT', 0, 100);
+
+        expect(lines).toEqual([
+            { accountCode: '1.1.4', debit: 100, credit: 0 },
+            { accountCode: '1.1.5', debit: 0, credit: 0 },
+            { accountCode: '5.1.3', debit: 15, credit: 0 },
+            { accountCode: '2.1.1', debit: 0, credit: 115 },
+        ]);
+        expect(Math.abs(journalBalance(lines))).toBeLessThan(0.0001);
+    });
+
+    it.each([Number.NaN, Number.POSITIVE_INFINITY, -1])(
+        'rechaza costo esperado de OC inválido: %s',
+        (expected) => {
+            expect(() => buildPurchaseJournalLines(115, 15, 'CREDIT', 15, expected))
+                .toThrowError('El costo esperado de inventario debe ser finito y no negativo');
+        },
+    );
+
     it.each([
         [-1, 0, undefined],
         [10, -1, undefined],
@@ -277,6 +342,9 @@ describe('asientos por régimen fiscal', () => {
         );
         expect(() => buildPurchaseJournalLines(10, 1, 'CASH', 2)).toThrowError(
             'El crédito fiscal debe estar entre cero y el IVA de compra',
+        );
+        expect(() => buildPurchaseJournalLines('-0.001', 0, 'CASH', 0)).toThrowError(
+            'El total de compra debe ser finito y no negativo',
         );
     });
 });

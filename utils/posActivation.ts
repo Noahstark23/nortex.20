@@ -12,18 +12,58 @@ export interface QuickProductDraft {
 export interface PosQuantityProduct {
     saleMode?: 'COUNTED' | 'MEASURED' | null;
     quantityStep?: number | null;
+    unit?: string | null;
 }
 
-/** Mantiene fracciones legacy, pero un producto contado explícito siempre usa enteros. */
-export function effectivePosSaleMode(product: Pick<PosQuantityProduct, 'saleMode'>): 'COUNTED' | 'MEASURED' {
-    return product.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED';
+/**
+ * Compatibilidad del catálogo legacy:
+ * antes de `saleMode`, el alta común del POS/inventario sembraba productos por
+ * pieza con `unit = "unidad"` y sin reglas físicas. Si el POS los interpreta
+ * como medidos, el `+` vuelve a sumar 0.0001 y bloquea la venta.
+ */
+function prefersLegacyCounted(product: PosQuantityProduct): boolean {
+    return typeof product.unit === 'string'
+        && product.unit.trim().toLowerCase() === 'unidad'
+        && product.saleMode == null
+        && product.quantityStep == null;
+}
+
+/** Mantiene fracciones legacy medidas, pero un producto contado usa enteros. */
+export function effectivePosSaleMode(product: PosQuantityProduct): 'COUNTED' | 'MEASURED' {
+    if (product.saleMode === 'COUNTED') return 'COUNTED';
+    if (prefersLegacyCounted(product)) return 'COUNTED';
+    return 'MEASURED';
 }
 
 export function effectivePosQuantityStep(product: PosQuantityProduct): number {
     if (Number.isFinite(product.quantityStep) && Number(product.quantityStep) > 0) {
         return Number(product.quantityStep);
     }
+    if (prefersLegacyCounted(product)) return 1;
     return product.saleMode === 'COUNTED' ? 1 : 0.0001;
+}
+
+/**
+ * Cantidad que agrega cada toque sobre una tarjeta del catálogo, incluido el
+ * primero cuando el producto todavía no está en el ticket.
+ *
+ * Los productos contados pueden venderse en paquetes fijos (por ejemplo, de
+ * 6). Iniciar en 1 o usar +1 en repeticiones, mientras el botón del ticket usa
+ * +6, deja una cantidad imposible de cobrar. Los medidos conservan el gesto +1.
+ */
+export function repeatedCatalogAddIncrement(product: PosQuantityProduct): number {
+    return effectivePosSaleMode(product) === 'COUNTED'
+        ? effectivePosQuantityStep(product)
+        : 1;
+}
+
+export function customerCreditUsagePct(
+    creditLimit: number,
+    currentDebt: number,
+): number {
+    if (!Number.isFinite(creditLimit) || creditLimit <= 0) return 0;
+    if (!Number.isFinite(currentDebt)) return 0;
+    return Math.min(Math.max((currentDebt / creditLimit) * 100, 0), 100);
 }
 
 export interface QuickProductPayload {
@@ -51,9 +91,8 @@ const decimalFromDraft = (value: string): Decimal | null => {
     try {
         const decimal = new Decimal(value.trim());
         return decimal.isFinite() ? decimal : null;
-    } catch {
-        return null;
-    }
+    } catch { /* Decimal rechaza formatos inválidos; se normalizan abajo. */ }
+    return null;
 };
 
 /**

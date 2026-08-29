@@ -12,14 +12,17 @@ import bcrypt from 'bcryptjs';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
 import {
+    ACCOUNTING_READ_ROLES,
     CUSTOMER_CREATE_ROLES,
-    CUSTOMER_HUB_READ_ROLES,
     CUSTOMER_INTERACTION_WRITE_ROLES,
     CUSTOMER_PAYMENT_ROLES,
     CUSTOMER_READ_ROLES,
-    CUSTOMER_UPDATE_ROLES,
     isCustomerCreateAuthorized,
     isCustomerUpdateAuthorized,
+    POS_SALE_ROLES,
+    PURCHASE_PAYMENT_ROLES,
+    PURCHASE_READ_ROLES,
+    PURCHASE_WRITE_ROLES,
     QUOTATION_READ_ROLES,
     QUOTATION_WRITE_ROLES,
     RETURN_SEARCH_ROLES,
@@ -44,25 +47,35 @@ import { composeSeedCatalog } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent, PLAN_PRICE_USD, requiereConfirmacionDePagoCorto, calcularNuevoVencimiento } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
+import { executeSupplierPaymentTransaction } from './services/supplierPaymentService';
+import { executeProcurementMatch } from './services/procurementMatchService';
+import {
+    applyBatchWarehouseDelta,
+    BatchWarehouseLedgerError,
+    resolveBatchWarehouseLedgerMode,
+} from './services/productBatchWarehouseLedgerService';
 import { calcularPulso, claveDelDiaManagua, inicioDelDiaManagua, MANAGUA_UTC_OFFSET_HOURS } from './services/pulsoPos';
 import {
     BatchRestorationError,
     restoreSaleItemBatchesForReturn,
+    type BatchRestorationResult,
 } from './services/saleBatchAllocationService.js';
 import {
     allowedReturnRefundMethods,
     assertMatchingReturnReplay,
     buildReturnAvailability,
     buildReturnPayloadHash,
+    planReturnBatchRestoration,
     resolveReturnRefundMethod,
     resolveReturnWarehouseId,
     resolveRequestedReturnItems,
     ReturnResolutionError,
+    type ReturnBatchRestorationPlan,
     type ReturnProductAuthority,
     type ReturnSaleItemSnapshot,
 } from './services/returnService';
 import { applyStockDelta, asegurarBodegaPorDefecto, materializeWarehouseRow, resolveOperationalWarehouse, StockError, weightedAverageCost } from './services/stockService';
-import { appendSignedCashMovement, signCapitalLoan, verifyTenantLedger, appendDriverWalletMovement, verifyDriverLedger } from './services/ledger';
+import { appendSignedCashMovement, verifyTenantLedger, appendDriverWalletMovement, verifyDriverLedger } from './services/ledger';
 import { signAuthToken, verifyAuthToken } from './services/secrets';
 import { initObservability, errorTelemetry } from './services/observability';
 import { isWhatsAppEnabled } from './services/whatsapp/config';
@@ -81,9 +94,12 @@ import motorizadosRouter from './routes/motorizados';
 import driverRouter from './routes/driver';
 import loanRoutes from './routes/loans';
 import purchaseOrdersRouter from './routes/purchaseOrders';
+import suppliersRouter from './routes/suppliers';
+import procurementMatchesRouter from './routes/procurementMatches';
 import serialsRouter from './routes/serials';
 import warehousesRouter from './routes/warehouses';
 import stockTransfersRouter from './routes/stockTransfers';
+import batchWarehouseLedgerRouter from './routes/batchWarehouseLedger';
 import syncRoutes from './routes/sync';
 import scaleLabelsRouter, { scaleDevicesRouter } from './routes/scaleLabels';
 import tenantCapabilitiesRouter from './routes/tenantCapabilities';
@@ -91,6 +107,7 @@ import agentBankingRouter from './routes/agentBanking';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 import { normalizeCalendarDateInput } from './lib/calendarDate';
+import { daysSinceManaguaCivilDate, managuaBusinessDate, parseManaguaCivilDateInput } from './lib/managuaBusinessDate';
 import {
     QuotationItemError,
     resolveQuotationItems,
@@ -99,6 +116,25 @@ import {
 } from './lib/quotationItems';
 import { buildSalesQuantityBreakdown } from './lib/salesQuantityReport';
 import { calculatePurchaseOrderInvoiceAvailability } from './lib/purchaseOrderAvailability';
+import { calculatePurchaseMoney } from './lib/purchaseMoney';
+import {
+    assertAggregateBatchMutationAllowed,
+    assertBatchTrackingTransitionAllowed,
+    assertManualBatchReplay,
+    buildManualBatchCommandId,
+    buildManualBatchPayloadHash,
+    buildManualBatchRelatedId,
+    ManualBatchMovementError,
+    parseManualBatchCommandClaim,
+    type ManualBatchCommandType,
+} from './lib/manualBatchMovements';
+import { ProcurementMatchError } from './lib/procurementMatch';
+import {
+    PURCHASE_FISCAL_STATUSES,
+    PURCHASE_PAYABLE_STATUSES,
+    resolveEffectiveSupplierBalance,
+    SupplierPaymentError,
+} from './lib/supplierPayments';
 import { escapeHtml, fiscalPreviewCsp } from './lib/htmlSecurity';
 import {
     publicOrderItemsForQuotation,
@@ -119,6 +155,7 @@ import {
     CreateReturnSchema,
     CancelSaleSchema,
     CreatePaymentSchema,
+    SupplierPaymentRequestSchema,
     CreateCashMovementSchema,
     CreatePurchaseSchema,
     InventoryAdjustSchema,
@@ -127,6 +164,7 @@ import {
     BulkImportProductsSchema,
     BulkEditProductsSchema,
     CreateBatchSchema,
+    WriteoffBatchSchema,
     CreateStockCountSchema,
     RecordCountSchema,
     OpenShiftSchema,
@@ -139,8 +177,8 @@ import {
     LoginSchema,
     ResetPasswordSchema,
     KardexRecordSchema,
-    FinancePurchaseSchema,
     UpdateFiscalSettingsSchema,
+    CreateRetencionSufridaSchema,
 } from './validation/schemas.js';
 import {
     assertBaseUnitChangeAllowed,
@@ -157,7 +195,6 @@ import { resolvePurchaseLine } from '../utils/purchasePackaging.js';
 import {
     FISCAL_REGIME_CUOTA_FIJA,
     normalizeFiscalRegime,
-    vatCollectedFromSale,
 } from '../utils/fiscalRegime.js';
 import {
     normalizeTenantCapabilities,
@@ -399,9 +436,12 @@ app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
 app.use('/api/driver', driverRouter); // Red NORTEX: registro, login PIN, entregas
 app.use('/api/purchase-orders', purchaseOrdersRouter); // Órdenes de Compra (procurement)
+app.use('/api/suppliers', suppliersRouter); // Proveedor 360, contactos y metadata documental
+app.use('/api/procurement/matches', procurementMatchesRouter); // Conciliación OC-recepción-factura
 app.use('/api/serials', serialsRouter); // Control de series (números de serie por unidad)
 app.use('/api/warehouses', warehousesRouter); // Multi-bodega (Fase 2: fundación)
 app.use('/api/stock-transfers', stockTransfersRouter); // Transferencias entre bodegas (Fase 3)
+app.use('/api/batch-warehouse-ledger', batchWarehouseLedgerRouter);
 app.use('/api/loans', loanRoutes);
 app.use('/api/sales/sync', syncRoutes);
 app.use('/api/scale-labels', scaleLabelsRouter);
@@ -1207,6 +1247,18 @@ app.post('/api/onboarding/seed-catalog', authenticate, checkRole(['OWNER', 'ADMI
             return res.status(400).json({ error: 'Tu giro no tiene un catálogo de ejemplo disponible.' });
         }
 
+        const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(prisma, tenantId);
+        for (const sample of catalog) {
+            assertAggregateBatchMutationAllowed({
+                mode: batchWarehouseLedgerMode,
+                requiresBatchTracking: sample.requiresBatchTracking === true,
+                delta: sample.stock,
+                // El seed histórico crea ProductBatch, pero todavía no tiene un
+                // comando lote+bodega idempotente; activo queda fail-closed.
+                hasExplicitBatch: false,
+            });
+        }
+
         // Guard anti-duplicado: solo sembramos con el inventario en cero.
         const existing = await prisma.product.count({ where: { tenantId } });
         if (existing > 0) {
@@ -1220,6 +1272,14 @@ app.post('/api/onboarding/seed-catalog', authenticate, checkRole(['OWNER', 'ADMI
         }
 
         const createdCount = await prisma.$transaction(async (tx: any) => {
+            const authoritativeBatchMode = await resolveBatchWarehouseLedgerMode(tx, tenantId);
+            for (const sample of catalog) {
+                assertAggregateBatchMutationAllowed({
+                    mode: authoritativeBatchMode,
+                    requiresBatchTracking: sample.requiresBatchTracking === true,
+                    delta: sample.stock,
+                });
+            }
             let count = 0;
             const now = new Date();
 
@@ -1307,6 +1367,7 @@ app.post('/api/onboarding/seed-catalog', authenticate, checkRole(['OWNER', 'ADMI
 
         res.json({ message: `Cargamos ${createdCount} productos de ejemplo. Editalos, borralos o sumá los tuyos.`, count: createdCount });
     } catch (error) {
+        if (manualBatchErrorResponse(res, error)) return;
         console.error('Seed catalog error:', error);
         res.status(500).json({ error: 'No se pudo cargar el catálogo de ejemplo.' });
     }
@@ -1926,9 +1987,8 @@ function normalizeOptionalCustomerText(value: unknown): string | null | undefine
     return text === '' ? null : text;
 }
 
-function startOfTodayLocal() {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+function startOfTodayManaguaBusiness(asOf: Date = new Date()) {
+    return managuaBusinessDate(asOf);
 }
 
 function formatCustomerMoney(value: Decimal.Value | null | undefined) {
@@ -1970,7 +2030,7 @@ function customerHubOrderBy(segment: string) {
     ];
 }
 
-function customerHubSegmentWhere(segment: string) {
+function customerHubSegmentWhere(segment: string, asOf: Date = new Date()) {
     if (segment === 'withDebt') return { currentDebt: { gt: 0 } };
     if (segment === 'overlimit') {
         return {
@@ -1987,7 +2047,7 @@ function customerHubSegmentWhere(segment: string) {
         return { isWholesale: true, isBlocked: false, currentDebt: 0 };
     }
     if (segment === 'inactive') {
-        const cutoff = new Date(Date.now() - 60 * 86400000);
+        const cutoff = new Date(managuaBusinessDate(asOf).getTime() - 60 * 86400000);
         return {
             isBlocked: false,
             isWholesale: false,
@@ -2005,11 +2065,11 @@ function customerHubSegmentWhere(segment: string) {
     return {};
 }
 
-async function buildCustomerHubList(tenantId: string, customers: any[]) {
+async function buildCustomerHubList(tenantId: string, customers: any[], asOf: Date = new Date()) {
     if (customers.length === 0) return [];
 
     const customerIds = customers.map((customer) => customer.id);
-    const today = startOfTodayLocal();
+    const today = startOfTodayManaguaBusiness(asOf);
     const baseSaleWhere = {
         tenantId,
         customerId: { in: customerIds },
@@ -2090,7 +2150,7 @@ async function buildCustomerHubList(tenantId: string, customers: any[]) {
                 openInvoices,
                 lastSaleAt,
                 createdAt: customer.createdAt,
-            });
+            }, asOf);
 
             return {
                 id: customer.id,
@@ -2156,29 +2216,6 @@ async function validarSellerDelTenant(sellerId: string, tenantId: string): Promi
         select: { id: true },
     });
     return seller !== null;
-}
-
-type LockedScopedCustomer = {
-    id: string;
-    sellerId: string | null;
-    currentDebt: Decimal.Value | null;
-};
-
-async function lockCustomerForScopedMutation(
-    tx: any,
-    authReq: AuthRequest,
-    customerId: string,
-): Promise<LockedScopedCustomer | null> {
-    const lockedCustomers: LockedScopedCustomer[] = await tx.$queryRaw`
-        SELECT id, sellerId, currentDebt
-        FROM \`Customer\`
-        WHERE id = ${customerId}
-          AND tenantId = ${authReq.tenantId!}
-        FOR UPDATE`;
-    const customer = lockedCustomers[0] ?? null;
-    if (!customer) return null;
-    if (authReq.role === 'VENDEDOR' && customer.sellerId !== authReq.userId) return null;
-    return customer;
 }
 
 app.post('/api/customers', authenticate, checkRole(CUSTOMER_CREATE_ROLES), validate(CreateCustomerSchema), async (req: any, res: any) => {
@@ -2287,7 +2324,7 @@ app.get('/api/customers', authenticate, checkRole(CUSTOMER_READ_ROLES), async (r
     }
 });
 
-app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const segment = typeof req.query.segment === 'string' ? req.query.segment : 'all';
@@ -2298,10 +2335,11 @@ app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), 
     }
 
     try {
+        const asOf = new Date();
         const whereClause: any = applySellerCustomerScope(authReq, {
             tenantId,
             ...customerSearchWhere(req.query.search),
-            ...customerHubSegmentWhere(segment),
+            ...customerHubSegmentWhere(segment, asOf),
         });
         if (authReq.role !== 'VENDEDOR') {
             Object.assign(whereClause, customerSellerWhere(req.query.sellerId));
@@ -2314,7 +2352,7 @@ app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), 
             include: { seller: { select: { id: true, name: true, status: true } } },
         });
 
-        const hub = await buildCustomerHubList(tenantId, customers);
+        const hub = await buildCustomerHubList(tenantId, customers, asOf);
         const filtered = hub.filter((customer) => {
             return matchesCustomerHubSegment(segment, customer.segment, {
                 creditLimit: customer.creditLimit,
@@ -2335,7 +2373,7 @@ app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), 
     }
 });
 
-app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const { id } = req.params;
@@ -2348,14 +2386,15 @@ app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLE
         });
         if (!customer) return res.status(404).json({ error: 'Cliente no encontrado' });
 
-        const [profile] = await buildCustomerHubList(tenantId, [customer]);
+        const now = new Date();
+        const [profile] = await buildCustomerHubList(tenantId, [customer], now);
         const saleScope = {
             tenantId,
             customerId: id,
             status: { not: ESTADO_ANULADA },
             ...receivableCustomerScope(authReq),
         };
-        const today = startOfTodayLocal();
+        const today = managuaBusinessDate(now);
 
         const [
             creditSales,
@@ -2401,7 +2440,7 @@ app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLE
                     sale: { select: { id: true, invoiceNumber: true, total: true, balance: true, createdAt: true } },
                 },
             }),
-            prisma.auditLog.findMany({
+            authReq.role === 'VENDEDOR' ? Promise.resolve([]) : prisma.auditLog.findMany({
                 where: {
                     tenantId,
                     action: { in: ['CUSTOMER_CREATED', 'CUSTOMER_UPDATED', 'CREDIT_PAYMENT', 'BAD_DEBT_WRITEOFF'] },
@@ -2412,7 +2451,13 @@ app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLE
                 include: { user: { select: { id: true, name: true } } },
             }),
             prisma.customerInteraction.findMany({
-                where: { tenantId, customerId: id },
+                where: {
+                    tenantId,
+                    customerId: id,
+                    ...(authReq.role === 'VENDEDOR'
+                        ? { customer: { sellerId: authReq.userId! } }
+                        : {}),
+                },
                 orderBy: { createdAt: 'desc' },
                 take: 20,
                 include: { creator: { select: { id: true, name: true } } },
@@ -2442,6 +2487,17 @@ app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLE
             }),
         ]);
 
+        // La cartera puede reasignarse mientras se calculan los paneles. Antes
+        // de devolver datos sensibles, el vendedor debe seguir siendo dueño de
+        // la ficha; si cambió, la respuesta falla cerrada.
+        if (authReq.role === 'VENDEDOR') {
+            const stillAuthorized = await prisma.customer.findFirst({
+                where: customerWhere,
+                select: { id: true },
+            });
+            if (!stillAuthorized) return res.status(404).json({ error: 'Cliente no encontrado' });
+        }
+
         const totalBilled = new Decimal(creditTotals._sum.total ?? 0);
         const totalBalance = new Decimal(creditTotals._sum.balance ?? 0);
         const totalPaid = totalBilled.minus(totalBalance);
@@ -2453,7 +2509,7 @@ app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLE
             const balance = new Decimal(sale.balance.toString());
             const paid = total.minus(balance);
             const ref = sale.dueDate ?? sale.createdAt;
-            const overdueDays = Math.floor((today.getTime() - new Date(ref.getFullYear(), ref.getMonth(), ref.getDate()).getTime()) / 86400000);
+            const overdueDays = daysSinceManaguaCivilDate(ref, now);
             const overdue = balance.greaterThan(0) && overdueDays > 0;
 
             return {
@@ -2590,7 +2646,10 @@ app.post(
 
         try {
             const interaction = await prisma.$transaction(async (tx: any) => {
-                const customer = await lockCustomerForScopedMutation(tx, authReq, customerId);
+                const customer = await tx.customer.findFirst({
+                    where: applySellerCustomerScope(authReq, { id: customerId, tenantId }),
+                    select: { id: true },
+                });
                 if (!customer) throw new Error('CUSTOMER_NOT_FOUND');
 
                 const interactionStartsOpen = Boolean(req.body.followUpAt) || req.body.type === 'PROMISE';
@@ -2653,7 +2712,10 @@ app.patch(
 
         try {
             const result = await prisma.$transaction(async (tx: any) => {
-                const customer = await lockCustomerForScopedMutation(tx, authReq, customerId);
+                const customer = await tx.customer.findFirst({
+                    where: applySellerCustomerScope(authReq, { id: customerId, tenantId }),
+                    select: { id: true },
+                });
                 if (!customer) throw new Error('INTERACTION_NOT_FOUND');
 
                 const lockedInteractions: Array<{ id: string }> = await tx.$queryRaw`
@@ -2702,7 +2764,7 @@ app.patch(
     },
 );
 
-app.put('/api/customers/:id', authenticate, checkRole(CUSTOMER_UPDATE_ROLES), validate(UpdateCustomerSchema), async (req: any, res: any) => {
+app.put('/api/customers/:id', authenticate, validate(UpdateCustomerSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
     const { name, taxId, phone, email, address, creditLimit, isBlocked, isWholesale, sellerId } = req.body;
@@ -2741,6 +2803,15 @@ app.put('/api/customers/:id', authenticate, checkRole(CUSTOMER_UPDATE_ROLES), va
             if (isBlocked !== undefined) data.isBlocked = Boolean(isBlocked);
             if (isWholesale !== undefined) data.isWholesale = Boolean(isWholesale);
             if (sellerId !== undefined) data.sellerId = sellerId; // null = desasignar
+
+            // Repetir tenant/cartera en el sink cierra la ventana entre el
+            // lookup y la escritura si un admin reasigna al cliente en paralelo.
+            const updateResult = await tx.customer.updateMany({ where: existingWhere, data });
+            if (updateResult.count !== 1) throw new Error('CUSTOMER_NOT_FOUND');
+            const updated = await tx.customer.findFirst({
+                where: { id, tenantId: authReq.tenantId },
+            });
+            if (!updated) throw new Error('CUSTOMER_NOT_FOUND');
 
             // Repetir tenant/cartera en el sink cierra la ventana entre el
             // lookup y la escritura si un admin reasigna al cliente en paralelo.
@@ -2851,92 +2922,6 @@ app.put('/api/sellers/:sellerId/catalog', authenticate, checkRole(['OWNER', 'ADM
         res.status(500).json({ error: 'Error guardando el catálogo del vendedor' });
     }
 });
-
-// ==========================================
-// 📦 SRM: PROVEEDORES
-// ==========================================
-
-app.get('/api/suppliers', authenticate, async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    try {
-        const suppliers = await prisma.supplier.findMany({
-            where: { tenantId: authReq.tenantId },
-            orderBy: { name: 'asc' }
-        });
-        res.json(suppliers);
-    } catch (error) { res.status(500).json({ error: 'Error' }); }
-});
-
-// Schema Zod inline para creación de proveedor (definido aquí para evitar colisión en schemas.ts).
-const CreateSupplierSchema = z.object({
-    name: z.string().trim().min(1, 'El nombre es requerido'),
-    ruc: z.string().trim().optional(),
-    contactName: z.string().trim().optional(),
-    phone: z.string().trim().optional(),
-    email: z.string().trim().email('Email inválido').optional().or(z.literal('')),
-    address: z.string().trim().optional(),
-    category: z.string().trim().optional(),
-});
-
-app.post('/api/suppliers', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateSupplierSchema), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { name, ruc, contactName, phone, email, address, category } = req.body;
-    try {
-        const supplier = await prisma.supplier.create({
-            data: { tenantId: authReq.tenantId, name, contactName, phone, email, category, ruc, address } as any
-        });
-        res.json(supplier);
-    } catch (error) { res.status(500).json({ error: 'Error' }); }
-});
-
-// PUT /api/suppliers/:id - Actualizar proveedor (Bodeguero C2 — completa el CRUD)
-app.put('/api/suppliers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { id } = req.params;
-    const { name, ruc, contactName, phone, email, address, category } = req.body;
-    try {
-        const existing = await prisma.supplier.findFirst({ where: { id, tenantId: authReq.tenantId! } });
-        if (!existing) return res.status(404).json({ error: 'Proveedor no encontrado' });
-
-        const data: any = {};
-        if (name !== undefined) data.name = name;
-        if (ruc !== undefined) data.ruc = ruc;
-        if (contactName !== undefined) data.contactName = contactName;
-        if (phone !== undefined) data.phone = phone;
-        if (email !== undefined) data.email = email;
-        if (address !== undefined) data.address = address;
-        if (category !== undefined) data.category = category;
-
-        const supplier = await prisma.supplier.update({ where: { id }, data });
-        res.json(supplier);
-    } catch (error: any) {
-        console.error('Error updating supplier:', error);
-        res.status(500).json({ error: 'Error actualizando proveedor' });
-    }
-});
-
-// DELETE /api/suppliers/:id - Eliminar proveedor (solo si no tiene compras)
-app.delete('/api/suppliers/:id', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { id } = req.params;
-    try {
-        const existing = await prisma.supplier.findFirst({ where: { id, tenantId: authReq.tenantId! } });
-        if (!existing) return res.status(404).json({ error: 'Proveedor no encontrado' });
-
-        const purchases = await prisma.purchase.count({ where: { supplierId: id, tenantId: authReq.tenantId! } });
-        if (purchases > 0) {
-            return res.status(409).json({ error: `No se puede eliminar: el proveedor tiene ${purchases} compra(s) registrada(s).` });
-        }
-
-        // Los productos que lo tenían por defecto quedan en null (onDelete: SetNull).
-        await prisma.supplier.delete({ where: { id } });
-        res.json({ message: 'Proveedor eliminado' });
-    } catch (error: any) {
-        console.error('Error deleting supplier:', error);
-        res.status(500).json({ error: 'Error eliminando proveedor' });
-    }
-});
-
 
 // ==========================================
 // 👔 RRHH: EMPLEADOS & NÓMINA (LÓGICA REAL AGREGADA)
@@ -3146,7 +3131,7 @@ app.patch('/api/employees/:id/pin', authenticate, checkRole(['OWNER', 'ADMIN', '
 // 🛒 MÓDULO DE VENTAS — delegado a salesService
 // ==========================================
 
-app.post('/api/sales', authenticate, async (req: any, res: any) => {
+app.post('/api/sales', authenticate, checkRole(POS_SALE_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const currentShift = await prisma.shift.findFirst({
@@ -3161,7 +3146,13 @@ app.post('/api/sales', authenticate, async (req: any, res: any) => {
             authReq.tenantId!,
             authReq.userId!,
             currentShift?.id ?? null,
-            { ...req.body, source: 'POS' }
+            {
+                ...req.body,
+                source: 'POS',
+                // La atribución de RRHH sale del turno autenticado. El cliente
+                // no puede adjudicar la venta a otro empleado del mismo tenant.
+                employeeId: currentShift?.employeeId ?? null,
+            }
         );
         res.json(result);
     } catch (error) {
@@ -3184,49 +3175,168 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), v
     const motivo = textoUtil(req.body.motivo);
 
     try {
-        const sale = await prisma.sale.findFirst({
+        const saleExists = await prisma.sale.findFirst({
             where: { id: saleId, tenantId: authReq.tenantId! },
-            include: {
-                items: { select: { productId: true, quantity: true, costAtSale: true } },
-                _count: { select: { productReturns: true, payments: true } },
-            },
+            select: { id: true },
         });
-        if (!sale) return res.status(404).json({ error: 'Factura no encontrada' });
-
-        // ¿El período contable de la venta está cerrado? Se pregunta con la
-        // MISMA función que usa el motor contable, para no tener dos criterios
-        // de "período cerrado" que puedan discrepar.
-        let periodoCerrado = false;
-        try {
-            await assertPeriodOpen(prisma as any, authReq.tenantId!, sale.createdAt);
-        } catch (err) {
-            if (err instanceof PeriodLockedError) periodoCerrado = true;
-            else throw err;
-        }
-
-        const veredicto = puedeAnularse({
-            status: sale.status,
-            cancelledAt: sale.cancelledAt,
-            devoluciones: sale._count.productReturns,
-            pagos: sale._count.payments,
-            periodoCerrado,
-        }, motivo);
-
-        if (!veredicto.ok) {
-            return res.status(409).json({ error: veredicto.mensaje, codigo: veredicto.codigo });
-        }
-
-        const plan = planDeReversion({
-            total: sale.total.toString(),
-            paymentMethod: sale.paymentMethod,
-            items: sale.items.map(i => ({
-                productId: i.productId,
-                quantity: i.quantity.toString(),
-                costAtSale: i.costAtSale.toString(),
-            })),
-        });
+        if (!saleExists) return res.status(404).json({ error: 'Factura no encontrada' });
 
         const resultado = await prisma.$transaction(async (tx: any) => {
+            const lockedSale: Array<{ id: string }> = await tx.$queryRaw`
+                SELECT id FROM \`Sale\`
+                WHERE id = ${saleId} AND \`tenantId\` = ${authReq.tenantId}
+                FOR UPDATE`;
+            if (lockedSale.length === 0) {
+                throw new ReturnResolutionError('SALE_NOT_FOUND', 404, 'Factura no encontrada');
+            }
+
+            // Esta relectura es la autoridad. Una devolución pudo haber
+            // commiteado mientras esta solicitud esperaba el lock de Sale; usar
+            // el snapshot externo permitiría anular y restaurar por segunda vez.
+            const sale = await tx.sale.findFirst({
+                where: { id: saleId, tenantId: authReq.tenantId! },
+                include: {
+                    items: { select: { id: true, productId: true, quantity: true, costAtSale: true } },
+                    pedidos: { select: { id: true } },
+                    _count: { select: { productReturns: true, payments: true } },
+                },
+            });
+            if (!sale) {
+                throw new ReturnResolutionError('SALE_NOT_FOUND', 404, 'Factura no encontrada');
+            }
+
+            let periodoCerrado = false;
+            try {
+                await assertPeriodOpen(tx, authReq.tenantId!, sale.createdAt);
+            } catch (error) {
+                if (error instanceof PeriodLockedError) periodoCerrado = true;
+                else throw error;
+            }
+            const veredicto = puedeAnularse({
+                status: sale.status,
+                cancelledAt: sale.cancelledAt,
+                devoluciones: sale._count.productReturns,
+                pagos: sale._count.payments,
+                periodoCerrado,
+            }, motivo);
+            if (!veredicto.ok) {
+                throw new ReturnResolutionError(veredicto.codigo, 409, veredicto.mensaje);
+            }
+
+            const plan = planDeReversion({
+                total: sale.total.toString(),
+                paymentMethod: sale.paymentMethod,
+                items: sale.items.map(item => ({
+                    productId: item.productId,
+                    quantity: item.quantity.toString(),
+                    costAtSale: item.costAtSale.toString(),
+                })),
+            });
+
+            const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(
+                tx,
+                authReq.tenantId!,
+            );
+            const batchTrackingByProduct = new Map<string, boolean>();
+            const productsWithBatchKardex = new Set<string>();
+            if (batchWarehouseLedgerMode !== 'OFF') {
+                const cancellationProductIds = [...new Set(sale.items.map(item => item.productId))];
+                const cancellationProducts = await tx.product.findMany({
+                    where: {
+                        tenantId: authReq.tenantId!,
+                        id: { in: cancellationProductIds },
+                    },
+                    select: { id: true, requiresBatchTracking: true },
+                });
+                if (cancellationProducts.length !== cancellationProductIds.length) {
+                    throw new ReturnResolutionError(
+                        'RETURN_PRODUCT_NOT_FOUND',
+                        409,
+                        'Un producto de la venta ya no está disponible para restaurar stock',
+                    );
+                }
+                for (const product of cancellationProducts) {
+                    batchTrackingByProduct.set(product.id, product.requiresBatchTracking);
+                }
+
+                const pedidoReferenceIds = sale.pedidos.map((pedido: { id: string }) => pedido.id);
+                const cancellationBatchKardex = await tx.kardexMovement.findMany({
+                    where: {
+                        tenantId: authReq.tenantId!,
+                        OR: [
+                            { referenceId: saleId, referenceType: 'SALE', type: 'SALE' },
+                            ...(pedidoReferenceIds.length > 0
+                                ? [{
+                                    referenceId: { in: pedidoReferenceIds },
+                                    referenceType: { in: ['PEDIDO_RESERVA', 'PEDIDO_VENTA'] },
+                                    type: 'OUT',
+                                }]
+                                : []),
+                        ],
+                        batchId: { not: null },
+                    },
+                    select: { productId: true },
+                });
+                for (const movement of cancellationBatchKardex) {
+                    productsWithBatchKardex.add(movement.productId);
+                }
+            }
+            const cancellationBatchPlans = new Map<string, ReturnBatchRestorationPlan>();
+            if (batchWarehouseLedgerMode !== 'OFF') {
+                const allocationRows = await tx.saleItemBatchAllocation.findMany({
+                    where: {
+                        tenantId: authReq.tenantId!,
+                        saleItemId: { in: sale.items.map(item => item.id) },
+                        saleItem: { saleId, sale: { tenantId: authReq.tenantId! } },
+                        batch: { tenantId: authReq.tenantId! },
+                    },
+                    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+                    select: {
+                        id: true,
+                        saleItemId: true,
+                        batchId: true,
+                        warehouseId: true,
+                        quantity: true,
+                        batch: { select: { productId: true, batchNumber: true } },
+                    },
+                });
+                const allocationsBySaleItem = new Map<string, any[]>();
+                for (const allocation of allocationRows) {
+                    const bucket = allocationsBySaleItem.get(allocation.saleItemId) ?? [];
+                    bucket.push({
+                        id: allocation.id,
+                        saleItemId: allocation.saleItemId,
+                        productId: allocation.batch.productId,
+                        batchId: allocation.batchId,
+                        batchNumber: allocation.batch.batchNumber,
+                        warehouseId: allocation.warehouseId,
+                        quantity: allocation.quantity,
+                    });
+                    allocationsBySaleItem.set(allocation.saleItemId, bucket);
+                }
+                const productLineCounts = new Map<string, number>();
+                for (const item of sale.items) {
+                    productLineCounts.set(
+                        item.productId,
+                        (productLineCounts.get(item.productId) ?? 0) + 1,
+                    );
+                }
+                for (const item of sale.items) {
+                    cancellationBatchPlans.set(item.id, planReturnBatchRestoration({
+                        saleItem: item,
+                        requestedQuantity: item.quantity,
+                        sameProductLineCount: productLineCounts.get(item.productId) ?? 0,
+                        requiresBatchTracking:
+                            batchTrackingByProduct.get(item.productId) === true
+                            || productsWithBatchKardex.has(item.productId)
+                            || (allocationsBySaleItem.get(item.id)?.length ?? 0) > 0,
+                        previousReturns: [],
+                        allocations: allocationsBySaleItem.get(item.id) ?? [],
+                        ledgerMode: batchWarehouseLedgerMode,
+                    }));
+                }
+            }
+
             // 1 · MARCAR PRIMERO, con la guarda en el WHERE. Dos anulaciones
             //     simultáneas (doble clic, dos pestañas) revertirían el stock
             //     DOS VECES si esto se hiciera al final: acá la primera gana y
@@ -3251,39 +3361,180 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), v
                 throw new Error('La factura ya fue anulada por otra operación.');
             }
 
-            // 2 · Devolver la mercadería al inventario. `enforceSufficient:false`
-            //     porque es una ENTRADA: nunca puede fallar por insuficiencia.
-            for (const linea of plan.lineas) {
-                const cantidad = linea.cantidad.toNumber();
-                let stockResult;
-                try {
-                    stockResult = await applyStockDelta(tx, {
-                        tenantId: authReq.tenantId!,
-                        productId: linea.productId,
-                        delta: cantidad,
-                        enforceSufficient: false,
-                    });
-                } catch (err) {
-                    // Producto borrado del catálogo: la venta se anula igual, no
-                    // se puede rehacer inventario de algo que ya no existe.
-                    if (err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') continue;
-                    throw err;
-                }
+            // 2 · OFF conserva el agregado legacy. En SHADOW/ENFORCED cada
+            //     allocation vuelve primero al sidecar de su bodega y después
+            //     a ProductBatch + agregado + Kardex, todo dentro de esta tx.
+            if (batchWarehouseLedgerMode === 'OFF') {
+                for (const linea of plan.lineas) {
+                    const cantidad = linea.cantidad.toNumber();
+                    let stockResult;
+                    try {
+                        stockResult = await applyStockDelta(tx, {
+                            tenantId: authReq.tenantId!,
+                            productId: linea.productId,
+                            delta: cantidad,
+                            enforceSufficient: false,
+                        });
+                    } catch (err) {
+                        // Producto borrado del catálogo: la venta se anula igual, no
+                        // se puede rehacer inventario de algo que ya no existe.
+                        if (err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') continue;
+                        throw err;
+                    }
 
-                await tx.kardexMovement.create({
-                    data: {
-                        tenantId: authReq.tenantId!,
-                        productId: linea.productId,
-                        type: 'RETURN',
-                        quantity: cantidad,
-                        stockBefore: stockResult.stockBefore,
-                        stockAfter: stockResult.stockAfter,
-                        referenceId: saleId,
-                        referenceType: 'SALE_VOIDED',
-                        reason: `Anulación de factura: ${motivo}`,
-                        userId: authReq.userId!,
-                    },
-                });
+                    await tx.kardexMovement.create({
+                        data: {
+                            tenantId: authReq.tenantId!,
+                            productId: linea.productId,
+                            type: 'RETURN',
+                            quantity: cantidad,
+                            stockBefore: stockResult.stockBefore,
+                            stockAfter: stockResult.stockAfter,
+                            referenceId: saleId,
+                            referenceType: 'SALE_VOIDED',
+                            reason: `Anulación de factura: ${motivo}`,
+                            userId: authReq.userId!,
+                        },
+                    });
+                }
+            } else {
+                const cancellationItemsInLockOrder = [...sale.items].sort(
+                    (left, right) => left.productId.localeCompare(right.productId)
+                        || left.id.localeCompare(right.id),
+                );
+                for (const item of cancellationItemsInLockOrder) {
+                    const batchPlan = cancellationBatchPlans.get(item.id);
+                    if (!batchPlan) {
+                        throw new ReturnResolutionError(
+                            'RECONCILIATION_REQUIRED',
+                            409,
+                            'No se pudo reconstruir la evidencia lote-bodega de la venta',
+                        );
+                    }
+                    let appliedQuantity = new Decimal(0);
+                    const restorationsInLockOrder = [...batchPlan.batchRestorations].sort(
+                        (left, right) => left.batchId.localeCompare(right.batchId),
+                    );
+                    for (const restoration of restorationsInLockOrder) {
+                        if (restoration.warehouseId) {
+                            await applyBatchWarehouseDelta({
+                                tx,
+                                mode: batchWarehouseLedgerMode,
+                                tenantId: authReq.tenantId!,
+                                productId: item.productId,
+                                batchId: restoration.batchId,
+                                warehouseId: restoration.warehouseId,
+                                delta: restoration.quantity.toFixed(4),
+                                movementType: 'SALE_RETURN',
+                                referenceId: saleId,
+                                referenceType: 'SALE_VOIDED',
+                                userId: authReq.userId!,
+                                reason: `Anulación de venta ${saleId}`,
+                                sourceKey: `sale-void:${saleId}:item:${item.id}:allocation:${restoration.allocationId}:batch:${restoration.batchId}`,
+                                allowNegative: false,
+                            });
+                        }
+
+                        const updatedBatch = await tx.productBatch.updateMany({
+                            where: {
+                                id: restoration.batchId,
+                                tenantId: authReq.tenantId!,
+                                productId: item.productId,
+                            },
+                            // ProductBatch.stock sigue siendo la proyección Float legacy.
+                            // La autoridad exacta ya se aplicó al sidecar Decimal arriba;
+                            // convertimos solo en esta frontera exigida por Prisma.
+                            data: { stock: { increment: restoration.quantity.toNumber() } },
+                        });
+                        if (updatedBatch.count !== 1) {
+                            throw new ReturnResolutionError(
+                                'RETURN_BATCH_TARGET_NOT_FOUND',
+                                409,
+                                'Un lote original ya no está disponible para restaurar',
+                            );
+                        }
+
+                        const stockResult = await applyStockDelta(tx, {
+                            tenantId: authReq.tenantId!,
+                            productId: item.productId,
+                            delta: restoration.quantity.toNumber(),
+                            enforceSufficient: false,
+                            warehouseId: restoration.warehouseId ?? undefined,
+                        });
+                        await tx.kardexMovement.create({
+                            data: {
+                                tenantId: authReq.tenantId!,
+                                productId: item.productId,
+                                type: 'RETURN',
+                                quantity: restoration.quantity.toNumber(),
+                                stockBefore: stockResult.stockBefore,
+                                stockAfter: stockResult.stockAfter,
+                                referenceId: saleId,
+                                referenceType: 'SALE_VOIDED',
+                                reason: `Anulación de factura: ${motivo} - lote ${restoration.batchNumber}`,
+                                userId: authReq.userId!,
+                                ...(restoration.warehouseId
+                                    ? { batchId: restoration.batchId }
+                                    : {}),
+                                warehouseId: stockResult.warehouseId,
+                            },
+                        });
+                        appliedQuantity = appliedQuantity.plus(restoration.quantity);
+                    }
+
+                    if (batchPlan.aggregateOnlyQuantity.greaterThan(0)) {
+                        const stockResult = await applyStockDelta(tx, {
+                            tenantId: authReq.tenantId!,
+                            productId: item.productId,
+                            delta: batchPlan.aggregateOnlyQuantity.toNumber(),
+                            enforceSufficient: false,
+                        });
+                        await tx.kardexMovement.create({
+                            data: {
+                                tenantId: authReq.tenantId!,
+                                productId: item.productId,
+                                type: 'RETURN',
+                                quantity: batchPlan.aggregateOnlyQuantity.toNumber(),
+                                stockBefore: stockResult.stockBefore,
+                                stockAfter: stockResult.stockAfter,
+                                referenceId: saleId,
+                                referenceType: 'SALE_VOIDED',
+                                reason: `Anulación de factura: ${motivo} - sin lote asignado`,
+                                userId: authReq.userId!,
+                                warehouseId: stockResult.warehouseId,
+                            },
+                        });
+                        appliedQuantity = appliedQuantity.plus(batchPlan.aggregateOnlyQuantity);
+                    }
+
+                    for (const gap of batchPlan.reconciliationGaps) {
+                        await tx.auditLog.create({
+                            data: {
+                                tenantId: authReq.tenantId!,
+                                userId: authReq.userId!,
+                                action: 'BATCH_WAREHOUSE_RETURN_RECONCILIATION_REQUIRED',
+                                details: JSON.stringify({
+                                    saleId,
+                                    returnId: null,
+                                    saleItemId: item.id,
+                                    productId: item.productId,
+                                    allocationId: gap.allocationId,
+                                    batchId: gap.batchId,
+                                    quantity: gap.quantity.toFixed(4),
+                                    reason: gap.reason,
+                                }),
+                            },
+                        });
+                    }
+
+                    if (!appliedQuantity.equals(new Decimal(item.quantity.toString()))) {
+                        throw new ReturnResolutionError(
+                            'RETURN_BATCH_RESTORATION_INVALID',
+                            500,
+                            'El movimiento por lote no coincide con la cantidad anulada',
+                        );
+                    }
+                }
             }
 
             // 3 · Bajar la deuda del cliente si era venta a crédito.
@@ -3315,28 +3566,28 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), v
             //     débito y crédito INVERTIDOS. Cuadra por construcción (el
             //     original cuadraba) y deja el rastro contable visible, en vez
             //     de borrar el asiento original — que sería falsear el libro.
-            try {
-                const lineasVenta = buildSaleJournalLines(
-                    Number(sale.total),
-                    plan.costoTotal.toNumber(),
-                    sale.paymentMethod,
-                    sale.exemptTotal == null ? null : Number(sale.exemptTotal),
-                    {
-                        fiscalRegime: sale.fiscalRegimeAtSale,
-                        vatAmount: sale.vatAmountAtSale?.toString() ?? null,
-                    },
-                );
-                await createJournalEntry(
-                    tx, authReq.tenantId!,
-                    `Anulación de venta #${saleId.slice(0, 8)}`,
-                    saleId, 'SALE_CANCELLED', authReq.userId!,
-                    lineasVenta.map(l => ({ accountCode: l.accountCode, debit: l.credit, credit: l.debit })),
-                );
-            } catch (accErr) {
-                // Mismo criterio que el resto del sistema: el gancho contable no
-                // tumba la operación de negocio, pero queda en el log.
-                console.warn('⚠️ Asiento de anulación falló (la anulación continúa):', accErr);
-            }
+            const lineasVenta = buildSaleJournalLines(
+                Number(sale.total),
+                plan.costoTotal.toNumber(),
+                sale.paymentMethod,
+                sale.exemptTotal == null ? null : Number(sale.exemptTotal),
+                {
+                    fiscalRegime: sale.fiscalRegimeAtSale,
+                    vatAmount: sale.vatAmountAtSale?.toString() ?? null,
+                },
+            );
+            // Una anulación mueve inventario y dinero: si el asiento no puede
+            // persistirse, el error debe abortar esta misma transacción.
+            await createJournalEntry(
+                tx, authReq.tenantId!,
+                `Anulación de venta #${saleId.slice(0, 8)}`,
+                saleId, 'SALE_CANCELLED', authReq.userId!,
+                lineasVenta.map(line => ({
+                    accountCode: line.accountCode,
+                    debit: line.credit,
+                    credit: line.debit,
+                })),
+            );
 
             // 5 · AUDITORÍA INMUTABLE, en la MISMA transacción (Capa 3).
             await tx.auditLog.create({
@@ -3373,7 +3624,16 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), v
 
         res.json({ success: true, ...resultado });
     } catch (error: any) {
-        console.error('Error anulando factura:', error);
+        if (error instanceof ReturnResolutionError || error instanceof BatchWarehouseLedgerError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
+        if (error instanceof StockError) {
+            return res.status(error.code === 'PRODUCT_NOT_FOUND' ? 409 : 400).json({
+                error: error.message,
+                code: error.code,
+            });
+        }
+        console.error('Error anulando factura:', error instanceof Error ? error.name : 'UNKNOWN_ERROR');
         res.status(500).json({ error: error?.message || 'No se pudo anular la factura' });
     }
 });
@@ -3592,7 +3852,7 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                 }),
                 tx.product.findMany({
                     where: { tenantId: authReq.tenantId, id: { in: productIds } },
-                    select: { id: true, name: true, unit: true },
+                    select: { id: true, name: true, unit: true, requiresBatchTracking: true },
                 }),
                 tx.kardexMovement.findMany({
                     where: {
@@ -3608,7 +3868,7 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                                 : []),
                         ],
                     },
-                    select: { warehouseId: true },
+                    select: { productId: true, batchId: true, warehouseId: true },
                 }),
             ]);
             if (products.length !== productIds.length) {
@@ -3616,6 +3876,11 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
             }
             const productsById = new Map<string, ReturnProductAuthority>(
                 products.map((product: ReturnProductAuthority): [string, ReturnProductAuthority] => [product.id, product]),
+            );
+            const productsWithBatchKardex = new Set(
+                saleKardexLocations
+                    .filter((movement: { batchId?: string | null }) => Boolean(movement.batchId))
+                    .map((movement: { productId: string }) => movement.productId),
             );
             const returnWarehouseId = resolveReturnWarehouseId(saleKardexLocations);
             const resolved = resolveRequestedReturnItems({
@@ -3626,18 +3891,91 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                 globalDiscount: sale.globalDiscount,
             });
 
-            // La evidencia por lote se resuelve con el mismo snapshot de
-            // devoluciones leído bajo el lock de Sale. El helper restaura solo
-            // ProductBatch; el agregado y Kardex se completan abajo en esta tx.
-            const resolvedWithBatches = [];
-            for (const item of resolved.items) {
-                const batchRestoration = await restoreSaleItemBatchesForReturn(tx, {
-                    tenantId: authReq.tenantId!,
-                    saleItemId: item.saleItemId,
-                    productId: item.productId,
-                    quantity: item.quantity,
-                    previousReturns,
+            // OFF conserva exactamente el restaurador legacy. SHADOW/ENFORCED
+            // leen la evidencia nueva bajo el mismo lock de Sale y solo la
+            // PLANEAN acá: ENFORCED debe poder rechazar evidencia incompleta
+            // antes de ProductReturn, stock, caja o contabilidad.
+            const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(
+                tx,
+                authReq.tenantId!,
+            );
+            const allocationsBySaleItem = new Map<string, any[]>();
+            if (batchWarehouseLedgerMode !== 'OFF') {
+                const allocationRows = await tx.saleItemBatchAllocation.findMany({
+                    where: {
+                        tenantId: authReq.tenantId!,
+                        saleItemId: { in: resolved.items.map(item => item.saleItemId) },
+                        saleItem: { saleId, sale: { tenantId: authReq.tenantId! } },
+                        batch: { tenantId: authReq.tenantId! },
+                    },
+                    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+                    select: {
+                        id: true,
+                        saleItemId: true,
+                        batchId: true,
+                        warehouseId: true,
+                        quantity: true,
+                        batch: { select: { productId: true, batchNumber: true } },
+                    },
                 });
+                for (const allocation of allocationRows) {
+                    const bucket = allocationsBySaleItem.get(allocation.saleItemId) ?? [];
+                    bucket.push({
+                        id: allocation.id,
+                        saleItemId: allocation.saleItemId,
+                        productId: allocation.batch.productId,
+                        batchId: allocation.batchId,
+                        batchNumber: allocation.batch.batchNumber,
+                        warehouseId: allocation.warehouseId,
+                        quantity: allocation.quantity,
+                    });
+                    allocationsBySaleItem.set(allocation.saleItemId, bucket);
+                }
+            }
+
+            const lineById = new Map<string, ReturnSaleItemSnapshot>(
+                sale.items.map((line: any): [string, ReturnSaleItemSnapshot] => [line.id, line]),
+            );
+            const productLineCounts = new Map<string, number>();
+            for (const line of sale.items) {
+                productLineCounts.set(
+                    line.productId,
+                    (productLineCounts.get(line.productId) ?? 0) + 1,
+                );
+            }
+            const resolvedWithBatches: Array<{
+                item: typeof resolved.items[number];
+                batchRestoration: BatchRestorationResult | ReturnBatchRestorationPlan;
+            }> = [];
+            for (const item of resolved.items) {
+                const saleItem = lineById.get(item.saleItemId);
+                if (!saleItem) {
+                    throw new ReturnResolutionError(
+                        'SALE_ITEM_NOT_FOUND',
+                        404,
+                        'La línea de venta ya no está disponible',
+                    );
+                }
+                const batchRestoration = batchWarehouseLedgerMode === 'OFF'
+                    ? await restoreSaleItemBatchesForReturn(tx, {
+                        tenantId: authReq.tenantId!,
+                        saleItemId: item.saleItemId,
+                        productId: item.productId,
+                        quantity: item.quantity,
+                        previousReturns,
+                    })
+                    : planReturnBatchRestoration({
+                        saleItem,
+                        requestedQuantity: item.quantity,
+                        sameProductLineCount: productLineCounts.get(item.productId) ?? 0,
+                        requiresBatchTracking:
+                            productsById.get(item.productId)?.requiresBatchTracking === true
+                            || productsWithBatchKardex.has(item.productId)
+                            || (allocationsBySaleItem.get(item.saleItemId)?.length ?? 0) > 0,
+                        previousReturns,
+                        allocations: allocationsBySaleItem.get(item.saleItemId) ?? [],
+                        ledgerMode: batchWarehouseLedgerMode,
+                    });
                 const restoredQuantity = batchRestoration.batchRestorations.reduce(
                     (sum, restoration) => sum.plus(restoration.quantity),
                     batchRestoration.aggregateOnlyQuantity,
@@ -3676,8 +4014,17 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                     batchId: restoration.batchId,
                     batchNumber: restoration.batchNumber,
                     quantity: restoration.quantity.toString(),
+                    ...('allocationId' in restoration
+                        ? {
+                            allocationId: restoration.allocationId,
+                            warehouseId: restoration.warehouseId,
+                        }
+                        : {}),
                 })),
                 aggregateOnlyQuantity: batchRestoration.aggregateOnlyQuantity.toString(),
+                ...(batchWarehouseLedgerMode === 'OFF'
+                    ? {}
+                    : { batchWarehouseLedgerMode }),
             }));
 
             const productReturn = await tx.productReturn.create({
@@ -3693,68 +4040,206 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                 }
             });
 
-            // Stock y Kardex usan producto/cantidad resueltos desde SaleItem.
-            for (const { item, batchRestoration } of resolvedWithBatches) {
-                const qty = item.quantity.toNumber();
-                const stockResult = await applyStockDelta(tx, {
-                    tenantId: authReq.tenantId,
-                    productId: item.productId,
-                    delta: qty,
-                    enforceSufficient: false,
-                    // Ventas nuevas guardan una única ubicación en Kardex. Las
-                    // históricas sin snapshot conservan el fallback default.
-                    warehouseId: returnWarehouseId ?? undefined,
-                });
+            // OFF queda byte-a-byte en su semántica anterior: ProductBatch se
+            // restauró en el helper legacy y el agregado vuelve a la bodega
+            // derivada del Kardex. Los modos 2B.0 ejecutan primero el sidecar
+            // exacto, luego ProductBatch, stock agregado y Kardex en ESTA tx.
+            const returnLinesInLockOrder = batchWarehouseLedgerMode === 'OFF'
+                ? resolvedWithBatches
+                : [...resolvedWithBatches].sort(
+                    (left, right) => left.item.productId.localeCompare(right.item.productId)
+                        || left.item.saleItemId.localeCompare(right.item.saleItemId),
+                );
+            for (const { item, batchRestoration } of returnLinesInLockOrder) {
+                if (batchWarehouseLedgerMode === 'OFF') {
+                    const qty = item.quantity.toNumber();
+                    const stockResult = await applyStockDelta(tx, {
+                        tenantId: authReq.tenantId,
+                        productId: item.productId,
+                        delta: qty,
+                        enforceSufficient: false,
+                        warehouseId: returnWarehouseId ?? undefined,
+                    });
 
-                let stockCursor = new Decimal(stockResult.stockBefore);
-                for (const restoration of batchRestoration.batchRestorations) {
-                    const stockAfter = stockCursor.plus(restoration.quantity);
+                    let stockCursor = new Decimal(stockResult.stockBefore);
+                    for (const restoration of batchRestoration.batchRestorations) {
+                        const stockAfter = stockCursor.plus(restoration.quantity);
+                        await tx.kardexMovement.create({
+                            data: {
+                                tenantId: authReq.tenantId,
+                                productId: item.productId,
+                                type: 'RETURN',
+                                quantity: restoration.quantity.toNumber(),
+                                stockBefore: stockCursor.toNumber(),
+                                stockAfter: stockAfter.toNumber(),
+                                referenceId: productReturn.id,
+                                referenceType: 'RETURN',
+                                reason: `Devolución: ${reason} - lote ${restoration.batchNumber}`,
+                                userId: authReq.userId,
+                                batchId: restoration.batchId,
+                                warehouseId: stockResult.warehouseId,
+                            },
+                        });
+                        stockCursor = stockAfter;
+                    }
+
+                    if (batchRestoration.aggregateOnlyQuantity.greaterThan(0)) {
+                        const stockAfter = stockCursor.plus(batchRestoration.aggregateOnlyQuantity);
+                        await tx.kardexMovement.create({
+                            data: {
+                                tenantId: authReq.tenantId,
+                                productId: item.productId,
+                                type: 'RETURN',
+                                quantity: batchRestoration.aggregateOnlyQuantity.toNumber(),
+                                stockBefore: stockCursor.toNumber(),
+                                stockAfter: stockAfter.toNumber(),
+                                referenceId: productReturn.id,
+                                referenceType: 'RETURN',
+                                reason: batchRestoration.batchRestorations.length === 0
+                                    ? `Devolución: ${reason}`
+                                    : `Devolución: ${reason} - sin lote asignado`,
+                                userId: authReq.userId,
+                                warehouseId: stockResult.warehouseId,
+                            },
+                        });
+                        stockCursor = stockAfter;
+                    }
+
+                    if (stockCursor.minus(stockResult.stockAfter).abs().greaterThan('0.000001')) {
+                        throw new ReturnResolutionError(
+                            'RETURN_BATCH_RESTORATION_INVALID',
+                            500,
+                            'El Kardex por lote no coincide con el stock restaurado',
+                        );
+                    }
+                    continue;
+                }
+
+                const exactPlan = batchRestoration as ReturnBatchRestorationPlan;
+                let appliedQuantity = new Decimal(0);
+                const restorationsInLockOrder = [...exactPlan.batchRestorations].sort(
+                    (left, right) => left.batchId.localeCompare(right.batchId),
+                );
+                for (const restoration of restorationsInLockOrder) {
+                    if (restoration.warehouseId) {
+                        await applyBatchWarehouseDelta({
+                            tx,
+                            mode: batchWarehouseLedgerMode,
+                            tenantId: authReq.tenantId!,
+                            productId: item.productId,
+                            batchId: restoration.batchId,
+                            warehouseId: restoration.warehouseId,
+                            delta: restoration.quantity.toFixed(4),
+                            movementType: 'SALE_RETURN',
+                            referenceId: productReturn.id,
+                            referenceType: 'PRODUCT_RETURN',
+                            userId: authReq.userId!,
+                            reason: `Devolución ${productReturn.id}`,
+                            sourceKey: `product-return:${productReturn.id}:return-item:${item.saleItemId}:allocation:${restoration.allocationId}:batch:${restoration.batchId}`,
+                            allowNegative: false,
+                        });
+                    }
+
+                    const updatedBatch = await tx.productBatch.updateMany({
+                        where: {
+                            id: restoration.batchId,
+                            tenantId: authReq.tenantId!,
+                            productId: item.productId,
+                        },
+                        // ProductBatch.stock sigue siendo la proyección Float legacy.
+                        // La autoridad exacta ya se aplicó al sidecar Decimal arriba;
+                        // convertimos solo en esta frontera exigida por Prisma.
+                        data: { stock: { increment: restoration.quantity.toNumber() } },
+                    });
+                    if (updatedBatch.count !== 1) {
+                        throw new ReturnResolutionError(
+                            'RETURN_BATCH_TARGET_NOT_FOUND',
+                            409,
+                            'Un lote original ya no está disponible para restaurar',
+                        );
+                    }
+
+                    const stockResult = await applyStockDelta(tx, {
+                        tenantId: authReq.tenantId!,
+                        productId: item.productId,
+                        delta: restoration.quantity.toNumber(),
+                        enforceSufficient: false,
+                        warehouseId: restoration.warehouseId ?? returnWarehouseId ?? undefined,
+                    });
                     await tx.kardexMovement.create({
                         data: {
-                            tenantId: authReq.tenantId,
+                            tenantId: authReq.tenantId!,
                             productId: item.productId,
                             type: 'RETURN',
                             quantity: restoration.quantity.toNumber(),
-                            stockBefore: stockCursor.toNumber(),
-                            stockAfter: stockAfter.toNumber(),
+                            stockBefore: stockResult.stockBefore,
+                            stockAfter: stockResult.stockAfter,
                             referenceId: productReturn.id,
                             referenceType: 'RETURN',
                             reason: `Devolución: ${reason} - lote ${restoration.batchNumber}`,
-                            userId: authReq.userId,
-                            batchId: restoration.batchId,
+                            userId: authReq.userId!,
+                            ...(restoration.warehouseId
+                                ? { batchId: restoration.batchId }
+                                : {}),
                             warehouseId: stockResult.warehouseId,
                         },
                     });
-                    stockCursor = stockAfter;
+                    appliedQuantity = appliedQuantity.plus(restoration.quantity);
                 }
 
-                if (batchRestoration.aggregateOnlyQuantity.greaterThan(0)) {
-                    const stockAfter = stockCursor.plus(batchRestoration.aggregateOnlyQuantity);
+                if (exactPlan.aggregateOnlyQuantity.greaterThan(0)) {
+                    const stockResult = await applyStockDelta(tx, {
+                        tenantId: authReq.tenantId!,
+                        productId: item.productId,
+                        delta: exactPlan.aggregateOnlyQuantity.toNumber(),
+                        enforceSufficient: false,
+                        warehouseId: returnWarehouseId ?? undefined,
+                    });
                     await tx.kardexMovement.create({
                         data: {
-                            tenantId: authReq.tenantId,
+                            tenantId: authReq.tenantId!,
                             productId: item.productId,
                             type: 'RETURN',
-                            quantity: batchRestoration.aggregateOnlyQuantity.toNumber(),
-                            stockBefore: stockCursor.toNumber(),
-                            stockAfter: stockAfter.toNumber(),
+                            quantity: exactPlan.aggregateOnlyQuantity.toNumber(),
+                            stockBefore: stockResult.stockBefore,
+                            stockAfter: stockResult.stockAfter,
                             referenceId: productReturn.id,
                             referenceType: 'RETURN',
-                            reason: batchRestoration.batchRestorations.length === 0
+                            reason: exactPlan.batchRestorations.length === 0
                                 ? `Devolución: ${reason}`
                                 : `Devolución: ${reason} - sin lote asignado`,
-                            userId: authReq.userId,
+                            userId: authReq.userId!,
                             warehouseId: stockResult.warehouseId,
                         },
                     });
-                    stockCursor = stockAfter;
+                    appliedQuantity = appliedQuantity.plus(exactPlan.aggregateOnlyQuantity);
                 }
 
-                if (stockCursor.minus(stockResult.stockAfter).abs().greaterThan('0.000001')) {
+                for (const gap of exactPlan.reconciliationGaps) {
+                    await tx.auditLog.create({
+                        data: {
+                            tenantId: authReq.tenantId!,
+                            userId: authReq.userId!,
+                            action: 'BATCH_WAREHOUSE_RETURN_RECONCILIATION_REQUIRED',
+                            details: JSON.stringify({
+                                saleId,
+                                returnId: productReturn.id,
+                                saleItemId: item.saleItemId,
+                                productId: item.productId,
+                                allocationId: gap.allocationId,
+                                batchId: gap.batchId,
+                                quantity: gap.quantity.toFixed(4),
+                                reason: gap.reason,
+                            }),
+                        },
+                    });
+                }
+
+                if (!appliedQuantity.equals(item.quantity)) {
                     throw new ReturnResolutionError(
                         'RETURN_BATCH_RESTORATION_INVALID',
                         500,
-                        'El Kardex por lote no coincide con el stock restaurado',
+                        'El movimiento por lote no coincide con la cantidad devuelta',
                     );
                 }
             }
@@ -4014,6 +4499,9 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
         if (error instanceof BatchRestorationError) {
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
+        if (error instanceof BatchWarehouseLedgerError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
         if (error instanceof ReturnResolutionError) {
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
@@ -4021,7 +4509,7 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
         if (error instanceof StockError) {
             return res.status(error.code === 'PRODUCT_NOT_FOUND' ? 409 : 400).json({ error: error.message, code: error.code });
         }
-        console.error(error);
+        console.error('Error procesando devolución:', error instanceof Error ? error.name : 'UNKNOWN_ERROR');
         res.status(500).json({ error: 'Error procesando devolución' });
     }
 });
@@ -4049,6 +4537,7 @@ app.post(
     validate(CreatePaymentSchema),
     registerCreditPayment,
 );
+
 // --- OPERATIONAL CONTROL (SHIFTS & AUDITS) - Preserved ---
 // (Preserved endpoints for shifts and audits)
 /**
@@ -4741,6 +5230,18 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
     const authReq = req as AuthRequest;
     const { type, amount, currency, category, description } = req.body;
 
+    // Los pagos a proveedores pertenecen al subledger de CxP. El atajo
+    // histórico de caja no tiene purchaseId, idempotencia ni los guards de
+    // documentStatus/paymentHold; permitirlo descuadraría el mayor respecto de
+    // Purchase.balanceDue. Las filas históricas siguen siendo legibles/anulables,
+    // pero toda escritura nueva debe pasar por /api/purchases/:id/pay.
+    if (category.trim().toUpperCase() === 'PAGO_PROVEEDOR') {
+        return res.status(409).json({
+            error: 'Registrá el pago desde la factura del proveedor en Compras.',
+            code: 'SUPPLIER_PAYMENT_REQUIRES_PURCHASE',
+        });
+    }
+
     try {
         // Validaciones de formato ya realizadas por Zod (type, amount, category).
         // A. VALIDAR CAJA ABIERTA — MISMO turno que ve la píldora del POS
@@ -4846,14 +5347,15 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
 
             let expenseId = null;
 
-            // Auto-crear Expense para salidas operativas
-            if (type === 'OUT' && ['GASTO_OPERATIVO', 'PAGO_PROVEEDOR'].includes(category)) {
+            // Auto-crear Expense solo para salidas operativas. Un pago a
+            // proveedor nunca es Expense y se registra por el subledger de CxP.
+            if (type === 'OUT' && category === 'GASTO_OPERATIVO') {
                 const expense = await tx.expense.create({
                     data: {
                         tenantId: authReq.tenantId,
                         amount: new Decimal(amount).toNumber(),
                         description: `[CAJA] ${description}`,
-                        category: category === 'PAGO_PROVEEDOR' ? 'SUPPLIER_PAYMENT' : 'OPERATIONAL',
+                        category: 'OPERATIONAL',
                     }
                 });
                 expenseId = expense.id;
@@ -5486,11 +5988,28 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), validate(
             return res.status(400).json({ error: 'SKU ya existe en tu inventario' });
         }
 
+        if (initialStock > 0 && Boolean(requiresBatchTracking)) {
+            const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(prisma, authReq.tenantId!);
+            assertAggregateBatchMutationAllowed({
+                mode: batchWarehouseLedgerMode,
+                requiresBatchTracking: true,
+                delta: initialStock,
+            });
+        }
+
         // La bodega default se materializa antes de la tx para evitar la carrera
         // de creación bajo REPEATABLE READ documentada en stockService.
         if (initialStock > 0) await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
 
         const product = await prisma.$transaction(async (tx: any) => {
+            if (initialStock > 0 && Boolean(requiresBatchTracking)) {
+                const authoritativeBatchMode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!);
+                assertAggregateBatchMutationAllowed({
+                    mode: authoritativeBatchMode,
+                    requiresBatchTracking: true,
+                    delta: initialStock,
+                });
+            }
             if (defaultSupplierId) {
                 const supplier = await tx.supplier.findFirst({
                     where: { id: defaultSupplierId, tenantId: authReq.tenantId! },
@@ -5581,6 +6100,7 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), validate(
         res.json(product);
     } catch (error: any) {
         if (productQuantityErrorResponse(res, error)) return;
+        if (manualBatchErrorResponse(res, error)) return;
         if (error?.message === 'PROVEEDOR_NO_ENCONTRADO') {
             return res.status(400).json({ error: 'El proveedor por defecto no pertenece a tu negocio' });
         }
@@ -5609,6 +6129,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), vali
             const batch = productList.slice(i, i + batchSize);
 
             await prisma.$transaction(async (tx: any) => {
+                const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!);
                 for (const [batchIdx, item] of batch.entries()) {
                     // Fila REAL del Excel para el mensaje de error (R2.7): el
                     // cliente la manda como excelRow; si no viene (integraciones
@@ -5699,13 +6220,46 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), vali
                             : null;
 
                         if (existing) {
-                            const lockedRows: Array<{ stock: Decimal.Value }> = await tx.$queryRaw`
-                                SELECT stock FROM \`Product\`
+                            const lockedRows: Array<{
+                                stock: Decimal.Value;
+                                requiresBatchTracking: boolean;
+                            }> = await tx.$queryRaw`
+                                SELECT stock, requiresBatchTracking FROM \`Product\`
                                 WHERE id = ${existing.id} AND tenantId = ${authReq.tenantId!}
                                 FOR UPDATE`;
                             if (lockedRows.length === 0) throw new Error('Producto no encontrado');
                             const stockBeforeLocked = new Decimal(lockedRows[0].stock);
-                            const stockDiff = new Decimal(targetStock).minus(stockBeforeLocked);
+                            // Una plantilla sin columna stock preserva la fila
+                            // bloqueada actual, no el snapshot `existing` leído
+                            // antes de una venta concurrente.
+                            const targetStockUnderLock = rawStock === undefined
+                                ? contextualProductQuantity(stockBeforeLocked, config, { allowZero: true })
+                                : targetStock;
+                            const stockDiff = new Decimal(targetStockUnderLock).minus(stockBeforeLocked);
+                            const lockedRequiresBatchTracking = lockedRows[0].requiresBatchTracking;
+                            const nextRequiresBatchTracking = rawBatchTracking === undefined
+                                ? lockedRequiresBatchTracking
+                                : Boolean(normalized.requiresBatchTracking);
+                            if (lockedRequiresBatchTracking !== nextRequiresBatchTracking) {
+                                const batchHistory = lockedRequiresBatchTracking && !nextRequiresBatchTracking
+                                    ? await tx.productBatch.findFirst({
+                                        where: { tenantId: authReq.tenantId!, productId: existing.id },
+                                        select: { id: true },
+                                    })
+                                    : null;
+                                assertBatchTrackingTransitionAllowed({
+                                    mode: batchWarehouseLedgerMode,
+                                    currentRequiresBatchTracking: lockedRequiresBatchTracking,
+                                    nextRequiresBatchTracking,
+                                    currentStock: stockBeforeLocked,
+                                    hasBatchHistory: batchHistory !== null,
+                                });
+                            }
+                            assertAggregateBatchMutationAllowed({
+                                mode: batchWarehouseLedgerMode,
+                                requiresBatchTracking: Boolean(lockedRequiresBatchTracking || nextRequiresBatchTracking),
+                                delta: stockDiff,
+                            });
 
                             if (normalized.unit.trim().toLowerCase() !== existing.unit.trim().toLowerCase()) {
                                 const [movement, hasOpenCommitments] = await Promise.all([
@@ -5740,7 +6294,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), vali
                                     packUnit: normalized.packUnit || null,
                                     packSize: normalizedPackSize,
                                     packPrice: normalizedPackPrice,
-                                    requiresBatchTracking: Boolean(normalized.requiresBatchTracking),
+                                    requiresBatchTracking: nextRequiresBatchTracking,
                                     ivaExento: Boolean(normalized.ivaExento),
                                 }
                             });
@@ -5807,7 +6361,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), vali
                                             packUnit: existing.packUnit,
                                             packSize: existing.packSize,
                                             packPrice: existing.packPrice,
-                                            requiresBatchTracking: existing.requiresBatchTracking,
+                                            requiresBatchTracking: lockedRequiresBatchTracking,
                                             ivaExento: existing.ivaExento,
                                             stock: stockBeforeLocked.toString(),
                                         },
@@ -5819,7 +6373,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), vali
                                             packUnit: normalized.packUnit || null,
                                             packSize: normalizedPackSize,
                                             packPrice: normalizedPackPrice,
-                                            requiresBatchTracking: Boolean(normalized.requiresBatchTracking),
+                                            requiresBatchTracking: nextRequiresBatchTracking,
                                             ivaExento: Boolean(normalized.ivaExento),
                                             stock: String(stockAfter),
                                         },
@@ -5828,6 +6382,11 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), vali
                             });
                             updated++;
                         } else {
+                            assertAggregateBatchMutationAllowed({
+                                mode: batchWarehouseLedgerMode,
+                                requiresBatchTracking: Boolean(normalized.requiresBatchTracking),
+                                delta: targetStock,
+                            });
                             const product = await tx.product.create({
                                 data: {
                                     tenantId: authReq.tenantId!,
@@ -6038,12 +6597,37 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), valida
         if (stock !== undefined) await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
 
         const updated = await prisma.$transaction(async (tx: any) => {
-            const lockedRows: Array<{ stock: Decimal.Value }> = await tx.$queryRaw`
-                SELECT stock FROM \`Product\`
+            const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!);
+            const lockedRows: Array<{
+                stock: Decimal.Value;
+                requiresBatchTracking: boolean;
+            }> = await tx.$queryRaw`
+                SELECT stock, requiresBatchTracking FROM \`Product\`
                 WHERE id = ${id} AND tenantId = ${authReq.tenantId!}
                 FOR UPDATE`;
             if (lockedRows.length === 0) throw new Error('PRODUCTO_NO_ENCONTRADO');
             const lockedStock = new Decimal(lockedRows[0].stock);
+            const lockedRequiresBatchTracking = lockedRows[0].requiresBatchTracking;
+            const nextRequiresBatchTracking = requiresBatchTracking === undefined
+                ? lockedRequiresBatchTracking
+                : Boolean(requiresBatchTracking);
+            const batchTrackingChanges = nextRequiresBatchTracking !== lockedRequiresBatchTracking;
+
+            if (batchTrackingChanges) {
+                const batchHistory = lockedRequiresBatchTracking && !nextRequiresBatchTracking
+                    ? await tx.productBatch.findFirst({
+                        where: { tenantId: authReq.tenantId!, productId: id },
+                        select: { id: true },
+                    })
+                    : null;
+                assertBatchTrackingTransitionAllowed({
+                    mode: batchWarehouseLedgerMode,
+                    currentRequiresBatchTracking: lockedRequiresBatchTracking,
+                    nextRequiresBatchTracking,
+                    currentStock: lockedStock,
+                    hasBatchHistory: batchHistory !== null,
+                });
+            }
 
             if (unit !== undefined) {
                 const [movement, hasOpenCommitments] = await Promise.all([
@@ -6072,6 +6656,11 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), valida
                 const stockDiff = new Decimal(targetStock).minus(lockedStock);
 
                 if (!stockDiff.isZero()) {
+                    assertAggregateBatchMutationAllowed({
+                        mode: batchWarehouseLedgerMode,
+                        requiresBatchTracking: Boolean(lockedRequiresBatchTracking || nextRequiresBatchTracking),
+                        delta: stockDiff,
+                    });
                     const stockResult = await applyStockDelta(tx, {
                         tenantId: authReq.tenantId!,
                         productId: id,
@@ -6151,6 +6740,7 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), valida
         res.json(updated);
     } catch (error: any) {
         if (productQuantityErrorResponse(res, error)) return;
+        if (manualBatchErrorResponse(res, error)) return;
         if (error?.message === 'PRODUCTO_NO_ENCONTRADO') return res.status(404).json({ error: 'Producto no encontrado' });
         console.error('Error updating product:', error);
         res.status(500).json({ error: 'Error actualizando producto' });
@@ -6467,6 +7057,7 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
 
         // TRANSACCIÓN ACID
         const result = await prisma.$transaction(async (tx: any) => {
+            const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!);
             const operationWarehouse = await resolveOperationalWarehouse(
                 tx,
                 authReq.tenantId!,
@@ -6480,8 +7071,9 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
                 sku: string;
                 saleMode: string | null;
                 quantityStep: any;
+                requiresBatchTracking: boolean;
             }> = await tx.$queryRaw`
-                SELECT name, sku, saleMode, quantityStep
+                SELECT name, sku, saleMode, quantityStep, requiresBatchTracking
                 FROM \`Product\`
                 WHERE id = ${productId} AND tenantId = ${authReq.tenantId!}
                 FOR UPDATE`;
@@ -6489,6 +7081,11 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
             if (!product) throw new StockError('PRODUCT_NOT_FOUND', 'Producto no encontrado en tu inventario.');
 
             const adjustQty = contextualProductQuantity(requestedDelta, product, { signed: true });
+            assertAggregateBatchMutationAllowed({
+                mode: batchWarehouseLedgerMode,
+                requiresBatchTracking: product.requiresBatchTracking,
+                delta: adjustQty,
+            });
 
             // Materializar y bloquear SIEMPRE la ubicación permite que Kardex,
             // respuesta y auditoría usen before/after locales, no el agregado.
@@ -6597,6 +7194,7 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
         });
     } catch (error: any) {
         if (productQuantityErrorResponse(res, error)) return;
+        if (manualBatchErrorResponse(res, error)) return;
         if (error instanceof StockError) {
             const status =
                 error.code === 'PRODUCT_NOT_FOUND' ? 404
@@ -6630,36 +7228,259 @@ app.get('/api/inventory/batches/:productId', authenticate, async (req: any, res:
 // [Bodeguero A4] Crea (o incrementa) un lote, suma el stock del producto de forma
 //   atómica vía applyStockDelta y deja rastro en el Kardex enlazado al lote. Activa el
 //   control de lotes del producto si aún no lo tenía (FEFO/alertas de vencimiento).
+type ManualBatchCommandResponse = Record<string, unknown>;
+
+const manualBatchResultDetails = (raw: string | null, expected: {
+    commandId: string;
+    commandType: ManualBatchCommandType;
+    payloadHash: string;
+}): ManualBatchCommandResponse => {
+    let parsed: unknown;
+    try {
+        parsed = raw === null ? null : JSON.parse(raw);
+    } catch {
+        parsed = null;
+    }
+    if (
+        typeof parsed !== 'object'
+        || parsed === null
+        || Array.isArray(parsed)
+        || (parsed as any).version !== 1
+        || (parsed as any).commandId !== expected.commandId
+        || (parsed as any).commandType !== expected.commandType
+        || (parsed as any).payloadHash !== expected.payloadHash
+        || typeof (parsed as any).response !== 'object'
+        || (parsed as any).response === null
+        || Array.isArray((parsed as any).response)
+    ) {
+        throw new ManualBatchMovementError(
+            'MANUAL_BATCH_COMMAND_CORRUPT',
+            500,
+            'El resultado idempotente del movimiento manual está incompleto o corrupto.',
+        );
+    }
+    return (parsed as any).response as ManualBatchCommandResponse;
+};
+
+/**
+ * Relee fuera de la transacción perdedora. Un claim sin resultado nunca se
+ * reejecuta: eso indicaría corrupción manual, porque ambos se confirman juntos.
+ */
+const loadManualBatchReplay = async (input: {
+    tenantId: string;
+    commandId: string;
+    commandType: ManualBatchCommandType;
+    payloadHash: string;
+}): Promise<ManualBatchCommandResponse | null> => {
+    const command = await prisma.auditLog.findFirst({
+        where: { id: input.commandId, tenantId: input.tenantId },
+        select: { action: true, details: true },
+    });
+    if (!command) return null;
+    if (command.action !== 'MANUAL_BATCH_COMMAND') {
+        throw new ManualBatchMovementError(
+            'MANUAL_BATCH_COMMAND_CORRUPT',
+            500,
+            'El identificador idempotente colisionó con una auditoría incompatible.',
+        );
+    }
+    const claim = parseManualBatchCommandClaim(command.details);
+    assertManualBatchReplay(claim, input);
+    if (
+        claim.resultAuditId !== buildManualBatchRelatedId(input.commandId, 'RESULT')
+        || claim.movementId !== buildManualBatchRelatedId(input.commandId, 'MOVEMENT')
+    ) {
+        throw new ManualBatchMovementError(
+            'MANUAL_BATCH_COMMAND_CORRUPT',
+            500,
+            'Los identificadores derivados del comando manual no coinciden.',
+        );
+    }
+    const result = await prisma.auditLog.findFirst({
+        where: { id: claim.resultAuditId, tenantId: input.tenantId },
+        select: { action: true, details: true },
+    });
+    if (!result) {
+        throw new ManualBatchMovementError(
+            'MANUAL_BATCH_COMMAND_INCOMPLETE',
+            500,
+            'El movimiento ya fue reclamado, pero su resultado inmutable no existe.',
+        );
+    }
+    const expectedResultAction = input.commandType === 'MANUAL_BATCH_CREATE'
+        ? 'PRODUCT_BATCH_ADDED'
+        : 'BATCH_WRITEOFF';
+    if (result.action !== expectedResultAction) {
+        throw new ManualBatchMovementError(
+            'MANUAL_BATCH_COMMAND_CORRUPT',
+            500,
+            'La auditoría de resultado del movimiento manual es incompatible.',
+        );
+    }
+    return manualBatchResultDetails(result.details, input);
+};
+
+const isUniqueConstraintFailure = (error: unknown): boolean =>
+    typeof error === 'object' && error !== null && 'code' in error && (error as any).code === 'P2002';
+
+function manualBatchErrorResponse(res: any, error: unknown): boolean {
+    if (error instanceof ManualBatchMovementError) {
+        res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        return true;
+    }
+    if (error instanceof BatchWarehouseLedgerError) {
+        res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        return true;
+    }
+    if (error instanceof StockError) {
+        const status = error.code === 'PRODUCT_NOT_FOUND' ? 404
+            : error.code === 'WAREHOUSE_NOT_FOUND' ? 404
+                : error.code === 'WAREHOUSE_REQUIRED' || error.code === 'INSUFFICIENT_STOCK' ? 409
+                    : 400;
+        res.status(status).json({ error: error.message, code: error.code });
+        return true;
+    }
+    return false;
+}
+
 app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateBatchSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { productId, batchNumber, expiryDate, quantity } = req.body;
+    const { clientEventId, productId, warehouseId: requestedWarehouseId, batchNumber, expiryDate, quantity } = req.body;
 
-    const expiry = new Date(String(expiryDate).slice(0, 10) + 'T00:00:00.000Z');
-    if (isNaN(expiry.getTime())) {
+    const expiry = new Date(`${expiryDate}T00:00:00.000Z`);
+    if (isNaN(expiry.getTime()) || expiry.toISOString().slice(0, 10) !== expiryDate) {
         return res.status(400).json({ error: 'Fecha de vencimiento inválida.' });
     }
 
-    try {
-        const result = await prisma.$transaction(async (tx: any) => {
-            const product = await tx.product.findFirst({
-                where: { id: productId, tenantId: authReq.tenantId! },
-            });
-            if (!product) throw new Error('Producto no encontrado en tu inventario.');
-            const batchQuantity = contextualProductQuantity(quantity, product);
+    const commandType = 'MANUAL_BATCH_CREATE' as const;
+    const quantityExact = new Decimal(quantity).toFixed(4);
+    const commandId = buildManualBatchCommandId({
+        tenantId: authReq.tenantId!,
+        clientEventId,
+        commandType,
+    });
+    const payloadHash = buildManualBatchPayloadHash(commandType, [
+        authReq.tenantId!,
+        authReq.userId!,
+        productId,
+        requestedWarehouseId,
+        batchNumber,
+        expiryDate,
+        quantityExact,
+    ]);
+    const resultAuditId = buildManualBatchRelatedId(commandId, 'RESULT');
+    const movementId = buildManualBatchRelatedId(commandId, 'MOVEMENT');
 
-            // 1. Sumar stock del producto (atómico, row-lock).
-            const { stockBefore, stockAfter, warehouseId } = await applyStockDelta(tx, {
+    try {
+        const replay = await loadManualBatchReplay({
+            tenantId: authReq.tenantId!, commandId, commandType, payloadHash,
+        });
+        if (replay) return res.json(replay);
+
+        const response = await prisma.$transaction(async (tx: any) => {
+            const mode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!);
+            const actor = await tx.user.findFirst({
+                where: { id: authReq.userId!, tenantId: authReq.tenantId!, status: 'ACTIVE' },
+                select: { id: true },
+            });
+            if (!actor) {
+                throw new BatchWarehouseLedgerError(
+                    'BATCH_WAREHOUSE_USER_NOT_FOUND', 404,
+                    'El usuario no está activo en este negocio para registrar el lote.',
+                );
+            }
+            const operationWarehouse = await resolveOperationalWarehouse(
+                tx, authReq.tenantId!, requestedWarehouseId,
+            );
+            const productRows: Array<{
+                id: string;
+                name: string;
+                unit: string;
+                stock: any;
+                saleMode: string | null;
+                quantityStep: any;
+                requiresBatchTracking: boolean;
+            }> = await tx.$queryRaw`
+                SELECT id, name, unit, stock, saleMode, quantityStep, requiresBatchTracking
+                FROM \`Product\`
+                WHERE id = ${productId} AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            const product = productRows[0];
+            if (!product) throw new StockError('PRODUCT_NOT_FOUND', 'Producto no encontrado en tu inventario.');
+            if (!product.requiresBatchTracking) {
+                assertBatchTrackingTransitionAllowed({
+                    mode,
+                    currentRequiresBatchTracking: false,
+                    nextRequiresBatchTracking: true,
+                    currentStock: product.stock,
+                    hasBatchHistory: false,
+                });
+            }
+            const batchQuantityDecimal = contextualProductQuantityDecimal(quantity, product);
+            const batchQuantity = batchQuantityDecimal.toNumber();
+            const exactDelta = batchQuantityDecimal.toFixed(4);
+            const existingBatch = await tx.productBatch.findFirst({
+                where: { productId, batchNumber, tenantId: authReq.tenantId! },
+                select: { id: true, expiryDate: true },
+            });
+            if (existingBatch && existingBatch.expiryDate.toISOString().slice(0, 10) !== expiryDate) {
+                throw new ManualBatchMovementError(
+                    'MANUAL_BATCH_IDEMPOTENCY_CONFLICT', 409,
+                    'Ese número de lote ya existe con otra fecha de vencimiento.',
+                );
+            }
+            const batchId = existingBatch?.id ?? buildManualBatchRelatedId(commandId, 'BATCH');
+
+            // Claim único antes de ProductStock, ProductBatch, Kardex o contabilidad.
+            await tx.auditLog.create({
+                data: {
+                    id: commandId,
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'MANUAL_BATCH_COMMAND',
+                    details: JSON.stringify({
+                        version: 1,
+                        commandType,
+                        payloadHash,
+                        resultAuditId,
+                        movementId,
+                        resourceId: batchId,
+                    }),
+                },
+            });
+
+            await materializeWarehouseRow(tx, {
+                tenantId: authReq.tenantId!,
+                productId,
+                warehouseId: operationWarehouse.id,
+                isDefault: operationWarehouse.isDefault,
+            });
+            const localRows: Array<{ stock: any }> = await tx.$queryRaw`
+                SELECT stock FROM \`ProductStock\`
+                WHERE tenantId = ${authReq.tenantId!}
+                  AND productId = ${productId}
+                  AND warehouseId = ${operationWarehouse.id}
+                FOR UPDATE`;
+            if (!localRows[0]) throw new Error('No se pudo preparar el stock de la bodega seleccionada.');
+            const localStockBefore = new Decimal(localRows[0].stock.toString());
+
+            // El warehouseId retornado por applyStockDelta es la autoridad final.
+            const stockResult = await applyStockDelta(tx, {
                 tenantId: authReq.tenantId!,
                 productId,
                 delta: batchQuantity,
                 enforceSufficient: false,
+                warehouseId: operationWarehouse.id,
             });
+            if (stockResult.warehouseId !== operationWarehouse.id) {
+                throw new Error('La bodega autoritativa del movimiento cambió inesperadamente.');
+            }
 
-            // 2. Crear o incrementar el lote (mismo lote = se acumula).
             const batch = await tx.productBatch.upsert({
                 where: { productId_batchNumber: { productId, batchNumber } },
                 update: { stock: { increment: batchQuantity } },
                 create: {
+                    id: batchId,
                     tenantId: authReq.tenantId!,
                     productId,
                     batchNumber,
@@ -6668,7 +7489,29 @@ app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), 
                 },
             });
 
-            // 3. Activar control de lotes si aún no estaba (habilita FEFO + alertas).
+            const batchLedger = await applyBatchWarehouseDelta({
+                tx,
+                mode,
+                tenantId: authReq.tenantId!,
+                productId,
+                batchId: batch.id,
+                warehouseId: stockResult.warehouseId,
+                delta: exactDelta,
+                movementType: 'ADJUSTMENT_IN',
+                referenceId: movementId,
+                referenceType: 'KARDEX_MOVEMENT',
+                userId: authReq.userId!,
+                reason: `Alta manual de lote ${batchNumber}`,
+                sourceKey: `manual-batch-create:${clientEventId}`,
+                allowNegative: false,
+            });
+            if (batchLedger.replay) {
+                throw new ManualBatchMovementError(
+                    'MANUAL_BATCH_COMMAND_CORRUPT', 500,
+                    'El subledger ya contenía este evento sin su claim de comando.',
+                );
+            }
+
             if (!product.requiresBatchTracking) {
                 await tx.product.update({
                     where: { id: productId },
@@ -6676,132 +7519,327 @@ app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), 
                 });
             }
 
-            // 4. Kardex: entrada por alta de lote, enlazada al lote.
-            const movement = await tx.kardexMovement.create({
+            const localStockAfter = localStockBefore.plus(batchQuantityDecimal);
+            await tx.kardexMovement.create({
                 data: {
+                    id: movementId,
                     tenantId: authReq.tenantId!,
                     productId,
                     type: 'IN_PURCHASE',
                     quantity: batchQuantity,
-                    stockBefore,
-                    stockAfter,
+                    stockBefore: localStockBefore.toNumber(),
+                    stockAfter: localStockAfter.toNumber(),
                     referenceType: 'BATCH',
                     reason: `Alta de lote ${batchNumber} (vence ${expiry.toISOString().slice(0, 10)})`,
                     userId: authReq.userId!,
                     batchId: batch.id,
-                    warehouseId,
+                    warehouseId: stockResult.warehouseId,
                 },
             });
 
+            const response: ManualBatchCommandResponse = {
+                message: `Lote ${batchNumber} agregado a ${product.name}. Stock: ${stockResult.stockAfter}`,
+                batch: {
+                    id: batch.id,
+                    batchNumber: batch.batchNumber,
+                    expiryDate: batch.expiryDate.toISOString(),
+                    stock: batch.stock,
+                },
+                newStock: stockResult.stockAfter,
+                warehouseId: stockResult.warehouseId,
+                quantity: exactDelta,
+                batchWarehouseStatus: batchLedger.status,
+            };
             await tx.auditLog.create({
                 data: {
+                    id: resultAuditId,
                     tenantId: authReq.tenantId!,
                     userId: authReq.userId!,
                     action: 'PRODUCT_BATCH_ADDED',
                     details: JSON.stringify({
-                        productId,
-                        batchId: batch.id,
-                        batchNumber,
-                        quantity: batchQuantity,
-                        unit: product.unit,
-                        stockBefore,
-                        stockAfter,
+                        version: 1,
+                        commandId,
+                        commandType,
+                        payloadHash,
+                        response,
                     }),
                 },
             });
 
-            return { batch, movement, newStock: stockAfter, productName: product.name };
-        });
+            return response;
+        }, { isolationLevel: 'ReadCommitted' });
 
-        res.json({
-            message: `Lote ${batchNumber} agregado a ${result.productName}. Stock: ${result.newStock}`,
-            batch: result.batch,
-            newStock: result.newStock,
-        });
+        res.json(response);
     } catch (error: any) {
+        if (isUniqueConstraintFailure(error)) {
+            try {
+                const replay = await loadManualBatchReplay({
+                    tenantId: authReq.tenantId!, commandId, commandType, payloadHash,
+                });
+                if (replay) return res.json(replay);
+            } catch (replayError) {
+                if (manualBatchErrorResponse(res, replayError)) return;
+                throw replayError;
+            }
+        }
         if (productQuantityErrorResponse(res, error)) return;
+        if (manualBatchErrorResponse(res, error)) return;
         console.error('Error creando lote:', error);
-        res.status(error.message?.includes('no encontrado') ? 400 : 500)
-            .json({ error: error.message || 'Error creando lote' });
+        res.status(500).json({ error: 'Error creando lote' });
     }
 });
 
 // POST /api/inventory/batches/:batchId/writeoff - Dar de baja un lote (merma) [Bodeguero B3]
 // Resta el stock restante del lote del producto, deja Kardex y asiento de merma
 // (Debe 5.1.2 Pérdida por Merma / Haber 1.1.4 Inventario, valuado al costo).
-app.post('/api/inventory/batches/:batchId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.post('/api/inventory/batches/:batchId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN']), validate(WriteoffBatchSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { batchId } = req.params;
-    const reason = (req.body?.reason || '').toString().trim();
+    const { clientEventId, warehouseId: requestedWarehouseId, quantity, reason } = req.body;
+    const commandType = 'MANUAL_BATCH_WRITEOFF' as const;
+    const quantityExact = new Decimal(quantity).toFixed(4);
+    const commandId = buildManualBatchCommandId({
+        tenantId: authReq.tenantId!, clientEventId, commandType,
+    });
+    const payloadHash = buildManualBatchPayloadHash(commandType, [
+        authReq.tenantId!, authReq.userId!, batchId, requestedWarehouseId, quantityExact, reason,
+    ]);
+    const resultAuditId = buildManualBatchRelatedId(commandId, 'RESULT');
+    const movementId = buildManualBatchRelatedId(commandId, 'MOVEMENT');
+
     try {
+        const replay = await loadManualBatchReplay({
+            tenantId: authReq.tenantId!, commandId, commandType, payloadHash,
+        });
+        if (replay) return res.json(replay);
+
         await seedChartOfAccounts(authReq.tenantId!); // garantiza 5.1.2 / 1.1.4
 
-        const result = await prisma.$transaction(async (tx: any) => {
-            const batch = await tx.productBatch.findFirst({
+        const response = await prisma.$transaction(async (tx: any) => {
+            const mode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!);
+            const actor = await tx.user.findFirst({
+                where: { id: authReq.userId!, tenantId: authReq.tenantId!, status: 'ACTIVE' },
+                select: { id: true },
+            });
+            if (!actor) {
+                throw new BatchWarehouseLedgerError(
+                    'BATCH_WAREHOUSE_USER_NOT_FOUND', 404,
+                    'El usuario no está activo en este negocio para registrar la merma.',
+                );
+            }
+            const operationWarehouse = await resolveOperationalWarehouse(
+                tx, authReq.tenantId!, requestedWarehouseId,
+            );
+            const batchHint = await tx.productBatch.findFirst({
                 where: { id: batchId, tenantId: authReq.tenantId! },
-                include: { product: { select: { name: true, cost: true } } },
+                select: { productId: true },
             });
-            if (!batch) throw new Error('Lote no encontrado');
-            const qty = Number(batch.stock);
-            if (qty <= 0) throw new Error('El lote no tiene stock para dar de baja.');
-            // Período cerrado → no se permite dar de baja (aun si el costo fuese 0).
+            if (!batchHint) throw new BatchWarehouseLedgerError(
+                'BATCH_WAREHOUSE_BATCH_NOT_FOUND', 404, 'Lote no encontrado.',
+            );
+            const productRows: Array<{
+                id: string;
+                name: string;
+                cost: any;
+                saleMode: string | null;
+                quantityStep: any;
+            }> = await tx.$queryRaw`
+                SELECT id, name, cost, saleMode, quantityStep
+                FROM \`Product\`
+                WHERE id = ${batchHint.productId} AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            const product = productRows[0];
+            if (!product) throw new StockError('PRODUCT_NOT_FOUND', 'Producto no encontrado en tu inventario.');
+            const batchRows: Array<{
+                id: string;
+                productId: string;
+                batchNumber: string;
+                expiryDate: Date;
+                stock: any;
+            }> = await tx.$queryRaw`
+                SELECT id, productId, batchNumber, expiryDate, stock
+                FROM \`ProductBatch\`
+                WHERE id = ${batchId} AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            const batch = batchRows[0];
+            if (!batch || batch.productId !== product.id) throw new BatchWarehouseLedgerError(
+                'BATCH_WAREHOUSE_BATCH_NOT_FOUND', 404, 'Lote no encontrado.',
+            );
+            const writeoffQuantity = contextualProductQuantityDecimal(quantity, product);
+            const writeoffQuantityExact = writeoffQuantity.toFixed(4);
+            const batchStockBefore = new Decimal(batch.stock.toString());
+            if (batchStockBefore.lessThan(writeoffQuantity)) {
+                throw new StockError(
+                    'INSUFFICIENT_STOCK',
+                    `El lote solo tiene ${batchStockBefore.toString()} disponibles en total.`,
+                );
+            }
             await assertPeriodOpen(tx, authReq.tenantId!, new Date());
-
-            // Restar del stock del producto (realidad física: el lote se descarta).
-            const { stockBefore, stockAfter } = await applyStockDelta(tx, {
-                tenantId: authReq.tenantId!,
-                productId: batch.productId,
-                delta: -qty,
-                enforceSufficient: false,
-            });
-
-            await tx.productBatch.update({ where: { id: batchId }, data: { stock: 0 } });
-
-            await tx.kardexMovement.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    productId: batch.productId,
-                    type: 'ADJUST_LOSS',
-                    quantity: -qty,
-                    stockBefore,
-                    stockAfter,
-                    referenceId: batchId,
-                    referenceType: 'BATCH_WRITEOFF',
-                    reason: reason || `Baja de lote ${batch.batchNumber} (vence ${new Date(batch.expiryDate).toISOString().slice(0, 10)})`,
-                    userId: authReq.userId!,
-                    batchId,
-                },
-            });
 
             await tx.auditLog.create({
                 data: {
+                    id: commandId,
                     tenantId: authReq.tenantId!,
                     userId: authReq.userId!,
-                    action: 'BATCH_WRITEOFF',
-                    details: JSON.stringify({ batchId, batchNumber: batch.batchNumber, productName: batch.product.name, quantity: qty, expiryDate: batch.expiryDate, reason: reason || null, timestamp: new Date().toISOString() }),
+                    action: 'MANUAL_BATCH_COMMAND',
+                    details: JSON.stringify({
+                        version: 1,
+                        commandType,
+                        payloadHash,
+                        resultAuditId,
+                        movementId,
+                        resourceId: batchId,
+                    }),
                 },
             });
 
-            const lossValue = new Decimal(qty).times(Number(batch.product.cost) || 0).toDecimalPlaces(2).toNumber();
-            if (lossValue > 0) {
+            const batchLedger = await applyBatchWarehouseDelta({
+                tx,
+                mode,
+                tenantId: authReq.tenantId!,
+                productId: product.id,
+                batchId,
+                warehouseId: operationWarehouse.id,
+                delta: writeoffQuantity.negated().toFixed(4),
+                movementType: 'WRITEOFF',
+                referenceId: movementId,
+                referenceType: 'KARDEX_MOVEMENT',
+                userId: authReq.userId!,
+                reason,
+                sourceKey: `manual-batch-writeoff:${clientEventId}`,
+                allowNegative: false,
+            });
+            if (batchLedger.replay) {
+                throw new ManualBatchMovementError(
+                    'MANUAL_BATCH_COMMAND_CORRUPT', 500,
+                    'El subledger ya contenía esta merma sin su claim de comando.',
+                );
+            }
+
+            await materializeWarehouseRow(tx, {
+                tenantId: authReq.tenantId!,
+                productId: product.id,
+                warehouseId: operationWarehouse.id,
+                isDefault: operationWarehouse.isDefault,
+            });
+            const localRows: Array<{ stock: any }> = await tx.$queryRaw`
+                SELECT stock FROM \`ProductStock\`
+                WHERE tenantId = ${authReq.tenantId!}
+                  AND productId = ${product.id}
+                  AND warehouseId = ${operationWarehouse.id}
+                FOR UPDATE`;
+            if (!localRows[0]) throw new Error('No se pudo preparar el stock de la bodega seleccionada.');
+            const localStockBefore = new Decimal(localRows[0].stock.toString());
+            if (localStockBefore.lessThan(writeoffQuantity)) {
+                throw new StockError(
+                    'INSUFFICIENT_STOCK',
+                    `Stock insuficiente en ${operationWarehouse.name}. Disponible: ${localStockBefore.toString()}.`,
+                );
+            }
+
+            const stockResult = await applyStockDelta(tx, {
+                tenantId: authReq.tenantId!,
+                productId: product.id,
+                delta: writeoffQuantity.negated().toNumber(),
+                enforceSufficient: true,
+                warehouseId: operationWarehouse.id,
+            });
+            const updatedBatch = await tx.productBatch.updateMany({
+                where: {
+                    id: batchId,
+                    tenantId: authReq.tenantId!,
+                    stock: { gte: writeoffQuantity.toNumber() },
+                },
+                data: { stock: { decrement: writeoffQuantity.toNumber() } },
+            });
+            if (updatedBatch.count !== 1) {
+                throw new StockError('INSUFFICIENT_STOCK', 'El saldo agregado del lote cambió concurrentemente.');
+            }
+
+            await tx.kardexMovement.create({
+                data: {
+                    id: movementId,
+                    tenantId: authReq.tenantId!,
+                    productId: product.id,
+                    type: 'ADJUST_LOSS',
+                    quantity: writeoffQuantity.negated().toNumber(),
+                    stockBefore: localStockBefore.toNumber(),
+                    stockAfter: localStockBefore.minus(writeoffQuantity).toNumber(),
+                    referenceId: batchId,
+                    referenceType: 'BATCH_WRITEOFF',
+                    reason,
+                    userId: authReq.userId!,
+                    batchId,
+                    warehouseId: operationWarehouse.id,
+                },
+            });
+
+            const lossValue = writeoffQuantity
+                .times(new Decimal(product.cost?.toString() ?? '0'))
+                .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            if (lossValue.greaterThan(0)) {
+                // createJournalEntry conserva un contrato number legado; la
+                // conversión ocurre solo después de cerrar el Decimal a 2dp.
+                const journalValue = lossValue.toNumber();
                 await createJournalEntry(
                     tx, authReq.tenantId!, `Baja de lote vencido ${batch.batchNumber}`, batchId, 'BATCH_WRITEOFF', authReq.userId!,
                     [
-                        { accountCode: '5.1.2', debit: lossValue, credit: 0 },
-                        { accountCode: '1.1.4', debit: 0, credit: lossValue },
+                        { accountCode: '5.1.2', debit: journalValue, credit: 0 },
+                        { accountCode: '1.1.4', debit: 0, credit: journalValue },
                     ]
                 );
             }
 
-            return { newStock: stockAfter, lossValue, batchNumber: batch.batchNumber, qty };
-        });
+            const response: ManualBatchCommandResponse = {
+                message: `Lote ${batch.batchNumber}: baja de ${writeoffQuantityExact} uds. Merma: C$ ${lossValue.toFixed(2)}`,
+                batchId,
+                batchNumber: batch.batchNumber,
+                quantity: writeoffQuantityExact,
+                newStock: stockResult.stockAfter,
+                warehouseId: operationWarehouse.id,
+                warehouseStock: localStockBefore.minus(writeoffQuantity).toFixed(4),
+                batchStock: batchStockBefore.minus(writeoffQuantity).toFixed(4),
+                lossValue: lossValue.toFixed(2),
+                batchWarehouseStatus: batchLedger.status,
+            };
+            await tx.auditLog.create({
+                data: {
+                    id: resultAuditId,
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'BATCH_WRITEOFF',
+                    details: JSON.stringify({
+                        version: 1,
+                        commandId,
+                        commandType,
+                        payloadHash,
+                        response,
+                    }),
+                },
+            });
+            return response;
+        }, { isolationLevel: 'ReadCommitted' });
 
-        res.json({ message: `Lote ${result.batchNumber} dado de baja (${result.qty} uds). Merma: C$ ${result.lossValue.toFixed(2)}`, ...result });
+        res.json(response);
     } catch (error: any) {
+        if (isUniqueConstraintFailure(error)) {
+            try {
+                const replay = await loadManualBatchReplay({
+                    tenantId: authReq.tenantId!, commandId, commandType, payloadHash,
+                });
+                if (replay) return res.json(replay);
+            } catch (replayError) {
+                if (manualBatchErrorResponse(res, replayError)) return;
+                throw replayError;
+            }
+        }
+        if (productQuantityErrorResponse(res, error)) return;
+        if (manualBatchErrorResponse(res, error)) return;
+        if (error instanceof PeriodLockedError) {
+            return res.status(423).json({ error: error.message, code: 'PERIOD_LOCKED' });
+        }
         console.error('Error dando de baja lote:', error);
-        const msg = error?.message || 'Error dando de baja el lote';
-        const code = error instanceof PeriodLockedError ? 423 : (msg.includes('no encontrado') || msg.includes('stock')) ? 400 : 500;
-        res.status(code).json({ error: msg });
+        res.status(500).json({ error: 'Error dando de baja el lote' });
     }
 });
 
@@ -7140,59 +8178,110 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
                 orderBy: { productId: 'asc' },
             });
 
-            let lossValue = new Decimal(0); // Σ |merma| · costo
-            let gainValue = new Decimal(0); // Σ sobrante · costo
-            let adjusted = 0;
+            const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!);
+            const preparedItems: Array<{
+                item: typeof items[number];
+                product: {
+                    stock: any;
+                    cost: any;
+                    name: string;
+                    saleMode: string | null;
+                    quantityStep: any;
+                    requiresBatchTracking: boolean;
+                };
+                counted: Decimal;
+                variance: Decimal;
+                currentBook: Decimal;
+                delta: Decimal;
+            }> = [];
             let countedItems = 0;
 
+            // Preflight completo: bloquea y calcula TODAS las líneas antes de la
+            // primera mutación. Así un solo producto con lotes aborta el cierre
+            // entero sin haber aplicado ajustes anteriores.
             for (const it of items) {
-                if (it.counted === null) continue; // no contado → no se toca
+                if (it.counted === null) continue;
                 countedItems++;
 
-                // Orden global de locks: StockCount → Product (por id asc) →
-                // ProductStock. Coincide con applyStockDelta y evita inversión
-                // frente a ventas mientras dos bodegas cierran en paralelo.
                 const productRows: Array<{
                     stock: any;
                     cost: any;
                     name: string;
                     saleMode: string | null;
                     quantityStep: any;
+                    requiresBatchTracking: boolean;
                 }> = await tx.$queryRaw`
-                    SELECT stock, cost, name, saleMode, quantityStep
+                    SELECT stock, cost, name, saleMode, quantityStep, requiresBatchTracking
                     FROM \`Product\`
                     WHERE id = ${it.productId} AND tenantId = ${authReq.tenantId!}
                     FOR UPDATE`;
                 const product = productRows[0];
                 if (!product) continue;
+                const counted = contextualProductQuantityDecimal(it.counted, product, { allowZero: true });
 
-                const counted = new Decimal(contextualProductQuantity(it.counted, product, { allowZero: true }));
-
-                // `variance` = conteo vs el snapshot inicial (informativo, para el reporte).
-                const variance = counted.minus(new Decimal(it.expected));
-                await tx.stockCountItem.update({ where: { id: it.id }, data: { diff: variance.toNumber() } });
-
-                // Materializa el desglose legado y bloquea LA FILA DE LA BODEGA,
-                // no el agregado Product.stock. El delta real lleva esa fila al
-                // conteo capturado y applyStockDelta mantiene el agregado en la
-                // misma transacción.
-                await materializeWarehouseRow(tx, {
-                    tenantId: authReq.tenantId!,
-                    productId: it.productId,
-                    warehouseId: count.warehouseId,
-                    isDefault: count.warehouse.isDefault,
-                });
                 const warehouseStockRows: Array<{ stock: any }> = await tx.$queryRaw`
                     SELECT stock FROM \`ProductStock\`
                     WHERE productId = ${it.productId}
                       AND warehouseId = ${count.warehouseId}
                       AND tenantId = ${authReq.tenantId!}
                     FOR UPDATE`;
-                if (warehouseStockRows.length === 0) {
+                // Una fila ausente todavía no se materializa: el Product lock
+                // ya impide movimientos concurrentes. En default conserva el
+                // agregado legado; en una secundaria su saldo inicial es cero.
+                const currentBook = warehouseStockRows[0]
+                    ? new Decimal(warehouseStockRows[0].stock)
+                    : count.warehouse.isDefault
+                        ? new Decimal(product.stock)
+                        : new Decimal(0);
+                preparedItems.push({
+                    item: it,
+                    product,
+                    counted,
+                    variance: counted.minus(new Decimal(it.expected)),
+                    currentBook,
+                    delta: counted.minus(currentBook),
+                });
+            }
+
+            for (const prepared of preparedItems) {
+                assertAggregateBatchMutationAllowed({
+                    mode: batchWarehouseLedgerMode,
+                    requiresBatchTracking: prepared.product.requiresBatchTracking,
+                    delta: prepared.delta,
+                });
+            }
+
+            let lossValue = new Decimal(0); // Σ |merma| · costo
+            let gainValue = new Decimal(0); // Σ sobrante · costo
+            let adjusted = 0;
+            for (const prepared of preparedItems) {
+                const { item: it, product, counted, variance, currentBook, delta } = prepared;
+
+                // Solo después de aprobar TODAS las líneas se permite la
+                // primera escritura de desglose/diff/stock.
+                await materializeWarehouseRow(tx, {
+                    tenantId: authReq.tenantId!,
+                    productId: it.productId,
+                    warehouseId: count.warehouseId,
+                    isDefault: count.warehouse.isDefault,
+                });
+                const materializedRows: Array<{ stock: any }> = await tx.$queryRaw`
+                    SELECT stock FROM \`ProductStock\`
+                    WHERE productId = ${it.productId}
+                      AND warehouseId = ${count.warehouseId}
+                      AND tenantId = ${authReq.tenantId!}
+                    FOR UPDATE`;
+                if (!materializedRows[0]) {
                     throw new StockCountFlowError(500, 'WAREHOUSE_STOCK_ROW_MISSING', 'No se pudo materializar el stock de la bodega.');
                 }
-                const currentBook = new Decimal(warehouseStockRows[0].stock);
-                const delta = counted.minus(currentBook);
+                if (!new Decimal(materializedRows[0].stock).equals(currentBook)) {
+                    throw new StockCountFlowError(
+                        409,
+                        'STOCK_COUNT_CONCURRENCY_CONFLICT',
+                        'El stock cambió durante el preflight del conteo; reintentá el cierre.',
+                    );
+                }
+                await tx.stockCountItem.update({ where: { id: it.id }, data: { diff: variance.toNumber() } });
                 if (delta.isZero()) continue;
 
                 await applyStockDelta(tx, {
@@ -7286,6 +8375,7 @@ app.post('/api/stock-counts/:id/close', authenticate, checkRole(['OWNER', 'ADMIN
         if (error instanceof StockError && error.code === 'WAREHOUSE_NOT_FOUND') {
             return res.status(409).json({ error: error.message, code: error.code });
         }
+        if (manualBatchErrorResponse(res, error)) return;
         if (productQuantityErrorResponse(res, error)) return;
         if (error?.code === 'P2034') {
             return res.status(409).json({
@@ -7336,15 +8426,29 @@ app.post('/api/kardex/record', authenticate, checkRole(['OWNER', 'ADMIN']), vali
 
     try {
         const result = await prisma.$transaction(async (tx: any) => {
-            // Verificar propiedad del producto (tenant) para datos de auditoría.
-            const product = await tx.product.findFirst({
-                where: { id: productId, tenantId: authReq.tenantId! },
-                select: { name: true, sku: true }
-            });
+            const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!);
+            // La política batch debe salir del mismo Product row-lock que
+            // applyStockDelta respetará después; una lectura snapshot permitiría
+            // un false→true concurrente entre guard y mutación.
+            const productRows: Array<{
+                name: string;
+                sku: string;
+                requiresBatchTracking: boolean;
+            }> = await tx.$queryRaw`
+                SELECT name, sku, requiresBatchTracking
+                FROM \`Product\`
+                WHERE id = ${productId} AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            const product = productRows[0];
 
             if (!product) {
                 throw new Error('Producto no encontrado');
             }
+            assertAggregateBatchMutationAllowed({
+                mode: batchWarehouseLedgerMode,
+                requiresBatchTracking: product.requiresBatchTracking,
+                delta: quantity,
+            });
 
             // Mutación ATÓMICA (UPDATE condicional con row-lock): el patrón anterior
             // leía el stock sin bloqueo y escribía un valor ABSOLUTO, pisando decrementos
@@ -7401,6 +8505,7 @@ app.post('/api/kardex/record', authenticate, checkRole(['OWNER', 'ADMIN']), vali
 
         res.json(result);
     } catch (error: any) {
+        if (manualBatchErrorResponse(res, error)) return;
         console.error('Error recording kardex:', error);
         res.status(400).json({ error: error.message || 'Error registrando movimiento' });
     }
@@ -7732,7 +8837,11 @@ app.get('/api/reports/expenses', authenticate, async (req: any, res: any) => {
 // ==========================================
 
 // GET /api/purchases - Listar compras del tenant
-app.get('/api/purchases', authenticate, async (req: any, res: any) => {
+app.get(
+    '/api/purchases',
+    authenticate,
+    checkRole(PURCHASE_READ_ROLES),
+    async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const purchases = await prisma.purchase.findMany({
@@ -7770,9 +8879,9 @@ app.get('/api/purchases', authenticate, async (req: any, res: any) => {
 });
 
 // POST /api/purchases - Registrar compra (Transacción ACID)
-app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), validate(CreatePurchaseSchema), async (req: any, res: any) => {
+app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), validate(CreatePurchaseSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { supplierId, warehouseId, invoiceNumber, date, dueDate, paymentMethod, notes, items, purchaseOrderId } = req.body;
+    const { supplierId, warehouseId, invoiceNumber, date, postingDate, dueDate, paymentMethod, notes, items, purchaseOrderId } = req.body;
     // Validaciones de formato ya realizadas por Zod
 
     try {
@@ -7785,7 +8894,13 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             where: { tenantId_code: { tenantId: authReq.tenantId!, code: '1.1.4' } },
             select: { id: true },
         });
-        if (!anchorPurchase) await seedChartOfAccounts(authReq.tenantId!);
+        const ppvAccount = purchaseOrderId
+            ? await prisma.account.findUnique({
+                where: { tenantId_code: { tenantId: authReq.tenantId!, code: '5.1.3' } },
+                select: { id: true },
+            })
+            : { id: 'NOT_REQUIRED' };
+        if (!anchorPurchase || !ppvAccount) await seedChartOfAccounts(authReq.tenantId!);
         if (!purchaseOrderId) await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
 
         // Compra de CONTADO: el efectivo sale de la gaveta, así que exige una
@@ -7832,10 +8947,15 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             // scoping por tenant. Sin esto, el include: { supplier: true } filtraría PII
             // del proveedor de otro tenant (fuga cross-tenant).
             const supplier = await tx.supplier.findFirst({
-                where: { id: supplierId, tenantId: authReq.tenantId! }
+                where: {
+                    id: supplierId,
+                    tenantId: authReq.tenantId!,
+                    status: 'ACTIVE',
+                    deletedAt: null,
+                },
             });
             if (!supplier) {
-                throw new Error('Proveedor no encontrado');
+                throw new Error('Proveedor no encontrado o no está activo');
             }
             // Una compra directa siempre tiene ubicación. Clientes anteriores
             // pueden omitirla solo cuando el negocio mantiene una única bodega
@@ -7860,6 +8980,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 supplierId: string;
                 status: string;
                 items: {
+                    id: string;
                     productId: string;
                     productName: string;
                     quantityReceived: number | string;
@@ -7878,6 +8999,7 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                         status: true,
                         items: {
                             select: {
+                                id: true,
                                 productId: true,
                                 productName: true,
                                 quantityReceived: true,
@@ -7919,10 +9041,14 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             // compra dentro de esta misma transacción. Nunca se acepta del body.
             const tenantFiscal = await tx.tenant.findUnique({
                 where: { id: authReq.tenantId! },
-                select: { fiscalRegime: true },
+                select: {
+                    walletBalance: true,
+                    fiscalRegime: true,
+                }
             });
-            if (!tenantFiscal) throw new Error('TENANT_NOT_FOUND');
-            const fiscalRegimeAtPurchase = normalizeFiscalRegime(tenantFiscal.fiscalRegime);
+            if (!tenantBefore) throw new Error('TENANT_NOT_FOUND');
+            const walletBefore = new Decimal(tenantBefore?.walletBalance?.toString() ?? '0');
+            const fiscalRegimeAtPurchase = normalizeFiscalRegime(tenantBefore.fiscalRegime);
             const cuotaFijaPurchase = fiscalRegimeAtPurchase === FISCAL_REGIME_CUOTA_FIJA;
 
             // 1. Calcular totales. T2 Fase 2 — el crédito fiscal (IVA de compras)
@@ -7931,9 +9057,23 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             //    exonerados se acreditaba un crédito fiscal INEXISTENTE (menos IVA
             //    a pagar del que corresponde). `product.ivaExento` es autoritativo
             //    (viene de la BD scoped por tenant, nunca del cliente).
-            let subtotal = new Decimal(0);
-            let taxableSubtotal = new Decimal(0);   // base gravada (no exonerada)
-            const processedItems: any[] = [];
+            interface PreparedPurchaseItem {
+                productId: string;
+                productName: string;
+                purchaseOrderItemId: string | null;
+                quantity: number;
+                quantityExact: string;
+                baseQuantity: Decimal;
+                stockQuantity: number;
+                unit: string;
+                unitCost: string;
+                unitCostExact: string;
+                lineNet: Decimal;
+                taxable: boolean;
+                batchNumber: string | null;
+                expiryDate: Date | null;
+            }
+            const preparedItems: PreparedPurchaseItem[] = [];
 
             const productIds = [...new Set(items.map((item: any) => String(item.productId)))];
             const ownedProducts: Array<{
@@ -7982,11 +9122,19 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 }
                 const exactQuantity = resolvedLine.baseQuantity;
                 // PurchaseItem.unitCost sigue siendo Decimal(10,2) legacy; el
-                // promedio usa el cociente exacto del empaque, no esa sombra.
-                const unitCost = resolvedLine.baseUnitCost.toDecimalPlaces(2);
+                // snapshot nuevo conserva seis decimales del costo base resuelto.
+                const unitCost = resolvedLine.baseUnitCost.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
                 const linkedItem = linkedProductAvailability?.get(item.productId);
                 if (linkedProductAvailability && !linkedItem) {
                     throw new Error(`ITEM_FUERA_DE_OC|${product.name}`);
+                }
+                if (item.purchaseOrderItemId) {
+                    const explicitOrderItem = linkedPurchaseOrder?.items.find(
+                        (orderItem) => orderItem.id === item.purchaseOrderItemId,
+                    );
+                    if (!explicitOrderItem || explicitOrderItem.productId !== item.productId) {
+                        throw new Error(`ITEM_OC_INVALIDO|${product.name}`);
+                    }
                 }
                 if (linkedItem) {
                     const remainingToInvoice = linkedItem.remaining;
@@ -8002,39 +9150,81 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     throw new Error(`LOTE_REQUERIDO|${product.name}`);
                 }
 
-                const totalCost = resolvedLine.lineTotal;
-                subtotal = subtotal.plus(totalCost);
-                if (!product.ivaExento) taxableSubtotal = taxableSubtotal.plus(totalCost);
-
-                processedItems.push({
+                preparedItems.push({
                     productId:   item.productId,
                     productName: product.name,
+                    purchaseOrderItemId: item.purchaseOrderItemId ?? null,
                     quantity:    legacyPurchaseQuantity(exactQuantity),
                     quantityExact: exactQuantity.toFixed(),
+                    baseQuantity: exactQuantity,
                     stockQuantity: exactQuantity.toNumber(),
                     unit: product.unit,
-                    // En cuota fija el IVA del proveedor no es acreditable: forma
-                    // parte del costo del inventario gravado.
-                    averageUnitCost: (
-                        cuotaFijaPurchase && !product.ivaExento
-                            ? resolvedLine.baseUnitCost.mul('1.15')
-                            : resolvedLine.baseUnitCost
-                    ).toString(),
                     unitCost:    unitCost.toFixed(2),
-                    totalCost:   totalCost.toNumber(),
+                    unitCostExact: resolvedLine.baseUnitCost
+                        .toDecimalPlaces(6, Decimal.ROUND_HALF_UP)
+                        .toFixed(6),
+                    // Recalcular desde los operandos Decimal preserva el importe
+                    // previo al redondeo; purchaseMoney aplica HALF_UP explícito.
+                    lineNet: resolvedLine.visibleQuantity.mul(resolvedLine.visibleUnitCost),
+                    taxable: !product.ivaExento,
                     batchNumber: item.batchNumber || null,
                     expiryDate:  item.expiryDate ? normalizeCalendarDateInput(item.expiryDate) : null
                 });
             }
 
-            // IVA solo sobre la base GRAVADA. `total = subtotal(todo) + IVA(gravado)`:
-            // se paga al proveedor el costo de TODA la mercancía más el IVA de la
-            // parte gravada. En recordPurchase el asiento queda Debe 1.1.4 = subtotal
-            // (todo el inventario) + Debe 1.1.5 = tax (crédito solo del gravado).
-            const subtotalAmount = subtotal.toDecimalPlaces(4);
-            const taxAmount = taxableSubtotal.mul('0.15').toDecimalPlaces(4); // IVA 15% Nicaragua
-            const totalAmount = subtotalAmount.plus(taxAmount).toDecimalPlaces(4);
-            const creditableTax = cuotaFijaPurchase ? new Decimal(0) : taxAmount;
+            // La factura, el subledger y el mayor se liquidan por línea a centavos.
+            // Sumar IVA sobre la base agregada dejaba casos como C$0.10 + C$0.015
+            // persistidos en balanceDue (4dp) aunque Purchase.total y el mayor son 2dp.
+            const purchaseMoney = calculatePurchaseMoney(
+                preparedItems.map((item) => ({ lineNet: item.lineNet, taxable: item.taxable })),
+                !cuotaFijaPurchase,
+            );
+            const subtotalAmount = purchaseMoney.subtotal;
+            const taxAmount = purchaseMoney.tax;
+            const totalAmount = purchaseMoney.total;
+            const creditableTax = purchaseMoney.creditableTax;
+            // El modo es configuración persistida del tenant, jamás del payload. Se
+            // resuelve una sola vez por documento y solo cuando realmente hay una
+            // entrada directa con lote; las compras sin lote y las facturas de OC no
+            // pagan una lectura ni materializan filas del sidecar.
+            const batchWarehouseLedgerMode = !linkedPurchaseOrder && preparedItems.some((item) =>
+                productsById.get(item.productId)?.requiresBatchTracking === true)
+                ? await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!)
+                : null;
+            const processedItems = preparedItems.map((item, index) => {
+                const lineMoney = purchaseMoney.lines[index];
+                // `calculatePurchaseMoney` conserva exactamente una salida por
+                // entrada; este guard evita persistir una línea sin snapshots si
+                // ese contrato cambiara accidentalmente.
+                if (!lineMoney) throw new Error('TOTAL_COMPRA_INCONSISTENTE');
+                const {
+                    baseQuantity,
+                    lineNet: _lineNet,
+                    taxable,
+                    ...persisted
+                } = item;
+                const inventoryLineCost = cuotaFijaPurchase && taxable
+                    ? lineMoney.lineTotal
+                    : lineMoney.lineNet;
+                return {
+                    ...persisted,
+                    // Identidad interna de la línea: el sidecar lote+bodega usa este
+                    // mismo id persistido y nunca depende del orden de retorno de MySQL.
+                    // Va después del snapshot para que ninguna ampliación futura del
+                    // payload preparado pueda reemplazar la autoridad del servidor.
+                    // Toda línea directa recibe identidad server-side antes de los
+                    // efectos físicos. Así incluso SKUs duplicados conservan una
+                    // evidencia de bodega/lote/costo inequívoca para devoluciones.
+                    ...(!linkedPurchaseOrder ? { id: crypto.randomUUID() } : {}),
+                    averageUnitCost: inventoryLineCost.div(baseQuantity).toString(),
+                    totalCost: lineMoney.lineNet.toFixed(2),
+                    taxAmountExact: lineMoney.lineTax.toFixed(2),
+                    creditableTaxExact: lineMoney.creditableTax.toFixed(2),
+                };
+            });
+
+            // CASH nace pagada y liquidada en el mismo instante autoritativo.
+            const settledNow = paymentMethod === 'CASH' ? new Date() : null;
 
             // 2. Crear cabecera de compra
             const purchase = await tx.purchase.create({
@@ -8046,14 +9236,24 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                     // `date` es obligatorio: inferirlo desde createdAt clasifica
                     // mal las facturas retroactivas en constancias/libros/DGI.
                     date: normalizeCalendarDateInput(date),
+                    postingDate: normalizeCalendarDateInput(postingDate ?? date),
                     dueDate: dueDate ? normalizeCalendarDateInput(dueDate) : null,
-                    subtotal: subtotalAmount.toNumber(),
-                    tax: taxAmount.toNumber(),
+                    subtotal: subtotalAmount.toFixed(2),
+                    tax: taxAmount.toFixed(2),
                     fiscalRegimeAtPurchase,
-                    creditableTax: creditableTax.toNumber(),
-                    total: totalAmount.toNumber(),
+                    creditableTax: creditableTax.toFixed(2),
+                    total: totalAmount.toFixed(2),
+                    documentStatus: 'POSTED',
+                    matchStatus: 'NOT_REQUIRED',
+                    paymentHold: false,
                     status: paymentMethod === 'CASH' ? 'COMPLETED' : 'PENDING_PAYMENT',
                     paymentMethod,
+                    // El saldo de CxP nace junto con la compra. Los NULL quedan
+                    // reservados exclusivamente para filas históricas previas al
+                    // subledger; así un abono parcial nunca depende de inferencias.
+                    balanceDue: paymentMethod === 'CASH' ? '0.00' : totalAmount.toFixed(2),
+                    paidAt: settledNow,
+                    settledAt: settledNow,
                     notes: notes || null,
                     createdBy: authReq.userId!,
                     items: {
@@ -8068,10 +9268,47 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 include: { items: true, supplier: true }
             });
 
+            // La conciliación toma la línea de OC como identidad y reserva las
+            // recepciones antes de cualquier efecto financiero. Una compra CASH
+            // fuera de tolerancia falla aquí y revierte la factura completa.
+            const procurementMatch = await executeProcurementMatch({
+                tx,
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                purchaseId: purchase.id,
+            });
+            // executeProcurementMatch materializa identidad OC y snapshots exactos
+            // mediante UPDATE SQL. El objeto devuelto por purchase.create conserva
+            // los items previos; refrescarlos evita responder costos/variancias stale.
+            const matchedPurchaseItems = await tx.purchaseItem.findMany({
+                where: {
+                    purchaseId: purchase.id,
+                    purchase: { tenantId: authReq.tenantId! },
+                },
+                orderBy: { id: 'asc' },
+            });
+            if (matchedPurchaseItems.length !== purchase.items.length) {
+                throw new ProcurementMatchError(
+                    'PURCHASE_ITEM_REFRESH_FAILED',
+                    409,
+                    'No se pudieron confirmar todas las líneas conciliadas de la factura',
+                );
+            }
+
             // 3. Actualizar inventario + Kardex + Costo promedio ponderado. Si hay OC,
             // la recepción es la única responsable de estos movimientos.
             const costChanges: any[] = []; // before/after de stock y costo valorizado por producto
-            for (const item of linkedPurchaseOrder ? [] : processedItems) {
+            // Dos compras directas de proveedores distintos no comparten el lock
+            // inicial del Supplier. Ejecutar [P1,P2] y [P2,P1] en paralelo podía
+            // ciclar los locks Product/ProductStock. La copia ordenada afecta solo
+            // efectos físicos; no cambia el orden ni la identidad de PurchaseItem.
+            const inventoryMutationItems = linkedPurchaseOrder
+                ? []
+                : [...processedItems].sort((left, right) =>
+                    left.productId.localeCompare(right.productId)
+                    || (left.batchNumber ?? '').localeCompare(right.batchNumber ?? '')
+                    || (left.id ?? '').localeCompare(right.id ?? ''));
+            for (const item of inventoryMutationItems) {
                 const product = productsById.get(item.productId);
                 if (!product) continue;
 
@@ -8143,6 +9380,46 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                         }
                     });
                     batchId = batch.id;
+
+                    // Sidecar exacto lote+bodega. Product/ProductStock, ProductBatch
+                    // y Kardex siguen siendo los agregados legacy; cualquier fallo
+                    // acá aborta la misma tx antes del Kardex y la auditoría final.
+                    if (batchWarehouseLedgerMode === 'SHADOW' || batchWarehouseLedgerMode === 'ENFORCED') {
+                        if (!item.id) throw new Error('PURCHASE_ITEM_ID_REQUIRED');
+                        await applyBatchWarehouseDelta({
+                            tx,
+                            mode: batchWarehouseLedgerMode,
+                            tenantId: authReq.tenantId!,
+                            productId: item.productId,
+                            batchId: batch.id,
+                            warehouseId: purchaseWarehouseId,
+                            delta: item.quantityExact,
+                            movementType: 'DIRECT_PURCHASE',
+                            referenceId: purchase.id,
+                            referenceType: 'PURCHASE',
+                            userId: authReq.userId!,
+                            reason: `Compra Factura #${invoiceNumber}`,
+                            sourceKey: `direct-purchase:${purchase.id}:item:${item.id}`,
+                            allowNegative: false,
+                        });
+                    }
+                }
+
+                // Evidencia física de la entrada directa. Se escribe únicamente
+                // después de confirmar stock y lote; count!=1 aborta toda la tx.
+                if (!item.id) throw new Error('PURCHASE_ITEM_ID_REQUIRED');
+                const evidenceWrite = await tx.purchaseItem.updateMany({
+                    where: { id: item.id, purchaseId: purchase.id },
+                    data: {
+                        inventoryWarehouseId: purchaseWarehouseId,
+                        inventoryBatchId: batchId,
+                        inventoryUnitCostExact: new Decimal(item.averageUnitCost)
+                            .toDecimalPlaces(6, Decimal.ROUND_HALF_UP)
+                            .toFixed(6),
+                    },
+                });
+                if (evidenceWrite.count !== 1) {
+                    throw new Error('PURCHASE_ITEM_INVENTORY_EVIDENCE_WRITE_FAILED');
                 }
 
                 // Kardex: Registro de entrada por compra
@@ -8175,14 +9452,30 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             //    El asiento de `recordPurchase` ya acreditaba Caja (1.1.1): la
             //    billetera nunca fue la contrapartida correcta.
             if (paymentMethod === 'CASH') {
-                // `turnoDeContado` se resolvió y validó ANTES de abrir la tx.
-                const salida = await registrarSalidaDeCajaPorCompra(tx, {
-                    tenantId: authReq.tenantId!,
-                    userId: authReq.userId!,
-                    shiftId: turnoDeContado!.id,
-                    invoiceNumber,
-                    supplierName: purchase.supplier.name,
-                    total: totalAmount,
+                // Débito ATÓMICO: decrementa solo si hay saldo suficiente. El guard de
+                // suficiencia y la escritura son el MISMO UPDATE condicional (toma el
+                // row-lock), así dos compras de contado concurrentes no pueden ambas
+                // pasar el chequeo y dejar la billetera en negativo (TOCTOU).
+                const debited = await tx.tenant.updateMany({
+                    where: { id: authReq.tenantId, walletBalance: { gte: totalAmount.toFixed(2) } },
+                    data: { walletBalance: { decrement: totalAmount.toFixed(2) } }
+                });
+                if (debited.count === 0) {
+                    const t = await tx.tenant.findUnique({
+                        where: { id: authReq.tenantId },
+                        select: { walletBalance: true }
+                    });
+                    throw new Error(`SALDO_INSUFICIENTE: disponible C$ ${new Decimal(t?.walletBalance?.toString() ?? 0).toFixed(2)}, requerido C$ ${totalAmount.toFixed(2)}. Usa crédito o recarga tu billetera.`);
+                }
+
+                // Crear gasto
+                await tx.expense.create({
+                    data: {
+                        tenantId: authReq.tenantId!,
+                        amount: totalAmount.toFixed(2),
+                        description: `Compra Factura #${invoiceNumber} - ${purchase.supplier.name}`,
+                        category: 'COMPRA_MERCADERIA'
+                    }
                 });
                 efectivoAntesCompra = salida.efectivoAntes;
                 efectivoDespuesCompra = salida.efectivoDespues;
@@ -8202,10 +9495,12 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                 authReq.tenantId!,
                 authReq.userId!,
                 purchase.id,
-                totalAmount.toNumber(),
-                taxAmount.toNumber(),
+                totalAmount.toFixed(2),
+                taxAmount.toFixed(2),
                 paymentMethod,
-                creditableTax.toNumber(),
+                creditableTax.toFixed(2),
+                normalizeCalendarDateInput(postingDate ?? date),
+                linkedPurchaseOrder ? procurementMatch.plan.expectedAmount : undefined,
             );
 
             // Asiento inmutable de auditoría (Capa 3): toda compra mueve su efecto
@@ -8229,16 +9524,23 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
                         creditableTax: creditableTax.toString(),
                         fiscalRegime: fiscalRegimeAtPurchase,
                         total: totalAmount.toString(),
-                        shiftId: turnoDeContado?.id ?? null,
-                        efectivoAntes: efectivoAntesCompra?.toNumber() ?? null,
-                        efectivoDespues: efectivoDespuesCompra?.toNumber() ?? null,
+                        matchStatus: procurementMatch.matchStatus,
+                        paymentHold: procurementMatch.paymentHold,
+                        priceTolerancePct: procurementMatch.priceTolerancePct,
+                        walletBefore: walletBefore.toFixed(2),
+                        walletAfter: walletAfter.toFixed(2),
                         productChanges: costChanges,
                         timestamp: new Date().toISOString()
                     })
                 }
             });
 
-            return purchase;
+            return {
+                ...purchase,
+                items: matchedPurchaseItems,
+                matchStatus: procurementMatch.matchStatus,
+                paymentHold: procurementMatch.paymentHold,
+            };
         });
 
         res.json({
@@ -8256,7 +9558,17 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
         if (error instanceof PeriodLockedError) {
             return res.status(423).json({ error: error.message });
         }
-        if (error?.message === 'FACTURA_DUPLICADA') {
+        if (error instanceof ProcurementMatchError) {
+            return res.status(error.httpStatus).json({
+                error: error.message,
+                code: error.code,
+                ...(error.details ? { details: error.details } : {}),
+            });
+        }
+        if (error instanceof BatchWarehouseLedgerError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
+        if (error?.message === 'FACTURA_DUPLICADA' || error?.code === 'P2002') {
             return res.status(409).json({ error: `Ya existe la factura #${invoiceNumber} para este proveedor. No se registró nuevamente.` });
         }
         if (error instanceof StockError && error.code === 'WAREHOUSE_REQUIRED') {
@@ -8282,6 +9594,13 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
             const productName = error.message.slice('ITEM_FUERA_DE_OC|'.length);
             return res.status(400).json({ error: `${productName} no pertenece a la orden de compra vinculada` });
         }
+        if (error?.message?.startsWith('ITEM_OC_INVALIDO|')) {
+            const productName = error.message.slice('ITEM_OC_INVALIDO|'.length);
+            return res.status(400).json({
+                error: `La línea de orden indicada para ${productName} no pertenece a esta orden de compra`,
+                code: 'PURCHASE_ORDER_ITEM_INVALID',
+            });
+        }
         if (error?.message?.startsWith('CANTIDAD_SUPERA_RECEPCION|')) {
             const [, productName, remainingQty] = error.message.split('|');
             return res.status(400).json({ error: `${productName} solo tiene ${remainingQty} unidades recibidas pendientes de facturar en esta OC` });
@@ -8300,102 +9619,92 @@ app.post('/api/purchases', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']
     }
 });
 
-// POST /api/purchases/:id/pay - Pagar cuenta pendiente CONTRA LA CAJA DEL TURNO
-//
-// Antes debitaba `Tenant.walletBalance` (la billetera FINTECH que se fondea con
-// /api/loans/request y se gasta en el marketplace B2B): ninguna ferretería la
-// tiene fondeada, así que el pago SIEMPRE moría con "SALDO_INSUFICIENTE:
-// disponible C$ 0.00 … Recarga tu billetera" mientras el modal prometía "se
-// descontará de tu caja" y había plata real en la gaveta. Además no posteaba
-// asiento: la CxP (2.1.1) que abrió la compra a crédito quedaba viva para
-// siempre en el mayor.
-//
-// Ahora: salida de caja firmada + factura COMPLETED + asiento (Debe 2.1.1 /
-// Haber 1.1.1) en UNA sola transacción. La billetera no interviene.
-// Ver backend/services/supplierPayment.ts.
-app.post('/api/purchases/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER']), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { id } = req.params;
+// POST /api/purchases/:id/pay — abono o liquidación de una CxP.
+app.post(
+    '/api/purchases/:id/pay',
+    authenticate,
+    checkRole(PURCHASE_PAYMENT_ROLES),
+    validate(SupplierPaymentRequestSchema),
+    async (req: any, res: any) => {
+        const authReq = req as AuthRequest;
+        try {
+            // createJournalEntry resuelve el catálogo desde el cliente compartido.
+            // Sembrar antes de abrir la tx evita que REPEATABLE READ oculte cuentas
+            // recién creadas dentro del pago.
+            const payableAccount = await prisma.account.findUnique({
+                where: { tenantId_code: { tenantId: authReq.tenantId!, code: '2.1.1' } },
+                select: { id: true },
+            });
+            if (!payableAccount) await seedChartOfAccounts(authReq.tenantId!);
 
-    try {
-        const purchase = await prisma.purchase.findFirst({
-            where: { id, tenantId: authReq.tenantId },
-            include: { supplier: true }
-        });
-
-        if (!purchase) {
-            return res.status(404).json({ error: 'Compra no encontrada' });
-        }
-
-        if (purchase.status === 'COMPLETED') {
-            return res.status(400).json({ error: 'Esta compra ya fue pagada' });
-        }
-
-        // Caja donde está parado quien paga — MISMO turno que ve la píldora del
-        // POS (`resolverTurnoAbierto`, NX-03). Sin caja abierta el error lo DICE:
-        // no manda a recargar una billetera que no participa del pago.
-        const { shift: turnoAbierto } = await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!);
-        if (!turnoAbierto) {
-            const sinCaja = new SupplierPaymentError('SIN_CAJA_ABIERTA', MENSAJE_SIN_CAJA_ABIERTA);
-            return res.status(sinCaja.httpStatus).json({ error: sinCaja.message, code: sinCaja.code });
-        }
-
-        // A1/A5: catálogo sembrado ANTES de la tx (mismo motivo que en
-        // /api/purchases y /api/cash-movements): el auto-seed de getAccount
-        // ocurre fuera de la transacción y sus filas no serían visibles adentro
-        // bajo REPEATABLE READ.
-        const anchorCxP = await prisma.account.findUnique({
-            where: { tenantId_code: { tenantId: authReq.tenantId!, code: '2.1.1' } },
-            select: { id: true },
-        });
-        if (!anchorCxP) await seedChartOfAccounts(authReq.tenantId!);
-
-        await prisma.$transaction(async (tx: any) => {
-            await pagarFacturaProveedorEnCaja(tx, {
+            const result = await executeSupplierPaymentTransaction({
+                db: prisma,
                 tenantId: authReq.tenantId!,
                 userId: authReq.userId!,
-                purchaseId: purchase.id,
-                shiftId: turnoAbierto.id,
-                invoiceNumber: purchase.invoiceNumber,
-                supplierName: purchase.supplier.name,
-                total: purchase.total.toString(),
+                purchaseId: req.params.id,
+                request: req.body,
             });
-        });
 
-        res.json({ message: `Factura #${purchase.invoiceNumber} pagada exitosamente` });
-
-    } catch (error: any) {
-        console.error('Error pagando compra:', error);
-        // Período cerrado: el pago ahora exige asiento → 423 en vez de sacar
-        // plata de la gaveta sin contrapartida contable.
-        if (error instanceof PeriodLockedError) {
-            return res.status(423).json({ error: error.message });
+            return res.json({
+                ...result,
+                message: result.replay
+                    ? 'El pago ya había sido registrado; no se duplicó.'
+                    : result.purchase.status === 'COMPLETED'
+                        ? 'Factura pagada completamente.'
+                        : 'Abono a proveedor registrado.',
+            });
+        } catch (error: unknown) {
+            if (error instanceof SupplierPaymentError) {
+                return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+            }
+            if (error instanceof PeriodLockedError) {
+                return res.status(409).json({ error: error.message, code: 'PERIOD_LOCKED' });
+            }
+            console.error('Pago a proveedor falló', {
+                name: error instanceof Error ? error.name : 'UnknownError',
+                code: typeof error === 'object' && error !== null && 'code' in error
+                    ? String((error as { code?: unknown }).code ?? '')
+                    : undefined,
+            });
+            return res.status(500).json({ error: 'No pudimos registrar el pago al proveedor' });
         }
-        if (error instanceof SupplierPaymentError) {
-            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
-        }
-        res.status(500).json({ error: error.message || 'Error al procesar el pago' });
-    }
-});
+    },
+);
 
 // GET /api/purchases/pending - Cuentas por pagar
-app.get('/api/purchases/pending', authenticate, async (req: any, res: any) => {
+app.get('/api/purchases/pending', authenticate, checkRole(PURCHASE_PAYMENT_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const pending = await prisma.purchase.findMany({
-            where: { tenantId: authReq.tenantId, status: 'PENDING_PAYMENT' },
+            where: {
+                tenantId: authReq.tenantId,
+                documentStatus: 'POSTED',
+                status: { in: [...PURCHASE_PAYABLE_STATUSES] },
+                paymentMethod: { not: 'NORTEX_CAPITAL' },
+            },
             include: { supplier: { select: { name: true } } },
-            orderBy: { dueDate: 'asc' }
+            orderBy: { dueDate: 'asc' },
+            take: 500,
         });
 
-        const totalDebt = pending.reduce(
-            (sum: Decimal, p: { total: unknown }) =>
-                sum.plus(new Decimal(p.total?.toString() ?? '0')),
-            new Decimal(0)
-        ).toDecimalPlaces(4).toNumber();
+        const serialized = pending.map((purchase) => ({
+            ...purchase,
+            balanceDue: resolveEffectiveSupplierBalance(purchase).toFixed(4),
+        }));
+        const totalDebt = serialized.reduce(
+            (sum, purchase) => sum.plus(purchase.balanceDue),
+            new Decimal(0),
+        ).toDecimalPlaces(4);
 
-        res.json({ purchases: pending, totalDebt });
+        res.json({
+            purchases: serialized,
+            totalDebt: totalDebt.toNumber(),
+            totalDebtExact: totalDebt.toFixed(4),
+        });
     } catch (error) {
+        if (error instanceof SupplierPaymentError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
         res.status(500).json({ error: 'Error al obtener cuentas por pagar' });
     }
 });
@@ -10172,7 +11481,7 @@ app.post('/api/quotations', authenticate, checkRole(QUOTATION_WRITE_ROLES), asyn
 // ==========================================
 
 // GET /api/credits/debtors - Clientes con deuda pendiente
-app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         // Buscar ventas a CRÉDITO con saldo pendiente > 0
@@ -10215,20 +11524,14 @@ app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES)
 
 // GET /api/collections/worklist - "Cobrar hoy" (Cobranza A1): deudas a crédito por
 // urgencia (vencidas primero) + KPIs de cobranza. dueSoonDays = ventana "por vencer".
-app.get('/api/collections/worklist', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/collections/worklist', authenticate, checkRole(CUSTOMER_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const dueSoonDays = Math.min(60, Math.max(1, parseInt(req.query.dueSoonDays) || 7));
     try {
         const now = new Date();
-        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const MS_DAY = 86400000;
         // Días vencidos desde la referencia (vence ?? emisión); >0 vencido, <0 por vencer.
-        const diasVencido = (ref: Date) => {
-            const r = new Date(ref);
-            const refMid = new Date(r.getFullYear(), r.getMonth(), r.getDate()).getTime();
-            return Math.floor((hoy.getTime() - refMid) / MS_DAY);
-        };
+        const diasVencido = (ref: Date) => daysSinceManaguaCivilDate(ref, now);
         const bucketDe = (d: number) => d <= 0 ? 'corriente' : d <= 30 ? 'b1_30' : d <= 60 ? 'b31_60' : d <= 90 ? 'b61_90' : 'b90';
 
         const sales = await prisma.sale.findMany({
@@ -10273,7 +11576,7 @@ app.get('/api/collections/worklist', authenticate, checkRole(CUSTOMER_HUB_READ_R
         // Más vencido primero; luego por vencer (más cerca de hoy), luego corriente.
         items.sort((a, b) => b.daysOverdue - a.daysOverdue);
 
-        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const startOfDay = inicioDelDiaManagua(now);
         const collectedToday = await prisma.payment.aggregate({
             where: {
                 sale: {
@@ -10305,7 +11608,7 @@ app.get('/api/collections/worklist', authenticate, checkRole(CUSTOMER_HUB_READ_R
 
 // GET /api/customers/:id/statement - Estado de cuenta del cliente (Cobranza A2):
 // facturas a crédito con saldo/abonos + aging + totales. Para imprimir/enviar.
-app.get('/api/customers/:id/statement', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/customers/:id/statement', authenticate, checkRole(CUSTOMER_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const { id } = req.params;
@@ -10327,13 +11630,7 @@ app.get('/api/customers/:id/statement', authenticate, checkRole(CUSTOMER_HUB_REA
         });
 
         const now = new Date();
-        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const MS_DAY = 86400000;
-        const diasVencido = (ref: Date) => {
-            const r = new Date(ref);
-            const refMid = new Date(r.getFullYear(), r.getMonth(), r.getDate()).getTime();
-            return Math.floor((hoy.getTime() - refMid) / MS_DAY);
-        };
+        const diasVencido = (ref: Date) => daysSinceManaguaCivilDate(ref, now);
 
         let totalBilled = new Decimal(0), totalPaid = new Decimal(0), totalBalance = new Decimal(0), totalOverdue = new Decimal(0);
         const invoices = sales.map((s: any) => {
@@ -10362,6 +11659,14 @@ app.get('/api/customers/:id/statement', authenticate, checkRole(CUSTOMER_HUB_REA
                 })),
             };
         });
+
+        if (authReq.role === 'VENDEDOR') {
+            const stillAuthorized = await prisma.customer.findFirst({
+                where: applySellerCustomerScope(authReq, { id, tenantId }),
+                select: { id: true },
+            });
+            if (!stillAuthorized) return res.status(404).json({ error: 'Cliente no encontrado' });
+        }
 
         res.json({
             customer: {
@@ -10397,11 +11702,13 @@ async function registerCreditPayment(req: any, res: any) {
     const { saleId, amount, clientEventId } = req.body;
     const method = req.body.method || 'CASH';
     const paymentAmount = new Decimal(amount).toDecimalPlaces(2);
-    const payloadHash = crypto.createHash('sha256').update(JSON.stringify({
-        saleId,
-        amount: paymentAmount.toFixed(2),
-        method,
-    })).digest('hex');
+    const payloadHash = clientEventId
+        ? crypto.createHash('sha256').update(JSON.stringify({
+            saleId,
+            amount: paymentAmount.toFixed(2),
+            method,
+        })).digest('hex')
+        : null;
 
     try {
         const result = await prisma.$transaction(async (tx: any) => {
@@ -10424,26 +11731,20 @@ async function registerCreditPayment(req: any, res: any) {
                 WHERE s.id = ${saleId} AND s.tenantId = ${authReq.tenantId!}
                 FOR UPDATE`;
             const lockedSale = lockedSales[0];
-            if (!lockedSale) {
+            if (!lockedSale || (authReq.role === 'VENDEDOR' && lockedSale.sellerId !== authReq.userId)) {
                 throw new Error('PAYMENT_SALE_NOT_FOUND');
             }
 
-            const lockedCustomer = lockedSale.customerId
-                ? await lockCustomerForScopedMutation(tx, authReq, lockedSale.customerId)
-                : null;
-            if ((lockedSale.customerId && !lockedCustomer)
-                || (authReq.role === 'VENDEDOR' && !lockedSale.customerId && lockedSale.sellerId !== authReq.userId)) {
-                throw new Error('PAYMENT_SALE_NOT_FOUND');
-            }
-
-            const replay = await tx.payment.findFirst({
-                where: { saleId, clientEventId },
-            });
-            if (replay) {
-                if (!replay.payloadHash || replay.payloadHash !== payloadHash) {
-                    throw new Error('PAYMENT_IDEMPOTENCY_CONFLICT');
+            if (clientEventId) {
+                const replay = await tx.payment.findFirst({
+                    where: { saleId, clientEventId },
+                });
+                if (replay) {
+                    if (!replay.payloadHash || replay.payloadHash !== payloadHash) {
+                        throw new Error('PAYMENT_IDEMPOTENCY_CONFLICT');
+                    }
+                    return { replayed: true, paymentId: replay.id };
                 }
-                return { replayed: true, paymentId: replay.id };
             }
 
             if (lockedSale.paymentMethod !== 'CREDIT') throw new Error('PAYMENT_NOT_CREDIT');
@@ -10458,28 +11759,35 @@ async function registerCreditPayment(req: any, res: any) {
                     amount: paymentAmount.toFixed(2),
                     method,
                     collectedBy: authReq.userId!,
-                    clientEventId,
+                    clientEventId: clientEventId ?? null,
                     payloadHash,
                 },
             });
 
-            await tx.sale.update({
-                where: { id: saleId },
+            const saleUpdated = await tx.sale.updateMany({
+                where: { id: saleId, tenantId: authReq.tenantId! },
                 data: {
                     balance: balanceAfter.toFixed(2),
                     status: balanceAfter.isZero() ? 'PAID' : 'CREDIT_PENDING',
                 },
             });
+            if (saleUpdated.count !== 1) throw new Error('PAYMENT_SALE_NOT_FOUND');
 
             let debtBefore: Decimal | null = null;
             let debtAfter: Decimal | null = null;
-            if (lockedSale.customerId && lockedCustomer) {
-                debtBefore = new Decimal(lockedCustomer.currentDebt?.toString() ?? 0);
+            if (lockedSale.customerId) {
+                const lockedCustomers: Array<{ currentDebt: any }> = await tx.$queryRaw`
+                    SELECT currentDebt FROM \`Customer\`
+                    WHERE id = ${lockedSale.customerId} AND tenantId = ${authReq.tenantId!}
+                    FOR UPDATE`;
+                if (lockedCustomers.length === 0) throw new Error('PAYMENT_CUSTOMER_NOT_FOUND');
+                debtBefore = new Decimal(lockedCustomers[0].currentDebt.toString());
                 debtAfter = Decimal.max(0, debtBefore.minus(paymentAmount)).toDecimalPlaces(2);
-                await tx.customer.update({
-                    where: { id: lockedSale.customerId },
+                const customerUpdated = await tx.customer.updateMany({
+                    where: { id: lockedSale.customerId, tenantId: authReq.tenantId! },
                     data: { currentDebt: debtAfter.toFixed(2) },
                 });
+                if (customerUpdated.count !== 1) throw new Error('PAYMENT_CUSTOMER_NOT_FOUND');
             }
 
             await recordPayment(
@@ -10487,7 +11795,7 @@ async function registerCreditPayment(req: any, res: any) {
                 authReq.tenantId!,
                 authReq.userId!,
                 payment.id,
-                paymentAmount,
+                paymentAmount.toNumber(),
                 method,
             );
             await tx.auditLog.create({
@@ -10499,7 +11807,7 @@ async function registerCreditPayment(req: any, res: any) {
                         saleId,
                         customerId: lockedSale.customerId,
                         paymentId: payment.id,
-                        clientEventId,
+                        clientEventId: clientEventId ?? null,
                         amount: paymentAmount.toFixed(2),
                         balanceBefore: balanceBefore.toFixed(2),
                         balanceAfter: balanceAfter.toFixed(2),
@@ -10514,11 +11822,7 @@ async function registerCreditPayment(req: any, res: any) {
         });
 
         const updatedSale = await prisma.sale.findFirst({
-            where: {
-                id: saleId,
-                tenantId: authReq.tenantId!,
-                ...receivableCustomerScope(authReq),
-            },
+            where: { id: saleId, tenantId: authReq.tenantId! },
             include: {
                 payments: { orderBy: { createdAt: 'desc' } },
                 customer: { select: { name: true } },
@@ -10566,7 +11870,7 @@ async function registerCreditPayment(req: any, res: any) {
 // POST /api/credits/:saleId/writeoff - Castigar una venta a crédito como incobrable
 // (Cobranza B1). Postea el asiento Debe 5.2.7 / Haber 1.1.3, salda la venta y baja
 // la deuda del cliente. Solo OWNER/ADMIN; respeta el lock de período.
-app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN']), async (req: any, res: any) => {
+app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN', 'SUPER_ADMIN']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { saleId } = req.params;
     const reason = (req.body?.reason || '').toString().trim();
@@ -10577,23 +11881,46 @@ app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADM
         await seedChartOfAccounts(authReq.tenantId!); // garantiza 5.2.7
 
         const result = await prisma.$transaction(async (tx: any) => {
-            const sale = await tx.sale.findFirst({ where: { id: saleId, tenantId: authReq.tenantId! } });
+            const lockedSales: Array<{
+                id: string;
+                customerId: string | null;
+                paymentMethod: string;
+                balance: any;
+            }> = await tx.$queryRaw`
+                SELECT id, customerId, paymentMethod, balance
+                FROM \`Sale\`
+                WHERE id = ${saleId} AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            const sale = lockedSales[0];
             if (!sale) throw new Error('Venta no encontrada');
             if (sale.paymentMethod !== 'CREDIT') throw new Error('Solo se castigan ventas a crédito.');
             const balance = new Decimal(sale.balance.toString());
             if (balance.lessThanOrEqualTo(0)) throw new Error('Esta venta no tiene saldo pendiente.');
 
             // Asiento de incobrable (assertPeriodOpen vive dentro de createJournalEntry).
-            await recordBadDebt(tx, authReq.tenantId!, authReq.userId!, saleId, balance.toNumber());
+            await recordBadDebt(tx, authReq.tenantId!, authReq.userId!, saleId, balance);
 
             // Saldar la venta y marcarla como incobrable.
-            await tx.sale.update({ where: { id: saleId }, data: { balance: 0, status: 'UNCOLLECTIBLE' } });
+            const saleUpdated = await tx.sale.updateMany({
+                where: { id: saleId, tenantId: authReq.tenantId! },
+                data: { balance: 0, status: 'UNCOLLECTIBLE' },
+            });
+            if (saleUpdated.count !== 1) throw new Error('Venta no encontrada');
 
             // Bajar la deuda del cliente (clamp a 0 por si el contador venía desfasado).
             if (sale.customerId) {
-                const cust = await tx.customer.findUnique({ where: { id: sale.customerId }, select: { currentDebt: true } });
-                const newDebt = Math.max(0, Number(cust?.currentDebt || 0) - balance.toNumber());
-                await tx.customer.update({ where: { id: sale.customerId }, data: { currentDebt: newDebt } });
+                const lockedCustomers: Array<{ currentDebt: any }> = await tx.$queryRaw`
+                    SELECT currentDebt FROM \`Customer\`
+                    WHERE id = ${sale.customerId} AND tenantId = ${authReq.tenantId!}
+                    FOR UPDATE`;
+                if (lockedCustomers.length === 0) throw new Error('Cliente no encontrado');
+                const currentDebt = new Decimal(lockedCustomers[0].currentDebt.toString());
+                const newDebt = Decimal.max(0, currentDebt.minus(balance)).toDecimalPlaces(2);
+                const customerUpdated = await tx.customer.updateMany({
+                    where: { id: sale.customerId, tenantId: authReq.tenantId! },
+                    data: { currentDebt: newDebt.toFixed(2) },
+                });
+                if (customerUpdated.count !== 1) throw new Error('Cliente no encontrado');
             }
 
             await tx.auditLog.create({
@@ -10695,10 +12022,6 @@ app.put('/api/tenant/fiscal', authenticate, checkRole(['ADMIN', 'OWNER']), valid
 
     try {
         const tenant = await prisma.$transaction(async (tx) => {
-            // Serializa cambios de régimen para que dos administradores no
-            // reutilicen la misma versión con reglas distintas. La versión es el
-            // guard que obliga a conciliar ventas offline nacidas bajo otro régimen.
-            await tx.$queryRaw`SELECT id FROM \`Tenant\` WHERE id = ${authReq.tenantId!} FOR UPDATE`;
             const before = await tx.tenant.findUnique({
                 where: { id: authReq.tenantId! },
                 select: {
@@ -10718,7 +12041,7 @@ app.put('/api/tenant/fiscal', authenticate, checkRole(['ADMIN', 'OWNER']), valid
                 : normalizeFiscalRegime(fiscalRegime);
             const regimeChanged = nextRegime !== normalizeFiscalRegime(before.fiscalRegime);
             const data: Record<string, unknown> = {
-                ...(taxId !== undefined ? { taxId } : {}),
+                ...(taxId !== undefined ? { taxId: taxId || null } : {}),
                 ...(address !== undefined ? { address: address || null } : {}),
                 ...(phone !== undefined ? { phone: phone || null } : {}),
                 ...(dgiAuthCode !== undefined ? { dgiAuthCode: dgiAuthCode || null } : {}),
@@ -10885,7 +12208,7 @@ app.post('/api/accounting/seed', authenticate, async (req: any, res: any) => {
 });
 
 // Balance General
-app.get('/api/accounting/balance-general', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/balance-general', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const balance = await getBalanceGeneral(authReq.tenantId!);
@@ -10894,7 +12217,7 @@ app.get('/api/accounting/balance-general', authenticate, async (req: any, res: a
 });
 
 // Estado de Resultados
-app.get('/api/accounting/estado-resultados', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/estado-resultados', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { month, year } = req.query;
     try {
@@ -10908,7 +12231,7 @@ app.get('/api/accounting/estado-resultados', authenticate, async (req: any, res:
 });
 
 // Chart of Accounts (Catálogo de cuentas)
-app.get('/api/accounting/chart', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/chart', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         await seedChartOfAccounts(authReq.tenantId!);
@@ -10921,7 +12244,7 @@ app.get('/api/accounting/chart', authenticate, async (req: any, res: any) => {
 });
 
 // Libro Diario (Journal Entries)
-app.get('/api/accounting/journal', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/journal', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { month, year } = req.query;
     try {
@@ -11016,7 +12339,7 @@ app.post('/api/accounting/journal', authenticate, checkRole(['OWNER', 'ADMIN', '
 });
 
 // GET /api/accounting/libro-diario/:year/:month — Libro Diario (A4)
-app.get('/api/accounting/libro-diario/:year/:month', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/libro-diario/:year/:month', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const year = parseInt(req.params.year);
     const month = parseInt(req.params.month);
@@ -11062,7 +12385,7 @@ app.get('/api/accounting/libro-diario/:year/:month', authenticate, async (req: a
 // GET /api/accounting/libro-mayor/:year/:month?accountCode= — Mayor / Balanza (A4)
 // Sin accountCode → balanza de comprobación (saldo inicial + debe + haber + final
 // por cuenta). Con accountCode → detalle de movimientos de esa cuenta.
-app.get('/api/accounting/libro-mayor/:year/:month', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/libro-mayor/:year/:month', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const year = parseInt(req.params.year);
@@ -11141,7 +12464,7 @@ app.get('/api/accounting/libro-mayor/:year/:month', authenticate, async (req: an
 });
 
 // GET /api/accounting/periods — estado de los períodos cerrados/reabiertos (A3)
-app.get('/api/accounting/periods', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/periods', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const periods = await prisma.fiscalPeriod.findMany({
@@ -11195,7 +12518,7 @@ app.post('/api/accounting/periods/:year/:month/reopen', authenticate, checkRole(
 // ══════════════════════════════════════════════════════════════════════════
 
 // B4 — GET/PUT configuración fiscal del tenant
-app.get('/api/accounting/tax-config', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/tax-config', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const cfg = await prisma.taxConfig.findUnique({ where: { tenantId: authReq.tenantId! } });
@@ -11258,9 +12581,8 @@ app.post('/api/accounting/exchange-rate', authenticate, checkRole(['OWNER', 'ADM
         const { fecha, rate } = req.body ?? {};
         const r = new Decimal(Number(rate) || 0);
         if (r.lessThanOrEqualTo(0) || r.greaterThan(10000)) return res.status(400).json({ error: 'Tipo de cambio inválido.' });
-        const day = fecha ? new Date(fecha) : new Date();
-        if (isNaN(day.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
-        day.setHours(0, 0, 0, 0);
+        const day = fecha ? parseManaguaCivilDateInput(fecha) : managuaBusinessDate();
+        if (!day) return res.status(400).json({ error: 'Fecha inválida.' });
         const saved = await prisma.exchangeRate.upsert({
             where: { tenantId_fecha: { tenantId: authReq.tenantId!, fecha: day } },
             create: { tenantId: authReq.tenantId!, fecha: day, rate: r.toDecimalPlaces(4).toNumber(), source: 'MANUAL' },
@@ -11274,57 +12596,250 @@ app.post('/api/accounting/exchange-rate', authenticate, checkRole(['OWNER', 'ADM
 });
 
 // B1 — Retenciones SUFRIDAS (crédito contra el anticipo IR / IMI)
-app.post('/api/accounting/retenciones-sufridas', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
+app.post('/api/accounting/retenciones-sufridas', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), validate(CreateRetencionSufridaSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    try {
-        const { fecha, clienteRetenedor, tipo, baseAmount, amount, numeroConstancia, saleId } = req.body ?? {};
-        if (!clienteRetenedor || typeof clienteRetenedor !== 'string') return res.status(400).json({ error: 'El cliente retenedor es requerido.' });
-        if (tipo !== 'IR_2' && tipo !== 'IMI_1') return res.status(400).json({ error: 'Tipo inválido (IR_2 | IMI_1).' });
-        const amt = new Decimal(Number(amount) || 0).toDecimalPlaces(2);
-        const base = new Decimal(Number(baseAmount) || 0).toDecimalPlaces(2);
-        if (amt.lessThanOrEqualTo(0)) return res.status(400).json({ error: 'El monto retenido debe ser mayor a cero.' });
-        const day = fecha ? new Date(fecha) : new Date();
-        if (isNaN(day.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
+    const {
+        fecha,
+        clienteRetenedor,
+        tipo,
+        baseAmount,
+        amount,
+        numeroConstancia,
+        saleId,
+        clientEventId,
+    } = req.body;
+    const day = normalizeCalendarDateInput(fecha);
+    const base = new Decimal(baseAmount);
+    const amt = new Decimal(amount);
+    const payloadHash = crypto.createHash('sha256').update(JSON.stringify({
+        fecha,
+        clienteRetenedor,
+        tipo,
+        baseAmount: base.toFixed(2),
+        amount: amt.toFixed(2),
+        numeroConstancia: numeroConstancia ?? null,
+        saleId,
+    })).digest('hex');
 
-        await prisma.$transaction(async (tx: any) => {
-            await tx.retencionSufrida.create({
+    try {
+        const result = await prisma.$transaction(async (tx: any) => {
+            // La retención liquida CxC igual que un abono: se bloquea primero la
+            // venta y después su cliente. Este orden estable serializa retenciones
+            // simultáneas sin perder saldo ni deuda agregada.
+            const lockedSales: Array<{
+                id: string;
+                customerId: string | null;
+                paymentMethod: string;
+                status: string;
+                balance: any;
+            }> = await tx.$queryRaw`
+                SELECT id, customerId, paymentMethod, status, balance
+                FROM \`Sale\`
+                WHERE id = ${saleId} AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            const lockedSale = lockedSales[0];
+            if (!lockedSale) throw new Error('RETENCION_SALE_NOT_FOUND');
+            if (!lockedSale.customerId) throw new Error('RETENCION_CUSTOMER_NOT_FOUND');
+
+            const lockedCustomers: Array<{
+                id: string;
+                name: string;
+                currentDebt: any;
+            }> = await tx.$queryRaw`
+                SELECT id, name, currentDebt
+                FROM \`Customer\`
+                WHERE id = ${lockedSale.customerId} AND tenantId = ${authReq.tenantId!}
+                FOR UPDATE`;
+            const lockedCustomer = lockedCustomers[0];
+            if (!lockedCustomer) throw new Error('RETENCION_CUSTOMER_NOT_FOUND');
+
+            // Debe ocurrir después de ambos locks: una solicitud gemela que
+            // esperaba a la ganadora observa el replay antes de revalidar saldos.
+            const replay = await tx.retencionSufrida.findFirst({
+                where: { tenantId: authReq.tenantId!, clientEventId },
+            });
+            if (replay) {
+                if (!replay.payloadHash || replay.payloadHash !== payloadHash) {
+                    throw new Error('RETENCION_IDEMPOTENCY_CONFLICT');
+                }
+                return { retencionId: replay.id, idempotentReplay: true };
+            }
+
+            if (lockedSale.paymentMethod !== 'CREDIT') throw new Error('RETENCION_SALE_NOT_CREDIT');
+            const balanceBefore = new Decimal(lockedSale.balance.toString());
+            if (!balanceBefore.greaterThan(0)) throw new Error('RETENCION_SALE_SETTLED');
+            if (amt.greaterThan(balanceBefore)) throw new Error('RETENCION_EXCEEDS_BALANCE');
+
+            const balanceAfter = balanceBefore.minus(amt).toDecimalPlaces(2);
+            const statusAfter = balanceAfter.isZero() ? 'PAID' : 'CREDIT_PENDING';
+            const debtBefore = new Decimal(lockedCustomer.currentDebt.toString());
+            const debtAfter = Decimal.max(0, debtBefore.minus(amt)).toDecimalPlaces(2);
+
+            const retencion = await tx.retencionSufrida.create({
                 data: {
-                    tenantId: authReq.tenantId!, fecha: day, clienteRetenedor: clienteRetenedor.trim(),
-                    tipo, baseAmount: base.toNumber(), amount: amt.toNumber(),
-                    numeroConstancia: numeroConstancia ? String(numeroConstancia).trim() : null,
-                    saleId: saleId ? String(saleId) : null, createdBy: authReq.userId!,
+                    tenantId: authReq.tenantId!,
+                    fecha: day,
+                    clienteRetenedor,
+                    tipo,
+                    baseAmount: base.toFixed(2),
+                    amount: amt.toFixed(2),
+                    numeroConstancia: numeroConstancia ?? null,
+                    saleId,
+                    clientEventId,
+                    payloadHash,
+                    createdBy: authReq.userId!,
                 },
             });
+
+            const saleUpdated = await tx.sale.updateMany({
+                where: { id: saleId, tenantId: authReq.tenantId! },
+                data: { balance: balanceAfter.toFixed(2), status: statusAfter },
+            });
+            if (saleUpdated.count !== 1) throw new Error('RETENCION_SALE_NOT_FOUND');
+
+            const customerUpdated = await tx.customer.updateMany({
+                where: { id: lockedCustomer.id, tenantId: authReq.tenantId! },
+                data: { currentDebt: debtAfter.toFixed(2) },
+            });
+            if (customerUpdated.count !== 1) throw new Error('RETENCION_CUSTOMER_NOT_FOUND');
+
             // Asiento: el crédito fiscal (activo) sube; la CxC del cliente baja
             // (el cliente liquidó parte del saldo vía retención).
             await createJournalEntry(
                 tx, authReq.tenantId!,
-                `Retención ${tipo === 'IR_2' ? 'IR 2%' : 'IMI 1%'} sufrida — ${clienteRetenedor.trim()}`,
-                '', 'RETENCION_SUFRIDA', authReq.userId!,
+                `Retención ${tipo === 'IR_2' ? 'IR 2%' : 'IMI 1%'} sufrida — ${clienteRetenedor}`,
+                retencion.id, 'RETENCION_SUFRIDA', authReq.userId!,
                 [
                     { accountCode: '1.1.6', debit: amt.toNumber(), credit: 0 },
                     { accountCode: '1.1.3', debit: 0, credit: amt.toNumber() },
                 ],
                 { isAutomatic: true, date: day }
             );
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    action: 'RETENCION_SUFRIDA_CREATE',
+                    details: JSON.stringify({
+                        retencionId: retencion.id,
+                        clientEventId,
+                        before: {
+                            sale: {
+                                id: lockedSale.id,
+                                paymentMethod: lockedSale.paymentMethod,
+                                status: lockedSale.status,
+                                balance: balanceBefore.toFixed(2),
+                            },
+                            customer: {
+                                id: lockedCustomer.id,
+                                name: lockedCustomer.name,
+                                currentDebt: debtBefore.toFixed(2),
+                            },
+                        },
+                        after: {
+                            retencionId: retencion.id,
+                            fecha,
+                            clienteRetenedor,
+                            tipo,
+                            baseAmount: base.toFixed(2),
+                            amount: amt.toFixed(2),
+                            numeroConstancia: numeroConstancia ?? null,
+                            sale: {
+                                id: lockedSale.id,
+                                status: statusAfter,
+                                balance: balanceAfter.toFixed(2),
+                            },
+                            customer: {
+                                id: lockedCustomer.id,
+                                currentDebt: debtAfter.toFixed(2),
+                            },
+                        },
+                    }),
+                },
+            });
+
+            return { retencionId: retencion.id, idempotentReplay: false };
         });
-        res.status(201).json({ message: 'Retención sufrida registrada — se acreditará contra tu anticipo IR del mes.' });
-    } catch (error: unknown) {
+
+        return res.status(result.idempotentReplay ? 200 : 201).json({
+            message: result.idempotentReplay
+                ? 'La retención ya estaba registrada; no se duplicó el crédito fiscal.'
+                : 'Retención sufrida registrada — se acreditará contra tu anticipo IR del mes.',
+            id: result.retencionId,
+            idempotentReplay: result.idempotentReplay,
+        });
+    } catch (error: any) {
+        // Dos transacciones pueden observar una clave ausente. El UNIQUE arbitra
+        // la carrera y revierte por completo asiento + auditoría del perdedor.
+        if (error?.code === 'P2002' && clientEventId) {
+            try {
+                const replay = await prisma.retencionSufrida.findFirst({
+                    where: { tenantId: authReq.tenantId!, clientEventId },
+                });
+                if (replay) {
+                    if (!replay.payloadHash || replay.payloadHash !== payloadHash) {
+                        return res.status(409).json({
+                            error: 'La misma operación ya se usó con datos distintos.',
+                            code: 'RETENCION_IDEMPOTENCY_CONFLICT',
+                        });
+                    }
+                    return res.status(200).json({
+                        message: 'La retención ya estaba registrada; no se duplicó el crédito fiscal.',
+                        id: replay.id,
+                        idempotentReplay: true,
+                    });
+                }
+            } catch (lookupError) {
+                console.error('Retención sufrida replay lookup error:', lookupError);
+                return res.status(500).json({ error: 'Error al comprobar el reintento de la retención.' });
+            }
+        }
+        if (error?.message === 'RETENCION_IDEMPOTENCY_CONFLICT') {
+            return res.status(409).json({
+                error: 'La misma operación ya se usó con datos distintos.',
+                code: error.message,
+            });
+        }
+        if (error?.message === 'RETENCION_SALE_NOT_FOUND' || error?.message === 'RETENCION_CUSTOMER_NOT_FOUND') {
+            return res.status(404).json({
+                error: 'La venta o su cliente no existe en este negocio.',
+                code: error.message,
+            });
+        }
+        const businessErrors: Record<string, string> = {
+            RETENCION_SALE_NOT_CREDIT: 'La factura seleccionada no es una venta a crédito.',
+            RETENCION_SALE_SETTLED: 'La factura seleccionada ya no tiene saldo pendiente.',
+            RETENCION_EXCEEDS_BALANCE: 'La retención excede el saldo pendiente de la factura.',
+        };
+        if (businessErrors[error?.message]) {
+            return res.status(400).json({ error: businessErrors[error.message], code: error.message });
+        }
         if (error instanceof PeriodLockedError) return res.status(409).json({ error: error.message });
         console.error('Retención sufrida error:', error);
-        res.status(500).json({ error: error instanceof Error ? error.message : 'Error al registrar la retención.' });
+        res.status(500).json({ error: 'Error al registrar la retención.' });
     }
 });
 
-app.get('/api/accounting/retenciones-sufridas', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/retenciones-sufridas', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const where: any = { tenantId: authReq.tenantId! };
-        const { month, year } = req.query;
-        if (month && year) {
-            const s = new Date(parseInt(year), parseInt(month) - 1, 1);
-            const e = new Date(parseInt(year), parseInt(month), 0, 23, 59, 59);
-            where.fecha = { gte: s, lte: e };
+        const fiscalPeriod = parseFiscalPeriod(req.query.month, req.query.year);
+        if ((req.query.month != null || req.query.year != null) && !fiscalPeriod) {
+            return res.status(400).json({ error: 'Periodo inválido. Usa month=1-12 y year=YYYY.' });
+        }
+        if (fiscalPeriod) {
+            const start = normalizeCalendarDateInput(
+                `${fiscalPeriod.year}-${String(fiscalPeriod.month).padStart(2, '0')}-01`,
+            );
+            const nextMonth = fiscalPeriod.month === 12
+                ? { year: fiscalPeriod.year + 1, month: 1 }
+                : { year: fiscalPeriod.year, month: fiscalPeriod.month + 1 };
+            const endExclusive = normalizeCalendarDateInput(
+                `${nextMonth.year}-${String(nextMonth.month).padStart(2, '0')}-01`,
+            );
+            where.fecha = { gte: start, lt: endExclusive };
         }
         const items = await prisma.retencionSufrida.findMany({ where, orderBy: { fecha: 'desc' }, take: 200 });
         res.json({ retenciones: items.map(r => ({ ...r, baseAmount: Number(r.baseAmount), amount: Number(r.amount) })) });
@@ -11334,7 +12849,7 @@ app.get('/api/accounting/retenciones-sufridas', authenticate, async (req: any, r
 // ── B2 — Activos fijos + depreciación ───────────────────────────────────────
 
 // GET lista (con valor en libros)
-app.get('/api/accounting/fixed-assets', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/fixed-assets', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const assets = await prisma.fixedAsset.findMany({
@@ -11366,8 +12881,10 @@ app.post('/api/accounting/fixed-assets', authenticate, checkRole(['OWNER', 'ADMI
         if (!(cat in VIDA_UTIL_DEFAULT)) return res.status(400).json({ error: 'Categoría inválida.' });
         const costoD = new Decimal(Number(costo) || 0);
         if (costoD.lessThanOrEqualTo(0)) return res.status(400).json({ error: 'El costo debe ser mayor a cero.' });
-        const fecha = fechaAdquisicion ? new Date(fechaAdquisicion) : new Date();
-        if (isNaN(fecha.getTime())) return res.status(400).json({ error: 'Fecha inválida.' });
+        const fecha = fechaAdquisicion
+            ? parseManaguaCivilDateInput(fechaAdquisicion)
+            : managuaBusinessDate();
+        if (!fecha) return res.status(400).json({ error: 'Fecha inválida.' });
         const vida = Number(vidaUtilMeses) > 0 ? Math.floor(Number(vidaUtilMeses)) : VIDA_UTIL_DEFAULT[cat];
 
         // E1: el alta ahora CAPITALIZA el activo (Debe 1.2.1) dentro de una
@@ -11495,7 +13012,7 @@ app.post('/api/accounting/depreciacion/run', authenticate, checkRole(['OWNER', '
 });
 
 // ── B3 — Declaración anual de IR ────────────────────────────────────────────
-app.get('/api/fiscal/renta-anual/:year', authenticate, async (req: any, res: any) => {
+app.get('/api/fiscal/renta-anual/:year', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const year = parseInt(req.params.year);
     if (isNaN(year) || year < 2000 || year > 2100) return res.status(400).json({ error: 'Año inválido.' });
@@ -11514,7 +13031,7 @@ app.get('/api/fiscal/renta-anual/:year', authenticate, async (req: any, res: any
 // ══════════════════════════════════════════════════════════════════════════
 const OBLIGATION_KEYS = ['IVA', 'ANTICIPO_IR', 'IMI', 'INSS', 'INATEC', 'IR_LABORAL'];
 
-app.get('/api/accounting/cierre-mensual/:year/:month', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/cierre-mensual/:year/:month', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const year = parseInt(req.params.year);
@@ -11605,7 +13122,7 @@ app.put('/api/accounting/cierre-mensual/:year/:month/:key', authenticate, checkR
 // ==========================================
 
 // GET /api/accounting/aging — ¿quién me debe y a quién le debo, por antigüedad?
-app.get('/api/accounting/aging', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/aging', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     try {
@@ -11615,15 +13132,10 @@ app.get('/api/accounting/aging', authenticate, async (req: any, res: any) => {
         interface RawItem { id: string; entidadId: string; entidadNombre: string; telefono: string | null; numero: string | null; fecha: Date; vence: Date | null; monto: number; saldo: Decimal; }
 
         const now = new Date();
-        const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const MS_DAY = 86400000;
+        const hoy = managuaBusinessDate(now);
 
         // Días vencidos desde la fecha de referencia (vence ?? fecha de emisión).
-        const diasVencido = (ref: Date) => {
-            const r = new Date(ref);
-            const refMid = new Date(r.getFullYear(), r.getMonth(), r.getDate()).getTime();
-            return Math.floor((hoy.getTime() - refMid) / MS_DAY);
-        };
+        const diasVencido = (ref: Date) => daysSinceManaguaCivilDate(ref, now);
         const bucketDe = (d: number): BucketKey => d <= 0 ? 'corriente' : d <= 30 ? 'b1_30' : d <= 60 ? 'b31_60' : d <= 90 ? 'b61_90' : 'b90';
         const zero = (): Record<BucketKey, Decimal> => ({ corriente: new Decimal(0), b1_30: new Decimal(0), b31_60: new Decimal(0), b61_90: new Decimal(0), b90: new Decimal(0) });
         const numBuckets = (b: Record<BucketKey, Decimal>) => ({
@@ -11665,8 +13177,13 @@ app.get('/api/accounting/aging', authenticate, async (req: any, res: any) => {
         });
         // CxP: compras a crédito pendientes (mismo filtro que /api/purchases/pending).
         const purchases = await prisma.purchase.findMany({
-            where: { tenantId, status: 'PENDING_PAYMENT' },
-            include: { supplier: { select: { name: true } } },
+            where: {
+                tenantId,
+                documentStatus: 'POSTED',
+                status: { in: [...PURCHASE_PAYABLE_STATUSES] },
+                paymentMethod: { not: 'NORTEX_CAPITAL' },
+            },
+            include: { supplier: { select: { name: true, phone: true } } },
             orderBy: { dueDate: 'asc' },
         });
 
@@ -11685,16 +13202,19 @@ app.get('/api/accounting/aging', authenticate, async (req: any, res: any) => {
             id: p.id,
             entidadId: p.supplierId,
             entidadNombre: p.supplier?.name ?? 'Proveedor',
-            telefono: null,
+            telefono: p.supplier?.phone ?? null,
             numero: p.invoiceNumber,
             fecha: p.date,
             vence: p.dueDate,
             monto: new Decimal(p.total.toString()).toDecimalPlaces(2).toNumber(),
-            saldo: new Decimal(p.total.toString()),
+            saldo: resolveEffectiveSupplierBalance(p),
         })));
 
         res.json({ asOf: hoy, cxc, cxp });
     } catch (error) {
+        if (error instanceof SupplierPaymentError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
         console.error('Aging error:', error);
         res.status(500).json({ error: 'Error al generar la antigüedad de saldos.' });
     }
@@ -11708,7 +13228,7 @@ app.get('/api/accounting/aging', authenticate, async (req: any, res: any) => {
 // Método directo, derivado del mayor de las cuentas de efectivo (Caja 1.1.1 + Bancos
 // 1.1.2). Un débito a efectivo es entrada; un crédito, salida. Reconcilia con el
 // balance: saldoInicial + flujoNeto = saldoFinal.
-app.get('/api/accounting/flujo-efectivo/:year/:month', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/flujo-efectivo/:year/:month', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const year = parseInt(req.params.year);
@@ -11979,203 +13499,20 @@ app.get('/api/inventory/reorder', authenticate, checkRole(['OWNER', 'ADMIN']), a
 });
 
 // POST /api/capital/finance-purchase — Financiar compra con Nortex Capital
-app.post('/api/capital/finance-purchase', authenticate, validate(FinancePurchaseSchema), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { supplierId, items } = req.body;
-    // items: [{ productId, productName, quantity, unitCost }]
-
-    if (!supplierId || !items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: 'supplierId e items son requeridos.' });
-    }
-
-    try {
-        // 1. Validar límite de crédito del tenant
-        const tenant = await prisma.tenant.findUnique({ where: { id: authReq.tenantId } });
-        if (!tenant) return res.status(404).json({ error: 'Tenant no encontrado.' });
-
-        // A2 — montos con decimal.js (antes float nativo: se ALMACENAN en
-        // Purchase/CapitalLoan y alimentan el asiento; el float acumula centavos).
-        // El costo del proveedor (unitCost) NO trae IVA → el IVA se SUMA (15%),
-        // igual que en /api/purchases (correcto para compras).
-        const subtotalD = items.reduce(
-            (s: Decimal, i: any) => s.plus(new Decimal(i.quantity).mul(new Decimal(i.unitCost).toDecimalPlaces(2))),
-            new Decimal(0)
-        ).toDecimalPlaces(4);
-        const taxD = subtotalD.mul('0.15').toDecimalPlaces(4);
-        const totalD = subtotalD.plus(taxD).toDecimalPlaces(4);
-        const interestRate = 0.05; // 5% flat
-        const totalDueD = totalD.mul(new Decimal(1).plus(interestRate)).toDecimalPlaces(4);
-        const subtotal = subtotalD.toNumber();
-        const tax = taxD.toNumber();
-        const total = totalD.toNumber();
-        const totalDue = totalDueD.toNumber();
-
-        const creditLimit = Number(tenant.creditLimit);
-        if (total > creditLimit) {
-            return res.status(403).json({
-                error: `Monto C$ ${total.toFixed(2)} excede tu límite de crédito C$ ${creditLimit.toFixed(2)}. Mejora tu Nortex Score vendiendo más.`,
-                creditLimit,
-                requested: total
-            });
-        }
-
-        // 2. Transacción atómica: Purchase + CapitalLoan + JournalEntry
-        const result = await prisma.$transaction(async (tx: any) => {
-
-            // Aislamiento multi-tenant: el proveedor y TODOS los productos deben ser del
-            // tenant del JWT. No confiar en los ids del body (cross-tenant); abortar si no.
-            const supplier = await tx.supplier.findFirst({
-                where: { id: supplierId, tenantId: authReq.tenantId! },
-                select: { id: true },
-            });
-            if (!supplier) throw new Error('SUPPLIER_NOT_FOUND');
-
-            const tenantFiscal = await tx.tenant.findUnique({
-                where: { id: authReq.tenantId! },
-                select: { fiscalRegime: true },
-            });
-            if (!tenantFiscal) throw new Error('TENANT_NOT_FOUND');
-            const fiscalRegimeAtPurchase = normalizeFiscalRegime(tenantFiscal.fiscalRegime);
-            const creditableTaxD = fiscalRegimeAtPurchase === FISCAL_REGIME_CUOTA_FIJA
-                ? new Decimal(0)
-                : taxD;
-            const inventoryValueD = totalD.minus(creditableTaxD).toDecimalPlaces(4);
-
-            const productIds: string[] = [...new Set(items.map((i: any) => i.productId))];
-            const ownedProducts = await tx.product.findMany({
-                where: { id: { in: productIds }, tenantId: authReq.tenantId! },
-            });
-            if (ownedProducts.length !== productIds.length) throw new Error('PRODUCT_NOT_FOUND');
-            const capitalProducts = new Map<string, (typeof ownedProducts)[number]>(
-                ownedProducts.map((product: any) => [product.id, product] as const),
-            );
-            const capitalItems = items.map((item: any) => {
-                const product = capitalProducts.get(item.productId);
-                if (!product) throw new Error('PRODUCT_NOT_FOUND');
-                const exact = contextualProductQuantityDecimal(item.quantity, product);
-                const unitCost = new Decimal(item.unitCost).toDecimalPlaces(2);
-                return {
-                    productId: item.productId,
-                    productName: product.name,
-                    quantity: legacyPurchaseQuantity(exact),
-                    quantityExact: exact.toFixed(),
-                    unitCost: unitCost.toFixed(2),
-                    totalCost: exact.mul(unitCost).toDecimalPlaces(2).toNumber(),
-                };
-            });
-
-            // a) Crear la compra al proveedor con estado PENDING_PAYMENT
-            const purchase = await tx.purchase.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    supplierId,
-                    invoiceNumber: `NXC-${Date.now()}`,
-                    subtotal,
-                    tax,
-                    fiscalRegimeAtPurchase,
-                    creditableTax: creditableTaxD.toNumber(),
-                    total,
-                    status: 'PENDING_PAYMENT',
-                    paymentMethod: 'NORTEX_CAPITAL',
-                    notes: 'Compra financiada por Nortex Capital - Oráculo de Inventario',
-                    createdBy: authReq.userId!,
-                    items: {
-                        create: capitalItems,
-                    }
-                }
-            });
-
-            // b) Crear el préstamo de Nortex Capital
-            const dueDate = new Date();
-            dueDate.setDate(dueDate.getDate() + 30);
-
-            const loan = await tx.capitalLoan.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    amount: total,
-                    interestRate,
-                    totalDue,
-                    dueDate,
-                    status: 'ACTIVE',
-                    linkedPurchaseId: purchase.id
-                }
-            });
-            // Tamper-evidence: firma de los términos de origen del préstamo
-            await signCapitalLoan(tx, loan);
-
-            // c) Asiento contable (Partida Doble)
-            // A2 — antes se debitaba TODO el `total` (con IVA) a Inventario (1.1.4)
-            // y se omitía IVA Crédito Fiscal (1.1.5): el inventario quedaba
-            // sobrevaluado en el 15% y se PERDÍA el crédito fiscal del IVA de la
-            // compra. Ahora se separa igual que `recordPurchase`:
-            //   Debe: Inventario (1.1.4) = total menos IVA acreditable
-            //   Debe: IVA Crédito Fiscal (1.1.5) = IVA acreditable (cero en cuota fija)
-            //   Haber: Préstamos Nortex Capital por Pagar (2.1.8) = total
-            const { createJournalEntry } = await import('./services/accounting');
-            await createJournalEntry(
-                tx,
-                authReq.tenantId!,
-                `Compra financiada por Nortex Capital - ${items.length} productos`,
-                purchase.id,
-                'CAPITAL_LOAN',
-                authReq.userId!,
-                [
-                    { accountCode: '1.1.4', debit: inventoryValueD.toNumber(), credit: 0 },
-                    ...(creditableTaxD.isZero()
-                        ? []
-                        : [{ accountCode: '1.1.5', debit: creditableTaxD.toNumber(), credit: 0 }]),
-                    { accountCode: '2.1.8', debit: 0, credit: total },
-                ]
-            );
-
-            await tx.auditLog.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    userId: authReq.userId!,
-                    action: 'CAPITAL_PURCHASE_FINANCED',
-                    details: JSON.stringify({
-                        purchaseId: purchase.id,
-                        loanId: loan.id,
-                        fiscalRegime: fiscalRegimeAtPurchase,
-                        subtotal: subtotalD.toString(),
-                        invoicedTax: taxD.toString(),
-                        creditableTax: creditableTaxD.toString(),
-                        inventoryValue: inventoryValueD.toString(),
-                        total: totalD.toString(),
-                        totalDue: totalDueD.toString(),
-                    }),
-                },
-            });
-
-            return { purchase, loan };
-        });
-
-        res.json({
-            message: '✅ Compra financiada exitosamente con Nortex Capital',
-            purchaseId: result.purchase.id,
-            loanId: result.loan.id,
-            loanTerms: {
-                amount: total,
-                interest: `${interestRate * 100}%`,
-                totalDue,
-                dueDate: result.loan.dueDate
-            }
-        });
-    } catch (error) {
-        if (productQuantityErrorResponse(res, error)) return;
-        if (error instanceof Error && error.message === 'SUPPLIER_NOT_FOUND') {
-            return res.status(404).json({ error: 'Proveedor no encontrado.' });
-        }
-        if (error instanceof Error && error.message === 'PRODUCT_NOT_FOUND') {
-            return res.status(404).json({ error: 'Uno o más productos no pertenecen a tu negocio.' });
-        }
-        if (error instanceof Error && error.message === 'TENANT_NOT_FOUND') {
-            return res.status(404).json({ error: 'Negocio no encontrado.' });
-        }
-        console.error('Capital Finance Error:', error);
-        res.status(500).json({ error: 'Error procesando el financiamiento' });
-    }
-});
+app.post(
+    '/api/capital/finance-purchase',
+    authenticate,
+    checkRole(['OWNER', 'ADMIN', 'SUPER_ADMIN']),
+    (_req: any, res: any) => {
+    // El flujo heredado creaba deuda y asiento de inventario sin recepción,
+    // lotes, Kardex ni existencias físicas. Se mantiene fail-closed hasta que
+    // Capital financie una OC y pase por el mismo workflow de recepción.
+    return res.status(409).json({
+        error: 'Las compras financiadas requieren una orden de compra y recepción de inventario.',
+        code: 'CAPITAL_PURCHASE_REQUIRES_RECEIPT_WORKFLOW',
+    });
+    },
+);
 
 // ==========================================
 // 📊 SALUD FINANCIERA & AUDITORÍA FORENSE
@@ -12316,16 +13653,20 @@ app.post('/api/accounting/retentions', authenticate, checkRole(['OWNER', 'ADMIN'
 
     try {
         const { generateRetentions } = await import('./services/accounting');
-        const result = await generateRetentions(authReq.tenantId!, month, year);
+        const result = await prisma.$transaction((tx: any) =>
+            generateRetentions(authReq.tenantId!, month, year, tx));
         res.json(result);
     } catch (error) {
         console.error('Generate retentions error:', error);
+        if (error instanceof PeriodLockedError) {
+            return res.status(409).json({ error: error.message, code: 'PERIOD_LOCKED' });
+        }
         res.status(500).json({ error: 'Error al generar retenciones' });
     }
 });
 
 // GET /api/accounting/retentions/:period — Consultar retenciones de un periodo
-app.get('/api/accounting/retentions/:period', authenticate, async (req: any, res: any) => {
+app.get('/api/accounting/retentions/:period', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { period } = req.params; // "2026-03"
 
@@ -12369,6 +13710,9 @@ app.post('/api/accounting/fiscal-close', authenticate, checkRole(['OWNER']), asy
         res.json({ message: `Cierre fiscal ${month}/${year} completado y período BLOQUEADO`, ...result });
     } catch (error) {
         console.error('Fiscal close error:', error);
+        if (error instanceof PeriodLockedError) {
+            return res.status(409).json({ error: error.message, code: 'PERIOD_LOCKED' });
+        }
         res.status(500).json({ error: 'Error al realizar cierre fiscal' });
     }
 });
@@ -13259,7 +14603,10 @@ app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(
     try {
         // 1. Obtener la compra + proveedor
         const purchase = await prisma.purchase.findFirst({
-            where: fiscalPurchaseScope(authReq.tenantId!, purchaseId),
+            where: {
+                ...fiscalPurchaseScope(authReq.tenantId!, purchaseId),
+                documentStatus: 'POSTED',
+            },
             include: { supplier: true },
         });
         if (!purchase) return res.status(404).json({ error: 'Compra no encontrada.' });
@@ -13621,7 +14968,8 @@ app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(FISCAL
             where: {
                 tenantId: authReq.tenantId!,
                 date: { gte: start, lt: end },
-                status: { in: ['COMPLETED', 'PENDING_PAYMENT'] },
+                documentStatus: 'POSTED',
+                status: { in: [...PURCHASE_FISCAL_STATUSES] },
             },
             include: { supplier: true },
             orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
@@ -13721,7 +15069,8 @@ app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(FISCAL_RE
             where: {
                 tenantId: authReq.tenantId!,
                 date: { gte: start, lt: end },
-                status: { in: ['COMPLETED', 'PENDING_PAYMENT'] },
+                documentStatus: 'POSTED',
+                status: { in: [...PURCHASE_FISCAL_STATUSES] },
             },
             include: { supplier: true },
             orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
@@ -13890,4 +15239,5 @@ initObservability();
 app.use(errorTelemetry);
 
 const PORT = process.env.PORT || 3000;
-app.listen(Number(PORT), '0.0.0.0', () => console.log(`🚀 Nortex Banking Core Ready :${PORT}`));
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(Number(PORT), HOST, () => console.log(`🚀 Nortex Banking Core Ready ${HOST}:${PORT}`));

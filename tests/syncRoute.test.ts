@@ -1,11 +1,40 @@
 import { describe, expect, it } from 'vitest';
 import {
     normalizeOfflineSalePayload,
+    offlineTransportIdentityIssue,
     offlineSyncFailureStatus,
     syncBodySchema,
 } from '../backend/routes/syncPayload';
 
 describe('normalizeOfflineSalePayload', () => {
+    it('conserva filas legacy del mismo tenant y manda userId divergente a conciliación', () => {
+        const principal = { tenantId: 'tenant-a', userId: 'user-a' };
+
+        expect(offlineTransportIdentityIssue(
+            { tenantId: 'tenant-a' },
+            principal,
+        )).toBeNull();
+        expect(offlineTransportIdentityIssue(
+            { tenantId: 'tenant-a', userId: 'user-a' },
+            principal,
+        )).toBeNull();
+        expect(offlineTransportIdentityIssue(
+            { tenantId: 'tenant-a', userId: 'user-atacante' },
+            principal,
+        )).toEqual({
+            status: 'reconciliation_required',
+            code: 'RECONCILIATION_REQUIRED',
+            error: expect.stringContaining('otra sesión'),
+        });
+        expect(offlineTransportIdentityIssue(
+            { tenantId: 'tenant-b', userId: 'user-a' },
+            principal,
+        )).toEqual(expect.objectContaining({
+            status: 'failed',
+            code: 'TENANT_MISMATCH',
+        }));
+    });
+
     it('envía divergencias y filas históricas no verificables a conciliación durable', () => {
         expect(offlineSyncFailureStatus('OFFLINE_PAYLOAD_MISMATCH')).toBe('reconciliation_required');
         expect(offlineSyncFailureStatus('RECONCILIATION_REQUIRED')).toBe('reconciliation_required');

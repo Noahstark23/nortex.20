@@ -68,8 +68,7 @@ describe('las ventas anuladas no cuentan en los números', () => {
         // stock por segunda vez y le acreditaría al cliente un dinero ya devuelto.
         const fuente = leer('backend/server.ts');
         const desde = fuente.indexOf(`app.post('/api/returns'`);
-        const aliasPagos = /app\.post\(\s*['"]\/api\/payments['"]/.exec(fuente.slice(desde));
-        const hasta = aliasPagos ? desde + aliasPagos.index : -1;
+        const hasta = fuente.indexOf(`\napp.`, desde + "app.post('/api/returns'".length);
         expect(desde).toBeGreaterThan(-1);
         expect(hasta).toBeGreaterThan(desde);
         const rutaDevoluciones = fuente.slice(desde, hasta);

@@ -6,6 +6,19 @@ farmacias, distribuidoras/misceláneas, prestamistas). Stack: **React + Vite** (
 (InnoDB; migraciones con backticks — NO PostgreSQL), **TypeScript** estricto.
 Maneja **dinero e inventario reales** → la integridad y la seguridad no son negociables.
 
+## Estación local segura
+
+- Runtime canónico: Node `22.23.2` mediante `.mise.toml`; npm y `package-lock.json`.
+- Lee también `AGENTS.md`, que define preservación del worktree y límites operativos
+  comunes a Codex, Gemini, Claude y OpenCode.
+- Compuerta local sin deploy: `nortex check` o `sh scripts/ci-local-safe.sh`.
+- Backend local aislado: `nortex backend`; n8n dev: `nortex n8n-up`. Ambos se
+  publican solo en `127.0.0.1` y se administran desde `~/Developer/Nortex`.
+- `nortex app-up` conserva una integración Docker completa opcional; requiere memoria
+  libre suficiente en Colima y no es el flujo host predeterminado.
+- No iniciar jobs `deploy-*`, webhooks, backup remoto, push, merge o DNS sin una
+  autorización explícita y separada. No asumir nunca que el worktree está limpio.
+
 - Backend: `tsx backend/server.ts` (sin build). Verificar con `npx tsc --noEmit`.
 - Frontend: `npm run build` (Vite + PWA). Producción usa `npm run build:seo`
   (build + prerender por-ruta: 70+ HTML estáticos + sitemap — ver `scripts/prerender.ts`).

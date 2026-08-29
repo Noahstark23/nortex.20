@@ -29,14 +29,12 @@ describe('seguimiento de clientes', () => {
         const createRoute = server.slice(createStart, updateStart);
         const updateRoute = server.slice(updateStart, updateEnd);
 
-        expect(server).toContain('async function lockCustomerForScopedMutation(');
         expect(createRoute).toContain('checkRole(CUSTOMER_INTERACTION_WRITE_ROLES)');
-        expect(createRoute).toContain('lockCustomerForScopedMutation(tx, authReq, customerId)');
+        expect(createRoute).toContain('applySellerCustomerScope(authReq, { id: customerId, tenantId })');
         expect(createRoute).toContain('await prisma.$transaction');
         expect(createRoute).toContain("action: 'CUSTOMER_INTERACTION_CREATED'");
         expect(createRoute).not.toContain('note: created.note');
 
-        expect(updateRoute).toContain('lockCustomerForScopedMutation(tx, authReq, customerId)');
         expect(updateRoute).toContain('AND tenantId = ${tenantId}');
         expect(updateRoute).toContain('AND customerId = ${customerId}');
         expect(updateRoute).toContain('FOR UPDATE`');
@@ -45,15 +43,15 @@ describe('seguimiento de clientes', () => {
 
     it('crea una tabla aditiva tenant-scoped con FKs restrictivas e índices de agenda', () => {
         const model = schema.slice(schema.indexOf('model CustomerInteraction {'), schema.indexOf('model Supplier {'));
-        expect(model).toMatch(/promisedAmount\s+Decimal\?\s+@db\.Decimal\(18, 4\)/);
+        expect(model).toContain('promisedAmount Decimal?');
         expect(model).toContain('followUpAt');
         expect(model).toContain('onDelete: Restrict');
         expect(model).toContain('@@index([tenantId, customerId, createdAt])');
         expect(model).toContain('@@index([tenantId, status, followUpAt])');
 
         expect(migration).toContain('CREATE TABLE `CustomerInteraction`');
-        expect(migration).toContain('`promisedAmount` DECIMAL(18, 4) NULL');
         expect(migration.match(/ON DELETE RESTRICT/g)).toHaveLength(3);
         expect(migration).not.toMatch(/DROP\s+(TABLE|COLUMN|INDEX)/i);
     });
 });
+

@@ -77,6 +77,25 @@ interface WarehouseStockItem {
     stock: number;
 }
 
+interface ManualBatchFormState {
+    batchNumber: string;
+    expiryDate: string;
+    quantity: string;
+    warehouseId: string;
+    clientEventId: string;
+    attempted: boolean;
+}
+
+interface BatchWriteoffFormState {
+    batchId: string;
+    batchNumber: string;
+    quantity: string;
+    reason: string;
+    warehouseId: string;
+    clientEventId: string;
+    attempted: boolean;
+}
+
 /** Nunca adivina una ubicación cuando hay más de una bodega activa. */
 export const soleActiveWarehouseId = (warehouses: WarehouseOption[]): string => {
     const active = warehouses.filter(warehouse => warehouse.isActive);
@@ -86,6 +105,26 @@ export const soleActiveWarehouseId = (warehouses: WarehouseOption[]): string => 
 /** Un producto sin fila explícita en una bodega secundaria tiene stock local 0. */
 export const localStockForProduct = (items: WarehouseStockItem[], productId: string): number =>
     Number(items.find(item => item.productId === productId)?.stock ?? 0);
+
+/** UUID v4 estable durante un retry; solo rota cuando nace un comando nuevo. */
+export const newManualBatchClientEventId = (): string => {
+    if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
+
+const newManualBatchForm = (warehouseId = ''): ManualBatchFormState => ({
+    batchNumber: '',
+    expiryDate: '',
+    quantity: '',
+    warehouseId,
+    clientEventId: newManualBatchClientEventId(),
+    attempted: false,
+});
 
 interface KardexEntry {
     id: string;
@@ -264,8 +303,13 @@ export default function Inventory() {
     const [batchesData, setBatchesData] = useState<ProductBatch[]>([]);
     const [batchesLoading, setBatchesLoading] = useState(false);
     const [showAddBatchForm, setShowAddBatchForm] = useState(false);
-    const [batchForm, setBatchForm] = useState({ batchNumber: '', expiryDate: '', quantity: '' });
+    const [batchForm, setBatchForm] = useState<ManualBatchFormState>(() => newManualBatchForm());
     const [batchSubmitting, setBatchSubmitting] = useState(false);
+    const [batchWarehouses, setBatchWarehouses] = useState<WarehouseOption[]>([]);
+    const [batchWarehousesLoading, setBatchWarehousesLoading] = useState(false);
+    const [batchCommandError, setBatchCommandError] = useState('');
+    const [writeoffForm, setWriteoffForm] = useState<BatchWriteoffFormState | null>(null);
+    const [writeoffSubmitting, setWriteoffSubmitting] = useState(false);
 
     // Bulk edit form (A2: edición masiva de categoría/precio)
     const [bulkEditForm, setBulkEditForm] = useState({
@@ -667,20 +711,58 @@ export default function Inventory() {
         setSelectedProduct(product);
         setShowBatchesModal(true);
         setShowAddBatchForm(false);
-        setBatchForm({ batchNumber: '', expiryDate: '', quantity: '' });
+        setBatchForm(newManualBatchForm());
+        setWriteoffForm(null);
+        setBatchCommandError('');
         setBatchesLoading(true);
+        setBatchWarehousesLoading(true);
 
         try {
-            const res = await fetch(`/api/inventory/batches/${product.id}`, { headers });
-            if (res.ok) {
-                const data = await res.json();
-                setBatchesData(data);
+            const [batchResponse, warehouseResponse] = await Promise.all([
+                fetch(`/api/inventory/batches/${product.id}`, { headers }),
+                fetch('/api/warehouses', { headers }),
+            ]);
+            if (batchResponse.ok) setBatchesData(await batchResponse.json());
+
+            const warehouseData: any = await warehouseResponse.json().catch(() => ({}));
+            if (warehouseResponse.ok) {
+                const available = (Array.isArray(warehouseData.data) ? warehouseData.data : [])
+                    .filter((warehouse: WarehouseOption) => warehouse.isActive);
+                const soleWarehouseId = soleActiveWarehouseId(available);
+                setBatchWarehouses(available);
+                setBatchForm(current => ({ ...current, warehouseId: soleWarehouseId }));
+                if (available.length === 0) {
+                    setBatchCommandError('No hay una bodega activa para registrar movimientos de lote.');
+                }
+            } else {
+                setBatchWarehouses([]);
+                setBatchCommandError(warehouseData.error || 'No se pudieron cargar las bodegas activas.');
             }
         } catch (e) {
             console.error('Error fetching batches:', e);
+            setBatchWarehouses([]);
+            setBatchCommandError('No pudimos cargar lotes y bodegas. Revisá tu conexión.');
         } finally {
             setBatchesLoading(false);
+            setBatchWarehousesLoading(false);
         }
+    };
+
+    const refreshSelectedProductBatches = async () => {
+        if (!selectedProduct) return;
+        const response = await fetch(`/api/inventory/batches/${selectedProduct.id}`, { headers });
+        if (response.ok) setBatchesData(await response.json());
+    };
+
+    const editBatchForm = (patch: Partial<Pick<ManualBatchFormState, 'batchNumber' | 'expiryDate' | 'quantity' | 'warehouseId'>>) => {
+        setBatchForm(current => ({
+            ...current,
+            ...patch,
+            ...(current.attempted
+                ? { clientEventId: newManualBatchClientEventId(), attempted: false }
+                : {}),
+        }));
+        setBatchCommandError('');
     };
 
     // A4: alta de lote → suma stock + Kardex (backend). Refresca lotes y la lista.
@@ -688,62 +770,136 @@ export default function Inventory() {
         e.preventDefault();
         if (!selectedProduct) return;
 
-        const qty = Number(batchForm.quantity);
-        if (!batchForm.batchNumber.trim() || !batchForm.expiryDate || !Number.isFinite(qty) || qty <= 0) {
-            alert('Completa número de lote, fecha de vencimiento y una cantidad mayor que cero.');
+        let quantityIsValid = false;
+        try {
+            const parsed = validateQuantity(batchForm.quantity, {
+                saleMode: selectedProduct.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED',
+                quantityStep: selectedProduct.quantityStep?.toString()
+                    || (selectedProduct.saleMode === 'COUNTED' ? '1' : '0.0001'),
+            });
+            quantityIsValid = parsed.greaterThan(0);
+        } catch {
+            quantityIsValid = false;
+        }
+        if (!batchForm.batchNumber.trim() || !batchForm.expiryDate || !batchForm.warehouseId || !quantityIsValid) {
+            setBatchCommandError('Completá lote, vencimiento, bodega y una cantidad válida mayor que cero.');
             return;
         }
 
         setBatchSubmitting(true);
+        setBatchForm(current => ({ ...current, attempted: true }));
+        setBatchCommandError('');
         try {
             const res = await fetch('/api/inventory/batches', {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({
+                    clientEventId: batchForm.clientEventId,
                     productId: selectedProduct.id,
+                    warehouseId: batchForm.warehouseId,
                     batchNumber: batchForm.batchNumber.trim(),
                     expiryDate: batchForm.expiryDate,
-                    quantity: qty
+                    quantity: batchForm.quantity.trim(),
                 })
             });
-            const data = await res.json();
+            const data = await res.json().catch(() => ({}));
             if (res.ok) {
-                setBatchForm({ batchNumber: '', expiryDate: '', quantity: '' });
+                setBatchForm(newManualBatchForm(batchForm.warehouseId));
                 setShowAddBatchForm(false);
-                // Refrescar lotes del producto
-                const r = await fetch(`/api/inventory/batches/${selectedProduct.id}`, { headers });
-                if (r.ok) setBatchesData(await r.json());
+                await refreshSelectedProductBatches();
                 // El stock del producto cambió → actualizar encabezado del modal y la lista
                 setSelectedProduct(prev => prev ? { ...prev, stock: data.newStock, requiresBatchTracking: true } : prev);
                 reload();
+                showToast({
+                    tone: 'success',
+                    title: 'Lote registrado',
+                    message: `${batchForm.batchNumber.trim()} quedó asociado a la bodega seleccionada.`,
+                });
             } else {
-                alert(`Error: ${data.error}`);
+                setBatchCommandError(data.error || 'No pudimos registrar el lote.');
             }
         } catch (e) {
-            alert('Error agregando lote');
+            setBatchCommandError('No pudimos registrar el lote. Reintentá: el identificador se conserva.');
         } finally {
             setBatchSubmitting(false);
         }
     };
 
-    // B3: dar de baja un lote (merma) → resta stock + Kardex + asiento de merma.
-    const handleWriteoffBatch = async (batchId: string, batchNumber: string) => {
+    const openWriteoffBatch = (batch: ProductBatch) => {
+        setWriteoffForm({
+            batchId: batch.id,
+            batchNumber: batch.batchNumber,
+            quantity: '',
+            reason: '',
+            warehouseId: soleActiveWarehouseId(batchWarehouses),
+            clientEventId: newManualBatchClientEventId(),
+            attempted: false,
+        });
+        setShowAddBatchForm(false);
+        setBatchCommandError('');
+    };
+
+    const editWriteoffForm = (patch: Partial<Pick<BatchWriteoffFormState, 'quantity' | 'reason' | 'warehouseId'>>) => {
+        setWriteoffForm(current => current ? ({
+            ...current,
+            ...patch,
+            ...(current.attempted
+                ? { clientEventId: newManualBatchClientEventId(), attempted: false }
+                : {}),
+        }) : current);
+        setBatchCommandError('');
+    };
+
+    // B3: baja parcial o total explícita por lote+bodega; nunca adivina ubicación.
+    const handleWriteoffBatch = async (event: React.FormEvent) => {
+        event.preventDefault();
         if (!selectedProduct) return;
-        if (!confirm(`¿Dar de baja el lote ${batchNumber}? Se restará su stock y se registrará como merma (no se puede deshacer).`)) return;
+        if (!writeoffForm) return;
+
+        let quantityIsValid = false;
         try {
-            const res = await fetch(`/api/inventory/batches/${batchId}/writeoff`, { method: 'POST', headers, body: JSON.stringify({}) });
-            const data = await res.json();
+            const parsed = validateQuantity(writeoffForm.quantity, {
+                saleMode: selectedProduct.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED',
+                quantityStep: selectedProduct.quantityStep?.toString()
+                    || (selectedProduct.saleMode === 'COUNTED' ? '1' : '0.0001'),
+            });
+            quantityIsValid = parsed.greaterThan(0);
+        } catch {
+            quantityIsValid = false;
+        }
+        if (!writeoffForm.warehouseId || !quantityIsValid || writeoffForm.reason.trim().length < 3) {
+            setBatchCommandError('Elegí bodega, cantidad local y una justificación de al menos 3 caracteres.');
+            return;
+        }
+
+        setWriteoffSubmitting(true);
+        setWriteoffForm(current => current ? { ...current, attempted: true } : current);
+        setBatchCommandError('');
+        try {
+            const res = await fetch(`/api/inventory/batches/${writeoffForm.batchId}/writeoff`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    clientEventId: writeoffForm.clientEventId,
+                    warehouseId: writeoffForm.warehouseId,
+                    quantity: writeoffForm.quantity.trim(),
+                    reason: writeoffForm.reason.trim(),
+                }),
+            });
+            const data = await res.json().catch(() => ({}));
             if (res.ok) {
-                const r = await fetch(`/api/inventory/batches/${selectedProduct.id}`, { headers });
-                if (r.ok) setBatchesData(await r.json());
+                await refreshSelectedProductBatches();
                 setSelectedProduct(prev => prev ? { ...prev, stock: data.newStock } : prev);
+                setWriteoffForm(null);
                 reload();
-                alert(data.message);
+                showToast({ tone: 'success', title: 'Merma registrada', message: data.message });
             } else {
-                alert(`Error: ${data.error}`);
+                setBatchCommandError(data.error || 'No pudimos registrar la baja del lote.');
             }
         } catch (e) {
-            alert('Error dando de baja el lote');
+            setBatchCommandError('No pudimos registrar la baja. Reintentá: el identificador se conserva.');
+        } finally {
+            setWriteoffSubmitting(false);
         }
     };
 
@@ -2935,8 +3091,8 @@ export default function Inventory() {
                 MODAL: BATCHES (LOTES)
                ========================================== */}
             {showBatchesModal && selectedProduct && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowBatchesModal(false)}>
-                    <div className="bg-slate-800 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden shadow-2xl border border-slate-700 flex flex-col" onClick={(e) => e.stopPropagation()}>
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => !batchSubmitting && !writeoffSubmitting && setShowBatchesModal(false)}>
+                    <div role="dialog" aria-modal="true" aria-label={`Lotes de ${selectedProduct.name}`} className="bg-slate-800 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden shadow-2xl border border-slate-700 flex flex-col" onClick={(e) => e.stopPropagation()}>
                         <div className="bg-gradient-to-r from-orange-900/50 to-amber-900/30 px-6 py-4 flex items-center justify-between border-b border-slate-700">
                             <div>
                                 <div className="flex items-center gap-2">
@@ -2951,13 +3107,25 @@ export default function Inventory() {
                             <div className="flex items-center gap-2">
                                 {isOwner && (
                                     <button
-                                        onClick={() => setShowAddBatchForm(v => !v)}
+                                        onClick={() => {
+                                            setWriteoffForm(null);
+                                            setBatchCommandError('');
+                                            setShowAddBatchForm(current => {
+                                                if (!current) setBatchForm(newManualBatchForm(soleActiveWarehouseId(batchWarehouses)));
+                                                return !current;
+                                            });
+                                        }}
+                                        disabled={batchWarehousesLoading || batchWarehouses.length === 0}
                                         className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
                                     >
                                         <Plus size={16} /> Agregar lote
                                     </button>
                                 )}
-                                <button onClick={() => setShowBatchesModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
+                                <button
+                                    onClick={() => setShowBatchesModal(false)}
+                                    disabled={batchSubmitting || writeoffSubmitting}
+                                    className="p-2 hover:bg-slate-700 disabled:opacity-40 rounded-lg text-slate-400 hover:text-white transition-colors"
+                                >
                                     <X size={24} />
                                 </button>
                             </div>
@@ -2965,13 +3133,13 @@ export default function Inventory() {
 
                         {/* A4: Formulario de alta de lote */}
                         {isOwner && showAddBatchForm && (
-                            <form onSubmit={handleAddBatch} className="px-6 py-4 border-b border-slate-700 bg-slate-900/40 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                            <form aria-label="Alta manual de lote" onSubmit={handleAddBatch} className="px-6 py-4 border-b border-slate-700 bg-slate-900/40 grid grid-cols-1 sm:grid-cols-6 gap-3 items-end">
                                 <div className="sm:col-span-1">
                                     <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Nº Lote</label>
                                     <input
                                         type="text"
                                         value={batchForm.batchNumber}
-                                        onChange={(e) => setBatchForm({ ...batchForm, batchNumber: e.target.value })}
+                                        onChange={(e) => editBatchForm({ batchNumber: e.target.value })}
                                         placeholder="L-2026-001"
                                         className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-orange-500"
                                     />
@@ -2981,7 +3149,7 @@ export default function Inventory() {
                                     <input
                                         type="date"
                                         value={batchForm.expiryDate}
-                                        onChange={(e) => setBatchForm({ ...batchForm, expiryDate: e.target.value })}
+                                        onChange={(e) => editBatchForm({ expiryDate: e.target.value })}
                                         className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
                                     />
                                 </div>
@@ -2993,22 +3161,101 @@ export default function Inventory() {
                                         min={selectedProduct.quantityStep?.toString() || (selectedProduct.saleMode === 'COUNTED' ? '1' : '0.0001')}
                                         step={selectedProduct.quantityStep?.toString() || (selectedProduct.saleMode === 'COUNTED' ? '1' : '0.0001')}
                                         value={batchForm.quantity}
-                                        onChange={(e) => setBatchForm({ ...batchForm, quantity: e.target.value })}
+                                        onChange={(e) => editBatchForm({ quantity: e.target.value })}
                                         placeholder="0"
                                         className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
                                     />
                                 </div>
+                                <div className="sm:col-span-2">
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Bodega</label>
+                                    <select
+                                        aria-label="Bodega para el alta del lote"
+                                        value={batchForm.warehouseId}
+                                        onChange={(event) => editBatchForm({ warehouseId: event.target.value })}
+                                        disabled={batchWarehousesLoading}
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                                    >
+                                        <option value="">Seleccioná una bodega</option>
+                                        {batchWarehouses.map(warehouse => (
+                                            <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
                                 <button
                                     type="submit"
-                                    disabled={batchSubmitting}
+                                    disabled={batchSubmitting || batchWarehousesLoading || !batchForm.warehouseId}
                                     className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
                                 >
                                     {batchSubmitting ? 'Guardando...' : (<><Plus size={16} /> Sumar al stock</>)}
                                 </button>
-                                <p className="sm:col-span-4 text-[11px] text-orange-300/70 flex items-center gap-1.5">
-                                    <AlertTriangle size={13} /> Agregar un lote suma al stock del producto y queda registrado en el Kardex. Si el nº de lote ya existe, se acumula.
+                                <p className="sm:col-span-6 text-[11px] text-orange-300/70 flex items-center gap-1.5">
+                                    <AlertTriangle size={13} /> La entrada queda ligada al lote y a la bodega. Un reintento conserva el mismo identificador y no duplica stock.
                                 </p>
                             </form>
+                        )}
+
+                        {isOwner && writeoffForm && (
+                            <form aria-label={`Dar de baja lote ${writeoffForm.batchNumber}`} onSubmit={handleWriteoffBatch} className="px-6 py-4 border-b border-red-900/50 bg-red-950/20 grid grid-cols-1 sm:grid-cols-6 gap-3 items-end">
+                                <div className="sm:col-span-6 flex items-center justify-between gap-3">
+                                    <div>
+                                        <p className="text-sm font-semibold text-red-200">Merma del lote {writeoffForm.batchNumber}</p>
+                                        <p className="text-xs text-slate-400">Indicá la cantidad que existe físicamente en una bodega. No se reparte ni se adivina ubicación.</p>
+                                    </div>
+                                    <button type="button" onClick={() => setWriteoffForm(null)} disabled={writeoffSubmitting} className="text-slate-400 hover:text-white"><X size={18} /></button>
+                                </div>
+                                <div className="sm:col-span-2">
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Bodega</label>
+                                    <select
+                                        aria-label="Bodega de la merma"
+                                        value={writeoffForm.warehouseId}
+                                        onChange={(event) => editWriteoffForm({ warehouseId: event.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                                    >
+                                        <option value="">Seleccioná una bodega</option>
+                                        {batchWarehouses.map(warehouse => (
+                                            <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="sm:col-span-1">
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Cantidad ({selectedProduct.unit})</label>
+                                    <input
+                                        aria-label="Cantidad a dar de baja"
+                                        type="number"
+                                        inputMode={selectedProduct.saleMode === 'COUNTED' ? 'numeric' : 'decimal'}
+                                        min={selectedProduct.quantityStep?.toString() || (selectedProduct.saleMode === 'COUNTED' ? '1' : '0.0001')}
+                                        step={selectedProduct.quantityStep?.toString() || (selectedProduct.saleMode === 'COUNTED' ? '1' : '0.0001')}
+                                        value={writeoffForm.quantity}
+                                        onChange={(event) => editWriteoffForm({ quantity: event.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                                    />
+                                </div>
+                                <div className="sm:col-span-2">
+                                    <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Justificación</label>
+                                    <input
+                                        aria-label="Justificación de la merma"
+                                        type="text"
+                                        maxLength={500}
+                                        value={writeoffForm.reason}
+                                        onChange={(event) => editWriteoffForm({ reason: event.target.value })}
+                                        placeholder="Ej. vencimiento o daño"
+                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                                    />
+                                </div>
+                                <button
+                                    type="submit"
+                                    disabled={writeoffSubmitting || !writeoffForm.warehouseId}
+                                    className="bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+                                >
+                                    {writeoffSubmitting ? 'Registrando...' : 'Confirmar merma'}
+                                </button>
+                            </form>
+                        )}
+
+                        {batchCommandError && (
+                            <div role="alert" className="px-6 py-3 border-b border-red-900/50 bg-red-950/30 text-sm text-red-200">
+                                {batchCommandError}
+                            </div>
                         )}
 
                         <div className="flex-1 overflow-y-auto overflow-x-auto p-0">
@@ -3058,7 +3305,7 @@ export default function Inventory() {
                                                     {isOwner && (
                                                         <td className="px-6 py-4 text-right">
                                                             <button
-                                                                onClick={() => handleWriteoffBatch(batch.id, batch.batchNumber)}
+                                                                onClick={() => openWriteoffBatch(batch)}
                                                                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${isExpired ? 'bg-red-600/20 border-red-600/50 text-red-300 hover:bg-red-600/40' : 'border-slate-600 text-slate-400 hover:bg-slate-700'}`}
                                                                 title="Dar de baja este lote (merma)"
                                                             >

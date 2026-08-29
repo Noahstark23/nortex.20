@@ -4,7 +4,7 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
-import Clients from '../components/Clients';
+import Clients, { managuaDateTimeLocalToIso } from '../components/Clients';
 import { authFetch } from '../utils/auth';
 
 vi.mock('../utils/auth', () => ({
@@ -102,6 +102,42 @@ const hubDetail = {
     interactions: [],
     timeline: [],
 };
+
+function arrangeOwnerHub() {
+    localStorage.setItem('nortex_user', JSON.stringify({ role: 'OWNER' }));
+    mockedAuthFetch.mockImplementation(async (url: string) => {
+        if (url === '/api/customers/hub?segment=all&limit=80') return jsonResponse(hubList);
+        if (url === '/api/customers/customer-1/hub') return jsonResponse(hubDetail);
+        if (url === '/api/team') return jsonResponse([]);
+        throw new Error(`URL no esperada: ${url}`);
+    });
+}
+
+describe('hora civil de Managua para gestiones CRM', () => {
+    it.each(['UTC', 'Asia/Tokyo', 'America/Los_Angeles'])(
+        'conserva la hora de Managua y el cruce de medianoche con host %s',
+        (hostTimeZone) => {
+            const originalHostTimeZone = process.env.TZ;
+            process.env.TZ = hostTimeZone;
+            try {
+                expect(managuaDateTimeLocalToIso('2026-08-29T23:45')).toBe('2026-08-30T05:45:00.000Z');
+            } finally {
+                if (originalHostTimeZone === undefined) delete process.env.TZ;
+                else process.env.TZ = originalHostTimeZone;
+            }
+        },
+    );
+
+    it('rechaza fechas civiles inválidas y huecos históricos de zona horaria', () => {
+        expect(managuaDateTimeLocalToIso('')).toBeNull();
+        expect(managuaDateTimeLocalToIso('2026-02-29T10:00')).toBeNull();
+        expect(managuaDateTimeLocalToIso('2006-04-30T02:30')).toBeNull();
+    });
+
+    it('resuelve una hora histórica repetida de forma determinista', () => {
+        expect(managuaDateTimeLocalToIso('2006-10-01T00:30')).toBe('2006-10-01T05:30:00.000Z');
+    });
+});
 
 describe('módulo de clientes hub', () => {
     beforeEach(() => {
@@ -447,7 +483,7 @@ describe('módulo de clientes hub', () => {
         fireEvent.change(screen.getByLabelText('RESULTADO / NOTA'), { target: { value: 'Pagará una parte.' } });
         fireEvent.change(screen.getByLabelText('MONTO PROMETIDO'), { target: { value: '750.25' } });
         fireEvent.change(screen.getByLabelText('FECHA PROMETIDA'), { target: { value: '2026-08-29T10:00' } });
-        fireEvent.change(screen.getByLabelText('PRÓXIMO SEGUIMIENTO'), { target: { value: '2026-08-28T15:00' } });
+        fireEvent.change(screen.getByLabelText('PRÓXIMO SEGUIMIENTO'), { target: { value: '2026-08-28T23:45' } });
         fireEvent.click(screen.getByRole('button', { name: /Guardar gestión/i }));
 
         await waitFor(() => {
@@ -458,8 +494,142 @@ describe('módulo de clientes hub', () => {
             const body = JSON.parse(String(call?.[1]?.body));
             expect(body.type).toBe('PROMISE');
             expect(body.promisedAmount).toBe('750.25');
-            expect(new Date(body.promisedAt).toISOString()).toBe(body.promisedAt);
-            expect(new Date(body.followUpAt).toISOString()).toBe(body.followUpAt);
+            expect(body.promisedAt).toBe('2026-08-29T16:00:00.000Z');
+            expect(body.followUpAt).toBe('2026-08-29T05:45:00.000Z');
         });
+    });
+
+    it('mantiene el modal abierto y explica una hora de seguimiento inexistente', async () => {
+        localStorage.setItem('nortex_user', JSON.stringify({ role: 'OWNER' }));
+        mockedAuthFetch.mockImplementation(async (url: string) => {
+            if (url === '/api/customers/hub?segment=all&limit=80') return jsonResponse(hubList);
+            if (url === '/api/customers/customer-1/hub') return jsonResponse(hubDetail);
+            if (url === '/api/team') return jsonResponse([]);
+            throw new Error(`URL no esperada: ${url}`);
+        });
+
+        render(
+            <MemoryRouter>
+                <Clients />
+            </MemoryRouter>,
+        );
+
+        fireEvent.click(await screen.findByRole('button', { name: /Registrar gestión/i }));
+        fireEvent.change(screen.getByLabelText('RESULTADO / NOTA'), { target: { value: 'Programar llamada.' } });
+        fireEvent.change(screen.getByLabelText('PRÓXIMO SEGUIMIENTO'), { target: { value: '2006-04-30T02:30' } });
+        fireEvent.click(screen.getByRole('button', { name: /Guardar gestión/i }));
+
+        expect(await screen.findByText('El próximo seguimiento no representa una hora válida en Nicaragua.')).toBeTruthy();
+        expect(screen.getByRole('dialog', { name: /Registrar gestión/i })).toBeTruthy();
+        expect(mockedAuthFetch.mock.calls.some(([url, init]) => (
+            url === '/api/customers/customer-1/interactions' && init?.method === 'POST'
+        ))).toBe(false);
+    });
+
+    it('mantiene el foco dentro de la ficha, cierra con Escape y devuelve foco al disparador', async () => {
+        arrangeOwnerHub();
+        render(
+            <MemoryRouter>
+                <Clients />
+            </MemoryRouter>,
+        );
+
+        const trigger = await screen.findByRole('button', { name: /Nuevo/i });
+        trigger.focus();
+        fireEvent.click(trigger);
+
+        const dialog = await screen.findByRole('dialog', { name: /Nuevo cliente/i });
+        const initial = screen.getByLabelText('NOMBRE / RAZÓN SOCIAL');
+        const first = screen.getByRole('button', { name: /Cerrar ficha de cliente/i });
+        const last = screen.getByRole('button', { name: /Guardar ficha/i });
+        await waitFor(() => expect(document.activeElement).toBe(initial));
+
+        last.focus();
+        fireEvent.keyDown(document, { key: 'Tab' });
+        expect(document.activeElement).toBe(first);
+        first.focus();
+        fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+        expect(document.activeElement).toBe(last);
+
+        fireEvent.mouseDown(dialog);
+        expect(screen.getByRole('dialog', { name: /Nuevo cliente/i })).toBeTruthy();
+        fireEvent.keyDown(document, { key: 'Escape' });
+        await waitFor(() => expect(screen.queryByRole('dialog', { name: /Nuevo cliente/i })).toBeNull());
+        expect(document.activeElement).toBe(trigger);
+
+        fireEvent.click(trigger);
+        const reopened = await screen.findByRole('dialog', { name: /Nuevo cliente/i });
+        fireEvent.mouseDown(reopened.parentElement as HTMLElement);
+        await waitFor(() => expect(screen.queryByRole('dialog', { name: /Nuevo cliente/i })).toBeNull());
+        expect(document.activeElement).toBe(trigger);
+    });
+
+    it('hace accesible por teclado el diálogo de registro de gestión', async () => {
+        arrangeOwnerHub();
+        render(
+            <MemoryRouter>
+                <Clients />
+            </MemoryRouter>,
+        );
+
+        const trigger = await screen.findByRole('button', { name: /Registrar gestión/i });
+        trigger.focus();
+        fireEvent.click(trigger);
+
+        const dialog = await screen.findByRole('dialog', { name: /Registrar gestión/i });
+        const initial = screen.getByLabelText('TIPO DE GESTIÓN');
+        const first = screen.getByRole('button', { name: /Cerrar registro de gestión/i });
+        const last = screen.getByRole('button', { name: /Guardar gestión/i });
+        await waitFor(() => expect(document.activeElement).toBe(initial));
+
+        last.focus();
+        fireEvent.keyDown(document, { key: 'Tab' });
+        expect(document.activeElement).toBe(first);
+        first.focus();
+        fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+        expect(document.activeElement).toBe(last);
+
+        fireEvent.mouseDown(dialog);
+        expect(screen.getByRole('dialog', { name: /Registrar gestión/i })).toBeTruthy();
+        fireEvent.keyDown(document, { key: 'Escape' });
+        await waitFor(() => expect(screen.queryByRole('dialog', { name: /Registrar gestión/i })).toBeNull());
+        expect(document.activeElement).toBe(trigger);
+    });
+
+    it('protege la confirmación de bloqueo con alertdialog, foco conservador y retorno al disparador', async () => {
+        arrangeOwnerHub();
+        render(
+            <MemoryRouter>
+                <Clients />
+            </MemoryRouter>,
+        );
+
+        const trigger = await screen.findByRole('button', { name: /^Bloquear crédito$/i });
+        trigger.focus();
+        fireEvent.click(trigger);
+
+        const dialog = await screen.findByRole('alertdialog', { name: /Bloquear crédito/i });
+        const cancel = screen.getByRole('button', { name: /Cancelar/i });
+        const confirm = screen.getByRole('button', { name: /Confirmar bloqueo/i });
+        await waitFor(() => expect(document.activeElement).toBe(cancel));
+
+        cancel.focus();
+        fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+        expect(document.activeElement).toBe(confirm);
+        confirm.focus();
+        fireEvent.keyDown(document, { key: 'Tab' });
+        expect(document.activeElement).toBe(cancel);
+
+        fireEvent.mouseDown(dialog);
+        expect(screen.getByRole('alertdialog', { name: /Bloquear crédito/i })).toBeTruthy();
+        fireEvent.keyDown(document, { key: 'Escape' });
+        await waitFor(() => expect(screen.queryByRole('alertdialog', { name: /Bloquear crédito/i })).toBeNull());
+        expect(document.activeElement).toBe(trigger);
+
+        fireEvent.click(trigger);
+        const reopened = await screen.findByRole('alertdialog', { name: /Bloquear crédito/i });
+        fireEvent.mouseDown(reopened.parentElement as HTMLElement);
+        await waitFor(() => expect(screen.queryByRole('alertdialog', { name: /Bloquear crédito/i })).toBeNull());
+        expect(document.activeElement).toBe(trigger);
     });
 });

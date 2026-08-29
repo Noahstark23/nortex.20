@@ -15,7 +15,7 @@ export const POS_SALE_ROLES = [
     'VENDEDOR',
 ];
 
-/** Lookup básico de clientes en POS; EMPLOYEE lo necesita para facturar. */
+/** Clientes/CxC: lectura operativa desde CRM/POS y conciliación contable. */
 export const CUSTOMER_READ_ROLES = [
     'OWNER',
     'ADMIN',
@@ -25,17 +25,7 @@ export const CUSTOMER_READ_ROLES = [
     'VIEWER',
     'EMPLOYEE',
     'VENDEDOR',
-];
-
-/** Hub, cartera y cobranza: refleja los roles con `customers:read`. */
-export const CUSTOMER_HUB_READ_ROLES = [
-    'OWNER',
-    'ADMIN',
-    'SUPER_ADMIN',
-    'MANAGER',
-    'CASHIER',
-    'VIEWER',
-    'VENDEDOR',
+    'ACCOUNTANT',
 ];
 
 /** Alta de clientes desde POS/CRM; VIEWER nunca muta. */
@@ -70,15 +60,6 @@ export const CUSTOMER_CONTROL_ROLES = [
     'OWNER',
     'ADMIN',
     'SUPER_ADMIN',
-];
-
-/** Entrada al PUT; la autorización fina por grupo se aplica después. */
-export const CUSTOMER_UPDATE_ROLES = [
-    'OWNER',
-    'ADMIN',
-    'SUPER_ADMIN',
-    'MANAGER',
-    'VENDEDOR',
 ];
 
 export type CustomerCreateIntent = {
@@ -152,6 +133,104 @@ export const CUSTOMER_PAYMENT_ROLES = [
     'VENDEDOR',
 ];
 
+/** Catálogo de proveedores: lectura operativa y consulta contable, sin POS básico. */
+export const SUPPLIER_READ_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'VIEWER',
+    'ACCOUNTANT',
+];
+
+/** Identidad, condiciones y contactos del proveedor son controles administrativos. */
+export const SUPPLIER_WRITE_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+];
+
+/** Historial de compras: operativo para gerencia y de solo lectura para contador/viewer. */
+export const PURCHASE_READ_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'VIEWER',
+    'ACCOUNTANT',
+];
+
+/** Crear una compra mueve inventario y dinero; no es una operación de solo lectura. */
+export const PURCHASE_WRITE_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+];
+
+/** La OC agrega al bodeguero para recepción, sin abrir datos a roles de POS/ruta. */
+export const PURCHASE_ORDER_READ_ROLES = [
+    ...PURCHASE_READ_ROLES,
+    'BODEGUERO',
+];
+
+export const PURCHASE_ORDER_RECEIVE_ROLES = [
+    ...PURCHASE_WRITE_ROLES,
+    'BODEGUERO',
+];
+
+/**
+ * La devolucion fisica comparte el deber de custodia de una recepcion: gestion
+ * y bodega pueden retirar existencias, mientras que sus lecturas permanecen en
+ * el expediente de proveedor y no abren el catalogo completo al BODEGUERO.
+ */
+export const SUPPLIER_RETURN_READ_ROLES = [
+    ...SUPPLIER_READ_ROLES,
+    'BODEGUERO',
+];
+export const SUPPLIER_RETURN_WRITE_ROLES = PURCHASE_ORDER_RECEIVE_ROLES;
+
+/**
+ * Una nota de credito altera CxP, IVA acreditable y el mayor. VIEWER/MANAGER
+ * pueden observarla mediante Proveedor 360, pero solo administracion y
+ * contabilidad pueden postearla.
+ */
+export const SUPPLIER_CREDIT_NOTE_READ_ROLES = SUPPLIER_READ_ROLES;
+export const SUPPLIER_CREDIT_NOTE_WRITE_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'ACCOUNTANT',
+];
+
+/** CxP revela deuda y permite mover Caja/Bancos; VIEWER queda fuera. */
+export const PURCHASE_PAYMENT_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'ACCOUNTANT',
+];
+
+/** Matching expone compras/CxP; resolver libera pagos y exige rol financiero. */
+export const PROCUREMENT_MATCH_READ_ROLES = PURCHASE_READ_ROLES;
+export const PROCUREMENT_MATCH_RESOLVE_ROLES = PURCHASE_PAYMENT_ROLES;
+
+/**
+ * Lectura de estados financieros, libros, cierres y reportes de antiguedad.
+ *
+ * Son datos sensibles de todo el negocio (incluyen saldos, deuda y obligaciones),
+ * por lo que no heredan la lectura operativa de POS/CRM. SUPER_ADMIN se declara
+ * de forma explicita aunque `checkRole` tambien lo verifica con su bypass
+ * persistido, para que la politica siga siendo legible y testeable por si sola.
+ */
+export const ACCOUNTING_READ_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'ACCOUNTANT',
+];
+
 /** Lectura operativa de pedidos; VIEWER puede observar, nunca mutar. */
 export const PEDIDO_READ_ROLES = [
     'OWNER',
@@ -198,8 +277,4 @@ export const QUOTATION_WRITE_ROLES = [
 ];
 
 /** Reportes y exportaciones fiscales que el contador prepara para DGI. */
-export const FISCAL_DGI_ROLES = [
-    'OWNER',
-    'ADMIN',
-    'ACCOUNTANT',
-];
+export const FISCAL_DGI_ROLES = ACCOUNTING_READ_ROLES;

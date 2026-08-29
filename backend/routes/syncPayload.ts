@@ -77,6 +77,42 @@ export const syncBodySchema = z.object({
 type OfflineItem = z.infer<typeof offlineItemSchema>;
 type OfflineSale = z.infer<typeof offlineSaleSchema>;
 
+export type OfflineTransportIdentityIssue = {
+    status: 'failed' | 'reconciliation_required';
+    code: 'TENANT_MISMATCH' | 'RECONCILIATION_REQUIRED';
+    error: string;
+};
+
+/**
+ * La identidad guardada en IndexedDB es evidencia de qué sesión originó la
+ * fila, no autoridad para ejecutar la venta. El tenant siempre sale del JWT y
+ * un userId divergente se conserva para conciliación en vez de reatribuirlo al
+ * usuario que casualmente inició la sincronización.
+ *
+ * `userId` ausente sigue siendo compatible con filas legacy: la pertenencia
+ * fuerte se vuelve a comprobar con Shift.userId dentro de salesService.
+ */
+export const offlineTransportIdentityIssue = (
+    sale: Pick<OfflineSale, 'tenantId' | 'userId'>,
+    principal: { tenantId: string; userId: string },
+): OfflineTransportIdentityIssue | null => {
+    if (sale.tenantId !== principal.tenantId) {
+        return {
+            status: 'failed',
+            code: 'TENANT_MISMATCH',
+            error: 'tenant mismatch',
+        };
+    }
+    if (sale.userId !== undefined && sale.userId !== principal.userId) {
+        return {
+            status: 'reconciliation_required',
+            code: 'RECONCILIATION_REQUIRED',
+            error: 'La venta offline pertenece a otra sesión y requiere conciliación',
+        };
+    }
+    return null;
+};
+
 export const offlineSyncFailureStatus = (
     code: string | undefined,
 ): 'failed' | 'reconciliation_required' => (

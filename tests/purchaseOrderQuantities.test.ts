@@ -60,6 +60,15 @@ describe('cantidades exactas en órdenes de compra', () => {
         expect(line.quantityStepAtOrder).toBe('0.25');
     });
 
+    it('acepta costos exactos de hasta 6 decimales para productos por peso', () => {
+        const [line] = normalizePurchaseOrderLines(
+            [{ productId: measured.id, quantity: '1.25', unitCost: '41.203456' }],
+            [measured],
+        );
+
+        expect(line.unitCost.toFixed(6)).toBe('41.203456');
+    });
+
     it('rechaza 1.5 para un producto COUNTED aunque el cliente diga MEASURED', () => {
         expectCode(
             () => normalizePurchaseOrderLines(
@@ -116,8 +125,8 @@ describe('cantidades exactas en órdenes de compra', () => {
         },
     );
 
-    it.each(['10.001', '-1', 'Infinity', '100000000'])(
-        'rechaza costos que no caben exactamente en Decimal(10,2): %s',
+    it.each(['10.0000001', '-1', 'Infinity', '100000000'])(
+        'rechaza costos que no caben exactamente en Decimal(18,6): %s',
         unitCost => {
             expectCode(
                 () => normalizePurchaseOrderLines(

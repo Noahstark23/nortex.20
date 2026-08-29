@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 const applyStockDeltaMock = vi.hoisted(() => vi.fn());
 const recordSaleMock = vi.hoisted(() => vi.fn());
+const resolveBatchWarehouseLedgerModeMock = vi.hoisted(() => vi.fn(async () => 'OFF'));
+const applyBatchWarehouseDeltaMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../backend/services/stockService.js', async (importOriginal) => ({
     ...(await importOriginal<typeof import('../backend/services/stockService.js')>()),
@@ -11,6 +13,12 @@ vi.mock('../backend/services/stockService.js', async (importOriginal) => ({
 vi.mock('../backend/services/accounting.js', async (importOriginal) => ({
     ...(await importOriginal<typeof import('../backend/services/accounting.js')>()),
     recordSale: recordSaleMock,
+}));
+
+vi.mock('../backend/services/productBatchWarehouseLedgerService.js', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../backend/services/productBatchWarehouseLedgerService.js')>()),
+    resolveBatchWarehouseLedgerMode: resolveBatchWarehouseLedgerModeMock,
+    applyBatchWarehouseDelta: applyBatchWarehouseDeltaMock,
 }));
 
 import {

@@ -1037,10 +1037,7 @@ const RetailDashboard: React.FC = () => {
 
             <form onSubmit={handleSaveFiscalData} className="p-6 space-y-4">
               <fieldset aria-describedby="fiscal-regime-help" className="space-y-2">
-                <legend className="block text-xs font-bold text-slate-300 mb-2">
-                  RÉGIMEN FISCAL
-                  {guardandoRegimen && <span className="ml-2 font-normal normal-case text-slate-500">guardando…</span>}
-                </legend>
+                <legend className="block text-xs font-bold text-slate-300 mb-2">RÉGIMEN FISCAL</legend>
 
                 <label className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-colors ${
                   fiscalData.fiscalRegime === 'GENERAL'
@@ -1052,8 +1049,7 @@ const RetailDashboard: React.FC = () => {
                     name="fiscalRegime"
                     value="GENERAL"
                     checked={fiscalData.fiscalRegime === 'GENERAL'}
-                    disabled={guardandoRegimen}
-                    onChange={() => elegirRegimenFiscal('GENERAL')}
+                    onChange={() => setFiscalData({ ...fiscalData, fiscalRegime: 'GENERAL' })}
                     className="mt-1 h-4 w-4 accent-blue-500"
                   />
                   <span>
@@ -1072,8 +1068,7 @@ const RetailDashboard: React.FC = () => {
                     name="fiscalRegime"
                     value="CUOTA_FIJA"
                     checked={fiscalData.fiscalRegime === 'CUOTA_FIJA'}
-                    disabled={guardandoRegimen}
-                    onChange={() => elegirRegimenFiscal('CUOTA_FIJA')}
+                    onChange={() => setFiscalData({ ...fiscalData, fiscalRegime: 'CUOTA_FIJA' })}
                     className="mt-1 h-4 w-4 accent-blue-500"
                   />
                   <span>
@@ -1083,8 +1078,7 @@ const RetailDashboard: React.FC = () => {
                 </label>
 
                 <p id="fiscal-regime-help" className="text-xs text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
-                  El régimen se guarda apenas lo elegís. Aplica solo a ventas nuevas:
-                  no modifica ni reescribe facturas anteriores.
+                  Este cambio aplica solo a ventas nuevas. No modifica ni reescribe facturas anteriores.
                 </p>
               </fieldset>
 

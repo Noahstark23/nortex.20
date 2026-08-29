@@ -80,6 +80,8 @@ const ACCOUNTANT_ITEMS: NavEntry[] = [
     { path: '/app/accounting', label: 'Contabilidad', shortLabel: 'Contab.', group: 'Fiscal', iconKey: 'bookOpen' },
     { path: '/app/reports', label: 'Reportes / Fiscal', shortLabel: 'Fiscal', group: 'Fiscal', iconKey: 'pieChart' },
     { path: '/app/purchases', label: 'Compras', shortLabel: 'Compras', group: 'Fiscal', iconKey: 'truck' },
+    { path: '/app/purchase-orders', label: 'Órdenes de compra', shortLabel: 'Órdenes', group: 'Fiscal', iconKey: 'fileText' },
+    { path: '/app/suppliers', label: 'Proveedores', shortLabel: 'Proveed.', group: 'Fiscal', iconKey: 'clipboardList' },
     { path: '/app/audit', label: 'Auditoría', shortLabel: 'Auditoría', group: 'Fiscal', iconKey: 'shield' },
 ];
 
@@ -95,9 +97,7 @@ const BODEGUERO_ITEMS: NavEntry[] = [
 /** Roles con acceso a cada item gated (mismo gating que existía en Layout). */
 const GATE_MANAGER = ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'];
 const GATE_ADMIN = ['OWNER', 'ADMIN', 'SUPER_ADMIN'];
-// Debe reflejar `customers:read` del backend para el catálogo retail. VENDEDOR
-// conserva su menú dedicado (VENDEDOR_ITEMS) y no pasa por este catálogo.
-const GATE_CUSTOMER_READ = ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'CASHIER', 'VIEWER'];
+const GATE_PROCUREMENT_READ = ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'VIEWER'];
 
 interface CatalogEntry extends NavEntry {
     /** Si está presente, solo estos roles ven el item (igual que antes). */
@@ -170,10 +170,10 @@ const RETAIL_CATALOG: CatalogEntry[] = [
     { path: '/app/warehouses', label: 'Bodegas', shortLabel: 'Bodegas', group: 'STOCK', iconKey: 'layoutGrid', roles: GATE_MANAGER },
     { path: '/app/scales', label: 'Balanzas y Etiquetas', shortLabel: 'Balanzas', group: 'STOCK', iconKey: 'monitor', roles: GATE_ADMIN },
     { path: '/app/inventory-count', label: 'Contar Productos', shortLabel: 'Conteo', group: 'STOCK', iconKey: 'clipboardList', roles: GATE_ADMIN },
-    { path: '/app/purchases', label: 'Compras', shortLabel: 'Compras', group: 'STOCK', iconKey: 'truck' },
-    { path: '/app/purchase-orders', label: 'Órdenes de compra', shortLabel: 'Órdenes', group: 'STOCK', iconKey: 'fileText', roles: GATE_MANAGER },
+    { path: '/app/purchases', label: 'Compras', shortLabel: 'Compras', group: 'STOCK', iconKey: 'truck', roles: GATE_PROCUREMENT_READ },
+    { path: '/app/purchase-orders', label: 'Órdenes de compra', shortLabel: 'Órdenes', group: 'STOCK', iconKey: 'fileText', roles: GATE_PROCUREMENT_READ },
     { path: '/app/smart-purchases', label: 'Compras Inteligentes', shortLabel: 'Smart', group: 'STOCK', iconKey: 'zap', roles: GATE_ADMIN },
-    { path: '/app/suppliers', label: 'Proveedores', shortLabel: 'Proveed.', group: 'STOCK', iconKey: 'clipboardList' },
+    { path: '/app/suppliers', label: 'Proveedores', shortLabel: 'Proveed.', group: 'STOCK', iconKey: 'clipboardList', roles: GATE_PROCUREMENT_READ },
     // Mercado B2B oculto del nav hasta tener catálogo real (no mock que debite
     // el wallet). La ruta sigue existiendo con un placeholder "próximamente".
     // ── CLIENTES ──
@@ -202,14 +202,14 @@ const RETAIL_CATALOG: CatalogEntry[] = [
 // "Mi Negocio" (/app/inicio) va primero para roles administradores; para roles
 // sin acceso (p. ej. CASHIER) simplemente se filtra por el gating del catálogo.
 const SIMPLE_SETS: Record<string, string[]> = {
-    PULPERIA: ['/app/inicio', '/app/pos', '/app/receivables', '/app/inventory', '/app/warehouses', '/app/scales', '/app/dashboard'],
-    FERRETERIA: ['/app/inicio', '/app/pos', '/app/receivables', '/app/inventory', '/app/warehouses', '/app/quotations', '/app/purchases', '/app/dashboard'],
-    FARMACIA: ['/app/inicio', '/app/pos', '/app/inventory', '/app/warehouses', '/app/purchases', '/app/receivables', '/app/dashboard'],
-    DISTRIBUIDORA: ['/app/inicio', '/app/pos', '/app/quotations', '/app/inventory', '/app/warehouses', '/app/purchases', '/app/receivables', '/app/delivery', '/app/dashboard'],
+    PULPERIA: ['/app/inicio', '/app/pos', '/app/receivables', '/app/clients', '/app/inventory', '/app/warehouses', '/app/scales', '/app/dashboard'],
+    FERRETERIA: ['/app/inicio', '/app/pos', '/app/receivables', '/app/clients', '/app/inventory', '/app/warehouses', '/app/quotations', '/app/purchases', '/app/dashboard'],
+    FARMACIA: ['/app/inicio', '/app/pos', '/app/inventory', '/app/warehouses', '/app/purchases', '/app/receivables', '/app/clients', '/app/dashboard'],
+    DISTRIBUIDORA: ['/app/inicio', '/app/pos', '/app/quotations', '/app/inventory', '/app/warehouses', '/app/purchases', '/app/receivables', '/app/clients', '/app/delivery', '/app/dashboard'],
 };
 
 /** Set simple por defecto para giros sin set propio (RETAIL, BOUTIQUE, MISCELANEA…). */
-const SIMPLE_DEFAULT: string[] = ['/app/inicio', '/app/pos', '/app/receivables', '/app/inventory', '/app/warehouses', '/app/scales', '/app/purchases', '/app/dashboard'];
+const SIMPLE_DEFAULT: string[] = ['/app/inicio', '/app/pos', '/app/receivables', '/app/clients', '/app/inventory', '/app/warehouses', '/app/scales', '/app/purchases', '/app/dashboard'];
 
 // ── API ──────────────────────────────────────────────────────────────────────
 

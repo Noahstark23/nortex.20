@@ -13,36 +13,82 @@
  */
 
 import express from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import Decimal from 'decimal.js';
-import { z } from 'zod';
+import prisma from '../lib/prisma';
 import { authenticate } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
-import { BODEGUERO_ROLE, redactBodegueroPurchaseOrder } from '../security/bodegueroPolicy';
 import {
-    applyStockDelta,
-    asegurarBodegaPorDefecto,
-    resolveOperationalWarehouse,
+    PURCHASE_ORDER_READ_ROLES,
+    PURCHASE_ORDER_RECEIVE_ROLES,
+    PURCHASE_WRITE_ROLES,
+} from '../middleware/accessPolicies';
+import { BODEGUERO_ROLE, redactBodegueroPurchaseOrder } from '../security/bodegueroPolicy';
+import { asegurarBodegaPorDefecto } from '../services/stockService';
+import {
+    procurementReceiptRequestSchema,
+    ProcurementReceiptError,
+} from '../lib/procurementReceipts';
+import {
+    executeProcurementReceiptTransaction,
     StockError,
-    weightedAverageCost,
-} from '../services/stockService';
-import { normalizeCalendarDateInput } from '../lib/calendarDate';
+    type SerializedGoodsReceipt,
+} from '../services/procurementReceiptService';
+import {
+    purchaseOrderCloseShortRequestSchema,
+    PurchaseOrderCloseShortError,
+} from '../lib/purchaseOrderCloseShort';
+import { executePurchaseOrderCloseShortTransaction } from '../services/purchaseOrderCloseShortService';
 import {
     extractPurchaseOrderProductIds,
     normalizePurchaseOrderLines,
-    normalizePurchaseOrderReceiptLines,
-    orderedQuantityForItem,
     PurchaseOrderQuantityError,
-    receivedQuantityForItem,
 } from '../../utils/purchaseOrderQuantities.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
-const prisma = new PrismaClient();
 const router = express.Router();
 
-const ROLES_WRITE = ['OWNER', 'ADMIN', 'MANAGER'];
-const ROLES_RECEIVE = ['OWNER', 'ADMIN', 'MANAGER', BODEGUERO_ROLE];
+const ROLES_WRITE = PURCHASE_WRITE_ROLES;
+const ROLES_RECEIVE = PURCHASE_ORDER_RECEIVE_ROLES;
+
+const redactBodegueroGoodsReceipt = (
+    receipt: Record<string, any> | SerializedGoodsReceipt,
+): Record<string, any> => ({
+    id: receipt.id,
+    purchaseOrderId: receipt.purchaseOrderId,
+    warehouseId: receipt.warehouseId,
+    receiptNumber: receipt.receiptNumber,
+    status: receipt.status,
+    supplierDeliveryRef: receipt.supplierDeliveryRef ?? null,
+    payloadVersion: receipt.payloadVersion ?? 1,
+    inspectionOutcome: receipt.inspectionOutcome ?? 'FULL_ACCEPT',
+    inspectedLineCount: receipt.inspectedLineCount ?? 0,
+    rejectedLineCount: receipt.rejectedLineCount ?? 0,
+    hasSupplierFault: receipt.hasSupplierFault ?? false,
+    receivedAt: receipt.receivedAt,
+    createdAt: receipt.createdAt,
+    warehouse: receipt.warehouse ?? null,
+    ...('_count' in receipt ? { _count: receipt._count } : {}),
+    ...(Array.isArray(receipt.items) ? {
+        items: receipt.items.map((item: Record<string, any>) => ({
+            id: item.id,
+            purchaseOrderItemId: item.purchaseOrderItemId,
+            productId: item.productId,
+            quantityExact: item.quantityExact?.toString() ?? null,
+            deliveredQuantityExact: item.deliveredQuantityExact?.toString() ?? null,
+            rejectedQuantityExact: item.rejectedQuantityExact?.toString() ?? null,
+            rejectionReasonCode: item.rejectionReasonCode ?? null,
+            supplierFault: item.supplierFault ?? null,
+            unitSnapshot: item.unitSnapshot,
+            saleModeSnapshot: item.saleModeSnapshot ?? null,
+            batchId: item.batchId ?? null,
+            batchNumber: item.batchNumber ?? null,
+            expiryDate: item.expiryDate ?? null,
+            createdAt: item.createdAt,
+        })),
+    } : {}),
+});
 
 /**
  * Mantiene la redacción financiera del rol BODEGUERO, pero conserva el
@@ -57,6 +103,12 @@ const redactBodegueroMeasuredOrder = (order: Record<string, any>): Record<string
 
     return {
         ...redacted,
+        goodsReceipts: Array.isArray(order.goodsReceipts)
+            ? order.goodsReceipts.map(redactBodegueroGoodsReceipt)
+            : [],
+        // Cierre corto es una decisión administrativa; BODEGUERO solo ve sus
+        // cantidades proyectadas en la línea, nunca autor ni notas del evento.
+        closeShorts: [],
         items: Array.isArray(redacted.items)
             ? redacted.items.map((item: Record<string, any>) => {
                 const source = sourceItems.get(item.id);
@@ -65,6 +117,8 @@ const redactBodegueroMeasuredOrder = (order: Record<string, any>): Record<string
                     ...item,
                     quantityOrderedExact: source.quantityOrderedExact?.toString() ?? null,
                     quantityReceivedExact: source.quantityReceivedExact?.toString() ?? null,
+                    quantityRejectedExact: source.quantityRejectedExact?.toString() ?? null,
+                    quantityClosedShortExact: source.quantityClosedShortExact?.toString() ?? null,
                     unitAtOrder: source.unitAtOrder ?? null,
                     saleModeAtOrder: source.saleModeAtOrder ?? null,
                     quantityStepAtOrder: source.quantityStepAtOrder?.toString() ?? null,
@@ -82,180 +136,98 @@ const redactBodegueroMeasuredOrder = (order: Record<string, any>): Record<string
     };
 };
 
-interface ReceiptLine {
-    itemId: string;
-    quantityReceived: unknown;
-    batchNumber?: string | null;
-    expiryDate?: string | null;
+interface PurchaseOrderCancellationItem {
+    quantityReceived: Prisma.Decimal | number | string;
+    quantityReceivedExact?: Prisma.Decimal | number | string | null;
+    quantityRejectedExact?: Prisma.Decimal | number | string | null;
+    quantityClosedShortExact?: Prisma.Decimal | number | string | null;
 }
 
-interface ValidatedReceiptLine extends Omit<ReceiptLine, 'quantityReceived'> {
-    quantityReceived: string;
-    quantityOrderedExact: string;
-    quantityReceivedExact: string;
-    unitAtOrder: string;
-    saleModeAtOrder: 'COUNTED' | 'MEASURED';
-    quantityStepAtOrder: string;
+interface PurchaseOrderCancellationState {
+    status: string;
+    items: PurchaseOrderCancellationItem[];
+    goodsReceipts?: unknown[];
+    closeShorts?: unknown[];
+    _count?: {
+        goodsReceipts?: number;
+        closeShorts?: number;
+    };
 }
 
-// Resumen before/after por producto de una recepción, para el AuditLog inmutable.
-interface ReceiptResult {
-    productId: string;
-    warehouseId: string;
-    quantityReceived: string;
-    unitCost: string;
-    stockBefore: string;
-    stockAfter: string;
-    costBefore: string;
-    costAfter: string;
+export interface PurchaseOrderCancellationRejection {
+    status: 409;
+    code: 'PO_HAS_RECEIPTS' | 'PO_FINAL_STATUS' | 'PO_INVALID_STATUS';
+    error: string;
 }
-
-const receiptDateOnly = z.iso.date();
-const receiptDateTimeWithOffset = z.iso.datetime({ offset: true });
-const parseReceiptExpiryDate = (value: string): Date | null => {
-    if (!receiptDateOnly.safeParse(value).success
-        && !receiptDateTimeWithOffset.safeParse(value).success) return null;
-    return normalizeCalendarDateInput(value);
-};
 
 /**
- * Aplica la entrada física de una recepción dentro de una transacción:
- * stock (incremento atómico) + costo promedio + lote (FEFO) + Kardex, y suma a
- * quantityReceived del ítem de la OC. Devuelve el resumen por producto.
+ * Decide si una OC puede cancelarse sin revertir inventario. Se validan ambas
+ * columnas de cantidad para cubrir filas legacy y evitar que una sombra Float
+ * desincronizada permita cancelar mercadería que ya ingresó físicamente.
  */
-async function applyGoodsReceipt(
-    tx: Prisma.TransactionClient,
-    tenantId: string,
-    userId: string,
-    poId: string,
-    poNumber: string,
-    lines: { item: { id: string; productId: string; unitCost: Prisma.Decimal }; line: ValidatedReceiptLine }[],
-    destinationWarehouseId: string
-): Promise<ReceiptResult[]> {
-    const results: ReceiptResult[] = [];
-    for (const { item, line } of lines) {
-        const recvExact = new Decimal(line.quantityReceived);
-        // Stock/Kardex/lotes aún son Float en el esquema legado. La autoridad
-        // de la OC permanece Decimal(18,4); esta conversión sucede únicamente
-        // en el borde de compatibilidad y nunca pasa por parseInt/redondeo.
-        const recv = recvExact.toNumber();
+export const getPurchaseOrderCancellationRejection = (
+    order: PurchaseOrderCancellationState,
+): PurchaseOrderCancellationRejection | null => {
+    const hasProjectedEvidence = order.items.some((item) => {
+        const legacyReceived = new Decimal(item.quantityReceived.toString());
+        const exactReceived = item.quantityReceivedExact == null
+            ? legacyReceived
+            : new Decimal(item.quantityReceivedExact.toString());
+        const rejected = new Decimal(item.quantityRejectedExact?.toString() ?? 0);
+        const closedShort = new Decimal(item.quantityClosedShortExact?.toString() ?? 0);
+        // Cualquier proyección no-cero (incluso una fila corrupta negativa)
+        // falla cerrada: cancelar no debe borrar evidencia que requeriría ajuste.
+        return !legacyReceived.isZero()
+            || !exactReceived.isZero()
+            || !rejected.isZero()
+            || !closedShort.isZero();
+    });
+    const hasReceiptEvent = (order._count?.goodsReceipts ?? order.goodsReceipts?.length ?? 0) > 0;
+    const hasCloseShortEvent = (order._count?.closeShorts ?? order.closeShorts?.length ?? 0) > 0;
 
-        const product = await tx.product.findFirst({
-            where: { id: item.productId, tenantId },
-            select: { id: true, name: true, cost: true, requiresBatchTracking: true },
-        });
-        if (!product) throw new Error(`Producto no encontrado: ${item.productId}`);
-
-        const batchNumber = typeof line.batchNumber === 'string' ? line.batchNumber.trim() : '';
-        const expiryDate = typeof line.expiryDate === 'string' ? parseReceiptExpiryDate(line.expiryDate) : null;
-        if (product.requiresBatchTracking && (!batchNumber || !line.expiryDate)) {
-            throw new Error(`LOTE_REQUERIDO|${product.name}`);
-        }
-        if (product.requiresBatchTracking && batchNumber.length > 100) {
-            throw new Error(`LOTE_INVALIDO|${product.name}`);
-        }
-        if (product.requiresBatchTracking && !expiryDate) {
-            throw new Error(`FECHA_LOTE_INVALIDA|${product.name}`);
-        }
-
-        // Stock por applyStockDelta: incremento ATÓMICO + doble escritura del
-        // desglose por bodega (invariante multi-bodega: Σ bodegas == agregado).
-        // El stockBefore que devuelve (post-lock) es el autoritativo para el costo.
-        const { stockBefore, stockAfter, warehouseId } = await applyStockDelta(tx, {
-            tenantId,
-            productId: product.id,
-            delta: recv,
-            enforceSufficient: false,
-            warehouseId: destinationWarehouseId,
-        });
-
-        // Costo promedio ponderado con el costo de la OC.
-        const oldStock = new Decimal(stockBefore);
-        // C2 — costo re-leído con la fila YA BLOQUEADA por applyStockDelta (FOR
-        // UPDATE). El `product.cost` de arriba viene de un findFirst NO-bloqueante
-        // ANTES del lock (snapshot REPEATABLE READ): con recepciones concurrentes
-        // del mismo producto quedaría STALE y el promedio mezclaría stock nuevo con
-        // costo viejo. La lectura locking devuelve el costo comprometido más reciente.
-        const lockedCostRows: any[] = await tx.$queryRaw`SELECT cost FROM \`Product\` WHERE id = ${product.id} AND \`tenantId\` = ${tenantId} FOR UPDATE`;
-        const oldCost = new Decimal((lockedCostRows[0]?.cost ?? 0).toString());
-        const newStock = new Decimal(stockAfter);
-        // Promedio ponderado móvil (función pura compartida — regla C1 adentro).
-        const newAvgCostD = weightedAverageCost(oldStock, oldCost, recvExact, item.unitCost.toString());
-
-        await tx.product.update({
-            where: { id: product.id },
-            data: { cost: newAvgCostD.toNumber() },
-        });
-
-        // Control de lotes (FEFO/alertas) si el producto lo requiere y vino lote+vencimiento.
-        let batchId: string | null = null;
-        if (product.requiresBatchTracking && batchNumber && expiryDate) {
-            const batch = await tx.productBatch.upsert({
-                where: { productId_batchNumber: { productId: product.id, batchNumber } },
-                update: { stock: { increment: recv } },
-                create: {
-                    tenantId,
-                    productId: product.id,
-                    batchNumber,
-                    expiryDate,
-                    stock: recv,
-                },
-            });
-            batchId = batch.id;
-        }
-
-        await tx.kardexMovement.create({
-            data: {
-                tenantId,
-                productId: product.id,
-                type: 'IN_PURCHASE',
-                quantity: recv,
-                stockBefore,
-                stockAfter,
-                referenceId: poId,
-                referenceType: 'PURCHASE_ORDER',
-                reason: `Recepción de Orden de Compra ${poNumber}`,
-                userId,
-                batchId,
-                // Bodega real del movimiento (la default hoy): sin esto la
-                // reconstrucción del stock por bodega desde Kardex queda coja.
-                warehouseId,
-            },
-        });
-
-        await tx.purchaseOrderItem.update({
-            where: { id: item.id },
-            data: {
-                quantityReceived: { increment: recv },
-                quantityOrderedExact: line.quantityOrderedExact,
-                quantityReceivedExact: line.quantityReceivedExact,
-                unitAtOrder: line.unitAtOrder,
-                saleModeAtOrder: line.saleModeAtOrder,
-                quantityStepAtOrder: line.quantityStepAtOrder,
-            },
-        });
-
-        results.push({
-            productId: product.id,
-            warehouseId,
-            quantityReceived: recvExact.toString(),
-            unitCost: item.unitCost.toString(),
-            stockBefore: oldStock.toString(),
-            stockAfter: newStock.toString(),
-            costBefore: oldCost.toString(),
-            costAfter: newAvgCostD.toString(),
-        });
+    if (order.status === 'PARTIALLY_RECEIVED' || hasProjectedEvidence || hasReceiptEvent || hasCloseShortEvent) {
+        return {
+            status: 409,
+            code: 'PO_HAS_RECEIPTS',
+            error: 'No se puede cancelar una orden con evidencia de recepción, rechazo o cierre corto',
+        };
     }
-    return results;
-}
+    if (order.status === 'RECEIVED' || order.status === 'CLOSED_SHORT' || order.status === 'CANCELLED') {
+        return {
+            status: 409,
+            code: 'PO_FINAL_STATUS',
+            error: `No se puede cancelar una OC en estado ${order.status}`,
+        };
+    }
+    if (order.status !== 'DRAFT' && order.status !== 'APPROVED') {
+        return {
+            status: 409,
+            code: 'PO_INVALID_STATUS',
+            error: `No se puede cancelar una OC en estado ${order.status}`,
+        };
+    }
+    return null;
+};
+
+const purchaseOrderTransitionSnapshot = (order: {
+    status: string;
+    approvedBy: string | null;
+    approvedAt: Date | null;
+}) => ({
+    status: order.status,
+    approvedBy: order.approvedBy,
+    approvedAt: order.approvedAt?.toISOString() ?? null,
+});
 
 // ── GET / — listar órdenes de compra del tenant ─────────────────────────────
-router.get('/', authenticate, async (req: any, res: any) => {
+router.get('/', authenticate, checkRole(PURCHASE_ORDER_READ_ROLES), async (req: any, res: any) => {
     try {
         const orders = await prisma.purchaseOrder.findMany({
             where: { tenantId: req.tenantId },
             include: {
-                supplier: { select: { name: true } },
+                // BODEGUERO usa el id para la devolución física anidada; la
+                // redacción posterior conserva solo id+name y nunca RUC/CxP.
+                supplier: { select: { id: true, name: true } },
                 items: {
                     include: {
                         product: {
@@ -271,8 +243,56 @@ router.get('/', authenticate, async (req: any, res: any) => {
                 receipts: {
                     select: {
                         items: {
-                            select: { productId: true, quantity: true, quantityExact: true },
+                            select: {
+                                productId: true,
+                                purchaseOrderItemId: true,
+                                quantity: true,
+                                quantityExact: true,
+                            },
                         },
+                    },
+                },
+                goodsReceipts: {
+                    orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+                    take: 20,
+                    select: {
+                        id: true,
+                        purchaseOrderId: true,
+                        warehouseId: true,
+                        receiptNumber: true,
+                        status: true,
+                        supplierDeliveryRef: true,
+                        payloadVersion: true,
+                        inspectionOutcome: true,
+                        inspectedLineCount: true,
+                        rejectedLineCount: true,
+                        hasSupplierFault: true,
+                        receivedBy: true,
+                        receivedAt: true,
+                        createdAt: true,
+                        warehouse: { select: { id: true, name: true } },
+                        receiver: { select: { id: true, name: true } },
+                        _count: { select: { items: true } },
+                    },
+                },
+                closeShorts: {
+                    orderBy: [{ closedAt: 'desc' }, { id: 'desc' }],
+                    take: 20,
+                    select: {
+                        id: true,
+                        purchaseOrderId: true,
+                        status: true,
+                        clientEventId: true,
+                        closedBy: true,
+                        closedAt: true,
+                        createdAt: true,
+                        lineCount: true,
+                        closedLineCount: true,
+                        hasSupplierFault: true,
+                        reasonSummaryCode: true,
+                        note: true,
+                        creator: { select: { id: true, name: true } },
+                        _count: { select: { items: true } },
                     },
                 },
             },
@@ -292,7 +312,7 @@ router.get('/', authenticate, async (req: any, res: any) => {
 });
 
 // ── GET /:id — detalle ──────────────────────────────────────────────────────
-router.get('/:id', authenticate, async (req: any, res: any) => {
+router.get('/:id', authenticate, checkRole(PURCHASE_ORDER_READ_ROLES), async (req: any, res: any) => {
     try {
         const order = await prisma.purchaseOrder.findFirst({
             where: { id: req.params.id, tenantId: req.tenantId },
@@ -311,6 +331,88 @@ router.get('/:id', authenticate, async (req: any, res: any) => {
                     },
                 },
                 receipts: { select: { id: true, invoiceNumber: true, total: true, createdAt: true } },
+                goodsReceipts: {
+                    orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+                    take: 200,
+                    select: {
+                        id: true,
+                        purchaseOrderId: true,
+                        warehouseId: true,
+                        receiptNumber: true,
+                        status: true,
+                        supplierDeliveryRef: true,
+                        payloadVersion: true,
+                        inspectionOutcome: true,
+                        inspectedLineCount: true,
+                        rejectedLineCount: true,
+                        hasSupplierFault: true,
+                        receivedBy: true,
+                        receivedAt: true,
+                        createdAt: true,
+                        warehouse: { select: { id: true, name: true } },
+                        receiver: { select: { id: true, name: true } },
+                        items: {
+                            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+                            select: {
+                                id: true,
+                                purchaseOrderItemId: true,
+                                productId: true,
+                                quantityExact: true,
+                                deliveredQuantityExact: true,
+                                rejectedQuantityExact: true,
+                                rejectionReasonCode: true,
+                                rejectionNotes: true,
+                                supplierFault: true,
+                                unitSnapshot: true,
+                                saleModeSnapshot: true,
+                                unitCostExact: true,
+                                batchId: true,
+                                batchNumber: true,
+                                expiryDate: true,
+                                createdAt: true,
+                            },
+                        },
+                    },
+                },
+                closeShorts: {
+                    orderBy: [{ closedAt: 'desc' }, { id: 'desc' }],
+                    take: 200,
+                    select: {
+                        id: true,
+                        purchaseOrderId: true,
+                        status: true,
+                        clientEventId: true,
+                        closedBy: true,
+                        closedAt: true,
+                        createdAt: true,
+                        lineCount: true,
+                        closedLineCount: true,
+                        hasSupplierFault: true,
+                        reasonSummaryCode: true,
+                        note: true,
+                        creator: { select: { id: true, name: true } },
+                        items: {
+                            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+                            select: {
+                                id: true,
+                                purchaseOrderItemId: true,
+                                quantityExact: true,
+                                reasonCode: true,
+                                supplierFault: true,
+                                note: true,
+                                orderedQuantitySnapshotExact: true,
+                                acceptedQuantitySnapshotExact: true,
+                                rejectedQuantitySnapshotExact: true,
+                                remainingBeforeExact: true,
+                                remainingAfterExact: true,
+                                unitSnapshot: true,
+                                saleModeSnapshot: true,
+                                quantityStepSnapshot: true,
+                                createdAt: true,
+                            },
+                        },
+                    },
+                },
             },
         });
         if (!order) return res.status(404).json({ error: 'Orden de compra no encontrada' });
@@ -339,53 +441,96 @@ router.post('/', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any
     }
 
     try {
-        // Validar proveedor y productos pertenecientes al tenant.
-        const supplier = await prisma.supplier.findFirst({ where: { id: supplierId, tenantId } });
-        if (!supplier) return res.status(404).json({ error: 'Proveedor no encontrado' });
-
         // Estructura y duplicados se validan antes de consultar. Después, cada
         // producto se vuelve a cargar con tenantId: el cliente no decide modo,
         // paso, unidad, nombre ni pertenencia.
         const productIds = extractPurchaseOrderProductIds(items);
-        const products = await prisma.product.findMany({
-            where: { id: { in: productIds }, tenantId },
-            select: { id: true, name: true, unit: true, saleMode: true, quantityStep: true },
-        });
-        const normalizedItems = normalizePurchaseOrderLines(items, products);
+        const result = await prisma.$transaction(async (tx) => {
+            // Primera lectura de la tx: serializa crear OC con bloquear,
+            // suspender o eliminar lógicamente al proveedor.
+            const supplierRows = await tx.$queryRaw<Array<{
+                id: string;
+                status: string;
+                deletedAt: Date | null;
+            }>>`
+                SELECT id, \`status\`, \`deletedAt\` FROM \`Supplier\`
+                WHERE id = ${supplierId} AND \`tenantId\` = ${tenantId}
+                FOR UPDATE`;
+            const supplier = supplierRows[0];
+            if (!supplier) return { outcome: 'SUPPLIER_NOT_FOUND' as const };
+            if (supplier.status !== 'ACTIVE' || supplier.deletedAt !== null) {
+                return { outcome: 'SUPPLIER_NOT_ACTIVE' as const };
+            }
 
-        // Correlativo por tenant. El @@unique([tenantId, orderNumber]) protege la integridad.
-        const count = await prisma.purchaseOrder.count({ where: { tenantId } });
-        const orderNumber = `OC-${String(count + 1).padStart(4, '0')}`;
+            const products = await tx.product.findMany({
+                where: { id: { in: productIds }, tenantId },
+                select: { id: true, name: true, unit: true, saleMode: true, quantityStep: true },
+            });
+            const normalizedItems = normalizePurchaseOrderLines(items, products);
 
-        const created = await prisma.purchaseOrder.create({
-            data: {
-                tenantId,
-                supplierId,
-                orderNumber,
-                status: 'DRAFT',
-                notes: notes ? String(notes) : null,
-                expectedDate: expectedDate ? new Date(expectedDate) : null,
-                createdBy: req.userId,
-                items: {
-                    create: normalizedItems.map((item) => ({
-                        productId: item.productId,
-                        productName: item.productName,
-                        // Float queda como sombra para clientes históricos; el
-                        // Decimal nullable es la autoridad en toda fila nueva.
-                        quantityOrdered: item.quantity.toNumber(),
-                        quantityOrderedExact: item.quantity.toString(),
-                        quantityReceivedExact: '0',
-                        unitAtOrder: item.unitAtOrder,
-                        saleModeAtOrder: item.saleModeAtOrder,
-                        quantityStepAtOrder: item.quantityStepAtOrder,
-                        unitCost: item.unitCost.toFixed(2),
-                    })),
+            // Correlativo por tenant. El @@unique([tenantId, orderNumber]) protege la integridad.
+            const count = await tx.purchaseOrder.count({ where: { tenantId } });
+            const orderNumber = `OC-${String(count + 1).padStart(4, '0')}`;
+
+            const created = await tx.purchaseOrder.create({
+                data: {
+                    tenantId,
+                    supplierId,
+                    orderNumber,
+                    status: 'DRAFT',
+                    notes: notes ? String(notes) : null,
+                    expectedDate: expectedDate ? new Date(expectedDate) : null,
+                    createdBy: req.userId,
+                    items: {
+                        create: normalizedItems.map((item) => ({
+                            productId: item.productId,
+                            productName: item.productName,
+                            // Float queda como sombra para clientes históricos; el
+                            // Decimal nullable es la autoridad en toda fila nueva.
+                            quantityOrdered: item.quantity.toNumber(),
+                            quantityOrderedExact: item.quantity.toString(),
+                            quantityReceivedExact: '0',
+                            unitAtOrder: item.unitAtOrder,
+                            saleModeAtOrder: item.saleModeAtOrder,
+                            quantityStepAtOrder: item.quantityStepAtOrder,
+                            unitCost: item.unitCost.toFixed(2),
+                            unitCostExact: item.unitCost.toString(),
+                        })),
+                    },
                 },
-            },
-            include: { items: true },
+                include: { items: true },
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId,
+                    userId: req.userId,
+                    action: 'PO_CREATED',
+                    details: JSON.stringify({
+                        poId: created.id,
+                        orderNumber: created.orderNumber,
+                        before: null,
+                        after: {
+                            status: created.status,
+                            supplierId: created.supplierId,
+                            itemCount: created.items.length,
+                        },
+                    }),
+                },
+            });
+            return { outcome: 'CREATED' as const, data: created };
         });
 
-        res.status(201).json({ success: true, data: created });
+        if (result.outcome === 'SUPPLIER_NOT_FOUND') {
+            return res.status(404).json({ error: 'Proveedor no encontrado' });
+        }
+        if (result.outcome === 'SUPPLIER_NOT_ACTIVE') {
+            return res.status(409).json({
+                error: 'El proveedor no está activo para nuevas órdenes de compra',
+                code: 'SUPPLIER_NOT_ACTIVE',
+            });
+        }
+        res.status(201).json({ success: true, data: result.data });
     } catch (e: any) {
         if (e instanceof PurchaseOrderQuantityError) {
             return res.status(400).json({ error: e.message, code: e.code });
@@ -402,36 +547,120 @@ router.post('/', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any
 router.post('/:id/approve', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any) => {
     const tenantId: string = req.tenantId;
     try {
-        const po = await prisma.purchaseOrder.findFirst({ where: { id: req.params.id, tenantId } });
-        if (!po) return res.status(404).json({ error: 'Orden de compra no encontrada' });
-        if (po.status !== 'DRAFT') {
-            return res.status(400).json({ error: `No se puede aprobar una OC en estado ${po.status}` });
+        const result = await prisma.$transaction(async (tx) => {
+            // El lock debe ser la primera lectura de la transacción: serializa
+            // approve/receive/cancel sobre la misma OC y elimina el TOCTOU.
+            await tx.$queryRaw`SELECT id FROM \`PurchaseOrder\` WHERE id = ${req.params.id} AND \`tenantId\` = ${tenantId} FOR UPDATE`;
+            const po = await tx.purchaseOrder.findFirst({ where: { id: req.params.id, tenantId } });
+            if (!po) return { outcome: 'NOT_FOUND' as const };
+            if (po.status !== 'DRAFT') {
+                return { outcome: 'INVALID_STATUS' as const, status: po.status };
+            }
+
+            // Bloquea también al proveedor: una suspensión concurrente no
+            // puede cruzarse con la aprobación y dejar una OC utilizable.
+            const activeSupplierRows = await tx.$queryRaw<Array<{ id: string }>>`
+                SELECT id FROM \`Supplier\`
+                WHERE id = ${po.supplierId}
+                  AND \`tenantId\` = ${tenantId}
+                  AND \`deletedAt\` IS NULL
+                  AND \`status\` = ${'ACTIVE'}
+                FOR UPDATE`;
+            if (activeSupplierRows.length === 0) {
+                return { outcome: 'SUPPLIER_NOT_ACTIVE' as const };
+            }
+
+            const approvedAt = new Date();
+            const updated = await tx.purchaseOrder.update({
+                where: { id: po.id },
+                data: { status: 'APPROVED', approvedBy: req.userId, approvedAt },
+            });
+            await tx.auditLog.create({
+                data: {
+                    tenantId,
+                    userId: req.userId,
+                    action: 'PO_APPROVED',
+                    details: JSON.stringify({
+                        poId: po.id,
+                        orderNumber: po.orderNumber,
+                        before: purchaseOrderTransitionSnapshot(po),
+                        after: purchaseOrderTransitionSnapshot(updated),
+                    }),
+                },
+            });
+            return { outcome: 'UPDATED' as const, data: updated };
+        });
+
+        if (result.outcome === 'NOT_FOUND') {
+            return res.status(404).json({ error: 'Orden de compra no encontrada' });
         }
-        const updated = await prisma.purchaseOrder.update({
-            where: { id: po.id },
-            data: { status: 'APPROVED', approvedBy: req.userId, approvedAt: new Date() },
-        });
-        await prisma.auditLog.create({
-            data: { tenantId, userId: req.userId, action: 'PO_APPROVED', details: JSON.stringify({ poId: po.id, orderNumber: po.orderNumber }) },
-        });
-        res.json({ success: true, data: updated });
+        if (result.outcome === 'INVALID_STATUS') {
+            return res.status(400).json({ error: `No se puede aprobar una OC en estado ${result.status}` });
+        }
+        if (result.outcome === 'SUPPLIER_NOT_ACTIVE') {
+            return res.status(409).json({
+                error: 'El proveedor no está activo para aprobar esta orden de compra',
+                code: 'SUPPLIER_NOT_ACTIVE',
+            });
+        }
+        res.json({ success: true, data: result.data });
     } catch (e: any) {
         console.error('Error aprobando OC:', e.message);
         res.status(500).json({ error: 'Error al aprobar la orden de compra' });
     }
 });
 
-// ── POST /:id/cancel — → CANCELLED (no si ya está RECEIVED) ──────────────────
+// ── POST /:id/cancel — DRAFT|APPROVED sin recepción → CANCELLED ──────────────
 router.post('/:id/cancel', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any) => {
     const tenantId: string = req.tenantId;
     try {
-        const po = await prisma.purchaseOrder.findFirst({ where: { id: req.params.id, tenantId } });
-        if (!po) return res.status(404).json({ error: 'Orden de compra no encontrada' });
-        if (po.status === 'RECEIVED' || po.status === 'CANCELLED') {
-            return res.status(400).json({ error: `No se puede cancelar una OC en estado ${po.status}` });
+        const result = await prisma.$transaction(async (tx) => {
+            // Comparte el mismo lock que receive: si una recepción gana la
+            // carrera, cancel verá sus cantidades; si cancel gana, receive verá
+            // CANCELLED. Nunca se revierten existencias de forma implícita.
+            await tx.$queryRaw`SELECT id FROM \`PurchaseOrder\` WHERE id = ${req.params.id} AND \`tenantId\` = ${tenantId} FOR UPDATE`;
+            const po = await tx.purchaseOrder.findFirst({
+                where: { id: req.params.id, tenantId },
+                include: {
+                    items: true,
+                    _count: { select: { goodsReceipts: true, closeShorts: true } },
+                },
+            });
+            if (!po) return { outcome: 'NOT_FOUND' as const };
+
+            const rejection = getPurchaseOrderCancellationRejection(po);
+            if (rejection) return { outcome: 'REJECTED' as const, rejection };
+
+            const updated = await tx.purchaseOrder.update({
+                where: { id: po.id },
+                data: { status: 'CANCELLED' },
+            });
+            await tx.auditLog.create({
+                data: {
+                    tenantId,
+                    userId: req.userId,
+                    action: 'PO_CANCELLED',
+                    details: JSON.stringify({
+                        poId: po.id,
+                        orderNumber: po.orderNumber,
+                        before: purchaseOrderTransitionSnapshot(po),
+                        after: purchaseOrderTransitionSnapshot(updated),
+                    }),
+                },
+            });
+            return { outcome: 'UPDATED' as const, data: updated };
+        });
+
+        if (result.outcome === 'NOT_FOUND') {
+            return res.status(404).json({ error: 'Orden de compra no encontrada' });
         }
-        const updated = await prisma.purchaseOrder.update({ where: { id: po.id }, data: { status: 'CANCELLED' } });
-        res.json({ success: true, data: updated });
+        if (result.outcome === 'REJECTED') {
+            return res.status(result.rejection.status).json({
+                error: result.rejection.error,
+                code: result.rejection.code,
+            });
+        }
+        res.json({ success: true, data: result.data });
     } catch (e: any) {
         console.error('Error cancelando OC:', e.message);
         res.status(500).json({ error: 'Error al cancelar la orden de compra' });
@@ -442,157 +671,91 @@ router.post('/:id/cancel', authenticate, checkRole(ROLES_WRITE), async (req: any
 router.post('/:id/receive', authenticate, checkRole(ROLES_RECEIVE), async (req: any, res: any) => {
     const tenantId: string = req.tenantId;
     const userId: string = req.userId;
-    const lines: ReceiptLine[] = Array.isArray(req.body?.items) ? req.body.items : [];
-    const rawWarehouseId = req.body?.warehouseId;
-    const requestedWarehouseId = typeof rawWarehouseId === 'string' && rawWarehouseId.trim()
-        ? rawWarehouseId.trim()
-        : undefined;
-
-    if (rawWarehouseId !== undefined
-        && (typeof rawWarehouseId !== 'string' || !rawWarehouseId.trim())) {
-        return res.status(400).json({ error: 'La bodega de destino es inválida', code: 'WAREHOUSE_NOT_FOUND' });
-    }
-
-    if (lines.length === 0) {
-        return res.status(400).json({ error: 'Se requiere al menos un ítem a recibir' });
+    const parsed = procurementReceiptRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+        return res.status(400).json({
+            error: 'La recepción no tiene un formato válido',
+            code: 'INVALID_RECEIPT_PAYLOAD',
+            details: parsed.error.flatten().fieldErrors,
+        });
     }
 
     try {
-        await asegurarBodegaPorDefecto(prisma, tenantId);
-        const result = await prisma.$transaction(async (tx) => {
-            // S38 — lock del header ANTES de cualquier lectura: dos receives
-            // concurrentes de la misma OC pasaban ambos el chequeo de estado (el
-            // findFirst no bloquea) y entraban el stock 2×. Con el FOR UPDATE el
-            // segundo espera el commit del primero, y como esta es la PRIMERA
-            // sentencia de la tx, su snapshot se abre después y las lecturas de
-            // abajo ya ven el estado y quantityReceived actualizados.
-            await tx.$queryRaw`SELECT id FROM \`PurchaseOrder\` WHERE id = ${req.params.id} AND \`tenantId\` = ${tenantId} FOR UPDATE`;
-            const po = await tx.purchaseOrder.findFirst({
-                where: { id: req.params.id, tenantId },
-                include: { items: true },
-            });
-            if (!po) throw new Error('NOT_FOUND');
-            if (po.status !== 'APPROVED' && po.status !== 'PARTIALLY_RECEIVED') {
-                throw new Error(`INVALID_STATUS:${po.status}`);
-            }
-
-            // La bodega es parte del acto físico de recepción. Clientes nuevos
-            // siempre la envían. Por compatibilidad, clientes anteriores solo
-            // pueden omitirla si el negocio tiene una única bodega activa; con
-            // varias ubicaciones no inferimos un destino que podría ser erróneo.
-            const destinationWarehouse = await resolveOperationalWarehouse(
-                tx,
-                tenantId,
-                requestedWarehouseId,
-            );
-
-            const orderProductIds = [...new Set(po.items.map(item => item.productId))];
-            const products = await tx.product.findMany({
-                where: { tenantId, id: { in: orderProductIds } },
-                select: {
-                    id: true,
-                    name: true,
-                    unit: true,
-                    saleMode: true,
-                    quantityStep: true,
-                },
-            });
-            const normalizedReceipts = normalizePurchaseOrderReceiptLines(lines, po.items, products);
-            const matched = normalizedReceipts.map((normalized, index) => {
-                const raw = lines[index];
-                return {
-                    item: normalized.item,
-                    line: {
-                        itemId: normalized.item.id,
-                        quantityReceived: normalized.quantity.toString(),
-                        batchNumber: typeof raw.batchNumber === 'string' ? raw.batchNumber : null,
-                        expiryDate: typeof raw.expiryDate === 'string' ? raw.expiryDate : null,
-                        quantityOrderedExact: normalized.ordered.toString(),
-                        quantityReceivedExact: normalized.receivedAfter.toString(),
-                        unitAtOrder: normalized.unitAtOrder,
-                        saleModeAtOrder: normalized.rules.saleMode,
-                        quantityStepAtOrder: normalized.rules.quantityStep,
-                    },
-                };
-            });
-
-            const receiptResults = await applyGoodsReceipt(
-                tx,
-                tenantId,
-                userId,
-                po.id,
-                po.orderNumber,
-                matched,
-                destinationWarehouse.id,
-            );
-
-            // Recalcular estado: RECEIVED si todo lo pedido fue recibido, si no PARTIALLY_RECEIVED.
-            const fresh = await tx.purchaseOrder.findUniqueOrThrow({
-                where: { id: po.id }, include: { items: true },
-            });
-            const fullyReceived = fresh.items.every((item) =>
-                receivedQuantityForItem(item).greaterThanOrEqualTo(orderedQuantityForItem(item)),
-            );
-            const newStatus = fullyReceived ? 'RECEIVED' : 'PARTIALLY_RECEIVED';
-
-            const updated = await tx.purchaseOrder.update({
-                where: { id: po.id },
-                data: { status: newStatus },
-                include: { items: true },
-            });
-
-            await tx.auditLog.create({
-                data: {
-                    tenantId, userId, action: 'PO_RECEIVED',
-                    details: JSON.stringify({
-                        poId: po.id,
-                        orderNumber: po.orderNumber,
-                        newStatus,
-                        warehouseId: destinationWarehouse.id,
-                        warehouseName: destinationWarehouse.name,
-                        received: matched.map((m, idx) => {
-                            const r = receiptResults[idx];
-                            return {
-                                itemId: m.item.id,
-                                productId: r.productId,
-                                warehouseId: r.warehouseId,
-                                qty: r.quantityReceived,
-                                unitCost: r.unitCost,
-                                stockBefore: r.stockBefore,
-                                stockAfter: r.stockAfter,
-                                costBefore: r.costBefore,
-                                costAfter: r.costAfter,
-                            };
-                        }),
-                    }),
-                },
-            });
-
-            return updated;
+        // Compatibilidad con clientes anteriores: sin bodega explícita solo se
+        // materializa Principal cuando el tenant todavía no tiene ubicaciones.
+        if (!parsed.data.warehouseId) {
+            await asegurarBodegaPorDefecto(prisma, tenantId);
+        }
+        const result = await executeProcurementReceiptTransaction({
+            db: prisma,
+            tenantId,
+            userId,
+            purchaseOrderId: req.params.id,
+            request: parsed.data,
         });
 
         res.json({
             success: true,
-            data: req.role === BODEGUERO_ROLE ? redactBodegueroMeasuredOrder(result) : result,
+            data: req.role === BODEGUERO_ROLE
+                ? redactBodegueroMeasuredOrder(result.purchaseOrder)
+                : result.purchaseOrder,
+            receipt: req.role === BODEGUERO_ROLE
+                ? redactBodegueroGoodsReceipt(result.receipt)
+                : result.receipt,
+            replay: result.replay,
         });
     } catch (e: any) {
-        const msg: string = e?.message ?? '';
+        if (e instanceof ProcurementReceiptError) {
+            return res.status(e.httpStatus).json({ error: e.message, code: e.code });
+        }
         if (e instanceof PurchaseOrderQuantityError) {
             return res.status(400).json({ error: e.message, code: e.code });
         }
-        if (msg === 'NOT_FOUND') return res.status(404).json({ error: 'Orden de compra no encontrada' });
-        if (msg.startsWith('INVALID_STATUS:')) return res.status(400).json({ error: `No se puede recibir una OC en estado ${msg.split(':')[1]}` });
         if (e instanceof StockError && e.code === 'WAREHOUSE_REQUIRED') {
             return res.status(400).json({ error: 'Seleccioná la bodega destino para recibir esta orden de compra', code: e.code });
         }
         if (e instanceof StockError && e.code === 'WAREHOUSE_NOT_FOUND') {
             return res.status(404).json({ error: 'La bodega destino no existe, está inactiva o no pertenece a tu negocio', code: e.code });
         }
-        if (msg.startsWith('LOTE_REQUERIDO|')) return res.status(400).json({ error: `Ingresá lote y vencimiento para ${msg.slice('LOTE_REQUERIDO|'.length)}` });
-        if (msg.startsWith('LOTE_INVALIDO|')) return res.status(400).json({ error: `El lote de ${msg.slice('LOTE_INVALIDO|'.length)} es inválido` });
-        if (msg.startsWith('FECHA_LOTE_INVALIDA|')) return res.status(400).json({ error: `La fecha de vencimiento de ${msg.slice('FECHA_LOTE_INVALIDA|'.length)} es inválida` });
-        console.error('Error recibiendo OC:', msg);
+        console.error('Error recibiendo OC:', e?.message ?? 'Error desconocido');
         res.status(500).json({ error: 'Error al recibir la orden de compra' });
+    }
+});
+
+// ── POST /:id/close-short — cierre administrativo de saldo no entregable ────
+router.post('/:id/close-short', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any) => {
+    const parsed = purchaseOrderCloseShortRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+        return res.status(400).json({
+            error: 'El cierre corto no tiene un formato válido',
+            code: 'INVALID_CLOSE_SHORT_PAYLOAD',
+            details: parsed.error.flatten().fieldErrors,
+        });
+    }
+
+    try {
+        const result = await executePurchaseOrderCloseShortTransaction({
+            db: prisma,
+            tenantId: req.tenantId,
+            userId: req.userId,
+            purchaseOrderId: req.params.id,
+            request: parsed.data,
+        });
+        res.json({
+            success: true,
+            data: result.purchaseOrder,
+            closeShort: result.closeShort,
+            replay: result.replay,
+        });
+    } catch (e: any) {
+        if (e instanceof PurchaseOrderCloseShortError) {
+            return res.status(e.httpStatus).json({ error: e.message, code: e.code });
+        }
+        if (e instanceof PurchaseOrderQuantityError) {
+            return res.status(400).json({ error: e.message, code: e.code });
+        }
+        console.error('Error cerrando corto OC:', e?.message ?? 'Error desconocido');
+        res.status(500).json({ error: 'Error al cerrar el saldo de la orden de compra' });
     }
 });
 

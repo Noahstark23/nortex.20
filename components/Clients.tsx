@@ -1,17 +1,10 @@
 import Decimal from 'decimal.js';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertCircle,
     ArrowLeft,
-    Ban,
-    CalendarClock,
-    CheckCircle,
     ChevronRight,
-    Clock3,
-    Mail,
     MessageSquare,
-    Pencil,
-    Phone,
     Plus,
     Save,
     Search,
@@ -26,6 +19,8 @@ import { formatMoney } from '../utils/money';
 import { normalizeApiFailure } from '../utils/posActivation';
 import { currentSessionRole } from '../utils/roleCapabilities';
 import { CustomerHubSegment } from '../utils/customerHub';
+import { ToastViewport, useToast } from './ui/Toast';
+import Customer360Detail from './customer/Customer360Detail';
 
 interface SellerRef {
     id: string;
@@ -34,7 +29,7 @@ interface SellerRef {
     status?: string;
 }
 
-interface CustomerHubListItem {
+export interface CustomerHubListItem {
     id: string;
     name: string;
     taxId: string | null;
@@ -61,7 +56,7 @@ interface CustomerHubListItem {
     };
 }
 
-interface CustomerHubDetail {
+export interface CustomerHubDetail {
     profile: CustomerHubListItem;
     receivables: {
         totals: {
@@ -159,6 +154,12 @@ type InteractionFormValues = {
     followUpAt: string;
 };
 
+type CustomerBlockConfirmState = {
+    id: string;
+    name: string;
+    nextBlockedState: boolean;
+} | null;
+
 const EMPTY_INTERACTION_FORM: InteractionFormValues = {
     type: 'NOTE',
     note: '',
@@ -186,7 +187,7 @@ const segmentTone: Record<CustomerHubSegment, string> = {
     blocked: 'bg-red-500/10 text-red-300 border-red-500/20',
     inactive: 'bg-slate-500/10 text-slate-300 border-slate-500/20',
     overlimit: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
-    wholesale: 'bg-indigo-500/10 text-indigo-300 border-indigo-500/20',
+    wholesale: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20',
     withDebt: 'bg-orange-500/10 text-orange-300 border-orange-500/20',
 };
 
@@ -200,9 +201,116 @@ const segmentLabel: Record<CustomerHubSegment, string> = {
 };
 
 const fmtMoney = (value: number) => formatMoney(value);
-const fmtDate = (value: string | null) => value
-    ? new Date(value).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: 'numeric' })
-    : 'Sin actividad';
+const MANAGUA_TIME_ZONE = 'America/Managua';
+const MANAGUA_DATE_TIME_PARTS = new Intl.DateTimeFormat('en-CA-u-ca-gregory-nu-latn', {
+    timeZone: MANAGUA_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+});
+
+type CivilDateTimeParts = {
+    year: number;
+    month: number;
+    day: number;
+    hour: number;
+    minute: number;
+};
+
+function civilDateTimeEpoch(parts: CivilDateTimeParts): number {
+    // setUTCFullYear evita la regla especial de Date.UTC para los años 0–99.
+    const date = new Date(0);
+    date.setUTCFullYear(parts.year, parts.month - 1, parts.day);
+    date.setUTCHours(parts.hour, parts.minute, 0, 0);
+    return date.getTime();
+}
+
+function isSameCivilDateTime(left: CivilDateTimeParts, right: CivilDateTimeParts): boolean {
+    return left.year === right.year
+        && left.month === right.month
+        && left.day === right.day
+        && left.hour === right.hour
+        && left.minute === right.minute;
+}
+
+function parseDateTimeLocal(value: string): CivilDateTimeParts | null {
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+    if (!match) return null;
+
+    const parts: CivilDateTimeParts = {
+        year: Number(match[1]),
+        month: Number(match[2]),
+        day: Number(match[3]),
+        hour: Number(match[4]),
+        minute: Number(match[5]),
+    };
+    const epoch = civilDateTimeEpoch(parts);
+    if (!Number.isFinite(epoch)) return null;
+
+    const roundTrip = new Date(epoch);
+    return roundTrip.getUTCFullYear() === parts.year
+        && roundTrip.getUTCMonth() + 1 === parts.month
+        && roundTrip.getUTCDate() === parts.day
+        && roundTrip.getUTCHours() === parts.hour
+        && roundTrip.getUTCMinutes() === parts.minute
+        ? parts
+        : null;
+}
+
+function managuaPartsAt(epoch: number): CivilDateTimeParts | null {
+    const date = new Date(epoch);
+    if (Number.isNaN(date.getTime())) return null;
+
+    const values: Partial<Record<Intl.DateTimeFormatPartTypes, number>> = {};
+    for (const part of MANAGUA_DATE_TIME_PARTS.formatToParts(date)) {
+        if (part.type === 'year' || part.type === 'month' || part.type === 'day' || part.type === 'hour' || part.type === 'minute') {
+            values[part.type] = Number(part.value);
+        }
+    }
+    if ([values.year, values.month, values.day, values.hour, values.minute].some((part) => !Number.isFinite(part))) {
+        return null;
+    }
+    return {
+        year: values.year!,
+        month: values.month!,
+        day: values.day!,
+        hour: values.hour!,
+        minute: values.minute!,
+    };
+}
+
+/**
+ * Convierte la hora civil ingresada en el CRM a un instante real de Managua.
+ * `datetime-local` no incluye zona: usar `new Date(value)` la interpretaría en la
+ * zona del navegador. Los offsets se descubren con Intl alrededor de la fecha y
+ * cada candidato se verifica de vuelta; así una hora inexistente por un cambio de
+ * horario se rechaza y una hora repetida elige de forma determinista la primera.
+ */
+export function managuaDateTimeLocalToIso(value: string): string | null {
+    const target = parseDateTimeLocal(value);
+    if (!target) return null;
+
+    const civilEpoch = civilDateTimeEpoch(target);
+    const possibleOffsets = new Set<number>();
+    for (let deltaHours = -48; deltaHours <= 48; deltaHours += 6) {
+        const probeEpoch = civilEpoch + deltaHours * 60 * 60 * 1000;
+        const localParts = managuaPartsAt(probeEpoch);
+        if (localParts) possibleOffsets.add(civilDateTimeEpoch(localParts) - probeEpoch);
+    }
+
+    const candidates = [...possibleOffsets]
+        .map((offset) => civilEpoch - offset)
+        .filter((epoch) => {
+            const localParts = managuaPartsAt(epoch);
+            return localParts !== null && isSameCivilDateTime(localParts, target);
+        })
+        .sort((left, right) => left - right);
+
+    return candidates.length > 0 ? new Date(candidates[0]).toISOString() : null;
+}
 
 const EMPTY_FORM: CustomerFormValues = {
     name: '',
@@ -218,6 +326,79 @@ const PROFILE_EDIT_ROLES = new Set(['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 
 const CUSTOMER_IDENTITY_EDIT_ROLES = new Set(['OWNER', 'ADMIN', 'SUPER_ADMIN']);
 const CUSTOMER_CONTROL_ROLES = new Set(['OWNER', 'ADMIN', 'SUPER_ADMIN']);
 const INTERACTION_WRITE_ROLES = new Set(['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'CASHIER', 'VENDEDOR']);
+
+const DIALOG_FOCUSABLE_SELECTOR = [
+    'a[href]',
+    'button:not([disabled])',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+function focusableElements(dialog: HTMLElement): HTMLElement[] {
+    return Array.from(dialog.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE_SELECTOR))
+        .filter((element) => element.tabIndex >= 0 && element.getAttribute('aria-hidden') !== 'true');
+}
+
+function useAccessibleDialog(
+    open: boolean,
+    onClose: () => void,
+    initialFocusSelector: string,
+) {
+    const dialogRef = useRef<HTMLDivElement>(null);
+    const closeRef = useRef(onClose);
+    closeRef.current = onClose;
+
+    useEffect(() => {
+        if (!open) return undefined;
+
+        const dialog = dialogRef.current;
+        if (!dialog) return undefined;
+
+        const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        const initialFocus = dialog.querySelector<HTMLElement>(initialFocusSelector)
+            ?? focusableElements(dialog)[0]
+            ?? dialog;
+        initialFocus.focus();
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                closeRef.current();
+                return;
+            }
+            if (event.key !== 'Tab') return;
+
+            const focusable = focusableElements(dialog);
+            if (focusable.length === 0) {
+                event.preventDefault();
+                dialog.focus();
+                return;
+            }
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const active = document.activeElement;
+            if (event.shiftKey && (active === first || !dialog.contains(active))) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+
+        document.addEventListener('keydown', handleKeyDown);
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+            if (trigger?.isConnected) trigger.focus();
+        };
+    }, [initialFocusSelector, open]);
+
+    return dialogRef;
+}
 
 function toEditableCustomerForm(customer: CustomerHubListItem): CustomerFormValues {
     return {
@@ -273,6 +454,7 @@ function validateCustomerForm(
 const Clients: React.FC = () => {
     const navigate = useNavigate();
     const role = currentSessionRole();
+    const { toast, showToast, dismissToast } = useToast();
     const canManageControls = CUSTOMER_CONTROL_ROLES.has(role);
     const canEditLegalIdentity = CUSTOMER_IDENTITY_EDIT_ROLES.has(role);
     const canCreateCustomer = canCreateCustomers(role);
@@ -301,6 +483,7 @@ const Clients: React.FC = () => {
     const [interactionForm, setInteractionForm] = useState<InteractionFormValues>(EMPTY_INTERACTION_FORM);
     const [interactionError, setInteractionError] = useState('');
     const [savingInteraction, setSavingInteraction] = useState(false);
+    const [blockConfirm, setBlockConfirm] = useState<CustomerBlockConfirmState>(null);
 
     const fetchCustomers = async (preferredId?: string | null) => {
         setLoading(true);
@@ -406,8 +589,6 @@ const Clients: React.FC = () => {
             return acc;
         }, { total: 0, debt: 0, overdue: 0, blocked: 0 });
     }, [customers]);
-    const interactions = detail?.interactions ?? [];
-
     const closeModal = () => {
         if (savingForm) return;
         setShowModal(false);
@@ -503,6 +684,13 @@ const Clients: React.FC = () => {
                 setMobileDetailOpen(true);
                 await fetchDetail(targetId);
             }
+            showToast({
+                tone: 'success',
+                title: editingCustomerId ? 'Ficha actualizada' : 'Cliente creado',
+                message: editingCustomerId
+                    ? 'La ficha quedó guardada y lista para POS, cartera y cobranza.'
+                    : 'El cliente ya quedó listo para venderle y darle seguimiento.',
+            });
         } catch {
             setFormErrors({
                 general: editingCustomerId
@@ -554,7 +742,21 @@ const Clients: React.FC = () => {
             }
         }
 
-        const toIso = (value: string) => value ? new Date(value).toISOString() : null;
+        const promisedAt = interactionForm.type === 'PROMISE'
+            ? managuaDateTimeLocalToIso(interactionForm.promisedAt)
+            : null;
+        if (interactionForm.type === 'PROMISE' && !promisedAt) {
+            setInteractionError('La fecha prometida no representa una hora válida en Nicaragua.');
+            return;
+        }
+        const followUpAt = interactionForm.followUpAt
+            ? managuaDateTimeLocalToIso(interactionForm.followUpAt)
+            : null;
+        if (interactionForm.followUpAt && !followUpAt) {
+            setInteractionError('El próximo seguimiento no representa una hora válida en Nicaragua.');
+            return;
+        }
+
         setSavingInteraction(true);
         setInteractionError('');
         try {
@@ -567,8 +769,8 @@ const Clients: React.FC = () => {
                     promisedAmount: interactionForm.type === 'PROMISE' && interactionForm.promisedAmount.trim()
                         ? interactionForm.promisedAmount.trim()
                         : null,
-                    promisedAt: interactionForm.type === 'PROMISE' ? toIso(interactionForm.promisedAt) : null,
-                    followUpAt: toIso(interactionForm.followUpAt),
+                    promisedAt,
+                    followUpAt,
                 }),
             });
             const body = await response.json().catch(() => ({}));
@@ -579,6 +781,11 @@ const Clients: React.FC = () => {
             setShowInteractionModal(false);
             setInteractionForm(EMPTY_INTERACTION_FORM);
             await fetchDetail(detail.profile.id);
+            showToast({
+                tone: 'success',
+                title: 'Gestión registrada',
+                message: 'La actividad quedó visible para el resto del equipo.',
+            });
         } catch {
             setInteractionError('No pudimos registrar la gestión. Revisá la conexión e intentá de nuevo.');
         } finally {
@@ -601,28 +808,49 @@ const Clients: React.FC = () => {
                 return;
             }
             await fetchDetail(detail.profile.id);
+            showToast({
+                tone: 'success',
+                title: status === 'COMPLETED' ? 'Gestión completada' : 'Gestión cancelada',
+                message: 'La línea de tiempo ya refleja el cambio.',
+            });
         } catch {
             setDetailError('No pudimos actualizar la gestión por un problema de conexión.');
         }
     };
 
     const toggleBlock = async (customer: CustomerHubListItem) => {
-        if (!confirm(`¿${customer.isBlocked ? 'Desbloquear' : 'Bloquear'} crédito para ${customer.name}?`)) return;
+        if (!canManageControls) return;
+        setBlockConfirm({
+            id: customer.id,
+            name: customer.name,
+            nextBlockedState: !customer.isBlocked,
+        });
+    };
+
+    const confirmToggleBlock = async () => {
+        if (!blockConfirm) return;
         try {
-            const res = await authFetch(`/api/customers/${customer.id}`, {
+            const res = await authFetch(`/api/customers/${blockConfirm.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ isBlocked: !customer.isBlocked }),
+                body: JSON.stringify({ isBlocked: blockConfirm.nextBlockedState }),
             });
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}));
                 setDetailError(normalizeApiFailure(res.status, body, 'No pudimos actualizar el bloqueo de crédito.').message);
                 return;
             }
-            await fetchCustomers(customer.id);
-            await fetchDetail(customer.id);
+            await fetchCustomers(blockConfirm.id);
+            await fetchDetail(blockConfirm.id);
+            showToast({
+                tone: 'success',
+                title: blockConfirm.nextBlockedState ? 'Crédito bloqueado' : 'Crédito desbloqueado',
+                message: `${blockConfirm.name} ya refleja el nuevo estado de crédito.`,
+            });
         } catch {
             setDetailError('No pudimos actualizar el bloqueo de crédito.');
+        } finally {
+            setBlockConfirm(null);
         }
     };
 
@@ -640,6 +868,11 @@ const Clients: React.FC = () => {
             }
             await fetchCustomers(customer.id);
             await fetchDetail(customer.id);
+            showToast({
+                tone: 'success',
+                title: customer.isWholesale ? 'Mayoreo desactivado' : 'Mayoreo activado',
+                message: `${customer.name} ya refleja las nuevas condiciones.`,
+            });
         } catch {
             setDetailError('No pudimos actualizar las condiciones de mayoreo.');
         }
@@ -659,22 +892,71 @@ const Clients: React.FC = () => {
             }
             await fetchCustomers(customerId);
             await fetchDetail(customerId);
+            const vendedor = vendedores.find((candidate) => candidate.id === nextSellerId);
+            showToast({
+                tone: 'success',
+                title: 'Cliente reasignado',
+                message: vendedor
+                    ? `La cartera ahora quedó a nombre de ${vendedor.name}.`
+                    : 'El cliente quedó sin vendedor asignado.',
+            });
         } catch {
             setDetailError('No pudimos reasignar el cliente por un problema de conexión.');
         }
     };
 
+    const sendStatementReminder = () => {
+        if (!detail) return;
+        const balance = detail.receivables.totals.balance;
+        const customerName = detail.profile.name;
+        const phoneDigits = (detail.profile.phone || '').replace(/\D/g, '');
+        if (!phoneDigits) {
+            showToast({
+                tone: 'warning',
+                title: 'Cliente sin teléfono',
+                message: 'Agregá un número antes de enviar recordatorios desde esta ficha.',
+            });
+            return;
+        }
+
+        const whatsappPhone = phoneDigits.startsWith('505') ? phoneDigits : `505${phoneDigits}`;
+        const draft = `Hola ${customerName}, te compartimos tu saldo pendiente en Nortex: ${fmtMoney(balance)}. Si querés, te atendemos por esta misma vía.`;
+        window.open(`https://wa.me/${whatsappPhone}?text=${encodeURIComponent(draft)}`, '_blank', 'noopener,noreferrer');
+        showToast({
+            tone: 'success',
+            title: 'Recordatorio listo',
+            message: 'Se abrió WhatsApp con el borrador del estado de cuenta.',
+        });
+    };
+
+    const customerFormDialogRef = useAccessibleDialog(
+        showModal,
+        closeModal,
+        '[data-dialog-initial-focus="customer-form"]',
+    );
+    const interactionDialogRef = useAccessibleDialog(
+        showInteractionModal,
+        closeInteractionModal,
+        '[data-dialog-initial-focus="customer-interaction"]',
+    );
+    const blockDialogRef = useAccessibleDialog(
+        Boolean(blockConfirm),
+        () => setBlockConfirm(null),
+        '[data-dialog-initial-focus="customer-block"]',
+    );
+
     return (
         <div className="h-full overflow-hidden bg-surface-950">
-            <div className="grid h-full grid-cols-1 xl:grid-cols-[420px_minmax(0,1fr)]">
+            <ToastViewport toast={toast} onDismiss={dismissToast} />
+            <div className="grid h-full grid-cols-1 xl:grid-cols-[310px_minmax(0,1fr)]">
                 <aside className={`${mobileDetailOpen ? 'hidden xl:flex' : 'flex'} h-full flex-col border-r border-white/[0.06] bg-surface-900/95`}>
-                    <div className="border-b border-white/[0.06] p-5">
+                    <div className="border-b border-white/[0.06] p-4">
                         <div className="flex items-start justify-between gap-3">
                             <div>
                                 <h1 className="flex items-center gap-2 text-2xl font-black text-slate-100">
                                     <Users className="text-nortex-500" /> Clientes
                                 </h1>
-                                <p className="mt-1 text-sm text-slate-400">Ahora funciona como cartera viva: perfil, deuda, actividad y siguiente acción.</p>
+                                <p className="mt-1 text-xs text-slate-500">Cartera, riesgo y seguimiento.</p>
                             </div>
                             {canCreateCustomer && (
                                 <button
@@ -687,22 +969,14 @@ const Clients: React.FC = () => {
                             )}
                         </div>
 
-                        <div className="mt-4 grid grid-cols-2 gap-3">
-                            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3">
-                                <span className="text-[11px] font-mono uppercase text-slate-500">Clientes</span>
-                                <div className="mt-1 text-xl font-black text-slate-100">{summary.total}</div>
+                        <div className="mt-4 rounded-control border border-white/[0.06] bg-white/[0.025] px-3 py-2.5 text-xs">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="font-bold text-slate-300">{summary.total} clientes</span>
+                                <span className="font-black text-amber-300">{fmtMoney(summary.debt)}</span>
                             </div>
-                            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3">
-                                <span className="text-[11px] font-mono uppercase text-slate-500">Saldo vivo</span>
-                                <div className="mt-1 text-xl font-black text-amber-300">{fmtMoney(summary.debt)}</div>
-                            </div>
-                            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3">
-                                <span className="text-[11px] font-mono uppercase text-slate-500">Facturas vencidas</span>
-                                <div className="mt-1 text-xl font-black text-red-300">{summary.overdue}</div>
-                            </div>
-                            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3">
-                                <span className="text-[11px] font-mono uppercase text-slate-500">Bloqueados</span>
-                                <div className="mt-1 text-xl font-black text-slate-100">{summary.blocked}</div>
+                            <div className="mt-1 flex items-center justify-between gap-3 text-slate-500">
+                                <span>{summary.overdue} facturas vencidas</span>
+                                <span>{summary.blocked} bloqueados</span>
                             </div>
                         </div>
 
@@ -717,14 +991,14 @@ const Clients: React.FC = () => {
                             />
                         </div>
 
-                        <div className="mt-4 flex flex-wrap gap-2">
+                        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
                             {SEGMENT_OPTIONS.map((option) => (
                                 <button
                                     type="button"
                                     key={option.id}
                                     onClick={() => setSegment(option.id)}
                                     aria-pressed={segment === option.id}
-                                    className={`rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
+                                    className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
                                         segment === option.id
                                             ? 'border-nortex-500 bg-nortex-500/15 text-nortex-300'
                                             : 'border-white/[0.06] bg-white/[0.03] text-slate-400 hover:text-slate-200'
@@ -769,9 +1043,9 @@ const Clients: React.FC = () => {
                         )}
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                    <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
                         {loading ? (
-                            <div className="space-y-3">
+                            <div className="space-y-2">
                                 {Array.from({ length: 6 }).map((_, index) => (
                                     <div key={index} className="h-32 animate-pulse rounded-2xl border border-white/[0.06] bg-white/[0.03]" />
                                 ))}
@@ -794,17 +1068,17 @@ const Clients: React.FC = () => {
                                                 setSelectedCustomerId(customer.id);
                                                 setMobileDetailOpen(true);
                                             }}
-                                            className={`w-full rounded-3xl border p-4 text-left transition-all ${
+                                            className={`w-full rounded-control border p-3 text-left transition-all ${
                                                 selected
-                                                    ? 'border-nortex-500 bg-nortex-500/10 shadow-[0_0_0_1px_rgba(87,196,255,0.12)]'
+                                                    ? 'border-emerald-500/70 bg-emerald-500/[0.08] shadow-[0_0_0_1px_rgba(16,185,129,0.10)]'
                                                     : 'border-white/[0.06] bg-white/[0.03] hover:bg-white/[0.05]'
                                             }`}
                                         >
                                             <div className="flex items-start justify-between gap-3">
                                                 <div>
-                                                    <div className="text-base font-black text-slate-100">{customer.name}</div>
+                                                    <div className="text-sm font-black text-slate-100">{customer.name}</div>
                                                     <div className="mt-1 text-xs text-slate-400">
-                                                        {customer.taxId || 'Sin documento'} · {customer.seller?.name || 'Sin vendedor'}
+                                                        {customer.phone || customer.taxId || 'Sin contacto'}
                                                     </div>
                                                 </div>
                                                 <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${segmentTone[customer.segment]}`}>
@@ -812,14 +1086,10 @@ const Clients: React.FC = () => {
                                                 </span>
                                             </div>
 
-                                            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                                                <div>
-                                                    <div className="text-[11px] font-mono uppercase text-slate-500">Deuda</div>
-                                                    <div className="mt-1 font-bold text-amber-300">{fmtMoney(customer.currentDebt)}</div>
-                                                </div>
-                                                <div>
-                                                    <div className="text-[11px] font-mono uppercase text-slate-500">Límite</div>
-                                                    <div className="mt-1 font-bold text-slate-100">{fmtMoney(customer.creditLimit)}</div>
+                                            <div className="mt-3 flex items-end justify-between gap-3 text-xs">
+                                                <div className="text-slate-500">{customer.seller?.name || 'Sin vendedor'}</div>
+                                                <div className={`font-black ${customer.currentDebt > 0 ? 'text-red-300' : 'text-slate-400'}`}>
+                                                    {fmtMoney(customer.currentDebt)}
                                                 </div>
                                             </div>
 
@@ -830,11 +1100,9 @@ const Clients: React.FC = () => {
                                                 />
                                             </div>
 
-                                            <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-400">
-                                                <div>{customer.stats.openInvoices} facturas abiertas · {customer.stats.overdueInvoices} vencidas</div>
-                                                <div className="inline-flex items-center gap-1">
-                                                    Abrir <ChevronRight size={14} />
-                                                </div>
+                                            <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-slate-500">
+                                                <div>{customer.stats.openInvoices} abiertas · {customer.stats.overdueInvoices} vencidas</div>
+                                                <ChevronRight size={14} aria-hidden="true" />
                                             </div>
                                         </button>
                                     );
@@ -844,7 +1112,7 @@ const Clients: React.FC = () => {
                     </div>
                 </aside>
 
-                <main className={`${mobileDetailOpen ? 'block' : 'hidden xl:block'} h-full overflow-y-auto bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.12),_transparent_32%),linear-gradient(180deg,_rgba(6,17,27,0.9),_rgba(6,17,27,1))] p-4 sm:p-5`}>
+                <main className={`${mobileDetailOpen ? 'block' : 'hidden xl:block'} h-full overflow-y-auto bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.07),_transparent_32%),linear-gradient(180deg,_rgba(6,17,27,0.9),_rgba(6,17,27,1))] p-4 sm:p-5`}>
                     <button
                         type="button"
                         onClick={() => setMobileDetailOpen(false)}
@@ -884,379 +1152,46 @@ const Clients: React.FC = () => {
                             </div>
                         </div>
                     ) : (
-                        <div className="space-y-5">
-                            <section className="rounded-card border border-white/[0.06] bg-surface-900/85 p-5 shadow-2xl shadow-black/10">
-                                <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-                                    <div>
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            <h2 className="text-3xl font-black text-slate-100">{detail.profile.name}</h2>
-                                            <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${segmentTone[detail.profile.segment]}`}>
-                                                {segmentLabel[detail.profile.segment]}
-                                            </span>
-                                            {detail.profile.isWholesale && (
-                                                <span className="rounded-full border border-indigo-500/20 bg-indigo-500/10 px-2.5 py-1 text-[11px] font-bold text-indigo-300">
-                                                    Mayoreo
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-400">
-                                            <span className="inline-flex items-center gap-2"><Phone size={14} /> {detail.profile.phone || 'Sin teléfono'}</span>
-                                            <span className="inline-flex items-center gap-2"><Mail size={14} /> {detail.profile.email || 'Sin email'}</span>
-                                            <span className="inline-flex items-center gap-2"><CalendarClock size={14} /> Última venta: {fmtDate(detail.profile.lastSaleAt)}</span>
-                                        </div>
-                                        {detail.profile.address && (
-                                            <p className="mt-3 max-w-3xl text-sm text-slate-500">{detail.profile.address}</p>
-                                        )}
-                                    </div>
-
-                                    <div className="grid w-full gap-2 xl:w-[330px]">
-                                        {canEditProfile && (
-                                            <button
-                                                onClick={openEditModal}
-                                                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white/[0.06] px-4 py-3 text-sm font-bold text-slate-100 hover:bg-white/[0.10]"
-                                            >
-                                                <Pencil size={16} /> Editar ficha
-                                            </button>
-                                        )}
-                                        {canWriteInteraction && (
-                                            <button
-                                                onClick={openInteractionModal}
-                                                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-nortex-500/15 px-4 py-3 text-sm font-bold text-nortex-200 hover:bg-nortex-500/20"
-                                            >
-                                                <MessageSquare size={16} /> Registrar gestión
-                                            </button>
-                                        )}
-                                        <button
-                                            onClick={() => navigate(`/app/receivables?customerId=${detail.profile.id}`)}
-                                            className="rounded-2xl bg-amber-500/15 px-4 py-3 text-sm font-bold text-amber-200 hover:bg-amber-500/20"
-                                        >
-                                            Abrir cobranza
-                                        </button>
-                                        {canManageControls && (
-                                            <>
-                                                <button
-                                                    onClick={() => toggleBlock(detail.profile)}
-                                                    className={`rounded-2xl px-4 py-3 text-sm font-bold ${
-                                                        detail.profile.isBlocked
-                                                            ? 'bg-emerald-500/15 text-emerald-300'
-                                                            : 'bg-red-500/15 text-red-300'
-                                                    }`}
-                                                >
-                                                    {detail.profile.isBlocked ? 'Desbloquear crédito' : 'Bloquear crédito'}
-                                                </button>
-                                                <button
-                                                    onClick={() => toggleWholesale(detail.profile)}
-                                                    className="rounded-2xl bg-indigo-500/15 px-4 py-3 text-sm font-bold text-indigo-300"
-                                                >
-                                                    {detail.profile.isWholesale ? 'Quitar mayoreo' : 'Activar mayoreo'}
-                                                </button>
-                                                {puedeAsignar && (
-                                                    <select
-                                                        aria-label="Vendedor asignado"
-                                                        value={detail.profile.sellerId || ''}
-                                                        onChange={(e) => reasignarVendedor(detail.profile.id, e.target.value)}
-                                                        className="rounded-2xl border border-white/[0.06] bg-white/[0.03] px-4 py-3 text-sm text-slate-100 outline-none focus:border-nortex-500"
-                                                    >
-                                                        <option value="">Sin vendedor</option>
-                                                        {vendedores.map((vendedor) => (
-                                                            <option key={vendedor.id} value={vendedor.id}>
-                                                                {vendedor.name}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                )}
-                                            </>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div className="mt-5 grid gap-4 lg:grid-cols-4">
-                                    <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] p-4">
-                                        <div className="text-[11px] font-mono uppercase text-slate-500">Saldo actual</div>
-                                        <div className="mt-2 text-2xl font-black text-amber-300">{fmtMoney(detail.profile.currentDebt)}</div>
-                                    </div>
-                                    <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] p-4">
-                                        <div className="text-[11px] font-mono uppercase text-slate-500">Límite</div>
-                                        <div className="mt-2 text-2xl font-black text-slate-100">{fmtMoney(detail.profile.creditLimit)}</div>
-                                    </div>
-                                    <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] p-4">
-                                        <div className="text-[11px] font-mono uppercase text-slate-500">Ventas acumuladas</div>
-                                        <div className="mt-2 text-2xl font-black text-slate-100">{fmtMoney(detail.profile.stats.totalSales)}</div>
-                                    </div>
-                                    <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] p-4">
-                                        <div className="text-[11px] font-mono uppercase text-slate-500">Siguiente acción</div>
-                                        <div className="mt-2 text-sm font-bold text-slate-200">{detail.profile.nextAction}</div>
-                                    </div>
-                                </div>
-                            </section>
-
-                            <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
-                                <div className="space-y-5">
-                                    <div className="rounded-card border border-white/[0.06] bg-surface-900/85 p-5">
-                                        <div className="flex items-center justify-between gap-3">
-                                            <div>
-                                                <h3 className="text-xl font-black text-slate-100">Cobranza</h3>
-                                                <p className="text-sm text-slate-400">Facturas abiertas, vencidas y últimos abonos.</p>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <span className="rounded-full bg-white/[0.04] px-3 py-1 text-xs font-bold text-slate-300">
-                                                    {detail.receivables.invoices.length} facturas
-                                                </span>
-                                                <button
-                                                    onClick={() => navigate(`/app/receivables?customerId=${detail.profile.id}`)}
-                                                    className="rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-1 text-xs font-bold text-amber-200 hover:bg-amber-500/15"
-                                                >
-                                                    Ver en módulo
-                                                </button>
-                                            </div>
-                                        </div>
-
-                                        <div className="mt-4 grid gap-3 md:grid-cols-4">
-                                            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3">
-                                                <div className="text-[11px] font-mono uppercase text-slate-500">Facturado</div>
-                                                <div className="mt-1 text-lg font-black text-slate-100">{fmtMoney(detail.receivables.totals.billed)}</div>
-                                            </div>
-                                            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3">
-                                                <div className="text-[11px] font-mono uppercase text-slate-500">Cobrado</div>
-                                                <div className="mt-1 text-lg font-black text-emerald-300">{fmtMoney(detail.receivables.totals.paid)}</div>
-                                            </div>
-                                            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3">
-                                                <div className="text-[11px] font-mono uppercase text-slate-500">Saldo</div>
-                                                <div className="mt-1 text-lg font-black text-amber-300">{fmtMoney(detail.receivables.totals.balance)}</div>
-                                            </div>
-                                            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3">
-                                                <div className="text-[11px] font-mono uppercase text-slate-500">Vencido</div>
-                                                <div className="mt-1 text-lg font-black text-red-300">{fmtMoney(detail.receivables.totals.overdue)}</div>
-                                            </div>
-                                        </div>
-
-                                        <div className="mt-4 space-y-3">
-                                            {detail.receivables.invoices.length === 0 ? (
-                                                <div className="rounded-2xl border border-dashed border-white/[0.08] bg-white/[0.02] p-4 text-sm text-slate-500">
-                                                    Este cliente todavía no tiene ventas a crédito abiertas.
-                                                </div>
-                                            ) : detail.receivables.invoices.slice(0, 6).map((invoice) => (
-                                                <div key={invoice.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4">
-                                                    <div className="flex flex-wrap items-start justify-between gap-3">
-                                                        <div>
-                                                            <div className="font-bold text-slate-100">
-                                                                {invoice.invoiceNumber ? `Factura #${invoice.invoiceNumber}` : `Venta ${invoice.id.slice(0, 8)}`}
-                                                            </div>
-                                                            <div className="mt-1 text-xs text-slate-400">
-                                                                Emitida {fmtDate(invoice.date)} · vence {fmtDate(invoice.dueDate)}
-                                                            </div>
-                                                        </div>
-                                                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
-                                                            invoice.status === 'OVERDUE'
-                                                                ? 'bg-red-500/15 text-red-300'
-                                                                : invoice.status === 'PAID'
-                                                                    ? 'bg-emerald-500/15 text-emerald-300'
-                                                                    : 'bg-amber-500/15 text-amber-300'
-                                                        }`}>
-                                                            {invoice.status === 'OVERDUE' ? 'Vencida' : invoice.status === 'PAID' ? 'Pagada' : 'Pendiente'}
-                                                        </span>
-                                                    </div>
-                                                    <div className="mt-3 grid gap-3 text-sm md:grid-cols-3">
-                                                        <div>
-                                                            <div className="text-[11px] font-mono uppercase text-slate-500">Total</div>
-                                                            <div className="mt-1 font-bold text-slate-100">{fmtMoney(invoice.total)}</div>
-                                                        </div>
-                                                        <div>
-                                                            <div className="text-[11px] font-mono uppercase text-slate-500">Abonado</div>
-                                                            <div className="mt-1 font-bold text-emerald-300">{fmtMoney(invoice.paid)}</div>
-                                                        </div>
-                                                        <div>
-                                                            <div className="text-[11px] font-mono uppercase text-slate-500">Saldo</div>
-                                                            <div className="mt-1 font-bold text-amber-300">{fmtMoney(invoice.balance)}</div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    <div className="rounded-card border border-white/[0.06] bg-surface-900/85 p-5">
-                                        <h3 className="text-xl font-black text-slate-100">Ventas recientes</h3>
-                                        <div className="mt-4 space-y-3">
-                                            {detail.recentSales.length === 0 ? (
-                                                <div className="rounded-2xl border border-dashed border-white/[0.08] bg-white/[0.02] p-4 text-sm text-slate-500">
-                                                    Este cliente no tiene ventas registradas todavía.
-                                                </div>
-                                            ) : detail.recentSales.map((sale) => (
-                                                <div key={sale.id} className="flex items-center justify-between rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4">
-                                                    <div>
-                                                        <div className="font-bold text-slate-100">
-                                                            {sale.invoiceNumber ? `Factura #${sale.invoiceNumber}` : `Venta ${sale.id.slice(0, 8)}`}
-                                                        </div>
-                                                        <div className="mt-1 text-xs text-slate-400">
-                                                            {fmtDate(sale.createdAt)} · {sale.paymentMethod === 'CREDIT' ? 'Crédito' : sale.paymentMethod}
-                                                            {sale.soldBy?.name ? ` · ${sale.soldBy.name}` : ''}
-                                                        </div>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <div className="font-black text-slate-100">{fmtMoney(sale.total)}</div>
-                                                        {sale.balance > 0 && (
-                                                            <div className="mt-1 text-xs font-bold text-amber-300">Saldo {fmtMoney(sale.balance)}</div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="space-y-5">
-                                    <div className="rounded-card border border-white/[0.06] bg-surface-900/85 p-5">
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div>
-                                                <h3 className="text-xl font-black text-slate-100">Seguimiento</h3>
-                                                <p className="mt-1 text-sm text-slate-400">Notas, contactos, visitas y promesas que sí quedan guardadas.</p>
-                                            </div>
-                                            {canWriteInteraction && (
-                                                <button
-                                                    type="button"
-                                                    onClick={openInteractionModal}
-                                                    className="rounded-xl bg-nortex-500/15 px-3 py-2 text-xs font-bold text-nortex-200 hover:bg-nortex-500/20"
-                                                >
-                                                    Nueva gestión
-                                                </button>
-                                            )}
-                                        </div>
-                                        <div className="mt-4 space-y-3">
-                                            {interactions.length === 0 ? (
-                                                <div className="rounded-2xl border border-dashed border-white/[0.08] bg-white/[0.02] p-4 text-sm text-slate-500">
-                                                    Todavía no hay gestiones registradas para este cliente.
-                                                </div>
-                                            ) : interactions.slice(0, 8).map((interaction) => (
-                                                <div key={interaction.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4">
-                                                    <div className="flex items-start justify-between gap-3">
-                                                        <div className="min-w-0">
-                                                            <div className="flex flex-wrap items-center gap-2">
-                                                                <span className="text-sm font-bold text-slate-100">
-                                                                    {interaction.type === 'PROMISE' ? 'Promesa de pago'
-                                                                        : interaction.type === 'CALL' ? 'Llamada'
-                                                                            : interaction.type === 'WHATSAPP' ? 'WhatsApp'
-                                                                                : interaction.type === 'VISIT' ? 'Visita' : 'Nota'}
-                                                                </span>
-                                                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                                                    interaction.status === 'OPEN'
-                                                                        ? 'bg-amber-500/15 text-amber-200'
-                                                                        : interaction.status === 'COMPLETED'
-                                                                            ? 'bg-emerald-500/15 text-emerald-200'
-                                                                            : 'bg-slate-500/15 text-slate-300'
-                                                                }`}>
-                                                                    {interaction.status === 'OPEN' ? 'Pendiente' : interaction.status === 'COMPLETED' ? 'Completada' : 'Cancelada'}
-                                                                </span>
-                                                            </div>
-                                                            <p className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-300">{interaction.note}</p>
-                                                            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
-                                                                <span>{interaction.creator?.name || 'Sistema'} · {fmtDate(interaction.createdAt)}</span>
-                                                                {interaction.followUpAt && <span>Seguimiento: {fmtDate(interaction.followUpAt)}</span>}
-                                                                {interaction.promisedAt && <span>Prometió: {fmtDate(interaction.promisedAt)}</span>}
-                                                                {interaction.promisedAmount !== null && <span>{fmtMoney(interaction.promisedAmount)}</span>}
-                                                            </div>
-                                                        </div>
-                                                        {interaction.status === 'OPEN' && canWriteInteraction && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => resolveInteraction(interaction.id, 'COMPLETED')}
-                                                                className="shrink-0 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-200 hover:bg-emerald-500/15"
-                                                            >
-                                                                Completar
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    <div className="rounded-card border border-white/[0.06] bg-surface-900/85 p-5">
-                                        <h3 className="text-xl font-black text-slate-100">Timeline operativa</h3>
-                                        <p className="mt-1 text-sm text-slate-400">Ventas, abonos, gestiones y cambios sensibles del perfil, en orden real.</p>
-                                        <div className="mt-4 space-y-3">
-                                            {detail.timeline.length === 0 ? (
-                                                <div className="rounded-2xl border border-dashed border-white/[0.08] bg-white/[0.02] p-4 text-sm text-slate-500">
-                                                    Sin actividad relevante todavía.
-                                                </div>
-                                            ) : detail.timeline.map((event) => (
-                                                <div key={event.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4">
-                                                    <div className="flex items-start justify-between gap-3">
-                                                        <div>
-                                                            <div className="flex items-center gap-2 text-sm font-bold text-slate-100">
-                                                                {event.type === 'payment'
-                                                                    ? <CheckCircle size={16} className="text-emerald-300" />
-                                                                    : event.type === 'sale'
-                                                                        ? <Clock3 size={16} className="text-nortex-300" />
-                                                                        : <AlertCircle size={16} className="text-amber-300" />}
-                                                                {event.title}
-                                                            </div>
-                                                            <div className="mt-1 text-xs text-slate-400">{event.subtitle}</div>
-                                                            {event.meta && <div className="mt-2 text-xs text-slate-500">{event.meta}</div>}
-                                                        </div>
-                                                        <div className="text-right">
-                                                            <div className="text-xs text-slate-500">{fmtDate(event.happenedAt)}</div>
-                                                            {event.amount !== null && (
-                                                                <div className="mt-1 text-sm font-black text-slate-100">{fmtMoney(event.amount)}</div>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    <div className="rounded-card border border-white/[0.06] bg-surface-900/85 p-5">
-                                        <h3 className="text-xl font-black text-slate-100">Últimos abonos</h3>
-                                        <div className="mt-4 space-y-3">
-                                            {detail.recentPayments.length === 0 ? (
-                                                <div className="rounded-2xl border border-dashed border-white/[0.08] bg-white/[0.02] p-4 text-sm text-slate-500">
-                                                    No hay abonos registrados para este cliente.
-                                                </div>
-                                            ) : detail.recentPayments.map((payment) => (
-                                                <div key={payment.id} className="flex items-center justify-between rounded-2xl border border-white/[0.06] bg-white/[0.03] p-4">
-                                                    <div>
-                                                        <div className="font-bold text-slate-100">{fmtMoney(payment.amount)}</div>
-                                                        <div className="mt-1 text-xs text-slate-400">
-                                                            {payment.invoiceNumber ? `Factura #${payment.invoiceNumber}` : 'Sin factura visible'} · {payment.method}
-                                                        </div>
-                                                        <div className="mt-1 text-xs text-slate-500">
-                                                            {payment.collectedBy || 'Sistema'} · {fmtDate(payment.createdAt)}
-                                                        </div>
-                                                    </div>
-                                                    <Clock3 size={18} className="text-emerald-300" />
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    <div className="rounded-card border border-white/[0.06] bg-gradient-to-br from-nortex-500/10 to-transparent p-5">
-                                        <div className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-nortex-200">
-                                            <Shield size={16} /> Recomendación
-                                        </div>
-                                        <p className="mt-3 text-sm leading-6 text-slate-300">
-                                            {detail.profile.nextAction}. Usá “Registrar gestión” para que la próxima persona vea qué se habló, qué prometió el cliente y cuándo hay que volver a contactarlo.
-                                        </p>
-                                    </div>
-                                </div>
-                            </section>
-                        </div>
+                        <Customer360Detail
+                            detail={detail}
+                            canEditProfile={canEditProfile}
+                            canWriteInteraction={canWriteInteraction}
+                            canManageControls={canManageControls}
+                            canAssignSeller={puedeAsignar}
+                            sellers={vendedores}
+                            onEdit={openEditModal}
+                            onRegisterInteraction={openInteractionModal}
+                            onResolveInteraction={(interactionId) => void resolveInteraction(interactionId, 'COMPLETED')}
+                            onSendStatement={sendStatementReminder}
+                            onOpenReceivables={() => navigate(`/app/receivables?customerId=${detail.profile.id}`)}
+                            onToggleBlock={(customer) => void toggleBlock(customer)}
+                            onToggleWholesale={(customer) => void toggleWholesale(customer)}
+                            onAssignSeller={(customerId, sellerId) => void reasignarVendedor(customerId, sellerId)}
+                        />
                     )}
                 </main>
             </div>
 
             {showModal && (canCreateCustomer || canEditProfile) && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
+                    onMouseDown={(event) => {
+                        if (event.target === event.currentTarget) closeModal();
+                    }}
+                >
                     <div
+                        ref={customerFormDialogRef}
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="customer-form-title"
+                        aria-describedby="customer-form-description"
+                        tabIndex={-1}
                         className="max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto rounded-card border border-white/[0.08] bg-surface-900 shadow-2xl"
                     >
                         <div className="flex items-center justify-between border-b border-white/[0.06] p-6">
                             <div>
                                 <h3 id="customer-form-title" className="text-xl font-black text-slate-100">{editingCustomerId ? 'Editar cliente' : 'Nuevo cliente'}</h3>
-                                <p className="text-sm text-slate-400">
+                                <p id="customer-form-description" className="text-sm text-slate-400">
                                     {editingCustomerId
                                         ? canEditLegalIdentity
                                             ? 'Corregí identidad, contacto y datos operativos sin salir del hub.'
@@ -1280,6 +1215,7 @@ const Clients: React.FC = () => {
                                 <label htmlFor="customer-name" className="text-xs font-mono font-bold text-slate-500">NOMBRE / RAZÓN SOCIAL</label>
                                 <input
                                     id="customer-name"
+                                    data-dialog-initial-focus={canEditIdentityFields ? 'customer-form' : undefined}
                                     required={canEditIdentityFields}
                                     readOnly={!canEditIdentityFields}
                                     value={formData.name}
@@ -1319,6 +1255,7 @@ const Clients: React.FC = () => {
                                     <label htmlFor="customer-phone" className="text-xs font-mono font-bold text-slate-500">TELÉFONO</label>
                                     <input
                                         id="customer-phone"
+                                        data-dialog-initial-focus={!canEditIdentityFields ? 'customer-form' : undefined}
                                         value={formData.phone}
                                         onChange={(e) => {
                                             setFormData({ ...formData, phone: e.target.value });
@@ -1359,7 +1296,7 @@ const Clients: React.FC = () => {
                                                 setFormErrors((previous) => ({ ...previous, creditLimit: undefined, general: undefined }));
                                             }}
                                             aria-invalid={Boolean(formErrors.creditLimit)}
-                                            className={`mt-1 w-full rounded-2xl border bg-blue-500/10 p-3 text-lg font-black text-slate-100 outline-none focus:border-nortex-500 ${formErrors.creditLimit ? 'border-red-500/70' : 'border-blue-500/20'}`}
+                                            className={`mt-1 w-full rounded-2xl border bg-emerald-500/[0.05] p-3 text-lg font-black text-slate-100 outline-none focus:border-emerald-500 ${formErrors.creditLimit ? 'border-red-500/70' : 'border-emerald-500/20'}`}
                                             placeholder="0.00"
                                         />
                                         {formErrors.creditLimit && <p className="mt-1 text-xs text-red-300">{formErrors.creditLimit}</p>}
@@ -1404,9 +1341,9 @@ const Clients: React.FC = () => {
                                 </div>
                             )}
 
-                            <div className="rounded-2xl border border-blue-500/15 bg-blue-500/10 p-4 text-xs text-blue-200">
+                            <div className="rounded-2xl border border-emerald-500/15 bg-emerald-500/[0.06] p-4 text-xs text-emerald-200">
                                 <div className="flex items-center gap-2 font-bold"><Shield size={14} /> Este cliente queda listo para POS, fiado y cobranza.</div>
-                                <p className="mt-1 text-blue-100/80">Después podés registrar llamadas, visitas, notas y promesas desde su ficha.</p>
+                                <p className="mt-1 text-emerald-100/80">Después podés registrar llamadas, visitas, notas y promesas desde su ficha.</p>
                             </div>
 
                             {formErrors.general && (
@@ -1428,17 +1365,25 @@ const Clients: React.FC = () => {
             )}
 
             {showInteractionModal && detail && canWriteInteraction && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm">
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm"
+                    onMouseDown={(event) => {
+                        if (event.target === event.currentTarget) closeInteractionModal();
+                    }}
+                >
                     <div
+                        ref={interactionDialogRef}
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="customer-interaction-title"
+                        aria-describedby="customer-interaction-description"
+                        tabIndex={-1}
                         className="max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto rounded-card border border-white/[0.08] bg-surface-900 shadow-2xl"
                     >
                         <div className="flex items-start justify-between gap-4 border-b border-white/[0.06] p-6">
                             <div>
                                 <h3 id="customer-interaction-title" className="text-xl font-black text-slate-100">Registrar gestión</h3>
-                                <p className="mt-1 text-sm text-slate-400">{detail.profile.name} · dejá contexto y una próxima acción concreta.</p>
+                                <p id="customer-interaction-description" className="mt-1 text-sm text-slate-400">{detail.profile.name} · dejá contexto y una próxima acción concreta.</p>
                             </div>
                             <button
                                 type="button"
@@ -1455,6 +1400,7 @@ const Clients: React.FC = () => {
                                 <label htmlFor="interaction-type" className="text-xs font-mono font-bold text-slate-500">TIPO DE GESTIÓN</label>
                                 <select
                                     id="interaction-type"
+                                    data-dialog-initial-focus="customer-interaction"
                                     value={interactionForm.type}
                                     onChange={(event) => {
                                         const type = event.target.value as InteractionFormValues['type'];
@@ -1556,6 +1502,57 @@ const Clients: React.FC = () => {
                                 <MessageSquare size={16} /> {savingInteraction ? 'Guardando gestión…' : 'Guardar gestión'}
                             </button>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {blockConfirm && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm"
+                    onMouseDown={(event) => {
+                        if (event.target === event.currentTarget) setBlockConfirm(null);
+                    }}
+                >
+                    <div
+                        ref={blockDialogRef}
+                        role="alertdialog"
+                        aria-modal="true"
+                        aria-labelledby="customer-block-title"
+                        aria-describedby="customer-block-description"
+                        tabIndex={-1}
+                        className="w-full max-w-md rounded-card border border-white/[0.08] bg-surface-900 shadow-2xl"
+                    >
+                        <div className="border-b border-white/[0.06] p-6">
+                            <h3 id="customer-block-title" className="text-xl font-black text-slate-100">
+                                {blockConfirm.nextBlockedState ? 'Bloquear crédito' : 'Desbloquear crédito'}
+                            </h3>
+                            <p id="customer-block-description" className="mt-2 text-sm text-slate-400">
+                                {blockConfirm.nextBlockedState
+                                    ? `Las próximas ventas a crédito para ${blockConfirm.name} quedarán frenadas hasta revisar su saldo.`
+                                    : `El crédito de ${blockConfirm.name} volverá a quedar disponible para nuevas ventas.`}
+                            </p>
+                        </div>
+                        <div className="flex gap-3 p-6">
+                            <button
+                                type="button"
+                                onClick={() => setBlockConfirm(null)}
+                                data-dialog-initial-focus="customer-block"
+                                className="flex-1 rounded-2xl border border-white/[0.08] px-4 py-3 text-sm font-bold text-slate-200 hover:bg-white/[0.04]"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void confirmToggleBlock()}
+                                className={`flex-1 rounded-2xl px-4 py-3 text-sm font-bold ${
+                                    blockConfirm.nextBlockedState
+                                        ? 'bg-red-500/15 text-red-200 hover:bg-red-500/20'
+                                        : 'bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/20'
+                                }`}
+                            >
+                                {blockConfirm.nextBlockedState ? 'Confirmar bloqueo' : 'Confirmar desbloqueo'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

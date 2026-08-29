@@ -6,6 +6,7 @@ const read = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8'
 
 const server = read('backend/server.ts');
 const purchaseOrders = read('backend/routes/purchaseOrders.ts');
+const procurementReceiptService = read('backend/services/procurementReceiptService.ts');
 
 function between(source: string, start: string, end: string): string {
     const from = source.indexOf(start);
@@ -29,10 +30,10 @@ const closeStockCountRoute = between(
     "app.post('/api/stock-counts/:id/close'",
     "app.post('/api/stock-counts/:id/cancel'",
 );
-const applyGoodsReceipt = between(
-    purchaseOrders,
-    'async function applyGoodsReceipt(',
-    '// ── GET /',
+const executeGoodsReceipt = between(
+    procurementReceiptService,
+    'export async function executeProcurementReceipt(',
+    '/**\n * Un P2002 concurrente',
 );
 const receivePurchaseOrderRoute = between(
     purchaseOrders,
@@ -69,13 +70,13 @@ describe('aislamiento de mutaciones por bodega', () => {
     });
 
     it('la recepción de OC usa el destino resuelto al incrementar inventario', () => {
-        expect(receivePurchaseOrderRoute).toContain('resolveOperationalWarehouse(');
-        expect(receivePurchaseOrderRoute).toContain('destinationWarehouse.id,');
-        expect(applyGoodsReceipt).toMatch(/applyStockDelta\([\s\S]*warehouseId: destinationWarehouseId/);
+        expect(receivePurchaseOrderRoute).toContain('executeProcurementReceiptTransaction({');
+        expect(executeGoodsReceipt).toContain('resolveOperationalWarehouse(');
+        expect(executeGoodsReceipt).toMatch(/applyStockDelta\([\s\S]*warehouseId: destinationWarehouse\.id/);
     });
 
     it('la recepción persiste el destino y devuelve errores de selección al cliente', () => {
-        expect(receivePurchaseOrderRoute).toMatch(/action: 'PO_RECEIVED'[\s\S]*warehouseId: destinationWarehouse\.id/);
+        expect(executeGoodsReceipt).toMatch(/action: 'GOODS_RECEIPT_POSTED'[\s\S]*warehouseId: destinationWarehouse\.id/);
         expect(receivePurchaseOrderRoute).toContain("e.code === 'WAREHOUSE_REQUIRED'");
         expect(receivePurchaseOrderRoute).toContain("e.code === 'WAREHOUSE_NOT_FOUND'");
         expect(receivePurchaseOrderRoute).toContain('code: e.code');

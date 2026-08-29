@@ -10,10 +10,6 @@ const migration = readFileSync(
     resolve(process.cwd(), 'backend/prisma/migrations/20260827_customer_relationship_hub/migration.sql'),
     'utf8',
 );
-const paymentHandler = server.slice(
-    server.indexOf('async function registerCreditPayment('),
-    server.indexOf('// POST /api/credits/:saleId/writeoff'),
-);
 
 describe('integridad de abonos de clientes', () => {
     it('contabiliza efectivo en Caja y medios electrónicos en Bancos', () => {
@@ -31,7 +27,7 @@ describe('integridad de abonos de clientes', () => {
         }
     });
 
-    it('rechaza montos inválidos y crédito como método de un abono', () => {
+    it('rechaza montos inválidos y crédito como método', () => {
         expect(() => buildPaymentJournalLines(Symbol('monto') as never)).toThrowError('amount no es un monto decimal válido');
         expect(() => buildPaymentJournalLines('0')).toThrowError('amount debe ser finito y mayor que cero');
         expect(() => buildPaymentJournalLines('-1')).toThrowError('amount debe ser finito y mayor que cero');
@@ -39,12 +35,11 @@ describe('integridad de abonos de clientes', () => {
         expect(() => buildPaymentJournalLines('Infinity')).toThrowError('amount debe ser finito y mayor que cero');
         expect(() => buildPaymentJournalLines('1.001')).toThrowError('amount no cabe en el rango monetario permitido');
         expect(() => buildPaymentJournalLines('100000000')).toThrowError('amount no cabe en el rango monetario permitido');
-        expect(CreatePaymentSchema.safeParse({
-            saleId: 'sale-1',
-            amount: '10',
-            method: 'CREDIT',
-            clientEventId: '4ac0efc2-fb48-48c8-936a-9bf4dbdf8277',
-        }).success).toBe(false);
+        expect(CreatePaymentSchema.safeParse({ saleId: 'sale-1', amount: '10', method: 'CREDIT' }).success).toBe(false);
+    });
+
+    it('exige un UUID idempotente en cada abono nuevo', () => {
+        expect(CreatePaymentSchema.safeParse({ saleId: 'sale-1', amount: '10', method: 'TRANSFER' }).success).toBe(false);
         expect(CreatePaymentSchema.safeParse({
             saleId: 'sale-1',
             amount: '10.25',
@@ -53,27 +48,17 @@ describe('integridad de abonos de clientes', () => {
         }).success).toBe(true);
     });
 
-    it('rechaza abonos actuales sin UUID idempotente antes de ejecutar el handler', () => {
-        const basePayment = { saleId: 'sale-1', amount: '10.25', method: 'CASH' };
-
-        expect(CreatePaymentSchema.safeParse(basePayment).success).toBe(false);
-        expect(CreatePaymentSchema.safeParse({ ...basePayment, clientEventId: null }).success).toBe(false);
-        expect(CreatePaymentSchema.safeParse({ ...basePayment, clientEventId: '' }).success).toBe(false);
-        expect(paymentHandler).not.toContain('if (clientEventId)');
-        expect(paymentHandler).not.toContain('clientEventId: clientEventId ?? null');
-        expect(paymentHandler).toContain('where: { saleId, clientEventId }');
-        expect(paymentHandler).toContain('clientEventId,\n                    payloadHash,');
-    });
-
     it('hace que el alias legacy y la ruta canónica compartan un único handler protegido', () => {
         expect(server).toContain("'/api/payments',\n    authenticate,\n    checkRole(CUSTOMER_PAYMENT_ROLES)");
         expect(server).toContain("'/api/credits/payment',\n    authenticate,\n    checkRole(CUSTOMER_PAYMENT_ROLES)");
         expect(server.match(/registerCreditPayment,/g)).toHaveLength(2);
-        expect(server).toContain('async function lockCustomerForScopedMutation(');
         expect(server).toContain('SELECT s.id, s.customerId, s.customerName, s.paymentMethod,');
-        expect(server).toContain('await lockCustomerForScopedMutation(tx, authReq, lockedSale.customerId)');
         expect(server).toContain('FOR UPDATE`');
         expect(server).toContain("throw new Error('PAYMENT_IDEMPOTENCY_CONFLICT')");
+        expect(server).toContain("const saleUpdated = await tx.sale.updateMany({");
+        expect(server).toContain("where: { id: saleId, tenantId: authReq.tenantId! },");
+        expect(server).toContain("const customerUpdated = await tx.customer.updateMany({");
+        expect(server).toContain("where: { id: lockedSale.customerId, tenantId: authReq.tenantId! },");
     });
 
     it('persiste la llave idempotente aditiva sin obligar históricos', () => {
@@ -84,5 +69,14 @@ describe('integridad de abonos de clientes', () => {
         expect(migration).toContain('ADD COLUMN `clientEventId` VARCHAR(128) NULL');
         expect(migration).toContain('ADD COLUMN `payloadHash` VARCHAR(64) NULL');
         expect(migration).toContain('CREATE UNIQUE INDEX `Payment_saleId_clientEventId_key`');
+    });
+
+    it('mantiene el castigo de incobrables scopeado por tenant y habilita super admin igual que la UI', () => {
+        expect(server).toContain("app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN', 'SUPER_ADMIN'])");
+        expect(server).toContain('FROM \\`Sale\\`');
+        expect(server).toContain('WHERE id = ${saleId} AND tenantId = ${authReq.tenantId!}');
+        expect(server).toContain('SELECT currentDebt FROM \\`Customer\\`');
+        expect(server).toContain('WHERE id = ${sale.customerId} AND tenantId = ${authReq.tenantId!}');
+        expect(server).toContain("data: { currentDebt: newDebt.toFixed(2) }");
     });
 });

@@ -24,6 +24,8 @@ interface StockItem {
     quantityStep?: string | number | null;
 }
 interface TransferDraft {
+    /** Se conserva durante un retry idéntico; cambia solo al cambiar la intención. */
+    clientEventId: string;
     toId: string;
     productId: string;
     productName: string;
@@ -45,6 +47,24 @@ const authHeaders = (): Record<string, string> => ({
     Authorization: `Bearer ${localStorage.getItem('nortex_token') ?? ''}`,
 });
 
+const newTransferClientEventId = (): string => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    const bytes = new Uint8Array(16);
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+        crypto.getRandomValues(bytes);
+    } else {
+        for (let index = 0; index < bytes.length; index += 1) {
+            bytes[index] = Math.floor(Math.random() * 256);
+        }
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
+
 /** Mismo criterio que la búsqueda del inventario: "cafe" encuentra "café". */
 const sinTildes = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
@@ -55,9 +75,9 @@ const parseCantidadTransferencia = (
     raw: string,
     saleMode: 'COUNTED' | 'MEASURED',
     quantityStep: string,
-): number | null => {
+): string | null => {
     try {
-        return validateStockTransferQuantity(raw.replace(',', '.'), { saleMode, quantityStep }).toNumber();
+        return validateStockTransferQuantity(raw.replace(',', '.'), { saleMode, quantityStep }).toFixed(4);
     } catch {
         return null;
     }
@@ -268,18 +288,21 @@ const Warehouses: React.FC = () => {
             setTransferError('Reintentá cargar las bodegas antes de transferir.');
             return;
         }
-        let qty: number;
+        let qty: string;
+        let qtyDisplay: string;
         try {
-            qty = validateStockTransferQuantity(transfer.qty.replace(',', '.'), {
+            const parsed = validateStockTransferQuantity(transfer.qty.replace(',', '.'), {
                 saleMode: transfer.saleMode,
                 quantityStep: transfer.quantityStep,
-            }).toNumber();
+            });
+            qty = parsed.toFixed(4);
+            qtyDisplay = parsed.toString();
+            if (parsed.greaterThan(transfer.available.toString())) {
+                setTransferError(`Solo hay ${transfer.available} ${transfer.unit} disponibles en ${selected.name}.`);
+                return;
+            }
         } catch (error) {
             setTransferError(error instanceof Error ? error.message : 'Ingresá una cantidad válida.');
-            return;
-        }
-        if (qty > transfer.available) {
-            setTransferError(`Solo hay ${transfer.available} ${transfer.unit} disponibles en ${selected.name}.`);
             return;
         }
 
@@ -289,16 +312,29 @@ const Warehouses: React.FC = () => {
         try {
             const res = await fetch('/api/stock-transfers', {
                 method: 'POST', headers: authHeaders(),
-                body: JSON.stringify({ fromWarehouseId: selected.id, toWarehouseId: transfer.toId, items: [{ productId: transfer.productId, quantity: qty }] }),
+                body: JSON.stringify({
+                    clientEventId: transfer.clientEventId,
+                    fromWarehouseId: selected.id,
+                    toWarehouseId: transfer.toId,
+                    items: [{ productId: transfer.productId, quantity: qty }],
+                }),
             });
             const d = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(d.error || 'No se pudo completar la transferencia.');
+            if (!res.ok) {
+                if (res.status === 409 && d.code === 'STOCK_TRANSFER_IDEMPOTENCY_CONFLICT') {
+                    setTransfer(current => current
+                        ? { ...current, clientEventId: newTransferClientEventId() }
+                        : current);
+                    throw new Error('La intención anterior ya fue usada. Revisá los datos y reintentá.');
+                }
+                throw new Error(d.error || 'No se pudo completar la transferencia.');
+            }
 
             setTransfer(null);
             showToast({
                 tone: 'success',
-                title: 'Transferencia realizada',
-                message: `${qty} ${transfer.unit} de ${transfer.productName}.`,
+                title: d.replay ? 'Transferencia confirmada' : 'Transferencia realizada',
+                message: `${qtyDisplay} ${transfer.unit} de ${transfer.productName}.`,
             });
             await loadStock(selected);
         } catch (error) {
@@ -373,6 +409,7 @@ const Warehouses: React.FC = () => {
         setTransferError('');
         transferReturnFocusRef.current = trigger;
         setTransfer({
+            clientEventId: newTransferClientEventId(),
             toId: destination.id,
             productId: item.productId,
             productName: item.name,
@@ -794,7 +831,14 @@ const Warehouses: React.FC = () => {
                             <select
                                 id="transfer-destination"
                                 value={transfer.toId}
-                                onChange={e => { setTransfer({ ...transfer, toId: e.target.value }); setTransferError(''); }}
+                                onChange={e => {
+                                    setTransfer({
+                                        ...transfer,
+                                        clientEventId: newTransferClientEventId(),
+                                        toId: e.target.value,
+                                    });
+                                    setTransferError('');
+                                }}
                                 disabled={transferring}
                                 className="w-full mt-1 px-3 py-2 border border-white/10 rounded-lg text-sm">
                                 {warehouses.filter(w => w.id !== selected.id && w.isActive).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
@@ -807,7 +851,11 @@ const Warehouses: React.FC = () => {
                                 id="transfer-quantity"
                                 value={transfer.qty}
                                 onChange={e => {
-                                    setTransfer({ ...transfer, qty: e.target.value });
+                                    setTransfer({
+                                        ...transfer,
+                                        clientEventId: newTransferClientEventId(),
+                                        qty: e.target.value,
+                                    });
                                     setTransferError('');
                                 }}
                                 onBlur={() => {
@@ -837,7 +885,7 @@ const Warehouses: React.FC = () => {
                         <button
                             type="button"
                             onClick={doTransfer}
-                            disabled={transferring || topologyLocked || !transfer.toId || validTransferQuantity === null || !(validTransferQuantity > 0)}
+                            disabled={transferring || topologyLocked || !transfer.toId || validTransferQuantity === null}
                             className="w-full min-h-tap inline-flex items-center justify-center gap-2 bg-brand text-white rounded-control font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                             {transferring && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}

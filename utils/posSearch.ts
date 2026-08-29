@@ -43,6 +43,11 @@ export interface ResultadoBusqueda<T> {
     coincidenciaExacta: boolean;
 }
 
+export type ResolucionEnterBusqueda<T> =
+    | { kind: 'select'; product: T }
+    | { kind: 'ambiguous'; total: number }
+    | { kind: 'none' };
+
 /**
  * Minúsculas y sin tildes. Un catálogo nica se carga a mano y desde Excel: el
  * mismo producto aparece como "bombón", "bombon" y "BOMBON". Buscar "bombon"
@@ -107,6 +112,25 @@ export function buscarProductos<T extends ProductoBuscable>(
         if (palabras.every(t => e.texto.includes(t))) encontrados.push(e.producto);
     }
     return recortar(encontrados, tope, false);
+}
+
+/**
+ * Decide qué puede hacer Enter sin vender el producto equivocado.
+ *
+ * Un SKU exacto y una búsqueda con un único resultado son intenciones
+ * inequívocas. Cuando hay varias coincidencias, el cajero debe tocar la fila
+ * correcta: elegir silenciosamente la primera puede descontar otro inventario.
+ */
+export function resolverEnterBusqueda<T extends ProductoBuscable>(
+    indice: EntradaIndice<T>[],
+    termino: string,
+): ResolucionEnterBusqueda<T> {
+    const resultado = buscarProductos(indice, termino, 2);
+    if (resultado.coincidenciaExacta || resultado.total === 1) {
+        return { kind: 'select', product: resultado.visibles[0] };
+    }
+    if (resultado.total === 0) return { kind: 'none' };
+    return { kind: 'ambiguous', total: resultado.total };
 }
 
 function recortar<T>(lista: T[], tope: number, exacta: boolean): ResultadoBusqueda<T> {

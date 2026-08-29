@@ -114,4 +114,16 @@ describe('ticket visual del POS', () => {
         expect(html).not.toContain('<script>alert(1)</script>');
         expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     });
+
+    it('con pago exacto conserva el efectivo recibido sin inventar vuelto', () => {
+        const html = renderToStaticMarkup(<ReceiptTicket data={{
+            ...receiptData([product({ name: 'Clavo' })]),
+            cashReceived: 140.1,
+            change: 0,
+        }} />);
+
+        expect(html).toContain('Efectivo recibido:');
+        expect(html).toContain('C$ 140.10');
+        expect(html).not.toContain('Vuelto:');
+    });
 });

@@ -35,7 +35,7 @@ describe('persistencia idempotente de devoluciones', () => {
 
     it('incluye el hash offline coordinado sin alterar la llave offline legacy', () => {
         const sale = modelBlock('Sale');
-        expect(sale).toContain('offlineId      String?   @unique');
+        expect(sale).toMatch(/offlineId\s+String\?\s+@unique/);
         expect(sale).toMatch(/offlinePayloadHash\s+String\?\s+@db\.VarChar\(64\)/);
         expect(migration).toContain('ADD COLUMN `offlinePayloadHash` VARCHAR(64) NULL');
     });

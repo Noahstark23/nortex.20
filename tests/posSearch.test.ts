@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { normalizar, indexarProductos, buscarProductos, ProductoBuscable } from '../utils/posSearch';
+import {
+    normalizar,
+    indexarProductos,
+    buscarProductos,
+    resolverEnterBusqueda,
+    ProductoBuscable,
+} from '../utils/posSearch';
 
 /**
  * Búsqueda del catálogo del POS — números oro.
@@ -189,6 +195,35 @@ describe('indexarProductos', () => {
         const r = buscarProductos(indexarProductos([]), 'lo que sea', 60);
         expect(r.visibles).toEqual([]);
         expect(r.total).toBe(0);
+    });
+});
+
+describe('resolverEnterBusqueda', () => {
+    it('selecciona un SKU exacto aunque otras líneas contengan el mismo texto', () => {
+        const lista = [...catalogo(), p('9', 'Repuesto CEM-001', 'REP-009')];
+        expect(resolverEnterBusqueda(indexarProductos(lista), 'cem-001')).toEqual({
+            kind: 'select',
+            product: lista[0],
+        });
+    });
+
+    it('selecciona una coincidencia difusa solo cuando es única', () => {
+        const lista = catalogo();
+        expect(resolverEnterBusqueda(indexarProductos(lista), 'bombon')).toEqual({
+            kind: 'select',
+            product: lista[2],
+        });
+    });
+
+    it('no adivina entre varias coincidencias', () => {
+        expect(resolverEnterBusqueda(indexarProductos(catalogo()), 'construccion')).toEqual({
+            kind: 'ambiguous',
+            total: 2,
+        });
+    });
+
+    it('declara cuando no hay coincidencias', () => {
+        expect(resolverEnterBusqueda(indexarProductos(catalogo()), 'motosierra')).toEqual({ kind: 'none' });
     });
 });
 

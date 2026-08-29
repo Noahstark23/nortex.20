@@ -95,13 +95,16 @@ export default defineConfig(({ mode }) => {
         }
       },
       test: {
-        // Excluir el sandbox de Stryker: si una corrida de mutación se
-        // interrumpe (Ctrl-C, OOM), `.stryker-tmp/` queda en disco con una COPIA
-        // instrumentada de los tests. Como está gitignoreado, `git status` sale
-        // limpio, pero `npm test` levanta la suite DUPLICADA (142 en vez de 71)
-        // y corre contra código congelado — puede dar verde sobre algo que ya
-        // cambiaste. El exclude por defecto de Vitest no cubre este directorio.
-        exclude: ['**/node_modules/**', '**/dist/**', '**/.stryker-tmp/**'],
+        // Excluir cualquier sandbox de Stryker: además del default
+        // `.stryker-tmp/`, las corridas enfocadas pueden dejar variantes como
+        // `.stryker-tmp-pos-activation/`. Si Vitest las descubre, ejecuta una
+        // copia congelada de la suite y mete falsos rojos o falsos verdes.
+        exclude: [
+          '**/node_modules/**',
+          '**/dist/**',
+          '**/.stryker-tmp*/**',
+          '**/.codex-stryker-*-tmp/**',
+        ],
       },
     };
 });

@@ -1,6 +1,5 @@
 -- Hub de relación con clientes y reintentos seguros de abonos.
 -- Migración estrictamente aditiva para MySQL 8: no reinterpreta históricos.
--- promisedAmount usa la precisión monetaria nueva; la tabla nace vacía.
 
 ALTER TABLE `Payment`
   ADD COLUMN `clientEventId` VARCHAR(128) NULL,
@@ -16,7 +15,7 @@ CREATE TABLE `CustomerInteraction` (
   `type` VARCHAR(191) NOT NULL,
   `note` TEXT NOT NULL,
   `status` VARCHAR(191) NOT NULL DEFAULT 'OPEN',
-  `promisedAmount` DECIMAL(18, 4) NULL,
+  `promisedAmount` DECIMAL(10, 2) NULL,
   `promisedAt` DATETIME(3) NULL,
   `followUpAt` DATETIME(3) NULL,
   `completedAt` DATETIME(3) NULL,

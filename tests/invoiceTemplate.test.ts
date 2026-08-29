@@ -3,6 +3,7 @@ import {
     buildA4Html,
     buildTicket80mmHtml,
     buildWhatsAppReceiptMessage,
+    detectThermalTicketPopupMode,
     InvoiceData,
     printA4,
     printTicket,
@@ -41,6 +42,42 @@ describe('plantilla del ticket 80 mm', () => {
         expect(html).toContain('TOTAL</td><td class="right">C$ 100.00');
         expect(html).toContain('Ferretería El Roble');
         expect(html).toContain('IMPRIMIR TICKET');
+    });
+
+    it('mantiene el documento general sin cambios cuando el regimen se omite o se explicita', () => {
+        const general: InvoiceData = { ...invoice, fiscalRegime: 'GENERAL' };
+
+        expect(buildTicket80mmHtml(general)).toBe(buildTicket80mmHtml(invoice));
+        expect(buildA4Html(general)).toBe(buildA4Html(invoice));
+        expect(buildWhatsAppReceiptMessage(general)).toBe(buildWhatsAppReceiptMessage(invoice));
+        expect(buildTicket80mmHtml(general)).toContain('IVA incluido (15%)');
+    });
+
+    it('genera factura simplificada de cuota fija sin exponer ningun desglose de IVA', () => {
+        const fixedQuota: InvoiceData = {
+            ...invoice,
+            fiscalRegime: 'CUOTA_FIJA',
+            subtotal: 105,
+            discount: 5,
+            tax: 13.04,
+            grandTotal: 100,
+        };
+        const ticket = buildTicket80mmHtml(fixedQuota);
+        const a4 = buildA4Html(fixedQuota);
+        const whatsapp = buildWhatsAppReceiptMessage(fixedQuota);
+
+        for (const output of [ticket, a4, whatsapp]) {
+            expect(output).toContain('FACTURA SIMPLIFICADA');
+            expect(output).toContain('Régimen de Cuota Fija');
+            expect(output).toContain('Subtotal');
+            expect(output).toContain('Descuento');
+            expect(output).not.toMatch(/IVA/i);
+            expect(output).not.toMatch(/Base imponible/i);
+        }
+        expect(ticket).toContain('TOTAL</td><td class="right">C$ 100.00');
+        expect(a4).toContain('<span>TOTAL</span>');
+        expect(a4).toContain('C$ 100.00');
+        expect(whatsapp).toContain('*TOTAL: C$ 100.00*');
     });
 
     it('mantiene el documento general sin cambios cuando el regimen se omite o se explicita', () => {
@@ -314,5 +351,88 @@ describe('plantilla del ticket 80 mm', () => {
 
         expect(blockedAlert).toHaveBeenCalledOnce();
         expect(blockedAlert).toHaveBeenCalledWith('Permite ventanas emergentes para imprimir.');
+    });
+
+    it('abre el ticket aislado en Android WebView para no depender de window.print del shell', () => {
+        vi.useFakeTimers();
+        const print = vi.fn();
+        const pageStyle = { textContent: '' };
+        const ticketContent = {
+            scrollHeight: 260,
+            getBoundingClientRect: () => ({ height: 260 }),
+        };
+        const printWindow = {
+            addEventListener: vi.fn((_event: string, listener: () => void) => listener()),
+            document: {
+                open: vi.fn(),
+                write: vi.fn(),
+                close: vi.fn(),
+                readyState: 'complete',
+                getElementById: vi.fn((id: string) => id === 'ticket-content' ? ticketContent : id === 'ticket-page-size' ? pageStyle : null),
+            },
+            print,
+        };
+        const open = vi.fn(() => printWindow);
+        vi.stubGlobal('window', { open, print: vi.fn(), addEventListener: vi.fn() } as unknown as Window);
+        vi.stubGlobal('navigator', {
+            userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel Build/UP1A; wv) Version/4.0 Chrome/124 Mobile Safari/537.36',
+        } as Navigator);
+
+        expect(printTicket(invoice)).toBe(true);
+        vi.runAllTimers();
+
+        expect(open).toHaveBeenCalledWith('', '_blank', 'width=420,height=720');
+        expect(printWindow.document.write).toHaveBeenCalledWith(expect.stringContaining('Ticket 80 mm'));
+        expect(pageStyle.textContent).toBe('@page { size: 80mm 79mm; margin: 0; }');
+        expect(print).toHaveBeenCalledOnce();
+    });
+
+    it('cae al popup térmico si el ticket aún no está montado en el DOM actual', () => {
+        vi.useFakeTimers();
+        const popupPrint = vi.fn();
+        const printWindow = {
+            addEventListener: vi.fn((_event: string, listener: () => void) => listener()),
+            document: {
+                open: vi.fn(),
+                write: vi.fn(),
+                close: vi.fn(),
+                readyState: 'complete',
+                getElementById: vi.fn(() => null),
+            },
+            print: popupPrint,
+        };
+        const open = vi.fn(() => printWindow);
+        vi.stubGlobal('document', {
+            getElementById: vi.fn(() => null),
+        });
+        vi.stubGlobal('window', { open, print: vi.fn(), addEventListener: vi.fn() } as unknown as Window);
+        vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)' } as Navigator);
+
+        expect(printTicket(invoice)).toBe(true);
+        vi.runAllTimers();
+
+        expect(open).toHaveBeenCalledWith('', '_blank', 'width=420,height=720');
+        expect(popupPrint).toHaveBeenCalledOnce();
+    });
+});
+
+describe('detectThermalTicketPopupMode', () => {
+    it('detecta Android WebView como ruta de popup térmico', () => {
+        expect(detectThermalTicketPopupMode({
+            userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel Build/UP1A; wv) Version/4.0 Chrome/124 Mobile Safari/537.36',
+        })).toBe(true);
+    });
+
+    it('detecta Capacitor nativo aunque el user-agent no delate WebView', () => {
+        expect(detectThermalTicketPopupMode({
+            userAgent: 'Mozilla/5.0 (Linux; Android 14)',
+            capacitor: { isNativePlatform: () => true },
+        })).toBe(true);
+    });
+
+    it('mantiene misma pestaña en navegadores normales', () => {
+        expect(detectThermalTicketPopupMode({
+            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)',
+        })).toBe(false);
     });
 });

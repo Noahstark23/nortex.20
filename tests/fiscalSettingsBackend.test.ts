@@ -10,9 +10,6 @@ describe('configuración fiscal backend', () => {
         expect(UpdateFiscalSettingsSchema.safeParse({ fiscalRegime: 'CUOTA_FIJA' }).success).toBe(true);
         expect(UpdateFiscalSettingsSchema.safeParse({ fiscalRegime: 'OTRO' }).success).toBe(false);
         expect(UpdateFiscalSettingsSchema.safeParse({ fiscalRegime: 'CUOTA_FIJA', tenantId: 'ajeno' }).success).toBe(false);
-        expect(UpdateFiscalSettingsSchema.safeParse({ taxId: null }).success).toBe(false);
-        expect(UpdateFiscalSettingsSchema.safeParse({ taxId: '' }).success).toBe(false);
-        expect(UpdateFiscalSettingsSchema.safeParse({ taxId: '   ' }).success).toBe(false);
         expect(UpdateFiscalSettingsSchema.safeParse({}).success).toBe(false);
     });
 

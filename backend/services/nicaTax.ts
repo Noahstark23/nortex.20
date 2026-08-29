@@ -12,6 +12,7 @@
 
 import Decimal from 'decimal.js';
 import prisma from '../lib/prisma';
+import { PURCHASE_FISCAL_STATUSES } from '../lib/supplierPayments';
 import { ESTADO_ANULADA } from './saleCancellation';
 
 // Cliente compartido: este motor no abre un pool Prisma adicional.
@@ -88,8 +89,12 @@ export interface MonthlyTaxReport {
     totalIVACollected: number;    // IVA cobrado en GENERAL (snapshot + fallback legacy)
 
     // Compras
-    totalPurchases: number;       // Compras brutas (con IVA)
-    totalIVAPaid: number;         // IVA pagado en compras (crédito fiscal)
+    purchaseTotal: number;                 // Compras brutas originales (con IVA)
+    purchaseCreditableTax: number;         // Crédito fiscal bruto de compras
+    supplierCreditNoteTotal: number;       // Reversa bruta por NC de proveedor
+    supplierCreditTaxReversal: number;     // IVA restituido por NC de proveedor
+    totalPurchases: number;                 // Compras netas fiscales, puede ser negativo
+    totalIVAPaid: number;                   // Crédito fiscal neto, puede ser negativo
 
     // Impuestos a pagar
     ivaNeto: number;              // IVA Ventas - IVA Compras (min 0)
@@ -114,6 +119,167 @@ export interface MonthlyTaxReport {
     vetSummary: string;
 }
 
+export interface MonthlyPurchaseTaxTotalsInput {
+    purchaseTotal: Decimal.Value;
+    purchaseCreditableTax: Decimal.Value;
+    supplierCreditNoteTotal: Decimal.Value;
+    supplierCreditTaxReversal: Decimal.Value;
+}
+
+/**
+ * Neteo fiscal puro de compras y notas de crédito. No aplica clamp: una nota
+ * por una compra de otro mes puede superar las compras del período actual y
+ * esa reversa debe aumentar, no esconder, el IVA por pagar.
+ */
+export function calculateMonthlyPurchaseTaxTotals(input: MonthlyPurchaseTaxTotalsInput) {
+    const purchaseTotal = new Decimal(input.purchaseTotal).toDecimalPlaces(4);
+    const purchaseCreditableTax = new Decimal(input.purchaseCreditableTax).toDecimalPlaces(4);
+    const supplierCreditNoteTotal = new Decimal(input.supplierCreditNoteTotal).toDecimalPlaces(4);
+    const supplierCreditTaxReversal = new Decimal(input.supplierCreditTaxReversal).toDecimalPlaces(4);
+
+    return {
+        purchaseTotal: purchaseTotal.toFixed(4),
+        purchaseCreditableTax: purchaseCreditableTax.toFixed(4),
+        supplierCreditNoteTotal: supplierCreditNoteTotal.toFixed(4),
+        supplierCreditTaxReversal: supplierCreditTaxReversal.toFixed(4),
+        totalPurchases: purchaseTotal.minus(supplierCreditNoteTotal).toFixed(4),
+        totalIVAPaid: purchaseCreditableTax.minus(supplierCreditTaxReversal).toFixed(4),
+    };
+}
+
+export interface SupplierCreditNoteFiscalRow {
+    id: string;
+    supplierId: string;
+    supplier: {
+        id: string;
+        name: string;
+        ruc: string | null;
+    };
+    creditNoteNumber: string;
+    creditNoteDate: Date;
+    devolutionDate: Date;
+    postingDate: Date;
+    fiscalRegimeAtCredit: string;
+    subtotal: string;
+    tax: string;
+    creditableTax: string;
+    total: string;
+}
+
+interface SupplierCreditNoteFiscalRecord {
+    id: string;
+    supplierId: string;
+    supplier: { id: string; name: string; ruc: string | null };
+    creditNoteNumber: string;
+    creditNoteDate: Date;
+    devolutionDate: Date;
+    postingDate: Date;
+    fiscalRegimeAtCredit: string;
+    subtotal: Decimal.Value;
+    tax: Decimal.Value;
+    creditableTax: Decimal.Value;
+    total: Decimal.Value;
+}
+
+export interface SupplierCreditNoteFiscalQueryClient {
+    supplierCreditNote: {
+        findMany(args: unknown): Promise<SupplierCreditNoteFiscalRecord[]>;
+    };
+}
+
+export interface SupplierCreditNoteFiscalQueryOptions {
+    database?: SupplierCreditNoteFiscalQueryClient;
+    pageSize?: number;
+}
+
+const SUPPLIER_CREDIT_NOTE_FISCAL_PAGE_SIZE = 500;
+const SUPPLIER_CREDIT_NOTE_FISCAL_MAX_PAGE_SIZE = 1_000;
+
+/** Fuente única del período/estado de NC para declaración y libros fiscales. */
+export function supplierCreditNoteFiscalPeriodWhere(tenantId: string, month: number, year: number) {
+    const { start, end } = fiscalMonthRange(month, year);
+    return {
+        tenantId,
+        status: 'POSTED',
+        type: 'RETURN',
+        devolutionDate: { gte: start, lt: end },
+    };
+}
+
+function supplierCreditNoteFiscalRow(record: SupplierCreditNoteFiscalRecord): SupplierCreditNoteFiscalRow {
+    return {
+        id: record.id,
+        supplierId: record.supplierId,
+        supplier: {
+            id: record.supplier.id,
+            name: record.supplier.name,
+            ruc: record.supplier.ruc ?? null,
+        },
+        creditNoteNumber: record.creditNoteNumber,
+        creditNoteDate: record.creditNoteDate,
+        devolutionDate: record.devolutionDate,
+        postingDate: record.postingDate,
+        fiscalRegimeAtCredit: record.fiscalRegimeAtCredit,
+        subtotal: new Decimal(record.subtotal).toFixed(4),
+        tax: new Decimal(record.tax).toFixed(4),
+        creditableTax: new Decimal(record.creditableTax).toFixed(4),
+        total: new Decimal(record.total).toFixed(4),
+    };
+}
+
+/**
+ * Lista completa para Libro de Compras usando páginas acotadas y orden estable.
+ * El caller recibe DTOs sin Decimal/BigInt no serializables y no reimplementa
+ * tenant, estado ni el período fiscal de la devolución.
+ */
+export async function listSupplierCreditNotesForFiscalPeriod(
+    tenantId: string,
+    month: number,
+    year: number,
+    options: SupplierCreditNoteFiscalQueryOptions = {},
+): Promise<SupplierCreditNoteFiscalRow[]> {
+    const database = options.database
+        ?? (prisma as unknown as SupplierCreditNoteFiscalQueryClient);
+    const requestedPageSize = Number.isInteger(options.pageSize) && Number(options.pageSize) > 0
+        ? Number(options.pageSize)
+        : SUPPLIER_CREDIT_NOTE_FISCAL_PAGE_SIZE;
+    const pageSize = Math.min(requestedPageSize, SUPPLIER_CREDIT_NOTE_FISCAL_MAX_PAGE_SIZE);
+    const rows: SupplierCreditNoteFiscalRow[] = [];
+    let cursor: string | undefined;
+
+    while (true) {
+        const records = await database.supplierCreditNote.findMany({
+            where: supplierCreditNoteFiscalPeriodWhere(tenantId, month, year),
+            select: {
+                id: true,
+                supplierId: true,
+                supplier: { select: { id: true, name: true, ruc: true } },
+                creditNoteNumber: true,
+                creditNoteDate: true,
+                devolutionDate: true,
+                postingDate: true,
+                fiscalRegimeAtCredit: true,
+                subtotal: true,
+                tax: true,
+                creditableTax: true,
+                total: true,
+            },
+            orderBy: [{ devolutionDate: 'asc' }, { id: 'asc' }],
+            take: pageSize + 1,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        });
+        const page = records.slice(0, pageSize);
+        rows.push(...page.map(supplierCreditNoteFiscalRow));
+        if (records.length <= pageSize) return rows;
+
+        const nextCursor = page.at(-1)?.id;
+        if (!nextCursor || nextCursor === cursor) {
+            throw new Error('La paginación fiscal de notas de crédito no avanzó');
+        }
+        cursor = nextCursor;
+    }
+}
+
 export async function generateMonthlyReport(
     tenantId: string,
     month: number,
@@ -133,8 +299,10 @@ export async function generateMonthlyReport(
     const purchaseWhere = {
         tenantId,
         date: { gte: startDate, lt: endDate },
-        status: { in: ['COMPLETED', 'PENDING_PAYMENT'] },
+        documentStatus: 'POSTED',
+        status: { in: [...PURCHASE_FISCAL_STATUSES] },
     };
+    const supplierCreditNoteWhere = supplierCreditNoteFiscalPeriodWhere(tenantId, month, year);
 
     // Los snapshots fiscales hacen que un cambio posterior de configuración no
     // reescriba la historia. Todo se agrega en MySQL: nunca cargamos las ventas
@@ -145,6 +313,7 @@ export async function generateMonthlyReport(
         legacyGeneralSales,
         purchasesResult,
         legacyPurchasesResult,
+        supplierCreditNotesResult,
         cfg,
         retenciones,
     ] = await Promise.all([
@@ -169,6 +338,12 @@ export async function generateMonthlyReport(
             where: { ...purchaseWhere, creditableTax: null },
             _sum: { tax: true },
         }),
+        // La devolución manda el período fiscal. El mutation gate garantiza
+        // que creditNoteDate y postingDate pertenecen al mismo mes abierto.
+        prisma.supplierCreditNote.aggregate({
+            where: supplierCreditNoteWhere,
+            _sum: { total: true, creditableTax: true },
+        }),
         // B4 — Tasas desde TaxConfig del tenant (fallback legal).
         prisma.taxConfig.findUnique({ where: { tenantId } }),
         // B1 — Agrupar en BD evita un findMany sin límite sobre datos fiscales.
@@ -184,7 +359,7 @@ export async function generateMonthlyReport(
     let ventasExentas = new Decimal(0);
     let snapshotIVA = new Decimal(0);
     for (const row of salesByRegime) {
-        const total = new Decimal(row._sum.total?.toString() ?? 0);
+        const total = new Decimal(row._sum.total?.toString() ?? '0');
         if (row.fiscalRegimeAtSale === 'CUOTA_FIJA') {
             // Aun si una fila corrupta trajera vatAmountAtSale > 0, cuota fija no
             // alimenta ningún impuesto del régimen general.
@@ -193,8 +368,8 @@ export async function generateMonthlyReport(
         }
         // GENERAL y valores legacy/desconocidos preservan el tratamiento previo.
         totalGeneral = totalGeneral.plus(total);
-        ventasExentas = ventasExentas.plus(row._sum.exemptTotal?.toString() ?? 0);
-        snapshotIVA = snapshotIVA.plus(row._sum.vatAmountAtSale?.toString() ?? 0);
+        ventasExentas = ventasExentas.plus(row._sum.exemptTotal?.toString() ?? '0');
+        snapshotIVA = snapshotIVA.plus(row._sum.vatAmountAtSale?.toString() ?? '0');
     }
 
     totalGeneral = totalGeneral.toDecimalPlaces(4);
@@ -206,11 +381,11 @@ export async function generateMonthlyReport(
     snapshotIVA = snapshotIVA.toDecimalPlaces(4);
 
     const legacyGeneralTotal = new Decimal(
-        legacyGeneralSales._sum.total?.toString() ?? 0
+        legacyGeneralSales._sum.total?.toString() ?? '0'
     ).toDecimalPlaces(4);
     const legacyDesglose = desglosarVentaConExoneracion(
         legacyGeneralTotal,
-        legacyGeneralSales._sum.exemptTotal?.toString() ?? 0
+        legacyGeneralSales._sum.exemptTotal?.toString() ?? '0'
     );
     const snapshotGeneralTotal = totalGeneral.minus(legacyGeneralTotal);
     const snapshotGeneralNet = snapshotGeneralTotal.minus(snapshotIVA);
@@ -225,16 +400,26 @@ export async function generateMonthlyReport(
 
     // `creditableTax = 0` es un snapshot explícito (p. ej. cuota fija), no debe
     // caer al IVA bruto. Solo NULL identifica compras legacy sin snapshot.
-    const totalPurchases = new Decimal(purchasesResult._sum.total?.toString() ?? 0);
+    const purchaseTotal = new Decimal(purchasesResult._sum.total?.toString() ?? '0');
     const snapshottedCreditableTax = new Decimal(
-        purchasesResult._sum.creditableTax?.toString() ?? 0
+        purchasesResult._sum.creditableTax?.toString() ?? '0'
     );
     const legacyCreditableTax = new Decimal(
-        legacyPurchasesResult._sum.tax?.toString() ?? 0
+        legacyPurchasesResult._sum.tax?.toString() ?? '0'
     );
-    const totalIVAPaid = snapshottedCreditableTax
+    const purchaseCreditableTax = snapshottedCreditableTax
         .plus(legacyCreditableTax)
         .toDecimalPlaces(4);
+    const purchaseTaxTotals = calculateMonthlyPurchaseTaxTotals({
+        purchaseTotal,
+        purchaseCreditableTax,
+        supplierCreditNoteTotal: supplierCreditNotesResult._sum.total?.toString() ?? '0',
+        supplierCreditTaxReversal: supplierCreditNotesResult._sum.creditableTax?.toString() ?? '0',
+    });
+    const supplierCreditNoteTotal = new Decimal(purchaseTaxTotals.supplierCreditNoteTotal);
+    const supplierCreditTaxReversal = new Decimal(purchaseTaxTotals.supplierCreditTaxReversal);
+    const totalPurchases = new Decimal(purchaseTaxTotals.totalPurchases);
+    const totalIVAPaid = new Decimal(purchaseTaxTotals.totalIVAPaid);
 
     // 3. Calcular IVA Neto
     const ivaRaw = totalIVACollected.minus(totalIVAPaid);
@@ -254,7 +439,7 @@ export async function generateMonthlyReport(
     let retIR = new Decimal(0);
     let retIMI = new Decimal(0);
     for (const r of retenciones) {
-        const amount = r._sum.amount?.toString() ?? 0;
+        const amount = r._sum.amount?.toString() ?? '0';
         if (r.tipo === 'IR_2') retIR = retIR.plus(amount);
         else if (r.tipo === 'IMI_1') retIMI = retIMI.plus(amount);
     }
@@ -285,8 +470,12 @@ Preparado por: NORTEX ERP
    Nota: Cuota Fija no alimenta IVA, Anticipo IR ni IMI del régimen general.` : ''}
 
 🛒 COMPRAS DEL PERÍODO
-   Compras Brutas (con IVA): C$ ${totalPurchases.toFixed(2)}
-   IVA Crédito Acreditable:  C$ ${totalIVAPaid.toFixed(2)}
+   Compras Brutas (con IVA):  C$ ${purchaseTotal.toFixed(2)}
+   (−) Notas de crédito prov.: C$ ${supplierCreditNoteTotal.toFixed(2)}
+   = Compras Netas Fiscales:   C$ ${totalPurchases.toFixed(2)}
+   IVA Crédito Bruto:          C$ ${purchaseCreditableTax.toFixed(2)}
+   (−) IVA restituido por NC:  C$ ${supplierCreditTaxReversal.toFixed(2)}
+   = IVA Crédito Neto:         C$ ${totalIVAPaid.toFixed(2)}
 
 💰 IMPUESTOS A PAGAR
    IVA Neto (Ventas - Compras): C$ ${ivaNeto.toFixed(2)}${ivaCredito.greaterThan(0) ? `\n   ⚠️ Crédito Fiscal a Favor: C$ ${ivaCredito.toFixed(2)}` : ''}
@@ -309,6 +498,10 @@ ${totalGeneral.isZero() && ventasCuotaFija.greaterThan(0)
         ventasGravadas: ventasGravadas.toNumber(),
         salesNetasSinIVA: salesNetasSinIVA.toNumber(),
         totalIVACollected: totalIVACollected.toNumber(),
+        purchaseTotal: purchaseTotal.toNumber(),
+        purchaseCreditableTax: purchaseCreditableTax.toNumber(),
+        supplierCreditNoteTotal: supplierCreditNoteTotal.toNumber(),
+        supplierCreditTaxReversal: supplierCreditTaxReversal.toNumber(),
         totalPurchases: totalPurchases.toNumber(),
         totalIVAPaid: totalIVAPaid.toNumber(),
         ivaNeto: ivaNeto.toNumber(),
@@ -387,13 +580,17 @@ Período: ${monthNames[month - 1].toUpperCase()} ${year}
    Ventas Cuota Fija (fuera de DMI): C$ ${new Decimal(taxReport.ventasCuotaFija.toString()).toFixed(2)}` : ''}
 
 🛒 COMPRAS Y CRÉDITO FISCAL
-   Compras (con IVA):           C$ ${taxReport.totalPurchases.toFixed(2)}
-   IVA Crédito Fiscal:          C$ ${taxReport.totalIVAPaid.toFixed(2)}
+   Compras Brutas (con IVA):    C$ ${taxReport.purchaseTotal.toFixed(2)}
+   (−) Notas crédito proveedor: C$ ${taxReport.supplierCreditNoteTotal.toFixed(2)}
+   Compras Netas Fiscales:      C$ ${taxReport.totalPurchases.toFixed(2)}
+   IVA Crédito Bruto:           C$ ${taxReport.purchaseCreditableTax.toFixed(2)}
+   (−) IVA restituido por NC:   C$ ${taxReport.supplierCreditTaxReversal.toFixed(2)}
+   IVA Crédito Fiscal Neto:     C$ ${taxReport.totalIVAPaid.toFixed(2)}
 
 💰 IMPUESTOS A PAGAR
    IVA Neto:                    C$ ${taxReport.ivaNeto.toFixed(2)}${taxReport.ivaCredito > 0 ? `\n   Crédito a Favor:              C$ ${taxReport.ivaCredito.toFixed(2)}` : ''}
-   Anticipo IR (1%):             C$ ${taxReport.anticipoIR.toFixed(2)}
-   IMI Alcaldía (1%):            C$ ${taxReport.imiAlcaldia.toFixed(2)}
+   Anticipo IR (${new Decimal(taxReport.anticipoIrRate.toString()).mul(100).toFixed(2)}%):         C$ ${taxReport.anticipoIR.toFixed(2)}
+   IMI Alcaldía (${new Decimal(taxReport.imiRate.toString()).mul(100).toFixed(2)}%):        C$ ${taxReport.imiAlcaldia.toFixed(2)}
    ──────────────────────────────────────
    TOTAL A PAGAR:                C$ ${taxReport.totalToPay.toFixed(2)}
 
