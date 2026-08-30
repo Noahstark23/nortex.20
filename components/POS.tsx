@@ -4106,7 +4106,7 @@ const POS: React.FC = () => {
     if (shiftLoading) return <div className="h-full flex items-center justify-center text-slate-500 gap-2"><Loader2 className="animate-spin" /> Cargando Sistema...</div>;
 
     return (
-        <div className="flex h-full bg-surface-950 relative">
+        <div className="nx-app-shell nx-dark-context flex h-full bg-surface-950 relative">
 
             {manualMeasuredProduct && (
                 <div className="fixed inset-0 z-modal bg-black/70 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="manual-measure-title">
@@ -4228,19 +4228,15 @@ const POS: React.FC = () => {
             )}
 
             {/* HEADER BAR */}
-            <div className={`absolute top-0 right-0 left-0 border-b border-white/[0.06] flex justify-between items-center gap-4 z-10 text-slate-100 ${guidedSimpleMode
+            <div className={`nx-dark-chrome absolute top-0 right-0 left-0 border-b border-white/[0.06] flex justify-between items-center gap-4 z-10 text-slate-100 ${guidedSimpleMode
                 ? 'h-16 bg-surface-950 px-4 lg:px-6'
                 : 'h-14 bg-surface-900 px-6'}`}>
                 <div className="font-bold text-slate-100 flex items-center gap-3 shrink-0 min-w-0">
                     {guidedSimpleMode ? (
                         <>
-                            <span className="text-[15px] font-black tracking-[-0.03em] text-white">
-                                nortex<span className="text-brand">.</span>
-                            </span>
-                            <span className="h-5 w-px bg-white/[0.10]" aria-hidden="true" />
                             <span className="min-w-0">
-                                <span className="block text-xs font-bold text-slate-100 leading-tight">
-                                    {firstSaleMode ? 'Primera venta' : 'Caja'}
+                                <span className="block text-sm font-semibold tracking-[-0.02em] text-slate-100 leading-tight">
+                                    {firstSaleMode ? 'Primera venta' : 'Nueva venta'}
                                 </span>
                                 <span className="block max-w-[210px] truncate text-[11px] font-medium text-slate-500 leading-tight">
                                     {tenantPrintDetails.tenantName}
@@ -5411,19 +5407,19 @@ const POS: React.FC = () => {
 
             {/* LEFT: PRODUCTS */}
             <div className={`w-full flex-1 flex flex-col overflow-hidden ${guidedSimpleMode
-                ? 'mt-16 p-4 lg:px-6 lg:py-5 mb-0'
+                ? 'nx-light-context nx-catalog-surface mt-16 p-4 text-slate-950 lg:px-6 lg:py-5 mb-0'
                 : 'mt-14 p-4 lg:p-6 mb-16 lg:mb-0'}`}>
                 {firstSaleMode && (
                     <div className="mb-4 rounded-card border border-brand/25 bg-brand-soft px-4 py-3.5 sm:px-5">
                         <div className="flex items-start justify-between gap-4">
                             <div>
-                                <p className="text-sm font-bold text-slate-100">Primera venta real</p>
-                                <p className="text-xs text-slate-400 mt-0.5">Al terminar se actualizan caja e inventario.</p>
+                                <p className={`text-sm font-bold ${guidedSimpleMode ? 'text-slate-950' : 'text-slate-100'}`}>Primera venta real</p>
+                                <p className={`text-xs mt-0.5 ${guidedSimpleMode ? 'text-slate-600' : 'text-slate-400'}`}>Al terminar se actualizan caja e inventario.</p>
                             </div>
                             <button
                                 type="button"
                                 onClick={() => navigate('/demo?source=first_sale')}
-                                className="hidden sm:inline-flex min-h-tap px-3 rounded-control text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/[0.05] items-center gap-2 shrink-0"
+                                className={`nx-fluid-press hidden sm:inline-flex min-h-tap px-3 rounded-control text-xs font-semibold items-center gap-2 shrink-0 ${guidedSimpleMode ? 'text-slate-700 hover:bg-slate-100 hover:text-slate-950' : 'text-slate-300 hover:text-white hover:bg-white/[0.05]'}`}
                             >
                                 <PlayCircle size={16} /> Practicar
                             </button>
@@ -5444,12 +5440,12 @@ const POS: React.FC = () => {
                                         <span className={`relative z-[1] flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-bold ${done
                                             ? 'border-brand bg-brand text-brand-on'
                                             : current
-                                                ? 'border-brand bg-surface-900 text-brand ring-4 ring-brand/10'
-                                                : 'border-white/[0.12] bg-surface-900 text-slate-500'}`}
+                                                ? `border-brand ${guidedSimpleMode ? 'bg-white' : 'bg-surface-900'} text-brand ring-4 ring-brand/10`
+                                                : `${guidedSimpleMode ? 'border-slate-300 bg-white' : 'border-white/[0.12] bg-surface-900'} text-slate-500`}`}
                                         >
                                             {done ? <Check size={13} strokeWidth={3} /> : item.step}
                                         </span>
-                                        <span className={`mt-2 text-[11px] font-semibold ${done || current ? 'text-slate-200' : 'text-slate-500'}`}>{item.label}</span>
+                                        <span className={`mt-2 text-[11px] font-semibold ${done || current ? (guidedSimpleMode ? 'text-slate-800' : 'text-slate-200') : 'text-slate-500'}`}>{item.label}</span>
                                     </li>
                                 );
                             })}
@@ -5457,7 +5453,7 @@ const POS: React.FC = () => {
                         <button
                             type="button"
                             onClick={() => navigate('/demo?source=first_sale')}
-                            className="sm:hidden mt-3 min-h-tap w-full rounded-control text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/[0.05] inline-flex items-center justify-center gap-2"
+                            className={`nx-fluid-press sm:hidden mt-3 min-h-tap w-full rounded-control text-xs font-semibold inline-flex items-center justify-center gap-2 ${guidedSimpleMode ? 'text-slate-700 hover:bg-slate-100 hover:text-slate-950' : 'text-slate-300 hover:text-white hover:bg-white/[0.05]'}`}
                         >
                             <PlayCircle size={16} /> Practicar sin guardar
                         </button>
@@ -5475,9 +5471,9 @@ const POS: React.FC = () => {
                                 type="text"
                                 autoFocus
                                 placeholder={guidedSimpleMode ? 'Escaneá o buscá un producto' : 'Buscar o escanear'}
-                                className={`w-full h-pay pl-11 pr-4 rounded-control border focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/50 text-slate-100 font-medium transition-colors ${guidedSimpleMode
-                                    ? 'bg-surface-950 border-white/[0.10] placeholder:text-slate-500'
-                                    : 'bg-surface-900 border-white/[0.06]'}`}
+                                className={`w-full h-pay pl-11 pr-4 rounded-control border focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/50 font-medium transition-colors ${guidedSimpleMode
+                                    ? 'bg-white border-slate-200 text-slate-950 placeholder:text-slate-500 shadow-sm'
+                                    : 'bg-surface-900 border-white/[0.06] text-slate-100'}`}
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                                 onKeyDown={handleSearchKeyDown}
@@ -5567,7 +5563,7 @@ const POS: React.FC = () => {
                         /* pb-24 debajo de `lg`: la barra de la venta es fija y ahora
                            está siempre, así que sin colchón taparía la última fila
                            de productos y la línea que declara el recorte. */
-                        <div className="flex-1 min-h-0 overflow-y-auto pb-24 lg:pb-4 custom-scrollbar">
+                        <div className="nx-catalog-plane flex-1 min-h-0 overflow-y-auto pb-24 lg:pb-4 custom-scrollbar">
                             <CajaNicaCatalog
                                 products={cajaProducts}
                                 totalProducts={cajaCatalogResult.total}
@@ -5679,7 +5675,7 @@ const POS: React.FC = () => {
                     aria-label={cart.length > 0
                         ? `Revisar venta, ${cart.reduce((a, b) => a + b.quantity, 0)} productos, total ${formatMoney(grandTotal)}`
                         : 'Abrir la venta actual, todavía sin productos'}
-                    className={`w-full h-pay rounded-card flex items-center justify-between px-5 font-bold text-base transition-colors ${cart.length > 0
+                    className={`nx-fluid-press w-full h-pay rounded-card flex items-center justify-between px-5 font-bold text-base transition-colors ${cart.length > 0
                         ? 'bg-brand text-brand-on shadow-premium animate-in slide-in-from-bottom duration-300'
                         : 'bg-surface-900/95 backdrop-blur-sm border border-white/[0.08] text-slate-400'}`}
                 >
@@ -5699,8 +5695,8 @@ const POS: React.FC = () => {
 
             {/* Cart Container - Drawer on Mobile, Sidebar on Desktop */}
             <div className={`
-          fixed inset-0 z-50 bg-surface-900 lg:static lg:z-auto lg:border-l lg:border-white/[0.06] flex flex-col transition-all duration-300
-          ${guidedSimpleMode ? 'lg:mt-16 lg:w-[38%] lg:min-w-[420px] lg:max-w-[560px]' : 'lg:mt-14 lg:w-96 lg:shadow-xl'}
+          nx-dark-context nx-ticket-surface fixed inset-0 z-50 bg-surface-900 lg:static lg:z-auto lg:border lg:border-white/[0.06] flex flex-col transition-[transform,opacity] duration-200 ease-nx
+          ${guidedSimpleMode ? 'lg:mt-16 lg:mr-3 lg:mb-3 lg:w-[38%] lg:min-w-[420px] lg:max-w-[560px] lg:rounded-card' : 'lg:mt-14 lg:w-96 lg:shadow-xl'}
           ${showMobileCart ? 'translate-y-0 opacity-100' : 'translate-y-full lg:translate-y-0 opacity-0 pointer-events-none lg:opacity-100 lg:pointer-events-auto'}
       `}>
                 <div className={`border-b border-white/[0.06] text-slate-100 flex items-center justify-between ${guidedSimpleMode ? 'min-h-16 px-5 lg:px-6 bg-surface-900' : 'p-5 bg-surface-800/40'}`}>
