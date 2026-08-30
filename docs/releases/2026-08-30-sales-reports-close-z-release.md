@@ -8,7 +8,7 @@ También corrige la entrada física de abonos en efectivo y la atribución de
 devoluciones al turno que realmente las procesa.
 
 La base integrada es `origin/main` en
-`236e451086a89e454afc8d2e0e3c619cd7a02297`. El SHA candidato definitivo será
+`28e424430d76cf5ef758b2a57f5ac764b9252519`. El SHA candidato definitivo será
 el `HEAD` final de esta rama y debe ser el mismo que aprueben CI, staging y
 `/api/health`; no se escribe manualmente en este documento.
 
@@ -35,8 +35,8 @@ Estado de infraestructura comprobado el 30 de agosto de 2026:
 - Atribución inequívoca de devoluciones: no efectivo solo a turno propio; CASH
   a turno propio o al único cajón abierto del tenant.
 - UI de reportes, descarga y consulta del cierre desde Reportes, POS y Cajas.
-- Compatibilidad con las correcciones de catálogo público, imágenes e interfaz
-  espacial que ya forman parte de `236e451`.
+- Compatibilidad con las correcciones de catálogo público, imágenes, interfaz
+  espacial y lectura pública que ya forman parte de `28e4244`.
 
 ## Contrato de base de datos
 
