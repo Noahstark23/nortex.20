@@ -1,5 +1,6 @@
 import { ArrowLeft, ArrowRight, Banknote, Check, Loader2 } from 'lucide-react';
 import type Decimal from 'decimal.js';
+import { useFluidPress } from '../../hooks/useFluidPress';
 import { formatMoney, sanitizeDecimalInput } from '../../utils/money';
 import { suggestNioCashAmounts, validateCashReceived } from '../../utils/posCash';
 
@@ -39,15 +40,26 @@ export const CajaNicaCheckout = ({
     const paymentError = validation.ok === false ? validation : null;
     const ready = successfulPayment !== null;
     const exactSelected = successfulPayment?.received.equals(total) ?? false;
+    const primaryPress = useFluidPress<HTMLButtonElement>({
+        disabled: cashOpen ? !ready || disabled || processing : disabled || processing,
+    });
+    const secondaryPress = useFluidPress<HTMLButtonElement>({ disabled: disabled || processing });
+    const backPress = useFluidPress<HTMLButtonElement>({ disabled: processing });
+    const exactPress = useFluidPress<HTMLButtonElement>({ disabled: disabled || processing });
 
     if (!cashOpen) {
         return (
-            <div className="space-y-2.5">
+            <div
+                role="group"
+                className="nx-ticket-dock nx-ticket-checkout space-y-2.5"
+                aria-label={`Cobro de ${formatMoney(total)}`}
+            >
                 <button
                     type="button"
+                    {...primaryPress.bind}
                     onClick={onOpenCash}
                     disabled={disabled || processing}
-                    className="flex h-pay w-full items-center gap-3 rounded-control bg-brand px-5 text-left text-[16px] font-bold text-brand-on transition-colors hover:bg-brand-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/50"
+                    className="nx-ticket-primary nx-fluid-press nx-fluid-engine flex h-pay w-full items-center gap-3 rounded-control bg-brand px-5 text-left text-[16px] font-bold text-brand-on shadow-lg shadow-brand/15 transition-[background-color,box-shadow] hover:bg-brand-hover hover:shadow-xl hover:shadow-brand/20 disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/50"
                 >
                     <Banknote size={21} aria-hidden="true" />
                     <span className="min-w-0 flex-1 truncate">Cobrar {formatMoney(total)} en efectivo</span>
@@ -55,9 +67,10 @@ export const CajaNicaCheckout = ({
                 </button>
                 <button
                     type="button"
+                    {...secondaryPress.bind}
                     onClick={onOtherPayment}
                     disabled={disabled || processing}
-                    className="flex min-h-tap w-full items-center justify-center gap-2 rounded-control border border-white/[0.08] text-sm font-semibold text-slate-300 transition-colors hover:bg-white/[0.05] hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
+                    className="nx-ticket-secondary nx-fluid-press nx-fluid-engine flex min-h-11 w-full items-center justify-center gap-2 rounded-control border border-white/[0.10] bg-white/[0.035] text-sm font-semibold text-slate-300 transition-[background-color,border-color,color] hover:border-white/[0.16] hover:bg-white/[0.07] hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
                 >
                     Otro pago <ArrowRight size={16} aria-hidden="true" />
                 </button>
@@ -67,7 +80,10 @@ export const CajaNicaCheckout = ({
     }
 
     return (
-        <section aria-labelledby="caja-nica-cash-title" className="space-y-3">
+        <section
+            aria-labelledby="caja-nica-cash-title"
+            className="nx-ticket-dock nx-ticket-cash space-y-3 rounded-card border border-white/[0.08] bg-black/15 p-3"
+        >
             <div className="flex items-center justify-between gap-3">
                 <div>
                     <h3 id="caja-nica-cash-title" className="text-sm font-bold text-slate-100">Efectivo recibido</h3>
@@ -75,9 +91,10 @@ export const CajaNicaCheckout = ({
                 </div>
                 <button
                     type="button"
+                    {...backPress.bind}
                     onClick={onCancelCash}
                     disabled={processing}
-                    className="inline-flex min-h-tap items-center gap-1.5 rounded-control px-2 text-xs font-semibold text-slate-400 transition-colors hover:bg-white/[0.05] hover:text-white disabled:opacity-45"
+                    className="nx-fluid-press nx-fluid-engine inline-flex min-h-11 items-center gap-1.5 rounded-control px-2 text-xs font-semibold text-slate-400 transition-[background-color,color] hover:bg-white/[0.05] hover:text-white disabled:opacity-45"
                 >
                     <ArrowLeft size={15} aria-hidden="true" /> Volver
                 </button>
@@ -86,10 +103,11 @@ export const CajaNicaCheckout = ({
             <div className="flex gap-2 overflow-x-auto pb-0.5">
                 <button
                     type="button"
+                    {...exactPress.bind}
                     onClick={() => onCashReceivedChange(total.toFixed(2))}
                     disabled={disabled || processing}
                     aria-pressed={exactSelected}
-                    className={`min-h-tap shrink-0 rounded-control border px-3 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${exactSelected
+                    className={`nx-ticket-cash-option nx-fluid-press nx-fluid-engine min-h-11 shrink-0 rounded-control border px-3 text-xs font-bold transition-[background-color,border-color,color] disabled:cursor-not-allowed disabled:opacity-45 ${exactSelected
                         ? 'border-brand bg-brand-soft text-brand'
                         : 'border-white/[0.08] bg-white/[0.04] text-slate-200 hover:bg-white/[0.07]'}`}
                 >
@@ -104,7 +122,7 @@ export const CajaNicaCheckout = ({
                             onClick={() => onCashReceivedChange(amount.toFixed(2))}
                             disabled={disabled || processing}
                             aria-pressed={selected}
-                            className={`min-h-tap shrink-0 rounded-control border px-3 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${selected
+                            className={`nx-ticket-cash-option nx-fluid-press min-h-11 shrink-0 rounded-control border px-3 text-xs font-bold transition-[background-color,border-color,color,transform] disabled:cursor-not-allowed disabled:opacity-45 ${selected
                                 ? 'border-brand bg-brand-soft text-brand'
                                 : 'border-white/[0.08] bg-white/[0.04] text-slate-200 hover:bg-white/[0.07]'}`}
                         >
@@ -130,7 +148,7 @@ export const CajaNicaCheckout = ({
                         }}
                         aria-invalid={!ready && cashReceived !== ''}
                         aria-describedby="caja-nica-cash-status"
-                        className="h-14 w-full rounded-control border border-white/[0.10] bg-surface-950 pl-11 pr-4 text-2xl font-black tabular-nums text-slate-100 outline-none transition-colors placeholder:text-slate-600 focus:border-brand focus:ring-2 focus:ring-brand/25 disabled:cursor-not-allowed disabled:opacity-45"
+                        className="nx-ticket-cash-input h-14 w-full rounded-control border border-white/[0.12] bg-black/20 pl-11 pr-4 text-2xl font-black tabular-nums text-slate-100 outline-none transition-[background-color,border-color,box-shadow] placeholder:text-slate-600 focus:border-brand focus:bg-black/30 focus:ring-2 focus:ring-brand/25 disabled:cursor-not-allowed disabled:opacity-45"
                         placeholder="0.00"
                     />
                 </span>
@@ -139,7 +157,7 @@ export const CajaNicaCheckout = ({
             <div
                 id="caja-nica-cash-status"
                 aria-live="polite"
-                className={`flex min-h-[72px] items-center justify-between rounded-control border px-4 py-3 ${ready
+                className={`nx-ticket-cash-status flex min-h-[72px] items-center justify-between rounded-control border px-4 py-3 ${ready
                     ? 'border-brand/20 bg-brand-soft'
                     : cashReceived !== ''
                         ? 'border-amber-500/20 bg-warning-soft'
@@ -164,18 +182,20 @@ export const CajaNicaCheckout = ({
 
             <button
                 type="button"
+                {...primaryPress.bind}
                 onClick={onConfirmCash}
                 disabled={!ready || disabled || processing}
-                className="flex h-pay w-full items-center justify-center gap-2 rounded-control bg-brand px-5 text-[16px] font-bold text-brand-on transition-colors hover:bg-brand-hover active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40"
+                className="nx-ticket-primary nx-fluid-press nx-fluid-engine flex h-pay w-full items-center justify-center gap-2 rounded-control bg-brand px-5 text-[16px] font-bold text-brand-on shadow-lg shadow-brand/15 transition-[background-color,box-shadow] hover:bg-brand-hover hover:shadow-xl hover:shadow-brand/20 disabled:cursor-not-allowed disabled:opacity-40"
             >
                 {processing ? <Loader2 size={19} className="animate-spin" aria-hidden="true" /> : <Check size={19} aria-hidden="true" />}
                 {processing ? 'Registrando…' : 'Registrar efectivo y seguir'}
             </button>
             <button
                 type="button"
+                {...secondaryPress.bind}
                 onClick={onOtherPayment}
                 disabled={disabled || processing}
-                className="min-h-tap w-full rounded-control text-sm font-semibold text-slate-400 transition-colors hover:bg-white/[0.04] hover:text-white disabled:opacity-45"
+                className="nx-ticket-secondary nx-fluid-press nx-fluid-engine min-h-11 w-full rounded-control text-sm font-semibold text-slate-400 transition-[background-color,color] hover:bg-white/[0.04] hover:text-white disabled:opacity-45"
             >
                 Otro pago
             </button>

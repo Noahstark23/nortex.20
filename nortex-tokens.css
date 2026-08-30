@@ -36,14 +36,13 @@
   --nx-warning-soft:  rgba(245, 165, 36, 0.12);
   --nx-success:       var(--nx-brand);
 
-  /* ---------- Tipografía ---------- */
-  /* Plus Jakarta Sans, auto-hospedada en /fonts (ver public/fonts/fuentes.css).
-     Antes acá decía `Inter`, pero Inter no se descargaba en ningún lado del
-     repo: el único <link> de fuentes pedía Plus Jakarta Sans y JetBrains Mono.
-     O sea que la app entera se pintaba con la fuente del sistema mientras
-     descargaba una familia que ningún estilo suyo usaba. Ahora es una sola
-     familia para el producto y la landing, y llega de verdad. */
-  --nx-font: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* ---------- Tipografía ----------
+     Spatial Counter prioriza la familia del sistema: conserva el ajuste óptico,
+     el hinting y el tamaño configurado por la persona en cada plataforma. La
+     fuente de marca auto-hospedada continúa disponible para marketing, pero la
+     interfaz operativa no depende de descargarla. */
+  --nx-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+  --nx-font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, system-ui, sans-serif;
   --nx-font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace; /* SOLO SKU y códigos */
 
   --nx-fs-display: 40px;  --nx-lh-display: 1.05;  /* TOTAL a cobrar, ganancia del día */
@@ -68,8 +67,8 @@
   --nx-12: 48px;
 
   /* ---------- Radios ---------- */
-  --nx-r-control: 8px;
-  --nx-r-card:    12px;
+  --nx-r-control: 10px;
+  --nx-r-card:    14px;
   --nx-r-pill:    999px;
 
   /* ---------- Controles ---------- */
@@ -79,9 +78,33 @@
   --nx-tap-min:   44px;   /* objetivo táctil mínimo */
   --nx-h-module-header: 64px; /* altura única del header de módulo (Fase 5) */
 
-  /* ---------- Movimiento ---------- */
-  --nx-t-fast: 140ms cubic-bezier(0.2, 0, 0, 1);
-  --nx-t-slow: 200ms cubic-bezier(0.2, 0, 0, 1);
+  /* ---------- Movimiento ----------
+     Estos tiempos solo gobiernan color/opacidad. Las transformaciones que
+     siguen un gesto usan el motor rAF interrumpible de `utils/fluidMotion.ts`. */
+  --nx-t-fast: 120ms cubic-bezier(0.2, 0, 0, 1);
+  --nx-t-slow: 180ms cubic-bezier(0.2, 0, 0, 1);
+  --nx-spring-response: 380ms;
+  --nx-press-scale: .985;
+  --nx-gesture-hysteresis: 10px;
+
+  /* ---------- Spatial Counter ----------
+     Opción visual 3: chrome y ticket oscuros, canvas de trabajo claro. Estos
+     tokens son semánticos para que la migración sea gradual y reversible. */
+  --nx-canvas:          #F4F5F7;
+  --nx-canvas-raised:   #FFFFFF;
+  --nx-canvas-subtle:   #E9ECF0;
+  --nx-canvas-border:   #D7DCE3;
+  --nx-canvas-text:     #171A1F;
+  --nx-canvas-muted:    #5F6772;
+  --nx-canvas-faint:    #89919C;
+  --nx-chrome:          #101318;
+  --nx-chrome-raised:   #171B21;
+  --nx-ticket:          #181C22;
+  --nx-ticket-raised:   #22272F;
+  --nx-glass-light:     rgba(255, 255, 255, .82);
+  --nx-glass-dark:      rgba(16, 19, 24, .88);
+  --nx-shadow-float:    0 18px 48px rgba(15, 18, 23, .18), 0 2px 10px rgba(15, 18, 23, .10);
+  --nx-shadow-subtle:   0 8px 28px rgba(15, 18, 23, .08), 0 1px 3px rgba(15, 18, 23, .06);
 
   /* ---------- Capas ----------
      La zona de cobro es intocable: ningún overlay flotante
@@ -128,6 +151,18 @@
   --nx-danger-rgb:        240 72 62;
   --nx-warning-rgb:       245 165 36;
 
+  --nx-canvas-rgb:        244 245 247;
+  --nx-canvas-raised-rgb: 255 255 255;
+  --nx-canvas-subtle-rgb: 233 236 240;
+  --nx-canvas-border-rgb: 215 220 227;
+  --nx-canvas-text-rgb:    23 26 31;
+  --nx-canvas-muted-rgb:   95 103 114;
+  --nx-canvas-faint-rgb:  137 145 156;
+  --nx-chrome-rgb:         16 19 24;
+  --nx-chrome-raised-rgb:  23 27 33;
+  --nx-ticket-rgb:         24 28 34;
+  --nx-ticket-raised-rgb:  34 39 47;
+
   /* ---------- Marcas de TERCEROS ----------
      No son decoración ni parte de la paleta: son la identidad de otra app, y el
      usuario reconoce el botón por ese color (el verde de WhatsApp, el cian de
@@ -168,6 +203,17 @@
   --nx-neutral-950-rgb:  11  13  16;
 }
 
+/* El contexto declara la intención de la superficie sin reordenar la escala
+   neutral. Así las clases convencionales (`bg-slate-50`, `text-slate-950`)
+   mantienen su significado y la migración no depende de un tema implícito. */
+.nx-light-context {
+  color-scheme: light;
+}
+
+.nx-dark-context {
+  color-scheme: dark;
+}
+
 /* ============================================================
    Base
    ============================================================ */
@@ -178,6 +224,8 @@ html, body {
   font-size: var(--nx-fs-body);
   line-height: var(--nx-lh-body);
   -webkit-font-smoothing: antialiased;
+  font-optical-sizing: auto;
+  text-rendering: optimizeLegibility;
 }
 
 /* Toda cifra se alinea en columna sin usar monoespaciada */

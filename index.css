@@ -64,7 +64,7 @@
 }
 
 /* ==========================================
-   FUNDACIÓN GLOBAL — TEMA "OBSIDIAN"
+   FUNDACIÓN GLOBAL — SPATIAL COUNTER
    ========================================== */
 @layer base {
   body {
@@ -73,6 +73,7 @@
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     /* ERP = números por todos lados: que SIEMPRE alineen en columna */
     font-variant-numeric: tabular-nums;
+    font-optical-sizing: auto;
   }
 
   /* Scrollbar fino y oscuro (el anterior era light y chocaba con la UI) */
@@ -159,6 +160,224 @@
   }
   .table-premium .num {
     @apply font-mono tabular-nums;
+  }
+
+  /* ── Spatial Counter · opción visual 3 ────────────────────────────────
+     El chrome y el ticket son oscuros; el trabajo cotidiano vive en un
+     canvas claro. Estas clases son semánticas para poder migrar módulo por
+     módulo sin alterar permisos, consultas ni operaciones de negocio. */
+  .nx-app-shell {
+    background: var(--nx-chrome);
+    color: rgb(var(--nx-neutral-100-rgb));
+    isolation: isolate;
+  }
+
+  .nx-sidebar {
+    background: var(--nx-glass-dark);
+    border-color: rgb(255 255 255 / .07);
+    box-shadow: 12px 0 40px rgb(3 7 18 / .16);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    backdrop-filter: blur(22px) saturate(140%);
+  }
+
+  .nx-dark-chrome {
+    background: var(--nx-glass-dark);
+    color: rgb(var(--nx-neutral-100-rgb));
+    border-color: rgb(255 255 255 / .07);
+    -webkit-backdrop-filter: blur(18px) saturate(135%);
+    backdrop-filter: blur(18px) saturate(135%);
+  }
+
+  .nx-workspace,
+  .nx-catalog-surface,
+  .nx-catalog-plane {
+    background: var(--nx-canvas);
+    color: var(--nx-canvas-text);
+  }
+
+  .nx-workspace {
+    scrollbar-color: rgb(var(--nx-canvas-faint-rgb) / .55) transparent;
+  }
+
+  .nx-module-header {
+    font-family: var(--nx-font-display);
+    letter-spacing: -.02em;
+  }
+
+  .nx-canvas-card,
+  .nx-list-surface {
+    background: var(--nx-canvas-raised);
+    border: 1px solid var(--nx-canvas-border);
+    border-radius: var(--nx-r-card);
+  }
+
+  .nx-canvas-card {
+    box-shadow: var(--nx-shadow-subtle);
+  }
+
+  .nx-list-surface {
+    box-shadow: 0 1px 2px rgb(15 18 23 / .035);
+  }
+
+  .nx-catalog-header {
+    color: var(--nx-canvas-text);
+  }
+
+  .nx-catalog-count {
+    color: var(--nx-canvas-muted);
+  }
+
+  .nx-catalog-tabs {
+    scrollbar-width: none;
+  }
+
+  .nx-catalog-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nx-catalog-tab,
+  .nx-catalog-more,
+  .nx-product-card,
+  .nx-catalog-card {
+    background: var(--nx-canvas-raised);
+    border-color: var(--nx-canvas-border);
+  }
+
+  .nx-product-card,
+  .nx-catalog-card {
+    box-shadow: 0 1px 3px rgb(15 18 23 / .06);
+  }
+
+  .nx-product-card:hover,
+  .nx-catalog-card:hover {
+    border-color: rgb(var(--nx-canvas-faint-rgb) / .72);
+    box-shadow: 0 10px 28px rgb(15 18 23 / .10), 0 2px 6px rgb(15 18 23 / .06);
+  }
+
+  .nx-product-card[data-selected='true'],
+  .nx-catalog-card[data-selected='true'] {
+    border-color: var(--nx-brand);
+    box-shadow: 0 0 0 2px var(--nx-brand-ring), var(--nx-shadow-subtle);
+  }
+
+  .nx-catalog-card-media {
+    overflow: hidden;
+    border-radius: var(--nx-r-control);
+  }
+
+  .nx-catalog-card-price {
+    font-family: var(--nx-font-display);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .nx-ticket-surface,
+  .nx-ticket-dock {
+    background: var(--nx-ticket);
+    color: rgb(var(--nx-neutral-100-rgb));
+    border-color: rgb(255 255 255 / .08);
+    box-shadow: var(--nx-shadow-float);
+  }
+
+  .nx-ticket-surface {
+    overflow: hidden;
+  }
+
+  .nx-ticket-checkout {
+    background: rgb(var(--nx-ticket-rgb) / .96);
+    border-color: rgb(255 255 255 / .08);
+  }
+
+  .nx-ticket-primary {
+    box-shadow: 0 8px 22px rgb(var(--nx-brand-rgb) / .18);
+  }
+
+  .nx-ticket-secondary,
+  .nx-ticket-cash-option,
+  .nx-ticket-cash-input {
+    border-color: rgb(255 255 255 / .10);
+  }
+
+  .nx-ticket-cash,
+  .nx-ticket-cash-status {
+    background: rgb(var(--nx-ticket-raised-rgb) / .72);
+  }
+
+  /* Respuesta táctil inmediata. La transformación no se interpola con CSS:
+     los gestos continuos usan el motor rAF y pueden ser interrumpidos desde el
+     valor de presentación actual. */
+  .nx-fluid-press {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    user-select: none;
+    transition-property: background-color, border-color, color, box-shadow, opacity !important;
+    transition-duration: 120ms !important;
+    transition-timing-function: cubic-bezier(.2, 0, 0, 1) !important;
+  }
+
+  .nx-fluid-press:active:not(:disabled) {
+    transform: scale(var(--nx-press-scale));
+  }
+
+  /* Los controles conectados al motor rAF usan la propiedad individual
+     `scale`; el fallback CSS no debe componer una segunda escala encima. */
+  .nx-fluid-engine:active:not(:disabled) {
+    transform: none;
+  }
+
+  .nx-fluid-press:focus-visible {
+    outline: 2px solid var(--nx-brand-ring);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+
+  .nx-fluid-press {
+    transition-duration: 0ms !important;
+  }
+
+  .nx-fluid-press:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .nx-sidebar,
+  .nx-dark-chrome {
+    background: var(--nx-chrome);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .nx-ticket-checkout {
+    background: var(--nx-ticket);
+  }
+}
+
+@media (prefers-contrast: more) {
+  .nx-canvas-card,
+  .nx-list-surface,
+  .nx-product-card,
+  .nx-catalog-card {
+    border-color: var(--nx-canvas-muted);
+  }
+
+  .nx-sidebar,
+  .nx-dark-chrome,
+  .nx-ticket-surface,
+  .nx-ticket-dock {
+    border-color: rgb(255 255 255 / .28);
   }
 }
 
