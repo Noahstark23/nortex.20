@@ -298,7 +298,14 @@ function buildHtml(route: RouteSEO): string {
     }
 
     // Contenido VISIBLE para crawlers; React lo reemplaza al montar en #root.
-    const seoBlock = `<div id="root"><div data-prerender="seo" style="max-width:820px;margin:0 auto;padding:24px;font-family:system-ui,-apple-system,sans-serif;line-height:1.6"><h1>${esc(route.h1)}</h1>${route.body}</div></div>`;
+    // Las rutas editoriales usan el mismo canvas cálido que el blog hidratado,
+    // evitando el fogonazo blanco entre el HTML SEO y React. Las demás rutas
+    // conservan su bloque neutral actual.
+    const isBlogRoute = route.path === '/blog' || route.path.startsWith('/blog/');
+    const seoContainer = isBlogRoute
+        ? `<main data-prerender="seo" class="nx-public-prerender"><h1>${esc(route.h1)}</h1>${route.body}</main>`
+        : `<div data-prerender="seo" style="max-width:820px;margin:0 auto;padding:24px;font-family:system-ui,-apple-system,sans-serif;line-height:1.6"><h1>${esc(route.h1)}</h1>${route.body}</div>`;
+    const seoBlock = `<div id="root">${seoContainer}</div>`;
     html = html.replace(/<div id="root">\s*<\/div>/, seoBlock);
 
     return html;
