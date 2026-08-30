@@ -1,6 +1,7 @@
-import { memo, useId, useState, type KeyboardEvent } from 'react';
+import { memo, useId, type KeyboardEvent } from 'react';
 import type { Product } from '../../types';
 import { formatMoney } from '../../utils/money';
+import { ProductImage } from '../ui/ProductImage';
 
 export interface CajaNicaCatalogProps {
     /** Lo que se muestra: ya viene recortado por el POS. */
@@ -28,13 +29,6 @@ const PRODUCT_TILE_GRADIENTS = [
     'from-sky-500/25 to-blue-500/15',
 ];
 
-const productoIniciales = (name: string): string => {
-    const words = name.trim().toUpperCase().split(/\s+/).filter(Boolean);
-    if (words.length === 0) return '??';
-    if (words.length === 1) return words[0].slice(0, 2);
-    return `${words[0][0]}${words[1][0]}`;
-};
-
 const productoPaleta = (seed: string): string =>
     PRODUCT_TILE_GRADIENTS[
         Math.abs(
@@ -42,44 +36,12 @@ const productoPaleta = (seed: string): string =>
         ) % PRODUCT_TILE_GRADIENTS.length
     ];
 
-const ProductoMiniatura = ({
-    name,
-    imageUrl,
-    className,
-}: {
-    name: string;
-    imageUrl?: string | null;
-    className: string;
-}) => {
-    const [imgError, setImgError] = useState(false);
-
-    if (!imageUrl || imgError) {
-        return (
-            <div className={`${className} grid place-items-center rounded-control border border-white/[0.12] bg-gradient-to-br ${productoPaleta(name)}`}>
-                <span className="text-xs font-bold uppercase tracking-[0.12em] text-white">
-                    {productoIniciales(name)}
-                </span>
-            </div>
-        );
-    }
-
-    return (
-        <img
-            src={imageUrl}
-            alt={name}
-            loading="lazy"
-            onError={() => setImgError(true)}
-            className={`${className} object-cover`}
-        />
-    );
-};
-
 /**
  * Catálogo táctil de Caja Nica.
  *
- * Los productos forman un solo rack, sin fotografías ni tarjetas flotantes:
- * nombre, unidad y precio quedan siempre en el mismo lugar para que el cajero
- * pueda reconocerlos por posición mientras atiende.
+ * Los productos forman un solo rack: foto, nombre, unidad y precio quedan
+ * siempre en el mismo lugar para que el cajero pueda reconocerlos por posición
+ * mientras atiende.
  */
 export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
     products,
@@ -97,7 +59,6 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
     const panelId = `${catalogId}-products`;
     const activeCategoryIndex = categories.indexOf(selectedCategory);
     const isSearching = searchTerm.trim().length > 0;
-    const ocultos = Math.max(0, total - products.length);
 
     const handleCategoryKeyDown = (
         event: KeyboardEvent<HTMLButtonElement>,
@@ -180,7 +141,7 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
                 {products.length > 0 ? (
                     <>
                         <ul className="grid grid-cols-2 gap-px md:grid-cols-3 lg:grid-cols-4">
-                            {products.map((product) => {
+                            {products.map((product, index) => {
                                 const unit = product.unit?.trim() || 'unidad';
                                 const blocked = blockedProductIds.has(product.id);
                                 const lowStock = !blocked && product.stock > 0 && product.stock <= 5;
@@ -203,13 +164,16 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
                                                 : 'bg-surface-950 hover:bg-surface-900 active:bg-surface-800'}`}
                                         >
                                             <div className="min-w-0">
-                                                <div className="mb-3 overflow-hidden rounded-control border border-white/[0.08] bg-white/[0.04]">
-                                                    <ProductoMiniatura
-                                                        name={product.name}
-                                                        imageUrl={product.imageUrl}
-                                                        className="aspect-[4/3] w-full"
-                                                    />
-                                                </div>
+                                                <ProductImage
+                                                    src={product.imageUrl}
+                                                    alt={product.name}
+                                                    loading={index < 8 ? 'eager' : 'lazy'}
+                                                    fetchPriority={index < 4 ? 'high' : 'auto'}
+                                                    sizes="(max-width: 767px) 50vw, (max-width: 1023px) 33vw, 25vw"
+                                                    className={`mb-3 aspect-[4/3] w-full rounded-control border border-white/[0.08] bg-gradient-to-br ${productoPaleta(product.name)}`}
+                                                    imageClassName="transition-opacity duration-200"
+                                                    fallbackClassName="text-white"
+                                                />
                                                 <span className={`line-clamp-2 text-[15px] font-semibold leading-snug sm:text-base ${blocked ? 'text-slate-400' : 'text-slate-100'}`}>
                                                     {product.name}
                                                 </span>
