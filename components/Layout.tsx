@@ -187,11 +187,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   // en backend y tampoco mostramos un control que el servidor va a rechazar.
   const canUseAttendanceClock = userRole !== 'BODEGUERO';
   const isMoreActive = moreItems.some(it => location.pathname.startsWith(it.path));
-  // La caja es una superficie operativa dedicada, no otra pantalla del ERP.
-  // Mientras se vende, el sidebar y la navegación inferior solo agregan blancos
-  // accidentales y roban ancho al ticket. La salida sigue disponible desde el
-  // menú contextual del propio POS, y el carrito continúa protegido por
-  // VentaEnCursoContext + su persistencia local.
+  // En móvil la caja conserva su superficie dedicada. En escritorio comparte
+  // el rail persistente del ERP para que cambiar de contexto sea predecible; la
+  // salida sigue protegida por VentaEnCursoContext + su persistencia local.
   const isPosSurface = location.pathname === '/app/pos';
 
   // ── Navegación en 5 secciones (rediseño Fase 2) ───────────────────────────
@@ -205,7 +203,22 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   /** Activo real del ítem, contemplando sus pantallas satélite. */
   const itemActivo = (item: NavItem, isActive: boolean) => isActive || esRutaDe(item.path, rutaDelMenu);
 
-  /** Item de nav: fondo suave + barra izquierda. Nunca un bloque sólido de color. */
+  // Contexto visual del shell. Se deriva únicamente de la sesión local que la
+  // app ya usa para pintar datos no sensibles; autorización y navegación siguen
+  // dependiendo del JWT y de buildNavigation, respectivamente.
+  let sessionName = 'Tu cuenta';
+  let businessName = 'Nortex';
+  try {
+    const session = JSON.parse(localStorage.getItem('nortex_user') || '{}');
+    sessionName = session.name || session.email || session.firstName || sessionName;
+    businessName = session.tenant?.businessName || session.tenant?.name || businessName;
+  } catch { /* sesión ilegible: el shell degrada a etiquetas neutrales */ }
+  const sessionInitial = sessionName.trim().charAt(0).toUpperCase() || 'N';
+  const activeNavItem = allItems.find(item => esRutaDe(item.path, rutaDelMenu));
+  const pageTitle = isPosSurface ? 'Nueva venta' : (activeNavItem?.label || 'Nortex');
+  const pageGroup = isPosSurface ? 'VENDER' : (activeNavItem?.group || 'ESPACIO DE TRABAJO');
+
+  /** Item de nav: selección inequívoca, compacta y con respuesta inmediata. */
   /* ── Guarda de navegación con venta en curso (P0-1) ──────────────────
      El sidebar está montado ALREDEDOR del POS, así que un clic acá desmonta la
      caja. El carrito ya sobrevive (utils/cartPersistence.ts), pero verlo
@@ -216,44 +229,47 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const ventaEnCurso = useVentaEnCurso();
   const [destinoPendiente, setDestinoPendiente] = useState<string | null>(null);
 
-  const guardarSalida = (e: React.MouseEvent, destino: string) => {
+  const guardarSalida = (e: React.MouseEvent, destino: string): boolean => {
     // Navegar DENTRO del POS no interrumpe nada.
-    if (!ventaEnCurso.hayVenta || destino === location.pathname) return;
+    if (!ventaEnCurso.hayVenta || destino === location.pathname) return true;
     e.preventDefault();
     setDestinoPendiente(destino);
+    return false;
   };
 
   const navItemClass = ({ isActive }: { isActive: boolean }) => `
-    w-full flex items-center justify-start gap-3 px-3 h-touch rounded-control transition-colors duration-150 group active:scale-[0.98]
+    nx-fluid-press group flex min-h-10 w-full items-center justify-start gap-2.5 rounded-control border px-2.5 py-2 text-left
     ${isActive
-      ? 'bg-brand/10 text-white shadow-nav-active'
-      : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'}
+      ? 'border-emerald-400/25 bg-emerald-500/90 text-white shadow-sm shadow-emerald-950/20'
+      : 'border-transparent text-slate-400 hover:border-white/[0.06] hover:bg-white/[0.055] hover:text-white'}
   `;
 
   return (
     // h-dvh (no h-screen): 100vh en Chrome Android no descuenta la barra de
     // direcciones y con overflow-hidden el contenido quedaba recortado sin scroll.
     // w-full (no w-screen): w-screen provoca overflow horizontal.
-    <div className="flex h-dvh w-full bg-surface-950 overflow-hidden [color-scheme:dark]">
+    <div className="nx-app-shell flex h-dvh w-full overflow-hidden [color-scheme:dark]">
       {/* DESKTOP SIDEBAR */}
-      <aside className={`${isPosSurface ? 'hidden' : 'hidden lg:flex'} w-64 bg-nortex-900 border-r border-white/[0.06] flex-col justify-between transition-all duration-300`}>
-        <div>
-          <div className="h-16 flex items-center justify-start px-6 border-b border-white/[0.06]">
-            <div className="w-8 h-8 bg-nortex-accent rounded-lg flex items-center justify-center mr-3 shadow-glow shadow-emerald-500/40">
-              <span className="font-bold text-surface-950 text-lg">N</span>
+      <aside className="nx-sidebar hidden w-[12rem] shrink-0 flex-col justify-between border-r border-white/[0.07] lg:flex xl:w-[12.5rem]">
+        <div className="min-h-0">
+          <div className="flex h-[4.5rem] items-center border-b border-white/[0.07] px-4">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control border border-emerald-300/20 bg-emerald-400/10">
+                <span className="text-[13px] font-black tracking-[-0.04em] text-emerald-300">N</span>
+              </div>
+              <span className="truncate text-[17px] font-semibold tracking-[-0.03em] text-white">nortex<span className="text-emerald-400">.</span></span>
             </div>
-            <span className="font-bold text-white text-lg tracking-tight">Nortex<span className="text-nortex-accent">.</span></span>
           </div>
 
-          <nav className="p-4 space-y-1 mt-4 overflow-y-auto max-h-[calc(100vh-160px)] custom-scrollbar">
+          <nav className="custom-scrollbar max-h-[calc(100dvh-15.5rem)] space-y-1 overflow-y-auto px-2.5 py-3" aria-label="Navegación principal">
             {/* Items sueltos (Mi Negocio, y los menús propios de LENDER/CONTADOR
                 que traen sus propias etiquetas de grupo). */}
             {looseItems.map((item) => {
               const Icon = item.icon;
               return (
                 <NavLink key={item.path} to={item.path} onClick={e => guardarSalida(e, item.path)} className={({ isActive }) => navItemClass({ isActive: itemActivo(item, isActive) })}>
-                  <Icon size={20} />
-                  <span className="font-medium text-sm">{item.label}</span>
+                  <Icon size={17} className="shrink-0" aria-hidden="true" />
+                  <span className="truncate text-[13px] font-medium tracking-[-0.01em]">{item.label}</span>
                 </NavLink>
               );
             })}
@@ -265,23 +281,23 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             {sectionGroups.map(({ section, items }) => {
               const isOpen = openSections[section] ?? sectionHasActive(items);
               return (
-                <div key={section} className="pt-1">
+                <div key={section} className="pt-1.5">
                   <button
                     onClick={() => setOpenSections(prev => ({ ...prev, [section]: !isOpen }))}
-                    className="w-full flex items-center gap-2 px-3 pt-3 pb-1.5 text-slate-500 hover:text-slate-300 transition-colors"
+                    className="nx-fluid-press flex min-h-8 w-full items-center gap-2 rounded-lg px-2.5 py-1 text-slate-500 transition-colors hover:bg-white/[0.035] hover:text-slate-300"
                     aria-expanded={isOpen}
                   >
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.1em]">{section}</span>
-                    <ChevronDown size={14} className={`ml-auto transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                    <span className="text-[9px] font-semibold uppercase tracking-[0.16em]">{section}</span>
+                    <ChevronDown size={12} className={`ml-auto transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
                   </button>
                   {isOpen && (
-                    <div className="space-y-1">
+                    <div className="mt-0.5 space-y-1">
                       {items.map((item) => {
                         const Icon = item.icon;
                         return (
                           <NavLink key={item.path} to={item.path} onClick={e => guardarSalida(e, item.path)} className={({ isActive }) => navItemClass({ isActive: itemActivo(item, isActive) })}>
-                            <Icon size={20} />
-                            <span className="font-medium text-sm">{item.label}</span>
+                            <Icon size={17} className="shrink-0" aria-hidden="true" />
+                            <span className="truncate text-[13px] font-medium tracking-[-0.01em]">{item.label}</span>
                           </NavLink>
                         );
                       })}
@@ -296,11 +312,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <>
                 <button
                   onClick={() => setShowMore(v => !v)}
-                  className={`w-full flex items-center justify-start gap-3 px-3 py-2.5 rounded-xl transition-colors mt-2 border-t border-white/[0.06] pt-3
+                  className={`nx-fluid-press mt-2 flex min-h-10 w-full items-center justify-start gap-2.5 border-t border-white/[0.07] px-2.5 pt-3 text-left transition-colors
                     ${(showMore || isMoreActive) ? 'text-slate-300' : 'text-slate-500 hover:text-slate-300'}`}
+                  aria-expanded={showMore || isMoreActive}
                 >
-                  <ChevronDown size={20} className={`transition-transform ${(showMore || isMoreActive) ? 'rotate-180' : ''}`} />
-                  <span className="font-medium text-sm">Más opciones</span>
+                  <ChevronDown size={16} className={`shrink-0 transition-transform duration-200 ${(showMore || isMoreActive) ? 'rotate-180' : ''}`} aria-hidden="true" />
+                  <span className="truncate text-[12px] font-medium">Más opciones</span>
                 </button>
                 {(showMore || isMoreActive) && moreItems.map((item) => {
                   const Icon = item.icon;
@@ -308,15 +325,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     <NavLink
                       key={item.path}
                       to={item.path}
-                      className={({ isActive }) => `
-                        w-full flex items-center justify-start gap-3 px-3 py-2 rounded-xl transition-all duration-200
-                        ${isActive
-                          ? 'bg-brand text-white shadow-glow shadow-brand/25'
-                          : 'text-slate-500 hover:bg-white/[0.04] hover:text-white'}
-                      `}
+                      onClick={e => guardarSalida(e, item.path)}
+                      className={({ isActive }) => navItemClass({ isActive: itemActivo(item, isActive) })}
                     >
-                      <Icon size={18} />
-                      <span className="font-medium text-[13px]">{item.label}</span>
+                      <Icon size={16} className="shrink-0" aria-hidden="true" />
+                      <span className="truncate text-[12px] font-medium">{item.label}</span>
                     </NavLink>
                   );
                 })}
@@ -327,46 +340,46 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             {canToggleMode && (
               <button
                 onClick={toggleUiMode}
-                className="w-full flex items-center justify-start gap-3 px-3 py-2 rounded-xl text-slate-600 hover:text-slate-300 transition-colors mt-1"
+                className="nx-fluid-press mt-1 flex min-h-9 w-full items-center justify-start gap-2.5 rounded-control px-2.5 py-2 text-left text-slate-600 transition-colors hover:bg-white/[0.035] hover:text-slate-300"
               >
-                <SlidersHorizontal size={16} />
-                <span className="font-medium text-xs">
+                <SlidersHorizontal size={15} className="shrink-0" aria-hidden="true" />
+                <span className="truncate text-[11px] font-medium">
                   {uiMode === 'simple' ? 'Ver menú completo' : 'Ver menú simple'}
                 </span>
               </button>
             )}
           </nav>
-        </div >
+        </div>
 
-        <div className="p-4 border-t border-white/[0.06]">
+        <div className="space-y-1 border-t border-white/[0.07] p-2.5">
           {canUseAttendanceClock && (
             <button
               onClick={() => setShowClock(true)}
-              className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-3 rounded-xl bg-brand/10 text-brand-300 hover:bg-brand/20 hover:text-brand-200 transition-all active:scale-[0.98] border border-brand/20 shadow-glow shadow-brand/10"
+              className="nx-fluid-press flex min-h-10 w-full items-center justify-start gap-2.5 rounded-control border border-emerald-400/15 bg-emerald-400/[0.07] px-2.5 py-2 text-left text-emerald-300 transition-colors hover:border-emerald-400/25 hover:bg-emerald-400/[0.12]"
             >
-              <Clock size={20} />
-              <span className="font-bold text-sm uppercase tracking-wider">Marcar Entrada/Salida</span>
+              <Clock size={16} className="shrink-0" aria-hidden="true" />
+              <span className="text-[11px] font-semibold leading-tight">Marcar entrada / salida</span>
             </button>
           )}
           <button
-            onClick={() => navigate('/app/ayuda')}
-            className="w-full flex items-center justify-start gap-3 px-3 mb-2 py-3 rounded-xl text-slate-400 hover:bg-white/[0.06] hover:text-white transition-colors"
+            onClick={e => { if (guardarSalida(e, '/app/ayuda')) navigate('/app/ayuda'); }}
+            className="nx-fluid-press flex min-h-10 w-full items-center justify-start gap-2.5 rounded-control px-2.5 py-2 text-left text-slate-400 transition-colors hover:bg-white/[0.055] hover:text-white"
           >
-            <BookOpen size={20} />
-            <span className="font-medium text-sm">¿Cómo hago…? (Ayuda)</span>
+            <BookOpen size={16} className="shrink-0" aria-hidden="true" />
+            <span className="truncate text-[11px] font-medium">Ayuda</span>
           </button>
           <button
             onClick={handleLogout}
-            className="w-full flex items-center justify-start gap-3 px-3 py-3 rounded-xl text-slate-500 hover:bg-red-500/10 hover:text-red-400 transition-colors"
+            className="nx-fluid-press flex min-h-10 w-full items-center justify-start gap-2.5 rounded-control px-2.5 py-2 text-left text-slate-500 transition-colors hover:bg-red-500/10 hover:text-red-300"
           >
-            <LogOut size={20} />
-            <span className="font-medium text-sm">Cerrar Sesión</span>
+            <LogOut size={16} className="shrink-0" aria-hidden="true" />
+            <span className="truncate text-[11px] font-medium">Cerrar sesión</span>
           </button>
         </div>
       </aside>
 
       {/* MOBILE BOTTOM NAV */}
-      <nav className={`${isPosSurface ? 'hidden' : 'flex lg:hidden'} fixed bottom-0 left-0 right-0 h-16 bg-surface-950/90 backdrop-blur-md border-t border-white/[0.06] items-center justify-around z-40 px-1 pb-safe`}>
+      <nav className={`${isPosSurface ? 'hidden' : 'flex lg:hidden'} nx-dark-chrome fixed inset-x-0 bottom-0 z-40 h-16 items-center justify-around border-t border-white/[0.08] px-1 pb-safe shadow-xl`} aria-label="Navegación móvil">
         {navItems.slice(0, 4).map((item) => {
           const Icon = item.icon;
           return (
@@ -375,11 +388,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               to={item.path}
               onClick={e => { setShowMobileMenu(false); guardarSalida(e, item.path); }}
               className={({ isActive }) => `
-                flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl transition-all min-w-0
-                ${isActive ? 'text-nortex-accent bg-slate-800' : 'text-slate-500 hover:text-slate-300'}
+                nx-fluid-press flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl px-2 py-1.5 transition-colors
+                ${isActive ? 'bg-emerald-400/12 text-emerald-300' : 'text-slate-500 hover:text-slate-300'}
               `}
             >
-              <Icon size={22} />
+              <Icon size={21} aria-hidden="true" />
               <span className="text-[9px] font-semibold leading-none truncate max-w-[44px] text-center">
                 {item.shortLabel}
               </span>
@@ -390,32 +403,37 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {/* BOTÓN MENÚ COMPLETO */}
         <button
           onClick={() => setShowMobileMenu(true)}
-          className="flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-xl text-slate-500 hover:text-white transition-all"
+          className="nx-fluid-press flex flex-col items-center justify-center gap-0.5 rounded-xl px-2 py-1.5 text-slate-500 transition-colors hover:bg-white/[0.04] hover:text-white"
+          aria-label="Abrir menú completo"
         >
-          <Menu size={22} />
+          <Menu size={21} aria-hidden="true" />
           <span className="text-[9px] font-semibold leading-none">Menú</span>
         </button>
       </nav>
 
       {/* FULL MOBILE MENU OVERLAY (El cajón secreto) */}
       {showMobileMenu && !isPosSurface && (
-        <div className="lg:hidden fixed inset-0 bg-slate-900 z-50 flex flex-col animate-in slide-in-from-bottom-full duration-200">
-          <div className="flex justify-between items-center p-6 border-b border-slate-800 bg-slate-900">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-nortex-accent rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(16,185,129,0.4)]">
-                <span className="font-bold text-nortex-900 text-lg">N</span>
+        <div className="nx-app-shell fixed inset-0 z-50 flex flex-col animate-in slide-in-from-bottom-full duration-200 lg:hidden">
+          <div className="nx-dark-chrome flex items-center justify-between border-b border-white/[0.08] p-5">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control border border-emerald-300/20 bg-emerald-400/10">
+                <span className="text-sm font-black text-emerald-300">N</span>
               </div>
-              <span className="font-bold text-white tracking-widest text-lg">MENÚ NORTEX</span>
+              <div className="min-w-0">
+                <p className="truncate text-base font-semibold tracking-[-0.02em] text-white">nortex<span className="text-emerald-400">.</span></p>
+                <p className="truncate text-[11px] text-slate-500">{businessName}</p>
+              </div>
             </div>
             <button
               onClick={() => setShowMobileMenu(false)}
-              className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white"
+              className="nx-fluid-press flex h-11 w-11 items-center justify-center rounded-full border border-white/[0.07] bg-white/[0.04] text-slate-400 transition-colors hover:bg-white/[0.08] hover:text-white"
+              aria-label="Cerrar menú"
             >
-              <X size={24} />
+              <X size={22} aria-hidden="true" />
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 custom-scrollbar pb-24">
+          <div className="custom-scrollbar flex-1 overflow-y-auto p-4 pb-24">
             {/* Agrupar items por grupo y renderizar con headers (primary ∪ more: nada se pierde) */}
             {(() => {
               const groups = allItems.reduce<Record<string, NavItem[]>>((acc, item) => {
@@ -425,7 +443,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               }, {});
               return Object.entries(groups).map(([groupName, items]) => (
                 <div key={groupName} className="mb-5">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1 mb-2">
+                  <p className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                     {groupName}
                   </p>
                   <div className="grid grid-cols-3 gap-2">
@@ -437,14 +455,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                           to={item.path}
                           onClick={e => { setShowMobileMenu(false); guardarSalida(e, item.path); }}
                           className={({ isActive }) => `
-                            flex flex-col items-center justify-center gap-1.5 p-3 rounded-2xl border transition-all text-center
-                            ${isActive
-                              ? 'bg-brand/10 border-brand/40 text-white shadow-glow shadow-brand/10'
-                              : 'bg-white/[0.03] border-white/[0.06] text-slate-400 hover:bg-white/[0.06] hover:text-white'}
+                            nx-fluid-press flex min-h-[5.5rem] flex-col items-center justify-center gap-1.5 rounded-2xl border p-3 text-center transition-colors
+                            ${itemActivo(item, isActive)
+                              ? 'border-emerald-400/30 bg-emerald-500/90 text-white shadow-lg shadow-emerald-950/20'
+                              : 'border-white/[0.07] bg-white/[0.035] text-slate-400 hover:bg-white/[0.07] hover:text-white'}
                           `}
                         >
-                          <Icon size={24} className={item.path === '/app/pos' ? 'text-nortex-accent' : ''} />
-                          <span className="font-bold text-[10px] leading-tight text-center">{item.label}</span>
+                          <Icon size={23} aria-hidden="true" />
+                          <span className="text-center text-[10px] font-semibold leading-tight">{item.label}</span>
                         </NavLink>
                       );
                     })}
@@ -454,38 +472,41 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             })()}
           </div>
 
-          <div className="flex-none p-4 pt-2 border-t border-slate-800 space-y-2">
+          <div className="nx-dark-chrome flex-none space-y-2 border-t border-white/[0.08] p-4 pt-3">
             {/* La Ayuda solo existía en el sidebar de escritorio (hidden lg:flex):
                 el usuario que más la necesita —el del Android— no la tenía. */}
             <button
-              onClick={() => { setShowMobileMenu(false); navigate('/app/ayuda'); }}
-              className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-white/[0.04] text-slate-300 font-bold border border-white/[0.08]"
+              onClick={e => {
+                setShowMobileMenu(false);
+                if (guardarSalida(e, '/app/ayuda')) navigate('/app/ayuda');
+              }}
+              className="nx-fluid-press flex min-h-12 w-full items-center justify-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm font-semibold text-slate-300 transition-colors hover:bg-white/[0.07]"
             >
-              <BookOpen size={18} />
+              <BookOpen size={18} aria-hidden="true" />
               ¿Cómo hago…? (Ayuda)
             </button>
             {canUseAttendanceClock && (
               <button
                 onClick={() => { setShowMobileMenu(false); setShowClock(true); }}
-                className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-indigo-500/10 text-indigo-400 font-bold border border-indigo-500/20"
+                className="nx-fluid-press flex min-h-12 w-full items-center justify-center gap-3 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.08] px-3 text-sm font-semibold text-emerald-300 transition-colors hover:bg-emerald-400/[0.13]"
               >
-                <Clock size={18} />
+                <Clock size={18} aria-hidden="true" />
                 Marcar Entrada / Salida
               </button>
             )}
             <button
               onClick={handleLogout}
-              className="w-full flex items-center justify-center gap-3 py-3.5 rounded-xl bg-red-500/10 text-red-500 font-bold border border-red-500/20"
+              className="nx-fluid-press flex min-h-12 w-full items-center justify-center gap-3 rounded-xl border border-red-400/15 bg-red-400/[0.07] px-3 text-sm font-semibold text-red-300 transition-colors hover:bg-red-400/[0.12]"
             >
-              <LogOut size={18} />
-              Cerrar Sesión
+              <LogOut size={18} aria-hidden="true" />
+              Cerrar sesión
             </button>
             {canToggleMode && (
               <button
                 onClick={toggleUiMode}
-                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl text-slate-500 text-xs font-semibold"
+                className="nx-fluid-press flex min-h-10 w-full items-center justify-center gap-2 rounded-xl text-xs font-semibold text-slate-500 transition-colors hover:bg-white/[0.04] hover:text-slate-300"
               >
-                <SlidersHorizontal size={14} />
+                <SlidersHorizontal size={14} aria-hidden="true" />
                 {uiMode === 'simple' ? 'Ver menú completo' : 'Ver menú simple'}
               </button>
             )}
@@ -493,9 +514,50 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div>
       )}
 
-      <main className={`flex-1 overflow-hidden relative ${isPosSurface ? 'mb-0' : 'mb-16 lg:mb-0'}`}>
-        {children}
-      </main>
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {/* El chrome permanece oscuro; el contexto claro empieza recién en el
+            workspace para no invertir sidebar, diálogos ni superficies POS. */}
+        <header className={`${isPosSurface ? 'hidden' : 'hidden lg:flex'} nx-dark-chrome h-[4.5rem] shrink-0 items-center justify-between border-b border-white/[0.07] px-5 text-white shadow-lg xl:px-6`}>
+          <div className="flex min-w-0 items-center gap-4">
+            <div className="min-w-0" aria-label="Ubicación actual">
+              <p className="text-[9px] font-semibold uppercase tracking-[0.17em] text-slate-500">{pageGroup}</p>
+              <p className="truncate text-[18px] font-semibold tracking-[-0.025em] text-slate-100">{pageTitle}</p>
+            </div>
+            {canToggleMode && (
+              <button
+                type="button"
+                onClick={toggleUiMode}
+                className="nx-fluid-press hidden min-h-8 items-center gap-2 rounded-full border border-emerald-400/15 bg-emerald-400/[0.07] px-3 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-400/[0.12] xl:inline-flex"
+                aria-label={`Cambiar a menú ${uiMode === 'simple' ? 'completo' : 'simple'}`}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-sm shadow-emerald-300/60" aria-hidden="true" />
+                Menú {uiMode === 'simple' ? 'simple' : 'completo'}
+              </button>
+            )}
+          </div>
+
+          <div className="flex shrink-0 items-center gap-3">
+            <div className="relative flex h-9 w-9 items-center justify-center rounded-full border border-white/[0.07] bg-white/[0.035] text-slate-400" role="status" aria-label={toasts.length > 0 ? `${toasts.length} notificaciones nuevas` : 'Sin notificaciones nuevas'}>
+              <Bell size={17} aria-hidden="true" />
+              {toasts.length > 0 && <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-emerald-400 ring-2 ring-surface-950" />}
+            </div>
+            <div className="h-7 w-px bg-white/[0.08]" aria-hidden="true" />
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-300 to-emerald-500 text-sm font-bold text-emerald-950 shadow-md shadow-emerald-950/20" aria-hidden="true">
+                {sessionInitial}
+              </div>
+              <div className="hidden min-w-0 max-w-44 xl:block">
+                <p className="truncate text-[12px] font-semibold text-slate-200">{sessionName}</p>
+                <p className="truncate text-[10px] text-slate-500">{businessName}</p>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <main className={`nx-light-context nx-workspace relative min-h-0 flex-1 overflow-hidden bg-slate-50 [color-scheme:light] ${isPosSurface ? 'mb-0' : 'mb-16 lg:mb-0'}`}>
+          {children}
+        </main>
+      </div>
 
       {/* Aviso de salida con venta en curso (P0-1). El texto dice la VERDAD:
           la venta queda guardada. Antes esto no existía y salir la borraba; si
@@ -538,7 +600,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       {canUseAttendanceClock && showClock && <PinPadClock onClose={() => setShowClock(false)} />}
 
       {/* 🔔 Toast de pedidos web */}
-      <div className="fixed top-4 right-4 z-toast flex flex-col gap-2 max-w-xs w-full pointer-events-none">
+      <div className={`pointer-events-none fixed right-4 z-toast flex w-[calc(100%-2rem)] max-w-xs flex-col gap-2 ${isPosSurface ? 'top-4' : 'top-4 lg:top-20'}`} aria-live="polite" aria-atomic="false">
         {toasts.map(toast => (
           <div
             key={toast.id}
@@ -549,13 +611,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             </div>
             <div className="flex-1 min-w-0">
               <p className="font-bold text-sm leading-tight">{toast.message}</p>
-              <p className="text-emerald-200 text-xs mt-0.5">Ve a Entregas para gestionarlo</p>
+              <p className="text-emerald-200 text-xs mt-0.5">Andá a Entregas para gestionarlo</p>
             </div>
             <button
               onClick={() => dismissToast(toast.id)}
-              className="text-white/60 hover:text-white flex-shrink-0 mt-0.5"
+              className="nx-fluid-press mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-white/60 hover:bg-white/10 hover:text-white"
+              aria-label="Cerrar notificación"
             >
-              <X size={14} />
+              <X size={14} aria-hidden="true" />
             </button>
           </div>
         ))}
