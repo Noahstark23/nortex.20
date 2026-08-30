@@ -8,13 +8,13 @@ También corrige la entrada física de abonos en efectivo y la atribución de
 devoluciones al turno que realmente las procesa.
 
 La base integrada es `origin/main` en
-`d2b2bef919b98809275b13b7e6a241f124e42caf`. El SHA candidato definitivo será
+`236e451086a89e454afc8d2e0e3c619cd7a02297`. El SHA candidato definitivo será
 el `HEAD` final de esta rama y debe ser el mismo que aprueben CI, staging y
 `/api/health`; no se escribe manualmente en este documento.
 
 Estado de infraestructura comprobado el 30 de agosto de 2026:
 
-- staging y producción responden `ok: true`, `db: "up"` y sirven `d2b2bef`;
+- staging y producción responden `ok: true`, `db: "up"` y sirven `236e451`;
 - el CI de esa base está verde;
 - `NORTEX_DEPLOY_ENABLED=true`, por lo que un merge a `main` promoverá staging;
 - existen los webhooks de ambos environments;
@@ -35,8 +35,8 @@ Estado de infraestructura comprobado el 30 de agosto de 2026:
 - Atribución inequívoca de devoluciones: no efectivo solo a turno propio; CASH
   a turno propio o al único cajón abierto del tenant.
 - UI de reportes, descarga y consulta del cierre desde Reportes, POS y Cajas.
-- Compatibilidad con las correcciones de catálogo público e imágenes que ya
-  forman parte de `d2b2bef`.
+- Compatibilidad con las correcciones de catálogo público, imágenes e interfaz
+  espacial que ya forman parte de `236e451`.
 
 ## Contrato de base de datos
 
@@ -146,7 +146,7 @@ Durante al menos 30 minutos:
 
 1. Si falla staging, detener la promoción y no aprobar producción.
 2. Si falla producción, volver en Coolify al último deployment sano confirmado:
-   `d2b2bef919b98809275b13b7e6a241f124e42caf`.
+   `236e451086a89e454afc8d2e0e3c619cd7a02297`.
 3. No revertir el schema aditivo.
 4. Repetir health, login, POS, una lectura de reporte y los flujos financieros
    básicos con la versión anterior.
