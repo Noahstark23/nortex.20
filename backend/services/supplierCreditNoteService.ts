@@ -1167,6 +1167,10 @@ export async function executeSupplierCreditNote({
             retentionAdjustmentRequired: retentionPurchaseIds.has(purchase.id) ? true : false,
         })),
         fiscalPeriodOpen: true,
+        // La revisión manual solo es necesaria cuando alguna compra aplicada
+        // tiene retenciones. El booleano estaba invertido: rechazaba todas las
+        // notas SIN retenciones y dejaba el caso riesgoso depender únicamente
+        // del guard por compra.
         retentionAdjustmentRequired: retentionPurchaseIds.size > 0,
         fiscalRegimeAtPosting: fiscalRegimeAtCredit,
     });

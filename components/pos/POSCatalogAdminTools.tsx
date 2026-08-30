@@ -4,6 +4,7 @@ import type { Product } from '../../types';
 import { sanitizeDecimalInput } from '../../utils/money';
 import { parseWorkbookRows, importInChunks } from '../../utils/importProducts';
 import { normalizeApiFailure, validateQuickProductDraft } from '../../utils/posActivation';
+import { mapApiProductImage } from '../../utils/posProductMapper';
 
 const MENSAJE_REQUERIDO = 'Completá este campo.';
 
@@ -220,6 +221,7 @@ export default function POSCatalogAdminTools({
                 price: data.price,
                 costPrice: data.cost,
                 stock: data.stock,
+                ...mapApiProductImage(data),
                 wholesalePrice: data.wholesalePrice ?? null,
                 wholesaleMinQty: data.wholesaleMinQty ?? null,
                 packUnit: data.packUnit ?? null,

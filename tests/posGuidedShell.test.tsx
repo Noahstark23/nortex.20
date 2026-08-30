@@ -15,6 +15,7 @@ afterEach(cleanup);
 const completedSale: POSGuidedSaleSnapshot = {
     saleKey: 'sale-1',
     receiptNumber: 'FAC-00125',
+    receiptFormat: 'TICKET_80MM',
     completedAtLabel: '27 ago 2026 · 10:34 a. m.',
     customerName: 'María López Ruiz',
     paymentMethodLabel: 'Efectivo',
@@ -24,7 +25,6 @@ const completedSale: POSGuidedSaleSnapshot = {
     total: '100',
     cashReceived: '120',
     change: '20',
-    receiptFormat: 'TICKET_80MM',
 };
 
 const makeProps = (overrides: Partial<POSGuidedShellProps> = {}): POSGuidedShellProps => ({

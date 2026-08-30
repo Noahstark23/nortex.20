@@ -231,6 +231,7 @@ describe('supplier returns and credit notes HTTP contract', () => {
                 eligibleLines: expect.objectContaining({
                     purchaseOrderId: 'po-1',
                     supplierId: 'supplier-1',
+                    eligibleLines: [],
                 }),
             }),
         }));

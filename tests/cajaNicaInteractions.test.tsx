@@ -10,9 +10,10 @@ import type { Product } from '../types';
 
 afterEach(cleanup);
 
-const product = (id: string, name: string, stock = 10): Product => ({
+const product = (id: string, name: string, stock = 10, imageUrl?: string): Product => ({
     id,
     name,
+    imageUrl,
     stock,
     price: 85,
     costPrice: 50,
@@ -141,5 +142,39 @@ describe('CajaNicaCatalog en interacción real', () => {
         expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ id: '1' }));
         expect(onBlocked).toHaveBeenCalledTimes(1);
         expect(onBlocked).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }));
+    });
+
+    it('prioriza las primeras fotos y muestra fallback si una URL se rompe', () => {
+        render(
+            <CajaNicaCatalog
+                products={[
+                    product(
+                        '1',
+                        'Arroz integral',
+                        10,
+                        'https://res.cloudinary.com/dex1vy92h/image/upload/v1/arroz.jpg',
+                    ),
+                ]}
+                totalProducts={1}
+                categories={['Todos']}
+                selectedCategory="Todos"
+                searchTerm=""
+                blockedProductIds={new Set()}
+                onCategoryChange={vi.fn()}
+                onAdd={vi.fn()}
+                onBlocked={vi.fn()}
+                onShowMore={vi.fn()}
+            />,
+        );
+
+        const image = screen.getByAltText('Arroz integral');
+        expect(image.getAttribute('loading')).toBe('eager');
+        expect(image.getAttribute('fetchpriority')).toBe('high');
+        expect(image.getAttribute('srcset')).toContain('w_160');
+
+        fireEvent.error(image);
+        expect(screen.getByRole('img', {
+            name: 'Sin foto disponible para Arroz integral',
+        })).toBeTruthy();
     });
 });

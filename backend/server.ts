@@ -166,6 +166,7 @@ import {
     InventoryAdjustSchema,
     CreateProductSchema,
     UpdateProductSchema,
+    PublicCatalogQuerySchema,
     BulkImportProductsSchema,
     BulkEditProductsSchema,
     CreateBatchSchema,
@@ -200,6 +201,7 @@ import { resolvePurchaseLine } from '../utils/purchasePackaging.js';
 import {
     FISCAL_REGIME_CUOTA_FIJA,
     normalizeFiscalRegime,
+    vatCollectedFromSale,
 } from '../utils/fiscalRegime.js';
 import {
     normalizeTenantCapabilities,
@@ -8836,9 +8838,7 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
             // compra dentro de esta misma transacción. Nunca se acepta del body.
             const tenantFiscal = await tx.tenant.findUnique({
                 where: { id: authReq.tenantId! },
-                select: {
-                    fiscalRegime: true,
-                }
+                select: { fiscalRegime: true },
             });
             if (!tenantFiscal) throw new Error('TENANT_NOT_FOUND');
             const fiscalRegimeAtPurchase = normalizeFiscalRegime(tenantFiscal.fiscalRegime);
@@ -8980,8 +8980,14 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
             // resuelve una sola vez por documento y solo cuando realmente hay una
             // entrada directa con lote; las compras sin lote y las facturas de OC no
             // pagan una lectura ni materializan filas del sidecar.
-            const batchWarehouseLedgerMode = !linkedPurchaseOrder && preparedItems.some((item) =>
-                productsById.get(item.productId)?.requiresBatchTracking === true)
+            // La identidad de PurchaseItem responde al tipo de documento, no al
+            // sidecar: toda compra directa necesita una línea retornable aunque el
+            // producto no maneje lotes o el ledger esté OFF. La lectura del modo sí
+            // queda limitada al subconjunto que realmente puede usar el sidecar.
+            const isDirectPurchase = !linkedPurchaseOrder;
+            const hasTrackedDirectPurchaseItem = isDirectPurchase && preparedItems.some((item) =>
+                productsById.get(item.productId)?.requiresBatchTracking === true);
+            const batchWarehouseLedgerMode = hasTrackedDirectPurchaseItem
                 ? await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!)
                 : null;
             const processedItems = preparedItems.map((item, index) => {
@@ -9008,7 +9014,7 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                     // Toda línea directa recibe identidad server-side antes de los
                     // efectos físicos. Así incluso SKUs duplicados conservan una
                     // evidencia de bodega/lote/costo inequívoca para devoluciones.
-                    ...(!linkedPurchaseOrder ? { id: crypto.randomUUID() } : {}),
+                    ...(isDirectPurchase ? { id: crypto.randomUUID() } : {}),
                     averageUnitCost: inventoryLineCost.div(baseQuantity).toString(),
                     totalCost: lineMoney.lineNet.toFixed(2),
                     taxAmountExact: lineMoney.lineTax.toFixed(2),
@@ -9245,6 +9251,7 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
             //    El asiento de `recordPurchase` ya acreditaba Caja (1.1.1): la
             //    billetera nunca fue la contrapartida correcta.
             if (paymentMethod === 'CASH') {
+                // `turnoDeContado` se resolvió y validó ANTES de abrir la tx.
                 const salida = await registrarSalidaDeCajaPorCompra(tx, {
                     tenantId: authReq.tenantId!,
                     userId: authReq.userId!,
@@ -9388,7 +9395,7 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
         }
         // Caja: sin turno abierto (409) o efectivo insuficiente en la gaveta (400).
         // El status sale del código tipado, no de un substring del mensaje.
-        if (error instanceof CashSupplierPaymentError) {
+        if (error instanceof CashSupplierPaymentError || error instanceof PayableSupplierPaymentError) {
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
         const notFound = error?.message?.includes('no encontrado');
@@ -14088,9 +14095,13 @@ app.put('/api/tenant/slug', authenticate, checkRole(['ADMIN', 'OWNER']), async (
 });
 
 // Rate limiter estricto para endpoints públicos
-const publicLimiter = rateLimit({
+const publicCatalogLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 30,
+    // La búsqueda se ejecuta con debounce desde el catálogo. Este techo cubre
+    // más de 5,000 productos a 48 por página y búsquedas normales, a la vez que
+    // acota la amplificación de las tres consultas por request. Sigue siendo
+    // MemoryStore/per-proceso (SCALING_AUDIT A1).
+    max: 120,
     message: { error: 'Demasiadas solicitudes. Intenta en unos minutos.' }
 });
 
@@ -14161,8 +14172,16 @@ app.get('/api/debug/catalog/:slug', authenticate, async (req: any, res: any) => 
 // GET /api/public/catalog/:slug — Catálogo público (NO requiere JWT)
 // 🔒 AUDITORÍA: Solo expone datos comerciales públicos y reglas de cantidad.
 // JAMÁS: cost, stock, tenantId, createdBy, sku, minStock
-app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) => {
+app.get('/api/public/catalog/:slug', publicCatalogLimiter, async (req: any, res: any) => {
     const { slug } = req.params;
+    const parsedQuery = PublicCatalogQuerySchema.safeParse(req.query);
+    if (!parsedQuery.success) {
+        return res.status(400).json({
+            error: 'Parámetros del catálogo inválidos',
+            details: parsedQuery.error.flatten().fieldErrors,
+        });
+    }
+    const { page, pageSize, search, category } = parsedQuery.data;
 
     try {
         const tenant = await prisma.tenant.findUnique({
@@ -14174,18 +14193,57 @@ app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) =
             return res.status(404).json({ error: 'Negocio no encontrado' });
         }
 
-        // 🔒 BLINDAJE: select explícito — NUNCA usar findMany sin select en endpoint público
-        // 🔒 Solo productos publicados: JAMÁS exponer inventario interno/borrador.
-        const products = await prisma.product.findMany({
-            where: { tenantId: tenant.id, isPublished: true },
-            select: {
-                id: true, name: true, price: true, description: true,
-                imageUrl: true, category: true, unit: true,
-                saleMode: true, quantityStep: true,
-                packUnit: true, packSize: true, packPrice: true,
-            },
-            orderBy: { name: 'asc' }
-        });
+        // El tenant siempre deriva del slug resuelto server-side. Búsqueda y
+        // categoría solo estrechan ese scope; nunca aceptan tenantId del cliente.
+        const where: any = { tenantId: tenant.id, isPublished: true };
+        const filters: any[] = [];
+        if (search) {
+            filters.push({
+                OR: [
+                    { name: { contains: search } },
+                    { description: { contains: search } },
+                ],
+            });
+        }
+        if (category === 'Otros') {
+            filters.push({ OR: [{ category: null }, { category: '' }, { category: 'Otros' }] });
+        } else if (category) {
+            filters.push({ category });
+        }
+        if (filters.length > 0) where.AND = filters;
+
+        // 🔒 BLINDAJE: select explícito — NUNCA usar findMany sin select en endpoint público.
+        // Las categorías se agregan sobre TODO el catálogo publicado; total sí
+        // corresponde a los filtros vigentes para que la paginación sea exacta.
+        const [products, total, categoryRows] = await prisma.$transaction([
+            prisma.product.findMany({
+                where,
+                select: {
+                    id: true, name: true, price: true, description: true,
+                    imageUrl: true, category: true, unit: true,
+                    saleMode: true, quantityStep: true,
+                    packUnit: true, packSize: true, packPrice: true,
+                },
+                orderBy: [{ name: 'asc' }, { id: 'asc' }],
+                skip: (page - 1) * pageSize,
+                take: pageSize,
+            }),
+            prisma.product.count({ where }),
+            prisma.product.findMany({
+                where: { tenantId: tenant.id, isPublished: true },
+                select: { category: true },
+                distinct: ['category'],
+                orderBy: { category: 'asc' },
+                // Una interfaz de filtros no es operable con cientos de
+                // categorías; el límite también evita otro listado Product
+                // sin cota en este endpoint público.
+                take: 500,
+            }),
+        ]);
+
+        const categories = Array.from(new Set(categoryRows.map((row: { category: string | null }) => (
+            row.category?.trim() || 'Otros'
+        )))).sort((a, b) => a.localeCompare(b, 'es'));
 
         res.json({
             business: {
@@ -14194,8 +14252,16 @@ app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) =
                 phone: tenant.phone,
             },
             products,
-            // Si el tenant no ha publicado productos, se devuelve lista vacía (nunca el catálogo interno).
-            message: products.length === 0 ? 'Catálogo en construcción.' : undefined,
+            pagination: {
+                page,
+                pageSize,
+                total,
+                totalPages: Math.ceil(total / pageSize),
+            },
+            categories,
+            // Solo anuncia construcción cuando no existe ningún producto publicado;
+            // un filtro sin coincidencias no debe ocultar que el catálogo sí existe.
+            message: categoryRows.length === 0 ? 'Catálogo en construcción.' : undefined,
         });
 
     } catch (error) {
@@ -14269,6 +14335,28 @@ app.post('/api/public/orders', orderLimiter, async (req: any, res: any) => {
                 })),
                 productsDB,
             );
+            const productsById = new Map(productsDB.map((product) => [product.id, product]));
+            const confirmationItems = resolvedItems.map((item) => {
+                const product = productsById.get(item.productId);
+                const presentationUnit = item.presentationAtSale === 'PACK'
+                    ? product?.packUnit?.trim()
+                    : item.unit.trim();
+                if (!presentationUnit) {
+                    throw new PublicOrderItemError(
+                        'INVALID_PRODUCT_CONFIGURATION',
+                        `${item.productName} no tiene una unidad de presentación válida`,
+                        409,
+                    );
+                }
+                return {
+                    productId: item.productId,
+                    name: item.productName,
+                    quantity: item.presentationQuantityAtSale.toFixed(),
+                    presentation: item.presentationAtSale,
+                    unit: presentationUnit,
+                    subtotal: item.subtotal.toFixed(2),
+                };
+            });
             const total = resolvedItems.reduce(
                 (sum, item) => sum.plus(item.subtotal),
                 new Decimal(0),
@@ -14295,13 +14383,16 @@ app.post('/api/public/orders', orderLimiter, async (req: any, res: any) => {
                     })),
                 },
             });
-            return { order, total };
+            return { order, total, confirmationItems };
         });
 
         res.json({
             message: '¡Pedido enviado! El negocio lo revisará pronto.',
             orderId: created.order.id,
             total: created.total.toNumber(),
+            // El cliente confirma/manda por WhatsApp exclusivamente este
+            // snapshot ya validado; nunca reusa nombres o precios cacheados.
+            items: created.confirmationItems,
         });
 
     } catch (error) {

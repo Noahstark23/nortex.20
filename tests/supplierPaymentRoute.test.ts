@@ -1,8 +1,14 @@
+// @vitest-environment jsdom
+import 'fake-indexeddb/auto';
+import React from 'react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cashMovementJournalLines } from '../backend/services/accounting';
 import { CATEGORIA_PAGO_PROVEEDOR } from '../backend/services/supplierPayment';
+import POS from '../components/POS';
 
 const server = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8');
 
@@ -22,6 +28,69 @@ if (cashMovementStart < 0 || cashMovementEnd < 0) {
     throw new Error('No se encontró la ruta de movimientos de caja');
 }
 const cashMovementRoute = server.slice(cashMovementStart, cashMovementEnd);
+
+const respuestaOk = (body: unknown) => ({
+    ok: true,
+    status: 200,
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+});
+
+const montarPosConPagoHistorico = () => {
+    localStorage.setItem('nortex_token', 'token-prueba');
+    localStorage.setItem('nortex_ui_mode', 'full');
+    localStorage.setItem('nortex_user', JSON.stringify({ id: 'user-1', role: 'OWNER' }));
+    localStorage.setItem('nortex_tenant_data', JSON.stringify({
+        id: 'tenant-1',
+        type: 'RETAIL',
+        businessName: 'Pulpería QA',
+    }));
+
+    const responses: Record<string, unknown> = {
+        '/api/products': [],
+        '/api/customers': [],
+        '/api/shifts/current': {
+            id: 'shift-1',
+            status: 'OPEN',
+            initialCash: '500.00',
+            userId: 'user-1',
+            startTime: '2026-08-30T12:00:00.000Z',
+            esTurnoPropio: true,
+            turnoDe: null,
+        },
+        '/api/cash-movements': [{
+            id: 'movement-legacy-1',
+            category: 'PAGO_PROVEEDOR',
+            amount: '115.00',
+            type: 'OUT',
+            createdAt: '2026-08-30T12:05:00.000Z',
+        }],
+        '/api/cash-movements/balance': { balance: '500.00', hasOpenShift: true },
+        '/api/pos/pulso': {},
+        '/api/tenant/fiscal-settings': {},
+        '/api/tenant/cashier-settings': {},
+        '/api/tenant/inventory-settings': {},
+        '/api/accounting/exchange-rate/latest': {},
+        '/api/agent-banking/agreements': [],
+        '/api/scale-labels/active-context': {},
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input).split('?')[0];
+        return respuestaOk(path in responses ? responses[path] : {});
+    }));
+
+    return render(React.createElement(
+        MemoryRouter,
+        null,
+        React.createElement(POS),
+    ));
+};
+
+afterEach(() => {
+    cleanup();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+});
 
 describe('integración estructural del subledger de CxP', () => {
     it('la ruta usa validación, política y servicio transaccional únicos', () => {
@@ -58,6 +127,20 @@ describe('integración estructural del subledger de CxP', () => {
             { accountCode: '2.1.1', debit: 25, credit: 0 },
             { accountCode: '1.1.1', debit: 0, credit: 25 },
         ]);
+    });
+
+    it('retira el pago manual del POS sin ocultar movimientos históricos', async () => {
+        montarPosConPagoHistorico();
+
+        const balance = await screen.findByTitle('Efectivo en caja');
+        fireEvent.click(balance);
+        expect(await screen.findByText('Pago a proveedor')).toBeTruthy();
+
+        fireEvent.keyDown(window, { key: 'F7' });
+        expect(await screen.findByRole('heading', { name: 'Salida de Efectivo' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Gasto Operativo' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Retiro Personal' })).toBeTruthy();
+        expect(screen.queryByRole('button', { name: 'Pago a proveedor' })).toBeNull();
     });
 
     it('siembra el catálogo antes de abrir el pago y traduce errores estables', () => {

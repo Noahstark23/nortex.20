@@ -19,6 +19,7 @@ import {
     PublicOrderItemError,
     resolvePublicOrderItems,
     type PublicOrderProductAuthority,
+    type ResolvedPublicOrderItem,
 } from '../services/publicOrderItemService.js';
 import { signPedidoTrackingToken, verifyPedidoTrackingToken } from '../services/secrets.js';
 import {
@@ -64,6 +65,51 @@ const CreatePedidoSchema = z.object({
         .max(50),
 });
 
+export interface PublicPedidoConfirmationItem {
+    productId: string;
+    name: string;
+    quantity: string;
+    presentation: 'BASE' | 'PACK';
+    unit: string;
+    subtotal: string;
+}
+
+/** Proyecta solo el resumen público ya resuelto dentro del tenant del slug. */
+export const buildPublicPedidoConfirmationItems = (
+    resolvedItems: readonly ResolvedPublicOrderItem[],
+    products: readonly PublicOrderProductAuthority[],
+): PublicPedidoConfirmationItem[] => {
+    const productsById = new Map(products.map((product) => [product.id, product]));
+    return resolvedItems.map((item) => {
+        const product = productsById.get(item.productId);
+        if (!product) {
+            throw new PublicOrderItemError(
+                'PRODUCT_NOT_FOUND',
+                'Producto no encontrado en este negocio',
+                404,
+            );
+        }
+        const presentationUnit = item.presentationAtSale === 'PACK'
+            ? product.packUnit?.trim()
+            : item.unit.trim();
+        if (!presentationUnit) {
+            throw new PublicOrderItemError(
+                'INVALID_PRODUCT_CONFIGURATION',
+                `${item.productName} no tiene una unidad de presentación válida`,
+                409,
+            );
+        }
+        return {
+            productId: item.productId,
+            name: item.productName,
+            quantity: item.presentationQuantityAtSale.toFixed(),
+            presentation: item.presentationAtSale,
+            unit: presentationUnit,
+            subtotal: item.subtotal.toFixed(2),
+        };
+    });
+};
+
 // POST /api/v1/pedidos -> (Público) Crear pedido desde el catálogo
 router.post('/', createPedidoLimiter, async (req: any, res: any) => {
     const parsed = CreatePedidoSchema.safeParse(req.body);
@@ -106,6 +152,7 @@ router.post('/', createPedidoLimiter, async (req: any, res: any) => {
                 })),
                 productsDB,
             );
+            const confirmationItems = buildPublicPedidoConfirmationItems(resolvedItems, productsDB);
             const totalSuma = resolvedItems.reduce(
                 (sum, item) => sum.plus(item.subtotal),
                 new Decimal(0),
@@ -148,30 +195,37 @@ router.post('/', createPedidoLimiter, async (req: any, res: any) => {
                         }
                     }
                 },
-                include: {
-                    items: true,
-                    eventos: true
-                }
+                // El endpoint público solo necesita identidad/estado. Los
+                // renglones y eventos se crean, pero no se vuelven a leer ni se
+                // materializan en el DTO de salida.
+                select: { id: true, estado: true },
             });
 
-            return { pedido, granTotal, costoEntrega };
+            return {
+                pedidoId: pedido.id,
+                estado: pedido.estado,
+                granTotal,
+                costoEntrega,
+                confirmationItems,
+            };
         });
 
         const trackingToken = signPedidoTrackingToken(
-            pedidoCreated.pedido.id,
+            pedidoCreated.pedidoId,
             tenantId,
         );
-        res.status(201).json({
-            message: 'Pedido creado exitosamente',
-            pedidoId: pedidoCreated.pedido.id,
-            estado: pedidoCreated.pedido.estado,
+        const publicPedidoResponse = {
+            pedidoId: pedidoCreated.pedidoId,
+            estado: pedidoCreated.estado,
             total: pedidoCreated.granTotal.toNumber(),
             costoEntrega: pedidoCreated.costoEntrega.toNumber(),
+            // Resumen autoritativo del servidor para confirmación y WhatsApp.
+            items: pedidoCreated.confirmationItems,
             // El token queda en el fragmento: el navegador no lo incluye en la
             // petición HTML ni en Referer. TrackPedido lo envía al API por header.
-            trackingPath: `/track/${pedidoCreated.pedido.id}#token=${encodeURIComponent(trackingToken)}`,
-            pedido: pedidoCreated.pedido,
-        });
+            trackingPath: `/track/${pedidoCreated.pedidoId}#token=${encodeURIComponent(trackingToken)}`,
+        };
+        res.status(201).json(publicPedidoResponse);
 
     } catch (error) {
         if (error instanceof PublicOrderItemError) {

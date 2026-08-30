@@ -1854,6 +1854,8 @@ model Product {
   @@unique([tenantId, sku])
   @@index([defaultSupplierId])
   @@index([tenantId])
+  @@index([tenantId, isPublished, name])
+  @@index([tenantId, isPublished, category, name])
   @@index([category])
   @@fulltext([name, category])
 }

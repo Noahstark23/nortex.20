@@ -219,7 +219,6 @@ describe('ingreso lote+bodega en compra directa', () => {
         const modeResolutionStart = purchaseRoute.indexOf('const batchWarehouseLedgerMode =');
         const processedStart = purchaseRoute.indexOf('const processedItems = preparedItems.map');
         const purchaseCreate = purchaseRoute.indexOf('const purchase = await tx.purchase.create', processedStart);
-        const modeResolutionBlock = purchaseRoute.slice(modeResolutionStart, processedStart);
         const processedBlock = purchaseRoute.slice(processedStart, purchaseCreate);
         const sidecarStart = purchaseRoute.indexOf(
             "if (batchWarehouseLedgerMode === 'SHADOW' || batchWarehouseLedgerMode === 'ENFORCED')",
@@ -233,10 +232,20 @@ describe('ingreso lote+bodega en compra directa', () => {
         expect(modeResolutionStart).toBeGreaterThan(0);
         expect(persistedSpread).toBeGreaterThan(0);
         expect(authoritativeId).toBeGreaterThan(persistedSpread);
-        expect(modeResolutionBlock).toContain(
+        // La identidad es más fuerte que el sidecar: toda compra directa recibe
+        // UUID. Las líneas tracked en SHADOW/ENFORCED lo heredan y el ledger exige
+        // ese mismo UUID antes de formar el sourceKey idempotente.
+        expect(purchaseRoute).toContain('const isDirectPurchase = !linkedPurchaseOrder');
+        expect(purchaseRoute).toContain(
+            'const hasTrackedDirectPurchaseItem = isDirectPurchase && preparedItems.some',
+        );
+        expect(purchaseRoute).toContain(
             'productsById.get(item.productId)?.requiresBatchTracking === true',
         );
-        expect(processedBlock).toContain('? { id: crypto.randomUUID() }');
+        expect(processedBlock).toContain('isDirectPurchase ? { id: crypto.randomUUID() }');
+        expect(purchaseRoute).toContain(
+            "batchWarehouseLedgerMode === 'SHADOW' || batchWarehouseLedgerMode === 'ENFORCED'",
+        );
         expect(purchaseRoute).toContain('create: processedItems.map');
         expect(purchaseRoute).toContain("|| (left.id ?? '').localeCompare(right.id ?? '')");
         expect(sidecarStart).toBeGreaterThan(purchaseCreate);

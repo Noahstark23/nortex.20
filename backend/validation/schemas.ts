@@ -14,6 +14,11 @@ import { z } from 'zod';
 import type { Request, Response, NextFunction } from 'express';
 import Decimal from 'decimal.js';
 import { MAX_QUANTITY, QUANTITY_DECIMAL_PLACES, validateQuantity } from '../../utils/quantity.js';
+import {
+    normalizeAllowedProductImageUrl,
+    PRODUCT_IMAGE_ALLOWED_HOST,
+    PRODUCT_IMAGE_URL_MAX_LENGTH,
+} from '../../utils/productImageUrl.js';
 import { fiscalCivilDate } from '../lib/fiscalAccess.js';
 
 // ============================================================
@@ -483,6 +488,69 @@ const nonNegativeQuantityWithDefault = (fallback: string) => z
     .optional()
     .transform((value) => (value === undefined || value === null || value === '' ? fallback : value));
 
+/**
+ * Host autorizado para fotos de producto.
+ *
+ * El cargador oficial usa Cloudinary. Esta misma frontera se comparte con los
+ * renderers: las URLs históricas de otros hosts ya no se solicitan y caen al
+ * fallback hasta que el usuario las reemplace.
+ */
+export const ProductImageUrlSchema = z
+    .union([
+        z.string().trim().max(PRODUCT_IMAGE_URL_MAX_LENGTH, 'La URL de la foto es demasiado larga'),
+        z.null(),
+    ])
+    .superRefine((value, ctx) => {
+        if (value === null || value === '') return;
+
+        let parsed: URL;
+        try {
+            parsed = new URL(value);
+        } catch {
+            ctx.addIssue({ code: 'custom', message: 'La foto debe usar una URL absoluta válida' });
+            return;
+        }
+
+        const hostname = parsed.hostname.toLowerCase();
+        if (parsed.protocol !== 'https:') {
+            ctx.addIssue({ code: 'custom', message: 'La foto debe usar HTTPS' });
+        } else if (parsed.username || parsed.password) {
+            ctx.addIssue({ code: 'custom', message: 'La URL de la foto no puede incluir credenciales' });
+        } else if (parsed.port) {
+            ctx.addIssue({ code: 'custom', message: 'La URL de la foto debe usar el puerto HTTPS estándar' });
+        } else if (
+            hostname !== PRODUCT_IMAGE_ALLOWED_HOST
+            || normalizeAllowedProductImageUrl(value) === null
+        ) {
+            ctx.addIssue({ code: 'custom', message: 'El proveedor de la foto no está autorizado' });
+        }
+    })
+    .transform((value) => {
+        if (value === '' || value === null) return null;
+        return normalizeAllowedProductImageUrl(value) ?? value;
+    });
+
+const publicCatalogPositiveInteger = (fallback: number, max: number) => z.preprocess(
+    (value) => value === undefined ? fallback : value,
+    z.union([
+        z.number().int(),
+        z.string().regex(/^[1-9]\d*$/, 'Debe ser un entero positivo').transform(Number),
+    ]).pipe(z.number().int().min(1).max(max)),
+);
+
+const optionalPublicCatalogText = (max: number) => z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().trim().min(1).max(max).optional(),
+);
+
+/** Query pública acotada para evitar offsets y payloads sin límite. */
+export const PublicCatalogQuerySchema = z.object({
+    page: publicCatalogPositiveInteger(1, 10_000),
+    pageSize: publicCatalogPositiveInteger(48, 100),
+    search: optionalPublicCatalogText(120),
+    category: optionalPublicCatalogText(100),
+}).strict();
+
 const ProductFieldsSchema = z.object({
     name:                  z.string().trim().min(1, 'Nombre requerido').max(200),
     sku:                   z.string().trim().min(1, 'SKU requerido').max(100),
@@ -498,7 +566,7 @@ const ProductFieldsSchema = z.object({
     productFamily:         ProductFamilySchema.optional().nullable(),
     isPublished:           z.boolean().optional(),
     ivaExento:             z.boolean().optional(),
-    imageUrl:              z.string().trim().max(2000).optional().nullable(),
+    imageUrl:              ProductImageUrlSchema.optional(),
     requiresBatchTracking: z.boolean().optional(),
     reorderPoint:          optionalNonNegativeQuantity,
     maxStock:              optionalNonNegativeQuantity,
