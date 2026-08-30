@@ -1,4 +1,5 @@
-import { memo, useId, type KeyboardEvent } from 'react';
+import { memo, useEffect, useId, useState, type KeyboardEvent } from 'react';
+import { Check } from 'lucide-react';
 import type { Product } from '../../types';
 import { formatMoney } from '../../utils/money';
 import { ProductImage } from '../ui/ProductImage';
@@ -59,6 +60,17 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
     const panelId = `${catalogId}-products`;
     const activeCategoryIndex = categories.indexOf(selectedCategory);
     const isSearching = searchTerm.trim().length > 0;
+    const [recentlyAddedId, setRecentlyAddedId] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!recentlyAddedId) return undefined;
+
+        const confirmationTimer = window.setTimeout(() => {
+            setRecentlyAddedId(null);
+        }, 700);
+
+        return () => window.clearTimeout(confirmationTimer);
+    }, [recentlyAddedId]);
 
     const handleCategoryKeyDown = (
         event: KeyboardEvent<HTMLButtonElement>,
@@ -81,18 +93,29 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
     };
 
     return (
-        <section aria-labelledby={`${catalogId}-title`} className="min-w-0">
-            <div className="mb-3 flex items-center justify-between gap-3">
-                <h2
-                    id={`${catalogId}-title`}
-                    className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400"
-                >
-                    {isSearching ? 'Resultados' : 'Tus productos'}
-                </h2>
+        <section
+            aria-labelledby={`${catalogId}-title`}
+            className="nx-catalog-plane min-w-0 text-slate-950"
+        >
+            <div className="nx-catalog-header mb-4 flex items-end justify-between gap-3 px-0.5">
+                <div className="min-w-0">
+                    <p className="mb-1 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                        Catálogo
+                    </p>
+                    <h2
+                        id={`${catalogId}-title`}
+                        className="truncate text-xl font-bold tracking-[-0.025em] text-slate-950"
+                    >
+                        {isSearching ? 'Resultados de búsqueda' : 'Productos'}
+                    </h2>
+                </div>
                 {/* El número es el TOTAL, no el de la lista recortada. Antes decía
                     `products.length`, que ya venía cortado a 12: a un negocio con
                     1,003 productos la pantalla le afirmaba que tenía doce. */}
-                <span className="text-xs tabular-nums text-slate-500" aria-live="polite">
+                <span
+                    className="nx-catalog-count shrink-0 rounded-pill border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold tabular-nums text-slate-600 shadow-sm"
+                    aria-live="polite"
+                >
                     {products.length === totalProducts
                         ? `${totalProducts} ${totalProducts === 1 ? 'producto' : 'productos'}`
                         : `${products.length} de ${totalProducts}`}
@@ -103,7 +126,7 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
                 <div
                     role="tablist"
                     aria-label="Categorías de productos"
-                    className="mb-3 flex max-w-full gap-1 overflow-x-auto border-b border-white/[0.06] pb-px"
+                    className="nx-catalog-tabs mb-4 flex max-w-full gap-2 overflow-x-auto pb-1"
                 >
                     {categories.map((category, index) => {
                         const selected = category === selectedCategory;
@@ -119,9 +142,9 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
                                 tabIndex={selected || activeCategoryIndex === -1 && index === 0 ? 0 : -1}
                                 onClick={() => onCategoryChange(category)}
                                 onKeyDown={(event) => handleCategoryKeyDown(event, index)}
-                                className={`relative min-h-tap shrink-0 px-4 text-sm font-semibold transition-colors focus-visible:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 focus-visible:ring-inset ${selected
-                                    ? 'text-slate-50 after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-brand'
-                                    : 'text-slate-400 hover:bg-white/[0.03] hover:text-slate-100'}`}
+                                className={`nx-catalog-tab nx-fluid-press relative min-h-11 shrink-0 rounded-control border px-4 text-sm font-semibold transition-[background-color,border-color,color,box-shadow,transform] focus-visible:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 ${selected
+                                    ? 'border-brand/30 bg-brand text-brand-on shadow-sm'
+                                    : 'border-slate-200 bg-white text-slate-600 shadow-sm hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950'}`}
                             >
                                 {category}
                             </button>
@@ -136,72 +159,92 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
                 aria-labelledby={activeCategoryIndex >= 0
                     ? `${catalogId}-category-${activeCategoryIndex}`
                     : undefined}
-                className="overflow-hidden rounded-card border border-white/[0.06] bg-white/[0.06]"
+                className="nx-catalog-results overflow-hidden rounded-card"
             >
                 {products.length > 0 ? (
                     <>
-                        <ul className="grid grid-cols-2 gap-px md:grid-cols-3 lg:grid-cols-4">
+                        <ul className="nx-catalog-grid grid grid-cols-2 gap-3 md:grid-cols-3 lg:gap-4 xl:grid-cols-4">
                             {products.map((product, index) => {
                                 const unit = product.unit?.trim() || 'unidad';
                                 const blocked = blockedProductIds.has(product.id);
                                 const lowStock = !blocked && product.stock > 0 && product.stock <= 5;
                                 const formattedPrice = formatMoney(product.price);
+                                const recentlyAdded = recentlyAddedId === product.id;
+                                const descriptor = product.productFamily?.trim()
+                                    || (product.sku ? `SKU ${product.sku}` : `Venta por ${unit}`);
+                                const stockLabel = blocked
+                                    ? 'Agotado'
+                                    : `${stockFormatter.format(product.stock)} en existencia · ${unit}`;
 
                                 return (
-                                    <li key={product.id} className="min-w-0 bg-surface-950">
+                                    <li key={product.id} className="min-w-0">
                                         <button
                                             type="button"
                                             aria-disabled={blocked || undefined}
                                             aria-label={blocked
                                                 ? `${product.name}, agotado`
-                                                : `Agregar ${product.name}, ${formattedPrice} por ${unit}`}
+                                                : `Agregar ${product.name}, ${formattedPrice} por ${unit}, ${stockLabel}`}
+                                            data-selected={recentlyAdded ? 'true' : undefined}
                                             onClick={() => {
                                                 if (blocked) onBlocked(product);
                                                 else onAdd(product);
+                                                if (!blocked) setRecentlyAddedId(product.id);
                                             }}
-                                            className={`flex min-h-[132px] w-full flex-col items-stretch justify-between px-4 py-4 text-left transition-colors focus-visible:relative focus-visible:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 focus-visible:ring-inset sm:min-h-[160px] lg:min-h-[190px] ${blocked
-                                                ? 'cursor-not-allowed bg-danger-soft hover:bg-danger-soft'
-                                                : 'bg-surface-950 hover:bg-surface-900 active:bg-surface-800'}`}
+                                            className={`nx-catalog-card nx-fluid-press group relative flex min-h-[216px] w-full flex-col overflow-hidden rounded-card border bg-white p-3 text-left shadow-sm transition-[background-color,border-color,box-shadow,transform] focus-visible:z-[1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50 sm:min-h-[248px] sm:p-3.5 ${blocked
+                                                ? 'cursor-not-allowed border-red-200 bg-red-50/80 opacity-70'
+                                                : recentlyAdded
+                                                    ? 'border-brand ring-2 ring-brand/20 shadow-md'
+                                                    : 'border-slate-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md active:translate-y-0 active:shadow-sm'}`}
                                         >
-                                            <div className="min-w-0">
+                                            <div className="nx-catalog-card-media relative">
                                                 <ProductImage
                                                     src={product.imageUrl}
                                                     alt={product.name}
                                                     loading={index < 8 ? 'eager' : 'lazy'}
                                                     fetchPriority={index < 4 ? 'high' : 'auto'}
                                                     sizes="(max-width: 767px) 50vw, (max-width: 1023px) 33vw, 25vw"
-                                                    className={`mb-3 aspect-[4/3] w-full rounded-control border border-white/[0.08] bg-gradient-to-br ${productoPaleta(product.name)}`}
-                                                    imageClassName="transition-opacity duration-200"
-                                                    fallbackClassName="text-white"
+                                                    className={`aspect-[5/4] w-full rounded-control border border-slate-200/80 bg-gradient-to-br ${productoPaleta(product.name)}`}
+                                                    imageClassName="!object-contain p-3 transition-[opacity,transform] duration-200 group-hover:scale-[1.02]"
+                                                    fallbackClassName="text-slate-600"
                                                 />
-                                                <span className={`line-clamp-2 text-[15px] font-semibold leading-snug sm:text-base ${blocked ? 'text-slate-400' : 'text-slate-100'}`}>
-                                                    {product.name}
-                                                </span>
-                                                <span className="mt-1 block">
-                                                    <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                                                        {product.sku ? `SKU ${product.sku}` : `Por ${unit}`}
+                                                {recentlyAdded && (
+                                                    <span
+                                                        aria-hidden="true"
+                                                        className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-brand text-brand-on shadow-md"
+                                                    >
+                                                        <Check size={16} strokeWidth={3} />
                                                     </span>
-                                                    {product.sku ? (
-                                                        <span className="mt-0.5 block text-xs text-slate-500">
-                                                            Por {unit}
-                                                        </span>
-                                                    ) : null}
-                                                </span>
+                                                )}
                                             </div>
 
-                                            <span className="mt-5 flex min-w-0 items-end justify-between gap-2">
-                                                <span className={`nx-num truncate text-base font-bold sm:text-lg ${blocked ? 'text-slate-500' : 'text-slate-100'}`}>
+                                            <span className="nx-catalog-card-content mt-3 flex min-w-0 flex-1 flex-col">
+                                                <span className={`line-clamp-2 text-[15px] font-bold leading-snug tracking-[-0.01em] sm:text-base ${blocked ? 'text-slate-500' : 'text-slate-950'}`}>
+                                                    {product.name}
+                                                </span>
+                                                <span className="mt-1 line-clamp-1 text-xs leading-5 text-slate-500">
+                                                    {descriptor}
+                                                </span>
+                                                <span className="text-[11px] font-medium text-slate-400">
+                                                    Por {unit}
+                                                </span>
+                                            </span>
+
+                                            <span className="mt-3 block border-t border-slate-100 pt-3">
+                                                <span className={`nx-catalog-card-price nx-num block truncate text-lg font-black tracking-[-0.02em] sm:text-xl ${blocked ? 'text-slate-500' : 'text-slate-950'}`}>
                                                     {formattedPrice}
                                                 </span>
-                                                {blocked ? (
-                                                    <span className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-danger">
-                                                        Agotado
-                                                    </span>
-                                                ) : lowStock ? (
-                                                    <span className="shrink-0 text-[11px] font-bold text-warning">
-                                                        Quedan {stockFormatter.format(product.stock)}
-                                                    </span>
-                                                ) : null}
+                                                <span className={`nx-catalog-card-stock mt-1 block truncate text-[11px] font-semibold ${blocked
+                                                    ? 'uppercase tracking-wide text-danger'
+                                                    : lowStock
+                                                        ? 'text-amber-700'
+                                                        : 'text-slate-500'}`}
+                                                >
+                                                    {blocked
+                                                        ? 'Agotado'
+                                                        : lowStock
+                                                            ? `Quedan ${stockFormatter.format(product.stock)} ${unit}`
+                                                            : stockLabel}
+                                                </span>
                                             </span>
                                         </button>
                                     </li>
@@ -209,14 +252,14 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
                             })}
                         </ul>
                         {products.length < totalProducts && (
-                            <div className="border-t border-white/[0.06] bg-surface-950 p-3 text-center">
-                                <p className="mb-2 text-xs text-slate-500">
+                            <div className="nx-catalog-more mt-4 rounded-card border border-slate-200 bg-white p-3 text-center shadow-sm">
+                                <p className="mb-2 text-xs font-medium text-slate-500">
                                     Quedan {totalProducts - products.length} por mostrar
                                 </p>
                                 <button
                                     type="button"
                                     onClick={onShowMore}
-                                    className="min-h-tap w-full rounded-control border border-white/[0.10] px-4 text-sm font-semibold text-slate-200 transition-colors hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
+                                    className="nx-fluid-press min-h-11 w-full rounded-control border border-slate-300 bg-slate-50 px-4 text-sm font-bold text-slate-800 transition-[background-color,border-color,transform] hover:border-slate-400 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
                                 >
                                     Mostrar más productos
                                 </button>
@@ -224,8 +267,8 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
                         )}
                     </>
                 ) : (
-                    <div className="flex min-h-[176px] items-center justify-center bg-surface-950 px-6 py-10 text-center">
-                        <p className="max-w-sm text-sm text-slate-400">
+                    <div className="flex min-h-[176px] items-center justify-center rounded-card border border-dashed border-slate-300 bg-white px-6 py-10 text-center">
+                        <p className="max-w-sm text-sm font-medium text-slate-500">
                             {isSearching
                                 ? `No encontramos productos para “${searchTerm.trim()}”.`
                                 : 'No hay productos en esta categoría.'}

@@ -100,9 +100,16 @@ describe('búsqueda operable con Enter', () => {
     });
 });
 
-describe('superficie de caja a ancho completo', () => {
-    it('oculta navegación e instalación solo en /app/pos', () => {
+describe('superficie de caja dentro del shell operativo', () => {
+    it('mantiene el sidebar desktop y reserva la navegación móvil para otros módulos', () => {
         expect(layout).toContain("const isPosSurface = location.pathname === '/app/pos'");
+        const desktopSidebar = between(layout, '{/* DESKTOP SIDEBAR */}', '{/* MOBILE BOTTOM NAV */}');
+        expect(desktopSidebar).toContain('<aside className="nx-sidebar hidden');
+        expect(desktopSidebar).toContain('lg:flex');
+        expect(desktopSidebar).not.toContain("isPosSurface ? 'hidden'");
+
+        // POS aporta su propio toolbar operativo. El header global y el bottom
+        // nav se ocultan para evitar dos barras apiladas, pero el sidebar queda.
         expect(layout).toContain("isPosSurface ? 'hidden' : 'hidden lg:flex'");
         expect(layout).toContain("isPosSurface ? 'hidden' : 'flex lg:hidden'");
         expect(layout).toContain('showMobileMenu && !isPosSurface');
