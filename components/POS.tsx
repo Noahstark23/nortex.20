@@ -6,6 +6,7 @@ import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Sear
 import { formatMoney, formatUSD } from '../utils/money';
 import { EmptyState } from './ui/EmptyState';
 import { IconButton } from './ui/IconButton';
+import { ProductImage } from './ui/ProductImage';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
@@ -70,8 +71,8 @@ import {
     type RequestErrorCategory,
 } from '../utils/posActivation';
 import { suggestNioCashAmounts as denominacionesSugeridas, validateCashReceived } from '../utils/posCash';
+import { mapApiProductImage } from '../utils/posProductMapper';
 import Decimal from 'decimal.js';
-
 // ── Utilidades financieras del POS (string controlado + Decimal.js) ──────────
 // `discount` y `basePrice` son estado comercial de la línea, no del producto.
 // basePrice preserva el precio de DETALLE original de la línea: item.price es el
@@ -91,51 +92,12 @@ const PRODUCT_TILE_GRADIENTS = [
     'from-sky-500/25 to-blue-500/15',
 ];
 
-const productoIniciales = (name: string): string => {
-    const words = name.trim().toUpperCase().split(/\s+/).filter(Boolean);
-    if (words.length === 0) return '??';
-    if (words.length === 1) return words[0].slice(0, 2);
-    return `${words[0][0]}${words[1][0]}`;
-};
-
 const productoPaleta = (seed: string): string =>
     PRODUCT_TILE_GRADIENTS[
         Math.abs(
             seed.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0),
         ) % PRODUCT_TILE_GRADIENTS.length
     ];
-
-const ProductoMiniatura = ({
-    name,
-    imageUrl,
-    className,
-}: {
-    name: string;
-    imageUrl?: string | null;
-    className: string;
-}) => {
-    const [imgError, setImgError] = useState(false);
-
-    if (!imageUrl || imgError) {
-        return (
-            <div className={`${className} grid place-items-center rounded-control border border-white/[0.12] bg-gradient-to-br ${productoPaleta(name)}`}>
-                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-white">
-                    {productoIniciales(name)}
-                </span>
-            </div>
-        );
-    }
-
-    return (
-        <img
-            src={imageUrl}
-            alt={name}
-            loading="lazy"
-            onError={() => setImgError(true)}
-            className={`${className} rounded-control object-cover`}
-        />
-    );
-};
 
 const isQuotationCartLine = (item: Pick<CartItem, 'quotationItemId'>): boolean =>
     typeof item.quotationItemId === 'string' && item.quotationItemId.trim() !== '';
@@ -257,13 +219,14 @@ const TarjetaProducto = React.memo<{
             : 'border-white/[0.06] hover:bg-surface-800 hover:border-brand/50 active:scale-[0.98]'}`}
     >
         <div className="min-w-0 flex items-center gap-2">
-            <div className="h-14 w-14 shrink-0">
-                <ProductoMiniatura
-                    name={product.name}
-                    imageUrl={product.imageUrl}
-                    className="h-full w-full"
-                />
-            </div>
+            <ProductImage
+                src={product.imageUrl}
+                alt={product.name}
+                loading="lazy"
+                sizes="56px"
+                className={`h-14 w-14 shrink-0 rounded-control border border-white/[0.12] bg-gradient-to-br ${productoPaleta(product.name)}`}
+                fallbackClassName="text-white"
+            />
             <div className="min-w-0">
                 <h3 className="font-semibold text-sm text-slate-100 leading-tight line-clamp-2 min-w-0">{product.name}</h3>
                 {product.sku ? (
@@ -304,32 +267,6 @@ const identidadLocal = (): { tenantId: string; userId: string } | null => {
         localStorage.getItem('nortex_tenant_data'),
         localStorage.getItem('nortex_user'),
     );
-};
-
-const fiscalSettingsFromTenantCache = (): FiscalSettingsSnapshot => {
-    try {
-        return normalizeFiscalSettingsSnapshot(
-            JSON.parse(localStorage.getItem('nortex_tenant_data') || '{}'),
-        );
-    } catch {
-        return normalizeFiscalSettingsSnapshot(undefined);
-    }
-};
-
-const cacheFiscalSettingsForTenant = (
-    tenantId: string | undefined,
-    settings: FiscalSettingsSnapshot,
-): void => {
-    if (!tenantId) return;
-    try {
-        const raw = localStorage.getItem('nortex_tenant_data');
-        if (!raw) return;
-        const tenant = JSON.parse(raw);
-        if (!tenant || typeof tenant !== 'object' || Array.isArray(tenant) || tenant.id !== tenantId) return;
-        localStorage.setItem('nortex_tenant_data', JSON.stringify({ ...tenant, ...settings }));
-    } catch {
-        // Una caché ilegible no debe bloquear el POS; el estado en memoria sigue vigente.
-    }
 };
 
 const fiscalSettingsFromTenantCache = (): FiscalSettingsSnapshot => {
@@ -1071,6 +1008,7 @@ const POS: React.FC = () => {
                     quantityStep: p.quantityStep == null ? null : Number(p.quantityStep),
                     ivaExento: p.ivaExento === true,
                     productFamily: p.productFamily ?? null,
+                    ...mapApiProductImage(p),
                 }));
                 setProducts(mapped);
                 setProductsError(false);
@@ -3114,7 +3052,6 @@ const POS: React.FC = () => {
                 headers,
                 body: JSON.stringify(validated.payload),
             });
-
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
                 const failure = normalizeApiFailure(res.status, data, 'No pudimos guardar el producto.');
@@ -3129,7 +3066,6 @@ const POS: React.FC = () => {
                 );
                 return;
             }
-
             // Map to frontend Product and add to cart
             const newProd: Product = {
                 id: data.id,
@@ -3139,6 +3075,7 @@ const POS: React.FC = () => {
                 costPrice: data.cost,
                 stock: data.stock,
                 category: data.category || 'General',
+                ...mapApiProductImage(data),
                 wholesalePrice: data.wholesalePrice ?? null,
                 wholesaleMinQty: data.wholesaleMinQty ?? null,
                 packUnit: data.packUnit ?? null,
@@ -3150,7 +3087,6 @@ const POS: React.FC = () => {
                 saleMode: data.saleMode ?? 'COUNTED',
                 quantityStep: data.quantityStep ?? 1,
             };
-
             setProducts(prev => [newProd, ...prev]);
             addToCart(newProd);
             playBeep();
@@ -3313,6 +3249,7 @@ const POS: React.FC = () => {
                 price: data.price,
                 costPrice: data.cost,
                 stock: data.stock,
+                ...mapApiProductImage(data),
                 wholesalePrice: data.wholesalePrice ?? null,
                 wholesaleMinQty: data.wholesaleMinQty ?? null,
                 packUnit: data.packUnit ?? null,

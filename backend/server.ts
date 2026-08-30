@@ -38,7 +38,7 @@ import { ESTADO_ANULADA, puedeAnularse, planDeReversion, textoUtil } from './ser
 import {
     pagarFacturaProveedorEnCaja,
     registrarSalidaDeCajaPorCompra,
-    SupplierPaymentError,
+    SupplierPaymentError as SupplierPaymentCajaError,
     MENSAJE_SIN_CAJA_ABIERTA,
 } from './services/supplierPayment';
 import { decidirIdentidadCajero, pinNormalizado, explicarModo } from './services/shiftIdentity';
@@ -161,6 +161,7 @@ import {
     InventoryAdjustSchema,
     CreateProductSchema,
     UpdateProductSchema,
+    PublicCatalogQuerySchema,
     BulkImportProductsSchema,
     BulkEditProductsSchema,
     CreateBatchSchema,
@@ -195,6 +196,7 @@ import { resolvePurchaseLine } from '../utils/purchasePackaging.js';
 import {
     FISCAL_REGIME_CUOTA_FIJA,
     normalizeFiscalRegime,
+    vatCollectedFromSale,
 } from '../utils/fiscalRegime.js';
 import {
     normalizeTenantCapabilities,
@@ -2803,15 +2805,6 @@ app.put('/api/customers/:id', authenticate, validate(UpdateCustomerSchema), asyn
             if (isBlocked !== undefined) data.isBlocked = Boolean(isBlocked);
             if (isWholesale !== undefined) data.isWholesale = Boolean(isWholesale);
             if (sellerId !== undefined) data.sellerId = sellerId; // null = desasignar
-
-            // Repetir tenant/cartera en el sink cierra la ventana entre el
-            // lookup y la escritura si un admin reasigna al cliente en paralelo.
-            const updateResult = await tx.customer.updateMany({ where: existingWhere, data });
-            if (updateResult.count !== 1) throw new Error('CUSTOMER_NOT_FOUND');
-            const updated = await tx.customer.findFirst({
-                where: { id, tenantId: authReq.tenantId },
-            });
-            if (!updated) throw new Error('CUSTOMER_NOT_FOUND');
 
             // Repetir tenant/cartera en el sink cierra la ventana entre el
             // lookup y la escritura si un admin reasigna al cliente en paralelo.
@@ -8911,7 +8904,7 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
             ? await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!)
             : { shift: null };
         if (paymentMethod === 'CASH' && !turnoDeContado) {
-            const sinCaja = new SupplierPaymentError(
+            const sinCaja = new SupplierPaymentCajaError(
                 'SIN_CAJA_ABIERTA',
                 'No hay caja abierta. Abrí una caja para registrar una compra de contado, o registrala a crédito.'
             );
@@ -9041,14 +9034,10 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
             // compra dentro de esta misma transacción. Nunca se acepta del body.
             const tenantFiscal = await tx.tenant.findUnique({
                 where: { id: authReq.tenantId! },
-                select: {
-                    walletBalance: true,
-                    fiscalRegime: true,
-                }
+                select: { fiscalRegime: true },
             });
-            if (!tenantBefore) throw new Error('TENANT_NOT_FOUND');
-            const walletBefore = new Decimal(tenantBefore?.walletBalance?.toString() ?? '0');
-            const fiscalRegimeAtPurchase = normalizeFiscalRegime(tenantBefore.fiscalRegime);
+            if (!tenantFiscal) throw new Error('TENANT_NOT_FOUND');
+            const fiscalRegimeAtPurchase = normalizeFiscalRegime(tenantFiscal.fiscalRegime);
             const cuotaFijaPurchase = fiscalRegimeAtPurchase === FISCAL_REGIME_CUOTA_FIJA;
 
             // 1. Calcular totales. T2 Fase 2 — el crédito fiscal (IVA de compras)
@@ -9452,30 +9441,14 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
             //    El asiento de `recordPurchase` ya acreditaba Caja (1.1.1): la
             //    billetera nunca fue la contrapartida correcta.
             if (paymentMethod === 'CASH') {
-                // Débito ATÓMICO: decrementa solo si hay saldo suficiente. El guard de
-                // suficiencia y la escritura son el MISMO UPDATE condicional (toma el
-                // row-lock), así dos compras de contado concurrentes no pueden ambas
-                // pasar el chequeo y dejar la billetera en negativo (TOCTOU).
-                const debited = await tx.tenant.updateMany({
-                    where: { id: authReq.tenantId, walletBalance: { gte: totalAmount.toFixed(2) } },
-                    data: { walletBalance: { decrement: totalAmount.toFixed(2) } }
-                });
-                if (debited.count === 0) {
-                    const t = await tx.tenant.findUnique({
-                        where: { id: authReq.tenantId },
-                        select: { walletBalance: true }
-                    });
-                    throw new Error(`SALDO_INSUFICIENTE: disponible C$ ${new Decimal(t?.walletBalance?.toString() ?? 0).toFixed(2)}, requerido C$ ${totalAmount.toFixed(2)}. Usa crédito o recarga tu billetera.`);
-                }
-
-                // Crear gasto
-                await tx.expense.create({
-                    data: {
-                        tenantId: authReq.tenantId!,
-                        amount: totalAmount.toFixed(2),
-                        description: `Compra Factura #${invoiceNumber} - ${purchase.supplier.name}`,
-                        category: 'COMPRA_MERCADERIA'
-                    }
+                // `turnoDeContado` se resolvió y validó ANTES de abrir la tx.
+                const salida = await registrarSalidaDeCajaPorCompra(tx, {
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    shiftId: turnoDeContado!.id,
+                    invoiceNumber,
+                    supplierName: purchase.supplier.name,
+                    total: totalAmount,
                 });
                 efectivoAntesCompra = salida.efectivoAntes;
                 efectivoDespuesCompra = salida.efectivoDespues;
@@ -9527,8 +9500,9 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                         matchStatus: procurementMatch.matchStatus,
                         paymentHold: procurementMatch.paymentHold,
                         priceTolerancePct: procurementMatch.priceTolerancePct,
-                        walletBefore: walletBefore.toFixed(2),
-                        walletAfter: walletAfter.toFixed(2),
+                        shiftId: turnoDeContado?.id ?? null,
+                        efectivoAntes: efectivoAntesCompra?.toNumber() ?? null,
+                        efectivoDespues: efectivoDespuesCompra?.toNumber() ?? null,
                         productChanges: costChanges,
                         timestamp: new Date().toISOString()
                     })
@@ -9611,7 +9585,7 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
         }
         // Caja: sin turno abierto (409) o efectivo insuficiente en la gaveta (400).
         // El status sale del código tipado, no de un substring del mensaje.
-        if (error instanceof SupplierPaymentError) {
+        if (error instanceof SupplierPaymentError || error instanceof SupplierPaymentCajaError) {
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
         const notFound = error?.message?.includes('no encontrado');
@@ -14234,9 +14208,13 @@ app.put('/api/tenant/slug', authenticate, checkRole(['ADMIN', 'OWNER']), async (
 });
 
 // Rate limiter estricto para endpoints públicos
-const publicLimiter = rateLimit({
+const publicCatalogLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 30,
+    // La búsqueda se ejecuta con debounce desde el catálogo. Este techo cubre
+    // más de 5,000 productos a 48 por página y búsquedas normales, a la vez que
+    // acota la amplificación de las tres consultas por request. Sigue siendo
+    // MemoryStore/per-proceso (SCALING_AUDIT A1).
+    max: 120,
     message: { error: 'Demasiadas solicitudes. Intenta en unos minutos.' }
 });
 
@@ -14307,8 +14285,16 @@ app.get('/api/debug/catalog/:slug', authenticate, async (req: any, res: any) => 
 // GET /api/public/catalog/:slug — Catálogo público (NO requiere JWT)
 // 🔒 AUDITORÍA: Solo expone datos comerciales públicos y reglas de cantidad.
 // JAMÁS: cost, stock, tenantId, createdBy, sku, minStock
-app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) => {
+app.get('/api/public/catalog/:slug', publicCatalogLimiter, async (req: any, res: any) => {
     const { slug } = req.params;
+    const parsedQuery = PublicCatalogQuerySchema.safeParse(req.query);
+    if (!parsedQuery.success) {
+        return res.status(400).json({
+            error: 'Parámetros del catálogo inválidos',
+            details: parsedQuery.error.flatten().fieldErrors,
+        });
+    }
+    const { page, pageSize, search, category } = parsedQuery.data;
 
     try {
         const tenant = await prisma.tenant.findUnique({
@@ -14320,18 +14306,57 @@ app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) =
             return res.status(404).json({ error: 'Negocio no encontrado' });
         }
 
-        // 🔒 BLINDAJE: select explícito — NUNCA usar findMany sin select en endpoint público
-        // 🔒 Solo productos publicados: JAMÁS exponer inventario interno/borrador.
-        const products = await prisma.product.findMany({
-            where: { tenantId: tenant.id, isPublished: true },
-            select: {
-                id: true, name: true, price: true, description: true,
-                imageUrl: true, category: true, unit: true,
-                saleMode: true, quantityStep: true,
-                packUnit: true, packSize: true, packPrice: true,
-            },
-            orderBy: { name: 'asc' }
-        });
+        // El tenant siempre deriva del slug resuelto server-side. Búsqueda y
+        // categoría solo estrechan ese scope; nunca aceptan tenantId del cliente.
+        const where: any = { tenantId: tenant.id, isPublished: true };
+        const filters: any[] = [];
+        if (search) {
+            filters.push({
+                OR: [
+                    { name: { contains: search } },
+                    { description: { contains: search } },
+                ],
+            });
+        }
+        if (category === 'Otros') {
+            filters.push({ OR: [{ category: null }, { category: '' }, { category: 'Otros' }] });
+        } else if (category) {
+            filters.push({ category });
+        }
+        if (filters.length > 0) where.AND = filters;
+
+        // 🔒 BLINDAJE: select explícito — NUNCA usar findMany sin select en endpoint público.
+        // Las categorías se agregan sobre TODO el catálogo publicado; total sí
+        // corresponde a los filtros vigentes para que la paginación sea exacta.
+        const [products, total, categoryRows] = await prisma.$transaction([
+            prisma.product.findMany({
+                where,
+                select: {
+                    id: true, name: true, price: true, description: true,
+                    imageUrl: true, category: true, unit: true,
+                    saleMode: true, quantityStep: true,
+                    packUnit: true, packSize: true, packPrice: true,
+                },
+                orderBy: [{ name: 'asc' }, { id: 'asc' }],
+                skip: (page - 1) * pageSize,
+                take: pageSize,
+            }),
+            prisma.product.count({ where }),
+            prisma.product.findMany({
+                where: { tenantId: tenant.id, isPublished: true },
+                select: { category: true },
+                distinct: ['category'],
+                orderBy: { category: 'asc' },
+                // Una interfaz de filtros no es operable con cientos de
+                // categorías; el límite también evita otro listado Product
+                // sin cota en este endpoint público.
+                take: 500,
+            }),
+        ]);
+
+        const categories = Array.from(new Set(categoryRows.map((row: { category: string | null }) => (
+            row.category?.trim() || 'Otros'
+        )))).sort((a, b) => a.localeCompare(b, 'es'));
 
         res.json({
             business: {
@@ -14340,8 +14365,16 @@ app.get('/api/public/catalog/:slug', publicLimiter, async (req: any, res: any) =
                 phone: tenant.phone,
             },
             products,
-            // Si el tenant no ha publicado productos, se devuelve lista vacía (nunca el catálogo interno).
-            message: products.length === 0 ? 'Catálogo en construcción.' : undefined,
+            pagination: {
+                page,
+                pageSize,
+                total,
+                totalPages: Math.ceil(total / pageSize),
+            },
+            categories,
+            // Solo anuncia construcción cuando no existe ningún producto publicado;
+            // un filtro sin coincidencias no debe ocultar que el catálogo sí existe.
+            message: categoryRows.length === 0 ? 'Catálogo en construcción.' : undefined,
         });
 
     } catch (error) {

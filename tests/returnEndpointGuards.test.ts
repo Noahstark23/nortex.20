@@ -5,11 +5,17 @@ import { describe, expect, it } from 'vitest';
 const server = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8');
 const pos = readFileSync(resolve(process.cwd(), 'components/POS.tsx'), 'utf8');
 
-const between = (source: string, start: string, end: string): string => {
+const between = (source: string, start: string, end: string | RegExp): string => {
     const from = source.indexOf(start);
-    const to = end
-        ? source.indexOf(end, from + start.length)
-        : source.indexOf("\napp.", from + start.length);
+    let to: number;
+    if (typeof end === 'string') {
+        to = end
+            ? source.indexOf(end, from + start.length)
+            : source.indexOf("\napp.", from + start.length);
+    } else {
+        const match = source.slice(from + start.length).match(end);
+        to = match ? from + start.length + match.index! : -1;
+    }
     if (from < 0 || to < 0) throw new Error(`No se encontró el bloque ${start}`);
     return source.slice(from, to);
 };

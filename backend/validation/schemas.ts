@@ -483,6 +483,79 @@ const nonNegativeQuantityWithDefault = (fallback: string) => z
     .optional()
     .transform((value) => (value === undefined || value === null || value === '' ? fallback : value));
 
+/**
+ * Hosts autorizados para fotos nuevas de producto.
+ *
+ * El cargador oficial usa Cloudinary. Los hosts adicionales son una lista exacta
+ * separada por comas en `PRODUCT_IMAGE_ALLOWED_HOSTS`; no se aceptan comodines,
+ * rutas ni protocolos en esa configuración. Así se pueden conservar proveedores
+ * externos legítimos durante una migración sin volver a aceptar cualquier URL.
+ * Las URLs históricas ya persistidas siguen siendo legibles; esta frontera solo
+ * aplica a altas y ediciones nuevas.
+ */
+const configuredProductImageHosts = (process.env.PRODUCT_IMAGE_ALLOWED_HOSTS ?? '')
+    .split(',')
+    .map((host) => host.trim().toLowerCase().replace(/\.$/, ''))
+    .filter((host) => (
+        host.length > 0
+        && host.length <= 253
+        && host.includes('.')
+        && !host.includes('..')
+        && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(host)
+    ));
+
+const PRODUCT_IMAGE_ALLOWED_HOSTS = new Set([
+    'res.cloudinary.com',
+    ...configuredProductImageHosts,
+]);
+
+export const ProductImageUrlSchema = z
+    .union([z.string().trim().max(2000, 'La URL de la foto es demasiado larga'), z.null()])
+    .superRefine((value, ctx) => {
+        if (value === null || value === '') return;
+
+        let parsed: URL;
+        try {
+            parsed = new URL(value);
+        } catch {
+            ctx.addIssue({ code: 'custom', message: 'La foto debe usar una URL absoluta válida' });
+            return;
+        }
+
+        const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
+        if (parsed.protocol !== 'https:') {
+            ctx.addIssue({ code: 'custom', message: 'La foto debe usar HTTPS' });
+        } else if (parsed.username || parsed.password) {
+            ctx.addIssue({ code: 'custom', message: 'La URL de la foto no puede incluir credenciales' });
+        } else if (parsed.port) {
+            ctx.addIssue({ code: 'custom', message: 'La URL de la foto debe usar el puerto HTTPS estándar' });
+        } else if (!PRODUCT_IMAGE_ALLOWED_HOSTS.has(hostname)) {
+            ctx.addIssue({ code: 'custom', message: 'El proveedor de la foto no está autorizado' });
+        }
+    })
+    .transform((value) => value === '' ? null : value);
+
+const publicCatalogPositiveInteger = (fallback: number, max: number) => z.preprocess(
+    (value) => value === undefined ? fallback : value,
+    z.union([
+        z.number().int(),
+        z.string().regex(/^[1-9]\d*$/, 'Debe ser un entero positivo').transform(Number),
+    ]).pipe(z.number().int().min(1).max(max)),
+);
+
+const optionalPublicCatalogText = (max: number) => z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().trim().min(1).max(max).optional(),
+);
+
+/** Query pública acotada para evitar offsets y payloads sin límite. */
+export const PublicCatalogQuerySchema = z.object({
+    page: publicCatalogPositiveInteger(1, 10_000),
+    pageSize: publicCatalogPositiveInteger(48, 100),
+    search: optionalPublicCatalogText(120),
+    category: optionalPublicCatalogText(100),
+}).strict();
+
 const ProductFieldsSchema = z.object({
     name:                  z.string().trim().min(1, 'Nombre requerido').max(200),
     sku:                   z.string().trim().min(1, 'SKU requerido').max(100),
@@ -498,7 +571,7 @@ const ProductFieldsSchema = z.object({
     productFamily:         ProductFamilySchema.optional().nullable(),
     isPublished:           z.boolean().optional(),
     ivaExento:             z.boolean().optional(),
-    imageUrl:              z.string().trim().max(2000).optional().nullable(),
+    imageUrl:              ProductImageUrlSchema.optional(),
     requiresBatchTracking: z.boolean().optional(),
     reorderPoint:          optionalNonNegativeQuantity,
     maxStock:              optionalNonNegativeQuantity,

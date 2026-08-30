@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import Decimal from 'decimal.js';
 import { ShoppingCart, Plus, Minus, X, Send, Phone, User, Store, Search, Share2, Package, Loader2, CheckCircle } from 'lucide-react';
 import { formatMoney } from '../utils/money';
 import { formatQuantityValue, validateQuantity } from '../utils/quantity';
+import { ProductImage } from './ui/ProductImage';
 
 type PublicPresentation = 'BASE' | 'PACK';
 
@@ -33,6 +34,104 @@ interface BusinessInfo {
     slug: string;
     phone?: string;
 }
+
+interface CatalogPagination {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+}
+
+const PUBLIC_CATALOG_PAGE_SIZE = 48;
+const SEARCH_DEBOUNCE_MS = 250;
+
+const fallbackPagination = (productsLength: number): CatalogPagination => ({
+    page: 1,
+    pageSize: Math.max(productsLength, PUBLIC_CATALOG_PAGE_SIZE),
+    total: productsLength,
+    totalPages: 1,
+});
+
+const parseCatalogPagination = (
+    value: unknown,
+    productsLength: number,
+): { pagination: CatalogPagination; paginated: boolean } => {
+    if (!value || typeof value !== 'object') {
+        return { pagination: fallbackPagination(productsLength), paginated: false };
+    }
+
+    const record = value as Record<string, unknown>;
+    const page = Number(record.page);
+    const pageSize = Number(record.pageSize);
+    const total = Number(record.total);
+    const totalPages = Number(record.totalPages);
+    if (
+        !Number.isInteger(page) || page < 1
+        || !Number.isInteger(pageSize) || pageSize < 1
+        || !Number.isInteger(total) || total < 0
+        || !Number.isInteger(totalPages) || totalPages < 0
+    ) {
+        return { pagination: fallbackPagination(productsLength), paginated: false };
+    }
+
+    return {
+        pagination: {
+            page,
+            pageSize,
+            total,
+            totalPages: Math.max(totalPages, total > 0 ? 1 : 0),
+        },
+        paginated: true,
+    };
+};
+
+const normalizedCatalogCategories = (value: unknown, products: CatalogProduct[]): string[] => {
+    const source = Array.isArray(value)
+        ? value
+        : products.map(product => product.category || 'Otros');
+    return Array.from(new Set(source.flatMap(category => {
+        if (typeof category !== 'string') return [];
+        const normalized = category.trim();
+        return normalized && normalized !== 'ALL' ? [normalized] : [];
+    })));
+};
+
+export const buildPublicCatalogUrl = (
+    slug: string,
+    options: { page: number; search?: string; category?: string },
+): string => {
+    const query = new URLSearchParams({
+        page: String(options.page),
+        pageSize: String(PUBLIC_CATALOG_PAGE_SIZE),
+    });
+    const search = options.search?.trim().slice(0, 120);
+    const category = options.category?.trim().slice(0, 100);
+    if (search) query.set('search', search);
+    if (category && category !== 'ALL') query.set('category', category);
+    return `/api/public/catalog/${encodeURIComponent(slug)}?${query.toString()}`;
+};
+
+export const appendUniqueCatalogProducts = (
+    current: CatalogProduct[],
+    incoming: CatalogProduct[],
+): CatalogProduct[] => {
+    const knownIds = new Set(current.map(product => product.id));
+    const uniqueIncoming = incoming.filter(product => {
+        if (knownIds.has(product.id)) return false;
+        knownIds.add(product.id);
+        return true;
+    });
+    return [...current, ...uniqueIncoming];
+};
+
+const refreshCartFromCatalogPage = (
+    current: CartItem[],
+    pageProducts: CatalogProduct[],
+): CartItem[] => current.flatMap(item => {
+    const currentProduct = pageProducts.find(product => product.id === item.id);
+    if (!currentProduct) return [item];
+    return reconcilePublicCatalogCart([item], [currentProduct]);
+});
 
 const productRules = (product: CatalogProduct, presentation: PublicPresentation) => ({
     saleMode: presentation === 'PACK'
@@ -161,9 +260,18 @@ const PublicCatalog: React.FC = () => {
     });
     const [showCart, setShowCart] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState('');
+    const [loadMoreError, setLoadMoreError] = useState('');
     const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+    const [catalogCategories, setCatalogCategories] = useState<string[]>([]);
+    const [pagination, setPagination] = useState<CatalogPagination>(() => fallbackPagination(0));
+    const [usesServerFilters, setUsesServerFilters] = useState(false);
+    const [legacyVisibleCount, setLegacyVisibleCount] = useState(PUBLIC_CATALOG_PAGE_SIZE);
+    const requestVersionRef = useRef(0);
+    const loadMoreControllerRef = useRef<AbortController | null>(null);
 
     // Checkout state
     const [showCheckout, setShowCheckout] = useState(false);
@@ -197,32 +305,133 @@ const PublicCatalog: React.FC = () => {
     }, [cart, CART_KEY]);
 
     useEffect(() => {
-        fetchCatalog();
-    }, [slug]);
+        const timeoutId = window.setTimeout(
+            () => setDebouncedSearch(searchTerm.trim()),
+            SEARCH_DEBOUNCE_MS,
+        );
+        return () => window.clearTimeout(timeoutId);
+    }, [searchTerm]);
 
-    const fetchCatalog = async () => {
-        try {
-            setLoading(true);
-            const res = await fetch(`/api/public/catalog/${slug}`);
-            if (!res.ok) {
-                setError('Catálogo no encontrado');
-                return;
-            }
-            const data = await res.json();
-            
-            setBusiness(data.business || null);
-            // 🛡️ BLINDAJE: Si products viene null/undefined, forzamos un array vacío [] 
-            // Esto evita que .map() o .filter() crasheen la app más abajo.
-            const publicProducts: CatalogProduct[] = Array.isArray(data.products) ? data.products : [];
-            setProducts(publicProducts);
-            // LocalStorage es solo cache de UX: rehidratar siempre con el
-            // catalogo publicado actual y descartar cantidades ya invalidas.
-            setCart(previous => reconcilePublicCatalogCart(previous, publicProducts));
-            
-        } catch (err) {
-            setError('Error al cargar el catálogo');
-        } finally {
+    useEffect(() => {
+        if (!slug) {
+            setError('Catálogo no encontrado');
             setLoading(false);
+            return undefined;
+        }
+
+        const controller = new AbortController();
+        const requestVersion = ++requestVersionRef.current;
+        loadMoreControllerRef.current?.abort();
+        loadMoreControllerRef.current = null;
+        setLoadingMore(false);
+        setLoading(true);
+        setError('');
+        setLoadMoreError('');
+
+        const loadFirstPage = async () => {
+            try {
+                const response = await fetch(buildPublicCatalogUrl(slug, {
+                    page: 1,
+                    search: debouncedSearch,
+                    category: selectedCategory,
+                }), { signal: controller.signal });
+                if (!response.ok) {
+                    if (requestVersion === requestVersionRef.current) {
+                        setError('Catálogo no encontrado');
+                    }
+                    return;
+                }
+
+                const data = await response.json() as Record<string, unknown>;
+                if (controller.signal.aborted || requestVersion !== requestVersionRef.current) return;
+
+                const publicProducts: CatalogProduct[] = Array.isArray(data.products)
+                    ? data.products
+                    : [];
+                const nextPagination = parseCatalogPagination(data.pagination, publicProducts.length);
+
+                setBusiness((data.business as BusinessInfo | null | undefined) || null);
+                setProducts(publicProducts);
+                setPagination(nextPagination.pagination);
+                setUsesServerFilters(nextPagination.paginated);
+                setLegacyVisibleCount(PUBLIC_CATALOG_PAGE_SIZE);
+                setCatalogCategories(normalizedCatalogCategories(data.categories, publicProducts));
+                // Una página es autoridad solo para sus propios productos. Los
+                // renglones cacheados que viven en otra página no se descartan.
+                // Al enviar, ambos endpoints públicos vuelven a validar producto,
+                // presentación, cantidad y precio en el servidor.
+                setCart(previous => nextPagination.paginated
+                    ? refreshCartFromCatalogPage(previous, publicProducts)
+                    : reconcilePublicCatalogCart(previous, publicProducts));
+            } catch {
+                if (!controller.signal.aborted && requestVersion === requestVersionRef.current) {
+                    setError('Error al cargar el catálogo');
+                }
+            } finally {
+                if (!controller.signal.aborted && requestVersion === requestVersionRef.current) {
+                    setLoading(false);
+                }
+            }
+        };
+
+        void loadFirstPage();
+        return () => {
+            controller.abort();
+            loadMoreControllerRef.current?.abort();
+        };
+    }, [slug, debouncedSearch, selectedCategory]);
+
+    const loadNextPage = async () => {
+        if (!usesServerFilters) {
+            setLegacyVisibleCount(current => current + PUBLIC_CATALOG_PAGE_SIZE);
+            return;
+        }
+
+        if (
+            !slug
+            || loadingMore
+            || pagination.page >= pagination.totalPages
+            || searchTerm.trim() !== debouncedSearch
+        ) {
+            return;
+        }
+
+        const requestVersion = requestVersionRef.current;
+        const controller = new AbortController();
+        loadMoreControllerRef.current?.abort();
+        loadMoreControllerRef.current = controller;
+        setLoadingMore(true);
+        setLoadMoreError('');
+
+        try {
+            const response = await fetch(buildPublicCatalogUrl(slug, {
+                page: pagination.page + 1,
+                search: debouncedSearch,
+                category: selectedCategory,
+            }), { signal: controller.signal });
+            if (!response.ok) throw new Error('No se pudo cargar la siguiente página');
+
+            const data = await response.json() as Record<string, unknown>;
+            if (controller.signal.aborted || requestVersion !== requestVersionRef.current) return;
+
+            const nextProducts: CatalogProduct[] = Array.isArray(data.products) ? data.products : [];
+            const nextPagination = parseCatalogPagination(data.pagination, nextProducts.length);
+            setProducts(current => appendUniqueCatalogProducts(current, nextProducts));
+            setPagination(nextPagination.pagination);
+            setCatalogCategories(current => {
+                const next = normalizedCatalogCategories(data.categories, nextProducts);
+                return next.length > 0 ? next : current;
+            });
+            setCart(current => refreshCartFromCatalogPage(current, nextProducts));
+        } catch {
+            if (!controller.signal.aborted && requestVersion === requestVersionRef.current) {
+                setLoadMoreError('No pudimos cargar más productos. Intenta de nuevo.');
+            }
+        } finally {
+            if (loadMoreControllerRef.current === controller) {
+                loadMoreControllerRef.current = null;
+                setLoadingMore(false);
+            }
         }
     };
 
@@ -442,13 +651,22 @@ const PublicCatalog: React.FC = () => {
     const shareUrl = typeof window !== 'undefined' ? window.location.href : '';
     const whatsappShare = `https://wa.me/?text=${encodeURIComponent(`¡Mira el catálogo de ${business?.name || ''}! ${shareUrl}`)}`;
 
-    const categories = ['ALL', ...Array.from(new Set(products.map(p => p.category || 'Otros').filter(Boolean)))];
-    const filteredProducts = products.filter(p => {
+    const categories = ['ALL', ...catalogCategories];
+    const locallyFilteredProducts = products.filter(p => {
         const matchSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
             (p.description || '').toLowerCase().includes(searchTerm.toLowerCase());
         const matchCategory = selectedCategory === 'ALL' || (p.category || 'Otros') === selectedCategory;
         return matchSearch && matchCategory;
     });
+    const filteredProducts = usesServerFilters
+        ? products
+        : locallyFilteredProducts.slice(0, legacyVisibleCount);
+    const visibleProductsTotal = usesServerFilters
+        ? pagination.total
+        : locallyFilteredProducts.length;
+    const hasMoreProducts = usesServerFilters
+        ? pagination.page < pagination.totalPages
+        : legacyVisibleCount < locallyFilteredProducts.length;
 
     // ---- ORDER SUCCESS SCREEN ----
     if (orderSuccess) {
@@ -584,7 +802,7 @@ const PublicCatalog: React.FC = () => {
                     />
                 </div>
 
-                {categories.length > 2 && (
+                {categories.length > 1 && (
                     <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
                         {categories.map(cat => (
                             <button
@@ -603,15 +821,19 @@ const PublicCatalog: React.FC = () => {
             </div>
 
             {/* Product Grid */}
-            <div className="max-w-6xl mx-auto px-4 pb-28">
+            <div
+                className="max-w-6xl mx-auto px-4 pb-28"
+                aria-busy={loading || loadingMore}
+            >
                 {filteredProducts.length === 0 ? (
                     <div className="text-center py-16 text-slate-400">
                         <Package size={40} className="mx-auto mb-3 opacity-50" />
                         <p>No se encontraron productos</p>
                     </div>
                 ) : (
+                    <>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-                        {filteredProducts.map(product => {
+                        {filteredProducts.map((product, index) => {
                             const baseInCart = cart.find(c => c.id === product.id && c.presentation === 'BASE');
                             const packInCart = cart.find(c => c.id === product.id && c.presentation === 'PACK');
                             return (
@@ -621,17 +843,16 @@ const PublicCatalog: React.FC = () => {
                                 >
                                     {/* Product Image */}
                                     <div className="aspect-square bg-gradient-to-br from-slate-100 to-slate-50 relative overflow-hidden">
-                                        {product.imageUrl ? (
-                                            <img
-                                                src={product.imageUrl}
-                                                alt={product.name}
-                                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                                            />
-                                        ) : (
-                                            <div className="w-full h-full flex items-center justify-center">
-                                                <Package className="text-slate-200" size={40} />
-                                            </div>
-                                        )}
+                                        <ProductImage
+                                            src={product.imageUrl}
+                                            alt={product.name}
+                                            loading={index < 8 ? 'eager' : 'lazy'}
+                                            fetchPriority={index < 4 ? 'high' : 'auto'}
+                                            sizes="(max-width: 639px) 50vw, (max-width: 1023px) 33vw, 25vw"
+                                            className="h-full w-full text-slate-400"
+                                            imageClassName="transition-transform duration-500 group-hover:scale-105"
+                                            fallback={<Package className="text-slate-200" size={40} />}
+                                        />
                                         {product.category && (
                                             <span className="absolute top-2 left-2 text-[10px] font-semibold bg-white/90 backdrop-blur text-slate-600 px-2 py-0.5 rounded-lg">
                                                 {product.category}
@@ -738,6 +959,26 @@ const PublicCatalog: React.FC = () => {
                             );
                         })}
                     </div>
+                    {hasMoreProducts && (
+                        <div className="mt-8 flex flex-col items-center gap-2 text-center">
+                            <p className="text-sm text-slate-500">
+                                Mostrando {filteredProducts.length} de {visibleProductsTotal} productos
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => void loadNextPage()}
+                                disabled={loadingMore || searchTerm.trim() !== debouncedSearch}
+                                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-6 py-2.5 font-semibold text-blue-700 shadow-sm transition-colors hover:bg-blue-50 disabled:cursor-wait disabled:opacity-60"
+                            >
+                                {loadingMore && <Loader2 className="animate-spin" size={17} />}
+                                {loadingMore ? 'Cargando...' : 'Mostrar más'}
+                            </button>
+                            {loadMoreError && (
+                                <p role="alert" className="text-sm text-red-600">{loadMoreError}</p>
+                            )}
+                        </div>
+                    )}
+                    </>
                 )}
             </div>
 
@@ -785,13 +1026,14 @@ const PublicCatalog: React.FC = () => {
                                     ) : (
                                         cart.map(item => (
                                             <div key={`${item.id}:${item.presentation}`} className="flex items-center gap-3 bg-slate-50 rounded-xl p-3">
-                                                <div className="w-12 h-12 rounded-lg bg-white border border-slate-200 flex items-center justify-center flex-shrink-0 overflow-hidden">
-                                                    {item.imageUrl ? (
-                                                        <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
-                                                    ) : (
-                                                        <Package className="text-slate-300" size={20} />
-                                                    )}
-                                                </div>
+                                                <ProductImage
+                                                    src={item.imageUrl}
+                                                    alt={item.name}
+                                                    loading="lazy"
+                                                    sizes="48px"
+                                                    className="h-12 w-12 flex-shrink-0 rounded-lg border border-slate-200 bg-white text-slate-300"
+                                                    fallback={<Package className="text-slate-300" size={20} />}
+                                                />
                                                 <div className="flex-1 min-w-0">
                                                     <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
                                                     <p className="text-xs text-slate-400">
