@@ -29,6 +29,22 @@ interface CartItem extends CatalogProduct {
     presentation: PublicPresentation;
 }
 
+export interface ConfirmedPublicOrderItem {
+    productId: string;
+    name: string;
+    /** Cantidad de la presentación confirmada por el servidor. */
+    quantity: string;
+    presentation: PublicPresentation;
+    unit: string;
+    /** Subtotal monetario autoritativo, redondeado por el servidor. */
+    subtotal: string;
+}
+
+export interface ConfirmedPublicOrder {
+    items: ConfirmedPublicOrderItem[];
+    total: string;
+}
+
 interface BusinessInfo {
     name: string;
     slug: string;
@@ -122,6 +138,96 @@ export const appendUniqueCatalogProducts = (
         return true;
     });
     return [...current, ...uniqueIncoming];
+};
+
+const parseCanonicalDecimal = (
+    value: unknown,
+    options: { strictlyPositive: boolean; maxDecimalPlaces: number },
+): Decimal | null => {
+    if (typeof value !== 'string' && typeof value !== 'number') return null;
+    try {
+        const decimal = new Decimal(value);
+        if (
+            !decimal.isFinite()
+            || (options.strictlyPositive ? !decimal.greaterThan(0) : decimal.isNegative())
+            || decimal.decimalPlaces() > options.maxDecimalPlaces
+        ) {
+            return null;
+        }
+        return decimal;
+    } catch {
+        return null;
+    }
+};
+
+/**
+ * Frontera fail-closed para el resumen autoritativo del checkout. Nunca se
+ * reconstruyen nombres, unidades o dinero desde el carrito persistido.
+ */
+export const parseConfirmedPublicOrder = (value: unknown): ConfirmedPublicOrder | null => {
+    if (!value || typeof value !== 'object') return null;
+    const record = value as Record<string, unknown>;
+    if (!Array.isArray(record.items) || record.items.length < 1 || record.items.length > 50) {
+        return null;
+    }
+    const total = parseCanonicalDecimal(record.total, {
+        strictlyPositive: false,
+        maxDecimalPlaces: 2,
+    });
+    if (!total) return null;
+
+    const seen = new Set<string>();
+    const items: ConfirmedPublicOrderItem[] = [];
+    let itemTotal = new Decimal(0);
+    for (const rawItem of record.items) {
+        if (!rawItem || typeof rawItem !== 'object') return null;
+        const item = rawItem as Record<string, unknown>;
+        const productId = typeof item.productId === 'string' ? item.productId.trim() : '';
+        const name = typeof item.name === 'string' ? item.name.trim() : '';
+        const unit = typeof item.unit === 'string' ? item.unit.trim() : '';
+        const presentation: PublicPresentation | null = item.presentation === 'BASE'
+            ? 'BASE'
+            : item.presentation === 'PACK'
+                ? 'PACK'
+                : null;
+        const quantity = parseCanonicalDecimal(item.quantity, {
+            strictlyPositive: true,
+            maxDecimalPlaces: 4,
+        });
+        const subtotal = parseCanonicalDecimal(item.subtotal, {
+            strictlyPositive: false,
+            maxDecimalPlaces: 2,
+        });
+        if (
+            !productId
+            || !name
+            || !unit
+            || !presentation
+            || !quantity
+            || !subtotal
+            || (presentation === 'PACK' && !quantity.isInteger())
+        ) {
+            return null;
+        }
+
+        const identity = `${productId}:${presentation}`;
+        if (seen.has(identity)) return null;
+        seen.add(identity);
+        itemTotal = itemTotal.plus(subtotal);
+        items.push({
+            productId,
+            name,
+            quantity: quantity.toFixed(),
+            presentation,
+            unit,
+            subtotal: subtotal.toFixed(2),
+        });
+    }
+
+    // DELIVERY puede sumar flete; ningún checkout válido puede confirmar un
+    // total menor que la suma de sus renglones.
+    if (total.lessThan(itemTotal)) return null;
+    return { items, total: total.toFixed(2) };
 };
 
 const refreshCartFromCatalogPage = (
@@ -285,6 +391,8 @@ const PublicCatalog: React.FC = () => {
     const [orderSuccess, setOrderSuccess] = useState(false);
     const [lastOrderId, setLastOrderId] = useState('');
     const [lastWhatsappUrl, setLastWhatsappUrl] = useState('');
+    const [lastConfirmedItems, setLastConfirmedItems] = useState<ConfirmedPublicOrderItem[]>([]);
+    const [lastConfirmedTotal, setLastConfirmedTotal] = useState('');
     // Checkout híbrido: DELIVERY crea un Pedido (módulo motorizados+tracking);
     // QUOTE crea un PublicOrder → Cotización mayorista (flujo B2B).
     const [orderMode, setOrderMode] = useState<'DELIVERY' | 'QUOTE'>('DELIVERY');
@@ -496,15 +604,15 @@ const PublicCatalog: React.FC = () => {
     const cartCount = cart.length;
 
     const generateWhatsAppLink = (
-        cartItems: CartItem[],
+        confirmedItems: ConfirmedPublicOrderItem[],
         businessInfo: BusinessInfo,
         orderId: string,
-        total: number,
+        total: string,
         trackingUrl?: string
     ): string => {
         const orderNum = orderId.slice(-8).toUpperCase();
-        const itemLines = cartItems
-            .map(item => `- ${item.quantity} ${presentationUnit(item, item.presentation)} de ${item.name} (${formatMoney(cartLineTotal(item).toNumber())})`)
+        const itemLines = confirmedItems
+            .map(item => `- ${item.quantity} ${item.unit} de ${item.name} (${formatMoney(item.subtotal)})`)
             .join('\n');
         const message =
             `Hola ${businessInfo.name}, quiero hacer el pedido #${orderNum} por un total de ${formatMoney(total)}.\n\n` +
@@ -544,10 +652,9 @@ const PublicCatalog: React.FC = () => {
             return;
         }
         setSubmitting(true);
-        const totalSnapshot = cartSnapshot.reduce(
-            (sum, item) => sum.plus(cartLineTotal(item)),
-            new Decimal(0),
-        ).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+        setLastWhatsappUrl('');
+        setLastConfirmedItems([]);
+        setLastConfirmedTotal('');
 
         try {
             if (orderMode === 'DELIVERY') {
@@ -578,6 +685,7 @@ const PublicCatalog: React.FC = () => {
                 }
 
                 const pedidoId: string = data.pedidoId || '';
+                const confirmation = parseConfirmedPublicOrder(data);
                 // Sin capacidad firmada no construimos un enlace legacy por UUID:
                 // el endpoint público falla cerrado y evita exponer el pedido.
                 const trackingPath: string = typeof data.trackingPath === 'string'
@@ -587,10 +695,18 @@ const PublicCatalog: React.FC = () => {
                 const trackingUrl = trackingPath ? `${window.location.origin}${trackingPath}` : '';
                 setLastOrderId(pedidoId);
                 setLastTrackingPath(trackingPath);
+                setLastConfirmedItems(confirmation?.items ?? []);
+                setLastConfirmedTotal(confirmation?.total ?? '');
 
                 // 🚀 WhatsApp con resumen + link de seguimiento en vivo
-                if (business?.phone && pedidoId) {
-                    const waUrl = generateWhatsAppLink(cartSnapshot, business, pedidoId, Number(data.total ?? totalSnapshot), trackingUrl);
+                if (business?.phone && pedidoId && confirmation) {
+                    const waUrl = generateWhatsAppLink(
+                        confirmation.items,
+                        business,
+                        pedidoId,
+                        confirmation.total,
+                        trackingUrl,
+                    );
                     setLastWhatsappUrl(waUrl);
                     window.open(waUrl, '_blank');
                 }
@@ -617,16 +733,19 @@ const PublicCatalog: React.FC = () => {
                 }
 
                 const orderId: string = data.orderId || '';
+                const confirmation = parseConfirmedPublicOrder(data);
                 setLastOrderId(orderId);
                 setLastTrackingPath('');
+                setLastConfirmedItems(confirmation?.items ?? []);
+                setLastConfirmedTotal(confirmation?.total ?? '');
 
                 // 🚀 Abrir WhatsApp automáticamente con resumen del pedido
-                if (business?.phone && orderId) {
+                if (business?.phone && orderId && confirmation) {
                     const waUrl = generateWhatsAppLink(
-                        cartSnapshot,
+                        confirmation.items,
                         business,
                         orderId,
-                        Number(data.total ?? totalSnapshot),
+                        confirmation.total,
                     );
                     setLastWhatsappUrl(waUrl);
                     window.open(waUrl, '_blank');
@@ -685,6 +804,33 @@ const PublicCatalog: React.FC = () => {
                         <strong>{business?.name}</strong> recibirá tu pedido y se pondrá en contacto contigo pronto.
                     </p>
 
+                    {lastConfirmedItems.length > 0 && lastConfirmedTotal && (
+                        <div className="mb-6 rounded-2xl bg-slate-50 p-4 text-left">
+                            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+                                Resumen confirmado
+                            </p>
+                            <div className="space-y-1.5">
+                                {lastConfirmedItems.map(item => (
+                                    <div
+                                        key={`${item.productId}:${item.presentation}`}
+                                        className="flex justify-between gap-3 text-sm"
+                                    >
+                                        <span className="text-slate-600">
+                                            {item.quantity} {item.unit} · {item.name}
+                                        </span>
+                                        <span className="font-medium text-slate-800">
+                                            {formatMoney(item.subtotal)}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="mt-3 flex justify-between border-t border-slate-200 pt-3 font-bold text-slate-900">
+                                <span>Total confirmado</span>
+                                <span>{formatMoney(lastConfirmedTotal)}</span>
+                            </div>
+                        </div>
+                    )}
+
                     {lastWhatsappUrl && (
                         <a
                             href={lastWhatsappUrl}
@@ -718,6 +864,8 @@ const PublicCatalog: React.FC = () => {
                             setShowCart(false);
                             setLastOrderId('');
                             setLastWhatsappUrl('');
+                            setLastConfirmedItems([]);
+                            setLastConfirmedTotal('');
                             setLastTrackingPath('');
                         }}
                         className="block w-full text-blue-600 font-medium hover:underline"

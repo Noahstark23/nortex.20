@@ -45,25 +45,42 @@ const renderCatalog = () => render(
 
 describe('ProductImage compartida', () => {
     it('optimiza solo entregas públicas y sin firma de Cloudinary', () => {
-        const cloudinaryUrl = 'https://res.cloudinary.com/nortex/image/upload/v123/productos/arroz.jpg';
+        const cloudinaryUrl = 'https://res.cloudinary.com/dex1vy92h/image/upload/v123/productos/arroz.jpg';
         const srcSet = cloudinaryProductSrcSet(cloudinaryUrl);
 
         expect(srcSet).toContain('/image/upload/f_auto,q_auto,c_limit,w_160/');
         expect(srcSet).toContain('800w');
         expect(cloudinaryProductSrcSet('https://fotos.example.com/arroz.jpg')).toBeUndefined();
         expect(cloudinaryProductSrcSet(
-            'https://res.cloudinary.com/nortex/image/upload/s--firma--/v1/arroz.jpg',
+            'https://res.cloudinary.com/dex1vy92h/image/upload/s--firma--/v1/arroz.jpg',
         )).toBeUndefined();
         expect(cloudinaryProductSrcSet(
-            'https://res.cloudinary.com/s--firma--/nortex/image/upload/v1/arroz.jpg',
+            'https://res.cloudinary.com/s--firma--/dex1vy92h/image/upload/v1/arroz.jpg',
+        )).toBeUndefined();
+        expect(cloudinaryProductSrcSet(
+            'https://res.cloudinary.com:8443/dex1vy92h/image/upload/v1/arroz.jpg',
         )).toBeUndefined();
         expect(normalizeProductImageSource('http://fotos.example.com/arroz.jpg')).toBe('');
+        expect(normalizeProductImageSource('https://fotos.example.com/arroz.jpg')).toBe('');
+        expect(normalizeProductImageSource('https://res.cloudinary.com.ejemplo.test/arroz.jpg')).toBe('');
+        expect(normalizeProductImageSource('https://usuario:clave@res.cloudinary.com/arroz.jpg')).toBe('');
+        expect(normalizeProductImageSource('https://res.cloudinary.com:8443/arroz.jpg')).toBe('');
+        expect(normalizeProductImageSource('https://res.cloudinary.com./arroz.jpg')).toBe('');
+        expect(normalizeProductImageSource(
+            'https://res.cloudinary.com/dex1vy92h/image/fetch/https://legacy.example.test/arroz.jpg',
+        )).toBe('');
+        expect(normalizeProductImageSource(
+            'https://res.cloudinary.com/dex1vy92h/image/upload/l_fetch:aHR0cHM6Ly9ldmls/arroz.jpg',
+        )).toBe('');
+        expect(normalizeProductImageSource(
+            'https://res.cloudinary.com/otro/image/upload/arroz.jpg',
+        )).toBe('');
         expect(normalizeProductImageSource('/productos/arroz.jpg')).toBe('');
     });
 
     it('mantiene el marco, cae a fallback y vuelve a intentar cuando cambia la URL', () => {
-        const firstUrl = 'https://fotos.example.com/rota.jpg';
-        const secondUrl = 'https://fotos.example.com/nueva.jpg';
+        const firstUrl = 'https://res.cloudinary.com/dex1vy92h/image/upload/s--firma--/v1/rota.jpg';
+        const secondUrl = 'https://res.cloudinary.com/dex1vy92h/image/upload/nueva.jpg';
         const { container, rerender } = render(
             <ProductImage
                 src={firstUrl}
@@ -93,8 +110,25 @@ describe('ProductImage compartida', () => {
         expect((screen.getByAltText('Arroz integral') as HTMLImageElement).src).toBe(secondUrl);
     });
 
-    it('manda URLs no HTTPS directo al fallback sin crear un request de imagen', () => {
-        render(<ProductImage src="http://fotos.example.com/arroz.jpg" alt="Arroz" />);
+    it('manda URLs legacy externas o relativas al fallback sin crear un request de imagen', () => {
+        const { rerender } = render(
+            <ProductImage src="https://fotos.example.com/arroz.jpg" alt="Arroz" />,
+        );
+
+        expect(screen.queryByAltText('Arroz')).toBeNull();
+        expect(screen.getByRole('img', { name: 'Sin foto disponible para Arroz' })).toBeTruthy();
+
+        rerender(<ProductImage src="/productos/demo-arroz.jpg" alt="Arroz" />);
+
+        expect(screen.queryByAltText('Arroz')).toBeNull();
+        expect(screen.getByRole('img', { name: 'Sin foto disponible para Arroz' })).toBeTruthy();
+
+        rerender(
+            <ProductImage
+                src="https://res.cloudinary.com/dex1vy92h/image/fetch/https://legacy.example.test/arroz.jpg"
+                alt="Arroz"
+            />,
+        );
 
         expect(screen.queryByAltText('Arroz')).toBeNull();
         expect(screen.getByRole('img', { name: 'Sin foto disponible para Arroz' })).toBeTruthy();
@@ -116,7 +150,7 @@ describe('paginación del catálogo público', () => {
             return successfulResponse({
                 business: { name: 'Mi Tienda', slug: 'mi-tienda' },
                 products: [
-                    product('1', 'Arroz', 'https://res.cloudinary.com/nortex/image/upload/v1/arroz.jpg'),
+                    product('1', 'Arroz', 'https://res.cloudinary.com/dex1vy92h/image/upload/v1/arroz.jpg'),
                     product('2', 'Aceite'),
                 ],
                 pagination: { page: 1, pageSize: 48, total: 3, totalPages: 2 },

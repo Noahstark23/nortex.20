@@ -462,6 +462,7 @@ const EXPECTED_MEASURED_FOREIGN_KEYS: Array<Omit<ForeignKeyShapeRow, 'updateRule
     { tableName: 'SaleItemBatchAllocation', constraintName: 'SaleItemBatchAllocation_tenantId_fkey', columnName: 'tenantId', referencedTableName: 'Tenant', referencedColumnName: 'id', deleteRule: 'RESTRICT' },
     { tableName: 'SaleItemBatchAllocation', constraintName: 'SaleItemBatchAllocation_saleItemId_fkey', columnName: 'saleItemId', referencedTableName: 'SaleItem', referencedColumnName: 'id', deleteRule: 'RESTRICT' },
     { tableName: 'SaleItemBatchAllocation', constraintName: 'SaleItemBatchAllocation_batchId_fkey', columnName: 'batchId', referencedTableName: 'ProductBatch', referencedColumnName: 'id', deleteRule: 'RESTRICT' },
+    { tableName: 'SaleItemBatchAllocation', constraintName: 'SaleItemBatchAllocation_warehouseId_fkey', columnName: 'warehouseId', referencedTableName: 'Warehouse', referencedColumnName: 'id', deleteRule: 'RESTRICT' },
 ];
 
 function assertAllNull(row: Record<string, unknown>, keys: string[], label: string): void {

@@ -1049,7 +1049,8 @@ const RetailDashboard: React.FC = () => {
                     name="fiscalRegime"
                     value="GENERAL"
                     checked={fiscalData.fiscalRegime === 'GENERAL'}
-                    onChange={() => setFiscalData({ ...fiscalData, fiscalRegime: 'GENERAL' })}
+                    onChange={() => elegirRegimenFiscal('GENERAL')}
+                    disabled={guardandoRegimen}
                     className="mt-1 h-4 w-4 accent-blue-500"
                   />
                   <span>
@@ -1068,7 +1069,8 @@ const RetailDashboard: React.FC = () => {
                     name="fiscalRegime"
                     value="CUOTA_FIJA"
                     checked={fiscalData.fiscalRegime === 'CUOTA_FIJA'}
-                    onChange={() => setFiscalData({ ...fiscalData, fiscalRegime: 'CUOTA_FIJA' })}
+                    onChange={() => elegirRegimenFiscal('CUOTA_FIJA')}
+                    disabled={guardandoRegimen}
                     className="mt-1 h-4 w-4 accent-blue-500"
                   />
                   <span>

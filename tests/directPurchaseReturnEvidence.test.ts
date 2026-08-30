@@ -29,8 +29,9 @@ describe('evidencia física de devolución en compra directa', () => {
 
         // La identidad se decide por ser compra directa, no por el modo del sidecar
         // ni por requiresBatchTracking; también la necesitan productos sin lote.
+        expect(purchaseRoute).toContain('const isDirectPurchase = !linkedPurchaseOrder');
         const identityClause = preparedBlock.slice(Math.max(0, idPosition - 240), idPosition + 80);
-        expect(identityClause).toContain('!linkedPurchaseOrder');
+        expect(identityClause).toContain('isDirectPurchase');
         expect(identityClause).not.toContain('batchWarehouseLedgerMode');
         expect(identityClause).not.toContain('requiresBatchTracking');
         expect(occurrences(preparedBlock, 'id: crypto.randomUUID()')).toBe(1);

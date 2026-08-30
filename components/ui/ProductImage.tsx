@@ -1,6 +1,9 @@
 import { useState, type ImgHTMLAttributes, type ReactNode } from 'react';
+import {
+    normalizeAllowedProductImageUrl,
+    PRODUCT_IMAGE_ALLOWED_HOST,
+} from '../../utils/productImageUrl';
 
-const CLOUDINARY_HOST = 'res.cloudinary.com';
 const CLOUDINARY_UPLOAD_SEGMENT = '/image/upload/';
 const RESPONSIVE_WIDTHS = [160, 240, 480, 800] as const;
 const CLOUDINARY_SIGNATURE_SEGMENT = /\/s--[^/]+--(?:\/|$)/;
@@ -14,12 +17,15 @@ const productInitials = (name: string): string => {
 
 /**
  * Crea variantes responsivas únicamente para URLs públicas y sin firma de
- * Cloudinary. Una URL de cualquier otro host se entrega intacta: no asumimos
- * que acepte la sintaxis de transformaciones de Cloudinary.
+ * Cloudinary. Cualquier otro host se rechaza en la frontera compartida y no
+ * recibe una solicitud del navegador.
  */
 export const cloudinaryProductSrcSet = (source: string): string | undefined => {
+    const normalizedSource = normalizeAllowedProductImageUrl(source);
+    if (!normalizedSource) return undefined;
+
     try {
-        const baseUrl = new URL(source);
+        const baseUrl = new URL(normalizedSource);
         const markerIndex = baseUrl.pathname.indexOf(CLOUDINARY_UPLOAD_SEGMENT);
         const deliveryPath = markerIndex >= 0
             ? baseUrl.pathname.slice(markerIndex + CLOUDINARY_UPLOAD_SEGMENT.length)
@@ -27,7 +33,7 @@ export const cloudinaryProductSrcSet = (source: string): string | undefined => {
 
         if (
             baseUrl.protocol !== 'https:'
-            || baseUrl.hostname.toLowerCase() !== CLOUDINARY_HOST
+            || baseUrl.hostname.toLowerCase() !== PRODUCT_IMAGE_ALLOWED_HOST
             || markerIndex < 0
             || !deliveryPath
             || CLOUDINARY_SIGNATURE_SEGMENT.test(baseUrl.pathname)
@@ -49,16 +55,12 @@ export const cloudinaryProductSrcSet = (source: string): string | undefined => {
     }
 };
 
-/** Evita requests malformados, contenido mixto y rutas relativas ambiguas. */
+/**
+ * Evita requests malformados, contenido mixto y destinos no autorizados.
+ * Las rutas demo relativas y las fotos legacy externas caen al fallback.
+ */
 export const normalizeProductImageSource = (source?: string | null): string => {
-    if (typeof source !== 'string' || !source.trim()) return '';
-    try {
-        const parsed = new URL(source.trim());
-        if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return '';
-        return parsed.toString();
-    } catch {
-        return '';
-    }
+    return normalizeAllowedProductImageUrl(source) ?? '';
 };
 
 type ImageLoading = NonNullable<ImgHTMLAttributes<HTMLImageElement>['loading']>;

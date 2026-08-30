@@ -8,6 +8,7 @@ import {
 } from '../backend/validation/schemas';
 
 const serverSource = readFileSync(new URL('../backend/server.ts', import.meta.url), 'utf8');
+const prismaSchemaSource = readFileSync(new URL('../backend/prisma/schema.prisma', import.meta.url), 'utf8');
 const routeStart = serverSource.indexOf("app.get('/api/public/catalog/:slug'");
 const routeEnd = serverSource.indexOf('// POST /api/public/orders', routeStart);
 const publicCatalogRoute = serverSource.slice(routeStart, routeEnd);
@@ -26,13 +27,24 @@ describe('contrato de fotos de producto', () => {
         expect(ProductImageUrlSchema.safeParse('http://res.cloudinary.com/foto.jpg').success).toBe(false);
         expect(ProductImageUrlSchema.safeParse('/imagenes/foto.jpg').success).toBe(false);
         expect(ProductImageUrlSchema.safeParse('https://res.cloudinary.com.ejemplo.test/foto.jpg').success).toBe(false);
+        expect(ProductImageUrlSchema.safeParse('https://imagenes.example.test/foto.jpg').success).toBe(false);
         expect(ProductImageUrlSchema.safeParse('https://usuario:clave@res.cloudinary.com/foto.jpg').success).toBe(false);
         expect(ProductImageUrlSchema.safeParse('https://res.cloudinary.com:8443/foto.jpg').success).toBe(false);
+        expect(ProductImageUrlSchema.safeParse('https://res.cloudinary.com./foto.jpg').success).toBe(false);
+
+        expect(ProductImageUrlSchema.parse('https://res.cloudinary.com:443/dex1vy92h/image/upload/foto.jpg'))
+            .toBe('https://res.cloudinary.com/dex1vy92h/image/upload/foto.jpg');
+        expect(ProductImageUrlSchema.safeParse(
+            'https://res.cloudinary.com/dex1vy92h/image/fetch/https://legacy.example.test/foto.jpg',
+        ).success).toBe(false);
+        expect(ProductImageUrlSchema.safeParse(
+            'https://res.cloudinary.com/dex1vy92h/image/upload/u_fetch:aHR0cHM6Ly9ldmls/foto.jpg',
+        ).success).toBe(false);
     });
 
     it('aplica la frontera tanto al alta como a la edición', () => {
         const base = { name: 'Martillo', sku: 'MAR-1', price: '120' };
-        expect(CreateProductSchema.safeParse({ ...base, imageUrl: 'https://res.cloudinary.com/demo/image/upload/martillo.jpg' }).success).toBe(true);
+        expect(CreateProductSchema.safeParse({ ...base, imageUrl: 'https://res.cloudinary.com/dex1vy92h/image/upload/martillo.jpg' }).success).toBe(true);
         expect(CreateProductSchema.safeParse({ ...base, imageUrl: 'https://ejemplo.test/martillo.jpg' }).success).toBe(false);
         expect(UpdateProductSchema.safeParse({ imageUrl: 'https://ejemplo.test/martillo.jpg' }).success).toBe(false);
         expect(UpdateProductSchema.parse({ imageUrl: '' }).imageUrl).toBeNull();
@@ -87,6 +99,8 @@ describe('ruta pública paginada', () => {
         expect(publicCatalogRoute).toContain('take: pageSize');
         expect(publicCatalogRoute).toContain("orderBy: [{ name: 'asc' }, { id: 'asc' }]");
         expect(publicCatalogRoute).toContain('prisma.product.count({ where })');
+        expect(prismaSchemaSource).toContain('@@index([tenantId, isPublished, name])');
+        expect(prismaSchemaSource).toContain('@@index([tenantId, isPublished, category, name])');
     });
 
     it('devuelve el contrato público sin campos internos', () => {

@@ -123,6 +123,13 @@ const dependencies = (overrides: Record<string, unknown> = {}) => ({
         data: [returnDto()],
         pageInfo: { nextCursor: null },
     }),
+    getReturnEligibleLines: vi.fn().mockResolvedValue({
+        purchaseOrderId: 'po-1',
+        supplierId: 'supplier-1',
+        batchLedgerMode: 'ENFORCED',
+        truncated: false,
+        eligibleLines: [],
+    }),
     createReturn: vi.fn().mockResolvedValue({ supplierReturn: returnDto(), replay: false }),
     listCreditNotes: vi.fn().mockResolvedValue({
         data: [creditNoteDto()],
@@ -210,8 +217,20 @@ describe('supplier returns and credit notes HTTP contract', () => {
             role: 'BODEGUERO',
             supplierId: 'supplier-1',
         }, { purchaseOrderId: 'po-1', limit: 25 });
+        expect(service.getReturnEligibleLines).toHaveBeenCalledWith({
+            tenantId: 'tenant-auth',
+            userId: 'user-auth',
+            role: 'BODEGUERO',
+            supplierId: 'supplier-1',
+        }, { purchaseOrderId: 'po-1', limit: 25 });
         expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-            data: [expect.objectContaining({ returnNumber: 'DEV-000001' })],
+            data: expect.objectContaining({
+                returns: [expect.objectContaining({ returnNumber: 'DEV-000001' })],
+                eligibleLines: expect.objectContaining({
+                    purchaseOrderId: 'po-1',
+                    eligibleLines: [],
+                }),
+            }),
         }));
     });
 

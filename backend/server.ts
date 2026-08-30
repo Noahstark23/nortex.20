@@ -9176,8 +9176,14 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
             // resuelve una sola vez por documento y solo cuando realmente hay una
             // entrada directa con lote; las compras sin lote y las facturas de OC no
             // pagan una lectura ni materializan filas del sidecar.
-            const batchWarehouseLedgerMode = !linkedPurchaseOrder && preparedItems.some((item) =>
-                productsById.get(item.productId)?.requiresBatchTracking === true)
+            // La identidad de PurchaseItem responde al tipo de documento, no al
+            // sidecar: toda compra directa necesita una línea retornable aunque el
+            // producto no maneje lotes o el ledger esté OFF. La lectura del modo sí
+            // queda limitada al subconjunto que realmente puede usar el sidecar.
+            const isDirectPurchase = !linkedPurchaseOrder;
+            const hasTrackedDirectPurchaseItem = isDirectPurchase && preparedItems.some((item) =>
+                productsById.get(item.productId)?.requiresBatchTracking === true);
+            const batchWarehouseLedgerMode = hasTrackedDirectPurchaseItem
                 ? await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!)
                 : null;
             const processedItems = preparedItems.map((item, index) => {
@@ -9204,7 +9210,7 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                     // Toda línea directa recibe identidad server-side antes de los
                     // efectos físicos. Así incluso SKUs duplicados conservan una
                     // evidencia de bodega/lote/costo inequívoca para devoluciones.
-                    ...(!linkedPurchaseOrder ? { id: crypto.randomUUID() } : {}),
+                    ...(isDirectPurchase ? { id: crypto.randomUUID() } : {}),
                     averageUnitCost: inventoryLineCost.div(baseQuantity).toString(),
                     totalCost: lineMoney.lineNet.toFixed(2),
                     taxAmountExact: lineMoney.lineTax.toFixed(2),
@@ -14448,6 +14454,28 @@ app.post('/api/public/orders', orderLimiter, async (req: any, res: any) => {
                 })),
                 productsDB,
             );
+            const productsById = new Map(productsDB.map((product) => [product.id, product]));
+            const confirmationItems = resolvedItems.map((item) => {
+                const product = productsById.get(item.productId);
+                const presentationUnit = item.presentationAtSale === 'PACK'
+                    ? product?.packUnit?.trim()
+                    : item.unit.trim();
+                if (!presentationUnit) {
+                    throw new PublicOrderItemError(
+                        'INVALID_PRODUCT_CONFIGURATION',
+                        `${item.productName} no tiene una unidad de presentación válida`,
+                        409,
+                    );
+                }
+                return {
+                    productId: item.productId,
+                    name: item.productName,
+                    quantity: item.presentationQuantityAtSale.toFixed(),
+                    presentation: item.presentationAtSale,
+                    unit: presentationUnit,
+                    subtotal: item.subtotal.toFixed(2),
+                };
+            });
             const total = resolvedItems.reduce(
                 (sum, item) => sum.plus(item.subtotal),
                 new Decimal(0),
@@ -14474,13 +14502,16 @@ app.post('/api/public/orders', orderLimiter, async (req: any, res: any) => {
                     })),
                 },
             });
-            return { order, total };
+            return { order, total, confirmationItems };
         });
 
         res.json({
             message: '¡Pedido enviado! El negocio lo revisará pronto.',
             orderId: created.order.id,
             total: created.total.toNumber(),
+            // El cliente confirma/manda por WhatsApp exclusivamente este
+            // snapshot ya validado; nunca reusa nombres o precios cacheados.
+            items: created.confirmationItems,
         });
 
     } catch (error) {
