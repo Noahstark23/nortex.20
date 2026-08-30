@@ -525,6 +525,59 @@ type OfflineShiftIdentity = {
 };
 
 /**
+ * Orden global de las mutaciones que comparten inventario y gaveta:
+ * Product -> Shift. El cierre solo toma Shift; una venta que pierda esa carrera
+ * falla al validar OPEN y revierte sus locks de producto sin quedar fuera del Z.
+ */
+const lockSaleProductsInOrder = async (
+    tx: PrismaTx,
+    tenantId: string,
+    productIds: readonly string[],
+): Promise<void> => {
+    const orderedIds = [...new Set(productIds)].sort();
+    for (const productId of orderedIds) {
+        const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT \`id\`
+              FROM \`Product\`
+             WHERE \`id\` = ${productId}
+               AND \`tenantId\` = ${tenantId}
+             LIMIT 1
+             FOR UPDATE
+        `);
+        if (rows.length !== 1) {
+            throw new SaleError('PRODUCT_NOT_FOUND', 404, 'Producto no encontrado');
+        }
+    }
+};
+
+/**
+ * Serializa venta POS y cierre sobre la misma fila de Shift. Si la venta toma
+ * el lock primero, el cierre incluirá esa factura; si el cierre gana, la venta
+ * verá el turno CLOSED y no podrá aparecer después del Reporte Z.
+ */
+const lockOpenOwnedPosShift = async (
+    tx: PrismaTx,
+    tenantId: string,
+    userId: string,
+    shiftId: string,
+): Promise<OfflineShiftIdentity> => {
+    const rows = await tx.$queryRaw<OfflineShiftIdentity[]>(Prisma.sql`
+        SELECT \`id\`, \`employeeId\`
+          FROM \`Shift\`
+         WHERE \`id\` = ${shiftId}
+           AND \`tenantId\` = ${tenantId}
+           AND \`userId\` = ${userId}
+           AND \`status\` = 'OPEN'
+         LIMIT 1
+         FOR UPDATE
+    `);
+    if (rows.length !== 1) {
+        throw new SaleError('NO_SHIFT', 400, 'CAJA CERRADA: El turno no está abierto');
+    }
+    return rows[0];
+};
+
+/**
  * Un replay puede llegar después del cierre, por eso no exige status OPEN.
  * Sí exige que el turno exista hoy bajo el mismo tenant y usuario autenticado:
  * Shift.userId puede cambiar mediante el traspaso explícito de caja y no es
@@ -701,17 +754,16 @@ export async function executeSaleWithResult(
 
     try {
         const sale = await prisma.$transaction(async (tx: PrismaTx) => {
+            await lockSaleProductsInOrder(
+                tx,
+                tenantId,
+                input.items.map((item) => item.id),
+            );
             if (source === 'POS') {
                 if (!shiftId) {
                     throw new SaleError('NO_SHIFT', 400, 'CAJA CERRADA: No hay turno abierto');
                 }
-                const shift = await tx.shift.findFirst({
-                    where: { id: shiftId, tenantId, status: 'OPEN' },
-                    select: { id: true },
-                });
-                if (!shift) {
-                    throw new SaleError('NO_SHIFT', 400, 'CAJA CERRADA: El turno no esta abierto');
-                }
+                await lockOpenOwnedPosShift(tx, tenantId, userId, shiftId);
             } else if (offlineSync) {
                 // Revalidar dentro de la transacción cierra la carrera con
                 // /api/shifts/:id/tomar entre el guard previo y la escritura.

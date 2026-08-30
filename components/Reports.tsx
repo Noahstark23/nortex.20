@@ -1,19 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { formatMoney } from '../utils/money';
 import { chartColors, gridProps, axisProps, tooltipProps } from '../utils/chartTheme';
 import { currentSessionRole } from '../utils/roleCapabilities';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { ShieldCheck, TrendingUp, TrendingDown, Package, DollarSign, Receipt, Warehouse, FileSpreadsheet, Loader2, Calendar, AlertTriangle, RefreshCw, Landmark, Scale, Copy, CheckCircle, Building2, Printer, Clock, Users, BookOpen, BarChart3, ArrowRight, Download } from 'lucide-react';
-import { ShiftReportTicket, type ShiftReportData } from './ShiftReportTicket';
 import { formatQuantityValue } from '../utils/quantity';
-import { buildMeasuredReportExportRows } from '../utils/measuredReportExport';
 import { ToastViewport, useToast } from './ui/Toast';
-import * as XLSX from 'xlsx';
+import SalesReportPanel, { type SalesReportData } from './reports/SalesReportPanel';
 import {
     authenticatedRequestErrorMessage,
     downloadAuthenticatedFile,
     downloadBlob,
     fetchAuthenticatedJson,
+    openAuthenticatedPreview,
 } from '../utils/authenticatedDownload';
 
 // Helpers
@@ -26,13 +25,27 @@ const IVA_RATE = 0.15;
 // formato inconsistente, lo lee como que el sistema calcula mal.
 const formatC = (n: number) => formatMoney(n);
 
-const getDefaultDates = () => {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(start.getDate() - 30);
+const MANAGUA_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA-u-ca-gregory-nu-latn', {
+    timeZone: 'America/Managua',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+});
+
+const managuaCivilDate = (date: Date) => {
+    const parts = Object.fromEntries(
+        MANAGUA_DATE_FORMATTER.formatToParts(date).map((part) => [part.type, part.value]),
+    );
+    return `${parts.year}-${parts.month}-${parts.day}`;
+};
+
+const getDefaultDates = (now = new Date()) => {
+    const endDate = managuaCivilDate(now);
+    const endOrdinal = Date.parse(`${endDate}T00:00:00.000Z`);
+    const start = new Date(endOrdinal - (30 * 86_400_000));
     return {
         startDate: start.toISOString().split('T')[0],
-        endDate: end.toISOString().split('T')[0],
+        endDate,
     };
 };
 
@@ -49,26 +62,6 @@ const fiscalPeriodFromDate = (isoDate: string) => {
 };
 
 const FISCAL_REPORT_ROLES = new Set(['OWNER', 'ADMIN', 'ACCOUNTANT']);
-
-interface SalesReport {
-    totalVentas: number;
-    ventasNetas: number;
-    ivaRecaudado: number;
-    totalCOGS: number;
-    utilidadBruta: number;
-    totalTransacciones: number;
-    chartData: { name: string; ventas: number; gastos: number }[];
-    quantityBreakdown: {
-        productId: string;
-        productName: string;
-        saleMode: 'COUNTED' | 'MEASURED';
-        presentation: 'BASE' | 'PACK';
-        baseUnit: string;
-        displayUnit: string;
-        usedFallbackUnit: boolean;
-        quantity: string;
-    }[];
-}
 
 interface InventoryReport {
     inventoryValue: number;
@@ -127,7 +120,9 @@ const Reports: React.FC = () => {
     const [sellersData, setSellersData] = useState<{ alcance: string; sellers: FilaVendedor[] } | null>(null);
     const [sellersLoading, setSellersLoading] = useState(false);
 
-    const [salesData, setSalesData] = useState<SalesReport | null>(null);
+    const [salesData, setSalesData] = useState<SalesReportData | null>(null);
+    const [salesError, setSalesError] = useState<string | null>(null);
+    const salesRequestIdRef = useRef(0);
     const [inventoryData, setInventoryData] = useState<InventoryReport | null>(null);
     const [expensesData, setExpensesData] = useState<ExpensesReport | null>(null);
 
@@ -141,7 +136,7 @@ const Reports: React.FC = () => {
     // Cajas (Shift History) tab state
     const [shiftHistory, setShiftHistory] = useState<any[]>([]);
     const [shiftHistoryLoading, setShiftHistoryLoading] = useState(false);
-    const [zReportData, setZReportData] = useState<ShiftReportData | null>(null);
+    const [zReportLoadingId, setZReportLoadingId] = useState<string | null>(null);
 
     // Contabilidad tab state
     const [balanceGeneral, setBalanceGeneral] = useState<any>(null);
@@ -207,26 +202,60 @@ const Reports: React.FC = () => {
     };
 
     const fetchReports = useCallback(async (isRefresh = false) => {
-        if (isRefresh) setRefreshing(true); else setLoading(true);
+        const requestId = ++salesRequestIdRef.current;
+        if (isRefresh) {
+            setRefreshing(true);
+        } else {
+            setLoading(true);
+            setSalesData(null);
+        }
         const params = `startDate=${dates.startDate}&endDate=${dates.endDate}`;
+        setSalesError(null);
 
         try {
-            const [salesRes, inventoryRes, expensesRes] = await Promise.all([
-                fetch(`/api/reports/sales?${params}`, { headers }),
-                fetch('/api/reports/inventory', { headers }),
-                fetch(`/api/reports/expenses?${params}`, { headers }),
+            const [salesResult, inventoryResult, expensesResult] = await Promise.allSettled([
+                fetchAuthenticatedJson<SalesReportData>(`/api/reports/sales?${params}`, { token }),
+                fetch('/api/reports/inventory', { headers }).then(async (response) => {
+                    if (!response.ok) throw new Error(`Inventario respondió ${response.status}`);
+                    return response.json() as Promise<InventoryReport>;
+                }),
+                fetch(`/api/reports/expenses?${params}`, { headers }).then(async (response) => {
+                    if (!response.ok) throw new Error(`Gastos respondió ${response.status}`);
+                    return response.json() as Promise<ExpensesReport>;
+                }),
             ]);
 
-            if (salesRes.ok) setSalesData(await salesRes.json());
-            if (inventoryRes.ok) setInventoryData(await inventoryRes.json());
-            if (expensesRes.ok) setExpensesData(await expensesRes.json());
+            // Si el usuario cambió las fechas mientras cargábamos, la respuesta
+            // anterior no puede pisar el período más reciente.
+            if (requestId !== salesRequestIdRef.current) return;
+
+            if (salesResult.status === 'fulfilled') {
+                setSalesData(salesResult.value);
+            } else {
+                setSalesError(authenticatedRequestErrorMessage(salesResult.reason));
+            }
+
+            if (inventoryResult.status === 'fulfilled') {
+                setInventoryData(inventoryResult.value);
+            } else {
+                console.error('Error cargando inventario para reportes:', inventoryResult.reason);
+            }
+            if (expensesResult.status === 'fulfilled') {
+                setExpensesData(expensesResult.value);
+            } else {
+                console.error('Error cargando gastos para reportes:', expensesResult.reason);
+            }
         } catch (e) {
+            if (requestId !== salesRequestIdRef.current) return;
             console.error('Error cargando reportes:', e);
+            setSalesError('No pudimos conectar con el servidor. Revisá tu conexión e intentá nuevamente.');
         } finally {
-            setLoading(false);
-            setRefreshing(false);
+            if (requestId === salesRequestIdRef.current) {
+                setLoading(false);
+                setRefreshing(false);
+            }
         }
-    }, [dates]);
+    }, [dates, token]);
 
     useEffect(() => {
         fetchReports();
@@ -272,31 +301,25 @@ const Reports: React.FC = () => {
         finally { setAccountingLoading(false); }
     }, []);
 
-    const getTenantName = () => {
+    const handleReprintZ = async (shiftId: string) => {
+        if (zReportLoadingId) return;
+        setZReportLoadingId(shiftId);
         try {
-            const t = localStorage.getItem('nortex_tenant');
-            return t ? JSON.parse(t).businessName : 'Mi Negocio';
-        } catch { return 'Mi Negocio'; }
-    };
-
-    const handleReprintZ = (shift: any) => {
-        const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-        setZReportData({
-            businessName: getTenantName(),
-            cashierName: shift.employee ? `${shift.employee.firstName} ${shift.employee.lastName}` : 'Sin asignar',
-            startTime: formatDate(shift.startTime),
-            endTime: formatDate(shift.endTime),
-            initialCash: shift.initialCash,
-            cashTotal: shift.cashTotal,
-            cardTotal: shift.cardTotal,
-            creditTotal: shift.creditTotal,
-            grandTotal: shift.grandTotal,
-            systemExpectedCash: shift.systemExpectedCash ?? 0,
-            finalCashDeclared: shift.finalCashDeclared ?? 0,
-            difference: shift.difference ?? 0,
-            totalSales: shift.totalSales,
-        });
-        setTimeout(() => window.print(), 200);
+            await openAuthenticatedPreview(`/api/reports/shifts/${encodeURIComponent(shiftId)}/document`, { token });
+            showToast({
+                tone: 'success',
+                title: 'Reporte Z listo',
+                message: 'Abrimos el cierre completo en una vista segura para imprimir.',
+            });
+        } catch (error) {
+            showToast({
+                tone: 'error',
+                title: 'No se pudo abrir el Reporte Z',
+                message: authenticatedRequestErrorMessage(error),
+            });
+        } finally {
+            setZReportLoadingId(null);
+        }
     };
 
     // Computed
@@ -304,37 +327,6 @@ const Reports: React.FC = () => {
     const margen = salesData && salesData.ventasNetas > 0
         ? (utilidadNeta / salesData.ventasNetas) * 100
         : 0;
-
-    const handleExportMeasuredBreakdown = () => {
-        if (!salesData?.quantityBreakdown.length) {
-            showToast({
-                tone: 'warning',
-                title: 'No hay cantidades para exportar',
-                message: 'Probá con un rango de fechas que tenga ventas.',
-            });
-            return;
-        }
-
-        const rows = buildMeasuredReportExportRows(salesData.quantityBreakdown);
-        const worksheet = XLSX.utils.json_to_sheet(rows, {
-            header: ['Producto', 'Unidad histórica', 'Modo', 'Presentación', 'Cantidad exacta'],
-        });
-        worksheet['!cols'] = [
-            { wch: 36 },
-            { wch: 28 },
-            { wch: 14 },
-            { wch: 16 },
-            { wch: 20 },
-        ];
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, 'Cantidades vendidas');
-        XLSX.writeFile(workbook, `Cantidades_vendidas_${dates.startDate}_${dates.endDate}.xlsx`);
-        showToast({
-            tone: 'success',
-            title: 'Excel generado',
-            message: 'La descarga de cantidades vendidas ya salió del navegador.',
-        });
-    };
 
     // Tax report generation
     const handleGenerateTaxReport = async () => {
@@ -442,6 +434,7 @@ const Reports: React.FC = () => {
                             <Calendar size={16} className="text-slate-400" />
                             <input
                                 type="date"
+                                aria-label="Fecha inicial del reporte de ventas"
                                 className="text-sm text-slate-200 outline-none bg-transparent"
                                 value={dates.startDate}
                                 onChange={e => setDates(prev => ({ ...prev, startDate: e.target.value }))}
@@ -449,12 +442,15 @@ const Reports: React.FC = () => {
                             <span className="text-slate-400 text-xs">a</span>
                             <input
                                 type="date"
+                                aria-label="Fecha final del reporte de ventas"
                                 className="text-sm text-slate-200 outline-none bg-transparent"
                                 value={dates.endDate}
                                 onChange={e => setDates(prev => ({ ...prev, endDate: e.target.value }))}
                             />
                         </div>
                         <button
+                            type="button"
+                            aria-label="Actualizar reporte de ventas"
                             onClick={() => fetchReports(true)}
                             disabled={refreshing}
                             className="p-2 bg-surface-900 border border-white/[0.06] rounded-lg hover:bg-surface-800/40 shadow-sm text-slate-300 transition-colors"
@@ -462,17 +458,6 @@ const Reports: React.FC = () => {
                         >
                             <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
                         </button>
-                        <button
-                            type="button"
-                            onClick={handleExportMeasuredBreakdown}
-                            disabled={!salesData?.quantityBreakdown.length}
-                            className="flex items-center gap-2 px-4 py-2 bg-nortex-900 text-white font-bold rounded-lg hover:bg-nortex-800 shadow-lg transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed"
-                        >
-                            <FileSpreadsheet size={16} /> Descargar cantidades (.xlsx)
-                        </button>
-                        <p className="text-xs text-slate-500">
-                            Conserva producto, unidad histórica, modo, presentación y cantidad decimal exacta.
-                        </p>
                         {canAccessFiscalDocuments && (
                             <button
                                 type="button"
@@ -489,6 +474,17 @@ const Reports: React.FC = () => {
                             </button>
                         )}
                     </div>
+
+                    <SalesReportPanel
+                        data={salesData}
+                        startDate={dates.startDate}
+                        endDate={dates.endDate}
+                        token={token}
+                        loading={loading || refreshing}
+                        error={salesError}
+                        onRetry={() => fetchReports(true)}
+                        showToast={showToast}
+                    />
 
                     {/* KPI CARDS */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
@@ -633,7 +629,7 @@ const Reports: React.FC = () => {
                     </div>
 
                     {/* DESGLOSE FISCAL */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                    <div className="grid grid-cols-1 gap-6 mb-8">
                         {/* Fiscal Summary Table */}
                         <div className="bg-surface-900 p-6 rounded-xl border border-white/[0.06] shadow-sm">
                             <h3 className="font-bold text-slate-100 mb-4 flex items-center gap-2">
@@ -645,25 +641,37 @@ const Reports: React.FC = () => {
                                         <tr className="hover:bg-surface-800/40">
                                             <td className="px-4 py-3 text-slate-300">Ventas Brutas (con IVA)</td>
                                             <td className="px-4 py-3 text-right font-mono font-bold text-slate-100">
-                                                {formatC(salesData?.totalVentas ?? 0)}
+                                                {formatC(Number(salesData?.summary?.grossSales ?? salesData?.totalVentas ?? 0))}
+                                            </td>
+                                        </tr>
+                                        <tr className="hover:bg-surface-800/40">
+                                            <td className="px-4 py-3 text-slate-300">(-) Devoluciones</td>
+                                            <td className="px-4 py-3 text-right font-mono font-bold text-amber-400">
+                                                -{formatC(Number(salesData?.summary?.returnsTotal ?? 0))}
+                                            </td>
+                                        </tr>
+                                        <tr className="hover:bg-surface-800/40">
+                                            <td className="px-4 py-3 font-bold text-slate-200">= Ventas después de devoluciones</td>
+                                            <td className="px-4 py-3 text-right font-mono font-bold text-slate-100">
+                                                {formatC(Number(salesData?.summary?.netSales ?? salesData?.totalVentas ?? 0))}
                                             </td>
                                         </tr>
                                         <tr className="hover:bg-surface-800/40">
                                             <td className="px-4 py-3 text-slate-300">(-) IVA 15%</td>
                                             <td className="px-4 py-3 text-right font-mono font-bold text-amber-400">
-                                                -{formatC(salesData?.ivaRecaudado ?? 0)}
+                                                -{formatC(Number(salesData?.summary?.vatCollected ?? salesData?.ivaRecaudado ?? 0))}
                                             </td>
                                         </tr>
                                         <tr className="hover:bg-surface-800/40 bg-blue-500/10">
-                                            <td className="px-4 py-3 font-bold text-blue-400">= Ventas Netas</td>
+                                            <td className="px-4 py-3 font-bold text-blue-400">= Ingreso neto sin IVA</td>
                                             <td className="px-4 py-3 text-right font-mono font-bold text-blue-400">
-                                                {formatC(salesData?.ventasNetas ?? 0)}
+                                                {formatC(Number(salesData?.summary?.netRevenue ?? salesData?.ventasNetas ?? 0))}
                                             </td>
                                         </tr>
                                         <tr className="hover:bg-surface-800/40">
                                             <td className="px-4 py-3 text-slate-300">(-) Costo de Ventas (COGS)</td>
                                             <td className="px-4 py-3 text-right font-mono font-bold text-slate-300">
-                                                -{formatC(salesData?.totalCOGS ?? 0)}
+                                                -{formatC(Number(salesData?.summary?.cogs ?? salesData?.totalCOGS ?? 0))}
                                             </td>
                                         </tr>
                                         <tr className="hover:bg-surface-800/40">
@@ -685,40 +693,6 @@ const Reports: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* Cantidades por producto y unidad histórica */}
-                        <div className="bg-surface-900 p-6 rounded-xl border border-white/[0.06] shadow-sm">
-                            <h3 className="font-bold text-slate-100 mb-4 flex items-center gap-2">
-                                <BarChart3 size={18} className="text-cyan-400" /> Cantidades vendidas
-                            </h3>
-                            <div className="space-y-3 max-h-72 overflow-y-auto custom-scrollbar pr-1">
-                                {salesData && salesData.quantityBreakdown.length > 0 ? (
-                                    salesData.quantityBreakdown.map((row) => (
-                                        <div key={`${row.productId}-${row.presentation}-${row.displayUnit}`} className="rounded-lg border border-white/[0.06] bg-surface-800/40 p-3">
-                                            <div className="flex items-start justify-between gap-3">
-                                                <div className="min-w-0">
-                                                    <div className="font-bold text-slate-100 text-sm">{row.productName}</div>
-                                                    <div className="mt-1 flex flex-wrap gap-2 text-[10px]">
-                                                        <span className="rounded bg-cyan-500/10 px-2 py-0.5 font-bold text-cyan-300">{row.displayUnit}</span>
-                                                        <span className={`rounded px-2 py-0.5 font-bold ${row.presentation === 'PACK' ? 'bg-violet-500/10 text-violet-300' : 'bg-slate-500/10 text-slate-300'}`}>
-                                                            {row.presentation === 'PACK' ? 'EMPAQUE' : 'BASE'}
-                                                        </span>
-                                                        <span className="rounded bg-white/[0.06] px-2 py-0.5 font-bold text-slate-300">{row.saleMode}</span>
-                                                    </div>
-                                                </div>
-                                                <div className="text-right">
-                                                    <div className="font-mono text-lg font-bold text-slate-100">{formatQuantityValue(row.quantity)}</div>
-                                                    <div className="text-[10px] text-slate-500">{row.usedFallbackUnit ? 'unidad histórica faltante' : `base ${row.baseUnit}`}</div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))
-                                ) : (
-                                    <div className="text-center py-8 text-slate-400 text-sm">
-                                        Sin cantidades vendidas para desglosar en este período.
-                                    </div>
-                                )}
-                            </div>
-                        </div>
                     </div>
 
                     {/* Low Stock Alert */}
@@ -1124,11 +1098,16 @@ const Reports: React.FC = () => {
                                                     </td>
                                                     <td className="px-4 py-3 text-center">
                                                         <button
-                                                            onClick={() => handleReprintZ(s)}
-                                                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-nortex-900 text-white text-xs font-bold rounded-lg hover:bg-nortex-800 transition-colors shadow-sm"
+                                                            type="button"
+                                                            onClick={() => handleReprintZ(s.id)}
+                                                            disabled={zReportLoadingId !== null}
+                                                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-nortex-900 text-white text-xs font-bold rounded-lg hover:bg-nortex-800 transition-colors shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
                                                             title="Reimprimir Reporte Z"
                                                         >
-                                                            <Printer size={14} /> Reporte Z
+                                                            {zReportLoadingId === s.id
+                                                                ? <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                                                                : <Printer size={14} aria-hidden="true" />}
+                                                            {zReportLoadingId === s.id ? 'Abriendo…' : 'Reporte Z'}
                                                         </button>
                                                     </td>
                                                 </tr>
@@ -1420,8 +1399,6 @@ const Reports: React.FC = () => {
                 </div>
             )}
 
-            {/* HIDDEN: Shift Report Ticket for printing */}
-            <ShiftReportTicket data={zReportData} />
         </div>
     );
 };

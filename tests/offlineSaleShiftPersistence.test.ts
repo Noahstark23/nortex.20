@@ -171,7 +171,10 @@ describe('identidad autoritativa al persistir replay offline', () => {
                 employeeId: 'employee-authoritative',
             }),
         }));
-        const lockQuery = queryRaw.mock.calls[0]?.[0];
+        const lockQuery = queryRaw.mock.calls
+            .map(([query]) => query)
+            .find((query) => query.sql.includes('FROM `Shift`'));
+        expect(lockQuery).toBeTruthy();
         expect(lockQuery.values).toEqual(['shift-a', 'tenant-a', 'user-a']);
         expect(lockQuery.sql).toContain('FOR UPDATE');
     });

@@ -275,11 +275,11 @@ ${typeof data.change === 'number' && data.change > 0 ? `<div style="font-size:10
 export function printTicket(data: InvoiceData): boolean {
     const prefersPopup = detectThermalTicketPopupMode();
     if (prefersPopup) {
-        return openPrintWindow(buildTicket80mmHtml(data), { width: 420, height: 720, thermal: true })
+        return openPrintWindow(buildTicket80mmHtml(data), { width: 420, height: 720, thermal: true, alertWhenBlocked: false })
             || printTicketFromCurrentDocument(data);
     }
     return printTicketFromCurrentDocument(data)
-        || openPrintWindow(buildTicket80mmHtml(data), { width: 420, height: 720, thermal: true });
+        || openPrintWindow(buildTicket80mmHtml(data), { width: 420, height: 720, thermal: true, alertWhenBlocked: false });
 }
 
 type TicketPrintEnvironment = {
@@ -478,12 +478,13 @@ type OpenPrintWindowOptions = {
     width: number;
     height: number;
     thermal: boolean;
+    alertWhenBlocked?: boolean;
 };
 
 function openPrintWindow(html: string, options: OpenPrintWindowOptions): boolean {
     const printWindow = window.open('', '_blank', `width=${options.width},height=${options.height}`);
     if (!printWindow) {
-        if (alertWhenBlocked) alert('Permite ventanas emergentes para imprimir.');
+        if (options.alertWhenBlocked ?? true) alert('Permite ventanas emergentes para imprimir.');
         return false;
     }
     let printScheduled = false;

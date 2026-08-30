@@ -97,7 +97,7 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
     const panelId = `${catalogId}-products`;
     const activeCategoryIndex = categories.indexOf(selectedCategory);
     const isSearching = searchTerm.trim().length > 0;
-    const ocultos = Math.max(0, total - products.length);
+    const ocultos = Math.max(0, totalProducts - products.length);
 
     const handleCategoryKeyDown = (
         event: KeyboardEvent<HTMLButtonElement>,

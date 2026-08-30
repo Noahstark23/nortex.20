@@ -53,6 +53,51 @@ export function includedVatFromGross(taxableGross: Decimal.Value): Decimal {
     return gross.minus(net).toDecimalPlaces(4);
 }
 
+export interface HistoricalSaleFiscalSnapshot {
+    total: Decimal.Value;
+    exemptTotal?: Decimal.Value | null;
+    fiscalRegimeAtSale?: unknown;
+    vatAmountAtSale?: Decimal.Value | null;
+}
+
+/**
+ * IVA efectivamente trasladado por una venta histórica.
+ *
+ * El snapshot guardado al facturar manda sobre la configuración actual. Las
+ * filas legacy sin snapshot conservan el cálculo histórico de IVA incluido,
+ * acotando la porción exonerada a [0, total]. CUOTA_FIJA nunca traslada IVA,
+ * incluso si una fila corrupta trae un snapshot distinto de cero.
+ */
+export function vatCollectedFromSale(sale: HistoricalSaleFiscalSnapshot): Decimal {
+    const total = new Decimal(sale.total).toDecimalPlaces(4);
+    if (!total.isFinite() || total.isNegative()) {
+        throw new Error('El total de venta debe ser finito y no negativo');
+    }
+    if (normalizeFiscalRegime(sale.fiscalRegimeAtSale) === FISCAL_REGIME_CUOTA_FIJA) {
+        return new Decimal(0);
+    }
+
+    if (sale.vatAmountAtSale != null) {
+        const snapshot = new Decimal(sale.vatAmountAtSale).toDecimalPlaces(4);
+        const rawExempt = sale.exemptTotal == null ? new Decimal(0) : new Decimal(sale.exemptTotal);
+        if (!rawExempt.isFinite()) {
+            throw new Error('El total exonerado debe ser finito');
+        }
+        const taxableGross = total.minus(Decimal.min(Decimal.max(rawExempt, 0), total));
+        if (!snapshot.isFinite() || snapshot.isNegative() || snapshot.greaterThan(taxableGross)) {
+            throw new Error('El IVA guardado debe estar entre cero y el total gravado de la venta');
+        }
+        return snapshot;
+    }
+
+    const rawExempt = sale.exemptTotal == null ? new Decimal(0) : new Decimal(sale.exemptTotal);
+    if (!rawExempt.isFinite()) {
+        throw new Error('El total exonerado debe ser finito');
+    }
+    const exempt = Decimal.min(Decimal.max(rawExempt, 0), total);
+    return includedVatFromGross(total.minus(exempt));
+}
+
 /**
  * Aplica el régimen a un desglose GENERAL ya calculado por el motor fiscal.
  *

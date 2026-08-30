@@ -218,7 +218,7 @@ describe('plantilla del ticket 80 mm', () => {
         expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     });
 
-    it('abre primero un documento aislado completo, calcula el papel y no imprime la pagina del POS', () => {
+    it('abre un ticket aislado si no existe uno en la pagina, calcula el papel y no imprime el POS', () => {
         vi.useFakeTimers();
         const parentPrint = vi.fn();
         const popupPrint = vi.fn();
@@ -251,7 +251,7 @@ describe('plantilla del ticket 80 mm', () => {
         vi.stubGlobal('document', { getElementById: vi.fn() });
 
         expect(printTicket(invoice)).toBe(true);
-        expect(open).toHaveBeenCalledWith('', '_blank', 'width=800,height=600');
+        expect(open).toHaveBeenCalledWith('', '_blank', 'width=420,height=720');
         expect(popupDocument.open).toHaveBeenCalledOnce();
         expect(popupDocument.write).toHaveBeenCalledOnce();
         const html = popupDocument.write.mock.calls[0][0];
@@ -269,7 +269,7 @@ describe('plantilla del ticket 80 mm', () => {
         expect(parentPrint).not.toHaveBeenCalled();
     });
 
-    it('cae silenciosamente a la pagina actual si el popup esta bloqueado', () => {
+    it('imprime primero el ticket de la pagina actual sin intentar abrir un popup', () => {
         const parentPrint = vi.fn();
         const addEventListener = vi.fn();
         const open = vi.fn(() => null);
@@ -294,7 +294,7 @@ describe('plantilla del ticket 80 mm', () => {
         vi.stubGlobal('alert', blockedAlert);
 
         expect(printTicket(invoice)).toBe(true);
-        expect(open).toHaveBeenCalledOnce();
+        expect(open).not.toHaveBeenCalled();
         expect(blockedAlert).not.toHaveBeenCalled();
         expect(appendChild).toHaveBeenCalledWith(pageStyle);
         expect(pageStyle.textContent).toBe('@media print { @page { size: 80mm 111mm; margin: 0; } }');

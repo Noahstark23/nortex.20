@@ -24,6 +24,7 @@ const completedSale: POSGuidedSaleSnapshot = {
     total: '100',
     cashReceived: '120',
     change: '20',
+    receiptFormat: 'TICKET_80MM',
 };
 
 const makeProps = (overrides: Partial<POSGuidedShellProps> = {}): POSGuidedShellProps => ({

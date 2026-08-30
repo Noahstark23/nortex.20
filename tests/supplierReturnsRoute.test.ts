@@ -76,6 +76,14 @@ const returnDto = () => ({
     }],
 });
 
+const returnEligibilityDto = () => ({
+    purchaseOrderId: 'po-1',
+    supplierId: 'supplier-1',
+    batchLedgerMode: 'ENFORCED',
+    truncated: false,
+    eligibleLines: [],
+});
+
 const creditNoteDto = () => ({
     id: 'credit-note-1',
     supplierId: 'supplier-1',
@@ -124,6 +132,7 @@ const dependencies = (overrides: Record<string, unknown> = {}) => ({
         pageInfo: { nextCursor: null },
     }),
     createReturn: vi.fn().mockResolvedValue({ supplierReturn: returnDto(), replay: false }),
+    getReturnEligibleLines: vi.fn().mockResolvedValue(returnEligibilityDto()),
     listCreditNotes: vi.fn().mockResolvedValue({
         data: [creditNoteDto()],
         pageInfo: { nextCursor: null },
@@ -210,8 +219,20 @@ describe('supplier returns and credit notes HTTP contract', () => {
             role: 'BODEGUERO',
             supplierId: 'supplier-1',
         }, { purchaseOrderId: 'po-1', limit: 25 });
+        expect(service.getReturnEligibleLines).toHaveBeenCalledWith({
+            tenantId: 'tenant-auth',
+            userId: 'user-auth',
+            role: 'BODEGUERO',
+            supplierId: 'supplier-1',
+        }, { purchaseOrderId: 'po-1', limit: 25 });
         expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-            data: [expect.objectContaining({ returnNumber: 'DEV-000001' })],
+            data: expect.objectContaining({
+                returns: [expect.objectContaining({ returnNumber: 'DEV-000001' })],
+                eligibleLines: expect.objectContaining({
+                    purchaseOrderId: 'po-1',
+                    supplierId: 'supplier-1',
+                }),
+            }),
         }));
     });
 
@@ -313,6 +334,12 @@ describe('supplier returns and credit notes HTTP contract', () => {
         }, res);
 
         const payload = res.json.mock.calls[0]?.[0];
+        expect(res.statusCode).toBe(200);
+        expect(payload).toEqual(expect.objectContaining({
+            data: expect.objectContaining({
+                returns: [expect.objectContaining({ returnNumber: 'DEV-000001' })],
+            }),
+        }));
         expect(JSON.stringify(payload)).not.toContain('tenant-secret');
         expect(JSON.stringify(payload)).not.toContain('secret-hash');
         expect(JSON.stringify(payload)).not.toContain('bookUnitCostExact');

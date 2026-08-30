@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 const source = (file: string) => readFileSync(resolve(process.cwd(), file), 'utf8');
 const purchases = source('components/Purchases.tsx');
 const reports = source('components/Reports.tsx');
+const salesPanel = source('components/reports/SalesReportPanel.tsx');
 const audit = source('components/AuditDashboard.tsx');
 
 describe('contrato UI de documentos fiscales protegidos', () => {
@@ -40,11 +41,17 @@ describe('contrato UI de documentos fiscales protegidos', () => {
         expect(reports).toContain('Nortex no calcula aquí el monto fijo asignado por la DGI');
     });
 
-    it('conserva el Excel de cantidades medidas junto a las descargas DGI', () => {
-        expect(reports).toContain("buildMeasuredReportExportRows(salesData.quantityBreakdown)");
-        expect(reports).toContain("XLSX.writeFile(workbook, `Cantidades_vendidas_${dates.startDate}_${dates.endDate}.xlsx`)");
-        expect(reports).toContain('Descargar cantidades (.xlsx)');
-        expect(reports).toContain('Cantidad exacta');
+    it('genera documento y Excel integrales en endpoints autenticados y acotados', () => {
+        expect(salesPanel).toContain('openAuthenticatedPreview(`/api/reports/sales/document?${reportQuery}`');
+        expect(salesPanel).toContain('`/api/reports/sales/export.xlsx?${reportQuery}`');
+        expect(salesPanel).toContain('downloadAuthenticatedFile(');
+        expect(salesPanel).toContain('Ver / imprimir documento');
+        expect(salesPanel).toContain('Descargar Excel');
+        expect(salesPanel).toContain('seleccioná un período de hasta 31 días');
+        expect(salesPanel).toContain('Productos vendidos');
+        expect(salesPanel).toContain('Cantidades y rentabilidad netas después de devoluciones');
+        expect(reports).not.toContain('XLSX.writeFile(');
+        expect(reports).not.toContain('buildMeasuredReportExportRows(');
     });
 
     it('no expone controles fiscales a cajeros ni vendedores', () => {
