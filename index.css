@@ -382,148 +382,436 @@
 }
 
 /* ==========================================
-   TIPOGRAFÍA DEL BLOG (.prose-nortex)
-   El cuerpo de los artículos se renderiza con utils/markdown.ts (HTML único para
-   cliente y prerender). Estos estilos le dan jerarquía sobre fondo claro.
-   (Bloque reconstruido: el merge de #61/#62 interleó dos versiones y dejó CSS
-   malformado —regla sin cerrar + propiedades sin selector— que rompía postcss.)
-   ========================================== */
-.prose-nortex {
-  color: #475569; /* slate-600 */
-  line-height: 1.75;
-  font-size: 1rem;
-}
-.prose-nortex h2 {
-  color: #0f172a; /* slate-900 */
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1.3;
-  margin-top: 2rem;
-  margin-bottom: 1rem;
-}
-.prose-nortex h3 {
-  color: #1e293b; /* slate-800 */
-  font-size: 1.25rem;
-  font-weight: 700;
-  margin-top: 1.5rem;
-  margin-bottom: 0.75rem;
-}
-.prose-nortex h4 {
-  color: #1e293b; /* slate-800 */
-  font-size: 1.05rem;
-  font-weight: 700;
-  margin-top: 1.25rem;
-  margin-bottom: 0.5rem;
-}
-.prose-nortex p {
-  margin-bottom: 1rem;
-}
-.prose-nortex strong {
-  color: #1e293b; /* slate-800 */
-  font-weight: 700;
+   EXPERIENCIA PÚBLICA · LECTURA EDITORIAL
+   ==========================================
+   El renderer Markdown emite clases semánticas tanto para React como para el
+   HTML SEO. `.prose-nortex` solo declara contexto: nunca selecciona enlaces ni
+   botones descendientes, evitando la regresión de texto verde sobre CTA verde. */
+
+.nx-public-page {
+  min-height: 100vh;
+  color-scheme: light;
+  background: var(--nx-public-canvas);
+  color: var(--nx-public-text);
+  font-family: var(--nx-font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-.prose-nortex a {
-  color: #059669; /* emerald-600 */
-  font-weight: 600;
-  text-decoration: underline;
+.nx-public-page::selection,
+.nx-public-reading::selection,
+.prose-nortex::selection {
+  background: var(--nx-public-accent-soft);
+  color: var(--nx-public-text);
 }
-.prose-nortex a.blog-cta {
+
+.nx-public-nav {
+  color: var(--nx-public-text);
+  background: rgb(var(--nx-public-surface-rgb) / .9);
+  border-color: rgb(var(--nx-public-text-rgb) / .12);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+}
+
+.nx-public-surface {
+  background: var(--nx-public-surface);
+  color: var(--nx-public-text);
+  border-color: var(--nx-public-border);
+}
+
+.nx-public-card {
+  background: var(--nx-public-surface-raised);
+  color: var(--nx-public-text);
+  border: 1px solid rgb(var(--nx-public-text-rgb) / .12);
+  border-radius: var(--nx-r-card);
+  box-shadow: var(--nx-public-shadow);
+  transition: border-color var(--nx-t-fast), box-shadow var(--nx-t-fast);
+}
+
+.nx-public-reading,
+.prose-nortex {
+  color: var(--nx-public-text-secondary);
+  font-family: var(--nx-font);
+  font-size: clamp(1rem, .98rem + .15vw, 1.0625rem);
+  line-height: 1.76;
+  letter-spacing: -.008em;
+  text-wrap: pretty;
+}
+
+.nx-public-muted {
+  color: var(--nx-public-text-secondary);
+}
+
+.nx-public-subtle {
+  color: var(--nx-public-text-subtle);
+}
+
+.nx-public-link {
+  color: var(--nx-public-accent-text);
+  font-weight: var(--nx-fw-semi);
+  text-decoration: underline;
+  text-decoration-color: rgb(12 114 75 / .42);
+  text-decoration-thickness: .08em;
+  text-underline-offset: .2em;
+  transition: color var(--nx-t-fast), text-decoration-color var(--nx-t-fast);
+}
+
+.nx-public-badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  margin: 1.25rem 0;
-  background: #059669;
-  color: #047857; /* emerald-700 */
+  width: fit-content;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid rgb(12 114 75 / .18);
+  border-radius: var(--nx-r-pill);
+  background: var(--nx-public-accent-soft);
+  color: var(--nx-public-accent-text);
+  font-size: var(--nx-fs-label);
+  font-weight: var(--nx-fw-semi);
+  line-height: 1.2;
+}
+
+.nx-public-primary,
+.nx-public-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--nx-tap-min);
+  padding: 10px 18px;
+  border-radius: var(--nx-r-control);
+  font-family: var(--nx-font);
+  font-size: .9375rem;
+  font-weight: var(--nx-fw-semi);
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  transition: background-color var(--nx-t-fast), border-color var(--nx-t-fast), color var(--nx-t-fast);
+}
+
+.nx-public-primary {
+  border: 1px solid rgb(6 35 26 / .16);
+  background: var(--nx-public-primary-fill);
+  color: var(--nx-public-on-primary);
+  box-shadow: 0 1px 2px rgb(6 35 26 / .14);
+}
+
+.nx-public-secondary {
+  border: 1px solid var(--nx-public-border);
+  background: var(--nx-public-surface-raised);
+  color: var(--nx-public-text);
+  box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .05);
+}
+
+/* La calculadora vive dentro de los artículos, por lo que comparte el mismo
+   canvas y evita reintroducir controles blancos con texto gris tenue. */
+.nx-public-calculator {
+  border-color: var(--nx-public-border);
+  background: var(--nx-public-surface);
+  color: var(--nx-public-text);
+  box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .04);
+}
+
+.nx-public-calculator-icon {
+  background: var(--nx-public-accent-soft);
+  color: var(--nx-public-accent-text);
+}
+
+.nx-public-field {
+  border-color: var(--nx-public-border);
+  background: var(--nx-public-surface-raised);
+  color: var(--nx-public-text);
+  transition: border-color var(--nx-t-fast), box-shadow var(--nx-t-fast);
+}
+
+.nx-public-field::placeholder,
+.nx-public-field input::placeholder {
+  color: var(--nx-public-text-subtle);
+  opacity: 1;
+}
+
+.nx-public-field:focus,
+.nx-public-field:focus-within {
+  border-color: var(--nx-public-accent-text);
+  box-shadow: 0 0 0 3px rgb(var(--nx-brand-rgb) / .2);
+}
+
+.nx-public-calculator-results {
+  border-color: var(--nx-public-border);
+  background: var(--nx-public-surface-raised);
+}
+
+.nx-public-calculator-result + .nx-public-calculator-result {
+  border-top: 1px solid rgb(var(--nx-public-text-rgb) / .1);
+}
+
+.nx-public-calculator-result-strong {
+  background: var(--nx-public-canvas-alt);
+  color: var(--nx-public-text);
+}
+
+:where(.nx-public-link, .nx-public-primary, .nx-public-secondary):focus-visible {
+  outline: 3px solid rgb(var(--nx-brand-rgb) / .55);
+  outline-offset: 3px;
+}
+
+.nx-public-card:focus-visible,
+.nx-prose-table-wrap:focus-visible {
+  outline: 3px solid rgb(var(--nx-brand-rgb) / .55);
+  outline-offset: 3px;
+}
+
+.nx-public-primary:disabled,
+.nx-public-secondary:disabled {
+  border-color: var(--nx-public-border);
+  background: var(--nx-public-canvas-alt);
+  color: var(--nx-public-text-subtle);
+  box-shadow: none;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+@media (hover: hover) {
+  .nx-public-card:hover {
+    border-color: rgb(12 114 75 / .24);
+    box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .05), 0 14px 38px rgb(12 114 75 / .08);
+  }
+
+  .nx-public-link:hover {
+    color: var(--nx-public-accent-hover);
+    text-decoration-color: currentColor;
+  }
+
+  .nx-public-primary:hover {
+    background: var(--nx-brand-hover);
+    color: var(--nx-public-on-primary);
+  }
+
+  .nx-public-secondary:hover {
+    border-color: rgb(var(--nx-public-text-rgb) / .24);
+    background: var(--nx-public-surface);
+    color: var(--nx-public-text);
+  }
+}
+
+/* El fallback lazy y el HTML SEO tienen el mismo canvas que la ruta hidratada;
+   no hay fogonazo blanco ni salto al fondo oscuro durante la navegación. */
+.nx-public-loading,
+.nx-public-prerender {
+  box-sizing: border-box;
+  min-height: 100vh;
+  background: var(--nx-public-canvas);
+  color: var(--nx-public-text);
+  font-family: var(--nx-font);
+}
+
+.nx-public-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--nx-public-text-secondary);
+  font-weight: var(--nx-fw-medium);
+}
+
+.nx-public-prerender {
+  width: 100%;
+  padding-block: clamp(32px, 7vw, 72px);
+  padding-inline: max(24px, calc((100vw - 820px) / 2));
+  font-size: 1rem;
+  line-height: 1.72;
+}
+
+/* Algunos hubs SEO aún contienen nodos crudos. Solo se seleccionan nodos SIN
+   clase: el renderer Markdown y los CTAs semánticos quedan fuera por contrato. */
+.nx-public-prerender :where(h1:not([class])) {
+  margin: 0 0 24px;
+  color: var(--nx-public-text);
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: var(--nx-fw-bold);
+  line-height: 1.08;
+  letter-spacing: -.035em;
+  text-wrap: balance;
+}
+
+.nx-public-prerender :where(h2:not([class])) {
+  margin: 36px 0 14px;
+  color: var(--nx-public-text);
+  font-size: 1.5rem;
+  line-height: 1.25;
+}
+
+.nx-public-prerender :where(p:not([class]), li:not([class])) {
+  color: var(--nx-public-text-secondary);
+}
+
+.nx-public-prerender :where(ul:not([class]), ol:not([class])) {
+  margin: 0 0 24px;
+  padding-left: 24px;
+}
+
+.nx-public-prerender :where(li:not([class])) {
+  margin-bottom: 8px;
+}
+
+.nx-public-prerender :where(a:not([class])) {
+  color: var(--nx-public-accent-text);
+  font-weight: var(--nx-fw-semi);
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-underline-offset: .2em;
 }
-.prose-nortex a:hover {
-  color: #059669;
+
+.nx-public-prerender :where(nav:not([class])) {
+  margin-top: 48px;
+  padding-top: 28px;
+  border-top: 1px solid var(--nx-public-border);
 }
-.prose-nortex ul,
-.prose-nortex ol {
-  margin: 0 0 1rem 1.5rem;
+
+/* Jerarquía única del cuerpo del post, compartida por React y prerender. */
+.nx-prose-heading {
+  scroll-margin-top: 96px;
+  color: var(--nx-public-text);
+  font-weight: var(--nx-fw-bold);
+  letter-spacing: -.025em;
+  text-wrap: balance;
 }
-.prose-nortex ul { list-style: disc; }
-.prose-nortex ol { list-style: decimal; }
-.prose-nortex li {
-  margin-bottom: 0.375rem;
+
+.nx-prose-heading-2 {
+  margin: 40px 0 16px;
+  font-size: clamp(1.5rem, 1.35rem + .6vw, 1.8rem);
+  line-height: 1.22;
 }
-.prose-nortex code {
-  background: #f1f5f9; /* slate-100 */
-  color: #0f172a;
-  padding: 0.1rem 0.35rem;
-  border-radius: 0.25rem;
-  font-size: 0.875em;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+
+.nx-prose-heading-3 {
+  margin: 28px 0 12px;
+  font-size: clamp(1.2rem, 1.12rem + .3vw, 1.35rem);
+  line-height: 1.3;
 }
-/* Tablas (renderer GFM): scroll horizontal en móvil, divisores tenues. */
-.prose-nortex .prose-table-wrap {
+
+.nx-prose-paragraph {
+  margin: 0 0 18px;
+  color: var(--nx-public-text-secondary);
+}
+
+.nx-prose-strong {
+  color: var(--nx-public-text);
+  font-weight: var(--nx-fw-bold);
+}
+
+.nx-prose-code {
+  padding: 2px 6px;
+  border: 1px solid rgb(var(--nx-public-text-rgb) / .1);
+  border-radius: 6px;
+  background: var(--nx-public-canvas-alt);
+  color: var(--nx-public-text);
+  font-family: var(--nx-font-mono);
+  font-size: .875em;
+}
+
+.nx-prose-list {
+  margin: 0 0 20px;
+  padding-left: 24px;
+  color: var(--nx-public-text-secondary);
+}
+
+.nx-prose-list-unordered {
+  list-style: disc;
+}
+
+.nx-prose-list-ordered {
+  list-style: decimal;
+}
+
+.nx-prose-list-item {
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
+
+.nx-prose-list-item::marker {
+  color: var(--nx-public-accent-text);
+  font-weight: var(--nx-fw-semi);
+}
+
+.nx-prose-quote {
+  margin: 24px 0;
+  padding: 16px 18px;
+  border-inline-start: 4px solid var(--nx-public-accent-text);
+  border-radius: 0 var(--nx-r-control) var(--nx-r-control) 0;
+  background: var(--nx-public-accent-soft);
+  color: var(--nx-public-text-secondary);
+  font-style: normal;
+}
+
+.nx-prose-table-wrap {
+  max-width: 100%;
+  margin: 24px 0;
   overflow-x: auto;
-  margin: 1.5rem 0;
-  border: 1px solid #e2e8f0; /* slate-200 */
-  border-radius: 0.75rem;
+  border: 1px solid var(--nx-public-border);
+  border-radius: var(--nx-r-card);
+  background: var(--nx-public-surface-raised);
+  box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .04);
+  -webkit-overflow-scrolling: touch;
 }
-.prose-nortex table {
+
+.nx-prose-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9rem;
+  font-size: .925rem;
 }
-.prose-nortex thead {
-  background: #f8fafc; /* slate-50 */
+
+.nx-prose-table-head {
+  background: var(--nx-public-surface);
 }
-.prose-nortex th {
+
+.nx-prose-table-heading {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--nx-public-border);
+  color: var(--nx-public-text);
+  font-weight: var(--nx-fw-semi);
   text-align: left;
-  font-weight: 700;
-  color: #334155; /* slate-700 */
-  padding: 0.75rem 1rem;
   white-space: nowrap;
 }
-.prose-nortex td {
-  padding: 0.75rem 1rem;
-  border-top: 1px solid #f1f5f9; /* slate-100 */
+
+.nx-prose-table-row-alt {
+  background: rgb(var(--nx-public-canvas-rgb) / .52);
 }
-/* CTA: una línea que es solo un enlace interno se muestra como botón. */
-.prose-nortex .prose-cta {
-  margin: 1.5rem 0;
-}
-.prose-nortex .prose-cta a {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  background: #059669; /* emerald-600 */
-  color: #fff;
-  font-weight: 700;
-  padding: 0.75rem 1.5rem;
-  border-radius: 0.5rem;
-  text-decoration: none;
-}
-.prose-nortex a.blog-cta:hover {
-  background: #10b981; /* emerald-500 */
-}
-.prose-nortex .blog-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 1.25rem 0;
-  font-size: 0.95rem;
-}
-.prose-nortex .blog-table th,
-.prose-nortex .blog-table td {
-  border: 1px solid #e2e8f0; /* slate-200 */
-  padding: 0.5rem 0.75rem;
+
+.nx-prose-table-cell {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgb(var(--nx-public-text-rgb) / .08);
+  color: var(--nx-public-text-secondary);
   text-align: left;
+  vertical-align: top;
 }
-.prose-nortex .blog-table thead th {
-  background: #f1f5f9; /* slate-100 */
-  color: #0f172a;
-  font-weight: 700;
+
+.nx-prose-table tbody tr:last-child .nx-prose-table-cell {
+  border-bottom: 0;
 }
-.prose-nortex .blog-table tbody tr:nth-child(even) {
-  background: #f8fafc; /* slate-50 */
-  transition: background-color 0.15s ease;
+
+.nx-prose-cta {
+  margin: 28px 0;
 }
-.prose-nortex .prose-cta a:hover {
-  background: #10b981; /* emerald-500 */
-  color: #fff;
+
+@media (max-width: 640px) {
+  .nx-public-prerender {
+    padding-inline: 20px;
+  }
+
+  .nx-prose-cta .nx-public-primary {
+    width: 100%;
+  }
+
+  .nx-prose-table-heading,
+  .nx-prose-table-cell {
+    min-width: 148px;
+    padding: 10px 12px;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .nx-public-card,
+  .nx-public-surface,
+  .nx-prose-table-wrap {
+    border-color: var(--nx-public-text-subtle);
+  }
 }

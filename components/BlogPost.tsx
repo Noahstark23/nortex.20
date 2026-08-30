@@ -9,12 +9,12 @@ import {
     buildFaqJsonLd,
     buildHowToJsonLd,
     buildCalculatorAppJsonLd,
-    SITE_ORIGIN,
 } from '../utils/seo';
 import Calculator from './Calculator';
 import { CALCULADORAS } from '../utils/calculadoras';
 import { pickRelatedGuides } from '../utils/related-guides';
-import { ArrowLeft, Clock, Calendar, ChevronRight } from 'lucide-react';
+import { Clock, Calendar, ChevronRight } from 'lucide-react';
+import BlogShell from './blog/BlogShell';
 
 const BlogPost: React.FC = () => {
     const { slug } = useParams<{ slug: string }>();
@@ -72,71 +72,67 @@ const BlogPost: React.FC = () => {
     });
 
     return (
-        <div className="min-h-screen bg-white">
-            <nav className="border-b border-slate-200 py-4 px-6">
-                <div className="max-w-3xl mx-auto flex items-center justify-between">
-                    <Link to="/blog" className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors">
-                        <ArrowLeft size={16} /> Blog
-                    </Link>
-                    <Link to="/register" className="text-sm font-bold bg-slate-900 text-white px-4 py-2 rounded-lg">
-                        Prueba Nortex Gratis
-                    </Link>
-                </div>
-            </nav>
-
-            <article className="max-w-3xl mx-auto px-6 py-10">
+        <BlogShell width="reading">
+            <article>
                 {/* Breadcrumb visible */}
-                <nav className="flex items-center flex-wrap gap-1 text-xs text-slate-400 mb-6" aria-label="Breadcrumb">
-                    <Link to="/blog" className="hover:text-slate-600">Blog</Link>
+                <nav className="nx-public-subtle flex flex-wrap items-center gap-1 text-sm" aria-label="Migas de pan">
+                    <Link to="/blog" className="nx-public-link inline-flex min-h-[44px] items-center px-1">Blog</Link>
                     {cluster && (
                         <>
-                            <ChevronRight size={12} />
-                            <Link to={`/blog/categoria/${cluster.slug}`} className="hover:text-slate-600">{cluster.name}</Link>
+                            <ChevronRight size={14} aria-hidden="true" />
+                            <Link to={`/blog/categoria/${cluster.slug}`} className="nx-public-link inline-flex min-h-[44px] items-center px-1">{cluster.name}</Link>
                         </>
                     )}
-                    <ChevronRight size={12} />
-                    <span className="text-slate-500 truncate max-w-[200px]">{post.title}</span>
+                    <ChevronRight size={14} aria-hidden="true" />
+                    <span aria-current="page" className="nx-public-muted max-w-[220px] truncate">{post.title}</span>
                 </nav>
 
                 {cluster ? (
                     <Link
                         to={`/blog/categoria/${cluster.slug}`}
-                        className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full hover:bg-emerald-100 transition-colors"
+                        className="nx-public-badge mt-4 inline-flex min-h-[36px] items-center px-3 text-sm font-semibold"
                     >
                         {post.category}
                     </Link>
                 ) : (
-                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full">{post.category}</span>
+                    <span className="nx-public-badge mt-4 inline-flex min-h-[36px] items-center px-3 text-sm font-semibold">{post.category}</span>
                 )}
 
-                <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 mt-4 mb-4 leading-tight">
+                <h1 className="mt-5 text-balance text-[36px] font-semibold leading-[1.08] tracking-[-0.03em] sm:text-[48px]">
                     {post.title}
                 </h1>
-                <div className="flex items-center gap-6 text-sm text-slate-400 mb-8 pb-6 border-b border-slate-100">
-                    <span className="flex items-center gap-1"><Calendar size={14} /> {post.updated ?? post.date}</span>
-                    <span className="flex items-center gap-1"><Clock size={14} /> {post.readTime} de lectura</span>
+                <div className="nx-public-subtle mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 border-b pb-7 text-sm">
+                    <span className="flex min-h-[32px] items-center gap-2">
+                        <Calendar size={15} aria-hidden="true" />
+                        <time dateTime={post.updated ?? post.date}>{post.updated ?? post.date}</time>
+                    </span>
+                    <span className="flex min-h-[32px] items-center gap-2"><Clock size={15} aria-hidden="true" /> {post.readTime} de lectura</span>
                 </div>
 
                 {/* Calculadora interactiva (si la guía la declara) — arriba del
                     cuerpo para que quede visible sin scroll y capte conversión. */}
-                {post.calculator && <Calculator type={post.calculator} />}
+                {post.calculator && (
+                    <div className="mt-8">
+                        <Calculator type={post.calculator} />
+                    </div>
+                )}
 
-                <div className="prose-nortex">
+                <div className="prose-nortex nx-public-reading mt-9">
                     {renderMarkdown(post.content, Link)}
                 </div>
 
                 {/* FAQ visible (además del JSON-LD) */}
                 {post.faq.length > 0 && (
-                    <section className="mt-12">
-                        <h2 className="text-2xl font-bold text-slate-900 mb-5">Preguntas frecuentes</h2>
-                        <div className="space-y-3">
+                    <section aria-labelledby="faq-title" className="mt-14">
+                        <h2 id="faq-title" className="text-[28px] font-semibold leading-tight tracking-[-0.02em]">Preguntas frecuentes</h2>
+                        <div className="mt-6 space-y-3">
                             {post.faq.map((item, i) => (
-                                <details key={i} className="group border border-slate-200 rounded-xl p-4 open:bg-slate-50">
-                                    <summary className="font-semibold text-slate-800 cursor-pointer list-none flex items-center justify-between">
+                                <details key={i} className="nx-public-surface group rounded-2xl border px-5 py-4">
+                                    <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between gap-4 font-semibold leading-6">
                                         {item.q}
-                                        <ChevronRight size={16} className="text-slate-400 group-open:rotate-90 transition-transform" />
+                                        <ChevronRight size={18} aria-hidden="true" className="nx-public-subtle shrink-0 transition-transform group-open:rotate-90" />
                                     </summary>
-                                    <p className="text-slate-600 mt-3 leading-relaxed">{item.a}</p>
+                                    <p className="nx-public-muted mt-3 pb-1 leading-7">{item.a}</p>
                                 </details>
                             ))}
                         </div>
@@ -144,38 +140,35 @@ const BlogPost: React.FC = () => {
                 )}
 
                 {/* CTA principal */}
-                <div className="mt-12 p-8 bg-slate-900 rounded-2xl text-white text-center">
-                    <h2 className="text-2xl font-bold mb-3">¿Cansado de hacer esto a mano?</h2>
-                    <p className="text-slate-300 mb-6">Nortex automatiza nómina, facturas y reportes DGI. Prueba gratis 30 días.</p>
-                    <Link to="/register" className="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-white font-bold px-8 py-3 rounded-xl transition-colors">
+                <aside className="nx-public-surface mt-14 rounded-3xl border p-7 text-center sm:p-10" aria-labelledby="article-cta-title">
+                    <h2 id="article-cta-title" className="text-[28px] font-semibold leading-tight tracking-[-0.02em]">¿Cansado de hacer esto a mano?</h2>
+                    <p className="nx-public-muted mx-auto mt-3 max-w-xl text-[17px] leading-7">Nortex automatiza nómina, facturas y reportes DGI. Prueba gratis 30 días.</p>
+                    <Link to="/register" className="nx-public-primary mt-6 inline-flex min-h-[44px] items-center justify-center gap-2 px-7 text-base font-semibold">
                         Empezar gratis ahora →
                     </Link>
-                </div>
+                </aside>
 
                 {/* Artículos relacionados */}
                 {related.length > 0 && (
-                    <section className="mt-12 pt-8 border-t border-slate-100">
-                        <h2 className="text-lg font-bold text-slate-900 mb-4">Seguí leyendo</h2>
-                        <div className="grid sm:grid-cols-2 gap-4">
+                    <section aria-labelledby="related-title" className="mt-14 border-t pt-9">
+                        <h2 id="related-title" className="text-2xl font-semibold tracking-[-0.02em]">Seguí leyendo</h2>
+                        <div className="mt-5 grid gap-4 sm:grid-cols-2">
                             {related.map(r => (
                                 <Link
                                     key={r.slug}
                                     to={`/blog/${r.slug}`}
-                                    className="block border border-slate-200 rounded-xl p-4 hover:border-emerald-300 hover:shadow-sm transition-all group"
+                                    className="nx-public-card group flex min-h-[144px] flex-col p-5"
                                 >
-                                    <span className="text-[11px] font-bold text-emerald-700">{r.category}</span>
-                                    <h3 className="font-semibold text-slate-800 text-sm mt-1 leading-snug group-hover:text-emerald-700 transition-colors">{r.title}</h3>
+                                    <span className="nx-public-badge inline-flex w-fit min-h-[28px] items-center px-2.5 text-[13px] font-semibold">{r.category}</span>
+                                    <h3 className="mt-3 text-[15px] font-semibold leading-snug">{r.title}</h3>
+                                    <span className="nx-public-link mt-auto pt-4 text-sm font-semibold">Leer guía</span>
                                 </Link>
                             ))}
                         </div>
                     </section>
                 )}
             </article>
-
-            <footer className="max-w-3xl mx-auto px-6 pb-12 text-center text-xs text-slate-400">
-                <a href={`${SITE_ORIGIN}/blog`} className="hover:text-slate-600">Nortex Blog · Recursos para PyMES de Nicaragua</a>
-            </footer>
-        </div>
+        </BlogShell>
     );
 };
 
