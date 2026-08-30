@@ -218,7 +218,7 @@ describe('plantilla del ticket 80 mm', () => {
         expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     });
 
-    it('abre primero un documento aislado completo, calcula el papel y no imprime la pagina del POS', () => {
+    it('abre un documento aislado completo cuando el ticket no esta montado en el POS', () => {
         vi.useFakeTimers();
         const parentPrint = vi.fn();
         const popupPrint = vi.fn();
@@ -251,7 +251,7 @@ describe('plantilla del ticket 80 mm', () => {
         vi.stubGlobal('document', { getElementById: vi.fn() });
 
         expect(printTicket(invoice)).toBe(true);
-        expect(open).toHaveBeenCalledWith('', '_blank', 'width=800,height=600');
+        expect(open).toHaveBeenCalledWith('', '_blank', 'width=420,height=720');
         expect(popupDocument.open).toHaveBeenCalledOnce();
         expect(popupDocument.write).toHaveBeenCalledOnce();
         const html = popupDocument.write.mock.calls[0][0];
@@ -267,6 +267,34 @@ describe('plantilla del ticket 80 mm', () => {
         expect(popupPageStyle.textContent).toBe('@page { size: 80mm 111mm; margin: 0; }');
         expect(popupPrint).toHaveBeenCalledOnce();
         expect(parentPrint).not.toHaveBeenCalled();
+    });
+
+    it('imprime desde el documento actual sin abrir popup en un navegador normal', () => {
+        const parentPrint = vi.fn();
+        const open = vi.fn();
+        const pageStyle = { id: '', textContent: '', remove: vi.fn() };
+        const ticketContent = {
+            scrollHeight: 378,
+            getBoundingClientRect: () => ({ height: 378 }),
+        };
+        const receipt = { firstElementChild: ticketContent };
+        vi.stubGlobal('document', {
+            getElementById: vi.fn((id: string) => id === 'receipt-area' ? receipt : null),
+            createElement: vi.fn(() => pageStyle),
+            head: { appendChild: vi.fn() },
+        });
+        vi.stubGlobal('window', {
+            open,
+            print: parentPrint,
+            addEventListener: vi.fn(),
+        } as unknown as Window);
+        vi.stubGlobal('navigator', {
+            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)',
+        } as Navigator);
+
+        expect(printTicket(invoice)).toBe(true);
+        expect(parentPrint).toHaveBeenCalledOnce();
+        expect(open).not.toHaveBeenCalled();
     });
 
     it('cae silenciosamente a la pagina actual si el popup esta bloqueado', () => {
@@ -291,6 +319,9 @@ describe('plantilla del ticket 80 mm', () => {
             print: parentPrint,
             addEventListener,
         } as unknown as Window);
+        vi.stubGlobal('navigator', {
+            userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel Build/UP1A; wv) Version/4.0 Chrome/124 Mobile Safari/537.36',
+        } as Navigator);
         vi.stubGlobal('alert', blockedAlert);
 
         expect(printTicket(invoice)).toBe(true);
@@ -316,15 +347,20 @@ describe('plantilla del ticket 80 mm', () => {
             createElement: vi.fn(() => pageStyle),
             head: { appendChild: vi.fn() },
         });
+        const open = vi.fn(() => {
+            throw new DOMException('Popup bloqueado', 'SecurityError');
+        });
         vi.stubGlobal('window', {
-            open: vi.fn(() => {
-                throw new DOMException('Popup bloqueado', 'SecurityError');
-            }),
+            open,
             print: parentPrint,
             addEventListener,
         } as unknown as Window);
+        vi.stubGlobal('navigator', {
+            userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel Build/UP1A; wv) Version/4.0 Chrome/124 Mobile Safari/537.36',
+        } as Navigator);
 
         expect(printTicket(invoice)).toBe(true);
+        expect(open).toHaveBeenCalledOnce();
         expect(parentPrint).toHaveBeenCalledOnce();
     });
 

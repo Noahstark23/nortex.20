@@ -16,7 +16,9 @@ import {
   HORA_EXTRA_RECARGO, INDEMNIZACION_TOPE_MESES, DIAS_POR_MES_INDEMNIZACION,
 } from './tasas';
 
-Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
+// Los defaults de decimal.js ya son precisión 20 y ROUND_HALF_UP. Configurarlos
+// al importar era redundante y producía un mutante estático imposible de atribuir
+// a un test con coverage perTest.
 
 const money = (d: Decimal) => d.toDecimalPlaces(2).toNumber();
 

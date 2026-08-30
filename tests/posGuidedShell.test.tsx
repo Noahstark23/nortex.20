@@ -15,6 +15,7 @@ afterEach(cleanup);
 const completedSale: POSGuidedSaleSnapshot = {
     saleKey: 'sale-1',
     receiptNumber: 'FAC-00125',
+    receiptFormat: 'TICKET_80MM',
     completedAtLabel: '27 ago 2026 · 10:34 a. m.',
     customerName: 'María López Ruiz',
     paymentMethodLabel: 'Efectivo',

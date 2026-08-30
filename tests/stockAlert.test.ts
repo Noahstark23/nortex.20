@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { evaluarLinea, evaluarCarrito, textoAviso, textoResumen, LineaCarrito } from '../utils/stockAlert';
+import { evaluarLinea, evaluarCarrito, textoAviso, textoResumen, type AvisoStock, type LineaCarrito } from '../utils/stockAlert';
 
 /**
  * Aviso de existencias del carrito — números oro.
@@ -89,6 +89,20 @@ describe('evaluarLinea — sin existencia y en negativo', () => {
         const t = textoAviso(a) as string;
         expect(t).toContain('-3');
         expect(t).toContain('ya se vendió más de lo que había');
+    });
+
+    it('un DTO parcial sin disponible no inventa que el inventario ya era negativo', () => {
+        const a: AvisoStock = {
+            id: 'legacy',
+            name: 'Producto legado',
+            estado: 'SIN_EXISTENCIA',
+            disponible: null,
+            pedido: 2,
+            faltante: 2,
+            unidad: 'und',
+            ajustarA: null,
+        };
+        expect(textoAviso(a)).toBe('Sin existencia en el sistema. Estás vendiendo 2 und.');
     });
 });
 

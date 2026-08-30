@@ -273,13 +273,25 @@ ${typeof data.change === 'number' && data.change > 0 ? `<div style="font-size:10
 }
 
 export function printTicket(data: InvoiceData): boolean {
+    if (typeof window === 'undefined') return false;
+
     const prefersPopup = detectThermalTicketPopupMode();
     if (prefersPopup) {
-        return openPrintWindow(buildTicket80mmHtml(data), { width: 420, height: 720, thermal: true })
+        return openPrintWindow(buildTicket80mmHtml(data), {
+            width: 420,
+            height: 720,
+            thermal: true,
+            alertWhenBlocked: false,
+        })
             || printTicketFromCurrentDocument(data);
     }
     return printTicketFromCurrentDocument(data)
-        || openPrintWindow(buildTicket80mmHtml(data), { width: 420, height: 720, thermal: true });
+        || openPrintWindow(buildTicket80mmHtml(data), {
+            width: 420,
+            height: 720,
+            thermal: true,
+            alertWhenBlocked: false,
+        });
 }
 
 type TicketPrintEnvironment = {
@@ -468,7 +480,12 @@ export function buildA4Html(data: InvoiceData): string {
 }
 
 export function printA4(data: InvoiceData) {
-    openPrintWindow(buildA4Html(data), { width: 800, height: 600, thermal: false });
+    openPrintWindow(buildA4Html(data), {
+        width: 800,
+        height: 600,
+        thermal: false,
+        alertWhenBlocked: true,
+    });
 }
 
 // =============================
@@ -478,12 +495,18 @@ type OpenPrintWindowOptions = {
     width: number;
     height: number;
     thermal: boolean;
+    alertWhenBlocked: boolean;
 };
 
 function openPrintWindow(html: string, options: OpenPrintWindowOptions): boolean {
-    const printWindow = window.open('', '_blank', `width=${options.width},height=${options.height}`);
+    let printWindow: Window | null = null;
+    try {
+        printWindow = window.open('', '_blank', `width=${options.width},height=${options.height}`);
+    } catch {
+        // Algunos WebViews lanzan SecurityError en vez de retornar null.
+    }
     if (!printWindow) {
-        if (alertWhenBlocked) alert('Permite ventanas emergentes para imprimir.');
+        if (options.alertWhenBlocked) alert('Permite ventanas emergentes para imprimir.');
         return false;
     }
     let printScheduled = false;
