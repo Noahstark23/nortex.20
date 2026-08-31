@@ -343,6 +343,17 @@ export const PurchaseItemSchema = z.object({
     purchaseOrderItemId: historicalOptional(z.string().trim().min(1, 'purchaseOrderItemId inválido')),
     quantity:    positiveQuantity,
     unitCost:    moneyAmountPositive,
+    // Intención explícita: si no viene (o un cliente histórico manda null),
+    // registrar la compra NO cambia el precio de venta actual del producto.
+    // Conservamos texto Decimal-safe hasta que el handler tome el lock del SKU.
+    salePrice:   historicalOptional(moneyAmountPositive.refine((value) => {
+        try {
+            const persisted = new Decimal(value).toNumber();
+            return Number.isFinite(persisted) && persisted > 0;
+        } catch {
+            return false;
+        }
+    }, { message: 'El precio de venta debe ser representable y mayor que cero' })),
     // Compatibilidad: clientes anteriores siempre expresaron cantidad/costo en
     // unidad base. El factor de PACK jamás forma parte de este contrato.
     purchaseUnit: PurchaseUnitSchema.optional().default('BASE'),

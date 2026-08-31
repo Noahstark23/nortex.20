@@ -41,6 +41,7 @@
     "utils/postSalePrintCash.ts",
     "backend/services/saleCancellation.ts",
     "backend/services/shiftIdentity.ts",
+    "backend/services/purchaseSalePriceService.ts:42-123",
     "utils/productFamilyPresets.ts",
     "utils/quantity.ts",
     "utils/stockTransferQuantity.ts",
@@ -97,6 +98,7 @@
   "account_lock_threshold_comment": "La realineación protege exactamente los seis cuerpos puros actuales de accounting y agrega canonicalJournalAccountLockOrder (7/7). procurementMatch queda 310/310 al cubrir también la carga fresca de helpers concisos. Gate oficial: 3414 instrumentados, 3394 puntuables, 3383 killed + 4 timeout = 3387 detectados, 7 sobrevivientes equivalentes históricos, 0 NoCoverage y los mismos 20 ignored de IR_TABLE. Score exacto 3387/3394 = 99.79375368296995%; el piso truncado permanece 99.79 y no baja.",
   "procurement_phase_two_b_threshold_comment": "Fase 2B amplía la red sin ignores nuevos: procurementReceipts 269/269; batchWarehouseLedger 165/165; batchWarehouseReadiness 496/496; manualBatchMovements 112/112; purchaseOrderCloseShort 157/157; stockTransferCommand 160/160; returnService 258/258 entre Decimal/idempotencia y restauración de lotes. procurementMatch conserva 310/310 y accounting 184/184. Gate oficial: 4834 instrumentados, 4814 puntuables, 4803 killed + 4 timeout = 4807 detectados, 7 sobrevivientes equivalentes históricos, 0 NoCoverage y los mismos 20 ignored de IR_TABLE. Score exacto 4807/4814 = 99.85459077690071%; el piso se TRUNCA a 99.85, nunca se redondea hacia arriba.",
   "release_scope_realign_comment": "El release de imágenes no cambia dinero, pero reveló dos rangos contables desplazados: 527-611 caía en el wrapper de nota de crédito/recordPurchase y cortaba buildPurchaseJournalLines; 876-924 caía en reversa/liquidación de agente y cortaba antes de returnMoney/buildReturnJournalLines. Se realinean a los cuerpos puros completos actuales 581-666 (compra+PPV) y 930-978 (devolución): la corrida dirigida mide 185/185 detectados, el piso contable sube de 184 a 185 y no hay ignores nuevos.",
+  "purchase_sale_price_threshold_comment": "El precio de venta explícito en compras agrega 68/68 mutantes detectados: roles exactos, presencia de intent, Decimal persistible, duplicados y before/after. Sobre la base oficial 4807/4814, el gate proyectado queda 4875/4882 = 99.85661614092585%; truncado a dos decimales el piso permanece 99.85. No se agregaron ignores ni NoCoverage.",
   "thresholds": {
     "high": 99.85,
     "low": 99.85,

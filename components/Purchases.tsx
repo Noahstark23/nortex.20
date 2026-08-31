@@ -14,7 +14,7 @@ import {
     resolvePurchaseLine,
     type PurchaseUnit,
 } from '../utils/purchasePackaging';
-import { currentSessionRole } from '../utils/roleCapabilities';
+import { currentSessionRole, roleCapabilitiesFor } from '../utils/roleCapabilities';
 import { ToastViewport, useToast } from './ui/Toast';
 import { authenticatedRequestErrorMessage, openAuthenticatedPreview } from '../utils/authenticatedDownload';
 
@@ -55,6 +55,8 @@ interface CartItem {
     quantity: number | string;
     unitCost: number | string;
     totalCost: number | string;
+    currentSalePrice: number | string | null;
+    salePrice: string;
     currentStock: number;
     unit: string;
     saleMode?: 'COUNTED' | 'MEASURED' | null;
@@ -463,6 +465,7 @@ const exceptionTypeLabel = (type: string): string => ({
 
 export default function Purchases() {
     const currentRole = currentSessionRole();
+    const canEditPurchaseSalePrice = roleCapabilitiesFor(currentRole).canManageProducts;
     const canCreatePurchase = PURCHASE_CREATE_ROLES.has(currentRole);
     const canPaySuppliers = SUPPLIER_PAYMENT_ROLES.has(currentRole);
     const canResolveMatches = MATCH_RESOLVE_ROLES.has(currentRole);
@@ -843,6 +846,8 @@ export default function Purchases() {
                 quantity: initialQuantity,
                 unitCost: new Decimal(product.cost).toDecimalPlaces(2).toString(),
                 totalCost: new Decimal(initialQuantity).mul(product.cost).toDecimalPlaces(2).toString(),
+                currentSalePrice: product.price,
+                salePrice: '',
                 currentStock: product.stock,
                 unit: product.unit || 'unidad',
                 saleMode: product.saleMode,
@@ -860,16 +865,34 @@ export default function Purchases() {
         setProductSearch('');
     };
 
-    const updateCartItem = (cartKey: string, field: 'quantity' | 'unitCost' | 'batchNumber' | 'expiryDate', value: string | number) => {
-        setCart(currentCart => currentCart.map(c => {
-            if (c.cartKey !== cartKey) return c;
-            const updated = { ...c, [field]: value };
-            updated.totalCost = new Decimal(updated.quantity || 0)
-                .mul(updated.unitCost || 0)
-                .toDecimalPlaces(2)
-                .toString();
-            return updated;
-        }));
+    const updateCartItem = (
+        cartKey: string,
+        field: 'quantity' | 'unitCost' | 'salePrice' | 'batchNumber' | 'expiryDate',
+        value: string | number,
+    ) => {
+        setCart(currentCart => {
+            // Product.price es único por SKU, aunque una OC pueda repetir ese
+            // SKU en varias líneas. Mantener los inputs sincronizados evita que
+            // el formulario permita dos decisiones comerciales incompatibles.
+            const salePriceProductId = field === 'salePrice'
+                ? currentCart.find(item => item.cartKey === cartKey)?.productId
+                : undefined;
+
+            return currentCart.map(c => {
+                if (field === 'salePrice' && salePriceProductId && c.productId === salePriceProductId) {
+                    return { ...c, salePrice: String(value) };
+                }
+                if (c.cartKey !== cartKey) return c;
+                const updated = { ...c, [field]: value };
+                if (field === 'quantity' || field === 'unitCost') {
+                    updated.totalCost = new Decimal(updated.quantity || 0)
+                        .mul(updated.unitCost || 0)
+                        .toDecimalPlaces(2)
+                        .toString();
+                }
+                return updated;
+            });
+        });
         setFormErrors(current => ({ ...current, items: undefined }));
     };
 
@@ -947,6 +970,8 @@ export default function Purchases() {
                 quantity,
                 unitCost,
                 totalCost: new Decimal(quantity).mul(unitCost).toDecimalPlaces(2).toString(),
+                currentSalePrice: product?.price ?? null,
+                salePrice: '',
                 currentStock: product?.stock ?? 0,
                 unit: product?.unit || 'unidad',
                 saleMode: product?.saleMode,
@@ -1034,6 +1059,21 @@ export default function Purchases() {
             errors.items = `${invalidPrecision.productName}: la cantidad admite 4 decimales y el costo 6.`;
         }
 
+        const invalidSalePrice = canEditPurchaseSalePrice && cart.find(item => {
+            const value = item.salePrice.trim();
+            if (!value) return false;
+            try {
+                const price = new Decimal(value);
+                const persistedPrice = price.toNumber();
+                return !Number.isFinite(persistedPrice) || persistedPrice <= 0;
+            } catch {
+                return true;
+            }
+        });
+        if (invalidSalePrice) {
+            errors.items = `${invalidSalePrice.productName}: el nuevo precio de venta debe ser representable y mayor que cero.`;
+        }
+
         const overAvailable = cart.find(item => item.purchaseOrderItemId && item.availableQuantity && (() => {
             try {
                 return new Decimal(item.quantity).greaterThan(item.availableQuantity);
@@ -1092,6 +1132,9 @@ export default function Purchases() {
                             quantity: new Decimal(c.quantity).toString(),
                             unitCost: new Decimal(c.unitCost).toString(),
                             purchaseUnit: c.purchaseUnit,
+                            salePrice: canEditPurchaseSalePrice && c.salePrice.trim()
+                                ? new Decimal(c.salePrice).toString()
+                                : undefined,
                             batchNumber: c.batchNumber?.trim() || undefined,
                             expiryDate: c.expiryDate || undefined
                         };
@@ -1899,12 +1942,13 @@ export default function Purchases() {
                                 {/* Cart Items Table */}
                                 {cart.length > 0 && (
                                     <div className="mt-4 overflow-x-auto rounded-control border border-slate-200">
-                                        <table className="min-w-[760px] w-full">
+                                        <table className="min-w-[980px] w-full">
                                             <thead>
                                                 <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                                                     <th className="text-left py-2 px-2">Producto</th>
                                                     <th className="text-center py-2 px-2 w-36">Cantidad recibida</th>
                                                     <th className="text-center py-2 px-2 w-40">Costo informado</th>
+                                                    <th className="text-center py-2 px-2 w-52">Precio de venta</th>
                                                     <th className="text-right py-2 px-2 w-28">Total</th>
                                                     <th className="w-10"></th>
                                                 </tr>
@@ -1987,6 +2031,49 @@ export default function Purchases() {
                                                                         : `por ${item.unit}`}
                                                                 </p>
                                                             </td>
+                                                            <td className="py-3 px-2 align-top">
+                                                                <p className="text-center text-xs text-slate-600">
+                                                                    Actual:{' '}
+                                                                    <span className="font-semibold tabular-nums text-slate-900">
+                                                                        {item.currentSalePrice === null
+                                                                            ? 'No disponible'
+                                                                            : formatCurrency(item.currentSalePrice)}
+                                                                    </span>
+                                                                </p>
+                                                                <p className="mt-0.5 text-center text-[11px] text-slate-500">
+                                                                    por {item.unit} base
+                                                                </p>
+                                                                {canEditPurchaseSalePrice ? (
+                                                                    <>
+                                                                        <label
+                                                                            htmlFor={`purchase-sale-price-${item.cartKey}`}
+                                                                            className="mt-2 block text-xs font-medium text-slate-700"
+                                                                        >
+                                                                            Nuevo precio de venta (opcional)
+                                                                        </label>
+                                                                        <input
+                                                                            id={`purchase-sale-price-${item.cartKey}`}
+                                                                            type="text"
+                                                                            inputMode="decimal"
+                                                                            value={item.salePrice}
+                                                                            onChange={(event) => updateCartItem(item.cartKey, 'salePrice', sanitizeDecimalInput(event.target.value))}
+                                                                            aria-label={`Nuevo precio de venta (opcional) de ${item.productName}${item.purchaseOrderItemId ? ` · línea ${item.purchaseOrderItemId}` : ''}`}
+                                                                            aria-invalid={Boolean(formErrors.items)}
+                                                                            placeholder="Conservar actual"
+                                                                            className="mt-1 min-h-11 w-full rounded-control border border-slate-200 bg-white px-2 py-2 text-center text-sm text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
+                                                                        />
+                                                                        <p className="mt-1 text-center text-[11px] text-slate-500">
+                                                                            {cart.filter(candidate => candidate.productId === item.productId).length > 1
+                                                                                ? 'Se sincroniza en todas las líneas de este producto.'
+                                                                                : `Siempre por ${item.unit} base, aunque comprés por empaque.`}
+                                                                        </p>
+                                                                    </>
+                                                                ) : (
+                                                                    <p className="mt-2 rounded-control bg-slate-100 px-2 py-2 text-center text-[11px] text-slate-600">
+                                                                        Solo un administrador puede cambiar el precio de venta.
+                                                                    </p>
+                                                                )}
+                                                            </td>
                                                             <td className="py-3 px-2 text-right">
                                                                 <span className="text-sm font-semibold tabular-nums text-emerald-700">{formatCurrency(item.totalCost)}</span>
                                                             </td>
@@ -2002,7 +2089,7 @@ export default function Purchases() {
                                                         </tr>
                                                         {item.requiresBatchTracking && (
                                                             <tr className="bg-slate-50">
-                                                                <td colSpan={5} className="border-b border-slate-100 px-3 py-2">
+                                                                <td colSpan={6} className="border-b border-slate-100 px-3 py-2">
                                                                     <div className="flex gap-4 items-center">
                                                                         <div className="flex items-center gap-2">
                                                                             <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">REQUIERE LOTE</span>

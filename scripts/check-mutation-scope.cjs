@@ -164,6 +164,9 @@ const PISO_MUTANTES = {
     // Sus dos sobrevivientes iniciales eran el campo `modo` en los caminos de
     // rechazo — los tests miraban `codigo` y `employeeId` pero no `modo`.
     'backend/services/shiftIdentity.ts': 68,
+    // Intención explícita de precio desde compras: roles exactos, presencia,
+    // Decimal persistible, deduplicación y before/after. Corrida dirigida 68/68.
+    'backend/services/purchaseSalePriceService.ts': 68,
     'backend/services/loanMath.ts': 12,
     // DTO público mínimo de tracking: 5/5; descarta notas, GPS y teléfonos.
     'backend/services/pedidoTrackingService.ts': 5,
