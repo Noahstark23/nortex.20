@@ -50,6 +50,15 @@ import { executeSale, SaleError } from './services/salesService';
 import { executeSupplierPaymentTransaction } from './services/supplierPaymentService';
 import { executeProcurementMatch } from './services/procurementMatchService';
 import {
+    applyLinkedPurchaseSalePriceIntents,
+    buildPurchaseSalePriceChange,
+    canSetPurchaseSalePrice,
+    createPurchaseSalePriceAudits,
+    hasPurchaseSalePriceIntent,
+    PurchaseSalePriceError,
+    resolvePurchaseSalePriceIntents,
+} from './services/purchaseSalePriceService';
+import {
     applyBatchWarehouseDelta,
     BatchWarehouseLedgerError,
     resolveBatchWarehouseLedgerMode,
@@ -8877,6 +8886,16 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
     const { supplierId, warehouseId, invoiceNumber, date, postingDate, dueDate, paymentMethod, notes, items, purchaseOrderId } = req.body;
     // Validaciones de formato ya realizadas por Zod
 
+    // MANAGER puede registrar la compra operativa, pero cambiar el precio de
+    // venta reescribe el catálogo comercial y conserva el permiso histórico de
+    // OWNER/ADMIN/SUPER_ADMIN. Este guard corre antes de cualquier lectura o tx.
+    if (hasPurchaseSalePriceIntent(items) && !canSetPurchaseSalePrice(authReq.role)) {
+        return res.status(403).json({
+            error: 'No tenés permiso para modificar precios de venta desde una compra',
+            code: 'PURCHASE_SALE_PRICE_FORBIDDEN',
+        });
+    }
+
     try {
         // A1/A5: el asiento de la compra necesita el catálogo YA sembrado. `getAccount`
         // auto-siembra con el prisma GLOBAL (autocommit): bajo REPEATABLE READ esas filas
@@ -8915,6 +8934,14 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
         let efectivoDespuesCompra: Decimal | null = null;
 
         const result = await prisma.$transaction(async (tx: any) => {
+            // Consolidar dentro de la misma unidad ACID: repetir el mismo precio
+            // para un SKU es idempotente; dos precios distintos son una intención
+            // ambigua y abortan la compra completa con 400.
+            const salePriceIntents = resolvePurchaseSalePriceIntents(items);
+            const salePriceIntentByProduct = new Map(
+                salePriceIntents.map((intent) => [intent.productId, intent]),
+            );
+
             // Serializar las compras del proveedor antes de cualquier lectura consistente
             // de la transacción. Así, un doble envío concurrente no puede pasar dos veces
             // el chequeo de factura duplicada.
@@ -9293,6 +9320,12 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
             // 3. Actualizar inventario + Kardex + Costo promedio ponderado. Si hay OC,
             // la recepción es la única responsable de estos movimientos.
             const costChanges: any[] = []; // before/after de stock y costo valorizado por producto
+            const priceChanges: Array<{
+                productId: string;
+                priceBefore: string;
+                priceAfter: string;
+            }> = [];
+            const directSalePriceProductsProcessed = new Set<string>();
             // Dos compras directas de proveedores distintos no comparten el lock
             // inicial del Supplier. Ejecutar [P1,P2] y [P2,P1] en paralelo podía
             // ciclar los locks Product/ProductStock. La copia ordenada afecta solo
@@ -9327,8 +9360,23 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                 // movió el costo → el promedio mezclaría stock nuevo con costo viejo
                 // (ej. graba 6.3333 donde lo correcto era 7.00). La lectura locking
                 // devuelve el costo comprometido más reciente.
-                const lockedCostRows: any[] = await tx.$queryRaw`SELECT cost FROM \`Product\` WHERE id = ${item.productId} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
-                const oldCost = new Decimal((lockedCostRows[0]?.cost ?? 0).toString());
+                const lockedProductRows: any[] = await tx.$queryRaw`SELECT cost, price FROM \`Product\` WHERE id = ${item.productId} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
+                const lockedProduct = lockedProductRows[0];
+                if (!lockedProduct) {
+                    throw new PurchaseSalePriceError(
+                        'PURCHASE_PRODUCT_NOT_FOUND',
+                        404,
+                        `Producto no encontrado: ${item.productId}`,
+                    );
+                }
+                const oldCost = new Decimal(lockedProduct.cost.toString());
+                const priceChange = buildPurchaseSalePriceChange(
+                    item.productId,
+                    lockedProduct.price,
+                    directSalePriceProductsProcessed.has(item.productId)
+                        ? undefined
+                        : salePriceIntentByProduct.get(item.productId),
+                );
 
                 // Promedio ponderado móvil (función pura compartida — regla C1 adentro).
                 const newAvgCost = weightedAverageCost(
@@ -9339,11 +9387,18 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                 ).toNumber();
 
                 await tx.product.update({
-                    where: { id: item.productId },
+                    where: { id: item.productId, tenantId: authReq.tenantId! },
                     data: {
-                        cost: newAvgCost  // ya redondeado a 4 d.p. por Decimal
+                        cost: newAvgCost, // ya redondeado a 4 d.p. por Decimal
+                        // Ausente o igual conserva Product.price; nunca se reescribe
+                        // por el mero hecho de registrar una compra.
+                        ...(priceChange
+                            ? { price: new Decimal(priceChange.priceAfter).toNumber() }
+                            : {}),
                     }
                 });
+                directSalePriceProductsProcessed.add(item.productId);
+                if (priceChange) priceChanges.push(priceChange);
 
                 costChanges.push({
                     productId: item.productId,
@@ -9438,6 +9493,17 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                 });
             }
 
+            // La factura de una OC no toca stock/costo y, por tanto, no entra al
+            // bucle anterior. Sus precios explícitos toman Product locks propios en
+            // orden estable, todavía antes del posible lock de Shift (CASH).
+            if (linkedPurchaseOrder && salePriceIntents.length > 0) {
+                priceChanges.push(...await applyLinkedPurchaseSalePriceIntents({
+                    tx,
+                    tenantId: authReq.tenantId!,
+                    intents: salePriceIntents,
+                }));
+            }
+
             // 4. Registro financiero — LA PLATA SALE DE LA GAVETA, no de la
             //    billetera fintech (`Tenant.walletBalance`, que se fondea con
             //    /api/loans/request y solo se gasta en el marketplace B2B).
@@ -9482,6 +9548,18 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                 linkedPurchaseOrder ? procurementMatch.plan.expectedAmount : undefined,
             );
 
+            // Auditoría granular del catálogo, dentro de la misma tx que compra,
+            // stock, caja y mayor. Un fallo posterior revierte también el precio.
+            await createPurchaseSalePriceAudits({
+                tx,
+                tenantId: authReq.tenantId!,
+                userId: authReq.userId!,
+                purchaseId: purchase.id,
+                purchaseOrderId: linkedPurchaseOrder?.id ?? null,
+                invoiceNumber,
+                changes: priceChanges,
+            });
+
             // Asiento inmutable de auditoría (Capa 3): toda compra mueve su efecto
             // financiero; solo una compra directa mueve además inventario valorizado.
             // Registrar el before/after de la GAVETA (null si fue a crédito: ahí no
@@ -9510,6 +9588,7 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                         efectivoAntes: efectivoAntesCompra?.toNumber() ?? null,
                         efectivoDespues: efectivoDespuesCompra?.toNumber() ?? null,
                         productChanges: costChanges,
+                        priceChanges,
                         timestamp: new Date().toISOString()
                     })
                 }
@@ -9546,6 +9625,9 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
             });
         }
         if (error instanceof BatchWarehouseLedgerError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
+        if (error instanceof PurchaseSalePriceError) {
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
         if (error?.message === 'FACTURA_DUPLICADA' || error?.code === 'P2002') {
