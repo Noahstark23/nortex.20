@@ -124,10 +124,10 @@ export function tieneLimiteDiario(config: unknown, operation: string): boolean {
 async function calcularGaveta(client: any, shift: { id: string; initialCash: any; initialCashUsd?: any }, moneda: 'NIO' | 'USD' = 'NIO'): Promise<Decimal> {
     // Fase D: la gaveta es POR MONEDA. Ventas solo aplican a C$ (el POS vende
     // en córdobas); el fondo inicial USD vive en Shift.initialCashUsd.
-    const freshSales: Array<{ total: any }> = moneda === 'NIO'
+    const freshSales: Array<{ total: any; storeCreditApplied: any }> = moneda === 'NIO'
         ? await client.sale.findMany({
             where: { shiftId: shift.id, paymentMethod: 'CASH' },
-            select: { total: true },
+            select: { total: true, storeCreditApplied: true },
         })
         : [];
     const freshMovements: Array<{ type: string; amount: any; currency: string | null }> = await client.cashMovement.findMany({
@@ -136,7 +136,9 @@ async function calcularGaveta(client: any, shift: { id: string; initialCash: any
     });
     const mismaMoneda = (m: any) => (m.currency || 'NIO') === moneda;
     const cashSalesTotal = freshSales
-        .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
+        .reduce((sum: Decimal, s: any) => sum.plus(
+            new Decimal(s.total.toString()).minus(s.storeCreditApplied?.toString() ?? 0),
+        ), new Decimal(0));
     const totalINs = freshMovements
         .filter((m) => m.type === 'IN' && mismaMoneda(m))
         .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));

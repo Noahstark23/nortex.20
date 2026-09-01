@@ -183,6 +183,7 @@ export const CreateSaleSchema = z.object({
 
 // POST /api/returns
 export const CreateReturnSchema = z.object({
+    correctionRequestId: z.string().trim().min(1, 'correctionRequestId requerido').max(191),
     // Contrato de clientes actuales: una misma UUID se conserva en reintentos
     // del mismo payload. ProductReturn mantiene la columna nullable únicamente
     // para poder convivir con devoluciones históricas.
@@ -214,6 +215,7 @@ export const CreateReturnSchema = z.object({
 // La regla fina (colapsar espacios, medir lo útil) vive en el módulo puro
 // `saleCancellation.ts`; acá solo se ataja lo grosero.
 export const CancelSaleSchema = z.object({
+    correctionRequestId: z.string().trim().min(1, 'correctionRequestId requerido').max(191),
     motivo: z.string().min(10, 'Escribí por qué se anula (mínimo 10 caracteres)').max(500),
 });
 
@@ -768,14 +770,75 @@ export const OpenShiftSchema = z.object({
     employeePin: z.string().regex(/^\d{4}$/, 'El PIN debe ser exactamente 4 dígitos numéricos').optional(),
 });
 
+const closeShiftNioAmount = moneyAmount.superRefine((value, ctx) => {
+    let parsed: Decimal;
+    try {
+        parsed = new Decimal(value);
+    } catch {
+        return; // moneyAmount ya agregó el error de sintaxis.
+    }
+    if (parsed.decimalPlaces() > 2) {
+        ctx.addIssue({ code: 'custom', message: 'El monto en córdobas admite máximo 2 decimales' });
+    }
+    if (parsed.greaterThan('99999999.99')) {
+        ctx.addIssue({ code: 'custom', message: 'El monto en córdobas excede el máximo permitido' });
+    }
+});
+
+const closeShiftUsdAmount = moneyAmount.superRefine((value, ctx) => {
+    let parsed: Decimal;
+    try {
+        parsed = new Decimal(value);
+    } catch {
+        return; // moneyAmount ya agregó el error de sintaxis.
+    }
+    if (parsed.decimalPlaces() > 4) {
+        ctx.addIssue({ code: 'custom', message: 'El monto en dólares admite máximo 4 decimales' });
+    }
+    if (parsed.greaterThan('99999999999999.9999')) {
+        ctx.addIssue({ code: 'custom', message: 'El monto en dólares excede el máximo permitido' });
+    }
+});
+
 // POST /api/shifts/close
 export const CloseShiftSchema = z.object({
-    shiftId:      z.string().min(1, 'shiftId requerido'),
-    declaredCash: moneyAmount,
+    shiftId:      z.string().trim().min(1, 'shiftId requerido').max(191, 'shiftId inválido'),
+    // Los PWA anteriores no enviaban llave idempotente, por eso sigue siendo
+    // opcional. Clientes nuevos deben conservar la misma UUID durante todos
+    // los retries del mismo intento de cierre.
+    clientEventId: z.string()
+        .trim()
+        .uuid('clientEventId debe ser UUID')
+        .transform((value) => value.toLowerCase())
+        .optional(),
+    declaredCash: closeShiftNioAmount,
     // Fase D: dólares contados al cierre (opcional; si no viene y hubo
     // movimiento USD, la diferencia USD se calcula contra 0 declarado).
-    declaredCashUsd: moneyAmount.optional(),
-    auditNotes:   z.string().max(500).optional(),
+    declaredCashUsd: closeShiftUsdAmount.optional(),
+    auditNotes:   z.string().trim().max(500).optional(),
+});
+
+/**
+ * Representación canónica de la intención material de cierre.
+ *
+ * La llave idempotente no forma parte de la huella: identifica el comando,
+ * mientras la huella demuestra qué se intentó hacer. El schema rechaza antes
+ * toda escala o rango no persistible; aquí solo se serializa para que
+ * `100`, `100.0` y `100.00`
+ * sean el mismo cierre y no conflictos artificiales de serialización JSON.
+ */
+export const canonicalizeCloseShiftPayload = (input: {
+    shiftId: string;
+    declaredCash: string | number;
+    declaredCashUsd?: string | number;
+    auditNotes?: string;
+}): string => JSON.stringify({
+    version: 1,
+    shiftId: input.shiftId,
+    declaredCash: new Decimal(input.declaredCash).toFixed(2),
+    // Omitido y cero tienen la misma semántica en el endpoint legacy.
+    declaredCashUsd: new Decimal(input.declaredCashUsd ?? 0).toFixed(4),
+    auditNotes: input.auditNotes?.trim() || null,
 });
 
 // POST /api/payroll/calculate

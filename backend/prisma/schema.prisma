@@ -50,10 +50,17 @@ model Tenant {
   // MISMA CUENTA: ahí el PIN es lo único que le pone nombre a un faltante del
   // arqueo. Si cada quien entra con su usuario, `Shift.userId` ya lo resuelve.
   requireCashierPin    Boolean   @default(false)
+  // Política operativa de devoluciones. Treinta días es el default acordado;
+  // una solicitud vencida puede documentarse, pero siempre requiere aprobación.
+  returnWindowDays     Int       @default(30)
   // Desglose de lotes por bodega: OFF preserva el comportamiento legado.
   // La activación se hará explícitamente por tenant, nunca desde una migración.
   batchWarehouseLedgerMode        String    @default("OFF") @db.VarChar(16)
   batchWarehouseLedgerActivatedAt DateTime?
+  // Seguridad de inventario farmacéutico: OFF preserva a todos los tenants
+  // existentes. ENFORCED solo se activa tras comprobar el ledger lote+bodega.
+  pharmacyInventoryMode        String    @default("OFF") @db.VarChar(16)
+  pharmacyInventoryActivatedAt DateTime?
   // Campos Fiscales DGI
   // GENERAL preserva el cálculo y desglose fiscal de todos los tenants
   // existentes; la versión permite congelar qué configuración usó cada documento.
@@ -115,6 +122,7 @@ model Tenant {
   procurementPolicy         ProcurementPolicy?
   productBatchWarehouseStocks ProductBatchWarehouseStock[]
   productBatchLedgerEntries   ProductBatchLedgerEntry[]
+  productBatchHolds           ProductBatchHold[]
   purchaseOrderCloseShorts    PurchaseOrderCloseShort[]
   purchaseOrderCloseShortItems PurchaseOrderCloseShortItem[]
   supplierReturns              SupplierReturn[]
@@ -122,6 +130,13 @@ model Tenant {
   supplierCreditNotes          SupplierCreditNote[]
   supplierCreditNoteLines      SupplierCreditNoteLine[]
   supplierCreditApplications   SupplierCreditApplication[]
+  saleCorrectionRequests       SaleCorrectionRequest[]
+  saleCorrectionLines          SaleCorrectionLine[]
+  approvalGrants               ApprovalGrant[]
+  returnRefunds                ReturnRefund[]
+  returnInspections            ReturnInspection[]
+  customerCreditEntries        CustomerCreditEntry[]
+  productReturnItems           ProductReturnItem[]
 
   // HR Module
   leaveRequests          LeaveRequest[]
@@ -182,6 +197,7 @@ model User {
   purchaseMatchExceptionsResolved  PurchaseMatchException[]     @relation("PurchaseMatchExceptionResolver")
   procurementPoliciesUpdated       ProcurementPolicy[]          @relation("ProcurementPolicyUpdater")
   productBatchLedgerEntriesCreated ProductBatchLedgerEntry[]     @relation("ProductBatchLedgerEntryCreator")
+  productBatchHoldsCreated         ProductBatchHold[]             @relation("ProductBatchHoldCreator")
   purchaseOrderCloseShortsCreated  PurchaseOrderCloseShort[]     @relation("PurchaseOrderCloseShortCreator")
   supplierReturnsCreated            SupplierReturn[]              @relation("SupplierReturnCreator")
   supplierCreditNotesCreated        SupplierCreditNote[]          @relation("SupplierCreditNoteCreator")
@@ -241,6 +257,9 @@ model Customer {
   address     String?  @db.Text
   creditLimit Decimal  @default(0) @db.Decimal(10, 2)
   currentDebt Decimal  @default(0) @db.Decimal(10, 2)
+  // Saldo a favor autoritativo. Cada cambio deja además una entrada inmutable
+  // en CustomerCreditEntry; no se recalcula sumando floats en el cliente.
+  storeCreditBalance Decimal @default(0) @db.Decimal(18, 4)
   isBlocked   Boolean  @default(false)
   // Cliente mayorista: el POS le aplica el precio de mayoreo desde la unidad 1.
   isWholesale Boolean  @default(false)
@@ -256,6 +275,7 @@ model Customer {
   seller       User?                 @relation("CustomerSeller", fields: [sellerId], references: [id])
   sales        Sale[]
   interactions CustomerInteraction[]
+  creditEntries CustomerCreditEntry[]
 
   loans Loan[]
 
@@ -1179,6 +1199,7 @@ model Sale {
   customerId                String?
   employeeId                String?
   balance                   Decimal   @default(0) @db.Decimal(10, 2)
+  storeCreditApplied        Decimal   @default(0) @db.Decimal(18, 4)
   dueDate                   DateTime?
   shiftId                   String?
   // Vendedores (cartera de ruta): QUIÉN vendió, tomado SIEMPRE de req.userId
@@ -1224,6 +1245,9 @@ model Sale {
   items          SaleItem[]
   payments       Payment[]
   productReturns ProductReturn[]
+  correctionRequests SaleCorrectionRequest[]
+  returnRefunds      ReturnRefund[]
+  customerCreditEntries CustomerCreditEntry[]
   serialNumbers  SerialNumber[]
   pedidos        Pedido[]
 
@@ -1273,6 +1297,8 @@ model SaleItem {
   sale             Sale                      @relation(fields: [saleId], references: [id])
   measurement      SaleMeasurement?
   batchAllocations SaleItemBatchAllocation[]
+  correctionLines SaleCorrectionLine[]
+  productReturnItems ProductReturnItem[]
 
   @@index([saleId])
 }
@@ -1490,6 +1516,9 @@ model Shift {
   status               String
   startTime            DateTime  @default(now())
   endTime              DateTime?
+  // Idempotencia del adaptador legado de cierre. Los historicos quedan NULL.
+  closeEventId         String?   @db.VarChar(128)
+  closePayloadHash     String?   @db.VarChar(64)
 
   tenant        Tenant         @relation(fields: [tenantId], references: [id])
   user          User           @relation(fields: [userId], references: [id])
@@ -1504,6 +1533,7 @@ model Shift {
   @@index([tenantId, status, startTime])
   @@index([userId])
   @@index([employeeId])
+  @@unique([tenantId, closeEventId])
 }
 
 // Snapshot Z inmutable generado atómicamente al cerrar una caja. `report`
@@ -1849,7 +1879,10 @@ model Product {
   scaleProductMappings ScaleProductMapping[]
   batchWarehouseStocks ProductBatchWarehouseStock[]
   batchLedgerEntries   ProductBatchLedgerEntry[]
+  batchHolds           ProductBatchHold[]
   supplierReturnItems  SupplierReturnItem[]
+  returnInspections    ReturnInspection[]
+  productReturnItems   ProductReturnItem[]
 
   @@unique([tenantId, sku])
   @@index([defaultSupplierId])
@@ -1961,6 +1994,7 @@ model Warehouse {
   goodsReceipts   GoodsReceipt[]
   batchWarehouseStocks ProductBatchWarehouseStock[]
   batchLedgerEntries ProductBatchLedgerEntry[]
+  batchHolds ProductBatchHold[]
   saleItemBatchAllocations SaleItemBatchAllocation[]
   purchaseItemsWithInventoryEvidence PurchaseItem[] @relation("PurchaseItemInventoryWarehouse")
   supplierReturnItems SupplierReturnItem[]
@@ -2039,6 +2073,7 @@ model ProductBatch {
   goodsReceiptItems   GoodsReceiptItem[]
   warehouseStocks     ProductBatchWarehouseStock[]
   ledgerEntries       ProductBatchLedgerEntry[]
+  holds               ProductBatchHold[]
   purchaseItemsWithInventoryEvidence PurchaseItem[] @relation("PurchaseItemInventoryBatch")
   supplierReturnItems SupplierReturnItem[]
 
@@ -2057,6 +2092,9 @@ model ProductBatchWarehouseStock {
   batchId     String
   warehouseId String
   stock       Decimal  @default(0) @db.Decimal(18, 4)
+  // Proyección exacta de existencias físicamente presentes pero no vendibles
+  // (por ejemplo, una devolución de medicamento puesta en cuarentena).
+  heldStock   Decimal  @default(0) @db.Decimal(18, 4)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -2069,6 +2107,44 @@ model ProductBatchWarehouseStock {
   @@index([tenantId, batchId])
   @@index([tenantId, productId, warehouseId])
   @@index([tenantId, warehouseId, productId])
+}
+
+/// Libro append-only de retenciones y liberaciones de lote por bodega.
+/// quantityDelta actualiza heldStock; los snapshots prueban el efecto sobre
+/// stock físico y vendible sin reinterpretar movimientos históricos.
+model ProductBatchHold {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  productId             String
+  batchId               String
+  warehouseId           String
+  quantityDelta         Decimal  @db.Decimal(18, 4)
+  heldBefore            Decimal  @db.Decimal(18, 4)
+  heldAfter             Decimal  @db.Decimal(18, 4)
+  physicalStockSnapshot Decimal  @db.Decimal(18, 4)
+  sellableBefore        Decimal  @db.Decimal(18, 4)
+  sellableAfter         Decimal  @db.Decimal(18, 4)
+  holdReasonCode        String   @db.VarChar(32)
+  referenceId           String?
+  referenceType         String?  @db.VarChar(64)
+  sourceKey             String   @db.VarChar(191)
+  payloadHash           String   @db.VarChar(64)
+  notes                 String?  @db.Text
+  userId                String
+  createdAt             DateTime @default(now())
+
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch     ProductBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  warehouse Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  creator   User         @relation("ProductBatchHoldCreator", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, sourceKey])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, batchId, warehouseId, createdAt])
+  @@index([tenantId, productId, warehouseId, createdAt])
+  @@index([tenantId, referenceType, referenceId])
+  @@index([userId])
 }
 
 /// Libro inmutable del stock de lote por bodega. sourceKey y payloadHash hacen
@@ -2269,17 +2345,197 @@ model ProductReturn {
   // escribe siempre su huella SHA-256 canónica en la misma transacción.
   clientEventId String?  @db.VarChar(128)
   payloadHash   String?  @db.VarChar(64)
+  // Expediente profesional. Nullable para conservar devoluciones históricas.
+  correctionRequestId String?  @unique
+  returnNumber        Int?
+  resolution          String   @default("REFUND") @db.VarChar(32) // REFUND | EXCHANGE | STORE_CREDIT
+  refundStatus        String   @default("NOT_REQUIRED") @db.VarChar(32) // NOT_REQUIRED | PENDING | COMPLETED
   createdAt     DateTime @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id])
-  sale   Sale   @relation(fields: [saleId], references: [id])
-  processedShift Shift? @relation("ProcessedShiftReturns", fields: [processedShiftId], references: [id])
+  tenant            Tenant                 @relation(fields: [tenantId], references: [id])
+  sale              Sale                   @relation(fields: [saleId], references: [id])
+  processedShift    Shift?                 @relation("ProcessedShiftReturns", fields: [processedShiftId], references: [id])
+  correctionRequest SaleCorrectionRequest? @relation(fields: [correctionRequestId], references: [id], onDelete: Restrict)
+  normalizedItems   ProductReturnItem[]
+  refunds           ReturnRefund[]
+  creditEntries     CustomerCreditEntry[]
 
   @@unique([tenantId, clientEventId])
   @@index([tenantId])
   @@index([saleId])
+  @@unique([tenantId, returnNumber])
   @@index([tenantId, createdAt])
   @@index([tenantId, processedShiftId, createdAt])
+}
+
+/// Solicitud aprobable que precede cualquier movimiento de dinero o inventario.
+/// `APPROVED` concede permiso, pero únicamente `COMPLETED` confirma que la
+/// transacción de negocio se ejecutó y fue revalidada bajo locks.
+model SaleCorrectionRequest {
+  id              String   @id @default(cuid())
+  tenantId        String
+  saleId          String
+  kind            String   @db.VarChar(16) // RETURN | VOID
+  status          String   @default("PENDING_APPROVAL") @db.VarChar(32)
+  reason          String   @db.Text
+  resolution      String?  @db.VarChar(32) // REFUND | EXCHANGE | STORE_CREDIT
+  refundMethod    String?  @db.VarChar(16) // CASH | CARD | QR | TRANSFER
+  requestedBy     String
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedBy      String?
+  rejectedAt      DateTime?
+  rejectionReason String?  @db.Text
+  executedBy      String?
+  executedAt      DateTime?
+  expiresAt       DateTime?
+  clientEventId   String   @db.VarChar(128)
+  payloadHash     String   @db.VarChar(64)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now()) @updatedAt
+
+  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  sale          Sale                 @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  lines         SaleCorrectionLine[]
+  productReturn ProductReturn?
+  refunds       ReturnRefund[]
+
+  @@unique([tenantId, clientEventId])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, saleId, createdAt])
+  @@index([approvedBy])
+  @@index([requestedBy])
+}
+
+model SaleCorrectionLine {
+  id             String   @id @default(cuid())
+  tenantId       String
+  requestId      String
+  saleItemId     String
+  quantity       Decimal  @db.Decimal(18, 4)
+  disposition    String   @default("RESTOCK") @db.VarChar(16) // RESTOCK | QUARANTINE | LOSS
+  createdAt      DateTime @default(now())
+
+  tenant     Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  request    SaleCorrectionRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  saleItem   SaleItem              @relation(fields: [saleItemId], references: [id], onDelete: Restrict)
+  inspection ReturnInspection?
+
+  @@unique([requestId, saleItemId])
+  @@index([tenantId, requestId])
+  @@index([tenantId, saleItemId])
+}
+
+/// Línea normalizada final. El JSON de ProductReturn continúa escribiéndose
+/// como snapshot compatible, pero las consultas nuevas no dependen de parsearlo.
+model ProductReturnItem {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  productReturnId    String
+  saleItemId         String
+  productId          String
+  quantity           Decimal  @db.Decimal(18, 4)
+  refundUnitPrice    Decimal  @db.Decimal(18, 4)
+  lineTotal          Decimal  @db.Decimal(18, 4)
+  costTotal          Decimal  @db.Decimal(18, 4)
+  disposition        String   @db.VarChar(16)
+  productNameAtReturn String? @db.VarChar(191)
+  unitAtReturn       String?  @db.VarChar(32)
+  createdAt          DateTime @default(now())
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  productReturn ProductReturn @relation(fields: [productReturnId], references: [id], onDelete: Restrict)
+  saleItem      SaleItem      @relation(fields: [saleItemId], references: [id], onDelete: Restrict)
+  product       Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([productReturnId, saleItemId])
+  @@index([tenantId, productReturnId])
+  @@index([tenantId, productId])
+}
+
+/// Autorización fuerte y de un solo uso. Se persiste el hash, nunca el token.
+model ApprovalGrant {
+  id          String   @id @default(cuid())
+  tenantId    String
+  userId      String
+  tokenHash   String   @unique @db.VarChar(64)
+  purpose     String   @db.VarChar(32) // SALE_CORRECTION
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, userId, expiresAt])
+}
+
+model ReturnRefund {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  saleId              String
+  productReturnId     String?
+  correctionRequestId String?
+  amount              Decimal  @db.Decimal(18, 4)
+  method              String   @db.VarChar(16)
+  status              String   @default("PENDING") @db.VarChar(16) // PENDING | COMPLETED | CANCELLED
+  externalReference   String?  @db.VarChar(191)
+  evidenceNote        String?  @db.Text
+  completedBy         String?
+  completedAt         DateTime?
+  createdAt           DateTime @default(now())
+
+  tenant            Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  sale              Sale                   @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  productReturn     ProductReturn?         @relation(fields: [productReturnId], references: [id], onDelete: Restrict)
+  correctionRequest SaleCorrectionRequest? @relation(fields: [correctionRequestId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, saleId])
+  @@index([productReturnId])
+}
+
+/// Existencia que volvió físicamente pero todavía no es vendible.
+model ReturnInspection {
+  id               String   @id @default(cuid())
+  tenantId         String
+  correctionLineId String   @unique
+  productId        String
+  quantity         Decimal  @db.Decimal(18, 4)
+  status           String   @default("PENDING") @db.VarChar(16) // PENDING | RESTOCKED | DISCARDED
+  batchEvidence    Json?
+  resolvedBy       String?
+  resolutionReason String?  @db.Text
+  resolvedAt       DateTime?
+  createdAt        DateTime @default(now())
+
+  tenant         Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  correctionLine SaleCorrectionLine @relation(fields: [correctionLineId], references: [id], onDelete: Restrict)
+  product        Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, productId])
+}
+
+model CustomerCreditEntry {
+  id              String   @id @default(cuid())
+  tenantId        String
+  customerId      String
+  productReturnId String?
+  saleId          String?
+  type            String   @db.VarChar(32) // RETURN_CREDIT | SALE_RETURN_CREDIT | EXCHANGE_DEBIT | VOID_RESTORE | ADJUSTMENT
+  amount          Decimal  @db.Decimal(18, 4) // positivo acredita; negativo consume
+  balanceAfter    Decimal  @db.Decimal(18, 4)
+  createdBy       String
+  createdAt       DateTime @default(now())
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  productReturn ProductReturn? @relation(fields: [productReturnId], references: [id], onDelete: Restrict)
+  sale          Sale?          @relation(fields: [saleId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, customerId, createdAt])
+  @@index([productReturnId])
+  @@index([saleId])
 }
 
 // ==========================================
@@ -2293,7 +2549,7 @@ model Account {
   name     String // "Caja General", "Inventario", "Ventas"
   type     String // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
   subtype  String? // CURRENT_ASSET, FIXED_ASSET, CURRENT_LIABILITY, etc.
-  balance  Decimal @default(0) @db.Decimal(14, 2)
+  balance  Decimal @default(0) @db.Decimal(18, 4)
   isSystem Boolean @default(true) // Cuentas del sistema (no borrables)
 
   tenant Tenant        @relation(fields: [tenantId], references: [id])
@@ -2308,16 +2564,25 @@ model JournalEntry {
   id            String   @id @default(cuid())
   tenantId      String
   date          DateTime @default(now())
+  economicDate  DateTime?
+  postedAt      DateTime?
   description   String   @db.Text
   referenceId   String? // Sale.id, Purchase.id, etc.
   referenceType String? // SALE, PURCHASE, EXPENSE, PAYROLL, ADJUSTMENT, RETURN, PAYMENT
   isAutomatic   Boolean  @default(true)
+  entryKind     String   @default("ORIGINAL") @db.VarChar(32)
+  postingKey    String?  @db.VarChar(191)
+  payloadHash   String?  @db.VarChar(64)
+  reversalOfId  String?  @unique
   createdBy     String
   createdAt     DateTime @default(now())
 
-  tenant Tenant        @relation(fields: [tenantId], references: [id])
-  lines  JournalLine[]
+  tenant     Tenant        @relation(fields: [tenantId], references: [id])
+  lines      JournalLine[]
+  reversalOf JournalEntry? @relation("JournalEntryReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy JournalEntry? @relation("JournalEntryReversal")
 
+  @@unique([tenantId, postingKey])
   @@index([tenantId])
   @@index([referenceId])
   @@index([date])
@@ -2327,8 +2592,8 @@ model JournalLine {
   id             String  @id @default(cuid())
   journalEntryId String
   accountId      String
-  debit          Decimal @default(0) @db.Decimal(14, 2)
-  credit         Decimal @default(0) @db.Decimal(14, 2)
+  debit          Decimal @default(0) @db.Decimal(18, 4)
+  credit         Decimal @default(0) @db.Decimal(18, 4)
 
   entry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
   account Account      @relation(fields: [accountId], references: [id])

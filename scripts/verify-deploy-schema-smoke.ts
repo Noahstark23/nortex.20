@@ -4,8 +4,12 @@ import {
     inspectPaymentIdempotencyIndex,
     inspectPaymentPayloadHashColumn,
     inspectProductReturnClientEventIdColumn,
+    inspectProductReturnCorrectionRequestIdColumn,
+    inspectProductReturnCorrectionRequestIndex,
     inspectProductReturnIdempotencyIndex,
+    inspectProductReturnNumberIndex,
     inspectProductReturnPayloadHashColumn,
+    inspectProductReturnReturnNumberColumn,
     inspectStockCountNullableIdColumn,
     inspectStockCountOpenWarehouseIndex,
     inspectStockCountTenantWarehouseStatusIndex,
@@ -15,6 +19,8 @@ import {
     inspectWarehouseSellerIndex,
     PAYMENT_IDEMPOTENCY_INDEX,
     PRODUCT_RETURN_IDEMPOTENCY_INDEX,
+    PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX,
+    PRODUCT_RETURN_NUMBER_UNIQUE_INDEX,
     STOCK_COUNT_OPEN_WAREHOUSE_INDEX,
     STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX,
     STOCK_COUNT_WAREHOUSE_FOREIGN_KEY,
@@ -397,7 +403,12 @@ async function readIndex(): Promise<WarehouseSellerIndexRow[]> {
     `;
 }
 
-async function readProductReturnIndex(): Promise<ProductReturnIndexRow[]> {
+async function readProductReturnIndex(
+    indexName:
+        | typeof PRODUCT_RETURN_IDEMPOTENCY_INDEX
+        | typeof PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX
+        | typeof PRODUCT_RETURN_NUMBER_UNIQUE_INDEX,
+): Promise<ProductReturnIndexRow[]> {
     return prisma.$queryRaw<ProductReturnIndexRow[]>`
         SELECT
             INDEX_NAME AS indexName,
@@ -412,7 +423,7 @@ async function readProductReturnIndex(): Promise<ProductReturnIndexRow[]> {
         FROM information_schema.STATISTICS
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'ProductReturn'
-          AND INDEX_NAME = ${PRODUCT_RETURN_IDEMPOTENCY_INDEX}
+          AND INDEX_NAME = ${indexName}
         ORDER BY SEQ_IN_INDEX
     `;
 }
@@ -433,7 +444,13 @@ async function verifyProductReturnUpgrade(): Promise<void> {
         FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'ProductReturn'
-          AND COLUMN_NAME IN ('clientEventId', 'payloadHash', 'processedShiftId')
+          AND COLUMN_NAME IN (
+            'clientEventId',
+            'payloadHash',
+            'correctionRequestId',
+            'returnNumber',
+            'processedShiftId'
+          )
         ORDER BY COLUMN_NAME
     `;
     assert(
@@ -448,8 +465,24 @@ async function verifyProductReturnUpgrade(): Promise<void> {
         ) === 'valid',
         'ProductReturn.payloadHash no coincide con VARCHAR(64) NULL.',
     );
+    assert(
+        inspectProductReturnCorrectionRequestIdColumn(
+            columns.filter(row => row.columnName === 'correctionRequestId'),
+        ) === 'valid',
+        'ProductReturn.correctionRequestId no coincide con VARCHAR(191) NULL.',
+    );
+    assert(
+        inspectProductReturnReturnNumberColumn(
+            columns.filter(row => row.columnName === 'returnNumber'),
+        ) === 'valid',
+        'ProductReturn.returnNumber no coincide con INTEGER NULL.',
+    );
 
-    const indexRows = await readProductReturnIndex();
+    const idempotencyIndexRows = await readProductReturnIndex(PRODUCT_RETURN_IDEMPOTENCY_INDEX);
+    const correctionIndexRows = await readProductReturnIndex(
+        PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX,
+    );
+    const returnNumberIndexRows = await readProductReturnIndex(PRODUCT_RETURN_NUMBER_UNIQUE_INDEX);
     const returns = await prisma.$queryRaw<Array<{
         id: string;
         tenantId: string;
@@ -459,9 +492,22 @@ async function verifyProductReturnUpgrade(): Promise<void> {
         createdBy: string;
         clientEventId: string | null;
         payloadHash: string | null;
+        correctionRequestId: string | null;
+        returnNumber: number | null;
         processedShiftId: string | null;
     }>>`
-        SELECT id, tenantId, saleId, reason, total, createdBy, clientEventId, payloadHash, processedShiftId
+        SELECT
+            id,
+            tenantId,
+            saleId,
+            reason,
+            total,
+            createdBy,
+            clientEventId,
+            payloadHash,
+            correctionRequestId,
+            returnNumber,
+            processedShiftId
         FROM ProductReturn
         WHERE id IN ('product-return-deploy-legacy', 'product-return-deploy-duplicate')
         ORDER BY id
@@ -481,7 +527,22 @@ async function verifyProductReturnUpgrade(): Promise<void> {
             returns.every(row => row.processedShiftId === null),
             'El preflight atribuyó devoluciones históricas duplicadas a un turno.',
         );
-        assert(indexRows.length === 0, 'El índice de devoluciones no debía crearse con duplicados.');
+        assert(
+            returns.every(row => row.correctionRequestId === null && row.returnNumber === null),
+            'El preflight inventó identidad de corrección o número para devoluciones duplicadas.',
+        );
+        assert(
+            idempotencyIndexRows.length === 0,
+            'El índice idempotente de devoluciones no debía crearse con duplicados.',
+        );
+        assert(
+            inspectProductReturnCorrectionRequestIndex(correctionIndexRows) === 'valid',
+            `${PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX} dejó de ser válido.`,
+        );
+        assert(
+            inspectProductReturnNumberIndex(returnNumberIndexRows) === 'valid',
+            `${PRODUCT_RETURN_NUMBER_UNIQUE_INDEX} dejó de ser válido.`,
+        );
         return;
     }
 
@@ -495,10 +556,23 @@ async function verifyProductReturnUpgrade(): Promise<void> {
     assert(legacyReturn?.createdBy === 'user-deploy-smoke', 'Cambió el autor de la devolución histórica.');
     assert(legacyReturn?.clientEventId === null, 'El upgrade inventó clientEventId histórico.');
     assert(legacyReturn?.payloadHash === null, 'El upgrade inventó payloadHash histórico.');
+    assert(
+        legacyReturn?.correctionRequestId === null,
+        'El upgrade inventó correctionRequestId histórico.',
+    );
+    assert(legacyReturn?.returnNumber === null, 'El upgrade inventó returnNumber histórico.');
     assert(legacyReturn?.processedShiftId === null, 'El upgrade atribuyó la devolución histórica a un turno.');
     assert(
-        inspectProductReturnIdempotencyIndex(indexRows) === 'valid',
+        inspectProductReturnIdempotencyIndex(idempotencyIndexRows) === 'valid',
         `${PRODUCT_RETURN_IDEMPOTENCY_INDEX} es incorrecto.`,
+    );
+    assert(
+        inspectProductReturnCorrectionRequestIndex(correctionIndexRows) === 'valid',
+        `${PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX} es incorrecto.`,
+    );
+    assert(
+        inspectProductReturnNumberIndex(returnNumberIndexRows) === 'valid',
+        `${PRODUCT_RETURN_NUMBER_UNIQUE_INDEX} es incorrecto.`,
     );
 }
 

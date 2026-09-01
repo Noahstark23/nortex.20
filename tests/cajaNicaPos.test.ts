@@ -20,8 +20,8 @@ const between = (contents: string, start: string, end: string): string => {
 describe('cobro sin atajos peligrosos', () => {
     it('valida el efectivo antes de la cola offline o el POST de venta', () => {
         const checkout = between(pos, 'const handleCheckout', 'const efectivoRecibidoDeLaVenta');
-        const cashGuard = between(checkout, "if (method === 'CASH')", 'if (hasQuotationLines');
-        const validationAt = checkout.indexOf('validateCashReceived(cashReceived, grandTotalD)');
+        const cashGuard = between(checkout, "if (method === 'CASH' && amountDueD.greaterThan(0))", 'if (hasQuotationLines');
+        const validationAt = checkout.indexOf('validateCashReceived(cashReceived, amountDueD)');
         const offlineAt = checkout.indexOf('if (!navigator.onLine)');
         const postAt = checkout.indexOf("fetch('/api/sales'");
 

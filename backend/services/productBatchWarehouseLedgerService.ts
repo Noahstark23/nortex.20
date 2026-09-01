@@ -23,6 +23,7 @@ interface LockedBatchWarehouseStockRow {
     id: string;
     productId: string;
     stock: Decimal.Value;
+    heldStock: Decimal.Value;
 }
 
 interface ExistingBatchWarehouseLedgerEntry {
@@ -321,7 +322,7 @@ export async function applyBatchWarehouseDelta({
         skipDuplicates: true,
     });
     const balances = await tx.$queryRaw<LockedBatchWarehouseStockRow[]>(Prisma.sql`
-        SELECT id, productId, stock
+        SELECT id, productId, stock, heldStock
         FROM \`ProductBatchWarehouseStock\`
         WHERE tenantId = ${intent.tenantId}
           AND batchId = ${intent.batchId}
@@ -350,6 +351,15 @@ export async function applyBatchWarehouseDelta({
     if (lockedReplay) return replayResult(mode, lockedReplay, payloadHash);
 
     const stockBeforeDecimal = new Decimal(balance.stock.toString());
+    const heldBeforeDecimal = new Decimal(balance.heldStock.toString());
+    if (heldBeforeDecimal.isNegative()
+        || (heldBeforeDecimal.greaterThan(0) && heldBeforeDecimal.greaterThan(stockBeforeDecimal))) {
+        throw new BatchWarehouseLedgerError(
+            'BATCH_WAREHOUSE_LEDGER_CORRUPT',
+            500,
+            'El saldo retenido lote-bodega no conserva sus invariantes',
+        );
+    }
     const deltaDecimal = new Decimal(intent.delta);
     const requestedAfterDecimal = stockBeforeDecimal.plus(deltaDecimal);
     let requestedAfter: string;
@@ -364,6 +374,19 @@ export async function applyBatchWarehouseDelta({
         );
     }
     const stockBefore = canonicalBatchWarehouseBalance(stockBeforeDecimal);
+
+    if (deltaDecimal.isNegative() && !intent.allowNegative && heldBeforeDecimal.greaterThan(0)) {
+        const availableAfterDecimal = stockBeforeDecimal
+            .minus(heldBeforeDecimal)
+            .plus(deltaDecimal);
+        if (availableAfterDecimal.isNegative()) {
+            throw new BatchWarehouseLedgerError(
+                'BATCH_WAREHOUSE_INSUFFICIENT_STOCK',
+                409,
+                'No hay existencias vendibles suficientes; parte del lote está retenida',
+            );
+        }
+    }
 
     if (requestedAfterDecimal.isNegative() && !intent.allowNegative) {
         if (mode === 'ENFORCED') {
@@ -432,7 +455,10 @@ export async function applyBatchWarehouseDelta({
             id: balance.id,
             tenantId: intent.tenantId,
             ...(deltaDecimal.isNegative() && !intent.allowNegative
-                ? { stock: { gte: deltaDecimal.abs() } }
+                ? {
+                    stock: { gte: deltaDecimal.abs().plus(heldBeforeDecimal) },
+                    heldStock: heldBeforeDecimal,
+                }
                 : {}),
         },
         data: { stock: { increment: deltaDecimal } },

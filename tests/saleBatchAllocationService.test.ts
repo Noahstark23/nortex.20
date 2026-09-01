@@ -72,6 +72,42 @@ describe('asignacion FEFO compartida', () => {
         }));
     });
 
+    it('mantiene vendible el vencimiento de hoy hasta medianoche civil Managua', async () => {
+        const { tx } = txWithBatches([{ id: 'batch-today', batchNumber: 'L-HOY', stock: 1 }]);
+        await allocateSaleItemBatchesFefo(tx, {
+            tenantId: 'tenant-a',
+            productId: 'product-a',
+            saleItemId: 'sale-item-a',
+            quantity: '1',
+            enforceComplete: true,
+            capturedAt: new Date('2026-08-22T05:59:59.999Z'),
+        });
+
+        expect(tx.productBatch.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                expiryDate: { gte: new Date('2026-08-21T00:00:00.000Z') },
+            }),
+        }));
+    });
+
+    it('deja de considerar el lote al iniciar el siguiente dia civil Managua', async () => {
+        const { tx } = txWithBatches([{ id: 'batch-next-day', batchNumber: 'L-AYER', stock: 1 }]);
+        await allocateSaleItemBatchesFefo(tx, {
+            tenantId: 'tenant-a',
+            productId: 'product-a',
+            saleItemId: 'sale-item-a',
+            quantity: '1',
+            enforceComplete: true,
+            capturedAt: new Date('2026-08-22T06:00:00.000Z'),
+        });
+
+        expect(tx.productBatch.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                expiryDate: { gte: new Date('2026-08-22T00:00:00.000Z') },
+            }),
+        }));
+    });
+
     it('online revierte si los lotes vigentes no cubren la linea', async () => {
         const { tx } = txWithBatches([{ id: 'batch-early', batchNumber: 'L-01', stock: 0.5 }]);
         await expect(allocateSaleItemBatchesFefo(tx, {

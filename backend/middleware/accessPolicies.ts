@@ -28,6 +28,18 @@ export const CUSTOMER_READ_ROLES = [
     'ACCOUNTANT',
 ];
 
+/** Hub, cartera y cobranza: excluye empleados sin responsabilidad financiera. */
+export const CUSTOMER_HUB_READ_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'CASHIER',
+    'VIEWER',
+    'VENDEDOR',
+    'ACCOUNTANT',
+];
+
 /** Alta de clientes desde POS/CRM; VIEWER nunca muta. */
 export const CUSTOMER_CREATE_ROLES = [
     'OWNER',
@@ -60,6 +72,15 @@ export const CUSTOMER_CONTROL_ROLES = [
     'OWNER',
     'ADMIN',
     'SUPER_ADMIN',
+];
+
+/** Entrada al PUT; la autorización fina por grupo se aplica después. */
+export const CUSTOMER_UPDATE_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'VENDEDOR',
 ];
 
 export type CustomerCreateIntent = {
@@ -221,8 +242,7 @@ export const PROCUREMENT_MATCH_RESOLVE_ROLES = PURCHASE_PAYMENT_ROLES;
  *
  * Son datos sensibles de todo el negocio (incluyen saldos, deuda y obligaciones),
  * por lo que no heredan la lectura operativa de POS/CRM. SUPER_ADMIN se declara
- * de forma explicita aunque `checkRole` tambien lo verifica con su bypass
- * persistido, para que la politica siga siendo legible y testeable por si sola.
+ * de forma explícita aunque `checkRole` también preserve su bypass.
  */
 export const ACCOUNTING_READ_ROLES = [
     'OWNER',
@@ -255,6 +275,8 @@ export const RETURN_SEARCH_ROLES = [
     'OWNER',
     'ADMIN',
     'SUPER_ADMIN',
+    'MANAGER',
+    'CASHIER',
 ];
 
 /** VIEWER puede consultar proformas y pedidos web, pero no convertir/crear. */

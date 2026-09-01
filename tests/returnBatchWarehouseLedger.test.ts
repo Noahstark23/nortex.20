@@ -262,24 +262,53 @@ const returnRoute = between(
 
 describe('integración transaccional lote+bodega de devoluciones y anulaciones', () => {
     it('ProductReturn filtra allocations por tenant+venta y preflight ENFORCED ocurre antes de efectos', () => {
-        const mode = returnRoute.indexOf('resolveBatchWarehouseLedgerMode');
+        const tenantLock = returnRoute.indexOf('SELECT type, batchWarehouseLedgerMode, pharmacyInventoryMode');
+        const saleLock = returnRoute.indexOf('SELECT id FROM \\`Sale\\`', tenantLock);
+        const mode = returnRoute.indexOf('normalizeBatchWarehouseLedgerMode', tenantLock);
         const allocationRead = returnRoute.indexOf('tx.saleItemBatchAllocation.findMany');
         const plan = returnRoute.indexOf('planReturnBatchRestoration');
         const create = returnRoute.indexOf('tx.productReturn.create');
         const stock = returnRoute.indexOf('applyStockDelta(tx');
 
-        expect(mode).toBeGreaterThan(-1);
+        expect(tenantLock).toBeGreaterThan(-1);
+        expect(returnRoute.slice(tenantLock, mode)).toContain('FOR UPDATE');
+        expect(mode).toBeGreaterThan(tenantLock);
+        expect(saleLock).toBeGreaterThan(mode);
+        expect(returnRoute.slice(saleLock, allocationRead)).toContain('FOR UPDATE');
         expect(allocationRead).toBeGreaterThan(mode);
         expect(plan).toBeGreaterThan(allocationRead);
         expect(create).toBeGreaterThan(plan);
         expect(stock).toBeGreaterThan(create);
         expect(returnRoute.slice(allocationRead, plan)).toContain('tenantId: authReq.tenantId!');
         expect(returnRoute.slice(allocationRead, plan)).toContain('saleItem: { saleId, sale: { tenantId: authReq.tenantId! } }');
-        expect(returnRoute.slice(plan, create)).toContain(
+        expect(returnRoute.slice(allocationRead, plan)).toContain(
             'productsById.get(item.productId)?.requiresBatchTracking === true',
         );
-        expect(returnRoute.slice(mode, plan)).toContain("batchWarehouseLedgerMode !== 'OFF'");
+        expect(returnRoute.slice(allocationRead, plan)).toContain('const requiresBatchTracking =');
         expect(returnRoute.slice(plan, create)).toContain('ledgerMode: batchWarehouseLedgerMode');
+    });
+
+    it('farmacia ENFORCED convierte la devolución loteada en cuarentena atómica', () => {
+        const tenantLock = returnRoute.indexOf('SELECT type, batchWarehouseLedgerMode, pharmacyInventoryMode');
+        const exactGuard = returnRoute.indexOf("'PHARMACY_RETURN_EXACT_BATCH_REQUIRED'", tenantLock);
+        const create = returnRoute.indexOf('tx.productReturn.create', exactGuard);
+        const physical = returnRoute.indexOf('await applyBatchWarehouseDelta({', create);
+        const hold = returnRoute.indexOf('await applyProductBatchHoldDelta({', physical);
+        const batchAggregate = returnRoute.indexOf('tx.productBatch.updateMany', hold);
+
+        expect(tenantLock).toBeGreaterThan(-1);
+        expect(exactGuard).toBeGreaterThan(tenantLock);
+        expect(create).toBeGreaterThan(exactGuard);
+        expect(physical).toBeGreaterThan(create);
+        expect(hold).toBeGreaterThan(physical);
+        expect(batchAggregate).toBeGreaterThan(hold);
+        const holdBlock = returnRoute.slice(hold, batchAggregate);
+        expect(holdBlock).toContain('quantityDelta: restoration.quantity.toFixed(4)');
+        expect(holdBlock).toContain('holdReasonCode: CUSTOMER_RETURN_HOLD_REASON_CODE');
+        expect(holdBlock).toContain("referenceType: 'PRODUCT_RETURN'");
+        expect(holdBlock).toContain('product-return:${productReturn.id}:quarantine:${restoration.allocationId}');
+        expect(returnRoute.slice(exactGuard, create)).toContain("? 'QUARANTINE'");
+        expect(returnRoute).toContain('error instanceof ProductBatchHoldError');
     });
 
     it('aplica SALE_RETURN exacto con sourceKey estable, Decimal string y actor autenticado', () => {
@@ -425,6 +454,7 @@ describe('integración transaccional lote+bodega de devoluciones y anulaciones',
 
     it('ambas rutas traducen errores del core sin volverlos 500 genérico', () => {
         expect(returnRoute).toContain('if (error instanceof BatchWarehouseLedgerError)');
+        expect(returnRoute).toContain('if (error instanceof ProductBatchHoldError)');
         expect(returnRoute).toContain('res.status(error.httpStatus)');
         expect(cancelRoute).toContain('error instanceof BatchWarehouseLedgerError');
         expect(cancelRoute).toContain('code: error.code');

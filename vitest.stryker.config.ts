@@ -35,12 +35,21 @@ const RENDER_LENTOS = [
     '**/tests/posVentaCritica.test.tsx',
 ];
 
+const INCOMPATIBLES_CON_INSTRUMENTACION = [
+    // Lee shiftCloseService.ts como texto. Stryker instrumenta ese texto antes
+    // del dry-run y rompe la aserción estructural aunque ningún mutante esté
+    // activo. Su contrato puro vive en cashCloseJournalMutation.test.ts; este
+    // archivo completo sigue ejecutándose en `npm test`.
+    '**/tests/closeShiftIdempotency.test.ts',
+];
+
 export default defineConfig({
     plugins: [react()],
     resolve: {
         alias: { '@': path.resolve(__dirname, '.') },
     },
     test: {
+        setupFiles: ['./tests/setup.ts'],
         exclude: [
             '**/node_modules/**',
             '**/dist/**',
@@ -48,6 +57,7 @@ export default defineConfig({
             // una copia instrumentada de la suite en disco.
             '**/.stryker-tmp/**',
             ...RENDER_LENTOS,
+            ...INCOMPATIBLES_CON_INSTRUMENTACION,
         ],
     },
 });

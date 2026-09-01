@@ -95,6 +95,7 @@ export default defineConfig(({ mode }) => {
         }
       },
       test: {
+        setupFiles: ['./tests/setup.ts'],
         // Excluir cualquier sandbox de Stryker: además del default
         // `.stryker-tmp/`, las corridas enfocadas pueden dejar variantes como
         // `.stryker-tmp-pos-activation/`. Si Vitest las descubre, ejecuta una

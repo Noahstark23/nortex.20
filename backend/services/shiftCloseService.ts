@@ -744,7 +744,7 @@ export async function closeShiftWithReport(
             tx.sale.groupBy({
                 by: ['paymentMethod'],
                 where: { tenantId: command.tenantId, shiftId: locked.id, status: { not: ESTADO_ANULADA } },
-                _sum: { total: true },
+                _sum: { total: true, storeCreditApplied: true },
                 _count: { _all: true },
                 orderBy: { paymentMethod: 'asc' },
             }),
@@ -766,9 +766,17 @@ export async function closeShiftWithReport(
             transactionCount: payment._count._all,
             grossSales: payment._sum.total?.toString() ?? '0',
         }));
-        const cashSales = paymentInputs
-            .filter((payment) => payment.method === 'CASH')
-            .reduce((sum, payment) => sum.plus(payment.grossSales), new Decimal(0));
+        // El reporte conserva la venta bruta por forma de pago, pero la gaveta
+        // solo recibe el tender real. El crédito de tienda aplicado no es
+        // efectivo y por tanto no puede inflar el esperado del cierre.
+        const cashSales = payments
+            .filter((payment) => payment.paymentMethod === 'CASH')
+            .reduce(
+                (sum, payment) => sum
+                    .plus(payment._sum.total?.toString() ?? '0')
+                    .minus(payment._sum.storeCreditApplied?.toString() ?? '0'),
+                new Decimal(0),
+            );
         const movements: ShiftCloseMovementInput[] = movementGroups.map((movement) => ({
             type: movement.type,
             currency: movement.currency || 'NIO',

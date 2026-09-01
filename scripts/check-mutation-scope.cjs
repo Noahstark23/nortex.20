@@ -93,6 +93,10 @@ const PISO_MUTANTES = {
     'utils/posCash.ts': 99,
     // Foto de recibido/vuelto para ticket inmediato: 23/23.
     'utils/postSalePrintCash.ts': 23,
+    // DTO autoritativo de /api/products para POS: conserva cero vendible,
+    // normaliza campos legacy y evita que una foto inválida rompa la tarjeta.
+    // Corrida dirigida del bloque farmacia: 46/46.
+    'utils/posProductMapper.ts': 46,
     // Los seis presets operativos se validan completos, sin fiscalidad/precio:
     // 45/45 mutantes detectados.
     'utils/productFamilyPresets.ts': 45,
@@ -136,6 +140,16 @@ const PISO_MUTANTES = {
     'backend/lib/batchWarehouseReadiness.ts': 496,
     // Transiciones manuales batch/no-batch y comando persistido: 112/112.
     'backend/lib/manualBatchMovements.ts': 112,
+    // Fecha civil Managua, piso de expiración y parser estricto: 40/40.
+    'backend/lib/managuaBusinessDate.ts': 40,
+    // Clasificación y DTO físico/retenido/vendible por vencimiento: 31/31.
+    'backend/lib/pharmacyExpiryAlerts.ts': 31,
+    // Un mismo producto+lote no puede mezclar dos vencimientos impresos:
+    // 41/41, incluidos formatos inválidos y mensajes de conflicto estables.
+    'backend/lib/productBatchIdentity.ts': 41,
+    // Intención Decimal exacta, payload canónico, hash e idempotencia de
+    // cuarentena lote+bodega: 142/142.
+    'backend/lib/productBatchHold.ts': 142,
     // Cierre corto de OC con cantidades Decimal exactas e idempotencia: 157/157.
     'backend/lib/purchaseOrderCloseShort.ts': 157,
     // Comando canónico de transferencia multi-bodega: 160/160.
@@ -177,7 +191,11 @@ const PISO_MUTANTES = {
     'backend/services/pedidoTrackingService.ts': 5,
     // Decimal/huella/conflicto idempotente (39) y restauración exacta de lotes
     // por allocation+bodega (219): 258/258 entre los tres rangos actuales.
-    'backend/services/returnService.ts': 258,
+    // Resolución de líneas + restauración lote/bodega + huella de idempotencia
+    // con expediente aprobado. 260/260 después de distinguir dos aprobaciones
+    // y normalizar espacios sin perder identidad.
+    'backend/services/returnService.ts': 260,
+    'backend/lib/saleCorrections.ts': 51,
     // nicaLabor.ts es el motor de nómina del ERP: lo que de verdad se le paga a un
     // trabajador (planilla, retención de IR, finiquito). Entró sin ninguna red —
     // el 95,59% histórico protegía utils/calc-laborales.ts, que es el ESPEJO
@@ -212,12 +230,22 @@ const PISO_MUTANTES = {
     // anticipado.
     'backend/services/stripe.ts': 13,
     'backend/services/stockService.ts': 5,
-    // Asientos puros de venta, abonos, compra+PPV y devolución: 178/178, más
-    // 7/7 del orden canónico de locks contables; 185/185 en la realineación
-    // actual. La factura ligada a OC deja
+    // PR-01 protege toda la canalización pura de posting: normalización
+    // estricta string/Decimal, límites 18,4, balance, orden total y huella.
+    // Corrida dirigida: 175/175, sin NoCoverage, ignores ni sobrevivientes.
+    'backend/services/journalPosting.ts': 175,
+    // Identidad legacy tenant+turno y hash de intención: 9/9.
+    'backend/services/legacyShiftCloseService.ts': 9,
+    // JSON canónico de cierre (NIO 2dp, USD 4dp, notas normalizadas): 8/8.
+    'backend/validation/schemas.ts': 8,
+    // Asientos puros de venta con crédito de tienda, abonos, pago a proveedor,
+    // compra+PPV y devolución: 205/205, más 7/7 del orden canónico de locks;
+    // 212/212 después de realinear los seis rangos integrados. La factura ligada a OC deja
     // Inventario al costo recibido y separa variación favorable/desfavorable
     // en 5.1.3, incluidos bordes CUOTA_FIJA.
-    'backend/services/accounting.ts': 185,
+    'backend/services/accounting.ts': 212,
+    // Reglas cruzadas RETURN/VOID: 50/50 sobre el superRefine autoritativo.
+    'backend/validation/saleCorrectionSchemas.ts': 50,
 };
 
 if (!fs.existsSync(REPORT)) {

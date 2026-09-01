@@ -87,10 +87,29 @@ describe('idempotencia de devoluciones', () => {
         ['otra cantidad', { items: [{ saleItemId: 'line-b', quantity: '0.75' }, { saleItemId: 'line-a', productId: 'product-a', quantity: '1.25' }] }],
         ['otro motivo', { reason: 'Producto vencido' }],
         ['otro canal', { refundMethod: 'CASH' as const }],
+        ['otra aprobación', { correctionRequestId: 'correction-002' }],
     ])('cambia la huella ante %s', (_label, override) => {
         expect(buildReturnPayloadHash({ ...basePayload, ...override })).not.toBe(
             buildReturnPayloadHash(basePayload),
         );
+    });
+
+    it('normaliza la aprobación y distingue dos expedientes autorizados', () => {
+        const normalized = buildReturnPayloadHash({
+            ...basePayload,
+            correctionRequestId: 'correction-001',
+        });
+        const withWhitespace = buildReturnPayloadHash({
+            ...basePayload,
+            correctionRequestId: '  correction-001  ',
+        });
+        const anotherApproval = buildReturnPayloadHash({
+            ...basePayload,
+            correctionRequestId: 'correction-002',
+        });
+
+        expect(withWhitespace).toBe(normalized);
+        expect(anotherApproval).not.toBe(normalized);
     });
 
     it.each([null, undefined, 'f'.repeat(64)])(

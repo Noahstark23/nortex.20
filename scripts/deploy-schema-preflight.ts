@@ -7,6 +7,8 @@ export const STOCK_COUNT_WAREHOUSE_INDEX = 'StockCount_warehouseId_idx';
 export const STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX = 'StockCount_tenantId_warehouseId_status_idx';
 export const STOCK_COUNT_WAREHOUSE_FOREIGN_KEY = 'StockCount_warehouseId_fkey';
 export const PRODUCT_RETURN_IDEMPOTENCY_INDEX = 'ProductReturn_tenantId_clientEventId_key';
+export const PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX = 'ProductReturn_correctionRequestId_key';
+export const PRODUCT_RETURN_NUMBER_UNIQUE_INDEX = 'ProductReturn_tenantId_returnNumber_key';
 export const PAYMENT_IDEMPOTENCY_INDEX = 'Payment_saleId_clientEventId_key';
 export const RETENCION_SUFRIDA_IDEMPOTENCY_INDEX = 'RetencionSufrida_tenantId_clientEventId_key';
 export const PURCHASE_INVOICE_UNIQUE_INDEX = 'Purchase_tenantId_supplierId_invoiceNumber_key';
@@ -29,6 +31,11 @@ export const SUPPLIER_CREDIT_NOTE_EVENT_UNIQUE_INDEX = 'SupplierCreditNote_tenan
 export const SUPPLIER_CREDIT_NOTE_LINE_RETURN_ITEM_UNIQUE_INDEX = 'SupplierCreditNoteLine_supplierReturnItemId_key';
 export const SUPPLIER_CREDIT_NOTE_LINE_DOCUMENT_ITEM_UNIQUE_INDEX = 'SupplierCreditNoteLine_creditNoteId_supplierReturnItemId_key';
 export const SUPPLIER_CREDIT_APPLICATION_PURCHASE_UNIQUE_INDEX = 'SupplierCreditApplication_creditNoteId_purchaseId_key';
+export const SHIFT_CLOSE_EVENT_UNIQUE_INDEX = 'Shift_tenantId_closeEventId_key';
+export const JOURNAL_ENTRY_POSTING_KEY_UNIQUE_INDEX = 'JournalEntry_tenantId_postingKey_key';
+export const JOURNAL_ENTRY_REVERSAL_UNIQUE_INDEX = 'JournalEntry_reversalOfId_key';
+export const JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY = 'JournalEntry_reversalOfId_fkey';
+export const PRODUCT_BATCH_HOLD_SOURCE_UNIQUE_INDEX = 'ProductBatchHold_tenantId_sourceKey_key';
 
 // Identificadores internos y constantes: nunca contienen entrada del usuario.
 const WAREHOUSE_TABLE_SQL = Prisma.raw('`Warehouse`');
@@ -51,7 +58,11 @@ const RETENCION_SUFRIDA_TABLE_SQL = Prisma.raw('`RetencionSufrida`');
 const PURCHASE_TABLE_SQL = Prisma.raw('`Purchase`');
 const CLIENT_EVENT_ID_COLUMN_SQL = Prisma.raw('`clientEventId`');
 const PAYLOAD_HASH_COLUMN_SQL = Prisma.raw('`payloadHash`');
+const CORRECTION_REQUEST_ID_COLUMN_SQL = Prisma.raw('`correctionRequestId`');
+const RETURN_NUMBER_COLUMN_SQL = Prisma.raw('`returnNumber`');
 const PRODUCT_RETURN_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`ProductReturn_tenantId_clientEventId_key`');
+const PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX_SQL = Prisma.raw('`ProductReturn_correctionRequestId_key`');
+const PRODUCT_RETURN_NUMBER_UNIQUE_INDEX_SQL = Prisma.raw('`ProductReturn_tenantId_returnNumber_key`');
 const PAYMENT_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`Payment_saleId_clientEventId_key`');
 const RETENCION_SUFRIDA_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`RetencionSufrida_tenantId_clientEventId_key`');
 const PURCHASE_INVOICE_UNIQUE_INDEX_SQL = Prisma.raw('`Purchase_tenantId_supplierId_invoiceNumber_key`');
@@ -103,6 +114,22 @@ export interface WarehouseSellerIndexRow {
     expression: string | null;
 }
 
+export interface AccountingDecimalColumnRow {
+    tableName: string;
+    columnName: string;
+    dataType: string;
+    columnType: string;
+    isNullable: string;
+    numericPrecision: number | bigint | null;
+    numericScale: number | bigint | null;
+    columnDefault: string | null;
+    extra: string;
+    generationExpression: string;
+}
+
+export type AccountingDecimalColumnState = 'missing' | 'legacy' | 'target' | 'invalid';
+export type AccountingDecimalConvergenceDecision = 'alter' | 'noop' | 'reject';
+
 export type StockCountColumnRow = WarehouseSellerColumnRow;
 export type StockCountIndexRow = WarehouseSellerIndexRow;
 export type ProductReturnColumnRow = WarehouseSellerColumnRow;
@@ -120,6 +147,12 @@ export type ProcurementPhaseTwoBForeignKeyRow = StockCountForeignKeyRow;
 export type ProcurementPhaseTwoCColumnRow = ProcurementPhaseTwoBColumnRow;
 export type ProcurementPhaseTwoCIndexRow = ProcurementPhaseTwoBIndexRow;
 export type ProcurementPhaseTwoCForeignKeyRow = ProcurementPhaseTwoBForeignKeyRow;
+export type CashCloseJournalColumnRow = ProcurementPhaseTwoBColumnRow;
+export type CashCloseJournalIndexRow = ProcurementPhaseTwoBIndexRow;
+export type CashCloseJournalForeignKeyRow = ProcurementPhaseTwoBForeignKeyRow;
+export type PharmacyInventoryColumnRow = ProcurementPhaseTwoBColumnRow;
+export type PharmacyInventoryIndexRow = ProcurementPhaseTwoBIndexRow;
+export type PharmacyInventoryForeignKeyRow = ProcurementPhaseTwoBForeignKeyRow;
 
 export interface ProcurementPhaseTwoBColumnContract {
     columnName: string;
@@ -130,6 +163,7 @@ export interface ProcurementPhaseTwoBColumnContract {
 }
 
 export type ProcurementPhaseTwoCColumnContract = ProcurementPhaseTwoBColumnContract;
+export type PharmacyInventoryColumnContract = ProcurementPhaseTwoBColumnContract;
 
 export interface StockCountForeignKeyRow {
     constraintName: string;
@@ -180,6 +214,17 @@ interface DuplicateProductReturnEventRow {
     duplicateCount: number | bigint;
 }
 
+interface DuplicateProductReturnCorrectionRow {
+    correctionRequestId: string;
+    duplicateCount: number | bigint;
+}
+
+interface DuplicateProductReturnNumberRow {
+    tenantId: string;
+    returnNumber: number | bigint;
+    duplicateCount: number | bigint;
+}
+
 interface DuplicatePaymentEventRow {
     saleId: string;
     clientEventId: string;
@@ -210,6 +255,86 @@ export type SchemaObjectState = 'missing' | 'valid' | 'invalid';
 function normalizedSchemaDefault(value: string | null): string | null {
     if (value === null) return null;
     return value.toLowerCase().replace(/^'(.*)'$/, '$1');
+}
+
+function isZeroDecimalDefault(value: string | null): boolean {
+    if (value === null) return false;
+    return /^[-+]?0+(?:\.0+)?$/.test(value.trim().replace(/^'(.*)'$/, '$1'));
+}
+
+/**
+ * Un DECIMAL solo se amplía sin redondear ni perder rango cuando el destino
+ * conserva (o aumenta) por separado sus dígitos enteros y fraccionarios.
+ */
+export function isSafeDecimalWidening(
+    source: { precision: number; scale: number },
+    target: { precision: number; scale: number },
+): boolean {
+    if (!Number.isInteger(source.precision)
+        || !Number.isInteger(source.scale)
+        || !Number.isInteger(target.precision)
+        || !Number.isInteger(target.scale)
+        || source.precision <= 0
+        || target.precision <= 0
+        || source.scale < 0
+        || target.scale < 0
+        || source.scale > source.precision
+        || target.scale > target.precision) {
+        return false;
+    }
+
+    return source.scale <= target.scale
+        && source.precision - source.scale <= target.precision - target.scale;
+}
+
+/**
+ * Solo acepta el contrato histórico DECIMAL(14,2) o el final DECIMAL(18,4).
+ * Cualquier nullabilidad, default, atributo unsigned/generado o metadata
+ * discordante se considera drift y se rechaza antes de ejecutar DDL.
+ */
+export function inspectAccountingDecimalColumn(
+    rows: AccountingDecimalColumnRow[],
+): AccountingDecimalColumnState {
+    if (rows.length === 0) return 'missing';
+    if (rows.length !== 1) return 'invalid';
+
+    const [column] = rows;
+    const precision = Number(column.numericPrecision);
+    const scale = Number(column.numericScale);
+    const normalizedColumnType = column.columnType.toLowerCase().replace(/\s+/g, '');
+    const identityIsValid = (column.tableName === 'Account' && column.columnName === 'balance')
+        || (column.tableName === 'JournalLine'
+            && (column.columnName === 'debit' || column.columnName === 'credit'));
+    const commonContractIsValid = identityIsValid
+        && column.dataType.toLowerCase() === 'decimal'
+        && column.isNullable.toUpperCase() === 'NO'
+        && isZeroDecimalDefault(column.columnDefault)
+        && column.extra === ''
+        && column.generationExpression === '';
+
+    if (!commonContractIsValid) return 'invalid';
+    if (precision === 14 && scale === 2 && normalizedColumnType === 'decimal(14,2)') {
+        return 'legacy';
+    }
+    if (precision === 18 && scale === 4 && normalizedColumnType === 'decimal(18,4)') {
+        return 'target';
+    }
+    return 'invalid';
+}
+
+export function decideAccountingDecimalConvergence(
+    rows: AccountingDecimalColumnRow[],
+): AccountingDecimalConvergenceDecision {
+    const state = inspectAccountingDecimalColumn(rows);
+    if (state === 'target') return 'noop';
+    if (state === 'legacy'
+        && isSafeDecimalWidening(
+            { precision: 14, scale: 2 },
+            { precision: 18, scale: 4 },
+        )) {
+        return 'alter';
+    }
+    return 'reject';
 }
 
 export function inspectProcurementPhaseTwoBColumn(
@@ -284,6 +409,32 @@ export function inspectProductReturnPayloadHashColumn(
     rows: ProductReturnColumnRow[],
 ): SchemaObjectState {
     return inspectNullableVarcharColumn(rows, 64);
+}
+
+export function inspectProductReturnCorrectionRequestIdColumn(
+    rows: ProductReturnColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 191);
+}
+
+export function inspectProductReturnReturnNumberColumn(
+    rows: ProductReturnColumnRow[],
+): SchemaObjectState {
+    if (rows.length === 0) return 'missing';
+    if (rows.length !== 1) return 'invalid';
+
+    const [column] = rows;
+    return column.dataType.toLowerCase() === 'int'
+        && column.columnType.toLowerCase() === 'int'
+        && column.isNullable.toUpperCase() === 'YES'
+        && column.characterMaximumLength === null
+        && column.characterSetName === null
+        && column.collationName === null
+        && column.columnDefault === null
+        && column.extra === ''
+        && column.generationExpression === ''
+        ? 'valid'
+        : 'invalid';
 }
 
 export function inspectPaymentClientEventIdColumn(
@@ -409,6 +560,28 @@ export function inspectProductReturnIdempotencyIndex(
     );
 }
 
+export function inspectProductReturnCorrectionRequestIndex(
+    rows: ProductReturnIndexRow[],
+): SchemaObjectState {
+    return inspectExactIndex(
+        rows,
+        PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX,
+        ['correctionRequestId'],
+        true,
+    );
+}
+
+export function inspectProductReturnNumberIndex(
+    rows: ProductReturnIndexRow[],
+): SchemaObjectState {
+    return inspectExactIndex(
+        rows,
+        PRODUCT_RETURN_NUMBER_UNIQUE_INDEX,
+        ['tenantId', 'returnNumber'],
+        true,
+    );
+}
+
 export function inspectPaymentIdempotencyIndex(
     rows: PaymentIndexRow[],
 ): SchemaObjectState {
@@ -501,6 +674,32 @@ export function inspectProcurementPhaseTwoBForeignKey(
         : 'invalid';
 }
 
+export function inspectCashCloseJournalColumn(
+    rows: CashCloseJournalColumnRow[],
+    expected: ProcurementPhaseTwoBColumnContract,
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBColumn(rows, expected);
+}
+
+export function inspectCashCloseJournalIndex(
+    rows: CashCloseJournalIndexRow[],
+    expectedName: string,
+    expectedColumns: string[],
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBIndex(rows, expectedName, expectedColumns, true);
+}
+
+export function inspectCashCloseJournalForeignKey(
+    rows: CashCloseJournalForeignKeyRow[],
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBForeignKey(rows, {
+        constraintName: JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY,
+        columnName: 'reversalOfId',
+        referencedTableName: 'JournalEntry',
+        deleteRule: 'RESTRICT',
+    });
+}
+
 export function inspectProcurementPhaseTwoCColumn(
     rows: ProcurementPhaseTwoCColumnRow[],
     expected: ProcurementPhaseTwoCColumnContract,
@@ -519,6 +718,34 @@ export function inspectProcurementPhaseTwoCIndex(
 
 export function inspectProcurementPhaseTwoCForeignKey(
     rows: ProcurementPhaseTwoCForeignKeyRow[],
+    expected: {
+        constraintName: string;
+        columnName: string;
+        referencedTableName: string;
+        deleteRule: 'CASCADE' | 'RESTRICT';
+    },
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBForeignKey(rows, expected);
+}
+
+export function inspectPharmacyInventoryColumn(
+    rows: PharmacyInventoryColumnRow[],
+    expected: PharmacyInventoryColumnContract,
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBColumn(rows, expected);
+}
+
+export function inspectPharmacyInventoryIndex(
+    rows: PharmacyInventoryIndexRow[],
+    expectedName: string,
+    expectedColumns: string[],
+    unique: boolean,
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBIndex(rows, expectedName, expectedColumns, unique);
+}
+
+export function inspectPharmacyInventoryForeignKey(
+    rows: PharmacyInventoryForeignKeyRow[],
     expected: {
         constraintName: string;
         columnName: string;
@@ -628,6 +855,17 @@ async function purchaseTableExists(db: DeploySchemaClient): Promise<boolean> {
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'Purchase'
+        LIMIT 1
+    `);
+    return rows.length === 1;
+}
+
+async function productBatchHoldTableExists(db: DeploySchemaClient): Promise<boolean> {
+    const rows = await db.query<Array<{ tableName: string }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'ProductBatchHold'
         LIMIT 1
     `);
     return rows.length === 1;
@@ -767,7 +1005,7 @@ async function readStockCountWarehouseForeignKey(
 
 async function readProductReturnColumn(
     db: DeploySchemaClient,
-    columnName: 'clientEventId' | 'payloadHash',
+    columnName: 'clientEventId' | 'payloadHash' | 'correctionRequestId' | 'returnNumber',
 ): Promise<ProductReturnColumnRow[]> {
     return db.query<ProductReturnColumnRow[]>(Prisma.sql`
         SELECT
@@ -808,8 +1046,12 @@ async function readProductReturnTenantIdColumn(
     `);
 }
 
-async function readProductReturnIdempotencyIndex(
+async function readProductReturnIndex(
     db: DeploySchemaClient,
+    indexName:
+        | typeof PRODUCT_RETURN_IDEMPOTENCY_INDEX
+        | typeof PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX
+        | typeof PRODUCT_RETURN_NUMBER_UNIQUE_INDEX,
 ): Promise<ProductReturnIndexRow[]> {
     return db.query<ProductReturnIndexRow[]>(Prisma.sql`
         SELECT
@@ -825,7 +1067,7 @@ async function readProductReturnIdempotencyIndex(
         FROM information_schema.STATISTICS
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'ProductReturn'
-          AND INDEX_NAME = ${PRODUCT_RETURN_IDEMPOTENCY_INDEX}
+          AND INDEX_NAME = ${indexName}
         ORDER BY SEQ_IN_INDEX
     `);
 }
@@ -1432,15 +1674,62 @@ async function assertProductReturnEventsAreUnique(db: DeploySchemaClient): Promi
     );
 }
 
-type ProductReturnNullableColumn = 'clientEventId' | 'payloadHash';
+async function assertProductReturnCorrectionsAreUnique(db: DeploySchemaClient): Promise<void> {
+    const duplicates = await db.query<DuplicateProductReturnCorrectionRow[]>(Prisma.sql`
+        SELECT correctionRequestId, COUNT(*) AS duplicateCount
+        FROM ${PRODUCT_RETURN_TABLE_SQL}
+        WHERE correctionRequestId IS NOT NULL
+        GROUP BY correctionRequestId
+        HAVING COUNT(*) > 1
+        LIMIT 10
+    `);
+
+    if (duplicates.length === 0) return;
+
+    const detail = duplicates
+        .map(row => `${row.correctionRequestId} (${String(row.duplicateCount)})`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `Hay devoluciones con correctionRequestId duplicado; no se creará el índice único: ${detail}`,
+    );
+}
+
+async function assertProductReturnNumbersAreUnique(db: DeploySchemaClient): Promise<void> {
+    const duplicates = await db.query<DuplicateProductReturnNumberRow[]>(Prisma.sql`
+        SELECT tenantId, returnNumber, COUNT(*) AS duplicateCount
+        FROM ${PRODUCT_RETURN_TABLE_SQL}
+        WHERE returnNumber IS NOT NULL
+        GROUP BY tenantId, returnNumber
+        HAVING COUNT(*) > 1
+        LIMIT 10
+    `);
+
+    if (duplicates.length === 0) return;
+
+    const detail = duplicates
+        .map(row => `${row.tenantId}/${String(row.returnNumber)} (${String(row.duplicateCount)})`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `Hay devoluciones con returnNumber duplicado por tenant; no se creará el índice único: ${detail}`,
+    );
+}
+
+type ProductReturnNullableColumn =
+    | 'clientEventId'
+    | 'payloadHash'
+    | 'correctionRequestId'
+    | 'returnNumber';
 
 function inspectProductReturnColumn(
     columnName: ProductReturnNullableColumn,
     rows: ProductReturnColumnRow[],
 ): SchemaObjectState {
-    return columnName === 'clientEventId'
-        ? inspectProductReturnClientEventIdColumn(rows)
-        : inspectProductReturnPayloadHashColumn(rows);
+    if (columnName === 'clientEventId') return inspectProductReturnClientEventIdColumn(rows);
+    if (columnName === 'payloadHash') return inspectProductReturnPayloadHashColumn(rows);
+    if (columnName === 'correctionRequestId') {
+        return inspectProductReturnCorrectionRequestIdColumn(rows);
+    }
+    return inspectProductReturnReturnNumberColumn(rows);
 }
 
 async function ensureProductReturnColumn(
@@ -1459,18 +1748,34 @@ async function ensureProductReturnColumn(
     }
 
     if (initialState === 'missing') {
-        const length = columnName === 'clientEventId' ? 128 : 64;
-        logger.info(`Aplicando DDL seguro: ProductReturn.${columnName} VARCHAR(${length}) NULL.`);
+        const columnType = columnName === 'clientEventId'
+            ? 'VARCHAR(128)'
+            : columnName === 'payloadHash'
+                ? 'VARCHAR(64)'
+                : columnName === 'correctionRequestId'
+                    ? 'VARCHAR(191)'
+                    : 'INTEGER';
+        logger.info(`Aplicando DDL seguro: ProductReturn.${columnName} ${columnType} NULL.`);
         try {
             if (columnName === 'clientEventId') {
                 await db.execute(Prisma.sql`
                     ALTER TABLE ${PRODUCT_RETURN_TABLE_SQL}
                     ADD COLUMN ${CLIENT_EVENT_ID_COLUMN_SQL} VARCHAR(128) NULL
                 `);
-            } else {
+            } else if (columnName === 'payloadHash') {
                 await db.execute(Prisma.sql`
                     ALTER TABLE ${PRODUCT_RETURN_TABLE_SQL}
                     ADD COLUMN ${PAYLOAD_HASH_COLUMN_SQL} VARCHAR(64) NULL
+                `);
+            } else if (columnName === 'correctionRequestId') {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${PRODUCT_RETURN_TABLE_SQL}
+                    ADD COLUMN ${CORRECTION_REQUEST_ID_COLUMN_SQL} VARCHAR(191) NULL
+                `);
+            } else {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${PRODUCT_RETURN_TABLE_SQL}
+                    ADD COLUMN ${RETURN_NUMBER_COLUMN_SQL} INTEGER NULL
                 `);
             }
         } catch (error) {
@@ -1490,50 +1795,84 @@ async function ensureProductReturnColumn(
         );
     }
 
-    const tenantIdColumn = await readProductReturnTenantIdColumn(db);
-    if (!columnsUseSameEncoding(finalColumn, tenantIdColumn)) {
-        throw new UnsafeSchemaStateError(
-            `ProductReturn.${columnName} no usa el mismo charset/collation que ProductReturn.tenantId.`,
-        );
+    if (columnName !== 'returnNumber') {
+        const tenantIdColumn = await readProductReturnTenantIdColumn(db);
+        if (!columnsUseSameEncoding(finalColumn, tenantIdColumn)) {
+            throw new UnsafeSchemaStateError(
+                `ProductReturn.${columnName} no usa el mismo charset/collation que ProductReturn.tenantId.`,
+            );
+        }
     }
 }
 
-async function ensureProductReturnIdempotencyIndex(
+interface ProductReturnUniqueIndexDefinition {
+    name:
+        | typeof PRODUCT_RETURN_IDEMPOTENCY_INDEX
+        | typeof PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX
+        | typeof PRODUCT_RETURN_NUMBER_UNIQUE_INDEX;
+    statement: Prisma.Sql;
+    inspect(rows: ProductReturnIndexRow[]): SchemaObjectState;
+    assertUnique(db: DeploySchemaClient): Promise<void>;
+}
+
+const PRODUCT_RETURN_UNIQUE_INDEX_DEFINITIONS: ProductReturnUniqueIndexDefinition[] = [
+    {
+        name: PRODUCT_RETURN_IDEMPOTENCY_INDEX,
+        statement: Prisma.sql`
+            CREATE UNIQUE INDEX ${PRODUCT_RETURN_IDEMPOTENCY_INDEX_SQL}
+            ON ${PRODUCT_RETURN_TABLE_SQL}(${TENANT_ID_COLUMN_SQL}, ${CLIENT_EVENT_ID_COLUMN_SQL})
+        `,
+        inspect: inspectProductReturnIdempotencyIndex,
+        assertUnique: assertProductReturnEventsAreUnique,
+    },
+    {
+        name: PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX,
+        statement: Prisma.sql`
+            CREATE UNIQUE INDEX ${PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX_SQL}
+            ON ${PRODUCT_RETURN_TABLE_SQL}(${CORRECTION_REQUEST_ID_COLUMN_SQL})
+        `,
+        inspect: inspectProductReturnCorrectionRequestIndex,
+        assertUnique: assertProductReturnCorrectionsAreUnique,
+    },
+    {
+        name: PRODUCT_RETURN_NUMBER_UNIQUE_INDEX,
+        statement: Prisma.sql`
+            CREATE UNIQUE INDEX ${PRODUCT_RETURN_NUMBER_UNIQUE_INDEX_SQL}
+            ON ${PRODUCT_RETURN_TABLE_SQL}(${TENANT_ID_COLUMN_SQL}, ${RETURN_NUMBER_COLUMN_SQL})
+        `,
+        inspect: inspectProductReturnNumberIndex,
+        assertUnique: assertProductReturnNumbersAreUnique,
+    },
+];
+
+async function ensureProductReturnUniqueIndex(
     db: DeploySchemaClient,
     logger: DeploySchemaLogger,
+    definition: ProductReturnUniqueIndexDefinition,
 ): Promise<void> {
-    const initialState = inspectProductReturnIdempotencyIndex(
-        await readProductReturnIdempotencyIndex(db),
-    );
+    const initialState = definition.inspect(await readProductReturnIndex(db, definition.name));
     if (initialState === 'invalid') {
         throw new UnsafeSchemaStateError(
-            `${PRODUCT_RETURN_IDEMPOTENCY_INDEX} existe con columnas u opciones incompatibles.`,
+            `${definition.name} existe con columnas u opciones incompatibles.`,
         );
     }
 
     if (initialState === 'missing') {
-        logger.info(`Aplicando DDL seguro: índice único ${PRODUCT_RETURN_IDEMPOTENCY_INDEX}.`);
+        logger.info(`Aplicando DDL seguro: índice único ${definition.name}.`);
         try {
-            await db.execute(Prisma.sql`
-                CREATE UNIQUE INDEX ${PRODUCT_RETURN_IDEMPOTENCY_INDEX_SQL}
-                ON ${PRODUCT_RETURN_TABLE_SQL}(${TENANT_ID_COLUMN_SQL}, ${CLIENT_EVENT_ID_COLUMN_SQL})
-            `);
+            await db.execute(definition.statement);
         } catch (error) {
-            if (inspectProductReturnIdempotencyIndex(
-                await readProductReturnIdempotencyIndex(db),
-            ) !== 'valid') {
-                await assertProductReturnEventsAreUnique(db);
+            if (definition.inspect(await readProductReturnIndex(db, definition.name)) !== 'valid') {
+                await definition.assertUnique(db);
                 throw error;
             }
-            logger.warn(`${PRODUCT_RETURN_IDEMPOTENCY_INDEX} fue creado concurrentemente; definición verificada.`);
+            logger.warn(`${definition.name} fue creado concurrentemente; definición verificada.`);
         }
     }
 
-    if (inspectProductReturnIdempotencyIndex(
-        await readProductReturnIdempotencyIndex(db),
-    ) !== 'valid') {
+    if (definition.inspect(await readProductReturnIndex(db, definition.name)) !== 'valid') {
         throw new UnsafeSchemaStateError(
-            `No se pudo verificar la definición final de ${PRODUCT_RETURN_IDEMPOTENCY_INDEX}.`,
+            `No se pudo verificar la definición final de ${definition.name}.`,
         );
     }
 }
@@ -1549,10 +1888,20 @@ export async function applyProductReturnSchemaPreflight(
 
     await ensureProductReturnColumn(db, logger, 'clientEventId');
     await ensureProductReturnColumn(db, logger, 'payloadHash');
-    await assertProductReturnEventsAreUnique(db);
-    await ensureProductReturnIdempotencyIndex(db, logger);
-    await assertProductReturnEventsAreUnique(db);
-    logger.info('Preflight DDL verificado: idempotencia de ProductReturn lista sin alterar históricos.');
+    await ensureProductReturnColumn(db, logger, 'correctionRequestId');
+    await ensureProductReturnColumn(db, logger, 'returnNumber');
+    for (const definition of PRODUCT_RETURN_UNIQUE_INDEX_DEFINITIONS) {
+        await definition.assertUnique(db);
+    }
+    for (const definition of PRODUCT_RETURN_UNIQUE_INDEX_DEFINITIONS) {
+        await ensureProductReturnUniqueIndex(db, logger, definition);
+    }
+    for (const definition of PRODUCT_RETURN_UNIQUE_INDEX_DEFINITIONS) {
+        await definition.assertUnique(db);
+    }
+    logger.info(
+        'Preflight DDL verificado: idempotencia y numeración de ProductReturn listas sin alterar históricos.',
+    );
 }
 
 async function assertPaymentEventsAreUnique(db: DeploySchemaClient): Promise<void> {
@@ -3667,6 +4016,1052 @@ export async function applyProcurementPhaseTwoCSchemaPreflight(
     logger.info('Preflight DDL 2C verificado: devoluciones y créditos listos sin DML ni activaciones.');
 }
 
+type PharmacyInventoryBaseTable = 'Tenant' | 'ProductBatchWarehouseStock';
+
+interface PharmacyInventoryColumnDefinition {
+    tableName: PharmacyInventoryBaseTable;
+    contract: PharmacyInventoryColumnContract;
+    ddl: Prisma.Sql;
+}
+
+interface PharmacyInventoryIndexContract {
+    name: string;
+    columns: string[];
+    unique: boolean;
+}
+
+interface PharmacyInventoryForeignKeyContract {
+    constraintName: string;
+    columnName: string;
+    referencedTableName: string;
+    deleteRule: 'CASCADE' | 'RESTRICT';
+}
+
+interface PharmacyInventoryTableContract {
+    tableName: 'ProductBatchHold';
+    columns: PharmacyInventoryColumnContract[];
+    indexes: PharmacyInventoryIndexContract[];
+    foreignKeys: PharmacyInventoryForeignKeyContract[];
+}
+
+const PHARMACY_INVENTORY_BASE_COLUMNS: PharmacyInventoryColumnDefinition[] = [
+    {
+        tableName: 'Tenant',
+        contract: {
+            columnName: 'pharmacyInventoryMode',
+            columnType: 'varchar(16)',
+            nullable: false,
+            defaultValue: 'OFF',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`Tenant\`
+            ADD COLUMN \`pharmacyInventoryMode\` VARCHAR(16) NOT NULL DEFAULT 'OFF'
+        `,
+    },
+    {
+        tableName: 'Tenant',
+        contract: {
+            columnName: 'pharmacyInventoryActivatedAt',
+            columnType: 'datetime(3)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`Tenant\`
+            ADD COLUMN \`pharmacyInventoryActivatedAt\` DATETIME(3) NULL
+        `,
+    },
+    {
+        tableName: 'ProductBatchWarehouseStock',
+        contract: {
+            columnName: 'heldStock',
+            columnType: 'decimal(18,4)',
+            nullable: false,
+            defaultValue: '0.0000',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`ProductBatchWarehouseStock\`
+            ADD COLUMN \`heldStock\` DECIMAL(18, 4) NOT NULL DEFAULT 0
+        `,
+    },
+];
+
+const PHARMACY_INVENTORY_HOLD_TABLE: PharmacyInventoryTableContract = {
+    tableName: 'ProductBatchHold',
+    columns: [
+        phaseTwoCIdColumn('id'),
+        phaseTwoCIdColumn('tenantId'),
+        phaseTwoCIdColumn('productId'),
+        phaseTwoCIdColumn('batchId'),
+        phaseTwoCIdColumn('warehouseId'),
+        phaseTwoCDecimalColumn('quantityDelta'),
+        phaseTwoCDecimalColumn('heldBefore'),
+        phaseTwoCDecimalColumn('heldAfter'),
+        phaseTwoCDecimalColumn('physicalStockSnapshot'),
+        phaseTwoCDecimalColumn('sellableBefore'),
+        phaseTwoCDecimalColumn('sellableAfter'),
+        phaseTwoCVarcharColumn('holdReasonCode', 32),
+        phaseTwoCIdColumn('referenceId', true),
+        phaseTwoCVarcharColumn('referenceType', 64, { nullable: true }),
+        phaseTwoCVarcharColumn('sourceKey', 191),
+        phaseTwoCVarcharColumn('payloadHash', 64),
+        { columnName: 'notes', columnType: 'text', nullable: true, defaultValue: null },
+        phaseTwoCIdColumn('userId'),
+        phaseTwoCCreatedAtColumn(),
+    ],
+    indexes: [
+        { name: 'PRIMARY', columns: ['id'], unique: true },
+        {
+            name: PRODUCT_BATCH_HOLD_SOURCE_UNIQUE_INDEX,
+            columns: ['tenantId', 'sourceKey'],
+            unique: true,
+        },
+        {
+            name: 'ProductBatchHold_tenantId_createdAt_idx',
+            columns: ['tenantId', 'createdAt'],
+            unique: false,
+        },
+        {
+            name: 'ProductBatchHold_tenantId_batchId_warehouseId_createdAt_idx',
+            columns: ['tenantId', 'batchId', 'warehouseId', 'createdAt'],
+            unique: false,
+        },
+        {
+            name: 'ProductBatchHold_tenantId_productId_warehouseId_createdAt_idx',
+            columns: ['tenantId', 'productId', 'warehouseId', 'createdAt'],
+            unique: false,
+        },
+        {
+            name: 'ProductBatchHold_tenantId_referenceType_referenceId_idx',
+            columns: ['tenantId', 'referenceType', 'referenceId'],
+            unique: false,
+        },
+        { name: 'ProductBatchHold_userId_idx', columns: ['userId'], unique: false },
+    ],
+    foreignKeys: [
+        {
+            constraintName: 'ProductBatchHold_tenantId_fkey',
+            columnName: 'tenantId',
+            referencedTableName: 'Tenant',
+            deleteRule: 'CASCADE',
+        },
+        {
+            constraintName: 'ProductBatchHold_productId_fkey',
+            columnName: 'productId',
+            referencedTableName: 'Product',
+            deleteRule: 'RESTRICT',
+        },
+        {
+            constraintName: 'ProductBatchHold_batchId_fkey',
+            columnName: 'batchId',
+            referencedTableName: 'ProductBatch',
+            deleteRule: 'RESTRICT',
+        },
+        {
+            constraintName: 'ProductBatchHold_warehouseId_fkey',
+            columnName: 'warehouseId',
+            referencedTableName: 'Warehouse',
+            deleteRule: 'RESTRICT',
+        },
+        {
+            constraintName: 'ProductBatchHold_userId_fkey',
+            columnName: 'userId',
+            referencedTableName: 'User',
+            deleteRule: 'RESTRICT',
+        },
+    ],
+};
+
+async function readPharmacyInventoryTables(
+    db: DeploySchemaClient,
+): Promise<Set<string>> {
+    const rows = await db.query<Array<{ tableName: string }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN (
+            'Tenant',
+            'ProductBatchWarehouseStock',
+            'ProductBatchHold'
+          )
+    `);
+    return new Set(rows.map(row => row.tableName));
+}
+
+async function ensurePharmacyInventoryColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    definition: PharmacyInventoryColumnDefinition,
+): Promise<void> {
+    const read = async () => inspectPharmacyInventoryColumn(
+        await readProcurementPhaseTwoBColumns(db, definition.tableName),
+        definition.contract,
+    );
+    const initial = await read();
+    const label = `${definition.tableName}.${definition.contract.columnName}`;
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(`${label} existe con tipo, nullabilidad o default incompatible.`);
+    }
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: columna ${label}.`);
+        try {
+            await db.execute(definition.ddl);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${label} fue creada concurrentemente; definición exacta verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(`No se pudo verificar la definición final de ${label}.`);
+    }
+}
+
+async function assertPharmacyInventoryHoldTable(
+    db: DeploySchemaClient,
+): Promise<void> {
+    const contract = PHARMACY_INVENTORY_HOLD_TABLE;
+    const [columns, indexes, foreignKeys] = await Promise.all([
+        readProcurementPhaseTwoBColumns(db, contract.tableName),
+        readProcurementPhaseTwoBIndexes(db, contract.tableName),
+        readProcurementPhaseTwoBForeignKeys(db, contract.tableName),
+    ]);
+
+    for (const column of contract.columns) {
+        if (inspectPharmacyInventoryColumn(columns, column) !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${contract.tableName}.${column.columnName} falta o tiene una definición incompatible.`,
+            );
+        }
+    }
+    for (const index of contract.indexes) {
+        const rows = indexes.filter(row => row.indexName === index.name);
+        if (inspectPharmacyInventoryIndex(rows, index.name, index.columns, index.unique) !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${index.name} falta o tiene columnas u opciones incompatibles.`,
+            );
+        }
+    }
+    for (const foreignKey of contract.foreignKeys) {
+        if (inspectPharmacyInventoryForeignKey(foreignKeys, foreignKey) !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${foreignKey.constraintName} falta o tiene una definición incompatible.`,
+            );
+        }
+    }
+}
+
+/**
+ * Expansión de seguridad farmacéutica. Las columnas sobre tablas históricas se
+ * convergen de forma idempotente con defaults inertes. ProductBatchHold es una
+ * tabla completamente nueva: db push conserva el CREATE TABLE atómico, pero
+ * cualquier tabla ya visible debe coincidir con el contrato completo.
+ */
+export async function applyPharmacyInventorySchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    let existingTables = await readPharmacyInventoryTables(db);
+    if (existingTables.size === 0) {
+        existingTables = await readPharmacyInventoryTables(db);
+        if (existingTables.size === 0) {
+            logger.info('Preflight DDL farmacia: instalación vacía; db push creará el contrato completo.');
+            return;
+        }
+    }
+    if (!existingTables.has('Tenant')) {
+        throw new UnsafeSchemaStateError(
+            'Hay estructuras farmacéuticas sin Tenant; el schema parcial requiere intervención manual.',
+        );
+    }
+    if (existingTables.has('ProductBatchHold')
+        && !existingTables.has('ProductBatchWarehouseStock')) {
+        throw new UnsafeSchemaStateError(
+            'ProductBatchHold existe sin ProductBatchWarehouseStock; el schema parcial requiere intervención manual.',
+        );
+    }
+
+    for (const definition of PHARMACY_INVENTORY_BASE_COLUMNS) {
+        if (existingTables.has(definition.tableName)) {
+            await ensurePharmacyInventoryColumn(db, logger, definition);
+        }
+    }
+
+    // Releer para detectar el CREATE TABLE de otra instancia durante el DDL base.
+    existingTables = await readPharmacyInventoryTables(db);
+    if (existingTables.has('ProductBatchHold')) {
+        if (!existingTables.has('ProductBatchWarehouseStock')) {
+            throw new UnsafeSchemaStateError(
+                'ProductBatchHold existe sin ProductBatchWarehouseStock; el schema parcial requiere intervención manual.',
+            );
+        }
+        await assertPharmacyInventoryHoldTable(db);
+    }
+
+    logger.info(
+        'Preflight DDL farmacia verificado: stock retenido listo con modo OFF y sin DML ni activaciones.',
+    );
+}
+
+
+type CashCloseJournalTableName = 'Shift' | 'JournalEntry';
+
+interface CashCloseJournalColumnDefinition {
+    tableName: CashCloseJournalTableName;
+    contract: ProcurementPhaseTwoBColumnContract;
+    ddl: Prisma.Sql;
+}
+
+interface CashCloseJournalUniqueDefinition {
+    tableName: CashCloseJournalTableName;
+    name: string;
+    columns: string[];
+    duplicateQuery: Prisma.Sql;
+    ddl: Prisma.Sql;
+}
+
+const CASH_CLOSE_JOURNAL_BASELINE_COLUMNS: Array<{
+    tableName: CashCloseJournalTableName;
+    contract: ProcurementPhaseTwoBColumnContract;
+}> = [
+    {
+        tableName: 'Shift',
+        contract: {
+            columnName: 'tenantId',
+            columnType: 'varchar(191)',
+            nullable: false,
+            defaultValue: null,
+        },
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'id',
+            columnType: 'varchar(191)',
+            nullable: false,
+            defaultValue: null,
+        },
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'tenantId',
+            columnType: 'varchar(191)',
+            nullable: false,
+            defaultValue: null,
+        },
+    },
+];
+
+const CASH_CLOSE_JOURNAL_COLUMNS: CashCloseJournalColumnDefinition[] = [
+    {
+        tableName: 'Shift',
+        contract: {
+            columnName: 'closeEventId',
+            columnType: 'varchar(128)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`Shift\`
+            ADD COLUMN \`closeEventId\` VARCHAR(128) NULL
+        `,
+    },
+    {
+        tableName: 'Shift',
+        contract: {
+            columnName: 'closePayloadHash',
+            columnType: 'varchar(64)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`Shift\`
+            ADD COLUMN \`closePayloadHash\` VARCHAR(64) NULL
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'economicDate',
+            columnType: 'datetime(3)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalEntry\`
+            ADD COLUMN \`economicDate\` DATETIME(3) NULL
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'postedAt',
+            columnType: 'datetime(3)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalEntry\`
+            ADD COLUMN \`postedAt\` DATETIME(3) NULL
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'entryKind',
+            columnType: 'varchar(32)',
+            nullable: false,
+            defaultValue: 'ORIGINAL',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalEntry\`
+            ADD COLUMN \`entryKind\` VARCHAR(32) NOT NULL DEFAULT 'ORIGINAL'
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'postingKey',
+            columnType: 'varchar(191)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalEntry\`
+            ADD COLUMN \`postingKey\` VARCHAR(191) NULL
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'payloadHash',
+            columnType: 'varchar(64)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalEntry\`
+            ADD COLUMN \`payloadHash\` VARCHAR(64) NULL
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'reversalOfId',
+            columnType: 'varchar(191)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalEntry\`
+            ADD COLUMN \`reversalOfId\` VARCHAR(191) NULL
+        `,
+    },
+];
+
+const CASH_CLOSE_JOURNAL_UNIQUES: CashCloseJournalUniqueDefinition[] = [
+    {
+        tableName: 'Shift',
+        name: SHIFT_CLOSE_EVENT_UNIQUE_INDEX,
+        columns: ['tenantId', 'closeEventId'],
+        duplicateQuery: Prisma.sql`
+            SELECT tenantId AS keyPartOne, closeEventId AS keyPartTwo, COUNT(*) AS duplicateCount
+            FROM \`Shift\`
+            WHERE closeEventId IS NOT NULL
+            GROUP BY tenantId, closeEventId
+            HAVING COUNT(*) > 1
+            LIMIT 10
+        `,
+        ddl: Prisma.sql`
+            CREATE UNIQUE INDEX \`Shift_tenantId_closeEventId_key\`
+            ON \`Shift\`(\`tenantId\`, \`closeEventId\`)
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        name: JOURNAL_ENTRY_POSTING_KEY_UNIQUE_INDEX,
+        columns: ['tenantId', 'postingKey'],
+        duplicateQuery: Prisma.sql`
+            SELECT tenantId AS keyPartOne, postingKey AS keyPartTwo, COUNT(*) AS duplicateCount
+            FROM \`JournalEntry\`
+            WHERE postingKey IS NOT NULL
+            GROUP BY tenantId, postingKey
+            HAVING COUNT(*) > 1
+            LIMIT 10
+        `,
+        ddl: Prisma.sql`
+            CREATE UNIQUE INDEX \`JournalEntry_tenantId_postingKey_key\`
+            ON \`JournalEntry\`(\`tenantId\`, \`postingKey\`)
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        name: JOURNAL_ENTRY_REVERSAL_UNIQUE_INDEX,
+        columns: ['reversalOfId'],
+        duplicateQuery: Prisma.sql`
+            SELECT reversalOfId AS keyPartOne, NULL AS keyPartTwo, COUNT(*) AS duplicateCount
+            FROM \`JournalEntry\`
+            WHERE reversalOfId IS NOT NULL
+            GROUP BY reversalOfId
+            HAVING COUNT(*) > 1
+            LIMIT 10
+        `,
+        ddl: Prisma.sql`
+            CREATE UNIQUE INDEX \`JournalEntry_reversalOfId_key\`
+            ON \`JournalEntry\`(\`reversalOfId\`)
+        `,
+    },
+];
+
+async function readCashCloseJournalTables(
+    db: DeploySchemaClient,
+): Promise<Set<CashCloseJournalTableName>> {
+    const rows = await db.query<Array<{ tableName: CashCloseJournalTableName }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN ('Shift', 'JournalEntry')
+    `);
+    return new Set(rows.map(row => row.tableName));
+}
+
+async function readCashCloseJournalColumns(
+    db: DeploySchemaClient,
+    tableName: CashCloseJournalTableName,
+): Promise<CashCloseJournalColumnRow[]> {
+    return db.query<CashCloseJournalColumnRow[]>(Prisma.sql`
+        SELECT
+            COLUMN_NAME AS columnName,
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ${tableName}
+        ORDER BY ORDINAL_POSITION
+    `);
+}
+
+async function readCashCloseJournalIndexes(
+    db: DeploySchemaClient,
+    tableName: CashCloseJournalTableName,
+): Promise<CashCloseJournalIndexRow[]> {
+    return db.query<CashCloseJournalIndexRow[]>(Prisma.sql`
+        SELECT
+            INDEX_NAME AS indexName,
+            NON_UNIQUE AS nonUnique,
+            SEQ_IN_INDEX AS seqInIndex,
+            COLUMN_NAME AS columnName,
+            SUB_PART AS subPart,
+            INDEX_TYPE AS indexType,
+            IS_VISIBLE AS isVisible,
+            COLLATION AS collation,
+            EXPRESSION AS expression
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ${tableName}
+        ORDER BY INDEX_NAME, SEQ_IN_INDEX
+    `);
+}
+
+async function readJournalEntryForeignKeys(
+    db: DeploySchemaClient,
+): Promise<CashCloseJournalForeignKeyRow[]> {
+    return db.query<CashCloseJournalForeignKeyRow[]>(Prisma.sql`
+        SELECT
+            rc.CONSTRAINT_NAME AS constraintName,
+            kcu.COLUMN_NAME AS columnName,
+            kcu.REFERENCED_TABLE_NAME AS referencedTableName,
+            kcu.REFERENCED_COLUMN_NAME AS referencedColumnName,
+            kcu.ORDINAL_POSITION AS ordinalPosition,
+            rc.DELETE_RULE AS deleteRule,
+            rc.UPDATE_RULE AS updateRule
+        FROM information_schema.REFERENTIAL_CONSTRAINTS rc
+        INNER JOIN information_schema.KEY_COLUMN_USAGE kcu
+          ON kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+         AND kcu.TABLE_NAME = rc.TABLE_NAME
+         AND kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+        WHERE rc.CONSTRAINT_SCHEMA = DATABASE()
+          AND rc.TABLE_NAME = 'JournalEntry'
+        ORDER BY rc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
+    `);
+}
+
+async function assertCashCloseJournalUniqueIsSafe(
+    db: DeploySchemaClient,
+    definition: CashCloseJournalUniqueDefinition,
+): Promise<void> {
+    const duplicates = await db.query<Array<{
+        keyPartOne: string;
+        keyPartTwo: string | null;
+        duplicateCount: number | bigint;
+    }>>(definition.duplicateQuery);
+    if (duplicates.length === 0) return;
+
+    const detail = duplicates
+        .map(row => [row.keyPartOne, row.keyPartTwo]
+            .filter((value): value is string => value !== null)
+            .join('/') + ` (${String(row.duplicateCount)})`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `${definition.name} no puede crearse porque hay claves non-null duplicadas: ${detail}`,
+    );
+}
+
+async function assertJournalEntryReversalsAreSafe(db: DeploySchemaClient): Promise<void> {
+    const invalid = await db.query<Array<{
+        reversalId: string;
+        reversalTenantId: string;
+        reversalOfId: string;
+        originalTenantId: string | null;
+        reason: 'MISSING_ORIGINAL' | 'CROSS_TENANT';
+    }>>(Prisma.sql`
+        SELECT
+            reversal.id AS reversalId,
+            reversal.tenantId AS reversalTenantId,
+            reversal.reversalOfId,
+            original.tenantId AS originalTenantId,
+            CASE
+                WHEN original.id IS NULL THEN 'MISSING_ORIGINAL'
+                ELSE 'CROSS_TENANT'
+            END AS reason
+        FROM \`JournalEntry\` reversal
+        LEFT JOIN \`JournalEntry\` original ON original.id = reversal.reversalOfId
+        WHERE reversal.reversalOfId IS NOT NULL
+          AND (original.id IS NULL OR original.tenantId <> reversal.tenantId)
+        LIMIT 10
+    `);
+    if (invalid.length === 0) return;
+
+    const detail = invalid
+        .map(row => `${row.reversalId}->${row.reversalOfId} (${row.reason})`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `JournalEntry.reversalOfId contiene referencias inexistentes o cross-tenant: ${detail}`,
+    );
+}
+
+function assertJournalEntryReversalEncoding(columns: CashCloseJournalColumnRow[]): void {
+    const id = columns.filter(column => column.columnName === 'id');
+    const reversal = columns.filter(column => column.columnName === 'reversalOfId');
+    if (id.length !== 1 || reversal.length !== 1) {
+        throw new UnsafeSchemaStateError(
+            'No se pudo comparar el encoding de JournalEntry.id y reversalOfId.',
+        );
+    }
+    if (id[0].characterSetName === null
+        || id[0].collationName === null
+        || reversal[0].characterSetName !== id[0].characterSetName
+        || reversal[0].collationName !== id[0].collationName) {
+        throw new UnsafeSchemaStateError(
+            'JournalEntry.reversalOfId debe usar el mismo charset y collation que JournalEntry.id.',
+        );
+    }
+}
+
+async function ensureCashCloseJournalColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    definition: CashCloseJournalColumnDefinition,
+): Promise<void> {
+    const read = async () => inspectCashCloseJournalColumn(
+        await readCashCloseJournalColumns(db, definition.tableName),
+        definition.contract,
+    );
+    const initial = await read();
+    const label = `${definition.tableName}.${definition.contract.columnName}`;
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(`${label} existe con definición incompatible.`);
+    }
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: columna ${label}.`);
+        try {
+            await db.execute(definition.ddl);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${label} fue creada concurrentemente; definición exacta verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(`No se pudo verificar la definición final de ${label}.`);
+    }
+}
+
+async function ensureCashCloseJournalUnique(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    definition: CashCloseJournalUniqueDefinition,
+): Promise<void> {
+    const read = async () => {
+        const indexes = await readCashCloseJournalIndexes(db, definition.tableName);
+        return inspectCashCloseJournalIndex(
+            indexes.filter(index => index.indexName === definition.name),
+            definition.name,
+            definition.columns,
+        );
+    };
+    const initial = await read();
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(`${definition.name} existe con definición incompatible.`);
+    }
+    await assertCashCloseJournalUniqueIsSafe(db, definition);
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: índice único ${definition.name}.`);
+        try {
+            await db.execute(definition.ddl);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${definition.name} fue creado concurrentemente; definición exacta verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${definition.name}.`,
+        );
+    }
+    await assertCashCloseJournalUniqueIsSafe(db, definition);
+}
+
+async function ensureJournalEntryReversalForeignKey(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+): Promise<void> {
+    const read = async () => inspectCashCloseJournalForeignKey(
+        await readJournalEntryForeignKeys(db),
+    );
+    const initial = await read();
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY} existe con definición incompatible.`,
+        );
+    }
+    await assertJournalEntryReversalsAreSafe(db);
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: FK ${JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY}.`);
+        try {
+            await db.execute(Prisma.sql`
+                ALTER TABLE \`JournalEntry\`
+                ADD CONSTRAINT \`JournalEntry_reversalOfId_fkey\`
+                FOREIGN KEY (\`reversalOfId\`) REFERENCES \`JournalEntry\`(\`id\`)
+                ON DELETE RESTRICT ON UPDATE CASCADE
+            `);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY} fue creada concurrentemente; definición exacta verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY}.`,
+        );
+    }
+    await assertJournalEntryReversalsAreSafe(db);
+}
+
+/**
+ * Converge los campos y restricciones expand-only de cierre/asientos antes de
+ * db push. Tolera cualquier estado parcial compatible y falla cerrado ante
+ * drift, duplicados, referencias huérfanas o reversos entre tenants.
+ */
+export async function applyCashCloseJournalSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    const tables = await readCashCloseJournalTables(db);
+    if (tables.size === 0) {
+        logger.info('Preflight cierre/asientos: tablas ausentes; db push creará el contrato completo.');
+        return;
+    }
+
+    for (const baseline of CASH_CLOSE_JOURNAL_BASELINE_COLUMNS) {
+        if (!tables.has(baseline.tableName)) continue;
+        const state = inspectCashCloseJournalColumn(
+            await readCashCloseJournalColumns(db, baseline.tableName),
+            baseline.contract,
+        );
+        if (state !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${baseline.tableName}.${baseline.contract.columnName} base falta o es incompatible.`,
+            );
+        }
+    }
+
+    // Prevalidar todo lo que ya existe antes del primer ALTER.
+    for (const definition of CASH_CLOSE_JOURNAL_COLUMNS) {
+        if (!tables.has(definition.tableName)) continue;
+        const state = inspectCashCloseJournalColumn(
+            await readCashCloseJournalColumns(db, definition.tableName),
+            definition.contract,
+        );
+        if (state === 'invalid') {
+            throw new UnsafeSchemaStateError(
+                `${definition.tableName}.${definition.contract.columnName} existe con definición incompatible.`,
+            );
+        }
+    }
+    for (const definition of CASH_CLOSE_JOURNAL_UNIQUES) {
+        if (!tables.has(definition.tableName)) continue;
+        const indexes = await readCashCloseJournalIndexes(db, definition.tableName);
+        const state = inspectCashCloseJournalIndex(
+            indexes.filter(index => index.indexName === definition.name),
+            definition.name,
+            definition.columns,
+        );
+        if (state === 'invalid') {
+            throw new UnsafeSchemaStateError(`${definition.name} existe con definición incompatible.`);
+        }
+        const relevantColumn = CASH_CLOSE_JOURNAL_COLUMNS.find(candidate => (
+            candidate.tableName === definition.tableName
+            && definition.columns.includes(candidate.contract.columnName)
+        ));
+        if (relevantColumn
+            && inspectCashCloseJournalColumn(
+                await readCashCloseJournalColumns(db, definition.tableName),
+                relevantColumn.contract,
+            ) === 'valid') {
+            await assertCashCloseJournalUniqueIsSafe(db, definition);
+        }
+    }
+    if (tables.has('JournalEntry')) {
+        const foreignKeyState = inspectCashCloseJournalForeignKey(
+            await readJournalEntryForeignKeys(db),
+        );
+        if (foreignKeyState === 'invalid') {
+            throw new UnsafeSchemaStateError(
+                `${JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY} existe con definición incompatible.`,
+            );
+        }
+        const reversalDefinition = CASH_CLOSE_JOURNAL_COLUMNS.find(definition => (
+            definition.tableName === 'JournalEntry'
+            && definition.contract.columnName === 'reversalOfId'
+        ));
+        const journalColumns = await readCashCloseJournalColumns(db, 'JournalEntry');
+        if (reversalDefinition
+            && inspectCashCloseJournalColumn(
+                journalColumns,
+                reversalDefinition.contract,
+            ) === 'valid') {
+            assertJournalEntryReversalEncoding(journalColumns);
+            await assertJournalEntryReversalsAreSafe(db);
+        }
+    }
+
+    for (const definition of CASH_CLOSE_JOURNAL_COLUMNS) {
+        if (tables.has(definition.tableName)) {
+            await ensureCashCloseJournalColumn(db, logger, definition);
+        }
+    }
+
+    if (tables.has('JournalEntry')) {
+        assertJournalEntryReversalEncoding(
+            await readCashCloseJournalColumns(db, 'JournalEntry'),
+        );
+    }
+    for (const definition of CASH_CLOSE_JOURNAL_UNIQUES) {
+        if (tables.has(definition.tableName)) {
+            await ensureCashCloseJournalUnique(db, logger, definition);
+        }
+    }
+    if (tables.has('JournalEntry')) {
+        await ensureJournalEntryReversalForeignKey(db, logger);
+    }
+
+    logger.info('Preflight cierre/asientos verificado: idempotencia, reversos y fechas listos.');
+}
+
+type AccountingDecimalTableName = 'Account' | 'JournalLine';
+type AccountingDecimalColumnName = 'balance' | 'debit' | 'credit';
+
+interface AccountingDecimalDefinition {
+    tableName: AccountingDecimalTableName;
+    columnName: AccountingDecimalColumnName;
+    ddl: Prisma.Sql;
+    unsafeValuesQuery: Prisma.Sql;
+}
+
+const ACCOUNTING_DECIMAL_DEFINITIONS: AccountingDecimalDefinition[] = [
+    {
+        tableName: 'Account',
+        columnName: 'balance',
+        ddl: Prisma.sql`
+            ALTER TABLE \`Account\`
+            MODIFY COLUMN \`balance\` DECIMAL(18, 4) NOT NULL DEFAULT 0
+        `,
+        unsafeValuesQuery: Prisma.sql`
+            SELECT id AS recordId, CAST(balance AS CHAR) AS unsafeValue
+            FROM \`Account\`
+            WHERE balance < CAST('-99999999999999.9999' AS DECIMAL(18, 4))
+               OR balance > CAST('99999999999999.9999' AS DECIMAL(18, 4))
+            LIMIT 10
+        `,
+    },
+    {
+        tableName: 'JournalLine',
+        columnName: 'debit',
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalLine\`
+            MODIFY COLUMN \`debit\` DECIMAL(18, 4) NOT NULL DEFAULT 0
+        `,
+        unsafeValuesQuery: Prisma.sql`
+            SELECT id AS recordId, CAST(debit AS CHAR) AS unsafeValue
+            FROM \`JournalLine\`
+            WHERE debit < CAST('-99999999999999.9999' AS DECIMAL(18, 4))
+               OR debit > CAST('99999999999999.9999' AS DECIMAL(18, 4))
+            LIMIT 10
+        `,
+    },
+    {
+        tableName: 'JournalLine',
+        columnName: 'credit',
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalLine\`
+            MODIFY COLUMN \`credit\` DECIMAL(18, 4) NOT NULL DEFAULT 0
+        `,
+        unsafeValuesQuery: Prisma.sql`
+            SELECT id AS recordId, CAST(credit AS CHAR) AS unsafeValue
+            FROM \`JournalLine\`
+            WHERE credit < CAST('-99999999999999.9999' AS DECIMAL(18, 4))
+               OR credit > CAST('99999999999999.9999' AS DECIMAL(18, 4))
+            LIMIT 10
+        `,
+    },
+];
+
+async function readAccountingDecimalTables(
+    db: DeploySchemaClient,
+): Promise<Set<AccountingDecimalTableName>> {
+    const rows = await db.query<Array<{ tableName: AccountingDecimalTableName }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN ('Account', 'JournalLine')
+    `);
+    return new Set(rows.map(row => row.tableName));
+}
+
+async function readAccountingDecimalColumn(
+    db: DeploySchemaClient,
+    definition: Pick<AccountingDecimalDefinition, 'tableName' | 'columnName'>,
+): Promise<AccountingDecimalColumnRow[]> {
+    return db.query<AccountingDecimalColumnRow[]>(Prisma.sql`
+        SELECT
+            TABLE_NAME AS tableName,
+            COLUMN_NAME AS columnName,
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            NUMERIC_PRECISION AS numericPrecision,
+            NUMERIC_SCALE AS numericScale,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ${definition.tableName}
+          AND COLUMN_NAME = ${definition.columnName}
+    `);
+}
+
+async function assertAccountingDecimalValuesFitTarget(
+    db: DeploySchemaClient,
+    definition: AccountingDecimalDefinition,
+): Promise<void> {
+    const unsafeValues = await db.query<Array<{ recordId: string; unsafeValue: string }>>(
+        definition.unsafeValuesQuery,
+    );
+    if (unsafeValues.length === 0) return;
+
+    const detail = unsafeValues
+        .map(row => `${row.recordId}=${row.unsafeValue}`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `${definition.tableName}.${definition.columnName} contiene valores fuera del rango DECIMAL(18,4): ${detail}`,
+    );
+}
+
+async function ensureAccountingDecimalColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    definition: AccountingDecimalDefinition,
+): Promise<void> {
+    const read = async () => readAccountingDecimalColumn(db, definition);
+    const initialRows = await read();
+    const decision = decideAccountingDecimalConvergence(initialRows);
+    const label = `${definition.tableName}.${definition.columnName}`;
+
+    if (decision === 'reject') {
+        const state = inspectAccountingDecimalColumn(initialRows);
+        throw new UnsafeSchemaStateError(
+            `${label} tiene contrato ${state}; solo se acepta DECIMAL(14,2) legacy o DECIMAL(18,4) final, NOT NULL DEFAULT 0.`,
+        );
+    }
+
+    if (decision === 'alter') {
+        logger.info(`Aplicando widening seguro: ${label} DECIMAL(14,2) -> DECIMAL(18,4).`);
+        try {
+            await db.execute(definition.ddl);
+        } catch (error) {
+            if (inspectAccountingDecimalColumn(await read()) !== 'target') throw error;
+            logger.warn(`${label} fue ampliada concurrentemente; definición final exacta verificada.`);
+        }
+    }
+
+    if (inspectAccountingDecimalColumn(await read()) !== 'target') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final DECIMAL(18,4) de ${label}.`,
+        );
+    }
+}
+
+/**
+ * Preflight del núcleo contable: valida contrato y rango antes de ampliar.
+ * DECIMAL(14,2) -> DECIMAL(18,4) conserva 12 -> 14 dígitos enteros y 2 -> 4
+ * decimales, por lo que no redondea ni reduce el dominio representable.
+ */
+export async function applyAccountingDecimalSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    const tables = await readAccountingDecimalTables(db);
+    if (tables.size === 0) {
+        logger.info('Preflight contable: Account y JournalLine aún no existen; db push creará DECIMAL(18,4).');
+        return;
+    }
+
+    // Primero validar todas las definiciones y todos los valores. Así no se
+    // deja una ampliación parcial por drift o datos incompatibles conocidos.
+    for (const definition of ACCOUNTING_DECIMAL_DEFINITIONS) {
+        if (!tables.has(definition.tableName)) continue;
+        const rows = await readAccountingDecimalColumn(db, definition);
+        if (decideAccountingDecimalConvergence(rows) === 'reject') {
+            const label = `${definition.tableName}.${definition.columnName}`;
+            throw new UnsafeSchemaStateError(
+                `${label} no coincide con DECIMAL(14,2) legacy ni DECIMAL(18,4) final.`,
+            );
+        }
+    }
+    for (const definition of ACCOUNTING_DECIMAL_DEFINITIONS) {
+        if (!tables.has(definition.tableName)) continue;
+        await assertAccountingDecimalValuesFitTarget(db, definition);
+    }
+    for (const definition of ACCOUNTING_DECIMAL_DEFINITIONS) {
+        if (!tables.has(definition.tableName)) continue;
+        await ensureAccountingDecimalColumn(db, logger, definition);
+    }
+    for (const definition of ACCOUNTING_DECIMAL_DEFINITIONS) {
+        if (!tables.has(definition.tableName)) continue;
+        await assertAccountingDecimalValuesFitTarget(db, definition);
+    }
+
+    logger.info('Preflight contable verificado: saldos, débitos y créditos usan DECIMAL(18,4) sin pérdida.');
+}
+
 /**
  * DDL expand-only que Prisma db push considera "data loss" aunque no borra filas.
  * Se ejecuta antes del db push normal y converge desde estados parciales.
@@ -3683,15 +5078,22 @@ export async function applyDeploySchemaPreflight(
         const paymentExists = await paymentTableExists(db);
         const retencionSufridaExists = await retencionSufridaTableExists(db);
         const purchaseExists = await purchaseTableExists(db);
+        const productBatchHoldExists = await productBatchHoldTableExists(db);
         if (stockCountExists
             || productReturnExists
             || paymentExists
             || retencionSufridaExists
-            || purchaseExists) {
+            || purchaseExists
+            || productBatchHoldExists) {
             throw new UnsafeSchemaStateError(
                 'Hay tablas de negocio sin Warehouse; el schema parcial requiere intervención manual.',
             );
         }
+        // Shift/JournalEntry/Account/JournalLine pueden existir en snapshots
+        // legacy anteriores a Warehouse. Sus cambios con unique/ALTER deben
+        // converger igualmente antes del db push sin aceptar data loss.
+        await applyCashCloseJournalSchemaPreflight(db, logger);
+        await applyAccountingDecimalSchemaPreflight(db, logger);
         logger.info('Preflight DDL: Warehouse aún no existe; db push creará el schema completo.');
         return;
     }
@@ -3709,4 +5111,7 @@ export async function applyDeploySchemaPreflight(
     await applyPurchaseMatchResolutionSchemaPreflight(db, logger);
     await applyProcurementPhaseTwoBSchemaPreflight(db, logger);
     await applyProcurementPhaseTwoCSchemaPreflight(db, logger);
+    await applyCashCloseJournalSchemaPreflight(db, logger);
+    await applyAccountingDecimalSchemaPreflight(db, logger);
+    await applyPharmacyInventorySchemaPreflight(db, logger);
 }

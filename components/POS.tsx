@@ -26,6 +26,8 @@ import { useReportarVenta } from './VentaEnCursoContext';
 import { ReceiptTicket } from './ReceiptTicket';
 import { CajaNicaCatalog } from './pos/CajaNicaCatalog';
 import { CajaNicaCheckout } from './pos/CajaNicaCheckout';
+import { StoreCreditPaymentOption } from './pos/StoreCreditPaymentOption';
+import { useStoreCreditCheckout } from '../hooks/useStoreCreditCheckout';
 import POSCatalogAdminTools from './pos/POSCatalogAdminTools';
 import {
     ShiftCloseReport,
@@ -75,7 +77,7 @@ import {
     type RequestErrorCategory,
 } from '../utils/posActivation';
 import { suggestNioCashAmounts as denominacionesSugeridas, validateCashReceived } from '../utils/posCash';
-import { mapApiProductImage } from '../utils/posProductMapper';
+import { mapApiProductForPos, mapApiProductImage } from '../utils/posProductMapper';
 import Decimal from 'decimal.js';
 // ── Utilidades financieras del POS (string controlado + Decimal.js) ──────────
 // `discount` y `basePrice` son estado comercial de la línea, no del producto.
@@ -385,6 +387,7 @@ interface Customer {
     phone?: string;
     creditLimit: number;
     currentDebt: number;
+    storeCreditBalance?: number;
     isBlocked: boolean;
     isWholesale?: boolean; // cliente mayorista → mayoreo desde la unidad 1
 }
@@ -431,6 +434,7 @@ interface CompletedSale {
     // termina el cobro: por eso la pantalla de éxito nunca mostraba el vuelto.
     cashReceived?: string;
     usdReceived?: string;
+    storeCreditApplied?: number;
 }
 
 interface ScalePreviewResponse {
@@ -942,6 +946,15 @@ const POS: React.FC = () => {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
     }), [token]);
+    const storeCreditCheckout = useStoreCreditCheckout(token, headers, showToast);
+    const { useStoreCredit, setUseStoreCredit, sourceReturnId: storeCreditSourceReturnId } = storeCreditCheckout;
+
+    useEffect(() => {
+        const customer = storeCreditCheckout.exchangeCustomer;
+        if (!customer) return;
+        setCustomerList((current) => current.some((item) => item.id === customer.id) ? current : [customer, ...current]);
+        setSelectedCustomer(customer); setCustomerSearch(customer.name);
+    }, [storeCreditCheckout.exchangeCustomer]);
 
     const fetchCustomerSuggestions = useCallback(async (query: string) => {
         if (!token) return;
@@ -981,35 +994,10 @@ const POS: React.FC = () => {
     // ==========================================
     const fetchProducts = useCallback(async () => {
         try {
-            const res = await fetch('/api/products', { headers });
+            const res = await fetch('/api/products?includeSellableStock=true', { headers });
             if (res.ok) {
                 const data = await res.json();
-                // Map backend fields to frontend Product type
-                const mapped: Product[] = data.map((p: any) => ({
-                    id: p.id,
-                    name: p.name,
-                    sku: p.sku,
-                    price: p.price,
-                    costPrice: p.cost,
-                    stock: p.stock,
-                    category: p.category || 'General',
-                    unit: p.unit || 'unidad',
-                    // Mayoreo y empaque: sin estos campos, effectiveUnitPrice
-                    // nunca sale de DETALLE y la regla de precios por cantidad
-                    // (testeada en tests/pricing.test.ts) queda muerta — la
-                    // docena configurada a C$90 se cobraba 12 × detalle.
-                    wholesalePrice: p.wholesalePrice ?? null,
-                    wholesaleMinQty: p.wholesaleMinQty ?? null,
-                    packUnit: p.packUnit ?? null,
-                    packSize: p.packSize ?? null,
-                    packPrice: p.packPrice ?? null,
-                    saleMode: p.saleMode ?? null,
-                    quantityStep: p.quantityStep == null ? null : Number(p.quantityStep),
-                    ivaExento: p.ivaExento === true,
-                    productFamily: p.productFamily ?? null,
-                    ...mapApiProductImage(p),
-                }));
-                setProducts(mapped);
+                setProducts(data.map(mapApiProductForPos));
                 setProductsError(false);
             } else {
                 // Falso empty-state (auditoría C8): un 500/402 mostraba "no tenés
@@ -2996,6 +2984,7 @@ const POS: React.FC = () => {
                 phone: body.phone || undefined,
                 creditLimit: Number(body.creditLimit ?? 0),
                 currentDebt: Number(body.currentDebt ?? 0),
+                storeCreditBalance: Number(body.storeCreditBalance ?? 0),
                 isBlocked: Boolean(body.isBlocked),
                 isWholesale: Boolean(body.isWholesale),
             };
@@ -3143,6 +3132,9 @@ const POS: React.FC = () => {
     // 15% encima: el cliente pagaba C$115 y la BD guardaba C$100 → sobrante
     // fantasma en todos los arqueos y fiado registrado 15% por debajo.
     const grandTotalD = discountedTotalD;
+    const availableStoreCreditD = Decimal.max(0, toDecimal(selectedCustomer?.storeCreditBalance ?? 0));
+    const storeCreditAppliedD = useStoreCredit ? Decimal.min(availableStoreCreditD, grandTotalD).toDecimalPlaces(2) : new Decimal(0);
+    const amountDueD = grandTotalD.minus(storeCreditAppliedD).toDecimalPlaces(2);
     // El backend redondea total y exento a centavos antes del desglose. Este
     // espejo evita que una venta medida offline imprima un IVA distinto por un
     // centavo cuando finalmente sincronice.
@@ -3172,7 +3164,8 @@ const POS: React.FC = () => {
     // texto dejaría el chip apagado según cómo se haya escrito el monto.
     const chipActivo = (monto: Decimal): boolean =>
         cashReceived !== '' && toDecimal(cashReceived).equals(monto);
-    const cashPaymentValidation = validateCashReceived(cashReceived, grandTotalD);
+    const cashPaymentValidation = amountDueD.isZero() ? { ok: true as const, received: new Decimal(0), total: new Decimal(0), change: new Decimal(0) }
+        : validateCashReceived(cashReceived, amountDueD);
 
     // Teclado táctil del modal de efectivo, con la misma sanitización del input.
     const teclaEfectivo = (tecla: string) => {
@@ -3234,8 +3227,16 @@ const POS: React.FC = () => {
         // visual. Este guard ocurre antes del lock, la cola offline y el POST:
         // ningún acceso (botón, Enter o código futuro) puede registrar efectivo
         // vacío o insuficiente saltándose la pantalla de vuelto.
-        if (method === 'CASH') {
-            const cashValidation = validateCashReceived(cashReceived, grandTotalD);
+        if (storeCreditAppliedD.greaterThan(0) && !navigator.onLine) {
+            showToast({
+                tone: 'warning',
+                title: 'El saldo a favor requiere conexión',
+                message: 'Conectate para verificar el balance actual del cliente antes de cobrar.',
+            });
+            return;
+        }
+        if (method === 'CASH' && amountDueD.greaterThan(0)) {
+            const cashValidation = validateCashReceived(cashReceived, amountDueD);
             if (cashValidation.ok === false) {
                 setShowCashPreModal(true);
                 setShowMobileCart(true);
@@ -3316,6 +3317,8 @@ const POS: React.FC = () => {
             employeeId: currentShift.employeeId ?? currentShift.employee?.id ?? null,
             globalDiscount: globalDiscountD.toString(),
             fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
+            storeCreditAmount: storeCreditAppliedD.toFixed(2),
+            storeCreditSourceReturnId,
             items: saleItems.map(({ name: _name, ...item }) => item),
         });
         const attempt = checkoutAttemptFor(
@@ -3337,6 +3340,8 @@ const POS: React.FC = () => {
             globalDiscount: globalDiscountNum,
             employeeId: currentShift.employeeId ?? currentShift.employee?.id ?? null,
             fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
+            storeCreditAmount: storeCreditAppliedD.toFixed(2),
+            ...(storeCreditSourceReturnId ? { storeCreditSourceReturnId } : {}),
         };
         trackEvent('real_sale_submit_attempted', {
             source: firstSaleMode ? 'first_sale' : 'pos',
@@ -3511,11 +3516,13 @@ const POS: React.FC = () => {
                 vatAmountAtSale: authoritativeVat.toDecimalPlaces(2).toNumber(),
                 cashReceived: method === 'CASH' ? cashReceived : undefined,
                 usdReceived: method === 'CASH' && payingInUSD ? usdAmount : undefined,
+                storeCreditApplied: storeCreditAppliedD.toNumber(),
             });
             setShowCashPreModal(false);
             setShowPaymentOptions(false);
             checkoutAttemptRef.current = null;
             setCashReceived('');
+            storeCreditCheckout.clear();
             trackEvent('sale_completed', { source: firstSaleMode ? 'first_sale' : 'pos', payment_type: method });
             trackFirstRealSale();
             if (measuredLines > 0) {
@@ -3538,7 +3545,7 @@ const POS: React.FC = () => {
                 error?.name === 'TimeoutError' ||
                 error?.name === 'AbortError' ||
                 error instanceof TypeError; // fetch: "Failed to fetch"
-            if (isNetworkFailure) {
+            if (isNetworkFailure && storeCreditAppliedD.isZero()) {
                 try {
                     await queueSaleOffline();
                     return;
@@ -3577,7 +3584,9 @@ const POS: React.FC = () => {
 
     const vueltoDeLaVenta = useMemo(() => {
         if (!completedSale || !efectivoRecibidoDeLaVenta) return null;
-        const vuelto = efectivoRecibidoDeLaVenta.minus(toDecimal(completedSale.grandTotal));
+        const efectivoCobrado = toDecimal(completedSale.grandTotal)
+            .minus(completedSale.storeCreditApplied ?? 0);
+        const vuelto = efectivoRecibidoDeLaVenta.minus(efectivoCobrado);
         // Pago justo (o insuficiente, p. ej. abono en efectivo): no hay vuelto
         // que mostrar y NO se inventa uno negativo.
         if (vuelto.lessThanOrEqualTo(0)) return null;
@@ -4432,15 +4441,13 @@ const POS: React.FC = () => {
                                                 <span className="ml-auto text-[10px] text-slate-500 font-mono">F4</span>
                                             </button>
                                         )}
-                                        {!guidedSimpleMode && (
-                                            <button
-                                                onClick={() => { setShowReturnModal(true); setShowCashActions(false); }}
-                                                className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
-                                            >
-                                                <RefreshCw size={16} className="text-slate-400 shrink-0" />
-                                                <span>Devolución de producto</span>
-                                            </button>
-                                        )}
+                                        <button
+                                            onClick={() => { setShowCashActions(false); window.location.assign('/app/sales'); }}
+                                            className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                        >
+                                            <RefreshCw size={16} className="text-slate-400 shrink-0" />
+                                            <span>Ventas y devoluciones</span>
+                                        </button>
                                         <button
                                             onClick={() => { openHeldCarts(); setShowCashActions(false); }}
                                             className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
@@ -6886,7 +6893,15 @@ const POS: React.FC = () => {
                             <IconButton icon={<X size={16} />} label="Cerrar" onClick={() => { if (!processing) setShowPaymentOptions(false); }} />
                         </div>
                         <div className="p-4 space-y-2">
+                            {selectedCustomer && <StoreCreditPaymentOption available={availableStoreCreditD.toNumber()} applied={storeCreditAppliedD.toNumber()}
+                                amountDue={amountDueD.toNumber()} selected={useStoreCredit} disabled={processing} onToggle={() => setUseStoreCredit((current) => !current)} />}
                             <p className="text-sm font-semibold text-slate-300 px-1 pb-1">{guidedSimpleMode ? 'Otros medios de pago' : '¿Cómo pagó?'}</p>
+                            {amountDueD.isZero() && <button
+                                type="button"
+                                onClick={() => handleCheckout('TRANSFER')}
+                                disabled={processing}
+                                className="w-full h-pay rounded-control bg-emerald-600 px-4 font-black text-white disabled:opacity-50"
+                            >Confirmar usando saldo a favor</button>}
                             {!guidedSimpleMode && <button
                                 type="button"
                                 autoFocus
@@ -6955,7 +6970,8 @@ const POS: React.FC = () => {
                             <div className="w-10 h-10 rounded-pill bg-brand-soft text-brand flex items-center justify-center"><Banknote size={20} /></div>
                             <div>
                                 <h2 id="cash-payment-title" className="text-base font-bold text-slate-100">Efectivo</h2>
-                                <p className="text-2xl font-extrabold text-slate-100 mt-0.5 nx-num">{formatMoney(grandTotal)}</p>
+                                <p className="text-2xl font-extrabold text-slate-100 mt-0.5 nx-num">{formatMoney(amountDueD)}</p>
+                                {storeCreditAppliedD.greaterThan(0) && <p className="mt-1 text-xs text-emerald-300">Saldo aplicado: {formatMoney(storeCreditAppliedD)}</p>}
                             </div>
                             <IconButton icon={<X size={16} />} label="Cerrar" onClick={() => { if (!processing) setShowCashPreModal(false); }} className="ml-auto" />
                         </div>
@@ -6994,10 +7010,10 @@ const POS: React.FC = () => {
                                     {toDecimal(usdAmount).greaterThan(0) && (
                                         <div className="bg-blue-500/10 px-3 py-2 rounded-lg border border-blue-500/20 text-sm">
                                             <div className="flex justify-between"><span className="text-blue-400">Equivalente NIO:</span><span className="font-bold text-blue-300 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate))}</span></div>
-                                            {toDecimal(usdAmount).mul(exchangeRate).greaterThanOrEqualTo(grandTotal) && (
+                                            {toDecimal(usdAmount).mul(exchangeRate).greaterThanOrEqualTo(amountDueD) && (
                                                 <>
-                                                    <div className="flex justify-between mt-1 pt-1 border-t border-blue-500/20"><span className="font-bold text-emerald-400">Cambio NIO:</span><span className="font-bold text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate).minus(grandTotal))}</span></div>
-                                                    <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-brand text-xs nx-num">{formatUSD(toDecimal(usdAmount).minus(toDecimal(grandTotal).div(exchangeRate)))}</span></div>
+                                                    <div className="flex justify-between mt-1 pt-1 border-t border-blue-500/20"><span className="font-bold text-emerald-400">Cambio NIO:</span><span className="font-bold text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate).minus(amountDueD))}</span></div>
+                                                    <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-brand text-xs nx-num">{formatUSD(toDecimal(usdAmount).minus(amountDueD.div(exchangeRate)))}</span></div>
                                                 </>
                                             )}
                                         </div>
@@ -7019,15 +7035,15 @@ const POS: React.FC = () => {
                                             no se depende solo del color para decir cuál es. */}
                                         <button
                                             type="button"
-                                            onClick={() => setCashReceived(grandTotalD.toFixed(2))}
-                                            aria-pressed={chipActivo(grandTotalD)}
-                                            className={`flex-shrink-0 px-3 py-1.5 font-bold rounded-control text-xs border transition-colors ${chipActivo(grandTotalD)
+                                            onClick={() => setCashReceived(amountDueD.toFixed(2))}
+                                            aria-pressed={chipActivo(amountDueD)}
+                                            className={`flex-shrink-0 px-3 py-1.5 font-bold rounded-control text-xs border transition-colors ${chipActivo(amountDueD)
                                                 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500 hover:bg-emerald-500/25'
                                                 : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'}`}
                                         >
                                             Monto exacto
                                         </button>
-                                        {denominacionesSugeridas(grandTotalD).map(monto => (
+                                        {denominacionesSugeridas(amountDueD).map(monto => (
                                             <button
                                                 key={monto.toFixed(2)}
                                                 type="button"
@@ -7049,7 +7065,7 @@ const POS: React.FC = () => {
                                             autoFocus
                                             aria-label="Efectivo recibido en córdobas"
                                             className="w-full pl-10 pr-4 py-3 border border-white/10 rounded-lg text-xl font-bold text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono tabular-nums"
-                                            placeholder={grandTotal.toFixed(2)}
+                                            placeholder={amountDueD.toFixed(2)}
                                             value={cashReceived}
                                             onChange={e => setCashReceived(sanitizeDecimalInput(e.target.value))}
                                         />
@@ -7081,19 +7097,19 @@ const POS: React.FC = () => {
                                             Limpiar
                                         </button>
                                     </div>
-                                    {cashReceived !== '' && toDecimal(cashReceived).greaterThanOrEqualTo(grandTotal) && (
+                                    {cashReceived !== '' && toDecimal(cashReceived).greaterThanOrEqualTo(amountDueD) && (
                                         <div className="bg-emerald-500/10 px-4 py-3 rounded-control border border-emerald-500/20 text-center">
                                             <p className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Vuelto</p>
                                             <p className="text-5xl font-black text-emerald-400 font-mono tabular-nums leading-none mt-1">
-                                                {formatMoney(toDecimal(cashReceived).minus(grandTotal))}
+                                                {formatMoney(toDecimal(cashReceived).minus(amountDueD))}
                                             </p>
                                         </div>
                                     )}
-                                    {cashReceived !== '' && toDecimal(cashReceived).lessThan(grandTotal) && (
+                                    {cashReceived !== '' && toDecimal(cashReceived).lessThan(amountDueD) && (
                                         <div className="bg-red-500/10 px-4 py-3 rounded-control border border-red-500/20 text-center">
                                             <p className="text-xs font-bold text-red-400 uppercase tracking-widest">Falta</p>
                                             <p className="text-3xl font-black text-red-400 font-mono tabular-nums leading-none mt-1">
-                                                {formatMoney(toDecimal(grandTotal).minus(toDecimal(cashReceived)))}
+                                                {formatMoney(amountDueD.minus(toDecimal(cashReceived)))}
                                             </p>
                                         </div>
                                     )}
@@ -7114,7 +7130,7 @@ const POS: React.FC = () => {
                                     className="flex-1 h-touch rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                                 >
                                     {processing ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
-                                    {processing ? 'Registrando…' : `Cobrar ${formatMoney(grandTotal)}`}
+                                    {processing ? 'Registrando…' : amountDueD.isZero() ? 'Confirmar con saldo' : `Cobrar ${formatMoney(amountDueD)}`}
                                 </button>
                             </div>
                         </div>

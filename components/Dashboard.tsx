@@ -649,15 +649,21 @@ const RetailDashboard: React.FC = () => {
                   </span>
                   <div className="min-w-0 flex-1">
                     <h3 className="font-semibold text-slate-950">Lotes próximos a vencer</h3>
-                    <p className="mt-0.5 text-sm text-slate-600">{expiringBatches.length} lote(s) vencen dentro de los próximos 90 días</p>
+                    <p className="mt-0.5 text-sm text-slate-600">{expiringBatches.length} lote(s) vencidos o dentro de los próximos 90 días</p>
                     <ul className="mt-3 divide-y divide-slate-200 border-t border-slate-200">
                       {expiringBatches.slice(0, 3).map((batch: any) => {
-                        const isExpired = new Date(batch.expiryDate) < new Date();
+                        const isExpired = batch.status === 'EXPIRED' || Number(batch.daysUntilExpiry) < 0;
+                        const expiryLabel = isExpired
+                          ? 'Vencido'
+                          : Number(batch.daysUntilExpiry) === 0
+                            ? 'Vence hoy'
+                            : `${batch.daysUntilExpiry} días`;
                         return (
                           <li key={batch.id} className="flex flex-col justify-between gap-1 py-2 text-sm sm:flex-row sm:items-center sm:gap-4">
                             <span className="truncate text-slate-700">{batch.productName} <span className="text-slate-500">· Lote {batch.batchNumber}</span></span>
                             <span className={`nx-num shrink-0 font-semibold ${isExpired ? 'text-red-700' : 'text-orange-700'}`}>
-                              {new Date(batch.expiryDate).toLocaleDateString()} · {batch.stock} uds
+                              {new Date(batch.expiryDate).toLocaleDateString('es-NI', { timeZone: 'UTC' })} · {expiryLabel} · {batch.physicalStock ?? batch.stock} uds
+                              {Number(batch.heldStock) > 0 ? ` · ${batch.heldStock} retenidas` : ''}
                             </span>
                           </li>
                         );

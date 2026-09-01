@@ -1,5 +1,10 @@
 # Plan — Nortex a Google Play Store (primero) y Apple App Store
 
+> **ARCHIVADO (2026-08-30):** todo el contenido que sigue es una fotografía
+> histórica y no debe usarse como inventario técnico ni roadmap vigente. Contiene
+> premisas que ya no coinciden con el repositorio. Consulte `BUILD_ANDROID.md`
+> para el shell actual y `PLAN_CAMARA_CODIGOS_BODEGA.md` para cámara y códigos.
+
 > Objetivo: publicar Nortex en **Play Store** cuanto antes y dejar **App Store**
 > encaminado (ya hay Mac mini para iOS). Nortex maneja **dinero real** y su **POS
 > offline es la joya de la corona** → el empaquetado no puede romper el modo
@@ -9,7 +14,7 @@
 > el comerciante paga por fuera (transferencia). Esto hace la publicación
 > **viable sin comisión (0%)** en ambas tiendas (ver §6.1).
 
-## 0. Estado actual (recon del repo)
+## 0. Estado observado en el snapshot histórico
 
 | Señal | Estado | Implica |
 |---|---|---|
@@ -20,7 +25,7 @@
 | Push nativo | ❌ no hay | Se agrega en iOS (ayuda a pasar Apple 4.2) |
 | Capacitor/Cordova | ❌ no instalado | Se agrega en Fase 2 (iOS) sin tocar el core |
 
-## 1. Recomendación estratégica (híbrida — confirmada por la investigación)
+## 1. Recomendación del snapshot — no vigente
 
 - **Android → TWA** (Bubblewrap / PWABuilder). Corre el PWA en el **motor Chrome
   real** del dispositivo → **service worker + IndexedDB + offline funcionan
@@ -55,7 +60,7 @@ ingeniería real**, no un wrapper automático.
   registration". Workaround si no aplica: registrar la entidad en otro país con
   presencia legal.
 
-## 3. Fase 0 — Preparar el PWA (sirve a las DOS tiendas, sin Mac)
+## 3. Fase 0 histórica — no ejecutar desde este archivo
 
 1. **Íconos** PNG **192 + 512 + maskable** (safe-zone) desde el logo Obsidian;
    actualizar `manifest.icons` de `vite.config.ts` (hoy solo SVG). Splash.
@@ -64,7 +69,7 @@ ingeniería real**, no un wrapper automático.
 3. **Lighthouse PWA "installable" = 100** (requisito de facto del TWA).
 4. **`/.well-known/assetlinks.json`** servido por Express (quita la barra de URL).
 
-## 4. Fase 1 — Android / Google Play (PRIMERO, sin Mac)
+## 4. Fase 1 histórica — no ejecutar desde este archivo
 
 1. Generar el TWA con **PWABuilder** (simple) o **Bubblewrap** (control) → **AAB**,
    **targetSdk 35 (Android 15)** — obligatorio desde 31-ago-2025.
@@ -75,7 +80,7 @@ ingeniería real**, no un wrapper automático.
    Safety form** (declarar PII/financiero honesto), política de privacidad.
 5. Release a producción.
 
-## 5. Fase 2 — iOS / App Store (con la Mac mini)
+## 5. Fase 2 histórica — no ejecutar desde este archivo
 
 1. Xcode 16 (SDK iOS 18, deployment target **iOS 15**) + **Capacitor**
    (`@capacitor/core`, `@capacitor/ios`) envolviendo el `dist/`.
@@ -107,7 +112,7 @@ ingeniería real**, no un wrapper automático.
 5. 🟡 **Offline iOS bajo WKWebView** — el trabajo de ingeniería real (SQLite, §5).
 6. ⚠️ **[VERIFICAR] elegibilidad de registro para Nicaragua** en ambas tiendas.
 
-## 7. Orden de acción
+## 7. Orden de acción histórico — no vigente
 
 1. **Tramitar el D-U-N-S YA** (cuello de botella de ~30 días) → cuenta de
    **organización** en ambas tiendas.

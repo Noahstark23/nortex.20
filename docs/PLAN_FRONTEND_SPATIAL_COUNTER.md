@@ -89,3 +89,4 @@ Salida: todo el workspace autenticado usa las mismas primitivas y estados.
 - `components/pos/CajaNicaCheckout.tsx`: cobro presentacional.
 - `components/GuestPOS.tsx`: recorrido público verificable.
 - `utils/fluidMotion.ts` y `hooks/useFluidPress.ts`: física compartida.
+

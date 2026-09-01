@@ -115,7 +115,7 @@ describe('guardas estructurales de devoluciones', () => {
     });
 
     it('resuelve un processedShiftId no nulo antes de persistir y limita el fallback a CASH', () => {
-        const refundResolutionIndex = returnRoute.indexOf('const refundMethod = resolveReturnRefundMethod');
+        const refundResolutionIndex = returnRoute.indexOf("const refundMethod = resolution === 'REFUND'");
         const shiftSelectionStart = returnRoute.indexOf('const ownProcessingShifts:');
         const attributionIndex = returnRoute.indexOf('resolveReturnShiftAttribution({', shiftSelectionStart);
         const processedShiftIndex = returnRoute.indexOf(
@@ -212,7 +212,8 @@ describe('guardas estructurales de devoluciones', () => {
         expect(accountingBlock).toContain('exemptTotal: resolved.exemptTotal');
         expect(accountingBlock).toContain('creditReduction,');
         expect(accountingBlock).toContain('settledRefund,');
-        expect(accountingBlock).toContain("refundMethod: refundMethod ?? 'CASH'");
+        expect(accountingBlock).toContain("refundMethod: resolution === 'REFUND' ? (refundMethod ?? 'CASH') : 'STORE_CREDIT'");
+        expect(accountingBlock).toContain("refundPending: resolution === 'REFUND'");
         expect(auditIndex).toBeGreaterThan(accountingIndex);
         expect(returnRoute.slice(auditIndex)).toContain('processedShiftId,');
         expect(returnRoute.slice(auditIndex)).toContain('shiftAttributionSource: shiftAttribution.source');
