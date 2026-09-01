@@ -135,6 +135,38 @@ const buscador = () => screen.findByPlaceholderText(/Escaneá o buscá un produc
 const asentar = (ms = 250) => new Promise((r) => setTimeout(r, ms));
 
 describe('POS · escanear y armar la venta', () => {
+    it('respeta sellableStock=0 aunque la existencia física sea positiva', async () => {
+        respuestas['/api/products'] = [{ ...PRODUCTO, stock: 40, sellableStock: 0 }];
+        const user = userEvent.setup();
+        montarPOS();
+
+        expect(fetch).toHaveBeenCalledWith(
+            '/api/products?includeSellableStock=true',
+            expect.objectContaining({ headers: expect.any(Object) }),
+        );
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar();
+
+        const cuerpo = document.body.textContent ?? '';
+        expect(cuerpo).toContain(`${PRODUCTO.name} está agotado`);
+        expect(cuerpo).toContain('Tu venta está vacía');
+        expect(cuerpo).not.toContain('1 unidad × C$ 25.00');
+    });
+
+    it('usa stock físico como fallback cuando sellableStock no viene en la respuesta', async () => {
+        respuestas['/api/products'] = [{ ...PRODUCTO, stock: 1 }];
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar();
+
+        const cuerpo = document.body.textContent ?? '';
+        expect(cuerpo).toContain(`${PRODUCTO.name} agregado`);
+        expect(cuerpo).toContain('1 unidad × C$ 25.00');
+    });
+
     it('escanear un SKU exacto mete el producto y el total refleja su precio', async () => {
         const user = userEvent.setup();
         montarPOS();

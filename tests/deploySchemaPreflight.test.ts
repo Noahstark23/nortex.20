@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     applyDeploySchemaPreflight,
     applyPaymentSchemaPreflight,
+    applyPharmacyInventorySchemaPreflight,
     applyProcurementPhaseTwoBSchemaPreflight,
     applyProcurementPhaseTwoCSchemaPreflight,
     applyProductReturnSchemaPreflight,
@@ -11,6 +12,9 @@ import {
     inspectPaymentClientEventIdColumn,
     inspectPaymentIdempotencyIndex,
     inspectPaymentPayloadHashColumn,
+    inspectPharmacyInventoryColumn,
+    inspectPharmacyInventoryForeignKey,
+    inspectPharmacyInventoryIndex,
     inspectProcurementPhaseTwoBColumn,
     inspectProcurementPhaseTwoBForeignKey,
     inspectProcurementPhaseTwoBIndex,
@@ -31,6 +35,7 @@ import {
     inspectWarehouseSellerColumn,
     inspectWarehouseSellerIndex,
     PAYMENT_IDEMPOTENCY_INDEX,
+    PRODUCT_BATCH_HOLD_SOURCE_UNIQUE_INDEX,
     PURCHASE_ITEM_INVENTORY_BATCH_FOREIGN_KEY,
     PURCHASE_ITEM_INVENTORY_BATCH_INDEX,
     PURCHASE_ITEM_INVENTORY_WAREHOUSE_FOREIGN_KEY,
@@ -52,6 +57,7 @@ import {
     type DeploySchemaClient,
     type PaymentColumnRow,
     type PaymentIndexRow,
+    type PharmacyInventoryColumnContract,
     type ProcurementPhaseTwoBColumnContract,
     type ProcurementPhaseTwoBColumnRow,
     type ProcurementPhaseTwoCColumnContract,
@@ -655,7 +661,7 @@ describe('deploy schema preflight', () => {
 
         await applyDeploySchemaPreflight({ query, execute }, { info, warn: vi.fn() });
 
-        expect(query).toHaveBeenCalledTimes(6);
+        expect(query).toHaveBeenCalledTimes(7);
         expect(execute).not.toHaveBeenCalled();
         expect(info).toHaveBeenCalledWith(expect.stringContaining('Warehouse aún no existe'));
     });
@@ -664,6 +670,7 @@ describe('deploy schema preflight', () => {
         const query = vi.fn()
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([{ tableName: 'StockCount' }])
+            .mockResolvedValueOnce([])
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([])
@@ -682,6 +689,7 @@ describe('deploy schema preflight', () => {
             .mockResolvedValueOnce([{ tableName: 'ProductReturn' }])
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
             .mockResolvedValueOnce([]);
 
         await expect(applyDeploySchemaPreflight(
@@ -697,6 +705,7 @@ describe('deploy schema preflight', () => {
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([{ tableName: 'RetencionSufrida' }])
+            .mockResolvedValueOnce([])
             .mockResolvedValueOnce([]);
 
         await expect(applyDeploySchemaPreflight(
@@ -712,7 +721,24 @@ describe('deploy schema preflight', () => {
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([])
-            .mockResolvedValueOnce([{ tableName: 'Purchase' }]);
+            .mockResolvedValueOnce([{ tableName: 'Purchase' }])
+            .mockResolvedValueOnce([]);
+
+        await expect(applyDeploySchemaPreflight(
+            { query, execute: vi.fn() },
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(UnsafeSchemaStateError);
+    });
+
+    it('falla cerrado si ProductBatchHold existe sin Warehouse', async () => {
+        const query = vi.fn()
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{ tableName: 'ProductBatchHold' }]);
 
         await expect(applyDeploySchemaPreflight(
             { query, execute: vi.fn() },
@@ -2030,5 +2056,381 @@ describe('Procurement Fase 2C deploy schema preflight', () => {
         expect(SUPPLIER_RETURN_EVENT_UNIQUE_INDEX).toBe('SupplierReturn_tenantId_clientEventId_key');
         expect(SUPPLIER_CREDIT_NOTE_LINE_RETURN_ITEM_UNIQUE_INDEX)
             .toBe('SupplierCreditNoteLine_supplierReturnItemId_key');
+    });
+});
+
+const pharmacyBaseContracts: Array<{
+    tableName: 'Tenant' | 'ProductBatchWarehouseStock';
+    contract: PharmacyInventoryColumnContract;
+}> = [
+    {
+        tableName: 'Tenant',
+        contract: {
+            columnName: 'pharmacyInventoryMode',
+            columnType: 'varchar(16)',
+            nullable: false,
+            defaultValue: 'OFF',
+        },
+    },
+    {
+        tableName: 'Tenant',
+        contract: {
+            columnName: 'pharmacyInventoryActivatedAt',
+            columnType: 'datetime(3)',
+            nullable: true,
+            defaultValue: null,
+        },
+    },
+    {
+        tableName: 'ProductBatchWarehouseStock',
+        contract: {
+            columnName: 'heldStock',
+            columnType: 'decimal(18,4)',
+            nullable: false,
+            defaultValue: '0.0000',
+        },
+    },
+];
+
+const pharmacyHoldColumns: PharmacyInventoryColumnContract[] = [
+    { columnName: 'id', columnType: 'varchar(191)', nullable: false, defaultValue: null },
+    { columnName: 'tenantId', columnType: 'varchar(191)', nullable: false, defaultValue: null },
+    { columnName: 'productId', columnType: 'varchar(191)', nullable: false, defaultValue: null },
+    { columnName: 'batchId', columnType: 'varchar(191)', nullable: false, defaultValue: null },
+    { columnName: 'warehouseId', columnType: 'varchar(191)', nullable: false, defaultValue: null },
+    { columnName: 'quantityDelta', columnType: 'decimal(18,4)', nullable: false, defaultValue: null },
+    { columnName: 'heldBefore', columnType: 'decimal(18,4)', nullable: false, defaultValue: null },
+    { columnName: 'heldAfter', columnType: 'decimal(18,4)', nullable: false, defaultValue: null },
+    { columnName: 'physicalStockSnapshot', columnType: 'decimal(18,4)', nullable: false, defaultValue: null },
+    { columnName: 'sellableBefore', columnType: 'decimal(18,4)', nullable: false, defaultValue: null },
+    { columnName: 'sellableAfter', columnType: 'decimal(18,4)', nullable: false, defaultValue: null },
+    { columnName: 'holdReasonCode', columnType: 'varchar(32)', nullable: false, defaultValue: null },
+    { columnName: 'referenceId', columnType: 'varchar(191)', nullable: true, defaultValue: null },
+    { columnName: 'referenceType', columnType: 'varchar(64)', nullable: true, defaultValue: null },
+    { columnName: 'sourceKey', columnType: 'varchar(191)', nullable: false, defaultValue: null },
+    { columnName: 'payloadHash', columnType: 'varchar(64)', nullable: false, defaultValue: null },
+    { columnName: 'notes', columnType: 'text', nullable: true, defaultValue: null },
+    { columnName: 'userId', columnType: 'varchar(191)', nullable: false, defaultValue: null },
+    {
+        columnName: 'createdAt',
+        columnType: 'datetime(3)',
+        nullable: false,
+        defaultValue: 'current_timestamp(3)',
+        extra: 'DEFAULT_GENERATED',
+    },
+];
+
+const pharmacyHoldIndexes = [
+    { name: 'PRIMARY', columns: ['id'], unique: true },
+    {
+        name: PRODUCT_BATCH_HOLD_SOURCE_UNIQUE_INDEX,
+        columns: ['tenantId', 'sourceKey'],
+        unique: true,
+    },
+    {
+        name: 'ProductBatchHold_tenantId_createdAt_idx',
+        columns: ['tenantId', 'createdAt'],
+        unique: false,
+    },
+    {
+        name: 'ProductBatchHold_tenantId_batchId_warehouseId_createdAt_idx',
+        columns: ['tenantId', 'batchId', 'warehouseId', 'createdAt'],
+        unique: false,
+    },
+    {
+        name: 'ProductBatchHold_tenantId_productId_warehouseId_createdAt_idx',
+        columns: ['tenantId', 'productId', 'warehouseId', 'createdAt'],
+        unique: false,
+    },
+    {
+        name: 'ProductBatchHold_tenantId_referenceType_referenceId_idx',
+        columns: ['tenantId', 'referenceType', 'referenceId'],
+        unique: false,
+    },
+    { name: 'ProductBatchHold_userId_idx', columns: ['userId'], unique: false },
+] as const;
+
+const pharmacyHoldForeignKeys = [
+    {
+        name: 'ProductBatchHold_tenantId_fkey',
+        columnName: 'tenantId',
+        referencedTableName: 'Tenant',
+        deleteRule: 'CASCADE',
+    },
+    {
+        name: 'ProductBatchHold_productId_fkey',
+        columnName: 'productId',
+        referencedTableName: 'Product',
+        deleteRule: 'RESTRICT',
+    },
+    {
+        name: 'ProductBatchHold_batchId_fkey',
+        columnName: 'batchId',
+        referencedTableName: 'ProductBatch',
+        deleteRule: 'RESTRICT',
+    },
+    {
+        name: 'ProductBatchHold_warehouseId_fkey',
+        columnName: 'warehouseId',
+        referencedTableName: 'Warehouse',
+        deleteRule: 'RESTRICT',
+    },
+    {
+        name: 'ProductBatchHold_userId_fkey',
+        columnName: 'userId',
+        referencedTableName: 'User',
+        deleteRule: 'RESTRICT',
+    },
+] as const;
+
+class PharmacyInventorySchemaFake implements DeploySchemaClient {
+    tables = new Set<string>(['Tenant', 'ProductBatchWarehouseStock']);
+    baseColumns = new Map<string, State>();
+    missingHoldColumn: string | null = null;
+    invalidHoldColumn: string | null = null;
+    invalidHoldIndex: string | null = null;
+    missingHoldIndex: string | null = null;
+    invalidHoldForeignKey: string | null = null;
+    missingHoldForeignKey: string | null = null;
+    events: string[] = [];
+    raceWins = new Set<string>();
+    hardFailures = new Set<string>();
+
+    constructor() {
+        for (const definition of pharmacyBaseContracts) {
+            this.baseColumns.set(`${definition.tableName}.${definition.contract.columnName}`, 'missing');
+        }
+    }
+
+    makeBaseValid(): this {
+        for (const definition of pharmacyBaseContracts) {
+            this.baseColumns.set(`${definition.tableName}.${definition.contract.columnName}`, 'valid');
+        }
+        return this;
+    }
+
+    addHoldTable(): this {
+        this.tables.add('ProductBatchHold');
+        return this;
+    }
+
+    async query<T>(statement: Prisma.Sql): Promise<T> {
+        const text = sqlText(statement);
+        const values = statement.values as unknown[];
+        if (text.includes('information_schema.TABLES') && text.includes('ProductBatchHold')) {
+            return [...this.tables].map(tableName => ({ tableName })) as T;
+        }
+        if (text.includes('information_schema.COLUMNS')) {
+            const tableName = String(values[0]);
+            if (tableName === 'ProductBatchHold') {
+                return pharmacyHoldColumns.flatMap(contract => {
+                    if (contract.columnName === this.missingHoldColumn) return [];
+                    const effective = contract.columnName === this.invalidHoldColumn
+                        ? { ...contract, nullable: !contract.nullable }
+                        : contract;
+                    return [phaseTwoBColumnRow(effective)];
+                }) as T;
+            }
+            return pharmacyBaseContracts
+                .filter(definition => definition.tableName === tableName)
+                .flatMap(definition => {
+                    const state = this.baseColumns.get(`${tableName}.${definition.contract.columnName}`);
+                    if (state === 'missing') return [];
+                    const effective = state === 'invalid'
+                        ? { ...definition.contract, nullable: !definition.contract.nullable }
+                        : definition.contract;
+                    return [phaseTwoBColumnRow(effective)];
+                }) as T;
+        }
+        if (text.includes('information_schema.STATISTICS')) {
+            return pharmacyHoldIndexes.flatMap(index => {
+                if (index.name === this.missingHoldIndex) return [];
+                const rows = exactIndexRows(index.name, [...index.columns], index.unique);
+                return index.name === this.invalidHoldIndex
+                    ? rows.map(row => ({ ...row, isVisible: 'NO' }))
+                    : rows;
+            }) as T;
+        }
+        if (text.includes('information_schema.REFERENTIAL_CONSTRAINTS')) {
+            return pharmacyHoldForeignKeys.flatMap(foreignKey => {
+                if (foreignKey.name === this.missingHoldForeignKey) return [];
+                return [{
+                    constraintName: foreignKey.name,
+                    columnName: foreignKey.columnName,
+                    referencedTableName: foreignKey.referencedTableName,
+                    referencedColumnName: 'id',
+                    ordinalPosition: 1n,
+                    deleteRule: foreignKey.name === this.invalidHoldForeignKey
+                        ? (foreignKey.deleteRule === 'CASCADE' ? 'RESTRICT' : 'CASCADE')
+                        : foreignKey.deleteRule,
+                    updateRule: 'CASCADE',
+                }];
+            }) as T;
+        }
+        throw new Error(`Query inesperada en fake farmacia: ${text}`);
+    }
+
+    async execute(statement: Prisma.Sql): Promise<number> {
+        const text = sqlText(statement);
+        const tableName = text.match(/ALTER TABLE `([^`]+)`/)?.[1];
+        const columnName = text.match(/ADD COLUMN `([^`]+)`/)?.[1];
+        if (!tableName || !columnName) throw new Error(`DDL inesperado en fake farmacia: ${text}`);
+        const action = `column:${tableName}.${columnName}`;
+        this.events.push(`execute:${action}`);
+        if (this.hardFailures.has(action)) throw new Error(`fallo ${action}`);
+        this.baseColumns.set(`${tableName}.${columnName}`, 'valid');
+        if (this.raceWins.has(action)) throw new Error(`otro iniciador ganó ${action}`);
+        return 0;
+    }
+}
+
+describe('Farmacia Bloque 0 deploy schema preflight', () => {
+    it('valida tipos, defaults, índices y FKs con el contrato exacto de MySQL', () => {
+        const heldStock = pharmacyBaseContracts[2].contract;
+        const heldStockRow = phaseTwoBColumnRow(heldStock);
+        expect(inspectPharmacyInventoryColumn([heldStockRow], heldStock)).toBe('valid');
+        expect(inspectPharmacyInventoryColumn(
+            [{ ...heldStockRow, columnDefault: null }],
+            heldStock,
+        )).toBe('invalid');
+
+        const sourceIndex = exactIndexRows(
+            PRODUCT_BATCH_HOLD_SOURCE_UNIQUE_INDEX,
+            ['tenantId', 'sourceKey'],
+            true,
+        );
+        expect(inspectPharmacyInventoryIndex(
+            sourceIndex,
+            PRODUCT_BATCH_HOLD_SOURCE_UNIQUE_INDEX,
+            ['tenantId', 'sourceKey'],
+            true,
+        )).toBe('valid');
+        expect(inspectPharmacyInventoryForeignKey([{
+            constraintName: 'ProductBatchHold_tenantId_fkey',
+            columnName: 'tenantId',
+            referencedTableName: 'Tenant',
+            referencedColumnName: 'id',
+            ordinalPosition: 1n,
+            deleteRule: 'CASCADE',
+            updateRule: 'CASCADE',
+        }], {
+            constraintName: 'ProductBatchHold_tenantId_fkey',
+            columnName: 'tenantId',
+            referencedTableName: 'Tenant',
+            deleteRule: 'CASCADE',
+        })).toBe('valid');
+    });
+
+    it('converge solo las columnas históricas con defaults inertes y es idempotente', async () => {
+        const db = new PharmacyInventorySchemaFake();
+
+        await applyPharmacyInventorySchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+
+        expect(db.events).toEqual([
+            'execute:column:Tenant.pharmacyInventoryMode',
+            'execute:column:Tenant.pharmacyInventoryActivatedAt',
+            'execute:column:ProductBatchWarehouseStock.heldStock',
+        ]);
+        expect(db.events.some(event => /ENFORCED|UPDATE|INSERT/.test(event))).toBe(false);
+
+        const before = db.events.length;
+        await applyPharmacyInventorySchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+        expect(db.events.slice(before)).toEqual([]);
+    });
+
+    it('tolera carreras solo cuando la relectura confirma las tres columnas exactas', async () => {
+        const db = new PharmacyInventorySchemaFake();
+        for (const action of [
+            'column:Tenant.pharmacyInventoryMode',
+            'column:Tenant.pharmacyInventoryActivatedAt',
+            'column:ProductBatchWarehouseStock.heldStock',
+        ]) db.raceWins.add(action);
+        const warn = vi.fn();
+
+        await applyPharmacyInventorySchemaPreflight(db, { info: vi.fn(), warn });
+
+        expect(warn).toHaveBeenCalledTimes(3);
+    });
+
+    it('propaga el error DDL cuando la carrera no dejó el objeto exacto', async () => {
+        const db = new PharmacyInventorySchemaFake();
+        db.hardFailures.add('column:ProductBatchWarehouseStock.heldStock');
+
+        await expect(applyPharmacyInventorySchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('fallo column:ProductBatchWarehouseStock.heldStock');
+        expect(db.baseColumns.get('ProductBatchWarehouseStock.heldStock')).toBe('missing');
+    });
+
+    it('falla cerrado ante una columna histórica incompatible sin intentar repararla', async () => {
+        const db = new PharmacyInventorySchemaFake().makeBaseValid();
+        db.baseColumns.set('Tenant.pharmacyInventoryMode', 'invalid');
+
+        await expect(applyPharmacyInventorySchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('Tenant.pharmacyInventoryMode');
+        expect(db.events).toEqual([]);
+    });
+
+    it('delega el CREATE TABLE nuevo y atómico a db push cuando ProductBatchHold no existe', async () => {
+        const db = new PharmacyInventorySchemaFake().makeBaseValid();
+        const info = vi.fn();
+
+        await applyPharmacyInventorySchemaPreflight(db, { info, warn: vi.fn() });
+
+        expect(db.events).toEqual([]);
+        expect(info).toHaveBeenCalledWith(expect.stringContaining('sin DML ni activaciones'));
+    });
+
+    it('acepta ProductBatchHold solo cuando columnas, índices y FKs están completos', async () => {
+        const db = new PharmacyInventorySchemaFake().makeBaseValid().addHoldTable();
+
+        await applyPharmacyInventorySchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
+
+        expect(db.events).toEqual([]);
+    });
+
+    it.each([
+        [
+            'columna faltante',
+            (db: PharmacyInventorySchemaFake) => { db.missingHoldColumn = 'sellableAfter'; },
+            'ProductBatchHold.sellableAfter',
+        ],
+        [
+            'índice incompatible',
+            (db: PharmacyInventorySchemaFake) => {
+                db.invalidHoldIndex = PRODUCT_BATCH_HOLD_SOURCE_UNIQUE_INDEX;
+            },
+            PRODUCT_BATCH_HOLD_SOURCE_UNIQUE_INDEX,
+        ],
+        [
+            'FK faltante',
+            (db: PharmacyInventorySchemaFake) => {
+                db.missingHoldForeignKey = 'ProductBatchHold_warehouseId_fkey';
+            },
+            'ProductBatchHold_warehouseId_fkey',
+        ],
+    ])('falla cerrado ante ProductBatchHold parcial: %s', async (_label, arrange, expected) => {
+        const db = new PharmacyInventorySchemaFake().makeBaseValid().addHoldTable();
+        arrange(db);
+
+        await expect(applyPharmacyInventorySchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(expected);
+        expect(db.events).toEqual([]);
+    });
+
+    it('falla cerrado si ProductBatchHold aparece sin su proyección lote+bodega', async () => {
+        const db = new PharmacyInventorySchemaFake().makeBaseValid().addHoldTable();
+        db.tables.delete('ProductBatchWarehouseStock');
+
+        await expect(applyPharmacyInventorySchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow('sin ProductBatchWarehouseStock');
+        expect(db.events).toEqual([]);
     });
 });

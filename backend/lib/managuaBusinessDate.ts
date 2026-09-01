@@ -27,26 +27,47 @@ export function managuaBusinessDate(asOf: Date = new Date()): Date {
 }
 
 /**
+ * Limite inferior para comparar campos que representan un dia de calendario.
+ *
+ * No es el instante en que inicia el dia en Managua (para eso existe
+ * `inicioDelDiaManagua`). ProductBatch.expiryDate es un dia civil y existe
+ * historial guardado tanto a 00:00Z como a 12:00Z; usar la medianoche UTC de
+ * la clave Managua incluye ambas codificaciones durante todo el dia impreso.
+ */
+export function managuaCalendarDateFloor(asOf: Date = new Date()): Date {
+    return new Date(`${claveDelDiaManagua(asOf)}T00:00:00.000Z`);
+}
+
+/**
+ * Días restantes de un campo calendario frente al día civil de Managua.
+ * `expiryDate` no es un instante: leer su YYYY-MM-DD UTC preserva registros
+ * históricos guardados tanto a 00:00Z como a 12:00Z.
+ */
+export function daysUntilManaguaCalendarDate(
+    expiryDate: Date,
+    asOf: Date = new Date(),
+): number {
+    if (Number.isNaN(expiryDate.getTime()) || Number.isNaN(asOf.getTime())) {
+        throw new RangeError('Fecha calendario inválida');
+    }
+    return civilDayOrdinal(expiryDate.toISOString().slice(0, 10))
+        - civilDayOrdinal(claveDelDiaManagua(asOf));
+}
+
+/**
  * Interpreta un valor de `<input type="date">` como dia civil de negocio.
  * Rechaza datetimes, formatos ambiguos y fechas inexistentes en vez de dejar
  * que `new Date('YYYY-MM-DD')` dependa de la zona horaria del proceso.
  */
 export function parseManaguaCivilDateInput(value: unknown): Date | null {
-    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-        return null;
-    }
+    if (typeof value !== 'string') return null;
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+    if (!match) return null;
 
-    const parsed = normalizeCalendarDateInput(value);
+    const canonicalDay = `${match[1]}-${match[2]}-${match[3]}`;
+    const parsed = normalizeCalendarDateInput(canonicalDay);
     if (Number.isNaN(parsed.getTime())) return null;
-
-    const [year, month, day] = value.split('-').map(Number);
-    if (
-        parsed.getUTCFullYear() !== year
-        || parsed.getUTCMonth() + 1 !== month
-        || parsed.getUTCDate() !== day
-    ) {
-        return null;
-    }
+    if (parsed.toISOString().slice(0, 10) !== canonicalDay) return null;
 
     return parsed;
 }

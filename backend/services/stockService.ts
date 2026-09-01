@@ -182,20 +182,31 @@ export async function resolveDefaultWarehouseId(
     tenantId: string
 ): Promise<string> {
     const existing = await tx.warehouse.findFirst({
-        where: { tenantId, isDefault: true },
+        where: { tenantId, isDefault: true, isActive: true },
         select: { id: true },
     });
     if (existing) return existing.id;
 
     // Sin default: si hay alguna bodega, promover la más antigua; si no, crear "Principal".
     const any = await tx.warehouse.findFirst({
-        where: { tenantId },
+        where: { tenantId, isActive: true },
         orderBy: { createdAt: 'asc' },
         select: { id: true },
     });
     if (any) {
         await tx.warehouse.update({ where: { id: any.id }, data: { isDefault: true } });
         return any.id;
+    }
+
+    const inactive = await tx.warehouse.findFirst({
+        where: { tenantId },
+        select: { id: true },
+    });
+    if (inactive) {
+        throw new StockError(
+            'WAREHOUSE_NOT_FOUND',
+            'No hay una bodega activa para registrar esta operación.',
+        );
     }
 
     try {

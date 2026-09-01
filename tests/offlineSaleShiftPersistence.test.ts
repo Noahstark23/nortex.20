@@ -109,7 +109,7 @@ const makeTransaction = (lockedEmployeeId: string | null) => {
             upsert: vi.fn().mockResolvedValue({ lastNumber: 1, rangeEnd: 10_000 }),
         },
         sale: { create: saleCreate },
-        warehouse: { findFirst: vi.fn().mockResolvedValue(null) },
+        warehouse: { findMany: vi.fn().mockResolvedValue([]) },
         saleItem: { create: vi.fn().mockResolvedValue({ id: 'sale-item-1' }) },
         saleMeasurement: { create: vi.fn() },
         kardexMovement: { create: vi.fn().mockResolvedValue({}) },
@@ -224,6 +224,35 @@ describe('identidad autoritativa al persistir replay offline', () => {
             userId: 'user-a',
             saleId: 'sale-created',
         }));
+    });
+
+    it('falla cerrado si el vendedor tiene dos cargas activas asignadas', async () => {
+        const { tx, saleCreate } = makeTransaction('employee-authoritative');
+        tx.warehouse.findMany.mockResolvedValue([
+            { id: 'warehouse-a' },
+            { id: 'warehouse-b' },
+        ]);
+        transaction.mockImplementation((callback) => callback(tx));
+
+        await expect(executeSaleWithResult(
+            'tenant-a',
+            'user-a',
+            'shift-a',
+            rawSale(null),
+            { offlineSync: true },
+        )).rejects.toMatchObject({
+            code: 'RECONCILIATION_REQUIRED',
+            httpStatus: 409,
+        });
+
+        expect(tx.warehouse.findMany).toHaveBeenCalledWith({
+            where: { tenantId: 'tenant-a', sellerId: 'user-a', isActive: true },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            take: 2,
+            select: { id: true },
+        });
+        expect(saleCreate).not.toHaveBeenCalled();
+        expect(applyStockDelta).not.toHaveBeenCalled();
     });
 
     it('aborta si el turno cambia de cajero entre el guard y el lock', async () => {

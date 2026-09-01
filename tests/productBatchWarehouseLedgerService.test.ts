@@ -49,6 +49,7 @@ interface FakeTxOptions {
     balanceProductId?: string;
     balanceExists?: boolean;
     initialStock?: string;
+    initialHeldStock?: string;
     fastReplay?: ExistingEntry | null;
     lockedReplay?: ExistingEntry | null;
     updateCount?: number;
@@ -83,7 +84,10 @@ const fakeTx = (options: FakeTxOptions = {}) => {
     const events: string[] = [];
     const auditRows: Array<{ action: string; details: string | null }> = [];
     const ledgerRows: Array<Record<string, unknown>> = [];
-    const state = { stock: new Decimal(options.initialStock ?? '0') };
+    const state = {
+        stock: new Decimal(options.initialStock ?? '0'),
+        heldStock: new Decimal(options.initialHeldStock ?? '0'),
+    };
 
     const tenantFind = vi.fn(async () => {
         events.push('tenant-mode');
@@ -115,6 +119,7 @@ const fakeTx = (options: FakeTxOptions = {}) => {
                     id: 'balance-1',
                     productId: options.balanceProductId ?? 'product-1',
                     stock: state.stock,
+                    heldStock: state.heldStock,
                 }];
         }
         if (text.includes('ProductBatchLedgerEntry')) {
@@ -548,6 +553,57 @@ describe('applyBatchWarehouseDelta', () => {
         expect(fake.mocks.auditCreate).not.toHaveBeenCalled();
     });
 
+    it('una salida no puede consumir stock retenido aunque el físico alcance', async () => {
+        const fake = fakeTx({
+            mode: 'ENFORCED',
+            initialStock: '5.0000',
+            initialHeldStock: '4.0000',
+        });
+        await expectServiceError(
+            applyBatchWarehouseDelta({ tx: fake.tx, ...baseIntent({ delta: '-2.0000' }) }),
+            'BATCH_WAREHOUSE_INSUFFICIENT_STOCK',
+            409,
+        );
+        expect(fake.state.stock.toFixed(4)).toBe('5.0000');
+        expect(fake.mocks.balanceUpdateMany).not.toHaveBeenCalled();
+        expect(fake.mocks.ledgerCreate).not.toHaveBeenCalled();
+    });
+
+    it('guarda atómicamente el umbral físico más lo retenido para una salida vendible', async () => {
+        const fake = fakeTx({
+            mode: 'ENFORCED',
+            initialStock: '5.0000',
+            initialHeldStock: '4.0000',
+        });
+        await applyBatchWarehouseDelta({
+            tx: fake.tx,
+            ...baseIntent({ delta: '-1.0000' }),
+        });
+        const update = fake.mocks.balanceUpdateMany.mock.calls[0]?.[0] as {
+            where: {
+                stock: { gte: Decimal };
+                heldStock: Decimal;
+            };
+        };
+        expect(update.where.stock.gte.toFixed(4)).toBe('5.0000');
+        expect(update.where.heldStock.toFixed(4)).toBe('4.0000');
+        expect(fake.state.stock.toFixed(4)).toBe('4.0000');
+    });
+
+    it('falla cerrado si la proyección retenida persistida viola sus invariantes', async () => {
+        const fake = fakeTx({
+            mode: 'ENFORCED',
+            initialStock: '1.0000',
+            initialHeldStock: '1.0001',
+        });
+        await expectServiceError(
+            applyBatchWarehouseDelta({ tx: fake.tx, ...baseIntent({ delta: '-0.0001' }) }),
+            'BATCH_WAREHOUSE_LEDGER_CORRUPT',
+            500,
+        );
+        expect(fake.mocks.balanceUpdateMany).not.toHaveBeenCalled();
+    });
+
     it('allowNegative explícito aplica saldo negativo con ledger inmutable', async () => {
         const fake = fakeTx({ mode: 'ENFORCED', initialStock: '0' });
         const result = await applyBatchWarehouseDelta({
@@ -566,10 +622,11 @@ describe('applyBatchWarehouseDelta', () => {
         const fake = fakeTx({ mode: 'ENFORCED', initialStock: '2' });
         await applyBatchWarehouseDelta({ tx: fake.tx, ...baseIntent({ delta: '-1.0000' }) });
         const update = fake.mocks.balanceUpdateMany.mock.calls[0]?.[0] as {
-            where: { id: string; tenantId: string; stock: { gte: Decimal } };
+            where: { id: string; tenantId: string; stock: { gte: Decimal }; heldStock: Decimal };
         };
         expect(update.where).toMatchObject({ id: 'balance-1', tenantId: 'tenant-1' });
         expect(update.where.stock.gte.toFixed(4)).toBe('1.0000');
+        expect(update.where.heldStock.toFixed(4)).toBe('0.0000');
     });
 
     it('clasifica un update perdido sin escribir ledger', async () => {

@@ -879,6 +879,21 @@ export async function executeSaleWithResult(
                 dueDate = new Date(saleCreatedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
             }
 
+            const sellerWarehouses = await tx.warehouse.findMany({
+                where: { tenantId, sellerId: userId, isActive: true },
+                orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+                take: 2,
+                select: { id: true },
+            });
+            if (sellerWarehouses.length > 1) {
+                throw new SaleError(
+                    'RECONCILIATION_REQUIRED',
+                    409,
+                    'El vendedor tiene más de una carga activa asignada; corregí la asignación antes de vender',
+                );
+            }
+            const sellerWarehouse = sellerWarehouses[0];
+
             const counter = await tx.invoiceSeries.upsert({
                 where: { tenantId_series: { tenantId, series: 'A' } },
                 update: { lastNumber: { increment: 1 } },
@@ -920,10 +935,6 @@ export async function executeSaleWithResult(
                 },
             });
 
-            const sellerWarehouse = await tx.warehouse.findFirst({
-                where: { tenantId, sellerId: userId, isActive: true },
-                select: { id: true },
-            });
             let costTotal = new Decimal(0);
 
             for (const item of normalizedItems) {

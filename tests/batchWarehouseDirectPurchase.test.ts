@@ -87,7 +87,12 @@ const makeSidecarTx = (options: {
         const text = sqlText(query);
         const values = sqlValues(query);
         if (text.includes('ProductBatchWarehouseStock')) {
-            return [{ id: 'balance-1', productId: 'product-1', stock }];
+            return [{
+                id: 'balance-1',
+                productId: 'product-1',
+                stock,
+                heldStock: new Decimal(0),
+            }];
         }
         if (text.includes('ProductBatchLedgerEntry')) {
             const [tenantId, sourceKey] = values.map(String);
@@ -295,6 +300,29 @@ describe('ingreso lote+bodega en compra directa', () => {
         }
     });
 
+    it('bloquea la identidad producto+lote antes de incrementar una compra directa', () => {
+        const productLock = purchaseRoute.indexOf('await applyStockDelta(tx');
+        const batchIdentityLock = purchaseRoute.indexOf('SELECT id, expiryDate', productLock);
+        const tenantScope = purchaseRoute.indexOf('WHERE tenantId = ${authReq.tenantId!}', batchIdentityLock);
+        const forUpdate = purchaseRoute.indexOf('FOR UPDATE', batchIdentityLock);
+        const identityGuard = purchaseRoute.indexOf('assertProductBatchExpiryIdentity({', forUpdate);
+        const batchUpdate = purchaseRoute.indexOf('tx.productBatch.updateMany({', identityGuard);
+        const batchCreate = purchaseRoute.indexOf('tx.productBatch.create({', identityGuard);
+        const sidecar = purchaseRoute.indexOf('await applyBatchWarehouseDelta({', identityGuard);
+
+        expect(productLock).toBeGreaterThan(0);
+        expect(batchIdentityLock).toBeGreaterThan(productLock);
+        expect(tenantScope).toBeGreaterThan(batchIdentityLock);
+        expect(forUpdate).toBeGreaterThan(tenantScope);
+        expect(identityGuard).toBeGreaterThan(forUpdate);
+        expect(batchUpdate).toBeGreaterThan(identityGuard);
+        expect(batchCreate).toBeGreaterThan(identityGuard);
+        expect(sidecar).toBeGreaterThan(batchUpdate);
+        expect(sidecar).toBeGreaterThan(batchCreate);
+        expect(purchaseRoute).toContain('error instanceof ProductBatchIdentityError');
+        expect(purchaseRoute).toContain("code: 'PURCHASE_BATCH_CONCURRENT_WRITE'");
+    });
+
     it('propaga un fallo del ledger dentro de la tx antes de Kardex y auditoría final', async () => {
         const fake = makeSidecarTx({ ledgerCreateFailure: new Error('ledger no disponible') });
         const afterSidecar = vi.fn();
@@ -315,13 +343,17 @@ describe('ingreso lote+bodega en compra directa', () => {
         expect(afterSidecar).not.toHaveBeenCalled();
 
         const transactionStart = purchaseRoute.indexOf('const result = await prisma.$transaction');
-        const batchUpsert = purchaseRoute.indexOf('const batch = await tx.productBatch.upsert');
-        const sidecar = purchaseRoute.indexOf('await applyBatchWarehouseDelta', batchUpsert);
+        const batchIdentityLock = purchaseRoute.indexOf('SELECT id, expiryDate', transactionStart);
+        const identityGuard = purchaseRoute.indexOf('assertProductBatchExpiryIdentity', batchIdentityLock);
+        const batchMutation = purchaseRoute.indexOf('tx.productBatch.updateMany', identityGuard);
+        const sidecar = purchaseRoute.indexOf('await applyBatchWarehouseDelta', batchMutation);
         const kardex = purchaseRoute.indexOf('await tx.kardexMovement.create', sidecar);
         const purchaseAudit = purchaseRoute.indexOf("action: 'PURCHASE_CREATED'", kardex);
         expect(transactionStart).toBeGreaterThan(0);
-        expect(batchUpsert).toBeGreaterThan(transactionStart);
-        expect(sidecar).toBeGreaterThan(batchUpsert);
+        expect(batchIdentityLock).toBeGreaterThan(transactionStart);
+        expect(identityGuard).toBeGreaterThan(batchIdentityLock);
+        expect(batchMutation).toBeGreaterThan(identityGuard);
+        expect(sidecar).toBeGreaterThan(batchMutation);
         expect(kardex).toBeGreaterThan(sidecar);
         expect(purchaseAudit).toBeGreaterThan(kardex);
         expect(purchaseRoute.slice(sidecar, kardex)).not.toContain('.catch(');

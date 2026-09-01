@@ -93,6 +93,10 @@ const PISO_MUTANTES = {
     'utils/posCash.ts': 99,
     // Foto de recibido/vuelto para ticket inmediato: 23/23.
     'utils/postSalePrintCash.ts': 23,
+    // DTO autoritativo de /api/products para POS: conserva cero vendible,
+    // normaliza campos legacy y evita que una foto inválida rompa la tarjeta.
+    // Corrida dirigida del bloque farmacia: 46/46.
+    'utils/posProductMapper.ts': 46,
     // Los seis presets operativos se validan completos, sin fiscalidad/precio:
     // 45/45 mutantes detectados.
     'utils/productFamilyPresets.ts': 45,
@@ -131,6 +135,16 @@ const PISO_MUTANTES = {
     'backend/lib/batchWarehouseReadiness.ts': 496,
     // Transiciones manuales batch/no-batch y comando persistido: 112/112.
     'backend/lib/manualBatchMovements.ts': 112,
+    // Fecha civil Managua, piso de expiración y parser estricto: 40/40.
+    'backend/lib/managuaBusinessDate.ts': 40,
+    // Clasificación y DTO físico/retenido/vendible por vencimiento: 31/31.
+    'backend/lib/pharmacyExpiryAlerts.ts': 31,
+    // Un mismo producto+lote no puede mezclar dos vencimientos impresos:
+    // 41/41, incluidos formatos inválidos y mensajes de conflicto estables.
+    'backend/lib/productBatchIdentity.ts': 41,
+    // Intención Decimal exacta, payload canónico, hash e idempotencia de
+    // cuarentena lote+bodega: 142/142.
+    'backend/lib/productBatchHold.ts': 142,
     // Cierre corto de OC con cantidades Decimal exactas e idempotencia: 157/157.
     'backend/lib/purchaseOrderCloseShort.ts': 157,
     // Comando canónico de transferencia multi-bodega: 160/160.

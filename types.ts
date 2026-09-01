@@ -31,6 +31,8 @@ export interface Product {
   saleMode?: SaleMode | null;
   quantityStep?: number | null;
   productFamily?: string | null;
+  /** Exención fiscal base del producto para el cálculo del carrito/POS. */
+  ivaExento?: boolean;
 }
 
 export interface ProductBatch {
@@ -49,7 +51,6 @@ export interface CartItem extends Product {
   quantityExact?: string | null;
   unitPriceExact?: string | null;
   presentationAtQuote?: 'BASE' | 'PACK';
-  ivaExento?: boolean;
   batchNumber?: string;
   expiryDate?: string;
   cartLineId?: string;
