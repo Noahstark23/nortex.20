@@ -2,8 +2,10 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+    daysUntilManaguaCalendarDate,
     daysSinceManaguaCivilDate,
     managuaBusinessDate,
+    managuaCalendarDateFloor,
     parseManaguaCivilDateInput,
 } from '../backend/lib/managuaBusinessDate';
 
@@ -34,6 +36,21 @@ describe('día civil de negocio de Managua', () => {
         expect(managuaBusinessDate(midnight).toISOString()).toBe('2026-08-22T12:00:00.000Z');
     });
 
+    it('crea un piso de comparacion que incluye fechas legacy 00Z y normalizadas 12Z', () => {
+        expect(managuaCalendarDateFloor(new Date('2026-08-22T05:59:59.999Z')).toISOString())
+            .toBe('2026-08-21T00:00:00.000Z');
+        expect(managuaCalendarDateFloor(new Date('2026-08-22T06:00:00.000Z')).toISOString())
+            .toBe('2026-08-22T00:00:00.000Z');
+    });
+
+    it('calcula vencimiento por fecha impresa aunque el historial mezcle 00Z y 12Z', () => {
+        const asOf = new Date('2026-08-22T18:00:00.000Z');
+        expect(daysUntilManaguaCalendarDate(new Date('2026-08-22T00:00:00.000Z'), asOf)).toBe(0);
+        expect(daysUntilManaguaCalendarDate(new Date('2026-08-22T12:00:00.000Z'), asOf)).toBe(0);
+        expect(daysUntilManaguaCalendarDate(new Date('2026-08-21T12:00:00.000Z'), asOf)).toBe(-1);
+        expect(daysUntilManaguaCalendarDate(new Date('2026-11-20T12:00:00.000Z'), asOf)).toBe(90);
+    });
+
     it.each([
         ['2026-08-27', '2026-08-27T12:00:00.000Z'],
         ['2028-02-29', '2028-02-29T12:00:00.000Z'],
@@ -50,6 +67,30 @@ describe('día civil de negocio de Managua', () => {
         20260827,
     ])('rechaza fechas contables ambiguas o inexistentes: %s', (input) => {
         expect(parseManaguaCivilDateInput(input)).toBeNull();
+    });
+
+    it('rechaza prefijos/sufijos y tipos no string sin intentar reinterpretarlos', () => {
+        expect(parseManaguaCivilDateInput('2026-08-27 extra')).toBeNull();
+        expect(parseManaguaCivilDateInput('x2026-08-27')).toBeNull();
+        expect(parseManaguaCivilDateInput({ toString: () => '2026-08-27' })).toBeNull();
+        expect(parseManaguaCivilDateInput(true)).toBeNull();
+    });
+
+    it('rechaza meses y días imposibles aunque el prefijo parezca calendario', () => {
+        expect(parseManaguaCivilDateInput('2026-13-01')).toBeNull();
+        expect(parseManaguaCivilDateInput('2026-00-15')).toBeNull();
+        expect(parseManaguaCivilDateInput('2026-04-31')).toBeNull();
+    });
+
+    it('falla con RangeError exacto si una fecha calendario ya viene inválida', () => {
+        expect(() => daysUntilManaguaCalendarDate(
+            new Date('invalid'),
+            new Date('2026-08-22T18:00:00.000Z'),
+        )).toThrowError(new RangeError('Fecha calendario inválida'));
+        expect(() => daysUntilManaguaCalendarDate(
+            new Date('2026-08-22T12:00:00.000Z'),
+            new Date('invalid'),
+        )).toThrowError(new RangeError('Fecha calendario inválida'));
     });
 
     it('conecta tipo de cambio y activos al parser civil, sin Date.parse local', () => {

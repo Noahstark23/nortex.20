@@ -33,6 +33,7 @@ export const SHIFT_CLOSE_EVENT_UNIQUE_INDEX = 'Shift_tenantId_closeEventId_key';
 export const JOURNAL_ENTRY_POSTING_KEY_UNIQUE_INDEX = 'JournalEntry_tenantId_postingKey_key';
 export const JOURNAL_ENTRY_REVERSAL_UNIQUE_INDEX = 'JournalEntry_reversalOfId_key';
 export const JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY = 'JournalEntry_reversalOfId_fkey';
+export const PRODUCT_BATCH_HOLD_SOURCE_UNIQUE_INDEX = 'ProductBatchHold_tenantId_sourceKey_key';
 
 // Identificadores internos y constantes: nunca contienen entrada del usuario.
 const WAREHOUSE_TABLE_SQL = Prisma.raw('`Warehouse`');
@@ -143,6 +144,9 @@ export type ProcurementPhaseTwoCForeignKeyRow = ProcurementPhaseTwoBForeignKeyRo
 export type CashCloseJournalColumnRow = ProcurementPhaseTwoBColumnRow;
 export type CashCloseJournalIndexRow = ProcurementPhaseTwoBIndexRow;
 export type CashCloseJournalForeignKeyRow = ProcurementPhaseTwoBForeignKeyRow;
+export type PharmacyInventoryColumnRow = ProcurementPhaseTwoBColumnRow;
+export type PharmacyInventoryIndexRow = ProcurementPhaseTwoBIndexRow;
+export type PharmacyInventoryForeignKeyRow = ProcurementPhaseTwoBForeignKeyRow;
 
 export interface ProcurementPhaseTwoBColumnContract {
     columnName: string;
@@ -153,6 +157,7 @@ export interface ProcurementPhaseTwoBColumnContract {
 }
 
 export type ProcurementPhaseTwoCColumnContract = ProcurementPhaseTwoBColumnContract;
+export type PharmacyInventoryColumnContract = ProcurementPhaseTwoBColumnContract;
 
 export interface StockCountForeignKeyRow {
     constraintName: string;
@@ -658,6 +663,34 @@ export function inspectProcurementPhaseTwoCForeignKey(
     return inspectProcurementPhaseTwoBForeignKey(rows, expected);
 }
 
+export function inspectPharmacyInventoryColumn(
+    rows: PharmacyInventoryColumnRow[],
+    expected: PharmacyInventoryColumnContract,
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBColumn(rows, expected);
+}
+
+export function inspectPharmacyInventoryIndex(
+    rows: PharmacyInventoryIndexRow[],
+    expectedName: string,
+    expectedColumns: string[],
+    unique: boolean,
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBIndex(rows, expectedName, expectedColumns, unique);
+}
+
+export function inspectPharmacyInventoryForeignKey(
+    rows: PharmacyInventoryForeignKeyRow[],
+    expected: {
+        constraintName: string;
+        columnName: string;
+        referencedTableName: string;
+        deleteRule: 'CASCADE' | 'RESTRICT';
+    },
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBForeignKey(rows, expected);
+}
+
 async function readSellerColumn(db: DeploySchemaClient): Promise<WarehouseSellerColumnRow[]> {
     return db.query<WarehouseSellerColumnRow[]>(Prisma.sql`
         SELECT
@@ -757,6 +790,17 @@ async function purchaseTableExists(db: DeploySchemaClient): Promise<boolean> {
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'Purchase'
+        LIMIT 1
+    `);
+    return rows.length === 1;
+}
+
+async function productBatchHoldTableExists(db: DeploySchemaClient): Promise<boolean> {
+    const rows = await db.query<Array<{ tableName: string }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'ProductBatchHold'
         LIMIT 1
     `);
     return rows.length === 1;
@@ -3796,6 +3840,293 @@ export async function applyProcurementPhaseTwoCSchemaPreflight(
     logger.info('Preflight DDL 2C verificado: devoluciones y créditos listos sin DML ni activaciones.');
 }
 
+type PharmacyInventoryBaseTable = 'Tenant' | 'ProductBatchWarehouseStock';
+
+interface PharmacyInventoryColumnDefinition {
+    tableName: PharmacyInventoryBaseTable;
+    contract: PharmacyInventoryColumnContract;
+    ddl: Prisma.Sql;
+}
+
+interface PharmacyInventoryIndexContract {
+    name: string;
+    columns: string[];
+    unique: boolean;
+}
+
+interface PharmacyInventoryForeignKeyContract {
+    constraintName: string;
+    columnName: string;
+    referencedTableName: string;
+    deleteRule: 'CASCADE' | 'RESTRICT';
+}
+
+interface PharmacyInventoryTableContract {
+    tableName: 'ProductBatchHold';
+    columns: PharmacyInventoryColumnContract[];
+    indexes: PharmacyInventoryIndexContract[];
+    foreignKeys: PharmacyInventoryForeignKeyContract[];
+}
+
+const PHARMACY_INVENTORY_BASE_COLUMNS: PharmacyInventoryColumnDefinition[] = [
+    {
+        tableName: 'Tenant',
+        contract: {
+            columnName: 'pharmacyInventoryMode',
+            columnType: 'varchar(16)',
+            nullable: false,
+            defaultValue: 'OFF',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`Tenant\`
+            ADD COLUMN \`pharmacyInventoryMode\` VARCHAR(16) NOT NULL DEFAULT 'OFF'
+        `,
+    },
+    {
+        tableName: 'Tenant',
+        contract: {
+            columnName: 'pharmacyInventoryActivatedAt',
+            columnType: 'datetime(3)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`Tenant\`
+            ADD COLUMN \`pharmacyInventoryActivatedAt\` DATETIME(3) NULL
+        `,
+    },
+    {
+        tableName: 'ProductBatchWarehouseStock',
+        contract: {
+            columnName: 'heldStock',
+            columnType: 'decimal(18,4)',
+            nullable: false,
+            defaultValue: '0.0000',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`ProductBatchWarehouseStock\`
+            ADD COLUMN \`heldStock\` DECIMAL(18, 4) NOT NULL DEFAULT 0
+        `,
+    },
+];
+
+const PHARMACY_INVENTORY_HOLD_TABLE: PharmacyInventoryTableContract = {
+    tableName: 'ProductBatchHold',
+    columns: [
+        phaseTwoCIdColumn('id'),
+        phaseTwoCIdColumn('tenantId'),
+        phaseTwoCIdColumn('productId'),
+        phaseTwoCIdColumn('batchId'),
+        phaseTwoCIdColumn('warehouseId'),
+        phaseTwoCDecimalColumn('quantityDelta'),
+        phaseTwoCDecimalColumn('heldBefore'),
+        phaseTwoCDecimalColumn('heldAfter'),
+        phaseTwoCDecimalColumn('physicalStockSnapshot'),
+        phaseTwoCDecimalColumn('sellableBefore'),
+        phaseTwoCDecimalColumn('sellableAfter'),
+        phaseTwoCVarcharColumn('holdReasonCode', 32),
+        phaseTwoCIdColumn('referenceId', true),
+        phaseTwoCVarcharColumn('referenceType', 64, { nullable: true }),
+        phaseTwoCVarcharColumn('sourceKey', 191),
+        phaseTwoCVarcharColumn('payloadHash', 64),
+        { columnName: 'notes', columnType: 'text', nullable: true, defaultValue: null },
+        phaseTwoCIdColumn('userId'),
+        phaseTwoCCreatedAtColumn(),
+    ],
+    indexes: [
+        { name: 'PRIMARY', columns: ['id'], unique: true },
+        {
+            name: PRODUCT_BATCH_HOLD_SOURCE_UNIQUE_INDEX,
+            columns: ['tenantId', 'sourceKey'],
+            unique: true,
+        },
+        {
+            name: 'ProductBatchHold_tenantId_createdAt_idx',
+            columns: ['tenantId', 'createdAt'],
+            unique: false,
+        },
+        {
+            name: 'ProductBatchHold_tenantId_batchId_warehouseId_createdAt_idx',
+            columns: ['tenantId', 'batchId', 'warehouseId', 'createdAt'],
+            unique: false,
+        },
+        {
+            name: 'ProductBatchHold_tenantId_productId_warehouseId_createdAt_idx',
+            columns: ['tenantId', 'productId', 'warehouseId', 'createdAt'],
+            unique: false,
+        },
+        {
+            name: 'ProductBatchHold_tenantId_referenceType_referenceId_idx',
+            columns: ['tenantId', 'referenceType', 'referenceId'],
+            unique: false,
+        },
+        { name: 'ProductBatchHold_userId_idx', columns: ['userId'], unique: false },
+    ],
+    foreignKeys: [
+        {
+            constraintName: 'ProductBatchHold_tenantId_fkey',
+            columnName: 'tenantId',
+            referencedTableName: 'Tenant',
+            deleteRule: 'CASCADE',
+        },
+        {
+            constraintName: 'ProductBatchHold_productId_fkey',
+            columnName: 'productId',
+            referencedTableName: 'Product',
+            deleteRule: 'RESTRICT',
+        },
+        {
+            constraintName: 'ProductBatchHold_batchId_fkey',
+            columnName: 'batchId',
+            referencedTableName: 'ProductBatch',
+            deleteRule: 'RESTRICT',
+        },
+        {
+            constraintName: 'ProductBatchHold_warehouseId_fkey',
+            columnName: 'warehouseId',
+            referencedTableName: 'Warehouse',
+            deleteRule: 'RESTRICT',
+        },
+        {
+            constraintName: 'ProductBatchHold_userId_fkey',
+            columnName: 'userId',
+            referencedTableName: 'User',
+            deleteRule: 'RESTRICT',
+        },
+    ],
+};
+
+async function readPharmacyInventoryTables(
+    db: DeploySchemaClient,
+): Promise<Set<string>> {
+    const rows = await db.query<Array<{ tableName: string }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN (
+            'Tenant',
+            'ProductBatchWarehouseStock',
+            'ProductBatchHold'
+          )
+    `);
+    return new Set(rows.map(row => row.tableName));
+}
+
+async function ensurePharmacyInventoryColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    definition: PharmacyInventoryColumnDefinition,
+): Promise<void> {
+    const read = async () => inspectPharmacyInventoryColumn(
+        await readProcurementPhaseTwoBColumns(db, definition.tableName),
+        definition.contract,
+    );
+    const initial = await read();
+    const label = `${definition.tableName}.${definition.contract.columnName}`;
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(`${label} existe con tipo, nullabilidad o default incompatible.`);
+    }
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: columna ${label}.`);
+        try {
+            await db.execute(definition.ddl);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${label} fue creada concurrentemente; definición exacta verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(`No se pudo verificar la definición final de ${label}.`);
+    }
+}
+
+async function assertPharmacyInventoryHoldTable(
+    db: DeploySchemaClient,
+): Promise<void> {
+    const contract = PHARMACY_INVENTORY_HOLD_TABLE;
+    const [columns, indexes, foreignKeys] = await Promise.all([
+        readProcurementPhaseTwoBColumns(db, contract.tableName),
+        readProcurementPhaseTwoBIndexes(db, contract.tableName),
+        readProcurementPhaseTwoBForeignKeys(db, contract.tableName),
+    ]);
+
+    for (const column of contract.columns) {
+        if (inspectPharmacyInventoryColumn(columns, column) !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${contract.tableName}.${column.columnName} falta o tiene una definición incompatible.`,
+            );
+        }
+    }
+    for (const index of contract.indexes) {
+        const rows = indexes.filter(row => row.indexName === index.name);
+        if (inspectPharmacyInventoryIndex(rows, index.name, index.columns, index.unique) !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${index.name} falta o tiene columnas u opciones incompatibles.`,
+            );
+        }
+    }
+    for (const foreignKey of contract.foreignKeys) {
+        if (inspectPharmacyInventoryForeignKey(foreignKeys, foreignKey) !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${foreignKey.constraintName} falta o tiene una definición incompatible.`,
+            );
+        }
+    }
+}
+
+/**
+ * Expansión de seguridad farmacéutica. Las columnas sobre tablas históricas se
+ * convergen de forma idempotente con defaults inertes. ProductBatchHold es una
+ * tabla completamente nueva: db push conserva el CREATE TABLE atómico, pero
+ * cualquier tabla ya visible debe coincidir con el contrato completo.
+ */
+export async function applyPharmacyInventorySchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    let existingTables = await readPharmacyInventoryTables(db);
+    if (existingTables.size === 0) {
+        existingTables = await readPharmacyInventoryTables(db);
+        if (existingTables.size === 0) {
+            logger.info('Preflight DDL farmacia: instalación vacía; db push creará el contrato completo.');
+            return;
+        }
+    }
+    if (!existingTables.has('Tenant')) {
+        throw new UnsafeSchemaStateError(
+            'Hay estructuras farmacéuticas sin Tenant; el schema parcial requiere intervención manual.',
+        );
+    }
+    if (existingTables.has('ProductBatchHold')
+        && !existingTables.has('ProductBatchWarehouseStock')) {
+        throw new UnsafeSchemaStateError(
+            'ProductBatchHold existe sin ProductBatchWarehouseStock; el schema parcial requiere intervención manual.',
+        );
+    }
+
+    for (const definition of PHARMACY_INVENTORY_BASE_COLUMNS) {
+        if (existingTables.has(definition.tableName)) {
+            await ensurePharmacyInventoryColumn(db, logger, definition);
+        }
+    }
+
+    // Releer para detectar el CREATE TABLE de otra instancia durante el DDL base.
+    existingTables = await readPharmacyInventoryTables(db);
+    if (existingTables.has('ProductBatchHold')) {
+        if (!existingTables.has('ProductBatchWarehouseStock')) {
+            throw new UnsafeSchemaStateError(
+                'ProductBatchHold existe sin ProductBatchWarehouseStock; el schema parcial requiere intervención manual.',
+            );
+        }
+        await assertPharmacyInventoryHoldTable(db);
+    }
+
+    logger.info(
+        'Preflight DDL farmacia verificado: stock retenido listo con modo OFF y sin DML ni activaciones.',
+    );
+}
+
+
 type CashCloseJournalTableName = 'Shift' | 'JournalEntry';
 
 interface CashCloseJournalColumnDefinition {
@@ -4571,11 +4902,13 @@ export async function applyDeploySchemaPreflight(
         const paymentExists = await paymentTableExists(db);
         const retencionSufridaExists = await retencionSufridaTableExists(db);
         const purchaseExists = await purchaseTableExists(db);
+        const productBatchHoldExists = await productBatchHoldTableExists(db);
         if (stockCountExists
             || productReturnExists
             || paymentExists
             || retencionSufridaExists
-            || purchaseExists) {
+            || purchaseExists
+            || productBatchHoldExists) {
             throw new UnsafeSchemaStateError(
                 'Hay tablas de negocio sin Warehouse; el schema parcial requiere intervención manual.',
             );
@@ -4604,4 +4937,5 @@ export async function applyDeploySchemaPreflight(
     await applyProcurementPhaseTwoCSchemaPreflight(db, logger);
     await applyCashCloseJournalSchemaPreflight(db, logger);
     await applyAccountingDecimalSchemaPreflight(db, logger);
+    await applyPharmacyInventorySchemaPreflight(db, logger);
 }

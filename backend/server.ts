@@ -67,6 +67,15 @@ import {
     BatchWarehouseLedgerError,
     resolveBatchWarehouseLedgerMode,
 } from './services/productBatchWarehouseLedgerService';
+import {
+    applyProductBatchHoldDelta,
+    ProductBatchHoldError,
+} from './services/productBatchHoldService';
+import {
+    MAX_PHARMACY_AVAILABILITY_PRODUCTS,
+    PharmacyAvailabilityError,
+    resolvePharmacyProductAvailability,
+} from './services/pharmacyAvailabilityService';
 import { calcularPulso, claveDelDiaManagua, inicioDelDiaManagua, MANAGUA_UTC_OFFSET_HOURS } from './services/pulsoPos';
 import {
     BatchRestorationError,
@@ -113,6 +122,7 @@ import serialsRouter from './routes/serials';
 import warehousesRouter from './routes/warehouses';
 import stockTransfersRouter from './routes/stockTransfers';
 import batchWarehouseLedgerRouter from './routes/batchWarehouseLedger';
+import pharmacyInventorySettingsRouter from './routes/pharmacyInventorySettings';
 import syncRoutes from './routes/sync';
 import scaleLabelsRouter, { scaleDevicesRouter } from './routes/scaleLabels';
 import tenantCapabilitiesRouter from './routes/tenantCapabilities';
@@ -122,7 +132,16 @@ import salesReportsRouter from './routes/salesReports.js';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 import { normalizeCalendarDateInput } from './lib/calendarDate';
-import { daysSinceManaguaCivilDate, managuaBusinessDate, parseManaguaCivilDateInput } from './lib/managuaBusinessDate';
+import {
+    daysSinceManaguaCivilDate,
+    managuaBusinessDate,
+    managuaCalendarDateFloor,
+    parseManaguaCivilDateInput,
+} from './lib/managuaBusinessDate';
+import {
+    assertProductBatchExpiryIdentity,
+    ProductBatchIdentityError,
+} from './lib/productBatchIdentity';
 import {
     QuotationItemError,
     resolveQuotationItems,
@@ -142,6 +161,9 @@ import {
     parseManualBatchCommandClaim,
     type ManualBatchCommandType,
 } from './lib/manualBatchMovements';
+import { normalizeBatchWarehouseLedgerMode } from './lib/batchWarehouseLedger';
+import { CUSTOMER_RETURN_HOLD_REASON_CODE } from './lib/productBatchHold';
+import { buildPharmacyExpiryAlert } from './lib/pharmacyExpiryAlerts';
 import { ProcurementMatchError } from './lib/procurementMatch';
 import {
     PURCHASE_FISCAL_STATUSES,
@@ -463,6 +485,7 @@ app.use('/api/serials', serialsRouter); // Control de series (números de serie 
 app.use('/api/warehouses', warehousesRouter); // Multi-bodega (Fase 2: fundación)
 app.use('/api/stock-transfers', stockTransfersRouter); // Transferencias entre bodegas (Fase 3)
 app.use('/api/batch-warehouse-ledger', batchWarehouseLedgerRouter);
+app.use('/api/tenant/pharmacy-inventory-settings', pharmacyInventorySettingsRouter);
 app.use('/api/loans', loanRoutes);
 app.use('/api/sales/sync', syncRoutes);
 app.use('/api/scale-labels', scaleLabelsRouter);
@@ -3869,6 +3892,49 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
         }
 
         const result = await prisma.$transaction(async (tx: any) => {
+            // Orden global de locks para este flujo: Tenant -> Sale -> Product.
+            // La activación farmacéutica también empieza por Tenant y después
+            // inspecciona ventas; conservar el mismo orden evita el ciclo
+            // Tenant -> Sale / Sale -> Tenant durante un cambio de modo.
+            // Además, la creación de cuarentenas queda serializada contra OFF.
+            const inventorySettingsRows: Array<{
+                type: string;
+                batchWarehouseLedgerMode: string;
+                pharmacyInventoryMode: string;
+            }> = await tx.$queryRaw`
+                SELECT type, batchWarehouseLedgerMode, pharmacyInventoryMode
+                FROM \`Tenant\`
+                WHERE id = ${authReq.tenantId}
+                FOR UPDATE`;
+            const inventorySettings = inventorySettingsRows[0];
+            if (!inventorySettings) {
+                throw new ReturnResolutionError(
+                    'RETURN_TENANT_NOT_FOUND',
+                    404,
+                    'El negocio autenticado ya no está disponible',
+                );
+            }
+            const batchWarehouseLedgerMode = normalizeBatchWarehouseLedgerMode(
+                inventorySettings.batchWarehouseLedgerMode,
+            );
+            if (inventorySettings.pharmacyInventoryMode !== 'OFF'
+                && inventorySettings.pharmacyInventoryMode !== 'ENFORCED') {
+                throw new ReturnResolutionError(
+                    'PHARMACY_INVENTORY_CONFIGURATION_INVALID',
+                    500,
+                    'La configuración farmacéutica guardada no es válida',
+                );
+            }
+            const pharmacyQuarantineEnabled = inventorySettings.pharmacyInventoryMode === 'ENFORCED';
+            if (pharmacyQuarantineEnabled
+                && (inventorySettings.type !== 'FARMACIA' || batchWarehouseLedgerMode !== 'ENFORCED')) {
+                throw new ReturnResolutionError(
+                    'PHARMACY_INVENTORY_ENFORCEMENT_REQUIRED',
+                    409,
+                    'La cuarentena farmacéutica exige un tenant FARMACIA y lote-bodega ENFORCED',
+                );
+            }
+
             // Todas las devoluciones de una venta se serializan sobre la misma
             // fila. La segunda solicitud concurrente espera, vuelve a sumar el
             // historial y no puede sobrepasar la cantidad de la línea.
@@ -3880,7 +3946,7 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                 throw new ReturnResolutionError('SALE_NOT_FOUND', 404, 'Venta no encontrada');
             }
 
-            // Releer después del lock de Sale cierra la carrera para retries de
+            // Releer después de Tenant y Sale cierra la carrera para retries de
             // una misma venta. El UNIQUE tenant+clientEventId arbitra requests
             // que intenten reutilizar la clave en ventas distintas; el INSERT
             // ocurre dentro de esta tx y cualquier perdedor revierte completo.
@@ -4068,10 +4134,6 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
             // leen la evidencia nueva bajo el mismo lock de Sale y solo la
             // PLANEAN acá: ENFORCED debe poder rechazar evidencia incompleta
             // antes de ProductReturn, stock, caja o contabilidad.
-            const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(
-                tx,
-                authReq.tenantId!,
-            );
             const allocationsBySaleItem = new Map<string, any[]>();
             if (batchWarehouseLedgerMode !== 'OFF') {
                 const allocationRows = await tx.saleItemBatchAllocation.findMany({
@@ -4116,6 +4178,12 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                     (productLineCounts.get(line.productId) ?? 0) + 1,
                 );
             }
+            const shouldQuarantineReturnItem = (item: { saleItemId: string; productId: string }): boolean =>
+                pharmacyQuarantineEnabled && (
+                    productsById.get(item.productId)?.requiresBatchTracking === true
+                    || productsWithBatchKardex.has(item.productId)
+                    || (allocationsBySaleItem.get(item.saleItemId)?.length ?? 0) > 0
+                );
             const resolvedWithBatches: Array<{
                 item: typeof resolved.items[number];
                 batchRestoration: BatchRestorationResult | ReturnBatchRestorationPlan;
@@ -4162,6 +4230,17 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                         'El desglose por lote no coincide con la cantidad devuelta',
                     );
                 }
+                if (shouldQuarantineReturnItem(item)
+                    && (batchRestoration.aggregateOnlyQuantity.greaterThan(0)
+                        || batchRestoration.batchRestorations.some(
+                            restoration => !('warehouseId' in restoration) || !restoration.warehouseId,
+                        ))) {
+                    throw new ReturnResolutionError(
+                        'PHARMACY_RETURN_EXACT_BATCH_REQUIRED',
+                        409,
+                        'La devolución farmacéutica requiere lote y bodega exactos para entrar en cuarentena',
+                    );
+                }
                 resolvedWithBatches.push({ item, batchRestoration });
             }
 
@@ -4201,6 +4280,9 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                 ...(batchWarehouseLedgerMode === 'OFF'
                     ? {}
                     : { batchWarehouseLedgerMode }),
+                inventoryDisposition: shouldQuarantineReturnItem(item)
+                    ? 'QUARANTINE'
+                    : 'SELLABLE',
             }));
 
             const balanceStored = new Decimal(sale.balance.toString());
@@ -4592,6 +4674,27 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                             sourceKey: `product-return:${productReturn.id}:return-item:${item.saleItemId}:allocation:${restoration.allocationId}:batch:${restoration.batchId}`,
                             allowNegative: false,
                         });
+
+                        // En farmacia ENFORCED la devolución aumenta el stock
+                        // físico, pero no vuelve al pool vendible. La retención
+                        // exacta comparte esta transacción y deja trazabilidad
+                        // append-only por lote+bodega.
+                        if (shouldQuarantineReturnItem(item)) {
+                            await applyProductBatchHoldDelta({
+                                tx,
+                                tenantId: authReq.tenantId!,
+                                productId: item.productId,
+                                batchId: restoration.batchId,
+                                warehouseId: restoration.warehouseId,
+                                quantityDelta: restoration.quantity.toFixed(4),
+                                holdReasonCode: CUSTOMER_RETURN_HOLD_REASON_CODE,
+                                referenceId: productReturn.id,
+                                referenceType: 'PRODUCT_RETURN',
+                                sourceKey: `product-return:${productReturn.id}:quarantine:${restoration.allocationId}`,
+                                userId: authReq.userId!,
+                                notes: `Devolución de cliente: ${reason}`,
+                            });
+                        }
                     }
 
                     const updatedBatch = await tx.productBatch.updateMany({
@@ -4840,6 +4943,9 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
         if (error instanceof BatchWarehouseLedgerError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
+        if (error instanceof ProductBatchHoldError) {
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
         if (error instanceof ReturnResolutionError) {
@@ -6095,9 +6201,69 @@ const legacyPurchaseQuantity = (quantity: Decimal): number => {
     return Decimal.min(quantity.ceil(), 2_147_483_647).toNumber();
 };
 
+/**
+ * Fusiona disponibilidad farmacéutica sin reemplazar `Product.stock`, que
+ * conserva su significado físico. Los listados legacy permanecen byte-compatible
+ * y solo el consumidor que pide `includeSellableStock=true` recibe la proyección
+ * por la misma bodega que usará la venta. Los chunks evitan IN gigantes.
+ */
+const withPharmacySellableStock = async <T extends { id: string; requiresBatchTracking?: boolean }>(
+    products: T[],
+    authReq: AuthRequest,
+): Promise<Array<T & { sellableStock?: number; availabilityWarehouseId?: string }>> => {
+    if (products.length === 0) return products;
+
+    const availabilityByProductId = new Map<string, Decimal>();
+    let enforced = false;
+    let warehouseId: string | null = null;
+    for (let offset = 0; offset < products.length; offset += MAX_PHARMACY_AVAILABILITY_PRODUCTS) {
+        const chunk = products.slice(offset, offset + MAX_PHARMACY_AVAILABILITY_PRODUCTS);
+        const result = await resolvePharmacyProductAvailability(prisma, {
+            tenantId: authReq.tenantId!,
+            userId: authReq.userId!,
+            productIds: chunk.map(product => product.id),
+        });
+        if (offset === 0 && !result.enforced) return products;
+        if (!result.enforced || !result.warehouse) {
+            throw new PharmacyAvailabilityError(
+                'INVALID_CONFIGURATION',
+                'La configuración farmacéutica cambió durante la lectura; reintentá',
+            );
+        }
+        if (warehouseId !== null && warehouseId !== result.warehouse.id) {
+            throw new PharmacyAvailabilityError(
+                'INVALID_CONFIGURATION',
+                'La bodega operativa cambió durante la lectura; reintentá',
+            );
+        }
+        enforced = true;
+        warehouseId = result.warehouse.id;
+        for (const [productId, availability] of result.byProductId) {
+            availabilityByProductId.set(productId, availability.sellableStock);
+        }
+    }
+
+    if (!enforced || !warehouseId) return products;
+    return products.map(product => {
+        const sellableStock = availabilityByProductId.get(product.id);
+        if (sellableStock === undefined) {
+            throw new PharmacyAvailabilityError(
+                'INVALID_CONFIGURATION',
+                `No se pudo calcular la existencia vendible de ${product.id}`,
+            );
+        }
+        return {
+            ...product,
+            sellableStock: sellableStock.toDecimalPlaces(4).toNumber(),
+            availabilityWarehouseId: warehouseId!,
+        };
+    });
+};
+
 // GET /api/products - Lista todos los productos (disponible para todos)
 app.get('/api/products', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
+    const includeSellableStock = req.query.includeSellableStock === 'true';
     const { search, lowStock, category, status, family, mode, sort, dir, page, pageSize } = req.query;
 
     try {
@@ -6163,9 +6329,12 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
                 prisma.product.findMany({ where: whereClause, orderBy, skip, take, include: { creator: { select: { name: true, email: true } } } }),
                 prisma.product.count({ where: whereClause }),
             ]);
-            const visibleProducts = authReq.role === BODEGUERO_ROLE
-                ? products.map(redactBodegueroProduct)
+            const productsWithAvailability = includeSellableStock
+                ? await withPharmacySellableStock(products, authReq)
                 : products;
+            const visibleProducts = authReq.role === BODEGUERO_ROLE
+                ? productsWithAvailability.map(redactBodegueroProduct)
+                : productsWithAvailability;
             return res.json({ products: visibleProducts, total, page: Math.max(1, parseInt(String(page)) || 1), pageSize: take });
         }
 
@@ -6181,10 +6350,26 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
             products = products.filter((p: any) => Number(p.stock) <= Number(p.minStock));
         }
 
+        const productsWithAvailability = includeSellableStock
+            ? await withPharmacySellableStock(products, authReq)
+            : products;
         res.json(authReq.role === BODEGUERO_ROLE
-            ? products.map(redactBodegueroProduct)
-            : products);
+            ? productsWithAvailability.map(redactBodegueroProduct)
+            : productsWithAvailability);
     } catch (error) {
+        if (error instanceof PharmacyAvailabilityError) {
+            const httpStatus = error.code === 'AUTHORITY_NOT_FOUND' ? 403
+                : error.code === 'WAREHOUSE_REQUIRED'
+                    || error.code === 'WAREHOUSE_NOT_FOUND'
+                    || error.code === 'BATCH_WAREHOUSE_LEDGER_REQUIRED'
+                    ? 409
+                    : error.code === 'INVALID_AUTHORITY'
+                        || error.code === 'INVALID_PRODUCT_IDS'
+                        || error.code === 'TOO_MANY_PRODUCTS'
+                        ? 400
+                        : 500;
+            return res.status(httpStatus).json({ error: error.message, code: error.code });
+        }
         console.error('Error fetching products:', error);
         res.status(500).json({ error: 'Error obteniendo productos' });
     }
@@ -7608,8 +7793,8 @@ app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), 
     const authReq = req as AuthRequest;
     const { clientEventId, productId, warehouseId: requestedWarehouseId, batchNumber, expiryDate, quantity } = req.body;
 
-    const expiry = new Date(`${expiryDate}T00:00:00.000Z`);
-    if (isNaN(expiry.getTime()) || expiry.toISOString().slice(0, 10) !== expiryDate) {
+    const expiry = parseManaguaCivilDateInput(expiryDate);
+    if (!expiry) {
         return res.status(400).json({ error: 'Fecha de vencimiento inválida.' });
     }
 
@@ -7684,11 +7869,26 @@ app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), 
                 where: { productId, batchNumber, tenantId: authReq.tenantId! },
                 select: { id: true, expiryDate: true },
             });
-            if (existingBatch && existingBatch.expiryDate.toISOString().slice(0, 10) !== expiryDate) {
-                throw new ManualBatchMovementError(
-                    'MANUAL_BATCH_IDEMPOTENCY_CONFLICT', 409,
-                    'Ese número de lote ya existe con otra fecha de vencimiento.',
-                );
+            if (existingBatch) {
+                try {
+                    assertProductBatchExpiryIdentity({
+                        productId,
+                        productName: product.name,
+                        batchNumber,
+                        existingExpiryDate: existingBatch.expiryDate,
+                        incomingExpiryDate: expiry,
+                    });
+                } catch (error) {
+                    if (!(error instanceof ProductBatchIdentityError)) throw error;
+                    // El código histórico de alta manual se conserva para no
+                    // romper clientes; la regla de identidad ya es la misma que
+                    // usa compras directas y recepciones.
+                    throw new ManualBatchMovementError(
+                        'MANUAL_BATCH_IDEMPOTENCY_CONFLICT',
+                        error.httpStatus,
+                        'Ese número de lote ya existe con otra fecha de vencimiento.',
+                    );
+                }
             }
             const batchId = existingBatch?.id ?? buildManualBatchRelatedId(commandId, 'BATCH');
 
@@ -8108,20 +8308,78 @@ app.post('/api/inventory/batches/:batchId/writeoff', authenticate, checkRole(['O
 app.get('/api/inventory/expiring-soon', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        const ninetyDaysFromNow = new Date();
-        ninetyDaysFromNow.setDate(ninetyDaysFromNow.getDate() + 90);
+        const asOf = new Date();
+        const todayFloor = managuaCalendarDateFloor(asOf);
+        // lt del día 91 incluye completo el día civil 90, tanto para fechas
+        // históricas 00Z como para las normalizadas 12Z.
+        const horizonExclusive = new Date(todayFloor.getTime() + 91 * 86_400_000);
+        const [tenantInventory, batches] = await Promise.all([
+            prisma.tenant.findFirst({
+                where: { id: authReq.tenantId! },
+                select: {
+                    pharmacyInventoryMode: true,
+                    batchWarehouseLedgerMode: true,
+                },
+            }),
+            prisma.productBatch.findMany({
+                where: {
+                    tenantId: authReq.tenantId,
+                    stock: { gt: 0 },
+                    expiryDate: { lt: horizonExclusive },
+                },
+                select: {
+                    id: true,
+                    productId: true,
+                    batchNumber: true,
+                    expiryDate: true,
+                    stock: true,
+                    product: { select: { name: true, sku: true } },
+                },
+                orderBy: [{ expiryDate: 'asc' }, { id: 'asc' }],
+                take: 50,
+            }),
+        ]);
+        if (!tenantInventory) return res.status(404).json({ error: 'Negocio no encontrado' });
 
-        const batches = await prisma.productBatch.findMany({
-            where: { 
-                tenantId: authReq.tenantId, 
-                stock: { gt: 0 },
-                expiryDate: { lte: ninetyDaysFromNow }
-            },
-            include: { product: { select: { name: true, sku: true } } },
-            orderBy: { expiryDate: 'asc' },
-            take: 50
-        });
-        res.json(batches);
+        const pharmacyEnforced = tenantInventory.pharmacyInventoryMode === 'ENFORCED';
+        if (pharmacyEnforced && tenantInventory.batchWarehouseLedgerMode !== 'ENFORCED') {
+            return res.status(409).json({
+                error: 'La farmacia requiere lote-bodega ENFORCED para calcular vencimientos',
+                code: 'BATCH_WAREHOUSE_LEDGER_REQUIRED',
+            });
+        }
+        if (tenantInventory.pharmacyInventoryMode !== 'OFF' && !pharmacyEnforced) {
+            return res.status(500).json({
+                error: 'La configuración farmacéutica guardada no es válida',
+                code: 'PHARMACY_INVENTORY_CONFIGURATION_INVALID',
+            });
+        }
+
+        const exactByBatchId = new Map<string, { stock: Decimal; heldStock: Decimal }>();
+        if (pharmacyEnforced && batches.length > 0) {
+            const exactBalances = await prisma.productBatchWarehouseStock.groupBy({
+                by: ['batchId'],
+                where: {
+                    tenantId: authReq.tenantId!,
+                    batchId: { in: batches.map(batch => batch.id) },
+                },
+                _sum: { stock: true, heldStock: true },
+            });
+            for (const balance of exactBalances) {
+                exactByBatchId.set(balance.batchId, {
+                    stock: new Decimal(balance._sum.stock?.toString() ?? 0),
+                    heldStock: new Decimal(balance._sum.heldStock?.toString() ?? 0),
+                });
+            }
+        }
+
+        const response = batches.map(batch => buildPharmacyExpiryAlert({
+            batch,
+            exactBalance: exactByBatchId.get(batch.id),
+            pharmacyEnforced,
+            asOf,
+        }));
+        res.json(response);
     } catch (error) {
         console.error('Error fetching expiring batches:', error);
         res.status(500).json({ error: 'Error obteniendo lotes por vencer' });
@@ -9347,10 +9605,6 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                 // entrada; este guard evita persistir una línea sin snapshots si
                 // ese contrato cambiara accidentalmente.
                 if (!lineMoney) throw new Error('TOTAL_COMPRA_INCONSISTENTE');
-                const requiresTrackedBatchIdentity = (
-                    batchWarehouseLedgerMode === 'SHADOW'
-                    || batchWarehouseLedgerMode === 'ENFORCED'
-                ) && productsById.get(item.productId)?.requiresBatchTracking === true;
                 const {
                     baseQuantity,
                     lineNet: _lineNet,
@@ -9369,7 +9623,7 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                     // Toda línea directa recibe identidad server-side antes de los
                     // efectos físicos. Así incluso SKUs duplicados conservan una
                     // evidencia de bodega/lote/costo inequívoca para devoluciones.
-                    ...(!linkedPurchaseOrder || requiresTrackedBatchIdentity ? { id: crypto.randomUUID() } : {}),
+                    ...(isDirectPurchase ? { id: crypto.randomUUID() } : {}),
                     averageUnitCost: inventoryLineCost.div(baseQuantity).toString(),
                     totalCost: lineMoney.lineNet.toFixed(2),
                     taxAmountExact: lineMoney.lineTax.toFixed(2),
@@ -9545,23 +9799,54 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                 // Control de Lotes
                 let batchId = null;
                 if (product.requiresBatchTracking && item.batchNumber && item.expiryDate) {
-                    const batch = await tx.productBatch.upsert({
-                        where: {
-                            productId_batchNumber: { productId: item.productId, batchNumber: item.batchNumber }
-                        },
-                        update: { stock: { increment: item.stockQuantity } },
-                        create: {
-                            tenantId: authReq.tenantId!,
+                    // `applyStockDelta` ya bloqueó Product. Esta lectura locking
+                    // conserva ese orden global y cierra la carrera entre dos
+                    // compras que intenten crear el mismo número de lote con
+                    // vencimientos distintos.
+                    const existingBatches: Array<{ id: string; expiryDate: Date }> = await tx.$queryRaw`
+                        SELECT id, expiryDate
+                        FROM \`ProductBatch\`
+                        WHERE tenantId = ${authReq.tenantId!}
+                          AND productId = ${item.productId}
+                          AND batchNumber = ${item.batchNumber}
+                        FOR UPDATE`;
+                    const existingBatch = existingBatches[0] ?? null;
+                    if (existingBatch) {
+                        assertProductBatchExpiryIdentity({
                             productId: item.productId,
+                            productName: product.name,
                             batchNumber: item.batchNumber,
-                            // `processedItems` ya normalizó la fecha calendario a Date.
-                            // Volver a pasar el Date por el normalizador de strings
-                            // produciría una fecha inválida para compras con lote.
-                            expiryDate: item.expiryDate,
-                            stock: item.stockQuantity
+                            existingExpiryDate: existingBatch.expiryDate,
+                            incomingExpiryDate: item.expiryDate,
+                        });
+                    }
+                    if (existingBatch) {
+                        const updatedBatch = await tx.productBatch.updateMany({
+                            where: {
+                                id: existingBatch.id,
+                                tenantId: authReq.tenantId!,
+                                productId: item.productId,
+                            },
+                            data: { stock: { increment: item.stockQuantity } },
+                        });
+                        if (updatedBatch.count !== 1) {
+                            throw new Error('PURCHASE_BATCH_CONCURRENT_WRITE');
                         }
-                    });
-                    batchId = batch.id;
+                        batchId = existingBatch.id;
+                    } else {
+                        const createdBatch = await tx.productBatch.create({
+                            data: {
+                                tenantId: authReq.tenantId!,
+                                productId: item.productId,
+                                batchNumber: item.batchNumber,
+                                // `processedItems` ya normalizó la fecha calendario a Date.
+                                expiryDate: item.expiryDate,
+                                stock: item.stockQuantity,
+                            },
+                            select: { id: true },
+                        });
+                        batchId = createdBatch.id;
+                    }
 
                     // Sidecar exacto lote+bodega. Product/ProductStock, ProductBatch
                     // y Kardex siguen siendo los agregados legacy; cualquier fallo
@@ -9573,7 +9858,7 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                             mode: batchWarehouseLedgerMode,
                             tenantId: authReq.tenantId!,
                             productId: item.productId,
-                            batchId: batch.id,
+                            batchId,
                             warehouseId: purchaseWarehouseId,
                             delta: item.quantityExact,
                             movementType: 'DIRECT_PURCHASE',
@@ -9761,6 +10046,19 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
         }
         if (error instanceof PurchaseSalePriceError) {
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
+        if (error instanceof ProductBatchIdentityError) {
+            return res.status(error.httpStatus).json({
+                error: error.message,
+                code: error.code,
+                details: error.details,
+            });
+        }
+        if (error?.message === 'PURCHASE_BATCH_CONCURRENT_WRITE') {
+            return res.status(409).json({
+                error: 'El lote cambió mientras se registraba la compra; intentá nuevamente',
+                code: 'PURCHASE_BATCH_CONCURRENT_WRITE',
+            });
         }
         if (error?.message === 'FACTURA_DUPLICADA' || error?.code === 'P2002') {
             return res.status(409).json({ error: `Ya existe la factura #${invoiceNumber} para este proveedor. No se registró nuevamente.` });

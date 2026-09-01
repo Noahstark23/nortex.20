@@ -36,6 +36,7 @@ interface WarehouseSeed {
     batchId: string;
     warehouseId: string;
     stock: string;
+    heldStock?: string;
 }
 
 const fakeTx = (options: {
@@ -49,7 +50,10 @@ const fakeTx = (options: {
     }]));
     const warehouseStocks = new Map((options.warehouseStocks ?? []).map(row => [
         `${row.batchId}:${row.warehouseId}`,
-        new Decimal(row.stock),
+        {
+            stock: new Decimal(row.stock),
+            heldStock: new Decimal(row.heldStock ?? 0),
+        },
     ]));
     const persisted: Array<Record<string, unknown>> = [];
     const productBatchFindMany = vi.fn(async () => [...batches.values()]
@@ -62,13 +66,14 @@ const fakeTx = (options: {
     const productBatchWarehouseStockFindMany = vi.fn(async ({ where }: {
         where: { tenantId: string; productId: string; warehouseId: string };
     }) => [...warehouseStocks.entries()]
-        .filter(([key, stock]) => key.endsWith(`:${where.warehouseId}`) && stock.greaterThan(0))
-        .map(([key, stock]) => {
+        .filter(([key, balance]) => key.endsWith(`:${where.warehouseId}`) && balance.stock.greaterThan(0))
+        .map(([key, balance]) => {
             const batchId = key.slice(0, key.lastIndexOf(':'));
             const batch = batches.get(batchId)!;
             return {
                 batchId,
-                stock: stock.toString(),
+                stock: balance.stock.toString(),
+                heldStock: balance.heldStock.toString(),
                 batch: { id: batch.id, batchNumber: batch.batchNumber },
                 expiryDate: batch.expiryDate,
             };
@@ -289,7 +294,11 @@ describe('egreso FEFO lote+bodega de ventas', () => {
                 tenantId: 'tenant-a',
                 productId: 'product-a',
                 warehouseId: 'warehouse-a',
-                batch: expect.objectContaining({ tenantId: 'tenant-a', productId: 'product-a' }),
+                batch: expect.objectContaining({
+                    tenantId: 'tenant-a',
+                    productId: 'product-a',
+                    expiryDate: { gte: new Date('2026-08-26T00:00:00.000Z') },
+                }),
             }),
             orderBy: [
                 { batch: { expiryDate: 'asc' } },
@@ -302,6 +311,38 @@ describe('egreso FEFO lote+bodega de ventas', () => {
         expect(applyBatchWarehouseDelta.mock.calls.every(([call]) => (
             call.tenantId === 'tenant-a' && call.warehouseId === 'warehouse-a'
         ))).toBe(true);
+    });
+
+    it('ENFORCED resta heldStock y nunca asigna unidades en cuarentena', async () => {
+        const fake = fakeTx({
+            batches: [
+                { id: 'batch-held', batchNumber: 'L-01', expiryDate: '2027-01-01', globalStock: '2' },
+                { id: 'batch-sellable', batchNumber: 'L-02', expiryDate: '2027-02-01', globalStock: '1' },
+            ],
+            warehouseStocks: [
+                {
+                    batchId: 'batch-held', warehouseId: 'warehouse-a', stock: '2', heldStock: '2',
+                },
+                {
+                    batchId: 'batch-sellable', warehouseId: 'warehouse-a', stock: '1', heldStock: '0',
+                },
+            ],
+        });
+
+        const result = await allocateSaleItemBatchesFefo(fake.tx, {
+            ...saleContext,
+            quantity: '1',
+            enforceComplete: true,
+            batchWarehouseLedgerMode: 'ENFORCED',
+        });
+
+        expect(result.allocations.map(allocation => allocation.batchId)).toEqual(['batch-sellable']);
+        expect(applyBatchWarehouseDelta).toHaveBeenCalledOnce();
+        expect(applyBatchWarehouseDelta).toHaveBeenCalledWith(expect.objectContaining({
+            batchId: 'batch-sellable',
+            delta: '-1.0000',
+        }));
+        expect(fake.batches.get('batch-held')?.globalStock.toString()).toBe('2');
     });
 
     it('ENFORCED preserva 0.0001 sin redondearla ni inventar lote negativo', async () => {

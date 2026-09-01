@@ -77,7 +77,7 @@ import {
     type RequestErrorCategory,
 } from '../utils/posActivation';
 import { suggestNioCashAmounts as denominacionesSugeridas, validateCashReceived } from '../utils/posCash';
-import { mapApiProductImage } from '../utils/posProductMapper';
+import { mapApiProductForPos, mapApiProductImage } from '../utils/posProductMapper';
 import Decimal from 'decimal.js';
 // ── Utilidades financieras del POS (string controlado + Decimal.js) ──────────
 // `discount` y `basePrice` son estado comercial de la línea, no del producto.
@@ -994,35 +994,10 @@ const POS: React.FC = () => {
     // ==========================================
     const fetchProducts = useCallback(async () => {
         try {
-            const res = await fetch('/api/products', { headers });
+            const res = await fetch('/api/products?includeSellableStock=true', { headers });
             if (res.ok) {
                 const data = await res.json();
-                // Map backend fields to frontend Product type
-                const mapped: Product[] = data.map((p: any) => ({
-                    id: p.id,
-                    name: p.name,
-                    sku: p.sku,
-                    price: p.price,
-                    costPrice: p.cost,
-                    stock: p.stock,
-                    category: p.category || 'General',
-                    unit: p.unit || 'unidad',
-                    // Mayoreo y empaque: sin estos campos, effectiveUnitPrice
-                    // nunca sale de DETALLE y la regla de precios por cantidad
-                    // (testeada en tests/pricing.test.ts) queda muerta — la
-                    // docena configurada a C$90 se cobraba 12 × detalle.
-                    wholesalePrice: p.wholesalePrice ?? null,
-                    wholesaleMinQty: p.wholesaleMinQty ?? null,
-                    packUnit: p.packUnit ?? null,
-                    packSize: p.packSize ?? null,
-                    packPrice: p.packPrice ?? null,
-                    saleMode: p.saleMode ?? null,
-                    quantityStep: p.quantityStep == null ? null : Number(p.quantityStep),
-                    ivaExento: p.ivaExento === true,
-                    productFamily: p.productFamily ?? null,
-                    ...mapApiProductImage(p),
-                }));
-                setProducts(mapped);
+                setProducts(data.map(mapApiProductForPos));
                 setProductsError(false);
             } else {
                 // Falso empty-state (auditoría C8): un 500/402 mostraba "no tenés

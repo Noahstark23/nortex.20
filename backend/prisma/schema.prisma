@@ -57,6 +57,10 @@ model Tenant {
   // La activación se hará explícitamente por tenant, nunca desde una migración.
   batchWarehouseLedgerMode        String    @default("OFF") @db.VarChar(16)
   batchWarehouseLedgerActivatedAt DateTime?
+  // Seguridad de inventario farmacéutico: OFF preserva a todos los tenants
+  // existentes. ENFORCED solo se activa tras comprobar el ledger lote+bodega.
+  pharmacyInventoryMode        String    @default("OFF") @db.VarChar(16)
+  pharmacyInventoryActivatedAt DateTime?
   // Campos Fiscales DGI
   // GENERAL preserva el cálculo y desglose fiscal de todos los tenants
   // existentes; la versión permite congelar qué configuración usó cada documento.
@@ -118,6 +122,7 @@ model Tenant {
   procurementPolicy         ProcurementPolicy?
   productBatchWarehouseStocks ProductBatchWarehouseStock[]
   productBatchLedgerEntries   ProductBatchLedgerEntry[]
+  productBatchHolds           ProductBatchHold[]
   purchaseOrderCloseShorts    PurchaseOrderCloseShort[]
   purchaseOrderCloseShortItems PurchaseOrderCloseShortItem[]
   supplierReturns              SupplierReturn[]
@@ -192,6 +197,7 @@ model User {
   purchaseMatchExceptionsResolved  PurchaseMatchException[]     @relation("PurchaseMatchExceptionResolver")
   procurementPoliciesUpdated       ProcurementPolicy[]          @relation("ProcurementPolicyUpdater")
   productBatchLedgerEntriesCreated ProductBatchLedgerEntry[]     @relation("ProductBatchLedgerEntryCreator")
+  productBatchHoldsCreated         ProductBatchHold[]             @relation("ProductBatchHoldCreator")
   purchaseOrderCloseShortsCreated  PurchaseOrderCloseShort[]     @relation("PurchaseOrderCloseShortCreator")
   supplierReturnsCreated            SupplierReturn[]              @relation("SupplierReturnCreator")
   supplierCreditNotesCreated        SupplierCreditNote[]          @relation("SupplierCreditNoteCreator")
@@ -1873,6 +1879,7 @@ model Product {
   scaleProductMappings ScaleProductMapping[]
   batchWarehouseStocks ProductBatchWarehouseStock[]
   batchLedgerEntries   ProductBatchLedgerEntry[]
+  batchHolds           ProductBatchHold[]
   supplierReturnItems  SupplierReturnItem[]
   returnInspections    ReturnInspection[]
   productReturnItems   ProductReturnItem[]
@@ -1987,6 +1994,7 @@ model Warehouse {
   goodsReceipts   GoodsReceipt[]
   batchWarehouseStocks ProductBatchWarehouseStock[]
   batchLedgerEntries ProductBatchLedgerEntry[]
+  batchHolds ProductBatchHold[]
   saleItemBatchAllocations SaleItemBatchAllocation[]
   purchaseItemsWithInventoryEvidence PurchaseItem[] @relation("PurchaseItemInventoryWarehouse")
   supplierReturnItems SupplierReturnItem[]
@@ -2065,6 +2073,7 @@ model ProductBatch {
   goodsReceiptItems   GoodsReceiptItem[]
   warehouseStocks     ProductBatchWarehouseStock[]
   ledgerEntries       ProductBatchLedgerEntry[]
+  holds               ProductBatchHold[]
   purchaseItemsWithInventoryEvidence PurchaseItem[] @relation("PurchaseItemInventoryBatch")
   supplierReturnItems SupplierReturnItem[]
 
@@ -2083,6 +2092,9 @@ model ProductBatchWarehouseStock {
   batchId     String
   warehouseId String
   stock       Decimal  @default(0) @db.Decimal(18, 4)
+  // Proyección exacta de existencias físicamente presentes pero no vendibles
+  // (por ejemplo, una devolución de medicamento puesta en cuarentena).
+  heldStock   Decimal  @default(0) @db.Decimal(18, 4)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -2095,6 +2107,44 @@ model ProductBatchWarehouseStock {
   @@index([tenantId, batchId])
   @@index([tenantId, productId, warehouseId])
   @@index([tenantId, warehouseId, productId])
+}
+
+/// Libro append-only de retenciones y liberaciones de lote por bodega.
+/// quantityDelta actualiza heldStock; los snapshots prueban el efecto sobre
+/// stock físico y vendible sin reinterpretar movimientos históricos.
+model ProductBatchHold {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  productId             String
+  batchId               String
+  warehouseId           String
+  quantityDelta         Decimal  @db.Decimal(18, 4)
+  heldBefore            Decimal  @db.Decimal(18, 4)
+  heldAfter             Decimal  @db.Decimal(18, 4)
+  physicalStockSnapshot Decimal  @db.Decimal(18, 4)
+  sellableBefore        Decimal  @db.Decimal(18, 4)
+  sellableAfter         Decimal  @db.Decimal(18, 4)
+  holdReasonCode        String   @db.VarChar(32)
+  referenceId           String?
+  referenceType         String?  @db.VarChar(64)
+  sourceKey             String   @db.VarChar(191)
+  payloadHash           String   @db.VarChar(64)
+  notes                 String?  @db.Text
+  userId                String
+  createdAt             DateTime @default(now())
+
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch     ProductBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  warehouse Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  creator   User         @relation("ProductBatchHoldCreator", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, sourceKey])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, batchId, warehouseId, createdAt])
+  @@index([tenantId, productId, warehouseId, createdAt])
+  @@index([tenantId, referenceType, referenceId])
+  @@index([userId])
 }
 
 /// Libro inmutable del stock de lote por bodega. sourceKey y payloadHash hacen
