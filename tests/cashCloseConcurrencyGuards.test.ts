@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const server = readFileSync(join(__dirname, '..', 'backend', 'server.ts'), 'utf8');
-const shiftCloseService = readFileSync(
-    join(__dirname, '..', 'backend', 'services', 'shiftCloseService.ts'),
+const legacyShiftCloseService = readFileSync(
+    join(__dirname, '..', 'backend', 'services', 'legacyShiftCloseService.ts'),
     'utf8',
 );
 const salesService = readFileSync(
@@ -20,13 +20,13 @@ function handlerBody(source: string, start: string): string {
     return end === -1 ? rest : rest.slice(0, end);
 }
 
-describe('serialización del cierre de caja', () => {
+describe('serialización del cierre de caja legacy', () => {
     it('bloquea el turno antes de reclamarlo y calcula el arqueo sobre la reread cerrada', () => {
-        const lockIndex = shiftCloseService.indexOf('const lockedShiftRows: Array<{ id: string }> = await tx.$queryRaw`');
-        const lockClauseIndex = shiftCloseService.indexOf('FOR UPDATE', lockIndex);
-        const claimIndex = shiftCloseService.indexOf('const claim = await tx.shift.updateMany');
-        const closedShiftIndex = shiftCloseService.indexOf('const closedShift = await tx.shift.findFirst');
-        const metricsIndex = shiftCloseService.indexOf('const metrics = calculateCloseMetrics(closedShift, input)');
+        const lockIndex = legacyShiftCloseService.indexOf('const lockedShiftRows: Array<{ id: string }> = await tx.$queryRaw`');
+        const lockClauseIndex = legacyShiftCloseService.indexOf('FOR UPDATE', lockIndex);
+        const claimIndex = legacyShiftCloseService.indexOf('const claim = await tx.shift.updateMany');
+        const closedShiftIndex = legacyShiftCloseService.indexOf('const closedShift = await tx.shift.findFirst');
+        const metricsIndex = legacyShiftCloseService.indexOf('const metrics = calculateCloseMetrics(closedShift, input)');
 
         expect(lockIndex).toBeGreaterThan(-1);
         expect(lockClauseIndex).toBeGreaterThan(lockIndex);

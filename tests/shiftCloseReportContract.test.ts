@@ -86,7 +86,7 @@ describe('contrato durable del cierre de caja y su Reporte Z', () => {
         expect(model).toMatch(/@@index\(\[tenantId, businessDate\]\)/);
         expect(model).toMatch(/@@index\(\[tenantId, createdAt\]\)/);
         expect(productReturn).toMatch(/processedShiftId\s+String\?/);
-        expect(productReturn).toContain('processedShift Shift?');
+        expect(productReturn).toMatch(/processedShift\s+Shift\?/);
         expect(productReturn).toMatch(/@@index\(\[tenantId, processedShiftId, createdAt\]\)/);
     });
 });
